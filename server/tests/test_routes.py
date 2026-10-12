@@ -40,6 +40,31 @@ def test_account_reads_retired_plans_as_free(client, make_token, monkeypatch, pl
     assert response.json()["plan"] == expected
 
 
+@pytest.mark.parametrize("body", [
+    {"mode": "new", "cutType": "mirror"},
+    {"mode": "new", "cut_type": "mirror"},
+    {"mode": "new", "cutType": "mirror", "contentRole": "coordination"},
+    {"mode": "vary", "source": {"cutType": "mirror"}},
+    {"mode": "vary", "source": {"cut_type": "mirror"}},
+])
+def test_editor_rejects_retired_cut_type_before_job_or_credit_reservation(client, make_token, body):
+    response = client.post(
+        "/v1/projects/p1/editor:generate-image", headers=_auth(make_token), json=body,
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "unknown_cut_type"
+
+
+@pytest.mark.parametrize("hints", [{}, {"contentRole": "coordination"}, {"sectionRole": "styling"}])
+def test_storyboard_rejects_retired_cut_type_before_storage(client, make_token, hints):
+    response = client.put(
+        "/v1/projects/p1/storyboard", headers=_auth(make_token),
+        json=[{"id": "retired", "source": "ai", "cutType": "mirror", **hints}],
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "unknown_cut_type"
+
+
 def test_editor_source_capability_parser_accepts_api_urls_and_rejects_malformed_hosts():
     asset_id = "33333333-3333-3333-3333-333333333333"
 
@@ -734,7 +759,6 @@ def test_editor_vary_inherits_trusted_source_license_snapshot(
         ("horizon", {"changes": [{"type": "pose", "value": "파리 거리에서 걷기"}]}),
         ("horizon", {"refBgAssetId": "44444444-4444-4444-4444-444444444444"}),
         ("styling", {}),
-        ("mirror", {}),
     ],
 )
 def test_editor_real_vary_accepts_scene_changes_and_every_cut_type(
@@ -932,7 +956,6 @@ def test_editor_new_real_studio_cut_is_accepted(
 
 @pytest.mark.parametrize("cut_type,extra", [
     pytest.param("styling", {}, id="styling"),
-    pytest.param("mirror", {}, id="mirror"),
     # 2026-09-26: 첫 장면(hooking) 섹션도 열렸다 — hero 컷이 같은 길로 간다.
     pytest.param("styling", {"contentRole": "hero"}, id="hooking-hero"),
     # 2026-09-28: product 섹션도 열렸다 — 그 섹션에 착용 컷을 청하면 스타일링과 똑같이
@@ -943,7 +966,7 @@ def test_editor_new_real_studio_cut_is_accepted(
 def test_editor_new_real_styling_and_hooking_cuts_are_accepted(
     client, make_token, monkeypatch, cut_type, extra,
 ):
-    """실제 모델 + styling 섹션(스타일링·거울샷)·hooking 섹션(첫 장면) = 스튜디오 컷과 똑같이
+    """실제 모델 + styling 섹션(스타일링)·hooking 섹션(첫 장면) = 스튜디오 컷과 똑같이
     실제 얼굴로 만든다.
 
     styling 은 2026-09-25, hooking 은 2026-09-26 사용자 결정 — 그 전에는 409

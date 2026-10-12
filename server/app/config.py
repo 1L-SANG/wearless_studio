@@ -182,10 +182,6 @@ class Settings:
     # 4K 는 0/2(글자는 읽히나 다른 결함·+80% 비용)라 채택하지 않았다. 'off' 면 승급 없음.
     # 패턴 승급(4K)과 겹치면 패턴이 이긴다(상위 호환). 승급은 base 해상도를 깎지 않는다.
     mannequin_logo_image_size: str = "OFF"  # off | 1K | 2K | 4K. 기본은 패턴별 분기 없음.
-    # 생성 컷의 상품·로고 동일성 QC. off=미판정, shadow=판정만 기록,
-    # bestof=불일치 시 원본 입력에서 후보를 더 생성해 첫 pass 또는 picker 최선을 채택.
-    garment_qc_mode: str = "bestof"  # off | shadow | bestof
-    garment_qc_extra_candidates: int = 2
     # 최종 컷 독립 QC v1.
     # repair = Gemini 1차 → 독립 QC → 필요 시 Gemini 2차 1회 → 독립 재검수.
     # 2차가 개선되지 않으면 1차를 보존하며, QC/2차 호출 실패도 1차 출고를 막지 않는다.
@@ -288,7 +284,6 @@ class Settings:
     # 2026-09-11 v6: 1cr=50원 기준 행동별 단가, 정본 documents/research/2026-09-07-credit-pricing-plans.md §5·§5-1
     credit_cost_version: str = "v6"
     credit_cost_mannequin_generate: int = 45
-    credit_cost_mannequin_adjust: int = 0  # @deprecated AG-05 폐기 — fitProfile 재생성으로 통합 (프론트 CREDIT_COSTS.mannequinAdjust=0 미러)
     credit_cost_storyboard_per_cut: int = 19  # PL-4 상세페이지: AI 컷 1개당 (프론트 CREDIT_COSTS 미러)
     credit_min_storyboard_cuts: int = 5  # PL-4 상세페이지: AI 생성이 있으면 최소 청구 컷 수
     credit_cost_editor_image: int = 19  # PL-5 에디터 이미지 1장
@@ -859,7 +854,6 @@ def load_settings() -> Settings:
         job_worker_id=os.getenv("JOB_WORKER_ID", f"web-{os.getpid()}"),
         credit_cost_version=os.getenv("CREDIT_COST_VERSION", "v6"),
         credit_cost_mannequin_generate=int(os.getenv("CREDIT_COST_MANNEQUIN_GENERATE", "45")),
-        credit_cost_mannequin_adjust=int(os.getenv("CREDIT_COST_MANNEQUIN_ADJUST", "0")),
         credit_cost_storyboard_per_cut=int(os.getenv("CREDIT_COST_STORYBOARD_PER_CUT", "19")),
         credit_min_storyboard_cuts=5,
         credit_cost_editor_image=int(os.getenv("CREDIT_COST_EDITOR_IMAGE", "19")),
@@ -892,9 +886,6 @@ def load_settings() -> Settings:
             "MANNEQUIN_PATTERN_IMAGE_SIZE", "off", {"off", "1k", "2k", "4k"}).upper(),
         mannequin_logo_image_size=_flag(
             "MANNEQUIN_LOGO_IMAGE_SIZE", "off", {"off", "1k", "2k", "4k"}).upper(),
-        garment_qc_mode=_flag(
-            "GARMENT_QC_MODE", "bestof", {"off", "shadow", "bestof"}),
-        garment_qc_extra_candidates=int(os.getenv("GARMENT_QC_EXTRA_CANDIDATES", "2")),
         cut_output_qc_mode=_flag(
             "CUT_OUTPUT_QC_MODE", "off", {"off", "shadow", "repair"}),
         page_output_qc_mode=_flag("PAGE_OUTPUT_QC_MODE", "off", {"off", "shadow"}),

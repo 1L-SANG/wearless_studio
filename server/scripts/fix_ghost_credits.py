@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SERVER = ROOT / "server"
 sys.path.insert(0, str(SERVER))
 
-from scripts.smoke_realwire import _load_env  # noqa: E402
+from scripts.env_loader import _load_env  # noqa: E402
 
 _load_env(SERVER / ".env")
 

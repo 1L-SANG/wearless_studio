@@ -58,11 +58,11 @@ def test_explicit_shot_or_direction_override_releases_reference_camera(changes):
         assert "DIRECTION-CHANGED" in prompt
 
 
-def test_explicit_pose_overrides_reference_pose():
+def test_retired_pose_does_not_override_reference_pose():
     spec = _bound(pose="walking")
     plan = cut_plan.compile_cut_plan(cg.apply_reference_compatibility(cg.normalize_spec(spec)), "top")
-    assert plan.attribute_owners["pose"] == "storyboard"
-    assert "USER POSE OVERRIDE" in _prompt(spec)
+    assert plan.attribute_owners["pose"] == "reference"
+    assert "USER POSE OVERRIDE" not in _prompt(spec)
 
 
 def test_horizon_color_reuse_adds_bounded_micro_pose():
@@ -89,27 +89,12 @@ def test_horizon_set_member_reuse_keeps_the_example_pose():
     assert cut_plan.compile_cut_plan(cg.apply_reference_compatibility(cg.normalize_spec(spec)), "top").example_repeat_index == 0
 
 
-@pytest.mark.parametrize("pose", content_roles._STUDIO_POSE_ROTATION)
-def test_saved_auto_studio_pose_on_a_set_member_does_not_override_the_example(pose):
-    """옛 서버가 저장해 둔 핏 섹션 자동 포즈는 예시 포즈를 덮지 않는다. 셀러가 고른 포즈는 그대로다."""
+@pytest.mark.parametrize("pose", ["auto", "walking", "one hand in a pocket, shoulders relaxed"])
+def test_legacy_pose_on_a_set_member_does_not_override_the_example(pose):
     spec = _bound(pose=pose)
-    assert cg.normalize_spec(spec)["pose"] == "auto"
+    assert "pose" not in cg.normalize_spec(spec)
     assert "USER POSE OVERRIDE" not in _prompt(spec)
-    assert cg.normalize_spec(_bound(pose="walking"))["pose"] == "walking"
-    assert cg.normalize_spec({**_bound(pose=pose), "spaceGroupId": None})["pose"] != "auto"
-
-
-def test_editor_single_cut_clears_saved_auto_pose_only_where_the_example_governs(monkeypatch):
-    """에디터 한 컷 다시 만들기도 옛 자동 포즈 대신 예시 포즈를 따른다(2026-09-27). 방향이 달라 예시가
-    포즈를 못 정하는 컷과 셀러가 고른 포즈는 그대로 둔다."""
-    monkeypatch.setattr(cg, "load_example_asset_registry", lambda: ("", {"standalone": {"cutType": "horizon", "direction": "front", "shot": "full"}}))
-    rotated = content_roles._STUDIO_POSE_ROTATION[1]
-    spec = {"cutType": "horizon", "exampleId": "standalone", "shot": "full", "direction": "front",
-            "refScope": "all", "pose": rotated}
-    assert cg.clear_legacy_studio_pose(spec)["pose"] == "auto"
-    assert cg.clear_legacy_studio_pose({**spec, "direction": "back"})["pose"] == rotated
-    assert cg.clear_legacy_studio_pose({**spec, "pose": "walking"})["pose"] == "walking"
-    assert cg.clear_legacy_studio_pose({**spec, "cutType": "styling"})["pose"] == rotated
+    assert "Preserve the complete example's body direction" in _prompt(spec)
 
 
 def test_snake_case_set_members_are_also_skipped_by_studio_pose_rotation():

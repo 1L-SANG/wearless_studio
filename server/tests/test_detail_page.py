@@ -212,7 +212,7 @@ def test_success_commit_uncertainty_never_deletes_published_cut(monkeypatch, can
         stored_outputs.append({"key": "k/published", "cleanup_intent_id": None})
         return ([{"blockId": "detail", "imageUrl": "/v1/assets/a1/file", "width": 880, "height": 1320}],
                 [{"asset_id": "a1", "bucket": "b", "key": "k/published", "mime": "image/png"}],
-                0, [], [], None, [])
+                0, [], None, [])
 
     async def finalize(*args, **kwargs):
         captured["finalized"] = True
@@ -1323,15 +1323,14 @@ def test_gen_cuts_detail_requires_loaded_detail_manifest(monkeypatch):
     manifest = dpj.cut_generator.build_manifest(
         [{"slot": "Front"}], has_mannequin=False, has_match=False, mood_count=0)
 
-    (cut_results, cut_assets, face_cuts, garment_qcs,
-     cut_qcs, page_qc, warnings) = asyncio.run(dpj._gen_cuts(
+    (cut_results, cut_assets, face_cuts, cut_qcs, page_qc, warnings) = asyncio.run(dpj._gen_cuts(
         app, _job(reserved=1), [(spec, images, manifest, False, images)],
         {"name": "니트", "clothingType": "top"}, {},
     ))
 
     assert app.state.gemini.calls == 0
     assert cut_results == [] and cut_assets == [] and face_cuts == 0
-    assert garment_qcs == [] and cut_qcs == [] and page_qc is None and warnings == []
+    assert cut_qcs == [] and page_qc is None and warnings == []
 
 
 @pytest.mark.parametrize("qc_report", [
@@ -1361,8 +1360,7 @@ def test_gen_cuts_detail_publishes_selected_generated_output_once(monkeypatch, q
         has_mannequin=False, has_match=False, mood_count=0,
     )
 
-    (cut_results, cut_assets, face_cuts, garment_qcs,
-     cut_qcs, page_qc, warnings) = asyncio.run(dpj._gen_cuts(
+    (cut_results, cut_assets, face_cuts, cut_qcs, page_qc, warnings) = asyncio.run(dpj._gen_cuts(
         app, _job(reserved=1), [(spec, images, manifest, False, images)],
         {"name": "니트", "clothingType": "top"}, {},
     ))
@@ -1370,7 +1368,7 @@ def test_gen_cuts_detail_publishes_selected_generated_output_once(monkeypatch, q
     assert app.state.gemini.calls == 0
     assert len(cut_results) == len(cut_assets) == 1
     assert face_cuts == 0
-    assert garment_qcs == [] and page_qc is None and warnings == []
+    assert page_qc is None and warnings == []
     assert cut_qcs == [{"blockId": "detail-1", **qc_report}]
 
 
@@ -1470,7 +1468,7 @@ def test_detail_success_settles_from_requested_minimum_snapshot(
 
     async def fake_cuts(app, job, prepared, product, analysis, **kwargs):
         return ([{"blockId": f"b{i}"} for i in range(completed)],
-                [{"metadata": {}} for _ in range(completed)], 0, [], [], None, [])
+                [{"metadata": {}} for _ in range(completed)], 0, [], None, [])
 
     def fake_assemble(*args, **kwargs):
         return []
@@ -1947,6 +1945,8 @@ def test_run_detail_page_job_uses_other_color_detail_and_keeps_normal_color_stri
 
 def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(monkeypatch):
     captured = {}
+    # This test exercises generic all/pose inputs rather than the confirmed packet.
+    monkeypatch.setattr(dpj.confirmed_gpt_runtime, "profile_requested", lambda _spec: False)
 
     async def fake_gp(conn, uid, pid):
         return {"copywriting": False}
@@ -2044,9 +2044,9 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
     assert "EXAMPLE REFERENCE as art direction" in captured["all"]["prompt"]
     assert "Do not transfer any background, lighting, color grade" in captured["pose"]["prompt"]
     assert "EXAMPLE REFERENCE as art direction" not in captured["pose"]["prompt"]
-    assert len(captured["named"]["images"]) == 1
-    assert "EXAMPLE REFERENCE" not in captured["named"]["manifest"]
-    assert "REFERENCE SCOPE" not in captured["named"]["prompt"]
+    assert len(captured["named"]["images"]) == 2
+    assert "POSE CONTROL" in captured["named"]["manifest"]
+    assert "Pose: walk" not in captured["named"]["prompt"]
     for block_id in ("mismatch", "unpublished"):
         assert len(captured[block_id]["images"]) == 1
         assert captured[block_id]["cut_spec"]["exampleId"] is None
@@ -2304,7 +2304,7 @@ def test_run_detail_page_job_attaches_set_plate_and_set_or_flat_pose(monkeypatch
     ]
     for block_id, item in captured["cuts"].items():
         assert "EXAMPLE REFERENCE (scope: bg)" not in item["manifest"]
-        assert item["cutSpec"]["pose"] == "auto"
+        assert "pose" not in item["cutSpec"]
         expected_scope = "all" if block_id == "standalone-all" else "pose"
         assert item["cutSpec"]["refScope"] == expected_scope
         if expected_scope == "pose":
@@ -2627,10 +2627,10 @@ def test_run_detail_page_job_puts_the_real_face_in_every_worn_cut_and_settles(
         {"id": "h-front", "source": "ai", "cutType": "horizon", "shot": "full", "direction": "front"},
         {"id": "h-side", "source": "ai", "cutType": "horizon", "shot": "full", "direction": "side"},
         {"id": "styling", "source": "ai", "cutType": "styling", "shot": "full", "direction": "front"},
-        {"id": "mirror", "source": "ai", "cutType": "mirror", "shot": "full"},
+        {"id": "styling-hidden", "source": "ai", "cutType": "styling", "shot": "full", "faceExposure": "hide"},
     ]
     real_face_ids = (
-        (("hooking",) if hooking_open else ()) + ("h-front", "h-side", "styling", "mirror")
+        (("hooking",) if hooking_open else ()) + ("h-front", "h-side", "styling", "styling-hidden")
     )
     skipped_ids = set() if hooking_open else {"hooking"}
 
@@ -3039,8 +3039,7 @@ def test_fine_pattern_detail_generates_checked_new_cut_instead_of_original(monke
     original = {"id": "asset-detail-1", "width": 3000, "height": 4000, "slot": "Detail"}
 
     stored_outputs = []
-    (cut_results, cut_assets, face_cuts, garment_qcs,
-     cut_qcs, page_qc, warnings) = asyncio.run(dpj._gen_cuts(
+    (cut_results, cut_assets, face_cuts, cut_qcs, page_qc, warnings) = asyncio.run(dpj._gen_cuts(
         app, _job(reserved=1),
         [(spec, images, "manifest", False, images, None, False, original)],
         {"name": "스트라이프 셔츠", "clothingType": "top"}, {},
@@ -3053,7 +3052,7 @@ def test_fine_pattern_detail_generates_checked_new_cut_instead_of_original(monke
                                "cleanup_intent_id": cut_assets[0]["cleanup_intent_id"]}]
     assert cut_results[0]["imageUrl"] != "/v1/assets/asset-detail-1/file"
     assert cut_qcs == [{"blockId": "detail-1", "passed": True}]
-    assert face_cuts == 0 and garment_qcs == []
+    assert face_cuts == 0
     assert page_qc is None and warnings == []
 
 

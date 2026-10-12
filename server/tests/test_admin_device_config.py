@@ -1,7 +1,7 @@
 """관리자 기기 게이트 플래그 — 기본값과 허용값.
 
 코드 기본은 shadow(배포 직후 아무도 잠기지 않게), 테스트 기본은 off(관련 없는 라우트
-테스트가 FakeConn 위에서 기기 조회를 돌리지 않게 — garment_qc_mode 와 같은 선례).
+테스트가 FakeConn 위에서 기기 조회를 돌리지 않게).
 """
 from app.config import Settings, load_settings
 from conftest import make_settings

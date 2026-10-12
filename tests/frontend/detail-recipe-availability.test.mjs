@@ -18,7 +18,7 @@ test('source detail recipe stays available without any published examples for ev
     assert.equal(generation.hasAvailableGenerationRecipe([], { ...dressDetail, clothingType, shot: 'ghost' }), false);
   }
   assert.equal(generation.hasAvailableGenerationRecipe([], { ...dressDetail, clothingType: 'unknown' }), false);
-  for (const cutType of ['styling', 'horizon', 'mirror']) {
+  for (const cutType of ['styling', 'horizon']) {
     assert.equal(generation.hasAvailableGenerationRecipe([], { cutType, shot: 'full', clothingType: 'dress', gender: 'women' }), false);
   }
   assert.equal(generation.isGenerationCombinationPublic(dressDetail), false, 'example publication must remain unchanged');

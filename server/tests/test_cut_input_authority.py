@@ -52,7 +52,7 @@ def _patch_detail_terminal(monkeypatch, captured):
             if item[1]
         ]
         assets = [{"key": f"out/{item['blockId']}"} for item in results]
-        return results, assets, 0, [], [], None, []
+        return results, assets, 0, [], None, []
 
     def fake_assemble(*_args, **_kwargs):
         return []
@@ -119,7 +119,7 @@ def test_example_repeat_indexes_are_section_local_and_ignore_client_runtime_valu
     ]
 
     assert dpj._example_repeat_indexes(blocks, "top") == [
-        0, 0, 1, 2, 1, 0, 0, None, None, None,
+        0, 0, 1, 2, 1, 0, 0, 0, None, None,
     ]
 
 
@@ -166,7 +166,7 @@ def test_example_repeat_indexes_exclude_direction_incompatible_reference(monkeyp
          "exampleId": "front-example", "refScope": "all"},
     ]
 
-    assert dpj._example_repeat_indexes(blocks, "top") == [None, 0]
+    assert dpj._example_repeat_indexes(blocks, "top") == [0, 0]
 
 
 def test_detail_product_prunes_mannequin_model_matching_and_owned_mood(monkeypatch):
@@ -312,6 +312,7 @@ def test_detail_non_base_color_prunes_base_color_mannequin(monkeypatch):
 
 def test_detail_prunes_mood_for_all_and_bg_but_keeps_pose_order(monkeypatch):
     captured = {}
+    monkeypatch.setattr(dpj.confirmed_gpt_runtime, "profile_requested", lambda _spec: False)
     blocks = [
         {"id": scope, "source": "ai", "cutType": "styling", "shot": "full",
          "refAssetIds": ["mood"], "exampleId": f"example-{scope}", "refScope": scope,
@@ -518,9 +519,6 @@ def _patch_editor_common(monkeypatch, captured):
         })
         return b"OUTPUT", "image/png"
 
-    async def fake_best_of(settings, product_images, initial, generate_candidate):
-        return initial, None, []
-
     async def fake_scene(*_args, **_kwargs):
         return {"verdict": "pass", "mismatches": [], "correctionPrompt": None}
 
@@ -535,7 +533,6 @@ def _patch_editor_common(monkeypatch, captured):
     monkeypatch.setattr(eij.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_asset)
     monkeypatch.setattr(eij.cut_generator, "generate", fake_generate)
-    monkeypatch.setattr(eij.image_qc, "best_of", fake_best_of)
     monkeypatch.setattr(eij.image_qc, "scene_verdict", fake_scene)
     monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
     monkeypatch.setattr(eij, "_emit", fake_emit)

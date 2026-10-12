@@ -249,7 +249,7 @@ test('hasPatchFields is false only for empty or missing patches', () => {
   assert.equal(hasPatchFields({ clothingType: null }), true);
 });
 
-test('pose example direction gate matches worn directions and mirror recipe', () => {
+test('pose example direction gate matches worn directions', () => {
   assert.equal(poseExampleDirectionCompatible(
     { cutType: 'styling', direction: 'back' },
     { cutType: 'horizon', direction: 'back' },
@@ -259,12 +259,8 @@ test('pose example direction gate matches worn directions and mirror recipe', ()
     { cutType: 'horizon', direction: 'front' },
   ), false);
   assert.equal(poseExampleDirectionCompatible(
-    { cutType: 'mirror', direction: 'front' },
-    { cutType: 'mirror', direction: null },
-  ), true);
-  assert.equal(poseExampleDirectionCompatible(
     { cutType: 'styling', direction: 'front' },
-    { cutType: 'mirror', direction: null },
+    { cutType: 'horizon', direction: 'back' },
   ), false);
 });
 

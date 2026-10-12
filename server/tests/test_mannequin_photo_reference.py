@@ -6,7 +6,7 @@ import types
 import pytest
 
 from app.agents.gemini_image import InlineImage
-from app.agents.mannequin_adjust import build_adjust_directives
+from app.agents.mannequin_fit_edit import build_adjust_directives
 from app.agents.prompts import _product_block, load_prompt_template
 from app.agents.product_reference import ProductReference
 from app.workers import mannequin_job

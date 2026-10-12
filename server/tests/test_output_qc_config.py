@@ -78,7 +78,9 @@ def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_sha
     # 전부-병렬(DETAIL_CUT_CONCURRENCY=0)로 올리면서 1000ms 로 낮췄다(2026-08-27).
     assert variables["DETAIL_CUT_STAGGER_MS"] == "1000"
     assert variables["DETAIL_CUT_MAX_ATTEMPTS"] == "3"
-    assert variables["GARMENT_QC_MODE"] == "off"
+    for deployed_variables in (variables, worker_manifest):
+        assert "GARMENT_QC_MODE" not in deployed_variables
+        assert "GARMENT_QC_EXTRA_CANDIDATES" not in deployed_variables
     assert variables["CUT_OUTPUT_QC_MODE"] == "repair"
     assert variables["MANNEQUIN_IMAGE_SIZE"] == "1K"
     assert variables["MANNEQUIN_LOGO_IMAGE_SIZE"] == "off"

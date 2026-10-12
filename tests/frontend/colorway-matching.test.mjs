@@ -52,7 +52,7 @@ test('extended seed gives each extra color one full-medium pair with one matchin
     projectId: 'colorway-pair', clothingType: 'top', targetGenders: ['women'], matchClothing: MATCHES,
   });
   const baseWorn = blocks.filter((block) => (
-    ['styling', 'horizon', 'mirror'].includes(block.cutType) && block.colorId === 'base'
+    ['styling', 'horizon'].includes(block.cutType) && block.colorId === 'base'
   ));
   const pair = blocks.filter((block) => block.colorwayGroupId);
 
@@ -73,7 +73,7 @@ test('extended entry assigns each color once and shares that match across its fu
     projectId: 'colorway-entry-matches', clothingType: 'top', targetGenders: ['women'],
     matchClothing: MATCHES,
   });
-  const worn = blocks.filter((block) => ['styling', 'horizon', 'mirror'].includes(block.cutType));
+  const worn = blocks.filter((block) => ['styling', 'horizon'].includes(block.cutType));
   const byColor = Map.groupBy(worn, (block) => block.colorId);
 
   assert.ok(byColor.get('base').every((block) => block.matchIds.join() === 'match-light'));
@@ -93,8 +93,8 @@ test('colorway cuts keep pose automatic so one shared example can vary naturally
     projectId: 'colorway-poses', clothingType: 'top', targetGenders: ['women'],
   }).filter((block) => block.colorwayGroupId);
 
-  assert.deepEqual(pair.map((block) => block.pose), ['auto', 'auto']);
-  assert.deepEqual(pair.map((block) => block.poseLabel), ['AI 자동', 'AI 자동']);
+  assert.ok(pair.every((block) => !('pose' in block)));
+  assert.ok(pair.every((block) => !('poseLabel' in block)));
   assert.ok(pair.every((block) => !Object.hasOwn(block, 'expression')));
 });
 
@@ -124,7 +124,7 @@ test('extended groups every non-base color as one section 3 set even when base i
     assert.ok(pair.every((block) => block.sectionRole === 'studio'));
     assert.deepEqual(pair.map((block) => block.shot), ['full', 'medium']);
     assert.equal(new Set(pair.map((block) => block.layoutRowId)).size, 1);
-    assert.ok(pair.every((block) => block.pose === 'auto'));
+    assert.ok(pair.every((block) => !('pose' in block)));
     assert.ok(pair.every((block) => !Object.hasOwn(block, 'expression')));
   }
 });
@@ -140,11 +140,11 @@ test('three extra colors reuse automatic pose instead of carrying color-specific
   }).filter((block) => block.colorwayGroupId);
 
   assert.deepEqual(blocks.map((block) => [block.colorId, block.shot, block.pose]), [
-    ['ivory', 'full', 'auto'],
-    ['ivory', 'medium', 'auto'],
-    ['sky', 'full', 'auto'],
-    ['sky', 'medium', 'auto'],
-    ['gray', 'full', 'auto'],
-    ['gray', 'medium', 'auto'],
+    ['ivory', 'full', undefined],
+    ['ivory', 'medium', undefined],
+    ['sky', 'full', undefined],
+    ['sky', 'medium', undefined],
+    ['gray', 'full', undefined],
+    ['gray', 'medium', undefined],
   ]);
 });

@@ -26,8 +26,8 @@ MAX_GATE_EVIDENCE, MAX_OUTLIERS = 4, 32
 MAX_ID, MAX_COLOR, MAX_EVIDENCE, MAX_CORRECTION = 120, 80, 240, 300
 _ALWAYS = {"sku_fidelity", "target_color", "completeness"}
 _CLOTHING_TYPES = {"top", "bottom", "outer", "dress"}
-_CUT_TYPES = {"styling", "horizon", "mirror", "product"}
-_WORN_CUTS = {"styling", "horizon", "mirror"}
+_CUT_TYPES = {"styling", "horizon", "product"}
+_WORN_CUTS = {"styling", "horizon"}
 _OUTER_EXPOSED = {"open", "partial"}
 
 

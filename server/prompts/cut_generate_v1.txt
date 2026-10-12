@@ -118,17 +118,6 @@ CUT TYPE — PRODUCT CUT (garment only):
 - No model and no visible human body parts. The garment is presented alone.
 - Neutral background, true-to-color rendering; keep fabric texture crisp and detailed.
 
-[[CUT:mirror]]
-CUT TYPE — MIRROR SELFIE (거울샷):
-- A casual mirror selfie: the model holds a smartphone toward a large mirror.
-- The phone, the holding hand and part of the mirror frame are visible.
-- Everyday believable place (fitting room, bedroom full-length mirror, elevator) with natural
-  indoor light — a slightly candid, real-review feel, NOT a polished studio look.
-- Capture class is a phone camera: modest sharpness, phone-lens depth rendering, a hint of natural
-  grain in dim indoor light, slightly imperfect handheld framing and casual asymmetry are welcome.
-  It must read as a real customer-review snapshot, never a glossy campaign photo.
-- Composition follows typical Korean OOTD mirror selfies.
-
 [[SHOT:full]]full body from head to feet, the whole outfit visible; keep both complete feet and all
 footwear inside the frame with visible floor margin — never crop toes, heels, or the garment hem
 [[SHOT:medium]]medium framing: for tops, outerwear and dresses, frame from the head to the hip;
@@ -169,7 +158,6 @@ sharpen them; pick an element whose shape the reference clearly proves
 [[DIR:front_product]]Show the front side of the garment.
 [[DIR:back_product]]Show the back side of the garment.
 
-[[FACE:hide_mirror]]Face handling: the smartphone naturally covers the model's face.
 [[FACE:hide]]Face handling: frame or turn the head so the face is not identifiable (crop above the lips, or face turned away).
 [[FACE:hide_reference]]Face handling: match the reference's hidden-face composition. Keep every facial
 landmark unshown — no eyes, nose, or mouth may be visible. Preserve the same broad crop, head turn,
@@ -214,7 +202,6 @@ or physical occlusion mechanism; do not reveal a lower face beneath an umbrella,
   crop or pose, and never blend it with a face appearing in a MOOD reference.
 
 [[POSE:auto]]Pose: natural and unforced, chosen to flatter how the garment sits.
-[[POSE:named]]Pose: ${poseName} — keep it relaxed and natural.
 [[OUTER_CLOSURE:guard]]OUTER FRONT OPENING — USER-SELECTED REQUIREMENT:
 - This opening state overrides any different open/closed styling shown in EXAMPLE or MOOD images.
 - Use ONLY closure hardware visibly supported by PRODUCT references. Preserve the exact type, count
@@ -265,7 +252,7 @@ garment supports. Do not turn an open-front garment into a closable garment.
   relaxed hand placement and gaze target within the same gaze meaning. Preserve all defining contacts,
   broad limb roles, action, body direction and intended asymmetry.
 
-[[REFSCOPE:all_scene_only]]REFERENCE SCOPE — DIRECTION-CHANGED STYLING/MIRROR SCENE TRANSFER:
+[[REFSCOPE:all_scene_only]]REFERENCE SCOPE — DIRECTION-CHANGED STYLING SCENE TRANSFER:
 - The current CUT SPEC direction differs from the attached EXAMPLE REFERENCE. Use the example ONLY
   for scene archetype and recognizable material/architectural cues, light direction and softness,
   time of day, environmental palette, color grade, mood and capture class.
@@ -287,13 +274,13 @@ garment supports. Do not turn an open-front garment into a closable garment.
   person's garments, shoes, accessories, person identity, face, hair, body details, tattoos or
   worn/carried branding. Do not blanket-erase ordinary environmental text or signage, but do not
   reproduce a distinctive third-party brand/sign verbatim or invent conspicuous fake or garbled text.
-  Use the selected MODEL and current face-handling rule. A mirror cut still requires a plain phone.
+  Use the selected MODEL and current face-handling rule.
 - Apply the example-owned scene light physically to the person and clothing: consistent key direction,
   height, softness, temperature, contrast, fold shading, reflections, contact and cast shadows.
 - Bottoms and footwear are outfit garments, never WYSIWYG props. Use MATCHING when supplied;
   otherwise use a plain neutral coordinating basic. Add no caption, overlay or watermark.
 
-[[REFSCOPE:all]]REFERENCE SCOPE — STYLING/MIRROR ART-DIRECTION TRANSFER:
+[[REFSCOPE:all]]REFERENCE SCOPE — STYLING ART-DIRECTION TRANSFER:
 - Treat the attached EXAMPLE REFERENCE as art direction, not as a base canvas to copy. Preserve its
   framing, compatible camera geometry, light direction and softness,
   time of day, color grade, mood, scene archetype and broad composition.
@@ -317,11 +304,10 @@ ${allFramingRule}
   Never add, move, duplicate or awkwardly stage furniture, plants, signs, fixtures or props merely
   to prove difference.
   Keep only naturally justified elements at plausible scale and with plausible physical support.
-  Do not copy the exact room, shop, street, fitting room, bedroom, elevator, mirror or prop layout,
+  Do not copy the exact room, shop, street, fitting room, bedroom, elevator or prop layout,
   and do not drift to a different scene type, lighting setup or mood. An uninformed viewer must still
   immediately recognize which example supplied the composition, camera, lighting, palette and mood;
   sharing only a generic label such as cafe, street, room, park or beach is insufficient.
-  Mirror cuts follow this same rule.
 - Ordinary environmental text or signage is not automatically erased. Keep it natural to the alternate
   venue, but do not reproduce a distinctive third-party brand/sign verbatim or invent conspicuous fake
   or garbled text. PRODUCT garment text and logos remain governed only by PRODUCT pixels.
@@ -329,7 +315,7 @@ ${allFramingRule}
   the example's garments or shoes. Remove every carried or worn example prop unless it is physically
   required to preserve face hiding or the specified limb geometry (for example an umbrella that hides
   the face); any required prop becomes a visibly different generic unbranded counterpart. Remove
-  sunglasses and masks, except the plain phone required by a mirror cut, and remove layered
+  sunglasses and masks, and remove layered
   non-product outerwear/cardigans worn over the item.
 - Unless explicitly required above to preserve face hiding or limb geometry, the output must contain
   none of the example's bag, tote, basket, purse, backpack, hat, sunglasses, jewelry or footwear.
@@ -433,8 +419,6 @@ Do not copy the mannequin's body shape, height, proportions, gender presentation
 
 PRODUCT and MATCHING remain the only clothing evidence. If a hand position depended on a pocket or removed prop, preserve the broad arm direction and hand height without inventing that pocket or prop and without pushing a hand through fabric. If exact retargeting conflicts with verified garment construction, make only the smallest local hand adjustment; preserve the torso, balance, limbs, and overall pose.
 
-Mirror-cut exception: a blank phone proxy in POSE CONTROL determines only the phone-holding hand and arm. Render one plain unbranded phone because the MIRROR cut requires it; do not copy a case, logo, screen content, or other accessory.
-
 [[CUT:bg_edit]]EDIT TASK — INSERT A MODEL INTO THE ATTACHED SCENE:
 - The FIRST attached image is the finished, real location of this photo. Treat it as the base
   canvas being edited — it is not a loose reference.
@@ -457,15 +441,6 @@ Mirror-cut exception: a blank phone proxy in POSE CONTROL determines only the ph
   Korean-commerce aesthetic must not restyle, relight or recolor it.
 - FRAMING OVERRIDE: the FRAMING and DIRECTION requested below win over the first image's crop —
   extend or re-crop the scene consistently if needed, keeping the same location.
-
-[[CUT:bg_edit_mirror]]MIRROR-CUT MECHANICS — PRESERVE INSIDE THE EXACT PLATE:
-- This remains a mirror selfie: show the model as a physically correct mirror reflection, holding
-  one plain unbranded smartphone toward the mirror so the phone, holding hand and part of the
-  plate's existing mirror frame are visible.
-- Use the mirror and reflected room already present in the plate. Do not add a second mirror,
-  convert it into a third-person photograph, or redesign the room, fitting room or elevator.
-- Keep the casual Korean OOTD selfie composition and obey the requested FRAMING while preserving
-  the plate as the exact scene canvas.
 
 [[SPACE]]SPACE CONTINUITY: this cut belongs to a set shot in ONE location. Keep the lighting,
 background elements and color temperature consistent with a single coherent space

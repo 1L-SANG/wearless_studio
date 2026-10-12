@@ -42,7 +42,7 @@ def _run_gen_cuts(monkeypatch, *, real_attached, **profile_kwargs):
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     app = fake_worker_app(make_settings(
-        gemini_api_key="x", r2_bucket="b", garment_qc_mode="off", cut_output_qc_mode="off"))
+        gemini_api_key="x", r2_bucket="b", cut_output_qc_mode="off"))
     product_image = InlineImage("image/png", b"PRODUCT")
     prepared = (_styling_block(), [product_image], "1. MODEL FACE", False, [product_image],
                 None, False, None, None, real_attached)
@@ -111,7 +111,7 @@ def _vary(monkeypatch, *, cut_type, enabled, spec):
     return out, calls
 
 
-@pytest.mark.parametrize("cut_type", ["styling", "horizon", "mirror"])
+@pytest.mark.parametrize("cut_type", ["styling", "horizon"])
 def test_vary_applies_face_pass_on_worn_cuts(monkeypatch, cut_type):
     out, calls = _vary(monkeypatch, cut_type=cut_type, enabled=True, spec=_SPEC)
     assert out == (b"FACED", "image/png")
@@ -120,7 +120,6 @@ def test_vary_applies_face_pass_on_worn_cuts(monkeypatch, cut_type):
 
 @pytest.mark.parametrize("cut_type,enabled,spec", [
     ("product", True, _SPEC),   # 사람이 없는 컷
-    ("detail", True, _SPEC),
     ("styling", False, _SPEC),  # 플래그 off
     ("styling", True, None),    # LoRA 근거 없음(가상모델·미등록)
 ])

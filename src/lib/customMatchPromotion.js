@@ -128,7 +128,7 @@ export function applyPromotedMatchSelection(blocks, colors, matchClothing) {
   const colorById = new Map(colorList.map((color) => [color.id, color]));
   let changed = false;
   const next = blocks.map((block) => {
-    if (!['styling', 'horizon', 'mirror'].includes(block.cutType)
+    if (!['styling', 'horizon'].includes(block.cutType)
       || block.source === 'mine' || block.matchIdsOrigin === 'user') return block;
     const color = colorById.get(block.colorId) || baseColor;
     const matchIds = matchingIdsForColor(color, matchClothing, {

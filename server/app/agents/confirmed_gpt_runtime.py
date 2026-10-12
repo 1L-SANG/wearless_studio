@@ -57,7 +57,6 @@ def profile_requested(spec: dict) -> bool:
         and spec.get("direction") == "front"
         and spec.get("shot") in {"full", "medium"}
         and spec.get("refScope") == "all"
-        and spec.get("pose") == "auto"
         and not spec.get("spaceGroupId")
         and spec.get("_referenceDirectionCompatible") is not False
     )

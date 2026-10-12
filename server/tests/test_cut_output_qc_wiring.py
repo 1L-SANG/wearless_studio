@@ -62,16 +62,10 @@ def _run_detail_cut(
         output = generated_outputs.pop(0) if generated_outputs else b"INITIAL"
         return output, "image/png"
 
-    async def fake_best_of(settings, product_images, initial, generate_candidate):
-        events.append("garment")
-        assert initial.data == b"INITIAL"
-        return InlineImage("image/png", b"CHOSEN"), {"chosenIndex": 0}, []
-
     async def fake_emit(*_args, **_kwargs):
         return None
 
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_generate)
-    monkeypatch.setattr(dpj.image_qc, "best_of", fake_best_of)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     r2 = _RecordingR2(events)
@@ -80,7 +74,6 @@ def _run_detail_cut(
         "r2_bucket": "b",
         "model_image_high": "gemini-3-pro-image",
         "model_detail_cut": "gpt-image-2-2026-04-21",
-        "garment_qc_mode": "off",
         "cut_output_qc_mode": qc_mode,
     }
     setting_values.update(settings_overrides or {})
@@ -128,7 +121,6 @@ def test_confirmed_profile_is_first_result_only_and_uses_confirmed_qc_authority(
     assert run["generateKwargs"] == [
         {"confirmed_prompt_input": prompt_input},
     ]
-    assert run["result"][3] == []  # no garment best-of insertion
     assert captured["authority_profile"] == "confirmed_gpt_v1"
     assert captured["confirmed_prompt_input"] is prompt_input
     assert captured["generated"].data == b"INITIAL"
@@ -169,7 +161,7 @@ def test_confirmed_framing_crop_edits_stage1_with_exact_example_contract(monkeyp
     assert captured["repairPromptInput"] is prompt_input
     assert captured["qcInputs"] == [prompt_input, prompt_input]
     assert run["r2"].saved == [b"CROPPED"]
-    repair = run["result"][4][0]["repair"]
+    repair = run["result"][3][0]["repair"]
     assert repair["route"] == "EDIT_STAGE1"
     assert repair["accepted"] is True
 
@@ -201,7 +193,7 @@ def test_signature_cut_keeps_main_profile_settings_in_detail_worker(monkeypatch)
 
 def test_horizon_cut_and_repair_use_sunburst_without_moving_styling(monkeypatch):
     async def fail_then_pass_qc(settings, plan, references, generated):
-        return _qc_result("garmentConstruction") if generated.data == b"CHOSEN" else _qc_result()
+        return _qc_result("garmentConstruction") if generated.data == b"INITIAL" else _qc_result()
 
     monkeypatch.setattr(dpj.cut_output_qc, "verdict", fail_then_pass_qc)
     horizon = {
@@ -246,7 +238,7 @@ def _qc_result(*failed_gates):
     return dpj.cut_output_qc.validate(raw)
 
 
-def test_detail_shadow_qc_observes_chosen_output_before_save(monkeypatch):
+def test_detail_shadow_qc_observes_generated_output_before_save(monkeypatch):
     captured = {}
     events = []
 
@@ -259,19 +251,18 @@ def test_detail_shadow_qc_observes_chosen_output_before_save(monkeypatch):
 
     monkeypatch.setattr(dpj.cut_output_qc, "verdict", recording_cut_qc)
     run = _run_detail_cut(monkeypatch, events=events)
-    cut_results, assets, faces, garment_qcs, cut_qcs, page_qc, warnings = run["result"]
+    cut_results, assets, faces, cut_qcs, page_qc, warnings = run["result"]
     assert len(cut_results) == len(assets) == 1 and faces == 0
-    assert garment_qcs == [{"blockId": "b1", "chosenIndex": 0}]
     assert cut_qcs == [{
         "blockId": "b1", "verdict": "FAIL", "passed": False, "gates": {},
     }]
     assert page_qc is None
     assert warnings == []
-    assert captured["generated"].data == b"CHOSEN"
+    assert captured["generated"].data == b"INITIAL"
     assert [reference.role for reference in captured["references"]] == ["product"]
     assert captured["plan"]["declaredFitAxes"] == ["fit"]
-    assert run["r2"].saved == [b"CHOSEN"]
-    assert run["events"] == ["generate", "garment", "cut-qc", "save"]
+    assert run["r2"].saved == [b"INITIAL"]
+    assert run["events"] == ["generate", "cut-qc", "save"]
 
 
 def test_detail_repair_mode_regenerates_global_failure_and_accepts_pass(monkeypatch):
@@ -281,7 +272,7 @@ def test_detail_repair_mode_regenerates_global_failure_and_accepts_pass(monkeypa
         seen.append(generated.data)
         return (
             _qc_result("garmentConstruction")
-            if generated.data == b"CHOSEN"
+            if generated.data == b"INITIAL"
             else _qc_result()
         )
 
@@ -292,7 +283,7 @@ def test_detail_repair_mode_regenerates_global_failure_and_accepts_pass(monkeypa
         generated_outputs=[b"INITIAL", b"REPAIRED"],
     )
 
-    assert seen == [b"CHOSEN", b"REPAIRED"]
+    assert seen == [b"INITIAL", b"REPAIRED"]
     assert run["r2"].saved == [b"REPAIRED"]
     assert run["generateModels"] == [
         "gpt-image-2-2026-04-21",
@@ -302,7 +293,7 @@ def test_detail_repair_mode_regenerates_global_failure_and_accepts_pass(monkeypa
     assert run["generateKwargs"][1]["qc_corrections"] == (
         dpj.cut_output_qc._CORRECTIONS["garmentConstruction"],
     )
-    repair = run["result"][4][0]["repair"]
+    repair = run["result"][3][0]["repair"]
     assert repair["route"] == "REGENERATE_FROM_SCRATCH"
     assert repair["attempted"] is repair["accepted"] is True
     assert repair["finalSource"] == "stage2"
@@ -314,7 +305,7 @@ def test_detail_repair_mode_edits_stage1_for_local_failure(monkeypatch):
     async def fake_cut_qc(settings, plan, references, generated):
         return (
             _qc_result("framingDirectionFacePose")
-            if generated.data == b"CHOSEN"
+            if generated.data == b"INITIAL"
             else _qc_result()
         )
 
@@ -334,7 +325,7 @@ def test_detail_repair_mode_edits_stage1_for_local_failure(monkeypatch):
     monkeypatch.setattr(dpj.cut_generator, "repair", fake_repair)
     run = _run_detail_cut(monkeypatch, qc_mode="repair")
 
-    assert captured["source"].data == b"CHOSEN"
+    assert captured["source"].data == b"INITIAL"
     assert captured["model"] == "gpt-image-2-2026-04-21"
     assert captured["cut_spec"]["cutType"] == "product"
     assert captured["product"]["clothingType"] == "top"
@@ -343,7 +334,7 @@ def test_detail_repair_mode_edits_stage1_for_local_failure(monkeypatch):
     )
     assert run["r2"].saved == [b"EDITED"]
     assert len(run["generateKwargs"]) == 1
-    repair = run["result"][4][0]["repair"]
+    repair = run["result"][3][0]["repair"]
     assert repair["route"] == "EDIT_STAGE1"
     assert repair["accepted"] is True
 
@@ -352,7 +343,7 @@ def test_detail_repair_mode_keeps_stage1_when_stage2_regresses(monkeypatch):
     async def fake_cut_qc(settings, plan, references, generated):
         return (
             _qc_result("framingDirectionFacePose")
-            if generated.data == b"CHOSEN"
+            if generated.data == b"INITIAL"
             else _qc_result("framingDirectionFacePose", "modelIdentity")
         )
 
@@ -363,8 +354,8 @@ def test_detail_repair_mode_keeps_stage1_when_stage2_regresses(monkeypatch):
     monkeypatch.setattr(dpj.cut_generator, "repair", fake_repair)
     run = _run_detail_cut(monkeypatch, qc_mode="repair")
 
-    assert run["r2"].saved == [b"CHOSEN"]
-    repair = run["result"][4][0]["repair"]
+    assert run["r2"].saved == [b"INITIAL"]
+    repair = run["result"][3][0]["repair"]
     assert repair["attempted"] is True
     assert repair["accepted"] is False
     assert repair["finalSource"] == "stage1"
@@ -384,9 +375,6 @@ def test_detail_repair_keeps_five_provider_calls_in_flight(monkeypatch):
         state["active"] -= 1
         return f"IMAGE-{block['id']}".encode(), "image/png"
 
-    async def fake_best_of(settings, product_images, initial, generate_candidate):
-        return initial, None, []
-
     async def fake_cut_qc(settings, plan, references, generated):
         return _qc_result()
 
@@ -394,7 +382,6 @@ def test_detail_repair_keeps_five_provider_calls_in_flight(monkeypatch):
         return None
 
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_generate)
-    monkeypatch.setattr(dpj.image_qc, "best_of", fake_best_of)
     monkeypatch.setattr(dpj.cut_output_qc, "verdict", fake_cut_qc)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
@@ -402,7 +389,6 @@ def test_detail_repair_keeps_five_provider_calls_in_flight(monkeypatch):
     app = fake_worker_app(make_settings(
         gemini_api_key="x",
         r2_bucket="b",
-        garment_qc_mode="off",
         cut_output_qc_mode="repair",
         detail_cut_concurrency=5,
         detail_cut_stagger_ms=0,
@@ -448,9 +434,9 @@ def test_detail_shadow_qc_failure_warns_but_still_saves(monkeypatch, failure):
         )
 
     run = _run_detail_cut(monkeypatch, manifest=manifest)
-    _cuts, assets, _faces, _garment_qcs, cut_qcs, page_qc, warnings = run["result"]
+    _cuts, assets, _faces, cut_qcs, page_qc, warnings = run["result"]
     assert len(assets) == 1
-    assert run["r2"].saved == [b"CHOSEN"]
+    assert run["r2"].saved == [b"INITIAL"]
     assert cut_qcs == []
     assert page_qc is None
     assert warnings == [{"blockId": "b1", "code": "cut_output_qc_unavailable"}]
@@ -463,7 +449,7 @@ def test_generic_qc_off_and_product_detail_uses_dedicated_qc(monkeypatch):
 
     monkeypatch.setattr(dpj.cut_output_qc, "verdict", forbidden)
     off = _run_detail_cut(monkeypatch, qc_mode="off")
-    assert off["result"][4] == []
+    assert off["result"][3] == []
 
     async def fake_emit(*_args, **_kwargs):
         return None
@@ -491,8 +477,8 @@ def test_generic_qc_off_and_product_detail_uses_dedicated_qc(monkeypatch):
     ))
     assert detail_calls == ["b1"]
     assert len(result[1]) == 1
-    assert result[4] == [{"blockId": "b1", "passed": True}]
-    assert result[5] is None and result[6] == []
+    assert result[3] == [{"blockId": "b1", "passed": True}]
+    assert result[4] is None and result[5] == []
     assert r2.saved == [b"CHECKED-DETAIL"]
 
 
@@ -519,7 +505,6 @@ def test_detail_job_persists_cut_qc_per_block(monkeypatch):
             [{"blockId": "b1", "imageUrl": "/out"}],
             [{"key": "out"}],
             0,
-            [],
             [{"blockId": "b1", "verdict": "PASS", "passed": True}],
             None,
             [],
@@ -573,10 +558,6 @@ def _run_editor(monkeypatch, *, qc_mode, qc_error=False, cut_type="product", set
         captured["generateModels"].append(settings.model_image_high)
         return b"INITIAL", "image/png"
 
-    async def fake_best_of(settings, product_images, initial, generate_candidate):
-        captured["events"].append("garment")
-        return InlineImage("image/png", b"CHOSEN"), {"chosenIndex": 0}, []
-
     async def fake_cut_qc(settings, plan, references, generated):
         captured["qcCalls"] += 1
         captured["events"].append("cut-qc")
@@ -598,7 +579,6 @@ def _run_editor(monkeypatch, *, qc_mode, qc_error=False, cut_type="product", set
     monkeypatch.setattr(eij.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_asset)
     monkeypatch.setattr(eij.cut_generator, "generate", fake_generate)
-    monkeypatch.setattr(eij.image_qc, "best_of", fake_best_of)
     monkeypatch.setattr(eij.cut_output_qc, "verdict", fake_cut_qc)
     monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
     monkeypatch.setattr(eij, "_emit", fake_emit)
@@ -607,7 +587,6 @@ def _run_editor(monkeypatch, *, qc_mode, qc_error=False, cut_type="product", set
     setting_values = {
         "gemini_api_key": "x",
         "r2_bucket": "b",
-        "garment_qc_mode": "off",
         "cut_output_qc_mode": qc_mode,
     }
     setting_values.update(settings_overrides or {})
@@ -641,10 +620,10 @@ def test_editor_horizon_uses_sunburst_while_other_cuts_keep_editor_model(monkeyp
 @pytest.mark.parametrize(
     ("qc_mode", "qc_error", "expected_calls", "expected_events"),
     [
-        ("shadow", False, 1, ["generate", "garment", "cut-qc", "save"]),
-        ("shadow", True, 1, ["generate", "garment", "cut-qc", "save"]),
-        ("repair", False, 1, ["generate", "garment", "cut-qc", "save"]),
-        ("off", False, 0, ["generate", "garment", "save"]),
+        ("shadow", False, 1, ["generate", "cut-qc", "save"]),
+        ("shadow", True, 1, ["generate", "cut-qc", "save"]),
+        ("repair", False, 1, ["generate", "cut-qc", "save"]),
+        ("off", False, 0, ["generate", "save"]),
     ],
 )
 def test_editor_cut_qc_stays_observation_only_and_persisted_separately(
@@ -654,11 +633,11 @@ def test_editor_cut_qc_stays_observation_only_and_persisted_separately(
     metadata = captured["finalize"]["metadata"]
     assert captured["qcCalls"] == expected_calls
     assert captured["events"] == expected_events
-    assert r2.saved == [b"CHOSEN"]
-    assert metadata["garmentQc"] == {"chosenIndex": 0}
+    assert r2.saved == [b"INITIAL"]
+    assert "garmentQc" not in metadata
     if qc_mode in {"shadow", "repair"} and not qc_error:
         assert metadata["cutQc"] == {"verdict": "PASS", "passed": True, "gates": {}}
-        assert captured["generated"].data == b"CHOSEN"
+        assert captured["generated"].data == b"INITIAL"
         assert [reference.role for reference in captured["references"]] == ["product"]
         assert captured["plan"]["declaredFitAxes"] == ["fit"]
         assert "warnings" not in metadata

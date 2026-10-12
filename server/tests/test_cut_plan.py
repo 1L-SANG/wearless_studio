@@ -6,9 +6,9 @@ from app.agents.cut_plan import CutPlanError, compile_cut_plan, render_prompt_co
 def worn_spec(cut_type="styling", **changes):
     spec = {
         "cutType": cut_type,
-        "direction": None if cut_type == "mirror" else "front",
+        "direction": "front",
         "shot": "full",
-        "faceExposure": "hide" if cut_type == "mirror" else "same",
+        "faceExposure": "same",
         "pose": "auto",
         "colorId": "black",
         "matchIds": [],
@@ -58,21 +58,7 @@ def test_styling_without_reference_uses_lifestyle_recipe_and_no_reference_owner(
     assert plan.attribute_owners["scene"] == "recipe"
 
 
-def test_mirror_maps_to_styling_recipe_with_mirror_capture():
-    plan = compile_cut_plan(
-        worn_spec("mirror", exampleId="ex_mirror", refScope="all"), "dress"
-    )
-
-    assert plan.recipe_family == "styling"
-    assert plan.capture_mode == "mirrorSelfie"
-    assert plan.product_variant is None
-    assert plan.reference_mode == "all"
-    assert plan.attribute_owners["pose"] == "reference"
-    assert plan.attribute_owners["camera"] == "reference"
-    assert plan.attribute_owners["direction"] == "storyboard"
-
-
-def test_horizon_all_reference_loses_explicit_pose_and_direction():
+def test_horizon_all_reference_ignores_retired_pose_override():
     plan = compile_cut_plan(
         worn_spec(
             "horizon",
@@ -86,13 +72,13 @@ def test_horizon_all_reference_loses_explicit_pose_and_direction():
 
     assert plan.recipe_family == "horizon"
     assert plan.capture_mode == "studio"
-    assert plan.attribute_owners["pose"] == "storyboard"
-    assert "pose" not in plan.reference_attributes
+    assert plan.attribute_owners["pose"] == "reference"
+    assert "pose" in plan.reference_attributes
     assert plan.attribute_owners["direction"] == "storyboard"
     assert plan.attribute_owners["camera"] == "reference"
-    assert plan.to_dict()["conflictResolution"]["storyboardDirectionOverridesReference"]
-    assert plan.to_dict()["conflictResolution"]["explicitStoryboardPoseOverridesReference"]
-    assert plan.to_dict()["conflictResolution"]["explicitStoryboardPoseApplied"]
+    assert not plan.to_dict()["conflictResolution"]["storyboardDirectionOverridesReference"]
+    assert not plan.to_dict()["conflictResolution"]["explicitStoryboardPoseOverridesReference"]
+    assert not plan.to_dict()["conflictResolution"]["explicitStoryboardPoseApplied"]
 
 
 def test_all_reference_with_changed_direction_loses_pose_and_camera_authority():
@@ -146,8 +132,8 @@ def test_repeated_example_index_is_audited_only_when_micro_variation_is_active()
     assert active.example_repeat_index == 1
     assert active.to_dict()["exampleRepeatIndex"] == 1
     assert active.to_dict()["conflictResolution"]["repeatedExampleMicroVariationApplied"]
-    assert inactive.to_dict()["exampleRepeatIndex"] == 0
-    assert not inactive.to_dict()["conflictResolution"]["repeatedExampleMicroVariationApplied"]
+    assert inactive.to_dict()["exampleRepeatIndex"] == 1
+    assert inactive.to_dict()["conflictResolution"]["repeatedExampleMicroVariationApplied"]
 
 
 def test_horizon_colorway_repeat_is_audited_as_micro_variation():
@@ -244,7 +230,7 @@ def test_space_set_forces_pose_reference_and_owns_only_continuity():
     assert plan.to_dict()["conflictResolution"]["spaceSetCameraAndPoseRemainCutSpecific"]
 
 
-def test_explicit_pose_still_wins_inside_space_set():
+def test_retired_pose_does_not_override_space_set_reference():
     plan = compile_cut_plan(
         worn_spec(
             pose="crossed arms",
@@ -255,8 +241,8 @@ def test_explicit_pose_still_wins_inside_space_set():
     )
 
     assert plan.reference_mode == "pose"
-    assert plan.attribute_owners["pose"] == "storyboard"
-    assert "pose" not in plan.reference_attributes
+    assert plan.attribute_owners["pose"] == "reference"
+    assert "pose" in plan.reference_attributes
 
 
 def test_fit_profile_owns_only_declared_axes():
@@ -292,8 +278,8 @@ def test_contract_renderer_is_compact_and_names_ownership_rules():
     assert "storyboard:" in rendered and "pose" in rendered
     assert "modelFace: faceIdentity" in rendered
     assert "modelFullBody: bodyProportions" in rendered
-    assert "reference: camera, captureTone, light, scene" in rendered
-    assert "explicit pose override the example" in rendered
+    assert "reference: camera, captureTone, light, pose, scene" in rendered
+    assert "selected example owns direction and pose" in rendered
     assert "example person owns neither" in rendered
     assert "Seller name/category/sales/legacy-fit text owns no geometry" in rendered
     assert "Styling/all keeps scene type, ordinary ambience, palette, time" in rendered
@@ -309,13 +295,6 @@ def test_location_recomposition_applies_only_to_lifestyle_styling_all():
     )
     excluded = (
         compile_cut_plan(worn_spec(exampleId="ex", refScope="bg"), "top"),
-        compile_cut_plan(
-            worn_spec(
-                "mirror", direction=None, faceExposure="hide",
-                exampleId="ex", refScope="all",
-            ),
-            "top",
-        ),
         compile_cut_plan(
             worn_spec("horizon", exampleId="ex", refScope="all"), "top"
         ),
@@ -349,7 +328,7 @@ def test_location_recomposition_applies_only_to_lifestyle_styling_all():
     [
         (worn_spec(cutType="unknown"), "unknown_cut_type"),
         (worn_spec(shot="ghost"), "invalid_styling_spec"),
-        (worn_spec("mirror", direction="front"), "invalid_mirror_spec"),
+        (worn_spec("mirror"), "unknown_cut_type"),
         (product_spec(refScope="pose", exampleId="ex"), "product_reference_mode_must_be_all"),
         (worn_spec(_referenceDirectionCompatible="yes"),
          "invalid_reference_direction_compatibility"),

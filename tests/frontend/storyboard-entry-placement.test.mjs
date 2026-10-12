@@ -235,15 +235,13 @@ test('category filters stay server-consistent for styling and horizon pools', ()
   }).stylingSets.every((set) => set === null));
 });
 
-test('styling section auto-places space sets only — no mirror, no standalone cut', () => {
-  // 2026-08-14: 거울샷 자동 배치 제거. 2026-08-16: 그 자리를 메우던 낱장 스타일링컷도 제거 —
+test('styling section auto-places space sets only', () => {
   // 스타일링 섹션은 장소 세트만 자동 배치하고, 낱장은 셀러가 '컷 추가'로 직접 넣는다.
   const women = defaultStoryboard(baseColors, 'basic', context('women', 'bottom', 'women'));
   const men = defaultStoryboard(baseColors, 'basic', context('men', 'bottom', 'men'));
   const unknown = defaultStoryboard(baseColors, 'basic', context('unknown', 'bottom', null));
 
   for (const blocks of [women, men, unknown]) {
-    assert.equal(blocks.some((block) => block.cutType === 'mirror'), false);
     const stylingSection = blocks.filter((block) => block.sectionRole === 'styling');
     assert.ok(stylingSection.length > 0, '스타일링 섹션은 비어 있지 않다');
     assert.ok(

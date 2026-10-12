@@ -22,7 +22,7 @@
 |---|---|---|---|---|
 | PL-1 분석 | 입력 '입력 완료' → `analyzeProduct` | AG-01(라이브) → M-01(라이브) | — | `Analysis` (실측 null) |
 | PL-2 마네킹 생성 | 마네킹 최초 진입 시 **자동** → `generateMannequins` | AG-04 ×1 단일컷 **(라이브)** | `mannequinGenerate` | `MannequinCut[]` |
-| PL-3 마네킹 재생성 | 핏 확인 스텝 후 '수정사항 반영하여 재생성' → `regenerateMannequin(projectId, { fitProfile })` | AG-04(라이브) ×1 — fitProfile을 analysis에 영속 후 같은 파이프라인 재실행 | `mannequinGenerate` | `MannequinCut[]` (새 버전 추가·자동 선택) — *구 `adjustMannequin`(AG-05)·adjustCount 흐름 폐기* |
+| PL-3 마네킹 재생성 | 핏 확인 스텝 후 '수정사항 반영하여 재생성' → `regenerateMannequin(projectId, { fitProfile })` | AG-04(라이브) ×1 — fitProfile을 analysis에 영속 후 같은 파이프라인 재실행 | `mannequinGenerate` | `MannequinCut[]` (새 버전 추가·자동 선택) |
 | PL-4 상세페이지 생성 | 콘티 '이대로 생성하기' → `saveStoryboard` 후 `generateDetailPage` | AG-06(라이브) ×N → AG-02(라이브) → AG-03(라이브) → M-02(라이브) | AI 1~4 생성 컷은 최소 5컷 값, 5컷 이상은 실제 생성 컷 × `storyboardPerCut` | 전량 성공 시 `EditorBlock[]` |
 | PL-5 에디터 새 이미지 | AI 탭 `새 이미지 추가` → `generateImage(mode:'new')` | AG-06(라이브) | `editorImage` | `WardrobeImage` |
 | PL-6 현재 이미지 수정 | AI 탭 `현재 이미지 수정` → `generateImage(mode:'vary')` | AG-07(라이브) | `editorImage` | `WardrobeImage` |
@@ -53,11 +53,11 @@
 
 ```
 prep(기준 색상 이미지·분석 속성·매칭 하의 이미지·fitProfile = effective_fit_profile(analysis))
-  → AG-04 ×1 단일컷 (legacy candidate='A' — 구 A/B 병렬안 폐기)
+  → AG-04 ×1 단일컷 (저장 ID 호환용 candidate='A')
   → Pillow QC + AG-P2(현재 둘 다 shadow/off — 로그만) → MannequinCut[] 저장 → { data, credits }
 ```
 - 진행률: 서버 체크포인트(15 inputs_loaded → 35 generating → 85 finalizing)를 `jobs.progress`에 영속, 클라이언트가 체크포인트 사이를 크리핑으로 연출(마지막 99% 부근 스톨 — PRD §7.2).
-- 크레딧: 성공 시 잡당 `mannequinGenerate`(=45) 차감 — 예약량과 동일(구 "성공 후보 수 × 1" 계산 폐기). 실패: 미차감(예약 release). finalize는 lease-fenced 원자 처리.
+- 크레딧: 성공 시 잡당 `mannequinGenerate`(=45) 차감 — 예약량과 동일. 실패: 미차감(예약 release). finalize는 lease-fenced 원자 처리.
 - 멱등: 컷이 이미 존재하면 재실행·재차감 없이 기존 반환 (계약 §6 ②).
 - QC 게이팅 활성 시(현재 비활성): 거부 판정이면 correctionPrompt(실패원인+보완점)를 다음 시도 프롬프트에 주입해 최대 2회 재시도 (ai_agent_modules §5).
 
@@ -69,7 +69,6 @@ prep(기준 색상 이미지·분석 속성·매칭 하의 이미지·fitProfile
   → 새 버전 MannequinCut 저장 → 자동 선택·스텝 리셋 → { data, credits }
 ```
 - 크레딧: `mannequinGenerate`(=45). **횟수 제한 없음** — 크레딧이 자연 제한.
-- *구 `adjustMannequin`(AG-05, slimmer/looser enum + adjustCount 제한) 흐름은 폐기(2026-07) — fitProfile 재생성으로 통합.*
 
 ### PL-4 상세페이지 생성 — `generateDetailPage(projectId)` ★핵심
 
@@ -85,7 +84,7 @@ cuts     AG-06 cut-generator — source='ai' 블록별 병렬 실행. 일반 블
          Stage 1과 조건부 Stage 2를 만들고, exact 대상만 과거 입력·프롬프트 패킷을 추가한다.
          첫 시그니처 컷은 별도 image_signature 계약을 유지한다.
          MODEL_ROUTING_DETAIL_CUT=gpt-image-2-2026-04-21과 DETAIL_CUT_IMAGE_SIZE=4K를 쓴다.
-         세 계열로 컴파일하고, mirror는 styling의 mirrorSelfie 하위 방식으로 병렬 처리한다.
+         세 계열로 컴파일하고 블록별로 병렬 처리한다.
          source='mine' 블록은 ownImages 그대로(에이전트 호출 없음).
 copy     copywriting=true면: 카피 대상 블록별 AG-02 → 묶음 AG-03 검수(revise 채택)
 assemble M-02 page-assembler — 컷+카피+실측 → EditorBlock[] + 자동 블록 3종 (비AI)
@@ -138,7 +137,7 @@ PL-6 (mode:'vary'): VaryRequest 검증 → AG-07 1콜 → WardrobeImage('misc' �
 Job {
   id: string
   projectId: string
-  kind: 'analyze' | 'mannequin' | 'mannequin_adjust' | 'detail_page' | 'editor_image'
+  kind: 'analyze' | 'mannequin' | 'detail_page' | 'editor_image'
   status: JobStatus            // idle | running | done | error
   progress: number             // 0~100
   steps?: GenStep[]            // detail_page만 (genSteps 매핑)
@@ -159,7 +158,6 @@ Job {
 | 파이프라인 | 단가 키(`lib/limits.js`) | 차감 시점 | 실패 시 |
 |---|---|---|---|
 | PL-2 / PL-3 재생성 | `mannequinGenerate` | job 성공 확정 시 | 미차감 |
-| ~~PL-3 조정~~ | ~~`mannequinAdjust`~~ | **폐기** — fitProfile 재생성으로 통합(단가 0, deprecated) | — |
 | PL-4 | 1~4 생성 컷은 최소 5컷 값, 5컷 이상은 실제 생성 컷 × `storyboardPerCut` | 전량 성공 시에만 확정 | 한 컷이라도 실패하면 예약 전액 해제 |
 | PL-5 / PL-6 | `editorImage` | job 성공 확정 시 | 미차감 |
 

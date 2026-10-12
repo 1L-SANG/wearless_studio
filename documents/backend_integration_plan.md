@@ -1,7 +1,7 @@
-# 백엔드 연동 계획 (backend_integration_plan.md)
+# 백엔드 저장·API·작업 실행 계약
 
-> 상태: 확정 (2026-06-12, 갱신 2026-06-29) · 작성 방식: Claude·Codex 독립 초안 → 근거 기반 상호 반박 → 병합 (충돌 2건은 조건부 합의)
-> 역할: 기존 문서가 "무엇"을 정의했다면(엔티티·API 계약 = `common_data_contract.md`, 파이프라인·job 모델 = `ai_pipeline_spec.md`, 에이전트 = `ai_agent_modules.md`, 스택 = `03_기술스택_결정서.md`), 이 문서는 **물리 저장·HTTP 경계·job/credit/export 실행·전환 순서**만 정한다. 엔티티 필드와 파이프라인 단계는 재서술하지 않는다.
+> 현재 백엔드 경계와 소유권을 정리한다. 제품·데이터 요구사항은 PRD와 공통 데이터 계약, 운영 정책은 해당 런북을 따른다.
+> 역할: 기존 문서가 "무엇"을 정의했다면(엔티티·API 계약 = `common_data_contract.md`, 파이프라인·job 모델 = `ai_pipeline_spec.md`, 에이전트 = `ai_agent_modules.md`, 스택 = `03_기술스택_결정서.md`), 이 문서는 **물리 저장·HTTP 경계·job/credit/export 실행**만 정한다. 엔티티 필드와 파이프라인 단계는 재서술하지 않는다.
 
 ---
 
@@ -14,9 +14,9 @@
 | RLS | 전 사용자 테이블 활성화 + FastAPI도 모든 쿼리에 owner 조건 명시 | RLS는 운영 실수·미래 직접 조회에 대한 2차 방어선 |
 | R2 | private 기본 + presigned 업로드(finalize 검증) + 앱 URL → signed redirect 서빙 | 사용자 상품 사진은 공개 자산이 아니고, `src`는 URL이면 계약 충족 — 만료 관리 없는 안정 URL |
 | API 전환 | `lib/api` 시그니처 유지, 내부만 mock↔HTTP 어댑터 교체 | 계약 §6이 경계를 함수 단위로 확정 — 화면 수정과 백엔드 전환을 분리 |
-| job 실행 | Postgres `jobs` 큐(SKIP LOCKED+lease) + **web 프로세스 내 lifespan dispatcher로 시작**, worker 분리는 신호 후 | 운영 단위 1개로 시작하되 job을 HTTP 요청 수명과 분리 (합의 — §5) |
+| job 실행 | Postgres `jobs` 큐(SKIP LOCKED+lease) + lifespan dispatcher와 `JOB_KINDS`별 실행 프로세스 | job은 HTTP 요청 수명과 분리하고 같은 DB 큐·lease 계약으로 실행 (§5) |
 | 크레딧 | **reserve-then-confirm**: 시작 시 예약, 성공분만 확정, 실패 시 해제 | 동시 job 초과 사용 방지 + 실패 미차감 + 부분 차감을 동시에 만족 (Codex 안 채택) |
-| 다운로드 | **클라이언트 렌더 1차**(html-to-image+JSZip), 서버 Playwright는 P2 승격 항목 | 현행 download는 stub — 프론트에서 실패율부터 검증이 더 작은 단위 (합의 — §7) |
+| 다운로드 | **클라이언트 렌더**(html-to-image+JSZip) | 실제 에디터 다운로드는 `editorExport.js`가 담당 (§7) |
 | 진행 전달 | SSE 우선(`job_events` 기반 replay) + 폴링 폴백 | 재연결·프로세스 재시작에도 진행 상태 복구 가능 |
 
 ## 2. Supabase 스키마
@@ -28,14 +28,14 @@
 | `profiles` | user_id pk=auth.users, display_name, avatar_asset_id, plan | Account 매핑 (계약 §3.7) |
 | `credit_accounts` | user_id pk, **balance, reserved** | 잔액+예약 분리 — §6. 응답 `credits` = balance−reserved |
 | `credit_ledger` | id, user_id, project_id, job_id, action_key, delta, balance_after, available_after, idempotency_key uq, metadata, created_at | **append-only** (update/delete 금지). action_key = creditCosts 키 + grant/refund |
-| `projects` | id, user_id, status chk, title, compose_mode, copywriting, selected_mannequin_id, adjust_count, **storyboard jsonb, editor_blocks jsonb, editor_revision**, cover_asset_id, created/updated/deleted_at | 계약 §2. 보관함 조회는 컬럼 선택(블록 jsonb 제외). soft delete |
+| `projects` | id, user_id, status chk, title, compose_mode, copywriting, selected_mannequin_id, **storyboard jsonb, editor_blocks jsonb, editor_revision**, cover_asset_id, created/updated/deleted_at | 계약 §2. 보관함 조회는 컬럼 선택(블록 jsonb 제외). soft delete. 과거 `adjust_count`는 읽기 호환용이며 새 조정 제한에 사용하지 않음 |
 | `products` | id, project_id uq, name, clothing_type, colors jsonb, measurements jsonb, measurements_unknown, upload_complete | 계약 §3.1. colors 내 이미지 src는 asset URL |
 | `analyses` | project_id pk, payload jsonb, locked | 계약 §3.2 (Product 소유 필드 제외) |
-| `mannequin_cuts` | id, project_id, candidate chk, version, asset_id, base_fit, fit_adjust, length_adjust, match_adjust jsonb | uq(project_id, candidate, version) |
+| `mannequin_cuts` | id, project_id, candidate chk, version, asset_id, base_fit, fit_adjust, length_adjust, match_adjust jsonb | uq(project_id, candidate, version). candidate는 저장 ID 호환용이며 신규 단일컷은 A. 과거 fit_adjust·length_adjust·match_adjust는 읽기 호환용 |
 | `wardrobe_images` | id, project_id, color_id, asset_id, ai, cut_type, sort_order, deleted_at | 계약 §3.6 |
 | `assets` | id, user_id, project_id null, source(upload/ai/export/seed), visibility, r2_bucket, r2_key uq, mime_type, byte_size, width/height, checksum, original_filename, metadata jsonb, created/deleted_at | R2 키의 단일 레지스트리. ImageAsset.file 메타 보존 |
 | `matching_items` | seed shape 그대로 + image/thumbnail_asset_id, is_active, sort_order | `seedMatchingItems.js` 이관 (M-01 데이터) |
-| `jobs` | id, user_id, project_id, kind, status(pending/running/done/error), progress, steps jsonb, payload jsonb, result jsonb, error_message, **dedupe_key uq, idempotency_key uq, credits_reserved, credits_charged, locked_by/locked_at**, created/started/updated/finished_at | 계약 §6 멱등의 구현체 = job row. `cancelled` 없음(취소도 error). 화면용 JobStatus 매핑은 ai_pipeline_spec §4 |
+| `jobs` | id, user_id, project_id, kind, status(pending/running/done/error), progress, steps jsonb, payload jsonb, result jsonb, error_message, **dedupe_key uq, idempotency_key uq, credits_reserved, credits_charged, locked_by/locked_at**, created/started/updated/finished_at | 계약 §6 멱등의 구현체 = job row. 화면용 JobStatus 매핑은 ai_pipeline_spec §4 |
 | `job_events` | id bigint identity, job_id, event_type(progress/step/done/error), payload, created_at | SSE `Last-Event-ID` replay·폴링 폴백의 원본 |
 | `exports` | id, project_id, job_id, format(long/zip), asset_id null, status, **snapshot_revision**, created/finished/expires_at | 클라 렌더 채택 후에도 **이력·실패율·옵션 기록**으로 유지 (§7) |
 
@@ -92,14 +92,14 @@ seed/matching/{matchingItemId}.{ext}
 | uploadAsset | §3 업로드 3단계 |
 | analyzeProduct | POST `/v1/projects/{id}/analysis:analyze` (job) |
 | saveAnalysis | PATCH `/v1/projects/{id}/analysis` |
-| getMatchClothing | GET `/v1/projects/{id}/analysis/match-candidates` (과도기 — 최종은 analysis 응답 포함) |
+| getMatchClothing | GET `/v1/projects/{id}/analysis/match-candidates` (분석·마네킹·콘티의 공통 매칭 선택 조회) |
 | getMannequins | GET `/v1/projects/{id}/mannequins` |
-| generateMannequins / regenerateMannequin | POST `…/mannequins:generate` · `:regenerate` (job — regenerate는 `{fitProfile}` 바디). `:adjust`는 폐기 — 항상 **410 Gone**(잡 미생성·미차감, 무과금 생성 경로 차단) |
+| generateMannequins / regenerateMannequin | POST `…/mannequins:generate` · `:regenerate` (job — regenerate는 `{fitProfile}` 바디) |
 | getStoryboard / saveStoryboard | GET/PUT `/v1/projects/{id}/storyboard` |
 | generateDetailPage | POST `/v1/projects/{id}/detail-page:generate` (job) |
 | getEditorBlocks / saveEditorBlocks | GET/PUT `/v1/projects/{id}/editor-blocks` (PUT은 editor_revision 증가) |
 | getWardrobe / generateImage | GET `…/wardrobe` · POST `…/wardrobe/images:generate` (job) |
-| download | POST `/v1/projects/{id}/exports` — §7 (기록 + P2 서버 렌더 훅) |
+| download | 에디터의 클라이언트 내보내기 (§7) |
 | job 공통 | GET `/v1/jobs/{id}` (폴링) · GET `/v1/jobs/{id}/events` (SSE) |
 | pickAnyImage | 없음 — mock 전용 헬퍼, HTTP 어댑터에서 제거 |
 
@@ -108,9 +108,7 @@ seed/matching/{matchingItemId}.{ext}
 
 ## 5. job 실행 인프라 (합의안)
 
-**결정**: MVP 초기 job 실행은 별도 worker 컨테이너 없이 **FastAPI web 프로세스의 lifespan dispatcher**로 시작한다(그래서 AWS Copilot 매니페스트도 `count: 1` 단일 상시 태스크 — in-process dispatcher 유지). 단 ① `jobs` 테이블이 큐의 원본이고 dispatcher는 `FOR UPDATE SKIP LOCKED` claim + lease(locked_by/locked_at) 후 실행 — **요청 핸들러 안에서 실행 금지**(HTTP 취소·이탈이 job 취소로 이어지지 않게), ② provider 호출은 async client 또는 `to_thread` 격리(이벤트 루프 블로킹 방지), ③ web replica 2개+ 또는 CPU 작업(서버 렌더 등) 도입 시 같은 claim 코드를 별도 worker 프로세스로 분리(엔트리포인트 동일, env 플래그).
-
-근거: 운영 단위 1개의 단순성(Claude) + job/요청 수명 분리·복구 가능성(Codex) — 양쪽 조건부 합의. replica를 늘리는 순간 in-process dispatcher도 자연히 다중 worker가 되므로 claim/lease는 day-1 필수.
+`server/app/workers/dispatcher.py`가 lifespan에서 실행되며 `JOB_KINDS`로 맡을 작업을 고른다. `jobs`가 큐의 원본이고 `FOR UPDATE SKIP LOCKED`로 점유한 뒤 lease 토큰으로 결과 저장을 검증한다. 작업은 요청 핸들러 밖에서 실행하므로 HTTP 취소·화면 이탈이 작업 취소를 뜻하지 않는다. 제공자 호출은 비동기 또는 스레드로 격리한다. 종료 시 실행 중 작업을 제한 시간 동안 기다리고 남은 작업은 lease 복구에 맡긴다.
 
 - **복구**: lease timeout 초과 `running` job은 startup/주기 점검에서 `pending` 재큐 또는 `error('서버 재시작')` 처리 — 고착되면 멱등 합류 규칙 때문에 사용자가 새 job을 영영 못 연다.
 - **진행 전달**: worker가 `job_events` append → SSE는 이 테이블 replay(`Last-Event-ID`), 폴링은 `GET /v1/jobs/{id}`. 파이프라인 단계·진행률 매핑은 ai_pipeline_spec §3이 정본.
@@ -134,71 +132,20 @@ seed/matching/{matchingItemId}.{ext}
 
 - 근거: 선검증만으로는 동시 job 2개가 같은 잔액을 통과할 수 있다 (Codex 지적 수용).
 - 단가는 서버 config + 버전 필드 → `jobs.metadata.creditCostVersion` 기록(과거 차감 문의 대응).
-- 환불·무료 지급·플랜 단가는 ledger action(grant/refund)으로 수용 구조만 준비 — 정책은 PRD §12.2 확정 대기.
+- 구독·추가 구매 잔액은 `credit_sources`에서 관리한다. 구독 먼저, 이후 추가 구매 FIFO로 차감하며 계정 잔액·예약과 원장을 같은 트랜잭션에서 맞춘다. 정책은 PRD §12.2와 `credit_system_design.md`를 따른다.
 
-## 7. 다운로드 렌더링 (합의안)
+## 7. 다운로드 렌더링
 
-**결정**: MVP 다운로드는 **클라이언트 렌더**(html-to-image + JSZip)를 1차 구현으로 한다. 서버 Playwright 렌더는 P2 승격 항목.
+에디터는 `editorExport.js`에서 블록별 PNG, 긴 PNG와 블록별 ZIP을 실제로 만든다. 렌더는 기준 캔버스 폭 1000, 고정 픽셀 비율 2를 쓰며 편집 핸들·선택 표시를 제외한다. 핵심 상품 자산은 `/bytes`로 읽어 CORS를 보장하며 하나라도 읽지 못하면 다운로드를 중단한다. 외부 이미지 실패는 해당 자리와 경고를 남긴다. 서버 렌더 작업을 새 요구사항으로 간주하지 않는다.
 
-근거: 현행 에디터의 다운로드는 토스트 stub이고 export 의존성도 없다 — 프론트에서 실제 다운로드 동작·실패율을 먼저 검증하는 편이 서버 export 인프라(Playwright/Chromium 메모리·렌더 전용 route 이중화)보다 작은 검증 단위다. 03 결정서 §6의 "DOM 절대배치 = 내보내기 쉬움" 방향과 일치하고, PRD §10.16이 MVP 해상도 옵션을 제외해 환경 차이 변수도 적다.
+## 8. 프론트 API 어댑터 경계
 
-**조건 (Codex 조건부 수용 사항 — 구현 요건)**:
-1. 캡처 대상은 편집 UI(.quick 툴바·선택 outline·resize 핸들·crop 오버레이)가 섞인 `.canvas-block` 원본이 아니라 **export 전용 DOM 상태**로 분리 — 기존 미리보기 오버레이(`preview-sheet`, 편집 핸들 없는 렌더)가 출발점.
-2. 렌더 전 `document.fonts.ready` 대기(Pretendard self-hosted), R2 자산은 CORS 허용 origin 설정(canvas taint 방지), scale 고정(devicePixelRatio 무시).
-3. `exports` 테이블은 "서버가 만든 파일" 전제가 아니라 **내보내기 이력·실패율·옵션 기록**으로 유지 — `POST /v1/projects/{id}/exports`가 format·snapshot_revision·성공/실패를 기록한다.
-
-**P2 승격 트리거**(하나라도 충족 시 서버 렌더 전환): 마켓플레이스별 규격 프리셋(PRD §17) · 고해상도 옵션 요구 · 기록된 클라 렌더 실패율 임계 초과 · 모바일 지원.
-
-## 8. 전환 단계 (mock → 실서버)
-
-원칙: `src/lib/api/index.js` 아래 mockAdapter/httpAdapter 병렬 — `VITE_API_MODE`로 선택, **함수 단위 부분 스왑**(미전환 함수는 mock이 계속 담당). TanStack Query는 Phase 1과 함께 도입(03 §3, TODO.md §1).
-
-| Phase | 범위 | 완료 기준 |
-|---|---|---|
-| ✅ 0 | 어댑터 구조 + FastAPI 골격(healthz, JWT 미들웨어) + 스키마 마이그레이션 | 배포·JWT 검증 통과 |
-| ✅ 1 | Auth + `/me`·`/catalogs`·projects CRUD·보관함 + TanStack Query | 보관함이 실데이터 |
-| ✅ 2 | Product + R2 presigned 업로드 (objectURL → asset URL) | 입력 플로우 실서버, 업로드 실패 사유 표면화 |
-| ✅ 3 | Analysis + matching (M-01 룰베이스 서버 이관, 실측 null·소유권 분리 서버 검증) | 분석 플로우 실서버 |
-| ✅ 4 | jobs·SSE·dispatcher·크레딧 reserve/confirm — `generateMannequins`부터, 이후 adjust/detail-page/editor-image | 유료 job 멱등·차감 시나리오 통과 |
-| 5 | storyboard/editor-blocks/wardrobe 영속화 (editor_revision 충돌 방지) | 에디터 재진입 유지 |
-| 6 | export 기록 + 클라 렌더 다운로드 완성 | 긴 PNG/ZIP 실동작 |
-| 7 | mock 제거: parity 체크리스트 + `rg "@/mock"` 0건 + 멱등/미차감 수동 시나리오 | mock 의존 0 |
-
-근거: 마네킹 생성(Phase 4 선두)은 유료 멱등·진행률·asset·봉투가 모두 들어간 가장 작은 대표 케이스.
+`src/lib/api/index.js`가 `VITE_API_MODE`로 mock 또는 http 어댑터를 선택한다. HTTP 모드에서 순수 클라이언트 함수는 명시적 화이트리스트로 유지하며 미구현 서버 함수는 즉시 실패한다. 공개 입력·분석은 로컬 draft를 쓰고 분석만 실제 서버로 보낸다. 로그인 후 서버 프로젝트가 생기면 HTTP 경로로 승격한다. 임의의 함수별 mock 폴백은 허용하지 않는다.
 
 ## 9. 보안·운영 결정
 
-- **인증**: Supabase Auth(이메일+OAuth) → 모든 요청 `Authorization: Bearer` → FastAPI JWKS 검증 → `user_id` 주입. service-role 키는 서버만. dev 한정 익명 플래그는 Phase 1까지만.
-- **검증**: Pydantic 모델이 계약 §3~§6 mirror — JSONB 포함 전 저장 경로 검증.
+- **인증**: Supabase Auth(이메일+OAuth) → 모든 요청 `Authorization: Bearer` → FastAPI JWKS 검증 → `user_id` 주입. service-role 키는 서버만. 공개 입력·분석의 비회원 경계는 PRD와 현재 공개 분석 라우트를 따른다.
+- **검증**: Pydantic 모델이 계약 §3~§6을 검증하며 JSONB도 저장 전에 검증.
 - **카탈로그**: `getCatalogs`는 서버 config 제공, 운영자 편집 대상(matching_items, 분위기 예시 시드)만 DB화.
-- **삭제·보존**: project soft delete → 비동기 cleanup이 R2 private asset·export 삭제. ledger는 보존(감사). 보존 기한은 §11.
+- **삭제·보존**: project soft delete → 비동기 cleanup이 R2 private asset·export 삭제. ledger는 보존(감사). 보존 기한은 현재 운영 정책을 따른다.
 - **공유 제외**: 공개 상세페이지 URL은 이 계획에 없음 — Next.js 전환 신호와 함께 별도 결정(03 §4). export 다운로드는 인증 사용자 signed URL 한정.
-
-## 10. 실행 로드맵 (2026-06-12 확정 — Claude·Codex 독립 자문 수렴)
-
-> 사용자 제안 로드맵(상태 정리 → 뼈대 → AI → PG → 크레딧 → 다운로드)을 검토한 결론. 두 자문이 모든 지점에서 수렴했다.
-
-| 순서 | 작업 | 비고 |
-|---|---|---|
-| ✅ **0. AI 품질 스파이크** | 버리는 스크립트로 Gemini 이미지 모델에 실제 상품 사진 투입 — 마네킹 핏 재현·의류 동일성·비용·지연 검증 | **완료 (2026-06-19, 10/10 통과).** `spike/spike.js`, Gemini 3 Pro Image |
-| ✅ 1. Phase 0~1 | FastAPI 골격·Supabase(스키마+Auth)·백엔드 배포(당시 Railway)·어댑터 분기 + 읽기 전환 + **TanStack Query 도입** | **완료.** Zustand는 이미 구현 완료 |
-| ✅ 2. Phase 2~3 | R2 presigned 업로드 → 분석·매칭 전환 | **완료.** M-01 매칭 백엔드·64종 시드 live |
-| ✅ 3. Phase 4 | AI job 실체화 + **크레딧 원장(reserve-confirm) 동시 구축** | **완료.** AG-04 마네킹 생성(fitProfile 재생성 흐름) live. ⚠️ 크레딧 단가·환불 정책은 상용 출시 직전 확정 필요(§11-1) |
-| ✅ 3-1. Railway → AWS 이전 | 백엔드 호스팅을 **AWS ECS Fargate**(Copilot, `api.wearless.kr`)로 마이그레이션 — ECR 이미지, GitHub Actions(OIDC) 자동 배포, secrets=SSM Parameter Store | **완료 (2026-07).** API는 `.github/workflows/deploy-server.yml`, SAM2 모델 서비스는 `.github/workflows/deploy-sam2.yml`이 독립 배포한다. `copilot/` 매니페스트·`deploy/aws/` 참조. 프론트는 Vercel(별개) |
-| 4. Phase 5~6 | 콘티·에디터 영속화 → 다운로드(클라 렌더, §7) | |
-| 5. Phase 7 | mock 제거 (parity 체크리스트) | **mock은 그 전까지 유지** — 실행 가능한 계약(멱등·봉투·소유권 머지)이자 parity 기준. 폐기 시 전환 리스크 증가 |
-| 6. PG (결제) | 크레딧 **충전** 기능으로 원장 위에 마지막에 얹음 | 크레딧 시스템과 분리 — 베타는 수동 지급(원장 `grant`)으로 PG 없이 런칭 가능. PG사 선정은 별도 ADR |
-
-> **과금 구현 상태(2026-09-11):** 기존 예약·확정 경로에 v6 행동별 단가(마네킹 45cr, AI 컷 19cr, 편집 19cr)를 배선했다. 1cr=50원이며 서버 설정과 프론트 미러가 일치한다. 플랜별 할인·무료 수정과 라이선스 크레딧 결제 등 남은 범위는 PRD §12.2를 따른다. 환불 정책과 PG 운영은 해당 계약·런북에서 관리한다.
-
-스택 연결 시점: GEMINI/OPENAI 키=스파이크(지금) · Supabase=Phase 0~1 · 백엔드 배포=Phase 0 끝(healthz라도 조기 배포 — CORS·도메인 문제 조기 발견. 당시 Railway, 현재 AWS ECS Fargate) · TanStack Query=Phase 1 · R2=Phase 2 · TS 점진(types→.ts)=HTTP 어댑터 작성 시 · PG=맨 끝.
-
-## 11. 오픈 이슈 (정책 확정 대기)
-
-| 항목 | 구조 준비 상태 | 막힌 곳 |
-|---|---|---|
-| 크레딧 단가·플랜·무료 체험·환불 | ledger action + config 버전으로 수용 가능 | PRD §12.2 정책 (00_README §4 Blocking) |
-| 품질 불만 환불 기준 | refund action 예약 | 판정 기준 — AG-P2(image-qc)와 연결 |
-| 자산 보존 기한·비용 상한 | exports.expires_at + R2 lifecycle | 운영 정책 |
-| export 해상도·마켓 프리셋 | §7 P2 트리거로 정의 | P2 |
-| 분위기 예시 시드 입력 | matching_items 패턴 재사용 | 운영자 데이터 (사용자 결정: 직접 입력 예정) |

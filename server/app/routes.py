@@ -2939,6 +2939,8 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
     try:
         canonical = content_roles.canonicalize_storyboard(blocks, for_storage=True)
     except ValueError as exc:
+        if str(exc) == "unknown_cut_type":
+            raise _bad_request("unknown_cut_type", "지원하지 않는 컷 종류예요.") from exc
         if str(exc) == "invalid_example_selection_origin":
             raise _bad_request("invalid_example_selection_origin", "생성예시 선택 출처 값이 올바르지 않아요.")
         raise
@@ -3114,6 +3116,14 @@ async def generate_editor_image(
       이 키로만 보장됩니다.
     - **에지 케이스**: `402 Payment Required` — 크레딧(설정값, 기본 1)이 없으면 발생
     """
+    requested_spec = (
+        body if (body or {}).get("mode") == "new"
+        else (body or {}).get("source") or {}
+        if (body or {}).get("mode") == "vary" else {}
+    )
+    requested_cut_type = requested_spec.get("cutType") or requested_spec.get("cut_type")
+    if requested_cut_type and requested_cut_type not in cut_generator.CUT_TYPES:
+        raise _bad_request("unknown_cut_type", "지원하지 않는 컷 종류예요.")
     _require_bg_examples_enabled(request, body)
     if (body or {}).get("mode") == "new" and (
         (body or {}).get("spaceGroupId") or (body or {}).get("space_group_id")

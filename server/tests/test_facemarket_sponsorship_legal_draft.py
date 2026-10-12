@@ -109,7 +109,6 @@ def test_publisher_uses_conditions_and_preserves_draft_warning(publisher):
     # 검토되지 않은 v2 사용처 확장을 발행기가 자동 합본하지 않아요.
     agreement = (root / "public/legal/license-agreement.md").read_text()
     assert "사용처는 스튜디오·무지 배경" in agreement
-    assert "장소·스타일링 배경과 거울 컷" not in agreement
 
 
 def test_publisher_rejects_an_unresolved_condition(publisher):

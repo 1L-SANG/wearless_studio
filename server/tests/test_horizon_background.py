@@ -49,7 +49,7 @@ def test_horizon_background_selection_survives_generation_normalization():
     assert spec.get("horizonBackgroundMode") == "garment-tone"
 
 
-@pytest.mark.parametrize("cut_type", ["styling", "mirror", "product"])
+@pytest.mark.parametrize("cut_type", ["styling", "product"])
 def test_other_cut_families_cannot_enable_horizon_background(cut_type):
     spec = cg.normalize_spec({"cutType": cut_type, "horizonBackgroundMode": "garment-tone"})
     assert spec.get("horizonBackgroundMode", "reference") == "reference"
@@ -357,7 +357,7 @@ def test_actual_worker_keeps_geometry_inputs_and_selected_color_contract(monkeyp
         raise AssertionError("complete horizon references use cut output QC, never the empty-plate judge")
     async def cuts(app, job, prepared, product, analysis, **kwargs):
         capture(prepared[0][0], prepared[0][1], prepared[0][2])
-        return [], [], 0, [], [], None, []
+        return [], [], 0, [], None, []
     for name, function in {"get_product": get_product, "get_analysis": get_analysis, "get_project": get_project,
                            "get_storyboard": get_storyboard, "get_asset_for_user": get_asset,
                            "finalize_detail_page_failure": fail, "finalize_editor_image_success": finalize,

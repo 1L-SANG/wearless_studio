@@ -3031,7 +3031,7 @@ async def issue_face_vc(app, *, license_id, model_id, allowed, forbidden,
 
 _HOLDER_VERIFY_TIMEOUT = 5.0  # 게이트는 셀러 요청 블로킹 경로 — 홀더 지연이 생성 지연되지 않게 짧게.
 
-_STYLING_CUT_TYPES = frozenset({"styling", "mirror"})
+_STYLING_CUT_TYPES = frozenset({"styling"})
 
 
 def is_real_model_id(model_id: str | None) -> bool:

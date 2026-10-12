@@ -1662,7 +1662,7 @@ async def get_mannequin_cut_asset(
     conn: AsyncConnection, user_id: str, project_id: str, client_id: str
 ) -> dict | None:
     """client_id `${candidate}-${version}` 로 특정 마네킹컷의 에셋을 owner-scoped 조회
-    (AG-05 baseId 로드용). 파싱 실패·소유권 불일치는 None (라우트/워커가 실패 처리)."""
+    현재 컷 편집에 쓰는 에셋이다. 파싱 실패·소유권 불일치는 None (라우트/워커가 실패 처리)."""
     parts = (client_id or "").rsplit("-", 1)
     if len(parts) != 2 or not parts[1].isdigit():
         return None
@@ -2940,80 +2940,7 @@ async def finalize_mannequin_failure(
     return finalized
 
 
-# ---------- AG-05 마네킹 조정 종결 (원자·lease 펜스) — 마네킹 finalize 미러 ----------
-
-
-async def finalize_mannequin_adjust_success(
-    conn: AsyncConnection,
-    *,
-    job_id: str,
-    lease_token: str,
-    user_id: str,
-    project_id: str,
-    base_candidate: str,
-    cut: dict,  # {asset_id, bucket, key, mime, size, width, height, fit_adjust, length_adjust, match_adjust}
-    reserved: int,
-    charge: int,
-    metadata: dict,
-) -> dict | None:
-    """성공 종결(원자·lease 펜스): 에셋 insert + 새 버전 컷 insert(base_candidate 계승) + 크레딧
-    confirm + adjust_count 증가 + job done. None = lease 상실 → 아무것도 쓰지 않음."""
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
-            (job_id, lease_token),
-        )
-        if await cur.fetchone() is None:
-            return None  # lease 빼앗김 — 부수효과 0 (워커는 폐기)
-        await cur.execute(
-            "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
-            "r2_key, mime_type, byte_size, width, height, metadata) "
-            "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s, %s)",
-            (cut["asset_id"], user_id, project_id, cut["bucket"], cut["key"], cut["mime"],
-             cut.get("size"), cut.get("width"), cut.get("height"),
-             Json(_mannequin_asset_metadata(cut.get("generation_metadata")))),
-        )
-        await cur.execute(
-            "select coalesce(max(version), 0) + 1 as v from mannequin_cuts "
-            "where project_id = %s and candidate = %s",
-            (project_id, base_candidate),
-        )
-        version = (await cur.fetchone())["v"]
-        await cur.execute(
-            "insert into mannequin_cuts (project_id, candidate, version, asset_id, base_fit, "
-            "fit_adjust, length_adjust, match_adjust) "
-            "values (%s, %s, %s, %s, %s, %s, %s, %s)",
-            (project_id, base_candidate, version, cut["asset_id"], cut["base_fit"],
-             cut.get("fit_adjust"), cut.get("length_adjust"),
-             Json(cut["match_adjust"]) if cut.get("match_adjust") is not None else None),
-        )
-        cut_api = {  # MannequinCut shape (계약 §3.3) — _cut_to_api와 동일
-            "id": f"{base_candidate}-{version}",
-            "src": f"/v1/assets/{cut['asset_id']}/file",
-            "candidate": base_candidate, "version": version, "baseFit": cut["base_fit"],
-            "fitAdjust": cut.get("fit_adjust"), "lengthAdjust": cut.get("length_adjust"),
-            "matchAdjust": cut.get("match_adjust"),
-        }
-        await cur.execute(
-            "update projects set adjust_count = adjust_count + 1 where id = %s", (project_id,)
-        )
-    # 크레딧 확정 — 버킷 FIFO 차감, 같은 tx·jobs 락 유지. 멱등 = job.status(위 running FOR UPDATE).
-    available = await _consume_buckets(
-        conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
-        charge=charge, action_key="mannequinAdjust", metadata=metadata,
-    )
-    envelope = {"data": cut_api, "credits": available, "creditsCharged": charge}
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "update jobs set status = 'done', result = %s, credits_charged = %s, progress = 100, "
-            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
-            (Json(envelope), charge, job_id),
-        )
-        await cur.execute(
-            "insert into job_events (job_id, event_type, payload) values (%s, 'done', %s)",
-            (job_id, Json(envelope)),
-        )
-    return cut_api
+# ---------- 폐기된 마네킹 조정 잡의 실패 종결과 예약 해제 ----------
 
 
 async def finalize_mannequin_adjust_failure(
@@ -3394,7 +3321,7 @@ async def finalize_editor_image_success(
     metadata: dict,
 ) -> dict | None:
     """성공 종결(원자·lease 펜스): 에셋 insert + wardrobe_images insert + 크레딧 confirm + job
-    done. None = lease 상실(복구·재클레임) → 아무것도 쓰지 않음. finalize_mannequin_adjust_success
+    done. None = lease 상실(복구·재클레임) → 아무것도 쓰지 않음. finalize_mannequin_success
     와 동일 구조(AG-06/07 공용 종결, mannequin/detail_page finalize 미러)."""
     async with conn.cursor() as cur:
         await cur.execute(

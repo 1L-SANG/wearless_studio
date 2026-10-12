@@ -14,7 +14,7 @@ from . import horizon_background
 
 
 RecipeFamily = Literal["styling", "horizon", "product"]
-CaptureMode = Literal["lifestyle", "mirrorSelfie", "studio"]
+CaptureMode = Literal["lifestyle", "studio"]
 ProductVariant = Literal["ghost", "detail"]
 ReferenceMode = Literal["none", "all", "pose", "bg"]
 AttributeOwner = Literal[
@@ -39,7 +39,6 @@ _PRODUCT_SHOTS = frozenset({"ghost", "detail"})
 _WORN_DIRECTIONS = frozenset({"front", "side", "back"})
 _PRODUCT_DIRECTIONS = frozenset({"front", "back"})
 _WORN_FACES = frozenset({"same", "show", "hide"})
-_MIRROR_FACES = frozenset({"show", "hide"})
 _CLOSURES = frozenset({"open", "partial", "closed"})
 
 _PRODUCT_TRUTH_ATTRIBUTES = (
@@ -120,8 +119,8 @@ class CutPlan:
             "conflictResolution": {
                 "productTruthControlsOnly": list(_PRODUCT_TRUTH_ATTRIBUTES),
                 "fitProfileControlsOnly": [f"fit.{axis}" for axis in self.declared_fit_axes],
-                "storyboardDirectionOverridesReference": True,
-                "explicitStoryboardPoseOverridesReference": True,
+                "storyboardDirectionOverridesReference": False,
+                "explicitStoryboardPoseOverridesReference": False,
                 "explicitStoryboardPoseApplied": (
                     self.attribute_owners["pose"] == "storyboard"
                 ),
@@ -188,8 +187,8 @@ class CutPlan:
             if attributes:
                 lines.append(f"{owner}: {', '.join(attributes)}")
         lines.extend((
-            "Storyboard color/direction/shot/face/model/matching/closure and any explicit pose "
-            "override the example; never recover an overridden attribute from its pixels.",
+            "Storyboard color/shot/face/model/matching/closure override the example; "
+            "the selected example owns direction and pose.",
             "Selected-model inputs own face and body proportions; the example person owns neither.",
             "ProductTruth pixels own construction, length, material, pattern, hardware, "
             "silhouette and garment text/logo. Seller name/category/sales/legacy-fit text owns "
@@ -263,10 +262,6 @@ def _recipe(spec: Mapping[str, Any]) -> tuple[
                 or face not in _WORN_FACES:
             raise CutPlanError("invalid_styling_spec")
         return "styling", "lifestyle", None
-    if cut_type == "mirror":
-        if shot not in _WORN_SHOTS or direction is not None or face not in _MIRROR_FACES:
-            raise CutPlanError("invalid_mirror_spec")
-        return "styling", "mirrorSelfie", None
     if cut_type == "horizon":
         if shot not in _WORN_SHOTS or direction not in _WORN_DIRECTIONS \
                 or face not in _WORN_FACES:
@@ -306,12 +301,6 @@ def compile_cut_plan(
     if type(example_repeat_index) is not int or example_repeat_index < 0:
         raise CutPlanError("invalid_example_repeat_index")
 
-    raw_pose = spec.get("pose", "auto")
-    if not isinstance(raw_pose, str) or not raw_pose.strip():
-        raise CutPlanError("invalid_pose")
-    pose = raw_pose.strip()
-    explicit_pose = pose != "auto"
-
     raw_matches = spec.get("matchIds") or []
     if not isinstance(raw_matches, (list, tuple)):
         raise CutPlanError("invalid_matching")
@@ -346,8 +335,6 @@ def compile_cut_plan(
     if (recipe_family == "horizon" and spec.get("_horizonReferenceShot") in {"full", "medium"}
             and spec["_horizonReferenceShot"] != spec.get("shot") and "camera" in reference_attributes):
         reference_attributes.remove("camera")
-    if explicit_pose and "pose" in reference_attributes:
-        reference_attributes.remove("pose")
 
     effective_repeat_index = (
         example_repeat_index
@@ -356,7 +343,6 @@ def compile_cut_plan(
             and reference_mode == "all"
             and space_set_continuity is None
             and reference_direction_compatible
-            and not explicit_pose
         )
         else 0
     )
@@ -376,8 +362,6 @@ def compile_cut_plan(
     else:
         owners["faceIdentity"] = "recipe"
         owners["bodyProportions"] = "recipe"
-    if explicit_pose:
-        owners["pose"] = "storyboard"
     for axis in declared_fit_axes:
         owners[f"fit.{axis}"] = "fitProfile"
     if space_set_continuity is not None:
@@ -388,7 +372,6 @@ def compile_cut_plan(
         "direction": spec.get("direction"),
         "shot": spec.get("shot"),
         "face": spec.get("faceExposure"),
-        "pose": pose,
         "model": spec.get("modelId"),
         "matching": [str(value) for value in raw_matches],
         "outerClosure": outer_closure,

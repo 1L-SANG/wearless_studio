@@ -72,7 +72,7 @@ export function setCatalogDragImage(event, members) {
 export function spaceSetSupportsSection(set, sectionRole) {
   return sectionRole === 'studio'
     ? String(set?.setType || '').startsWith('horizon') && set.members.every(member => member.cutType === 'horizon')
-    : sectionRole === 'styling' && set?.setType === 'styling' && set.members.every(member => ['styling', 'mirror'].includes(member.cutType));
+    : sectionRole === 'styling' && set?.setType === 'styling' && set.members.every(member => member.cutType === 'styling');
 }
 
 export function independentSpaceSetChoices(set, { catalog = [], gender, clothingType, sectionRole } = {}) {
@@ -93,9 +93,9 @@ export function createIndependentCatalogMembers(set, exampleIds, template, { mak
   if (!requested.size || choices.length !== requested.size || requested.size !== exampleIds.length) throw new Error('catalog_member_unavailable');
   const { layoutRowId, layoutRowVersion, setSelectionOrigin, ownImages, exampleChoice, ...base } = stripHookFrameFields(detachSpaceMembership(template || {}));
   return choices.map(({ member, example }, index) => ({ ...base, id: makeId(member, index), source: 'ai',
-    sectionRole: context.sectionRole, contentRole: context.sectionRole === 'studio' ? 'fit' : member.cutType === 'mirror' ? 'realWear' : 'coordination',
+    sectionRole: context.sectionRole, contentRole: context.sectionRole === 'studio' ? 'fit' : 'coordination',
     cutType: member.cutType, direction: member.direction, shot: member.shot, exampleId: example.id, exampleSelectionOrigin: 'user',
     refScope: 'all', thumb: example.thumb || example.assetUrl, baseThumb: null, pose: 'auto', poseLabel: 'AI 자동',
-    angle: 'same', faceExposure: member.cutType === 'mirror' ? 'hide' : (base.faceExposure || 'same'), refImages: [], refAssetIds: [],
+    angle: 'same', faceExposure: base.faceExposure || 'same', refImages: [], refAssetIds: [],
   }));
 }

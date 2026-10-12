@@ -33,7 +33,6 @@ const EDITOR_IMAGE_JOB_TIMEOUT_MS = 3 * 60 * 1000;
 const EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE = '이미지가 아직 만들어지고 있어요. 완성되면 의류 탭에 자동으로 나타나요.';
 const DEFAULT_JOB_TIMEOUT_MESSAGE = '작업이 지연되고 있어요. 잠시 후 다시 시도해 주세요.';
 const MANNEQUIN_JOB_TIMEOUT_MESSAGE = '마네킹컷 생성이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.';
-const MANNEQUIN_ADJUST_JOB_TIMEOUT_MESSAGE = '마네킹컷 조정이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.';
 const BROWSER_OFFLINE_MESSAGE = '인터넷 연결이 끊겼어요. 연결을 확인해 주세요. 개발자 도구 Network 설정이 Offline이면 No throttling으로 바꿔 주세요.';
 
 const isBrowserOffline = () => globalThis.navigator?.onLine === false;
@@ -878,7 +877,7 @@ export const httpAdapter = {
     });
   },
 
-  // 최초 A/B 후보 생성 — 202{jobId}→폴링, 또는 완료 존재 시 200{data,credits}(무차감 재호출).
+  // 최초 마네킹 단일컷 생성 — 202{jobId}→폴링, 또는 완료 존재 시 200{data,credits}(무차감 재호출).
   // 크레딧: mannequinGenerate. 진행 중 재호출은 서버가 활성 job 에 합류(1회만 차감).
   //
   // onJobStarted: **서버가 202 로 답해 실제 job 이 생겼을 때만** 1회 호출한다. 200 캐시 경로에선
@@ -897,7 +896,7 @@ export const httpAdapter = {
       jobId = res.jobId;
     }
     onJobStarted?.(jobId);
-    // 마네킹 A/B 합성은 무거운 image job — 폴링 상한을 넉넉히(짧으면 정상 job 완료 전 실패 토스트).
+    // 마네킹 생성은 무거운 image job — 폴링 상한을 넉넉히(짧으면 정상 job 완료 전 실패 토스트).
     const result = await pollJob(jobId, {
       onProgress,
       timeoutMs: LONG_IMAGE_JOB_TIMEOUT_MS,
@@ -910,21 +909,7 @@ export const httpAdapter = {
   async cancelMannequinGeneration(projectId) {
     return http(`/v1/projects/${projectId}/mannequins:cancel`, { method: 'POST' });
   },
-  // @deprecated (2026-07) AG-05 폐기 — fitProfile 재생성(regenerateMannequin)으로 통합.
-  // 서버 :adjust 는 항상 410 Gone(잡 미생성). 화면 어디서도 호출하지 않으며 계약 §6 잔재로만 남김.
-  async adjustMannequin(projectId, { baseId, fitAdjust, lengthAdjust, matchAdjust, onProgress } = {}) {
-    const res = await http(`/v1/projects/${projectId}/mannequins:adjust`, {
-      method: 'POST', body: { baseId, fitAdjust, lengthAdjust, matchAdjust },
-    });
-    if (res.data) return { data: res.data, credits: res.credits };
-    const result = await pollJob(res.jobId, {
-      onProgress,
-      timeoutMs: LONG_IMAGE_JOB_TIMEOUT_MS,
-      timeoutMessage: MANNEQUIN_ADJUST_JOB_TIMEOUT_MESSAGE,
-    });
-    return { data: result.data, credits: result.credits };
-  },
-  // fit-profile 재생성 — 완료 캐시 없이 매 호출이 새 A/B 버전을 만든다(서버 :regenerate, finalize 가 max(version)+1).
+  // fit-profile 재생성 — 완료 캐시 없이 매 호출이 새 마네킹 버전을 만든다(서버 :regenerate, finalize 가 max(version)+1).
   // 크레딧: mannequinGenerate. generate 미러(202 job → 폴링). 재생성은 캐시 200 경로가 없어 항상 job.
   async regenerateMannequin(projectId, { fitProfile, onProgress, idempotencyKey } = {}) {
     const res = await http(`/v1/projects/${projectId}/mannequins:regenerate`, {

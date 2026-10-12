@@ -55,7 +55,7 @@ _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 # 컷·카피 동시 생성 상한. 순차(블록 수 × ~40s)면 4컷에 2~3분 → 병렬로 단축. gemini 버스트
 # 제한을 감안해 무제한이 아닌 소폭 동시성(429 시 이 값을 낮춘다).
 _GEN_CONCURRENCY = 3
-_WORN_CUT_TYPES = ("styling", "horizon", "mirror")
+_WORN_CUT_TYPES = ("styling", "horizon")
 
 
 def _example_repeat_indexes(
@@ -97,7 +97,6 @@ def _example_repeat_indexes(
                 and spec.get("exampleId")
                 and not spec.get("spaceGroupId")
                 and spec.get("refScope") == "all"
-                and spec.get("pose") == "auto"
                 and spec.get("_referenceDirectionCompatible") is not False
             ):
                 section = block.get("sectionId") or block.get("section_id")
@@ -288,7 +287,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     (block, images, manifest, has_face, product_images,
     space_set_plate, strict_space_scene_qc, unused_legacy_slot, confirmed_packet,
     real_identity_attached)로 AG-06 컷 생성
-    → (cut_results, cut_assets, face_cuts, garment_qcs, cut_qcs, page_qc, warnings).
+    → (cut_results, cut_assets, face_cuts, cut_qcs, page_qc, warnings).
     face_cuts = 라이선스 얼굴이 실제로 들어가고
     **성공까지 한** 컷 수 — AI 고지 문구 분기의 사실 근거(주입 0건이면 기본 문구).
     실패 컷은 여기서 None 으로 남기고, 호출자가 한 컷이라도 빠졌으면 전체 작업을 실패시킨다.
@@ -332,8 +331,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                if horizon_background.active(normalized) else {}),
         }
 
-    async def _store_cut(b, img, mime, chosen, *, has_face, real_identity_attached, garment_qc,
-                         cut_qc, garment_warnings, neck_repair_metadata, face_pass_outcome):
+    async def _store_cut(b, img, mime, chosen, *, has_face, real_identity_attached,
+                         cut_qc, cut_warnings, neck_repair_metadata, face_pass_outcome):
         """채택본 1장을 R2 에 올리고 컷 결과 튜플을 만든다. 새로 그린 컷과 체크포인트에서 이어 받은
         완성 컷이 **같은 길**로 나간다 — 자산 키·정리 표식·이벤트·정산 단위(cut_assets)가 같다
         (2026-09-23 _one_impl 꼬리에서 떼어 냄, 내용은 그대로). face_pass_outcome = 채택본을 만든 호출의 결과."""
@@ -362,7 +361,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             key,
             img,
             mime,
-            # 얼굴 노출 배지(`has_face`)가 꺼진 mirror/back도 REAL identity 두 장을
+            # 얼굴 노출 배지(`has_face`)가 꺼진 back도 REAL identity 두 장을
             # 생성 근거로 쓴다. 본문 민감도는 노출 추정이 아니라 입력 증거로 분류한다.
             cache=PRIVATE_NO_STORE if real_identity_attached else IMMUTABLE_CACHE,
         )
@@ -414,15 +413,14 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     if face_pass_outcome.get("face_recipe") else {}),
              }},
             has_face,
-            garment_qc,
             cut_qc,
-            garment_warnings,
+            cut_warnings,
             chosen if s.page_output_qc_mode == "shadow" else None,
         )
 
     async def _one_impl(item):
         """컷 1개 생성+저장. 실패(빈 슬롯)면 None. 각 블록 독립이라 동시 실행 가능."""
-        b, images, manifest, has_face, product_images = item[:5]
+        b, images, manifest, has_face = item[:4]
         space_set_plate = item[5] if len(item) > 5 else None
         strict_space_scene_qc = bool(item[6]) if len(item) > 6 else False
         confirmed_packet = item[8] if len(item) > 8 else None
@@ -455,8 +453,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     return None
                 return await _store_cut(
                     b, chosen.data, chosen.mime, chosen, has_face=False,
-                    real_identity_attached=False, garment_qc=None, cut_qc=detail_report,
-                    garment_warnings=[], neck_repair_metadata=None, face_pass_outcome={})
+                    real_identity_attached=False, cut_qc=detail_report,
+                    cut_warnings=[], neck_repair_metadata=None, face_pass_outcome={})
             if isinstance(item, _SkippedCut):
                 # 준비 단계에서 이미 건너뛴 자리(범위 밖·설정 오류 등) — 이유는 그쪽이 cut_skipped 로
                 # 남겼다. 아래 "옷 근거 없음" 로그로 떨어지면 원인을 잘못 가리킨다(2026-09-26: 막힌
@@ -564,8 +562,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 return await _store_cut(
                     b, final.image, final.mime, InlineImage(final.mime, final.image),
                     has_face=has_face, real_identity_attached=real_identity_attached,
-                    garment_qc=final.meta.get("garmentQc"), cut_qc=final.meta.get("cutQc"),
-                    garment_warnings=list(final.meta.get("warnings") or []),
+                    cut_qc=final.meta.get("cutQc"),
+                    cut_warnings=list(final.meta.get("warnings") or []),
                     neck_repair_metadata=final.meta.get("neckRepair"),
                     face_pass_outcome=dict(final.meta.get("facePass") or {}))
             if ckpt is not None and ckpt.base_reused:
@@ -702,57 +700,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                         await _emit(app.state.pool, job_id, "step",
                                     {"blockId": b.get("id"), "status": "cut_failed"})
                         return None
-            candidate_scene_warnings = []
-
-            async def _generate_candidate():
-                candidate_img, candidate_mime = await cut_generator.generate(
-                    generation_settings, gemini, b, product, images, **generate_kwargs)
-                _remember_outcome(candidate_img)
-                if plate is None:
-                    return InlineImage(candidate_mime, candidate_img)
-
-                candidate_attempt = 1
-                while True:
-                    try:
-                        scene_qc = await image_qc.scene_verdict(
-                            s, plate, InlineImage(candidate_mime, candidate_img))
-                    except VisionError as e:
-                        if strict_space_scene_qc:
-                            raise RuntimeError(
-                                "production space-set scene QC unavailable"
-                            ) from e
-                        log.warning(
-                            "AG-06 candidate scene QC unavailable job %s block %s: %r — fail-open",
-                            job_id, b.get("id"), e)
-                        candidate_scene_warnings.append({"code": "scene_qc_unavailable"})
-                        break
-                    if scene_qc["verdict"] == "pass":
-                        break
-                    if candidate_attempt >= max(1, s.bg_scene_qc_attempts):
-                        raise RuntimeError("candidate scene mismatch")
-                    candidate_attempt += 1
-                    candidate_img, candidate_mime = await cut_generator.generate(
-                        generation_settings, gemini, b, product, images, **generate_kwargs)
-                    _remember_outcome(candidate_img)
-                return InlineImage(candidate_mime, candidate_img)
-
-            if confirmed_packet is not None:
-                # The reviewed baseline was first-result-only.  Independent cut QC below
-                # owns the optional single Stage-2 attempt; best-of is never inserted.
-                chosen, garment_qc, garment_warnings = (
-                    InlineImage(mime, img),
-                    None,
-                    [],
-                )
-            else:
-                chosen, garment_qc, garment_warnings = await image_qc.best_of(
-                    s,
-                    product_images,
-                    InlineImage(mime, img),
-                    _generate_candidate,
-                )
-            img, mime = chosen.data, chosen.mime
-            garment_warnings = [*candidate_scene_warnings, *garment_warnings]
+            chosen = InlineImage(mime, img)
+            cut_warnings = []
 
             cut_qc = None
             if s.cut_output_qc_mode in {"shadow", "repair"}:
@@ -868,7 +817,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                                     e,
                                 )
                                 repair["error"] = "repair_unavailable"
-                                garment_warnings.append({
+                                cut_warnings.append({
                                     "code": "cut_output_qc_repair_unavailable"
                                 })
                         cut_qc = {**cut_qc, "repair": repair}
@@ -880,9 +829,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                         b.get("id"),
                         e,
                     )
-                    garment_warnings.append({"code": "cut_output_qc_unavailable"})
+                    cut_warnings.append({"code": "cut_output_qc_unavailable"})
 
-            # 후보 선택과 Stage2까지 끝난 채택본에만 한 번 적용한다. 그 뒤 Qwen을
+            # Stage2까지 끝난 채택본에만 한 번 적용한다. 그 뒤 Qwen을
             # 다시 실행하면 같은 목선 경계가 생기므로 API 결과를 그대로 저장한다.
             selected_outcome = outcome_by_image.get(hashlib.sha256(img).hexdigest(), {})
             neck_repair_metadata = None
@@ -901,7 +850,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 img, mime = chosen.data, chosen.mime
                 _remember_outcome(img, selected_outcome)
                 if not neck_repair_metadata["applied"]:
-                    garment_warnings.append({"code": "real_horizon_neck_repair_unavailable"})
+                    cut_warnings.append({"code": "real_horizon_neck_repair_unavailable"})
 
             img_sha256 = hashlib.sha256(img).hexdigest()
             # 원장·자산 메타의 face_pass = **채택본**을 만든 호출의 결과(마지막 호출의 것이 아니라).
@@ -911,9 +860,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 # 완성 컷을 남긴다 — 이 잡이 저장·정산 전에 죽어도(배포·lease·DB 오류) 다음 시도가
                 # provider·QC 없이 그대로 싣는다. 저장 실패는 이 컷을 막지 않는다.
                 await ckpt.save_final(img, mime, {
-                    "garmentQc": garment_qc,
                     "cutQc": cut_qc,
-                    "warnings": garment_warnings,
+                    "warnings": cut_warnings,
                     "neckRepair": neck_repair_metadata,
                     "facePass": {k: face_pass_outcome[k] for k in ("face_pass", "face_recipe")
                                  if face_pass_outcome.get(k)},
@@ -921,7 +869,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             return await _store_cut(
                 b, img, mime, chosen,
                 has_face=has_face, real_identity_attached=real_identity_attached,
-                garment_qc=garment_qc, cut_qc=cut_qc, garment_warnings=garment_warnings,
+                cut_qc=cut_qc, cut_warnings=cut_warnings,
                 neck_repair_metadata=neck_repair_metadata, face_pass_outcome=face_pass_outcome)
 
     # 같은 설정 복제 컷은 생성에서 접는다 — 원본만 생성하고 결과를 복제 위치에 복사
@@ -970,7 +918,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
 
     # gather 는 입력 순서를 보존 — 원본 컷만 생성한 뒤 복제 컷 자리에 결과를 복사한다.
     cut_results, cut_assets, face_cuts = [], [], 0
-    garment_qcs, cut_qcs, garment_warnings = [], [], []
+    cut_qcs, cut_warnings = [], []
     cut_tasks = [asyncio.create_task(_one(pos, prepared[i]))
                  for pos, i in enumerate(original_indexes)]
     try:
@@ -1021,9 +969,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             None,
             False,
             None,
-            None,
             [],
-            base[6],
+            base[5],
         ))
     for r in outcomes:
         if r:
@@ -1033,11 +980,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 cut_assets.append(r[1])
             face_cuts += 1 if r[2] else 0
             if r[3] is not None:
-                garment_qcs.append({"blockId": r[0]["blockId"], **r[3]})
-            if r[4] is not None:
-                cut_qcs.append({"blockId": r[0]["blockId"], **r[4]})
-            garment_warnings.extend(
-                {"blockId": r[0]["blockId"], **warning} for warning in r[5])
+                cut_qcs.append({"blockId": r[0]["blockId"], **r[3]})
+            cut_warnings.extend(
+                {"blockId": r[0]["blockId"], **warning} for warning in r[4])
 
     page_qc = None
     if s.page_output_qc_mode == "shadow" and prepared:
@@ -1069,7 +1014,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             ]
             # 실패 컷은 같은 outputIndex 자리에 None으로 남긴다. page_output_qc가 계획 대비
             # 누락을 completeness 실패로 판정하며, 뒤 컷이 앞으로 당겨져 잘못 매핑되지 않는다.
-            page_images = [r[6] if r is not None else None for r in outcomes]
+            page_images = [r[5] if r is not None else None for r in outcomes]
             page_qc = await page_output_qc.judge(
                 s, page_plan, page_images, product_truth_refs=product_truth_refs,
             )
@@ -1077,10 +1022,10 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             # shadow는 관측 전용이다. 매핑·정규화·provider의 예기치 않은 오류도 저장·정산을
             # 막아서는 안 된다.
             log.warning("AG-06 page output QC unavailable job %s: %r — shadow only", job_id, e)
-            garment_warnings.append({"code": "page_output_qc_unavailable"})
+            cut_warnings.append({"code": "page_output_qc_unavailable"})
     return (
-        cut_results, cut_assets, face_cuts, garment_qcs, cut_qcs, page_qc,
-        garment_warnings,
+        cut_results, cut_assets, face_cuts, cut_qcs, page_qc,
+        cut_warnings,
     )
 
 
@@ -1494,7 +1439,7 @@ async def run_detail_page_job(app, job: dict) -> None:
         _model_cache: dict[str, list[InlineImage] | None] = {}
 
         async def _model_images(spec: dict | None) -> list[InlineImage]:
-            if not spec or spec.get("cutType") not in ("styling", "horizon", "mirror"):
+            if not spec or spec.get("cutType") not in ("styling", "horizon"):
                 return []
             model_id = spec.get("modelId")
             if not model_id:
@@ -1674,8 +1619,6 @@ async def run_detail_page_job(app, job: dict) -> None:
                 # 공간 세트의 pose/범위/변주 강도는 저장 payload가 아니라 발행 레지스트리가
                 # 정본이다. 오래된 값이나 우회 클라이언트가 전용 pose·plate 계약을 바꾸지 못한다.
                 cut_spec["refScope"] = "all" if cut_spec.get("cutType") == "horizon" else "pose"
-                if cut_spec.get("cutType") != "horizon":
-                    cut_spec["pose"] = "auto"
                 cut_spec["spaceVariation"] = space_binding["set"]["spaceVariation"]
             # 저장 콘티에 우연히 남은 비계약 필드가 프로젝트 선택 모델을 덮지 못하게 제거 후 주입한다.
             cut_spec.pop("modelId", None)
@@ -1797,7 +1740,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 prepared.append(_skipped_cut(cut_spec))
                 continue
             moods = [mood_assets[str(r)] for r in (b.get("refAssetIds") or [])[:3] if mood_assets.get(str(r))]
-            # 얼굴이 실제로 담기는 컷에만 첨부 — product(사람 금지)·거울샷 기본(폰이 가림)·
+            # 얼굴이 실제로 담기는 컷에만 첨부 — product(사람 금지)·
             # 뒷모습·머리가 프레임 밖인 샷은 제외(cut_generator.wants_face 가 단일 규칙).
             wants = cut_generator.wants_face(cut_spec, clothing_type)
             # MODEL FULL BODY는 진짜 전신 자산을 붙인 VIRTUAL 경로에만 선언한다.
@@ -1813,7 +1756,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 has_identity = False
             elif cut_source == "REAL":
                 # 실존 모델 그리드는 얼굴 노출과 무관하게 모든 착용컷에 identity 앵커로 붙인다(A4).
-                # wants(얼굴 노출)로만 게이트하면 mirror/back 이 참조 0장 → 그 컷만 인물 랜덤이 된다
+                # wants(얼굴 노출)로만 게이트하면 back 이 참조 0장 → 그 컷만 인물 랜덤이 된다
                 # (REAL 은 VIRTUAL 과 달리 mB 폴백도 없음). 배지(has_identity)만 wants 로 준다.
                 attach_grid, _badge = cut_generator.real_identity_plan(
                     normalized.get("cutType") if normalized else None, wants_face=wants)
@@ -1933,11 +1876,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 has_space_set_plate = space_set_plate is not None
                 cut_spec["_spaceSetContinuity"] = has_space_set_plate
             elif example_id:
-                # 직접 포즈가 pose-scope 예시보다 우선한다는 기존 계약: 이미지 자체도 첨부하지 않아
-                # 픽셀 조건이 텍스트 가드를 우회해 포즈를 되살리지 못하게 한다.
-                pose_overrides_example = normalized is not None \
-                    and normalized["pose"] != "auto" and normalized["refScope"] == "pose"
-                if normalized is not None and not pose_overrides_example:
+                if normalized is not None:
                     scope = normalized["refScope"]
                     if example_id.startswith("ss_") and not (
                         b.get("spaceGroupId") or b.get("space_group_id")
@@ -2183,17 +2122,16 @@ async def run_detail_page_job(app, job: dict) -> None:
             cut_results,
             cut_assets,
             face_cuts,
-            garment_qcs,
             cut_qcs,
             page_qc,
-            garment_warnings,
+            cut_warnings,
         ) = await _gen_cuts(app, job, prepared, product, analysis, **_gen_cuts_kwargs)
         real_generated_cut_count = sum(
             1
             for asset in cut_assets
             if (asset.get("metadata") or {}).get("facemarket_real_derived") is True
         )
-        example_warnings.extend(garment_warnings)
+        example_warnings.extend(cut_warnings)
         # 중복 컷은 새 자산 없이도 완성 결과에 들어간다. 결과를 블록별로 대조해
         # 어느 AI 컷도 빠지지 않았을 때만 상세페이지를 조립·과금한다.
         completed = Counter(str(c.get("blockId")) for c in cut_results)
@@ -2256,7 +2194,7 @@ async def run_detail_page_job(app, job: dict) -> None:
         # AI 고지 분기는 **얼굴이 실제로 들어간 컷이 성공했을 때만**(face_cuts > 0) —
         # REAL 자산 주입이 실패했는데 '실제 모델'이라 쓰면 허위 고지가 된다.
         # 범위 주장 근거: totalCuts = **완성한 컷 수**(복제 컷 포함).
-        # face_cuts < totalCuts 면 얼굴 미첨부 컷(거울샷·뒷모습·하반신·상품컷)이 섞였다는 뜻이라
+        # face_cuts < totalCuts 면 얼굴 미첨부 컷(뒷모습·하반신·상품컷)이 섞였다는 뜻이라
         # 페이지 전체를 '가상인물 아님' 으로 주장할 수 없다 → assembler 가 '일부 컷' 문구로 내린다.
         license_notice = None
         if notice_ctx is not None and face_cuts > 0:
@@ -2297,8 +2235,6 @@ async def run_detail_page_job(app, job: dict) -> None:
             "creditCostVersion": s.credit_cost_version,
             "generatedCuts": len(cut_assets),
         }
-        if garment_qcs:
-            success_metadata["garmentQc"] = garment_qcs
         if cut_qcs:
             success_metadata["cutQc"] = cut_qcs
         if page_qc is not None:

@@ -97,7 +97,7 @@ What was implemented:
 
 8. CDN/browser privacy
 - REAL-derived detail/editor/vary output is server-marked sensitive and receives `private, no-store` from R2, `/file`, and `/bytes`.
-- Mirror/back classification follows attached REAL evidence, not just visible-face badges.
+- Back-cut classification follows attached REAL evidence, not just visible-face badges.
 - Unmarked legacy `source=ai` assets are conservatively treated as sensitive. New ordinary/virtual/product outputs explicitly record false and remain immutable.
 - Cloudflare R2-key prefix purge is durable, paced, retryable on bounded 429/Retry-After, and token-safe.
 - A service-private purge manifest is committed before origin deletion. Revision CAS and an advisory lock prevent stale workers from deleting a newer target set.

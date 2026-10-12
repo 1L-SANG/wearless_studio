@@ -34,7 +34,6 @@ def test_production_default_is_enabled_and_environment_can_disable_it(monkeypatc
 @pytest.mark.parametrize("cut,model,attached,outcome,generator,enabled,expected", [
     ("horizon", REAL, True, "applied", "gpt-image-2", True, True),
     ("styling", REAL, True, "applied", "gpt-image-2", True, False),
-    ("mirror", REAL, True, "applied", "gpt-image-2", True, False),
     ("product", REAL, True, "applied", "gpt-image-2", True, False),
     ("horizon", "mA", True, "applied", "gpt-image-2", True, False),
     ("horizon", REAL, False, "applied", "gpt-image-2", True, False),

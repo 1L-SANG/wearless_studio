@@ -211,7 +211,7 @@ def test_product_with_pose_is_rejected(tmp_path):
     assert any("제품컷에는 pose·bg" in item for item in caught.value.violations)
 
 
-@pytest.mark.parametrize("cut_type", ("styling", "horizon", "mirror", "product"))
+@pytest.mark.parametrize("cut_type", ("styling", "horizon", "product"))
 @pytest.mark.parametrize("direction", ("front", "back", "side", None))
 def test_direction_observation_metadata_is_cut_type_independent(
     tmp_path, cut_type, direction
@@ -304,7 +304,7 @@ def test_direction_outside_observation_metadata_values_is_rejected(tmp_path):
     assert any("direction이 허용값이 아닙니다: diagonal" in item for item in caught.value.violations)
 
 
-@pytest.mark.parametrize("cut_type", ("styling", "horizon", "mirror"))
+@pytest.mark.parametrize("cut_type", ("styling", "horizon"))
 def test_worn_gender_null_is_rejected(tmp_path, cut_type):
     manifest_path, root, manifest = _fixture(tmp_path)
     example = manifest["examples"][0]
@@ -313,7 +313,7 @@ def test_worn_gender_null_is_rejected(tmp_path, cut_type):
         "cutType": cut_type,
         "gender": None,
         "mood": "daily" if cut_type == "styling" else None,
-        "direction": None if cut_type == "mirror" else "front",
+        "direction": "front",
     })
 
     with pytest.raises(release.ReleaseValidationError) as caught:

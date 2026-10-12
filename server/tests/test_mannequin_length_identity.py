@@ -3,7 +3,7 @@ import re
 
 import pytest
 
-from app.agents.mannequin_adjust import build_adjust_directives
+from app.agents.mannequin_fit_edit import build_adjust_directives
 from app.agents.mannequin_fit_qc import declared_axis_spec
 from test_mannequin_photo_reference import capture_candidate
 

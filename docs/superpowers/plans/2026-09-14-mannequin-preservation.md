@@ -4,7 +4,7 @@
 
 **Goal:** Preserve good first cuts, use source-backed Sunburst corrections only for confirmed defects, validate preservation and update PR286.
 
-**Architecture:** Reuse existing AG01/photo-structure and real mannequin worker. Add opt-in paired edit assessment to existing image_qc rescore rather than a new analysis agent. Keep shared scene/best-of QC contracts unchanged. No newmaskUI.
+**Architecture:** Reuse existing AG01/photo-structure and real mannequin worker. Add opt-in paired edit assessment to existing image_qc rescore rather than a new analysis agent. Keep shared scene QC contracts unchanged. No newmaskUI.
 
 **Tech Stack:** Python FastAPI, pytest, existing OpenAI/Gemini clients, Copilot manifest.
 
@@ -23,7 +23,7 @@
 
 **Files:** worker owns server/app/workers/mannequin_job.py; server/app/agents/image_qc.py, edit_gate.py, mannequin_bust.py, mannequin_untuck.py and relatedsmallhelpers ifnecessary; server/app/agents/vision_llm.py onlyopt-incomplete-envelope support ifneeded; server/app/config.py; copilot/api/manifest.yml; server/.env.example; related mannequin/image_qc promptfiles and focusedtests. Do notchangeunrelated sharedimage_high routing or matching preprocessing. Controllerownsdocuments and PRpackaging.
 
-**Interfaces:** Extend existing image_qc.verdict onlywith opt-in before_image and edit_goal parameters (or equivalentlynamed). Existing no-argumentbehavior/schema ofscene,best_ofandunscored callers unchanged. Paired assessment outputs strictbooleans target_resolved and protected_regions_unchanged plus boundedregressionreasons; malformed/missing/incompletecannotapproveedit. Helper edit_accepted(result) isfalseunlessbothpositiveandno regressions, andexisting critical/source/matchinggatesalso pass. Add comparisoninputs onlytothe existingpost-editQCcall, not toallfirstgenerationcalls.
+**Interfaces:** Extend existing image_qc.verdict onlywith opt-in before_image and edit_goal parameters (or equivalentlynamed). Existing no-argumentbehavior/schema ofsceneandunscored callers unchanged. Paired assessment outputs strictbooleans target_resolved and protected_regions_unchanged plus boundedregressionreasons; malformed/missing/incompletecannotapproveedit. Helper edit_accepted(result) isfalseunlessbothpositiveandno regressions, andexisting critical/source/matchinggatesalso pass. Add comparisoninputs onlytothe existingpost-editQCcall, not toallfirstgenerationcalls.
 
 - [x] RED policy tests using recorded values:
 ```python

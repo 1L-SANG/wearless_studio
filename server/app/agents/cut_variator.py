@@ -15,12 +15,12 @@ from .model_routing import resolve_model
 from .prompts import _sanitize
 
 #: cut_generator._WORN_CUTS 와 같은 집합 — 사람이 담기는 컷에만 얼굴 패스를 건다.
-_WORN_CUTS = ("styling", "horizon", "mirror")
+_WORN_CUTS = ("styling", "horizon")
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _TEMPLATE_FILE = os.path.join(_SERVER_DIR, "prompts", "cut_vary_v1.txt")
 
-_DEFAULT_CUT_TYPE = "styling"  # cutType 미상 소스 → styling으로 가정 (계약 §6 AG-07)
+_DEFAULT_CUT_TYPE = "styling"  # cutType 없는 소스는 styling으로 가정 (계약 §6 AG-07)
 
 # change.type → 사람이 읽는 라벨 접두. value는 자유 텍스트일 수 있어 sanitize를 거친다.
 _TYPE_LABEL = {
@@ -68,6 +68,8 @@ def build_prompt(vary_spec: dict) -> str:
         "garment with natural, minor variation)"
     )
     cut_type = _sanitize(vary_spec.get("cutType") or _DEFAULT_CUT_TYPE) or _DEFAULT_CUT_TYPE
+    if cut_type not in ("styling", "horizon", "product"):
+        raise ValueError("unknown_cut_type")
     template = _load_template()
     return (
         template

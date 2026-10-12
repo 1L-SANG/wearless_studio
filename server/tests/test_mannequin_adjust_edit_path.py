@@ -9,7 +9,7 @@ import pytest
 from app import repo
 from app.agents import mannequin_fit_qc
 from app.agents.gemini_image import InlineImage
-from app.agents.mannequin_adjust import (
+from app.agents.mannequin_fit_edit import (
     ADJUST_PROMPT_VERSION,
     build_adjust_directives,
     build_adjust_manifest,

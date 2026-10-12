@@ -7,7 +7,7 @@
 
 ### FitProfile (프로젝트당 1개, 메인 의류 대상)
 ```js
-// src/lib/types.js
+// documents/common_data_contract.md, 구현: src/lib/fitAxes.js
 FitProfile = {
   category: 'top'|'pants'|'skirt'|'dress'|'outer', // §2 유도 규칙
   gender: 'women'|'men',                            // select_base_gender와 동일 규칙

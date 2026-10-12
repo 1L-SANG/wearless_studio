@@ -257,7 +257,7 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 품질·컷 수는 그대로 두고 동시 실행만 2개로 제한한다. 블록 안에서는
   # 고정 GPT Image 2 1차 → 독립 QC → 필요 시 같은 GPT 2차 1회 → 독립 재검수 순서를 지킨다.
   # image_high는 마네킹·매칭·AG-07 공유 경로이므로 Gemini로 유지하고 AG-06만 분리한다.
-  # 새 hard-gate가 garment 동일성까지 포함하므로 구 best-of 후보 생성은 중복 비용을 막기 위해 끈다.
+  # 상품 동일성은 현재 마네킹·컷 검수 경로가 담당한다.
   MODEL_ROUTING_IMAGE_HIGH: gemini-3-pro-image
   # 일반 최종 컷(상세페이지·에디터)은 gpt-image 2.5 flare. 운영 키가 이 모델을 쓸 수 있는지
   # 확인했다(2026-09-10: GET /v1/models/gpt-image-2.5-flare → 200). 마네킹·컬러웨이·매칭·
@@ -283,13 +283,8 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 보장되지 않는다(2026-08-19 Codex 리뷰) — 실측 전까지 5 를 상한으로 둔다.
   DETAIL_CUT_CONCURRENCY: "5"
   DETAIL_CUT_STAGGER_MS: "1000"
-  # 결과가 없는 안전한 일시 실패만 최초 생성 뒤 최대 2회 재시도한다. best-of는 계속 금지.
+  # 결과가 없는 안전한 일시 실패만 최초 생성 뒤 최대 2회 재시도한다.
   DETAIL_CUT_MAX_ATTEMPTS: "3"
-  # 구 best-of(컷마다 후보 2장 추가 생성 후 비전으로 고르기). IMAGE_QC·PANTS_QC·AXIS_QC
-  # 하드게이트가 같은 일을 하게 되면서 2026-08-17 부터 off — 중복 비용이라 **되살릴 계획 없다**.
-  # ⚠️ 이 줄을 지우면 코드 기본값 "bestof" 로 떨어져 되살아난다. 지우려면 image_qc.best_of
-  # 와 호출부까지 같이 — 테스트 90개가 그 함수를 주입 지점으로 쓴다(발표 뒤 작업).
-  GARMENT_QC_MODE: "off"
   # 관리자 콘솔 기기 게이트. 코드 기본 shadow. 2026-09-11 관리자 2명이 콘솔에서 서로 기기를
   # 승인한 뒤 enforce 로 올렸다. 락아웃 복구 = shadow 로 내렸다 다시 enforce. 런북 docs/runbooks/admin-device-gate.md
   ADMIN_DEVICE_GATE: enforce

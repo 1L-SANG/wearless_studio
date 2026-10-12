@@ -1,4 +1,4 @@
-"""AG-06 cut-generator — 컷 생성 (스타일링·호리존·제품·거울샷). ai_agent_modules §3 AG-06.
+"""AG-06 cut-generator — 컷 생성 (스타일링·호리존·제품). ai_agent_modules §3 AG-06.
 
 콘티 개편(ADR-0004)의 컷 계약을 이 모듈이 서버에서 강제한다 — 병렬 백엔드 머지(94cdd50)에서
 탈락했던 구(舊) agents/cut.py 의 계약을 이식(2026-07-07). 프롬프트 문장은 전부
@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from ..config import Settings
-from .content_roles import _STUDIO_POSE_ROTATION, canonicalize_storyboard_block
+from .content_roles import canonicalize_storyboard_block
 from .confirmed_gpt_prompt import (
     ConfirmedGptPromptInput,
     compile_confirmed_gpt_prompt,
@@ -46,7 +46,7 @@ _EXAMPLE_FETCH_TIMEOUT = 15.0
 
 log = logging.getLogger("wearless.cut_generator")
 
-CUT_TYPES = ("styling", "horizon", "product", "mirror")
+CUT_TYPES = ("styling", "horizon", "product")
 _PERSON_SHOTS = ("full", "medium")
 _PRODUCT_SHOTS = ("ghost", "detail")
 _DIRECTIONS = ("front", "side", "back")
@@ -60,13 +60,12 @@ _DIRECTIONS = ("front", "side", "back")
 #: face_pass 가 참). 09-17 에 잘 나왔던 사선 4컷이 그것이다. 각도 교체가 붙자 같은 주문이
 #: 진짜 옆모습으로 넘어가면서 사선이 사라졌다 — 둘은 다른 컷이고 핏 섹션에는 둘 다 필요하다.
 SIDE_STYLES = ("profile", "threeQuarter")
-_WORN_CUTS = ("styling", "horizon", "mirror")
+_WORN_CUTS = ("styling", "horizon")
 _OUTER_CLOSURE_STATES = ("open", "partial", "closed")
 _CUT_LABELS = {  # ${cutLabel} — 프롬프트 첫 줄의 짧은 명사구 (값이지 규칙 문장이 아님)
     "styling": "lifestyle styling cut",
     "horizon": "clean studio horizon cut",
     "product": "product-only cut",
-    "mirror": "casual mirror-selfie cut",
 }
 _SWATCH_META = {
     "white": ("화이트", "#ffffff"),
@@ -105,14 +104,10 @@ def _normalize_detail_color_transfer(value) -> dict | None:
     }
 
 
-#: 핏 섹션 자동 포즈(content_roles._STUDIO_POSE_ROTATION)를 아래 pose 정리와 같은 방식으로 맞춘 값.
-_AUTO_STUDIO_POSES = frozenset(_sanitize(pose)[:40] for pose in _STUDIO_POSE_ROTATION)
-
-
 def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
     """프론트를 믿지 않는다 — 컷 계약(ADR-0004)을 서버에서도 강제.
-    UI 정규화와 같은 규칙: mirror=방향 없음·샷 full/medium·얼굴 기본 hide,
-    product=방향 front/back·샷 ghost/detail, 착용컷=front/side/back·full/medium."""
+    UI 정규화와 같은 규칙: product=방향 front/back·샷 ghost/detail,
+    착용컷=front/side/back·full/medium."""
     raw = canonicalize_storyboard_block(raw)
     cut = raw.get("cutType") or raw.get("cut_type")
     if cut not in CUT_TYPES:
@@ -120,13 +115,7 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
     direction = raw.get("direction")
     shot = raw.get("shot")
     face = raw.get("faceExposure") or raw.get("face_exposure")
-    pose = raw.get("pose") or "auto"
-    if cut == "mirror":
-        direction = None
-        shot = shot if shot in _PERSON_SHOTS else "full"
-        face = "show" if face == "show" else "hide"
-        pose = "auto"  # 거울 셀피 구도 자동 (ADR-0004)
-    elif cut == "product":
+    if cut == "product":
         direction = direction if direction in ("front", "back") else "front"
         shot = shot if shot in _PRODUCT_SHOTS else "ghost"
         face = None
@@ -160,7 +149,6 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         **({"detailTargetId": _sanitize(raw.get("detailTargetId"))[:100]}
            if cut == "product" and shot == "detail" and raw.get("detailTargetId") else {}),
         "colorId": _sanitize(raw_color_id) or None,
-        "pose": _sanitize(pose)[:40] or "auto",
         "sideStyle": side_style,
         "faceExposure": face,
         "matchIds": [str(m) for m in (raw.get("matchIds") or raw.get("match_ids") or [])][:2],
@@ -207,8 +195,6 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         spec["refScope"] = "all" if cut == "horizon" else "pose"
         # 옛 서버가 콘티 저장 때 세트 컷에 돌려 넣은 핏 섹션 자동 포즈는 셀러 선택이 아니다(화면에서
         # 고를 수 없는 문장). 남기면 USER POSE OVERRIDE 로 완성 예시 포즈를 덮는다(ADR-0013).
-        if cut == "horizon" and spec["pose"] in _AUTO_STUDIO_POSES:
-            spec["pose"] = "auto"
     if cut == "horizon" and raw.get("_horizonReferenceShot") in {"full", "medium"}:
         spec["_horizonReferenceShot"] = raw["_horizonReferenceShot"]
     if horizon_background.active({**raw, "cutType": cut}):
@@ -240,7 +226,7 @@ def _face_fits(spec: dict, is_bottom: bool) -> bool:
 
     제외 대상:
       · faceExposure=None — product 컷(사람·신체 노출 자체가 금지, [[CUT:product]])
-      · faceExposure='hide' — 셀러가 명시적으로 비식별을 골랐거나 거울샷 기본값(폰이 얼굴을 가림)
+      · faceExposure='hide' — 셀러가 명시적으로 비식별을 골랐음
       · direction='back' — 뒷모습이라 얼굴이 프레임 밖
       · 머리가 프레임에 없는 샷 — 하의의 medium 프레이밍
     """
@@ -387,7 +373,7 @@ def direction_family_matches(entry: dict, spec: dict) -> bool:
 def pose_direction_compatible(example_id: str | None, spec: dict) -> bool:
     """pose 전용 자산과 현재 카드의 방향 계열이 같은지 API 호출 전에 판정한다.
 
-    mirror 카드에는 mirror 예시만 허용한다. 그 외 착용컷은 관찰 메타 direction이
+    착용컷은 관찰 메타 direction이
     카드 레시피 direction과 정확히 같아야 한다. 레거시 레지스트리처럼 메타가 없으면
     v2 포즈 계약을 증명할 수 없으므로 fail-closed한다.
     """
@@ -396,9 +382,6 @@ def pose_direction_compatible(example_id: str | None, spec: dict) -> bool:
     _default_base, assets = load_example_asset_registry()
     entry = assets.get(str(example_id)) or {}
     example_cut = entry.get("cutType")
-    card_cut = spec.get("cutType")
-    if card_cut == "mirror" or example_cut == "mirror":
-        return card_cut == example_cut == "mirror"
     return (
         example_cut in ("styling", "horizon")
         and entry.get("direction") in _DIRECTIONS
@@ -443,53 +426,10 @@ def apply_reference_compatibility(spec: dict) -> dict:
     if type(runtime_compatibility) is bool:
         return resolved
     example_cut = entry.get("cutType")
-    if spec.get("cutType") == "mirror" or example_cut == "mirror":
-        if example_cut == "mirror":
-            resolved["_referenceDirectionCompatible"] = spec.get("cutType") == "mirror"
-        return resolved
     example_direction = entry.get("direction")
     if example_cut in ("styling", "horizon") and example_direction in _DIRECTIONS:
         resolved["_referenceDirectionCompatible"] = direction_family_matches(entry, spec)
     return resolved
-
-
-def horizon_example_governs_pose(block: dict) -> bool:
-    """완성 예시가 이 호리존 컷의 포즈를 정하는지 판정한다(핏 섹션 자동 포즈 제외용).
-
-    예시가 있고, 참고 범위가 전부(all)나 포즈(pose)이고, 예시 방향이 컷 방향과 맞아야 한다.
-    일반 예시는 apply_reference_compatibility 와 같은 규칙(메타 없는 옛 예시는 양립, 옆모습은
-    갈래까지 같아야 함)을 쓰고, 세트 밖에서 쓴 공간 세트 멤버(ss_)는 그 멤버 방향과 컷 방향이
-    같은지 본다. 레지스트리를 못 읽으면 예시가 포즈를 정한다고 확신할 수 없어 False 다.
-    """
-    probe = dict(block)
-    probe.pop("_referenceDirectionCompatible", None)
-    spec = normalize_spec({**probe, "cutType": "horizon"})
-    example_id = spec["exampleId"]
-    if not example_id or spec["refScope"] not in ("all", "pose"):
-        return False
-    try:
-        if example_id.startswith("ss_"):
-            _base, registry = space_set_assets.load_space_set_registry()
-            member = next((member for parent in registry.values() for member in parent["members"]
-                           if member["exampleId"] == example_id), None)
-            return member is not None and member.get("direction") == spec["direction"]
-        resolved = apply_reference_compatibility({**spec, "refScope": "all", "spaceGroupId": None})
-    except (OSError, ValueError):
-        return False
-    return resolved["_referenceDirectionCompatible"] is not False
-
-
-def clear_legacy_studio_pose(spec: dict) -> dict:
-    """옛 서버가 저장한 핏 섹션 자동 포즈를 세트 밖 호리존 컷에서도 지운다(에디터 한 컷 경로용).
-
-    콘티 저장·상세 생성은 content_roles 가 같은 일을 하지만, 에디터 한 컷 다시 만들기는 콘티
-    정리를 거치지 않는다. 예시가 포즈를 정하는 컷만 지운다. 세트 멤버는 normalize_spec 이 처리한다.
-    """
-    if (spec.get("cutType") == "horizon" and not spec.get("spaceGroupId")
-            and _sanitize(spec.get("pose") or "")[:40] in _AUTO_STUDIO_POSES
-            and horizon_example_governs_pose(spec)):
-        return {**spec, "pose": "auto"}
-    return spec
 
 
 @lru_cache(maxsize=1)
@@ -529,8 +469,8 @@ def real_identity_plan(cut_type, *, wants_face: bool) -> tuple[bool, bool]:
     """REAL 소스에서 이 컷의 (실존모델 그리드 첨부?, 검증-얼굴 배지?). **순수 함수.**
 
     인물 일관성(AG-06/A4): 실존 모델 그리드(face_front+grid_sedcard)는 **얼굴 노출 여부와
-    무관하게** 모든 착용컷(styling/horizon/mirror)에 identity 앵커로 붙인다 — VIRTUAL 경로와
-    동형. 안 그러면 얼굴을 가리는 컷(mirror 기본·back)이 `wants_face=False` 라 참조 0장이 되어
+    무관하게** 모든 착용컷(styling/horizon)에 identity 앵커로 붙인다 — VIRTUAL 경로와
+    동형. 안 그러면 얼굴을 가리는 컷(back)이 `wants_face=False` 라 참조 0장이 되어
     그 컷만 인물이 랜덤이 된다(REAL 은 VIRTUAL 과 달리 mB 폴백도 못 탄다).
 
     검증-얼굴 배지(has_identity=face_cuts 계수·26.06 고지 근거)는 얼굴이 **실제로 노출되는**
@@ -740,7 +680,7 @@ def render_cut_prompt(
     얼굴 지시와 별개인 [[BODY_REF]] 체형 연속성 지시를 켠다. has_face=True이고
     MODEL FACE가 실제로 첨부된 라이선스 얼굴이 현재 프레임에 담길 때만
     [[FACE_REF]] 라이선스 지시가 추가되고 얼굴 지시가
-    [[FACE:licensed]] 로 오버라이드된다 — 기본 'same'/거울샷 'hide' 를 그대로 두면
+    [[FACE:licensed]] 로 오버라이드된다 — 기본 'same' 를 그대로 두면
     셀러가 라이선스료를 내고 "얼굴을 가려라"를 지시받는 자기모순이 된다.
     """
     sec = _sections(template)
@@ -794,10 +734,7 @@ def render_cut_prompt(
             and spec.get("_referenceDirectionCompatible") is not False
             and _EXAMPLE_ALL_LABEL in image_manifest):
         shot_key = "horizon_reference"
-    if cut == "mirror":
-        face_line = need("FACE:hide_mirror") if spec["faceExposure"] != "show" else need("FACE:show")
-        direction_line = ""
-    elif cut == "product":
+    if cut == "product":
         face_line = ""
         direction_line = need(f"DIR:{spec['direction']}_product")
     else:
@@ -808,7 +745,9 @@ def render_cut_prompt(
         # 이제 실패로 처리되므로(face_identity.SKIP_REASONS_UNAVAILABLE) 옆모습 주문은 곧 빈 컷이다.
         # 3/4(yaw 0.25~0.45 구간)면 몸은 옆으로 두고 얼굴은 바꿀 수 있다.
         direction_line = need(f"DIR:{spec['direction']}"
-                              + ("_identity" if face_pass and spec["direction"] == "side" else ""))
+                              + ("_identity" if spec["direction"] == "side" and (
+                                  spec.get("sideStyle") == "threeQuarter"
+                                  or (face_pass and spec.get("sideStyle") != "profile")) else ""))
     if use_licensed_face:
         face_line = need("FACE:licensed")
     elif (
@@ -822,22 +761,16 @@ def render_cut_prompt(
         # 드러냈다. 검수된 카탈로그 메타는 구도 설명보다 가까운 강한 FACE 규칙으로 올린다.
         # 사용자가 명시적으로 show를 고른 경우에만 현재 선택이 우선한다.
         face_line = need("FACE:hide_reference")
-    if spec["pose"] == "auto" or cut in ("product", "mirror"):
-        pose_line = need("POSE:auto") if cut != "product" else ""
-    else:
-        pose_line = need("POSE:named").replace("${poseName}", _sanitize(spec["pose"]))
+    pose_line = need("POSE:auto") if cut != "product" else ""
     # 생성예시 선택 반영 v0 — 예시 자산·꼬리표 시딩 전 과도기: id 해시로 구도 뉘앙스를
     # 결정적으로 고정(같은 예시 = 같은 뉘앙스). 실제 꼬리표 메타데이터가 오면 이 매핑을 대체한다(ADR-0004).
-    # band 규칙: 뉘앙스는 정면 대역(front·거울샷)에서만 — 사이드/뒷면이면 예시는 분위기만(T1)이라
+    # band 규칙: 뉘앙스는 정면 대역(front)에서만 — 사이드/뒷면이면 예시는 분위기만(T1)이라
     # 정면 계열 구도 문구가 방향 지시와 충돌하지 않게 미적용.
     example_line = ""
-    # 포즈를 직접 지정했고 예시가 '포즈만' 범위면 예시는 효력 상실 — 지시 충돌(POSE:named vs 예시 구도) 방지
-    pose_overrides_example = spec["pose"] != "auto" and spec["refScope"] == "pose"
     # v0 해시 뉘앙스는 공용(all) 예시에만 남긴다. pose/bg는 전용 이미지가 없으면
     # 아무 예시도 적용하지 않는 fail-closed 계약이며, 존재하지 않는 첨부물을 언급하지 않는다.
     if spec.get("exampleId") and spec.get("refScope") == "all" \
-            and cut != "product" and spec.get("direction") in (None, "front") \
-            and not pose_overrides_example:
+            and cut != "product" and spec.get("direction") in (None, "front"):
         idx = sum(ord(ch) for ch in spec["exampleId"]) % 3
         example_line = need(f"EXNUANCE:{idx}")
     # 실제 EXAMPLE 이미지가 매니페스트에 있을 때만 범위 계약을 승격한다. 이미지 로드 실패·미등록 id는
@@ -852,7 +785,7 @@ def render_cut_prompt(
         example_line = ""
         # 실제 all/pose 이미지가 포즈를 제어할 때 POSE:auto까지 남기면 "자연스럽게
         # 고르기"와 "예시 포즈 유지"가 충돌한다. 명시 포즈와 bg-only는 별도 계약이다.
-        if spec["pose"] == "auto" and spec["refScope"] in ("all", "pose"):
+        if spec["refScope"] in ("all", "pose"):
             pose_line = ""
     # 매니페스트 문구는 첨부 여부만 증명한다. 범위는 반드시 정규화된 spec에서 다시 가져와
     # in-space 강제(pose)를 우회하는 불가능한 all 조합을 만들지 않는다.
@@ -865,13 +798,12 @@ def render_cut_prompt(
         has_resolved_example
         and cut in _WORN_CUTS
         and spec.get("refScope") == "all"
-        and spec.get("pose") == "auto"
         and not spec.get("spaceGroupId")
         and spec.get("_referenceDirectionCompatible") is not False
         and type(repeat_index) is int
         and repeat_index >= 1
     )
-    if has_resolved_example and not pose_overrides_example and not bg_edit_mode:
+    if has_resolved_example and not bg_edit_mode:
         if (
             spec["refScope"] == "all"
             and cut in _WORN_CUTS
@@ -903,18 +835,6 @@ def render_cut_prompt(
                     "pose. Frame the current direction and shot naturally; retain only the "
                     "example's scene, light, capture tone and broad spatial mood."
                 )
-            elif spec["pose"] != "auto":
-                all_pose_rule = (
-                    "- USER POSE OVERRIDE: use the explicit pose in the current CUT SPEC. "
-                    "Do not preserve or infer the EXAMPLE REFERENCE pose, limb placement, "
-                    "weight balance, head angle or gaze. The example still owns only its "
-                    "compatible scene, light, capture class, framing and broad composition."
-                )
-                all_framing_rule = (
-                    "- Preserve the example's crop boundary, subject scale, headroom and negative "
-                    "space only where compatible with the current direction and shot. Reframe the "
-                    "USER POSE OVERRIDE, never the example's original pose."
-                )
             else:
                 all_pose_rule = (
                     "- POSE FROM EXAMPLE: preserve the semantic backbone—action, body-direction "
@@ -931,13 +851,13 @@ def render_cut_prompt(
                     "composition for the requested full or medium result."
                 )
             all_direction_rule = (
-                f"- USER DIRECTION OVERRIDE: the current CUT SPEC direction ({spec.get('direction')}) "
+                f"- EXAMPLE DIRECTION: the resolved example direction ({spec.get('direction')}) "
                 "is authoritative. Use example camera geometry only where compatible; never turn "
                 "the model back toward the example's original view."
             )
             # 반복 컷은 HORIZON_ALL_POSE 대신 POSE FROM EXAMPLE + EXREPEAT 작은 변주를 쓴다(둘은 서로 충돌).
             if (cut == "horizon" and spec.get("_referenceDirectionCompatible") is not False
-                    and spec["pose"] == "auto" and not example_repeat_active):
+                    and not example_repeat_active):
                 all_pose_rule = need("HORIZON_ALL_POSE")
             scope_line = (
                 scope_line
@@ -990,9 +910,7 @@ def render_cut_prompt(
         # bg 편집 모드는 컷 종류 섹션을 통째로 교체 — 경쟁할 배경 서술이 존재하지 않게 한다
         .replace(
             "${cutSection}",
-            "\n\n".join((need("CUT:bg_edit"), need("CUT:bg_edit_mirror")))
-            if bg_edit_mode and cut == "mirror"
-            else need("CUT:bg_edit") if bg_edit_mode
+            need("CUT:bg_edit") if bg_edit_mode
             else need("CUT:horizon_tone") if horizon_tone
             else need(f"CUT:{cut}"),
         )
@@ -1027,7 +945,7 @@ def render_cut_prompt(
         directing_profile,
         cut_type=cut,
         requested_direction=spec.get("direction"),
-        explicit_pose=spec.get("pose") != "auto",
+        explicit_pose=False,
         reference_direction_compatible=spec.get("_referenceDirectionCompatible"),
     )
     fit_profile = analysis.get("fitProfile") if isinstance(analysis, dict) else None
@@ -1702,7 +1620,6 @@ async def generate(
 ) -> tuple[bytes, str]:
     """컷 1개 생성. 실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리).
     스펙 위반(unknown cutType)은 ValueError — 조용한 styling 폴백을 하지 않는다
-    (거울샷 등 신규 컷이 엉뚱한 컷으로 대체 렌더되는 회귀 방지).
 
     has_face=True 는 '호출자가 images 에 FaceMarket 라이선스 MODEL FACE를
     매니페스트와 같은 자리에 넣었다'는 뜻이다. MODEL / MODEL SHEET

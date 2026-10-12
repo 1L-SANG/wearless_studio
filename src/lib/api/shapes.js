@@ -33,9 +33,8 @@ import {
 const sb = (sectionRole, contentRole, cutType, direction, shot, colorId, extra) => ({
   id: uid('blk'), sectionRole, contentRole, taxonomyVersion: STORYBOARD_TAXONOMY_VERSION,
   title: contentTitle(contentRole), source: 'ai', cutType, direction, shot, colorId,
-  pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],
+  matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],
   thumb: P.photo(contentRole + shot, cutType === 'product' ? 'product' : cutType === 'horizon' ? 'horizon' : 'styling', 240, 320),
-  poseThumb: P.pose('stand'), poseLabel: 'AI 자동',
   ...(extra || {}),
 });
 
@@ -123,7 +122,7 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
 
   // 스타일링 섹션은 **장소 세트만** 자동 배치한다 — 세트에 안 묶인 낱장 컷을 하나 얹던
   // 규칙은 폐기(2026-08-16 오너: "공간세트 2개 말고 컷 하나가 더 붙는 것 없애줘").
-  // 낱장 스타일링컷·거울샷은 셀러가 '컷 추가'로 직접 넣는 수동 선택지로만 남는다.
+  // 낱장 스타일링컷은 셀러가 '컷 추가'로 직접 넣는 수동 선택지로만 남는다.
   for (const set of stylingSets) {
     blocks.push(...(set
       ? setMemberBlocks(set, base, SECTION_ROLES.STYLING, CONTENT_ROLES.COORDINATION)
@@ -198,7 +197,7 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
     }));
   }
   return ensureSections(blocks.map((block) => (
-    ['styling', 'horizon', 'mirror'].includes(block.cutType)
+    ['styling', 'horizon'].includes(block.cutType)
       ? { ...block, matchIds: matchIdsFor(block.colorId) }
       : block
   )));
@@ -228,7 +227,6 @@ function storyboardTemplateFingerprint(blocks) {
     detailTargetOrigin: block.detailTargetOrigin ?? null,
     colorId: block.colorId ?? null,
     colorIds: block.colorIds || [],
-    pose: block.pose ?? null,
     matchIds: block.matchIds || [],
     faceExposure: block.faceExposure ?? null,
     angle: block.angle ?? null,
@@ -264,7 +262,6 @@ export function applySeededHookStyle(seeded, style, colors) {
     ...sb(SECTION_ROLES.HOOKING, CONTENT_ROLES.BENEFIT, slot.cutType, 'front', slot.shot,
       slot.colorId || template.colorId),
     matchIds: [...(template.matchIds || [])],
-    poseThumb: template.poseThumb,
     thumb: template.thumb,
   });
   return applyHookStyle(seeded, 'pair', { colors: colors || [], createBlock });

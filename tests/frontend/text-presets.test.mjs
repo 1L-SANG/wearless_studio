@@ -7,7 +7,7 @@ import {
   buildTextPresetElement, quickStylePatch, textPresetBox, textPresetDropPlacement, textPresetOf,
 } from '../../src/features/editor/presets/textPresets.js';
 
-/* 값의 출처: docs/superpowers/specs/2026-08-04-editor-text-slots-design.md
+/* 값의 출처: documents/editor_text_presets.md
    (셀러 텍스트 568건 실측 기반 타이포 위계). 이 테스트는 프리셋이 스펙 값에서
    조용히 어긋나는 것을 막는 계약 고정이다. */
 const SPEC = {

@@ -390,7 +390,6 @@ placeholder 의류는 절대 사용자에게 최종 결과로 보이지 않는�
 - PRODUCT/MATCHING/MODEL 조립: 약 1195~1207행
 - 생성예시/manifest 조립: 약 1211~1366행
 - 최초 생성 호출: 약 320~324행
-- product best-of: 약 408~445행
 - 독립 QC/repair: 약 447~525행
 - 최종 R2 저장: 약 536~559행
 

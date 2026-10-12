@@ -22,7 +22,6 @@ _TEXT_ROLE_BY_CONTENT_ROLE = {
     "benefit": "body",
     "coordination": "body",
     "fit": "body",
-    "realWear": "body",
     "productOverview": "body",
     "detail": "body",
     "custom": "body",
