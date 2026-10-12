@@ -13,6 +13,7 @@ import {
 
 async function apiHarness() {
   const server = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     logLevel: 'silent',
     root: new URL('../..', import.meta.url).pathname,
@@ -55,6 +56,7 @@ async function apiHarness() {
 
 async function adminModelsHarness() {
   const server = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     logLevel: 'silent',
     root: new URL('../..', import.meta.url).pathname,

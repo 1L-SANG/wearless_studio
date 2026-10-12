@@ -57,6 +57,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 async function tileHarness() {
   const root = fileURLToPath(new URL('../..', import.meta.url));
   const server = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     logLevel: 'silent',
     root,

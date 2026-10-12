@@ -8,6 +8,7 @@ import { createServer } from 'vite';
 let vite, api, DB, CreditsHistory;
 before(async () => {
   vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false, logLevel: 'silent', root: new URL('../..', import.meta.url).pathname,
     server: { middlewareMode: true, watch: null, hmr: false }, appType: 'custom', esbuild: { jsx: 'automatic' },
     plugins: [{

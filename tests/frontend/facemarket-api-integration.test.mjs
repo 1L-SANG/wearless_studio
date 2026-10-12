@@ -4,6 +4,7 @@ import { createServer } from 'vite';
 
 async function apiHarness(t) {
   const server = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     root: new URL('../..', import.meta.url).pathname,
     logLevel: 'silent',

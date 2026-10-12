@@ -6,7 +6,7 @@ let vite, api, store, runner, attempts, promotion, originalLocation;
 before(async () => {
   originalLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
   Object.defineProperty(globalThis, 'location', { configurable: true, value: { pathname: '/create/storyboard' } });
-  vite = await createServer({ configFile: false, define: { 'import.meta.env.VITE_ANALYSIS_FAST_ENTRY': '"1"' },
+  vite = await createServer({ optimizeDeps: { noDiscovery: true, include: [] }, configFile: false, define: { 'import.meta.env.VITE_ANALYSIS_FAST_ENTRY': '"1"' },
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
     server: { middlewareMode: true, watch: null }, appType: 'custom', logLevel: 'silent' });
   ({ api } = await vite.ssrLoadModule('/src/lib/api/index.js'));

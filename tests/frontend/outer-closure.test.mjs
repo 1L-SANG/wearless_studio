@@ -19,6 +19,7 @@ const cacheRoot = mkdtempSync(join(tmpdir(), 'outer-closure-'));
 
 before(async () => {
   vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false, root: new URL('../..', import.meta.url).pathname,
     cacheDir: cacheRoot, logLevel: 'silent', appType: 'custom',
     esbuild: { jsx: 'automatic' },

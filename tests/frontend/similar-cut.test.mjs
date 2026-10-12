@@ -6,6 +6,7 @@ import { createServer } from 'vite';
 let vite, api, DB;
 before(async () => {
   vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false, logLevel: 'silent', root: fileURLToPath(new URL('../..', import.meta.url)),
     server: { middlewareMode: true, watch: null, hmr: false }, appType: 'custom',
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },

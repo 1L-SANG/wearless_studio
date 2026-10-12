@@ -16,7 +16,7 @@ const root = new URL('../..', import.meta.url).pathname;
 const cache = mkdtempSync(join(tmpdir(), 'fm-photo-guide-test-'));
 let vite;
 before(async () => {
-  vite = await createServer({ configFile: false, root, cacheDir: cache, logLevel: 'silent', server: { middlewareMode: true, watch: null, ws: false }, appType: 'custom', esbuild: { jsx: 'automatic' }, resolve: { alias: { '@': `${root}/src` } } });
+  vite = await createServer({ optimizeDeps: { noDiscovery: true, include: [] }, configFile: false, root, cacheDir: cache, logLevel: 'silent', server: { middlewareMode: true, watch: null, ws: false }, appType: 'custom', esbuild: { jsx: 'automatic' }, resolve: { alias: { '@': `${root}/src` } } });
 });
 after(async () => { await vite?.close(); rmSync(cache, { recursive: true, force: true }); });
 

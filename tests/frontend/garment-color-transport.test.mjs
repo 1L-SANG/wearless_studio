@@ -8,6 +8,7 @@ import { ensureDraftRemotePhotos } from '../../src/lib/draftStore.js';
 
 test('public analysis sends only the base color photos and returns no garment color keys', async t => {
   const server = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false, root: fileURLToPath(new URL('../..', import.meta.url)), logLevel: 'silent',
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
     server: { middlewareMode: true, watch: null, hmr: false },
@@ -77,6 +78,7 @@ test('draft promotion never promotes garment color evidence', async () => {
 
 test('measureGarmentColors posts to the measure route with no body, and the mock answers skipped', async t => {
   const server = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false, root: fileURLToPath(new URL('../..', import.meta.url)), logLevel: 'silent',
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
     server: { middlewareMode: true, watch: null, hmr: false },

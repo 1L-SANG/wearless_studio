@@ -29,6 +29,7 @@ let buildStoryboard;
 
 before(async () => {
   vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     root: fileURLToPath(new URL('../..', import.meta.url)),
     plugins: [react()],

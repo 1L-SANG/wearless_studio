@@ -58,6 +58,7 @@ let loadedGuide;
 async function loadGuide() {
   loadedGuide ||= (async () => {
     vite = await createServer({
+      optimizeDeps: { noDiscovery: true, include: [] },
       configFile: false, plugins: [react()],
       resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
       server: { middlewareMode: true, watch: null }, appType: 'custom', logLevel: 'silent',

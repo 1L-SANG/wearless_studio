@@ -16,6 +16,7 @@ const read = (name) => readFileSync(pathFor(name), 'utf8');
 let vite;
 before(async () => {
   vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     root: pathFor('.'),
     logLevel: 'silent',

@@ -14,6 +14,7 @@ let vite;
 
 before(async () => {
   vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     root,
     cacheDir: join(cacheRoot, 'default'),
@@ -164,6 +165,7 @@ test('FaqSection은 details 없이 질문 여덟 개와 항상 보이는 답을 
 
 async function renderWithPricing(entry, exportName, pricing) {
   const vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     root,
     cacheDir: join(cacheRoot, `${exportName}-${pricing.perCut}`),

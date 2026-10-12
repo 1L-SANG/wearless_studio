@@ -25,6 +25,7 @@ async function harness(t, path, exportName, { accountPlan = 'pro', topupBonusEna
   const access = `globalThis[${JSON.stringify(key)}]`;
   const root = new URL('../..', import.meta.url).pathname;
   const vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false, root, logLevel: 'silent', appType: 'custom', ssr: { noExternal: true },
     server: { middlewareMode: true, watch: null, hmr: false }, esbuild: { jsx: 'automatic' },
     plugins: [{

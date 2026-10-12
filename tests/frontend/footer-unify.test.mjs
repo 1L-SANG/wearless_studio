@@ -10,6 +10,7 @@ const root = new URL('../..', import.meta.url).pathname;
 let vite, SiteFooter, FooterSection, LegalPage, styles;
 before(async () => {
   vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     root,
     logLevel: 'silent',
