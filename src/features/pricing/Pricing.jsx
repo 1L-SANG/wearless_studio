@@ -28,7 +28,7 @@ import { topupBonusCredits } from '@/lib/limits.js';
 import { CopyButton, PIcon, TransferDeadline, num, won } from './bankTransferParts.jsx';
 import s from './Pricing.module.css';
 
-// 요금 정본 documents/research/2026-09-07-credit-pricing-plans.md v8 기준 상세페이지(마네킹컷 45 + 무료 수정 1회 0 + AI 컷 10장 190 + 에디터 수정 1회 19). 랜딩 pricing-section.tsx 와 같은 값.
+// 요금 정본 documents/research/2026-09-07-credit-pricing-plans.md v8 기준 상세페이지(마네킹컷 45 + 무료 수정 1회 0 + AI 컷 10장 190 + 에디터 새 이미지 1회 19). 랜딩 pricing-section.tsx 와 같은 값.
 const STANDARD_PAGE_CREDITS = 254;
 
 // 충전 팩 크레딧당 가격 — 가격표와 같은 원 단위 한 자리.

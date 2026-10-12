@@ -66,6 +66,7 @@ import { imageResizeRect, lineColor, lineHitStrokeWidth, resizePolicyForElement,
 import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe, removeWardrobeImagesBySrc } from '@/features/editor/editorWardrobe.js';
 import { autofillBlocks, buildRoledCutPool, filledSrcSet, isGeneratedCutBlock } from '@/features/editor/templates/autofill.js';
 import { CanvasAiLayer, CanvasAiProgress } from './CanvasAiLayer.jsx';
+import { useEditorCreditCosts } from './useEditorCreditCosts.js';
 import { useCanvasAi } from './useCanvasAi.js';
 import { canReplaceCanvasAiResult } from './canvasAiJobs.js';
 import { canFillCanvasAiSlot, replaceCanvasAiImage, canvasAiSlotArrivalVisible, canvasAiProgressVisible, canvasAiResultDimensions, readCanvasAiResultDimensions } from './canvasAiApply.js';
@@ -1023,7 +1024,12 @@ export function Editor() {
   }), []);
   const [wardrobe, setWardrobe] = useState(null);
   const wardrobeContext = useRef({ storyboard: [], colorIds: [], fallbackColorId: null });
-  const [catalogs, setCatalogs] = useState(null);
+  const [catalogData, setCatalogs] = useState(null);
+  const editorCreditCosts = useEditorCreditCosts(projectId, catalogData?.creditCosts);
+  const catalogs = useMemo(() => catalogData && { ...catalogData, creditCosts: {
+    ...catalogData.creditCosts, ...editorCreditCosts,
+    editorEdit: editorCreditCosts.editorEdit, editorSimilar: editorCreditCosts.editorSimilar,
+  } }, [catalogData, editorCreditCosts.editorImage, editorCreditCosts.editorEdit, editorCreditCosts.editorSimilar]);
   const [fmModels, setFmModels] = useState(null); // FaceMarket 검증 모델(실존) — http 모드에서만 로드, 실패=null(가상 폴백)
   const [colorOpts, setColorOpts] = useState([]);
   const [detailColorOpts, setDetailColorOpts] = useState([]);
@@ -3721,7 +3727,7 @@ export function Editor() {
                       menu={canvasAi.menu} loading={canvasAi.loading} assetError={canvasAi.assetError}
                       job={canvasAi.jobs.get(canvasAi.element.id)}
                       visible={!canvasGesture && !cropping && !marquee && !spaceDown && !editEl && !preview}
-                      cost={catalogs.creditCosts?.editorImage} onAction={canvasAi.start}
+                      creditCosts={editorCreditCosts} onAction={canvasAi.start}
                       onUpload={() => requestSlotImage(b.id, canvasAi.element)}
                       onCancel={() => canvasAi.controller.cancel(canvasAi.element.id)}
                       onDismiss={() => canvasAi.controller.dismiss(canvasAi.element.id)}

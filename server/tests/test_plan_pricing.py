@@ -214,7 +214,7 @@ def test_credit_quote_shape(client, make_token, monkeypatch, plan, fee, free_adj
                               'selectedModelId': 'mF', 'extensionFeeAlreadyPaid': False},
         'mannequinRegenerate': {'freeAdjusts': free_adjusts, 'usedAdjusts': max(done_count - 1, 0),
                                 'nextCost': next_cost},
-        'storyboardPerCut': 19, 'editorImage': 19,
+        'storyboardPerCut': 19, 'editorImage': 19, 'editorEdit': 5, 'editorSimilar': 8,
     }
 
 

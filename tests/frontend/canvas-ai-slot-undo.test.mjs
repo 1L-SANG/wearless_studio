@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 import React from 'react';
 import { transformWithEsbuild } from 'vite';
 import * as apply from '../../src/features/editor/canvasAiApply.js';
-import { buildCanvasAiMenu } from '../../src/features/editor/canvasAiActions.js';
+import { buildCanvasAiMenu, canvasAiActionCreditCost } from '../../src/features/editor/canvasAiActions.js';
+import { editorImageCreditCost } from '../../src/lib/limits.js';
 import { hasImageSource } from '../../src/features/editor/editorImageSource.js';
 import { applySlotFillToInfo } from '../../src/features/editor/presets/infoPresets.js';
 import { fitImageToFrameBlock } from '../../src/features/editor/editorImageDrop.js';
@@ -20,7 +21,7 @@ const { code } = await transformWithEsbuild(`${layer.replace(/^import .*;\n/gm, 
 // state storage are replaced, so no browser or paid image request is needed.
 function components() {
   const values = []; let cursor = 0;
-  const scope = { React, ...apply, hasImageSource, CREDIT_COSTS: { editorImage: 19 },
+  const scope = { React, ...apply, hasImageSource, editorImageCreditCost, canvasAiActionCreditCost, CREDIT_COSTS: { editorImage: 19 },
     useRef: (current) => ({ current }), useCallback: (callback) => callback,
     useEffect() {}, useLayoutEffect() {},
     useState(initial) {

@@ -55,6 +55,8 @@ class CreditQuote(CamelModel):
     mannequin_regenerate: MannequinRegenerateQuote
     storyboard_per_cut: int
     editor_image: int
+    editor_edit: int
+    editor_similar: int
 
 
 class AppOriginRequest(CamelModel):

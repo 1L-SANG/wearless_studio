@@ -1,7 +1,7 @@
 import { api as base } from '@/mock/api.js';
 import { DB } from '@/mock/db.js';
 import { uid } from '@/lib/ids.js';
-import { CREDIT_COSTS } from '@/lib/limits.js';
+import { CREDIT_COSTS, editorImageCreditCost } from '@/lib/limits.js';
 import { classifyEditorAssetInfo, extractEditorAssetId } from '@/lib/editorAssetInfo.js';
 import { OUTER_CLOSURE_VALUES, outerClosureDisplayValue, outerClosureRange } from '@/lib/outerClosure.js';
 
@@ -135,7 +135,7 @@ function recordResult(projectId, result, recipe, origin, source = null) {
   const stored = Object.values(DB.wardrobe).flat().find((item) => item.id === image.id);
   if (stored) Object.assign(stored, clone(image));
   state().assets.set(image.assetId, { ...clone(image), projectId });
-  return { ...result, creditsCharged: CREDIT_COSTS.editorImage };
+  return { ...result, creditsCharged: result.creditsCharged ?? CREDIT_COSTS.editorImage };
 }
 
 function editPlan(projectId, body) {
@@ -227,7 +227,8 @@ export const mockAdapter = {
       if (plan) {
         const colorId = body.variationMode === 'color' ? body.colorId : plan.source.wardrobeGroup || plan.info.colorId || 'misc';
         const cutType = plan.info.kind === 'upload' ? 'styling' : plan.info.cutType || 'styling';
-        const result = await base.generateImage(projectId, { mode: 'new', cutType, colorId, ...callbacks });
+        const result = await base.generateImage(projectId, { mode: 'new', cutType, colorId, ...callbacks },
+          { creditCost: editorImageCreditCost(body) });
         return recordResult(projectId, result, plan.recipe, `editor_${body.variationMode}`, plan.source);
       }
       const isSimilar = body.mode === 'vary' && body.variationMode === 'similar';
@@ -241,7 +242,8 @@ export const mockAdapter = {
         const rootInfo = assetInfo(root);
         const cutType = rootInfo.kind === 'upload' ? 'styling' : rootInfo.cutType || 'styling';
         const colorId = root.wardrobeGroup || assetInfo(root).colorId || source.wardrobeGroup || 'misc';
-        result = await base.generateImage(projectId, { mode: 'new', cutType, colorId, ...callbacks });
+        result = await base.generateImage(projectId, { mode: 'new', cutType, colorId, ...callbacks },
+          { creditCost: editorImageCreditCost(body) });
         const actions = cutType === 'mirror'
           ? [['soft-smile', '거울 구도를 유지하며 부드럽게 웃기'], ['relaxed-expression', '거울 구도를 유지하며 편안한 표정 짓기'], ['small-head-tilt', '휴대폰 위치를 유지하며 고개 살짝 기울이기']]
           : [['relax-arms', '팔의 힘을 풀고 자연스럽게 서기'], ['glance-side', '시선을 살짝 옆으로 옮기기'], ['soft-smile', '고개를 살짝 기울이며 부드럽게 웃기']];
