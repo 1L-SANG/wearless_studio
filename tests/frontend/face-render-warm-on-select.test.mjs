@@ -16,6 +16,7 @@ test('confirmation proceeds for a saved real selection without a brand-category 
     a: { selectedModelId: '11111111-1111-1111-1111-111111111111', brandUseCategory: null },
     confirming: false, setConfirming() {}, onConfirmingChange() {}, composeModeSaveRef: { current: Promise.resolve() },
     mannequinGenerationCost: 0, onNext: (request) => confirmations.push(request),
+    commitMdComment() {},
     isRealModelSelection: () => true, warmFaceRender: () => assert.fail('FaceRender warmed'),
     toast: { push: () => assert.fail('category prompt shown') },
   };

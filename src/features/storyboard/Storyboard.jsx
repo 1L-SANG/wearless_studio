@@ -134,7 +134,6 @@ import { spaceSetDisplayName } from '@/lib/spaceSetDisplayNames.js';
 import {
   directionSpecFromExample,
   generationExampleSelectionPatch,
-  generationExampleStructuralRecipePatch,
 } from '@/lib/storyboardExampleSelection.js';
 import { mineImageUrl, normalizeMineImages, promoteMineImage } from '@/lib/storyboardMineImages.js';
 import { requestMannequinGeneration } from '@/features/mannequin/generationRunner.js';
@@ -210,11 +209,10 @@ const detachHookSlotOnReshape = (current, applied, merged) => (
     : merged
 );
 
-const WORN_CUT_TYPES = new Set(['styling', 'horizon', 'mirror']);
+const WORN_CUT_TYPES = new Set(['styling', 'horizon']);
 const WORN_ROLE_BY_CUT_TYPE = Object.freeze({
   styling: CONTENT_ROLES.COORDINATION,
   horizon: CONTENT_ROLES.FIT,
-  mirror: CONTENT_ROLES.REAL_WEAR,
 });
 const exampleCategoryFor = (cut) => cut === 'product' ? 'product' : (cut === 'horizon' ? 'horizon' : 'styling');
 /* 시그니처 풀(sig_*)은 생성예시 카탈로그에 없다 — 카탈로그 조회 전에 먼저 확인한다.
@@ -1230,8 +1228,8 @@ export function shouldRenderGenerationExampleGuide(block) {
    · 내 사진(refImages) = 샷 종류의 '내 이미지' 탭에서 업로드·선택
    · 카드가 사이드/뒷면이어도 선택한 예시의 전체 연출을 참고하되, 카드의 촬영 방향은 유지
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
-export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideStyle = null, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onUseMine = null, includeMirrorExamples = false, identityKind = null }) {
-  const galleryCut = cut === 'mirror' ? 'styling' : cut;
+export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onUseMine = null, identityKind = null }) {
+  const galleryCut = cut;
   const shotOpts = shotOptions || (cut === 'product' ? catalogs.productShotTypes
     : catalogs.shotTypes);
   const shotVal = shotOpts.some((s) => s.value === shot) ? shot : shotOpts[0].value;
@@ -1244,16 +1242,14 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
       gender,
       limit: (catalogs.genExamples || []).length,
       appendSetOnly: cut !== 'product',
-      appendMirror: includeMirrorExamples && galleryCut === 'styling',
     }), identityKind,
     { cutType: galleryCut, direction, sideStyle, shot: shotVal, refScope },
   ), [catalogs.genExamples, cut, galleryCut, shotVal, clothingType, gender, direction, sideStyle,
-    includeMirrorExamples, identityKind, refScope]);
+    identityKind, refScope]);
   const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
   const moodOnly = (cut === 'styling' || cut === 'horizon') && !!direction && direction !== 'front';
   const conditionStatus = !exampleId ? null : storedExampleConditionStatus(selectedExample, {
-    cutType: galleryCut, blockCutType, clothingType, gender,
-    includeMirror: includeMirrorExamples && galleryCut === 'styling',
+    cutType: galleryCut, clothingType, gender,
   });
   const selectedPoseCompatible = (selectedExample?.variants || []).includes('pose')
     && poseExampleDirectionCompatible(selectedExample, {
@@ -1412,7 +1408,6 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
                 direction,
                 sideStyle,
                 appendSetOnly: true,
-                appendMirror: includeMirrorExamples && galleryCut === 'styling',
               },
             ) : null} />
           : <span className="sb-exhint">{cut === 'horizon' && exampleId && refScope === 'all' ? '선택한 예시 구도 유지' : '내 사진은 이 프로젝트에서만'}</span>}
@@ -1518,7 +1513,6 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
 
   const isMine = block.source === 'mine';
   const isProduct = block.cutType === 'product';
-  const isMirror = block.cutType === 'mirror';
   const isDetail = block.contentRole === CONTENT_ROLES.DETAIL;
   const shouldRenderGenerationExamples = shouldRenderGenerationExampleGuide(block);
   const isSignatureSlot = block.hookSlotRole === 'signature';
@@ -1599,10 +1593,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       cutType: pendingRecipe.cutType,
       shot: pendingRecipe.shot,
     }, nextRole, { hasDetailImage });
-    const recipePatch = {
-      ...baseRecipePatch,
-      ...generationExampleStructuralRecipePatch({ ...current, ...baseRecipePatch }, example),
-    };
+    const recipePatch = baseRecipePatch;
     const nextColorOpts = nextRole === CONTENT_ROLES.DETAIL ? detailColorOpts : colorOpts;
     const colorId = nextColorOpts.some((color) => color.id === current.colorId)
       ? current.colorId : nextColorOpts[0]?.id;
@@ -1714,7 +1705,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
           <div className="sb-cut-label-row"><label className="lbl">컷 종류</label></div>
           <UnderlineTabs
             options={cutTypeOptions}
-            value={pendingRecipe?.cutType || (isMirror ? 'styling' : block.cutType)}
+            value={pendingRecipe?.cutType || block.cutType}
             onChange={onCutTypeChange} />
         </div>
       )}
@@ -1726,14 +1717,13 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             onCancelRequestedRecipe?.();
           }}>섹션 이동 취소</button>}
           {shouldRenderGenerationExamples && (
-            <MoodGuide identityKind={identityKind} catalogs={catalogs} cut={pendingRecipe.cutType} blockCutType={block.cutType}
-              direction={pendingRecipe.cutType === 'mirror' ? null : block.direction}
-              sideStyle={pendingRecipe.cutType === 'mirror' ? null : (block.sideStyle ?? null)}
+            <MoodGuide identityKind={identityKind} catalogs={catalogs} cut={pendingRecipe.cutType}
+              direction={block.direction}
+              sideStyle={block.sideStyle ?? null}
               shot={pendingRecipe.shot}
               shotOptions={pendingRecipe.cutType === 'product' ? productShotOptions : null}
               onShotChange={(shot) => setPendingRecipe((current) => ({ ...current, shot }))}
               clothingType={clothingType} gender={exampleGender}
-              includeMirrorExamples={effectiveSectionRole === SECTION_ROLES.STYLING || isMirror}
               exampleId={pendingChoice} onExampleChange={commitPendingRecipe} onExampleDrag={onExampleDrag}
               refScope={pendingInSpace && pendingRecipe.cutType !== 'horizon' ? 'pose' : 'all'} />
           )}
@@ -1771,12 +1761,11 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
               exampleId: null, exampleSelectionOrigin: null, refScope: null,
               refImages: [], refAssetIds: [],
               spaceGroupId: null, spaceVariation: null,
-            })} catalogs={catalogs} cut={block.cutType} blockCutType={block.cutType}
+            })} catalogs={catalogs} cut={block.cutType}
               direction={block.direction} sideStyle={block.sideStyle ?? null} shot={block.shot}
               shotOptions={isProduct ? productShotOptions : null}
               onShotChange={block.cutType === 'horizon' && block.exampleId && (block.refScope || 'all') === 'all' ? null : onShotChange}
               clothingType={clothingType} gender={exampleGender}
-              includeMirrorExamples={effectiveSectionRole === SECTION_ROLES.STYLING || isMirror}
               exampleId={block.exampleId || null}
               onExampleChange={onGenerationExampleChange}
               onExampleDrag={onExampleDrag}
@@ -3090,10 +3079,6 @@ export function Storyboard({ toastOverride = null } = {}) {
       return;
     }
     const droppedCutType = droppedExample?.cutType;
-    if (!reservation && droppedCutType === 'mirror' && sectionRole !== SECTION_ROLES.STYLING) {
-      toast.push('거울컷은 스타일링 섹션에만 추가할 수 있어요');
-      return;
-    }
     if (droppedCutType && !allowedCutTypeOptionsForSection(sectionRole).some((option) => option.value === droppedCutType)) {
       toast.push('이 섹션에는 해당 생성예시를 추가할 수 없어요');
       return;

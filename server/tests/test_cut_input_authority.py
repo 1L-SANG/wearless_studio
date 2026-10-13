@@ -53,7 +53,7 @@ def _patch_detail_terminal(monkeypatch, captured):
             if item[1]
         ]
         assets = [{"key": f"out/{item['blockId']}"} for item in results]
-        return results, assets, 0, [], [], None, []
+        return results, assets, 0, [], None, []
 
     def fake_assemble(*_args, **_kwargs):
         return []
@@ -540,9 +540,6 @@ def _patch_editor_common(monkeypatch, captured):
         })
         return b"OUTPUT", "image/png"
 
-    async def fake_best_of(settings, product_images, initial, generate_candidate):
-        return initial, None, []
-
     async def fake_scene(*_args, **_kwargs):
         return {"verdict": "pass", "mismatches": [], "correctionPrompt": None}
 
@@ -557,7 +554,6 @@ def _patch_editor_common(monkeypatch, captured):
     monkeypatch.setattr(eij.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_asset)
     monkeypatch.setattr(eij.cut_generator, "generate", fake_generate)
-    monkeypatch.setattr(eij.image_qc, "best_of", fake_best_of)
     monkeypatch.setattr(eij.image_qc, "scene_verdict", fake_scene)
     monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
     monkeypatch.setattr(eij, "_emit", fake_emit)

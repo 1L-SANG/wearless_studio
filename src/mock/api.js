@@ -51,6 +51,7 @@ import { migrateLegacyEntryStylingRuns } from '@/lib/storyboardEntryPlacement.js
 import { deriveHookFrame } from '@/lib/storyboardHookFrame.js';
 import { applySeededHookStyle } from '@/lib/api/shapes.js';
 import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
+import { isSupportedCutType } from '@/lib/storyboardTaxonomy.js';
 import { createDraftSlotMemory } from './draftSlotMemory.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -62,6 +63,13 @@ const LATENCY_SCALE = Number(globalThis.process?.env?.MOCK_API_LATENCY_SCALE ?? 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms * LATENCY_SCALE));
 const touch = () => { DB.project.updatedAt = new Date().toISOString(); };
 const spend = (n) => { DB.account.credits = Math.max(0, DB.account.credits - n); return DB.account.credits; };
+const unsupportedCutError = () => Object.assign(new Error('지원하지 않는 컷 종류예요. 새 이미지를 선택해 주세요.'), {
+  status: 400, code: 'unknown_cut_type', requestNotSent: true,
+});
+const assertSupportedStoryboardCuts = () => {
+  if (DB.storyboard.some((block) => block.source === 'ai' && block.cutType != null
+    && !isSupportedCutType(block.cutType))) throw unsupportedCutError();
+};
 const jobCancelledError = () => {
   const error = new Error('마네킹컷 생성이 취소됐어요.');
   error.code = 'job_cancelled';
@@ -530,7 +538,7 @@ export const api = {
       onProgress: (progress) => listeners.forEach((listener) => listener(progress)),
     }).then(() => {
       if (forceError) throw new Error('분석 서버에 일시적인 문제가 발생했어요.');
-      const a = normalizeAnalysisFit(clone(DB.analysis));
+      const a = normalizeAnalysisFit({ mdComment: '', ...clone(DB.analysis) });
       a.swatchSuggestions = mockSwatchSuggestions(product || DB.product);
       a.frontClosure = { version: 1, kind: (product || DB.product).clothingType === 'outer' ? 'zipper' : 'unknown',
         range: 'graded', secondary: null, evidenceSlots: ['Front'], note: null };
@@ -544,7 +552,7 @@ export const api = {
   },
   async getAnalysis(/* projectId */) {
     await wait(120);
-    const analysis = normalizeAnalysisFit(clone(DB.analysis));
+    const analysis = normalizeAnalysisFit({ mdComment: '', ...clone(DB.analysis) });
     return { ...analysis, matchClothing: normalizeMatchClothingSelection(analysis.matchClothing) };
   },
   // 의류색 측정은 서버 전용이라 목에서는 측정할 것이 없다고 답한다(http 와 같은 shape).
@@ -862,6 +870,7 @@ export const api = {
       return { data: clone(DB.editorBlocks), credits: DB.account.credits };  // 완료 재호출(멱등)
     }
     if (ewSim?.status === 'running' && ewSim.projectId === DB.project.id) return { jobId: ewSim.jobId };
+    assertSupportedStoryboardCuts();
     DB.project.status = 'generating'; touch();
     const job = { projectId: DB.project.id, jobId: uid('job'), events: [], nextId: 1, status: 'running', progress: 0, result: null };
     ewSim = job;
@@ -950,6 +959,7 @@ export const api = {
       onProgress && onProgress(100);
       return { data: clone(DB.editorBlocks), credits: DB.account.credits };
     }
+    assertSupportedStoryboardCuts();
     const job = joinable('detailPage', (listeners) => (async () => {
       const ownerId = DB.project.id;
       const emitStep = (steps) => listeners.forEach((l) => l.onStep && l.onStep(clone(steps)));
@@ -1017,6 +1027,8 @@ export const api = {
     const elements = (DB.editorBlocks || []).flatMap((block) => block.elements || []);
     const source = isVary ? images.find((image) => image.src === req.source?.src)
       || elements.find((element) => element.type === 'image' && element.src === req.source?.src) : null;
+    const requestedCutType = isVary ? source?.cutType || req.source?.cutType : req.cutType;
+    if (requestedCutType != null && !isSupportedCutType(requestedCutType)) throw unsupportedCutError();
     const detailReshoot = !!source?.src && (source.detailReshoot === true || elements.some((element) => (
       element.type === 'image' && element.src === req.source?.src
       && (DB.storyboard || []).some((block) => block.id === element.sourceBlockId
@@ -1034,6 +1046,7 @@ export const api = {
     const rootId = source?.similarCut?.rootAssetId || source?.id;
     const root = isSimilar ? images.find((image) => image.id === rootId) : null;
     if (isSimilar && !root) throw new Error('처음 원본 이미지를 찾을 수 없어요.');
+    if (root?.cutType != null && !isSupportedCutType(root.cutType)) throw unsupportedCutError();
     await runJob({ duration: 2400, onProgress: req.onProgress });
     const group = isVary ? (root?.wardrobeGroup || source?.wardrobeGroup || 'misc') : (req.colorId || 'misc');
     // cutType 은 생성 시점에 기록되는 메타데이터 — 이후 '현재 이미지 수정'이 옵션 세트를 고르는 기준
@@ -1043,9 +1056,7 @@ export const api = {
     if ((isVary && !isSimilar) || (!isVary && req.cutType === 'product' && req.shot === 'detail')) img.detailReshoot = true;
     if (isSimilar) {
       // 로컬 데모는 실제 사진 분석 없이 동작 이름만 순환한다. 원본 계보·이력 계약을 재현한다.
-      const actions = cutType === 'mirror'
-        ? [['soft-smile', '거울 구도를 유지하며 부드럽게 웃기'], ['relaxed-expression', '거울 구도를 유지하며 편안한 표정 짓기'], ['small-head-tilt', '휴대폰 위치를 유지하며 고개 살짝 기울이기']]
-        : [['relax-arms', '팔의 힘을 풀고 자연스럽게 서기'], ['glance-side', '시선을 살짝 옆으로 옮기기'], ['soft-smile', '고개를 살짝 기울이며 부드럽게 웃기']];
+      const actions = [['relax-arms', '팔의 힘을 풀고 자연스럽게 서기'], ['glance-side', '시선을 살짝 옆으로 옮기기'], ['soft-smile', '고개를 살짝 기울이며 부드럽게 웃기']];
       const previous = images.filter((image) => image.similarCut?.rootAssetId === rootId);
       const [actionKey, actionSummary] = actions[previous.length % actions.length];
       img.src = `${Placeholder.photo(id, cutType)}#${id}`;

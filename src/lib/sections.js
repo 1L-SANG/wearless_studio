@@ -11,6 +11,7 @@ import {
   STORYBOARD_TAXONOMY_VERSION,
   SECTION_ROLES,
   assignInternalContentRoles,
+  filterSupportedStoryboardBlocks,
   defaultContentRoleForSection,
   contentTitle,
   isContentRole,
@@ -39,6 +40,7 @@ export const titleForKey = (key) => sectionTitle(key);
    충돌 가능한 섹션 행/레이아웃은 stack으로 초기화한다. */
 export function ensureSections(blocks, { hasDetailImage = null } = {}) {
   if (!Array.isArray(blocks)) return blocks;
+  blocks = filterSupportedStoryboardBlocks(blocks);
   const needsNormalization = blocks.some((b) => b.taxonomyVersion !== STORYBOARD_TAXONOMY_VERSION
     || !isSectionRole(b.sectionRole) || !isContentRole(b.contentRole));
   let out = blocks.map((raw) => {

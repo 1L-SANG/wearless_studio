@@ -196,7 +196,7 @@ alter table public.kb_chunks enable row level security;
 create table public.ref_images (
   id            text primary key,
   r2_key        text not null,
-  cut_type      text not null,          -- 'styling' | 'horizon' | 'product' | 'mirror'
+  cut_type      text not null,          -- 'styling' | 'horizon' | 'product'
   mood_tags     jsonb not null default '[]',
   image_embedding vector(1408),         -- Vertex multimodal 차원(확정 시 조정)
   source        text not null default 'seed',  -- 'seed' | 'generated'

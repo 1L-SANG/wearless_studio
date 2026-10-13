@@ -24,7 +24,6 @@ NO_CONSENT = {"opt_location_cuts": False, "opt_lookbook_person_replace": False}
 @pytest.mark.parametrize("cut_type,allowed", [
     ("horizon", True),
     ("styling", True),
-    ("mirror", True),
     ("base_edit", True),      # 룩북 인물 교체 — 셀러 쪽 권리 확인 게이트는 별도로 유지된다
     ("product", False),       # 사람이 없는 컷
     ("detail", False),
@@ -47,7 +46,7 @@ def test_consent_values_are_not_an_input_anymore():
     assert NO_CONSENT["opt_location_cuts"] is False
 
 
-@pytest.mark.parametrize("cut_type", ["horizon", "styling", "mirror"])
+@pytest.mark.parametrize("cut_type", ["horizon", "styling"])
 def test_every_worn_block_uses_the_selected_model(cut_type):
     assert facemarket.resolve_block_model_id(cut_type, REAL) == REAL
     assert facemarket.resolve_block_model_id(cut_type, VIRTUAL) == VIRTUAL

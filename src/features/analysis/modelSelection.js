@@ -41,7 +41,7 @@ export function isRealModelSelection(selectedModelId) {
  * 서버 게이트(facemarket.REAL_IDENTITY_CUT_TYPES)와 같은 규칙이고, 모델의 선택 동의(opt_*)는
  * 여기서도 판정에 쓰지 않는다.
  */
-export const REAL_FACE_CUT_TYPES = ['horizon', 'styling', 'mirror', 'base_edit'];
+export const REAL_FACE_CUT_TYPES = ['horizon', 'styling', 'base_edit'];
 
 /** 이 컷에 실제 모델 얼굴이 들어가는가. */
 export function realFaceAllowedCut(cutType) {

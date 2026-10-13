@@ -13,7 +13,6 @@ CONTENT_ROLES = (
     "benefit",
     "coordination",
     "fit",
-    "realWear",
     "productOverview",
     "detail",
     "custom",
@@ -26,7 +25,6 @@ CONTENT_ROLE_NAMES = {
     "benefit": "핵심 장점",
     "coordination": "코디 활용",
     "fit": "핏 확인",
-    "realWear": "실제 착용 느낌",
     "productOverview": "제품 전체",
     "detail": "디테일",
     "custom": "직접 구성",
@@ -37,7 +35,6 @@ _CONTENT_ROLE_TO_SECTION_ROLE = {
     "benefit": "hooking",
     "coordination": "styling",
     "fit": "studio",
-    "realWear": "styling",
     "productOverview": "product",
     "detail": "product",
 }
@@ -47,7 +44,6 @@ _CONTENT_ROLE_RECIPES = {
     "benefit": {"cutType": "horizon", "direction": "front", "shot": "medium"},
     "coordination": {"cutType": "styling", "direction": "front", "shot": "full"},
     "fit": {"cutType": "horizon", "direction": "front", "shot": "full"},
-    "realWear": {"cutType": "mirror", "direction": None, "shot": "full"},
     "productOverview": {"cutType": "product", "direction": "front", "shot": "ghost"},
     "detail": {"cutType": "product", "direction": "front", "shot": "detail"},
 }
@@ -62,7 +58,6 @@ _PRODUCT_OVERVIEW_SHOTS = ("ghost",)
 _FIT_ROLE_BY_CUT_TYPE = {
     "styling": "coordination",
     "horizon": "fit",
-    "mirror": "realWear",
 }
 
 # 자산의 실제 생성 설정과 원본 설정 조회가 함께 쓰는 저장 필드다.
@@ -101,7 +96,7 @@ def validate_similar_cut_relationships(blocks: list) -> None:
             or block.get("source") != "ai" or resolve_content_role(block) == "custom"
             or source.get("source") != "ai" or source.get("similarSourceBlockId") is not None
             or resolve_content_role(source) in ("custom", "productOverview", "detail")
-            or (source.get("cutType") or source.get("cut_type")) not in ("styling", "horizon", "mirror")
+            or (source.get("cutType") or source.get("cut_type")) not in ("styling", "horizon")
         ):
             raise ValueError("invalid_similar_cut_relationship")
 
@@ -186,7 +181,7 @@ def validate_storyboard_example_references(
 def _role_for_selected_recipe(block: dict, role: str) -> str:
     """Align a hidden role with the seller-facing cut/shot choice."""
     cut_type = block.get("cutType") or block.get("cut_type")
-    if role in ("coordination", "fit", "realWear") and cut_type in _FIT_ROLE_BY_CUT_TYPE:
+    if role in ("coordination", "fit") and cut_type in _FIT_ROLE_BY_CUT_TYPE:
         return _FIT_ROLE_BY_CUT_TYPE[cut_type]
     if role in ("productOverview", "detail") and cut_type == "product":
         return "detail" if block.get("shot") == "detail" else "productOverview"
@@ -202,8 +197,6 @@ def resolve_content_role(block: dict | None) -> str:
     if block.get("source") == "mine":
         return "custom"
     cut_type = block.get("cutType") or block.get("cut_type")
-    if cut_type == "mirror":
-        return "realWear"
     if cut_type == "product":
         return "detail" if block.get("shot") == "detail" else "productOverview"
     if cut_type == "horizon":
@@ -269,6 +262,10 @@ def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> 
             out["sectionRole"] = section_role
         return _canonicalize_example_selection(out)
 
+    requested_cut_type = block.get("cutType") or block.get("cut_type")
+    if requested_cut_type and requested_cut_type not in ("styling", "horizon", "product"):
+        raise ValueError("unknown_cut_type")
+
     explicit_role = block.get("contentRole") or block.get("content_role")
     role = explicit_role if explicit_role in CONTENT_ROLES else resolve_content_role(block)
     role = _role_for_selected_recipe(block, role)
@@ -279,10 +276,10 @@ def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> 
         if section_role:
             out["sectionRole"] = section_role
         cut_type = block.get("cutType") or block.get("cut_type")
-        if cut_type in ("styling", "horizon", "mirror"):
+        if cut_type in ("styling", "horizon"):
             out["cutType"] = cut_type
             out.pop("cut_type", None)
-            out["direction"] = None if cut_type == "mirror" else (
+            out["direction"] = (
                 block.get("direction") if block.get("direction") in _WORN_DIRECTIONS else "front"
             )
             out["shot"] = block.get("shot") if block.get("shot") in _WORN_SHOTS else "full"
@@ -298,10 +295,7 @@ def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> 
     direction = recipe["direction"]
     shot = recipe["shot"]
 
-    if cut_type == "mirror":
-        if block.get("shot") in _WORN_SHOTS:
-            shot = block["shot"]
-    elif cut_type == "product":
+    if cut_type == "product":
         if block.get("direction") in _PRODUCT_DIRECTIONS:
             direction = block["direction"]
         if role == "detail":
@@ -334,9 +328,6 @@ def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> 
         out["faceExposure"] = None
         out["matchIds"] = []
         out["outerClosureState"] = None
-    elif cut_type == "mirror":
-        face = block.get("faceExposure") or block.get("face_exposure")
-        out["faceExposure"] = "show" if face == "show" else "hide"
     elif (block.get("faceExposure") or block.get("face_exposure")) not in ("same", "show", "hide"):
         out["faceExposure"] = "same"
     return _canonicalize_example_selection(out)
@@ -388,6 +379,10 @@ def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
         if not isinstance(block, dict):
             return block
         candidate = dict(block)
+        requested_cut_type = candidate.get("cutType") or candidate.get("cut_type")
+        if (candidate.get("source") != "mine" and requested_cut_type
+                and requested_cut_type not in ("styling", "horizon", "product")):
+            raise ValueError("unknown_cut_type")
         declared_section = candidate.get("sectionRole") or candidate.get("section_role")
         if declared_section not in SECTION_ROLES:
             declared_section = resolve_section_role(candidate)
@@ -399,10 +394,9 @@ def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
             role = resolve_content_role(candidate)
             if role == "custom" or _CONTENT_ROLE_TO_SECTION_ROLE.get(role) != declared_section:
                 role = defaults[declared_section]
-            requested_cut_type = candidate.get("cutType") or candidate.get("cut_type")
             if declared_section == "styling":
-                role = "realWear" if requested_cut_type == "mirror" else "coordination"
-                candidate["cutType"] = "mirror" if requested_cut_type == "mirror" else "styling"
+                role = "coordination"
+                candidate["cutType"] = "styling"
             elif declared_section == "studio":
                 role = "fit"
                 candidate["cutType"] = "horizon"

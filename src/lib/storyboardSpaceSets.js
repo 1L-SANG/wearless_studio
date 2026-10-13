@@ -22,7 +22,6 @@ export function detachSpaceMembership(block) {
 
 function roleForSetMember(sectionRole, cutType, previousRole) {
   if (sectionRole === 'styling') {
-    if (cutType === 'mirror') return 'realWear';
     return 'coordination';
   }
   if (sectionRole === 'studio') return 'fit';

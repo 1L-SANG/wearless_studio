@@ -364,7 +364,7 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     if (tag) {
       const colorTag = contentRole === CONTENT_ROLES.PRODUCT_OVERVIEW && tag !== 'FRONT' && tag !== 'BACK';
       els.push(Object.assign(
-        T(60, 44, colorTag ? 880 : 400, TAG_HEIGHT, tag, colorTag ? colorLabelStyle(tag, TAG_STYLE, 880) : TAG_STYLE),
+        T(60, 44, colorTag ? 880 : 400, TAG_HEIGHT, tag, colorTag ? colorLabelStyle(tag, TAG_STYLE, 400) : TAG_STYLE),
         { sourceBlockId: b.id, copyRole: 'label', textSlotVersion: 1 },
       ));
     }
@@ -623,6 +623,7 @@ export function buildDraft() {
     // 실제 분석이 절대 내지 않는 값이라, mock 화면을 실분석으로 오인하게 만들던 흔적을 제거(2026-07-15).
     materials: [{ name: '아크릴', ratio: 100 }],
     sellingPoints: [],
+    mdComment: '',
     frontClosure: { version: 1, kind: product.clothingType === 'outer' ? 'zipper' : 'unknown',
       range: 'graded', secondary: null, evidenceSlots: ['Front'], note: null },
     detailRecommendations: { version: 1, status: 'unavailable', candidates: [] },

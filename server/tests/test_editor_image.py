@@ -61,7 +61,7 @@ def test_editor_runtime_closure_matches_prompt_and_cut_qc_without_changing_reque
     request = {"mode": "new", "cutType": cut_type, "direction": "front", "colorId": "base",
                "shot": "ghost" if cut_type == "product" else "full", "outerClosureState": requested}
     original = deepcopy(request)
-    app = fake_worker_app(make_settings(garment_qc_mode="off", cut_output_qc_mode="shadow"))
+    app = fake_worker_app(make_settings(cut_output_qc_mode="shadow"))
     asyncio.run(eij.run_editor_image_job(app, worker_job(request)))
     assert finalized.await_count == 1
     assert captured["generated"] == captured["cutPlan"] == expected
@@ -487,7 +487,7 @@ def test_run_editor_image_job_vary_charges_cost_and_group_misc(monkeypatch):
     }
     similar_payload = patch_worker_similar_source(monkeypatch, eij, fake_get_asset)
     app = fake_worker_app(make_settings(
-        gemini_api_key="x", r2_bucket="b", garment_qc_mode="bestof"))
+        gemini_api_key="x", r2_bucket="b"))
     asyncio.run(eij.run_editor_image_job(app, worker_job({**payload, **similar_payload})))
 
     assert captured["charge"] == 1  # credit_cost_editor_image 기본값
@@ -632,7 +632,7 @@ def test_run_editor_image_job_vary_propagates_real_privacy_and_rechecks_license(
         assert r2.deletes == []
 
 
-@pytest.mark.parametrize("trusted_cut_type", [None, "styling", "mirror"])
+@pytest.mark.parametrize("trusted_cut_type", [None, "styling"])
 def test_run_editor_legacy_real_vary_uses_the_trusted_cut_type(monkeypatch, trusted_cut_type):
     """클라이언트가 'horizon' 이라고 해도 원장(provenance)의 컷 종류로 생성한다.
 
@@ -1353,7 +1353,7 @@ def test_run_editor_image_job_new_attaches_mood_refs(monkeypatch):
     assert "front view of the garment" in captured["manifest"]
 
 
-@pytest.mark.parametrize("cut_type", ["styling", "horizon", "mirror"])
+@pytest.mark.parametrize("cut_type", ["styling", "horizon"])
 def test_run_editor_image_job_new_attaches_all_matching_garments_in_order(
     monkeypatch, cut_type
 ):
@@ -1581,7 +1581,7 @@ def test_run_editor_image_job_new_matching_r2_missing_fails_closed(monkeypatch):
     r2 = MissingMatchingR2()
     payload = {
         "mode": "new",
-        "cutType": "mirror",
+        "cutType": "styling",
         "matchIds": ["match-1", "match-2"],
     }
     app = fake_worker_app(
@@ -1781,7 +1781,7 @@ def test_run_editor_image_job_model_r2_failure_falls_back_to_product(monkeypatch
     app = fake_worker_app(
         make_settings(gemini_api_key="x", r2_bucket="b"), r2=FailingModelR2())
     asyncio.run(eij.run_editor_image_job(app, worker_job({
-        "mode": "new", "cutType": "mirror", "shot": "full", "modelId": "mA",
+        "mode": "new", "cutType": "styling", "shot": "full", "modelId": "mA",
     })))
 
     assert captured["finalized"] is True
@@ -1938,3 +1938,11 @@ def test_selected_example_load_failure_fails_closed(monkeypatch, scope):
     assert not ok
     assert fail["metadata"]["error"] == "example_asset_unavailable"
     assert fail["metadata"]["refScope"] == scope
+
+
+def test_cut_variator_rejects_retired_cut_type_before_generation():
+    with pytest.raises(ValueError, match="unknown_cut_type"):
+        asyncio.run(eij.cut_variator.generate(
+            make_settings(), None, eij.InlineImage("image/png", b"source"), [], "mirror",
+            similar_plan={"actionKey": "hands-low"},
+        ))

@@ -5,6 +5,8 @@ import {
   FRAME_LIBRARY_ITEMS, buildDetailPageTemplateSet, buildFrameBlock, buildImageBlock,
   getDetailPageFrame, upgradeLegacyKiwiTemplateBlocks,
 } from '../../src/features/editor/editorLibrary.js';
+import { isAutoManagedBlock } from '../../src/features/editor/presets/infoPresets.js';
+import { DEFAULT_TEXT_BODY, dropUntouchedPlaceholders } from '../../src/features/editor/presets/textPresets.js';
 
 const seqId = () => { let n = 0; return (prefix) => `${prefix}${++n}`; };
 const PRODUCT = { clothingType: 'top', measurements: [
@@ -110,5 +112,73 @@ test('editor click, drag and full template handlers all pass the current product
       const block = handler.getBlocks().find((item) => item.templateId === entry.id);
       assert.deepEqual(cells(block, entry.positions).map((el) => el.text), entry.values);
     }
+  }
+});
+
+// Execute the editor's actual cleanup effects and handler; only React state is local.
+function textCleanupState(initialBlocks, freshIds = new Set()) {
+  const source = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
+  const pruning = source.slice(source.indexOf('  function pruneEmptyTextEl(elId)'), source.indexOf('  const changeBg ='));
+  const editEffect = source.slice(source.indexOf('  const prevEditEl ='), source.indexOf('  /* 손 안 댄 안내 문구'));
+  const selectionEffect = source.slice(source.indexOf('  const persistable ='), source.indexOf('  // inline crop mode'));
+  const latestBlocks = { current: initialBlocks };
+  const refs = [];
+  let refIndex = 0;
+  let effects = [];
+  const scope = { latestBlocks, FRESH_TEXT_IDS: freshIds, DEFAULT_TEXT_BODY, isAutoManagedBlock, dropUntouchedPlaceholders,
+    useRef: (value) => refs[refIndex++] ||= { current: value }, useEffect: (effect) => effects.push(effect),
+    setBlocks: (next) => { latestBlocks.current = typeof next === 'function' ? next(latestBlocks.current) : next; },
+    setSelEl: () => {}, setSelEls: () => {},
+  };
+  const render = new Function(...Object.keys(scope), 'blocks', 'selEl', 'editEl',
+    `${pruning}\n${editEffect}\n${selectionEffect}\nreturn () => persistable(latestBlocks.current);`);
+  let persist;
+  const transition = ({ selEl = null, editEl = null } = {}) => {
+    refIndex = 0;
+    effects = [];
+    persist = render(...Object.values(scope), latestBlocks.current, selEl, editEl);
+    effects.forEach((effect) => effect());
+  };
+  transition();
+  return { transition, getBlocks: () => latestBlocks.current,
+    reload: () => upgradeLegacyKiwiTemplateBlocks(JSON.parse(JSON.stringify(persist())), seqId()),
+  };
+}
+
+for (const entry of [...CASES.map((item) => ({ ...item, slotCount: 4 })),
+  { id: 'kiwi-t5-11-sizeguide', slotCount: 28 }]) {
+  for (const exit of ['selection leave', 'blank edit exit']) {
+    test(`${entry.id} preserves blank input slots after ${exit} and reload`, () => {
+      const block = buildFrameBlock(getDetailPageFrame(entry.id), seqId());
+      const slots = block.elements.filter((el) => el.placeholder === '실측' || el.placeholder === '체형 범위');
+      assert.equal(slots.length, entry.slotCount);
+      const state = textCleanupState([block]);
+      for (const slot of slots) {
+        state.transition({ selEl: slot.id, editEl: exit === 'blank edit exit' ? slot.id : null });
+        state.transition({ selEl: exit === 'blank edit exit' ? slot.id : null });
+        const remaining = state.getBlocks()[0].elements.find((el) => el.id === slot.id);
+        assert.ok(remaining, `${slot.placeholder} slot remains available for later input`);
+        assert.equal(remaining.text, '');
+        assert.equal(remaining.placeholder, slot.placeholder);
+      }
+      const saved = state.reload()[0];
+      assert.equal(saved.elements.filter((el) => el.placeholder === '실측').length, entry.id === 'kiwi-t5-11-sizeguide' ? 24 : 4);
+      assert.equal(saved.elements.filter((el) => el.placeholder === '체형 범위').length, entry.id === 'kiwi-t5-11-sizeguide' ? 4 : 0);
+      assert.ok(slots.every((slot) => saved.elements.some((el) => el.id === slot.id && el.text === '' && el.placeholder === slot.placeholder)));
+    });
+  }
+}
+
+test('cleanup still removes ordinary empty text and untouched new text', () => {
+  for (const block of [
+    { id: 'manual', kind: 'styling', elements: [{ id: 'empty', type: 'text', text: '', placeholder: '직접 입력' }] },
+    { id: 'template', kind: 'styling', templateId: 'kiwi-t4-10-productinfo', elements: [{ id: 'empty', type: 'text', text: '' }] },
+    { id: 'manual', kind: 'styling', elements: [{ id: 'empty', type: 'text', text: DEFAULT_TEXT_BODY }] },
+  ]) {
+    const state = textCleanupState([block], new Set(['empty']));
+    state.transition({ selEl: 'empty' });
+    state.transition();
+    assert.deepEqual(state.getBlocks()[0].elements, []);
+    assert.deepEqual(state.reload()[0].elements, []);
   }
 });

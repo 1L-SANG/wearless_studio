@@ -1,6 +1,6 @@
 import publicCombinationTable from '../../data/genexamples_public_combinations.json' with { type: 'json' };
 import { filterExamplesForModel } from './identityScope.js';
-import { exampleDirectionFamilyMatches, poseExampleDirectionCompatible } from './storyboardTaxonomy.js';
+import { exampleDirectionFamilyMatches, isSupportedCutType, poseExampleDirectionCompatible } from './storyboardTaxonomy.js';
 import { isSourceBasedDetailRecipe } from './detailRecommendations.js';
 import {
   exampleMoodBucket,
@@ -154,31 +154,22 @@ function matchesMainSelection(example, options, flatCombinationPublished) {
     ));
 }
 
-function matchesMirrorSelection(example, { clothingType, gender }) {
-  return !example?.retired && matchesSharedEligibility(example, { clothingType, gender })
-    && example?.cutType === 'mirror'
-    && isGenerationCombinationPublic({
-      cutType: 'mirror', shot: example.shot, clothingType, gender,
-    });
-}
-
 export function hasSelectableGenerationExamples(catalog, rawOptions) {
   const options = {
     spaceGroupId: null,
     direction: null,
     includeSetOnly: false,
     appendSetOnly: false,
-    appendMirror: false,
     ...rawOptions,
   };
+  if (!isSupportedCutType(options.cutType)) return false;
   const flatCombinationPublished = flatCombinationIsPublished(options);
   if (!flatCombinationPublished && !options.includeSetOnly && !options.appendSetOnly) return false;
   const source = Array.isArray(catalog) ? catalog : [];
   if (source.some((example) => matchesMainSelection(example, options, flatCombinationPublished))) {
     return true;
   }
-  return options.appendSetOnly && options.appendMirror && options.cutType === 'styling'
-    && source.some((example) => matchesMirrorSelection(example, options));
+  return false;
 }
 
 /* 갤러리·자동배정은 **카드와 같은 방향 가족**(정면·사선·옆모습·뒷면)을 **앞에** 둔다.
@@ -218,14 +209,14 @@ export function selectGenerationExamples(catalog, rawOptions) {
     direction: null,
     includeSetOnly: false,
     appendSetOnly: false,
-    appendMirror: false,
     mixMoodBuckets: false,
     ...rawOptions,
   };
   const {
     cutType, shot, clothingType, gender, includeSetOnly, appendSetOnly,
-    appendMirror, mixMoodBuckets, limit = 6,
+    mixMoodBuckets, limit = 6,
   } = options;
+  if (!isSupportedCutType(cutType)) return [];
   const flatCombinationPublished = flatCombinationIsPublished(options);
   if (!flatCombinationPublished && !includeSetOnly && !appendSetOnly) return [];
   const source = Array.isArray(catalog) ? catalog : [];
@@ -243,16 +234,9 @@ export function selectGenerationExamples(catalog, rawOptions) {
     const setMembers = dedupeHorizonSetMembers(
       matched.filter((example) => example.setOnly), ordinary, cutType,
     );
-    const mirrorExamples = appendMirror && cutType === 'styling'
-      ? source.filter((example) => (
-        matchesMirrorSelection(example, options)
-        // 거울 예시는 소수이므로 현재 full/medium 탭과 무관하게 모두 마지막에 둔다.
-      )).sort(byRankThenId)
-      : [];
     return [
       ...grouped(ordinary, { cutType, shot, limit }),
       ...grouped(setMembers, { cutType, shot, limit: setMembers.length, groupByMood: false }),
-      ...mirrorExamples,
     ];
   }
   return grouped(matched, {
@@ -309,7 +293,7 @@ export function repeatedAllExampleVariationIds(blocks, catalog = []) {
       || block.similarSourceBlockId
       || !block.id
       || !example
-      || !['styling', 'horizon', 'mirror'].includes(block.cutType)
+      || !['styling', 'horizon'].includes(block.cutType)
       || block.spaceGroupId
       || (block.refScope || 'all') !== 'all'
       || (block.pose || 'auto') !== 'auto'
@@ -446,13 +430,11 @@ export function assignGenerationExamples(blocks, {
 }
 
 export function storedExampleConditionStatus(example, {
-  cutType, blockCutType = cutType, clothingType, gender, includeMirror = false,
+  cutType, clothingType, gender,
 }) {
   if (!example) return 'unknown';
   if (!isPublishedAll(example)) return 'unknown';
-  if (example.cutType !== cutType
-    && !(cutType === 'styling' && example.cutType === 'mirror'
-      && (blockCutType === 'mirror' || includeMirror))) return 'changed';
+  if (example.cutType !== cutType) return 'changed';
   return matchesProductAndGender(example, { clothingType, gender }) ? 'valid' : 'changed';
 }
 

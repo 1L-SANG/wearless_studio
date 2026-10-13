@@ -273,7 +273,7 @@ def test_joined_request_key_replays_the_terminal_job_without_another_reservation
     assert len(reserved) == 1 and db.inserts == 1
 
 
-@pytest.mark.parametrize("cut_type", ["product", "styling", "mirror", "horizon"])
+@pytest.mark.parametrize("cut_type", ["product", "styling", "horizon"])
 @pytest.mark.parametrize("slot_exists,created", [(False, False), (True, True), (True, False)])
 def test_retry_route_restores_saved_settings_and_reserves_only_for_a_new_job(
     client, make_token, monkeypatch, cut_type, slot_exists, created,

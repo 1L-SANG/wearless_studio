@@ -4,6 +4,7 @@ import pytest
 import yaml
 
 from app.config import Settings, load_settings
+from app.agents import image_qc
 
 
 def test_output_qc_defaults_off_and_accepts_repair(monkeypatch):
@@ -79,7 +80,9 @@ def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_sha
     # 전부-병렬(DETAIL_CUT_CONCURRENCY=0)로 올리면서 1000ms 로 낮췄다(2026-08-27).
     assert variables["DETAIL_CUT_STAGGER_MS"] == "1000"
     assert variables["DETAIL_CUT_MAX_ATTEMPTS"] == "3"
-    assert variables["GARMENT_QC_MODE"] == "off"
+    for deployed_variables in (variables, worker_manifest):
+        assert "GARMENT_QC_MODE" not in deployed_variables
+        assert "GARMENT_QC_EXTRA_CANDIDATES" not in deployed_variables
     assert variables["CUT_OUTPUT_QC_MODE"] == "repair"
     assert variables["MANNEQUIN_IMAGE_SIZE"] == "1K"
     assert variables["MANNEQUIN_LOGO_IMAGE_SIZE"] == "off"
@@ -151,3 +154,18 @@ def test_openai_fallback_secret_uses_the_current_copilot_environment(service):
         "/copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}"
         "/secrets/OPENAI_API_KEY_FALLBACK"
     )
+
+
+@pytest.mark.parametrize("retired_mode", [None, "bestof", "shadow", "off"])
+def test_retired_candidate_mode_cannot_reappear_from_environment(monkeypatch, retired_mode):
+    if retired_mode is None:
+        monkeypatch.delenv("GARMENT_QC_MODE", raising=False)
+    else:
+        monkeypatch.setenv("GARMENT_QC_MODE", retired_mode)
+    monkeypatch.delenv("GARMENT_QC_EXTRA_CANDIDATES", raising=False)
+    settings = load_settings()
+    for name in ("garment_qc_mode", "garment_qc_extra_candidates"):
+        assert name not in Settings.__dataclass_fields__
+        assert not hasattr(settings, name)
+    for name in ("best_of", "pick_best", "pick_schema", "validate_pick"):
+        assert not hasattr(image_qc, name)

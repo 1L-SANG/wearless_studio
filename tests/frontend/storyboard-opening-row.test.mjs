@@ -106,7 +106,8 @@ test('mock ghost tags resolve color names without truncation and keep single-col
       assert.equal(label.x, 60);
       assert.equal(label.y, 44);
       assert.ok(label.y + label.h <= image.y);
-      if (suffix) assert.ok(Array.from(label.text).length * (label.style.size + (label.style.tracking || 0)) <= 880);
+      if (suffix) assert.ok(Array.from(label.text).length * (label.style.size + (label.style.tracking || 0)) <= 400,
+        '단일 색상 라벨은 이미 열린 구 프론트의 400px 상자에도 들어가야 한다');
     }
   }
   const single = buildEditorBlocksFromStoryboard(ghostStoryboard('front'), {

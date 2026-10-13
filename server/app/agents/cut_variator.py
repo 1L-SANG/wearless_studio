@@ -10,7 +10,7 @@ from .gemini_image import GeminiImageClient, InlineImage, run_cpu_bound
 from .model_routing import resolve_model
 
 #: cut_generator._WORN_CUTS 와 같은 집합 — 사람이 담기는 컷에만 얼굴 패스를 건다.
-_WORN_CUTS = ("styling", "horizon", "mirror")
+_WORN_CUTS = ("styling", "horizon")
 
 async def generate(
     settings: Settings,
@@ -31,6 +31,7 @@ async def generate(
     그리는 것이라 얼굴이 흔들릴 수 있고, 그러면 한 상세페이지 안에서 같은 사람이 컷마다 달라진다.
     패스는 **착장 컷일 때만** — product/ghost 류에는 사람이 없다. 실패는 원본 폴백(예외 없음).
     """
+    similar_cut.validate_cut_type(cut_type)
     if similar_plan is None:
         raise ValueError("similar_plan_required")
     model = resolve_model(settings, "image_high")

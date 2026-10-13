@@ -65,7 +65,7 @@ test('모든 섹션이 실제 모델에게 열려 있다 — 섹션 규칙만으
   const sectionRule = SCOPES.rules.find((r) => r.when && Array.isArray(r.when.sectionNotIn));
   assert.deepEqual(sectionRule.when.sectionNotIn, ['hooking', 'styling', 'studio', 'product']);
   for (const block of [{ sectionRole: 'studio', cutType: 'horizon' },
-    { sectionRole: 'styling', cutType: 'styling' }, { cutType: 'styling' }, { cutType: 'mirror' },
+    { sectionRole: 'styling', cutType: 'styling' }, { cutType: 'styling' },
     { sectionRole: 'hooking', cutType: 'styling' }, { sectionRole: 'hooking', cutType: 'horizon' },
     { contentRole: 'hero', cutType: 'styling' }, ...PRODUCT_BLOCKS]) {
     assert.equal(scopeOfBlock(block), 'both', JSON.stringify(block));

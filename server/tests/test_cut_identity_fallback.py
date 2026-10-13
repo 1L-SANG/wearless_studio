@@ -182,18 +182,12 @@ def test_worker_survives_malformed_manifest_encoding(monkeypatch):
     assert "failure" not in captured            # 잡 안 죽음
     assert captured["success"]["charge"] == 1
     assert captured["cut_spec"]["modelId"] == "customVirtual"  # 폴백만 스킵, 기존 동작 유지
-# --- REAL 소스 identity 첨부 계획 (A4: mirror/back 참조 0장 회귀 방지) ---
+# --- REAL 소스 identity 첨부 계획 (A4: back 참조 0장 회귀 방지) ---
 
 def test_real_face_shown_cut_attaches_grid_and_badge():
     # 얼굴 노출 착용컷(styling full 등, wants_face=True) → 그리드 첨부 + 검증 배지
     assert real_identity_plan("styling", wants_face=True) == (True, True)
     assert real_identity_plan("horizon", wants_face=True) == (True, True)
-
-
-def test_real_mirror_attaches_grid_without_badge():
-    # mirror(폰이 얼굴 가림, wants_face=False) — 그리드는 붙여 인물 일관성 유지, 배지는 없음.
-    # 이게 A4 핵심: 예전엔 wants=False → 참조 0장 → mirror 만 인물 랜덤이었다.
-    assert real_identity_plan("mirror", wants_face=False) == (True, False)
 
 
 def test_real_back_pose_attaches_grid_without_badge():
@@ -217,7 +211,6 @@ def test_real_unknown_cut_no_grid():
 def test_fallback_when_worn_cut_has_no_identity():
     # VIRTUAL registry 자산 없음 → 착용컷 참조 0장 → 폴백 필요
     assert needs_identity_fallback(cut_type="styling", has_model_images=False, face_slot=False) is True
-    assert needs_identity_fallback(cut_type="mirror", has_model_images=False, face_slot=False) is True
     assert needs_identity_fallback(cut_type="horizon", has_model_images=False, face_slot=False) is True
 
 

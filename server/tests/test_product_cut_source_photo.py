@@ -34,14 +34,12 @@ def test_product_source_direction_survives_storage_and_generation(product_exampl
     assert spec["sideStyle"] is None
 
 
-def test_worn_example_direction_and_mirror_rule_are_preserved(product_example):
+def test_worn_example_direction_is_preserved(product_example):
     blocks = content_roles.canonicalize_storyboard([
         {"source": "ai", "sectionRole": "studio", "cutType": "horizon",
          "direction": "front", "exampleId": "worn-example"},
-        {"source": "ai", "sectionRole": "styling", "cutType": "mirror", "direction": "back"},
     ], for_storage=True)
     assert next(b for b in blocks if b["cutType"] == "horizon")["direction"] == "back"
-    assert next(b for b in blocks if b["cutType"] == "mirror")["direction"] is None
 
 
 @pytest.mark.parametrize("different", [{"direction": "back"}, {"detailTargetId": "other-target"}])
@@ -121,3 +119,10 @@ def test_extended_top_front_and_back_ghosts_are_generated_separately(product_exa
     cuts = {cut["blockId"]: cut for cut in captured["cuts"]}
     assert cuts["front-ghost"]["imageUrl"] != cuts["back-ghost"]["imageUrl"]
     assert len(captured["success"]["cut_assets"]) == 2
+
+
+def test_retired_cut_rejects_without_overriding_saved_example_direction(product_example):
+    with pytest.raises(ValueError, match="unknown_cut_type"):
+        content_roles.canonicalize_storyboard([
+            {"source": "ai", "sectionRole": "styling", "cutType": "mirror", "direction": "back"},
+        ], for_storage=True)

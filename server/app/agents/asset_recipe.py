@@ -13,7 +13,18 @@ def project_recipe(value: dict | None) -> dict | None:
     """화면용 값은 빼고 공용 필드를 모두 담는다. 없는 값은 null로 남긴다."""
     if not isinstance(value, dict):
         return None
+    cut_type = value.get("cutType") or value.get("cut_type")
+    if cut_type and cut_type not in ("styling", "horizon", "product"):
+        return None
     return {key: deepcopy(value.get(key)) for key in content_roles.GENERATION_RECIPE_FIELDS}
+
+
+def _stored_recipe(value: dict) -> dict:
+    """폐기한 컷의 원본 이력은 유지하고 생성 레시피 투영에서만 제외한다."""
+    cut_type = value.get("cutType") or value.get("cut_type")
+    if cut_type and cut_type not in ("styling", "horizon", "product"):
+        return dict(value)
+    return content_roles.canonicalize_storyboard_block(value)
 
 
 def asset_id_from_file_capability(value: object) -> str | None:
@@ -94,10 +105,10 @@ def recipe_for_asset(
     def with_recipe(origin, recipe, recipe_from="self", source_id=None):
         out = {**result, "origin": origin, "recipe": project_recipe(recipe),
                "recipeFrom": recipe_from, "sourceAssetId": source_id}
-        if out["recipe"] is not None:
-            out["cutType"] = out["recipe"].get("cutType") or out["cutType"]
-            if out["recipe"].get("colorId") is not None:
-                out["colorId"] = out["recipe"]["colorId"]
+        if isinstance(recipe, dict):
+            out["cutType"] = recipe.get("cutType") or recipe.get("cut_type") or out["cutType"]
+            if recipe.get("colorId") is not None:
+                out["colorId"] = recipe["colorId"]
         return out
 
     generation = metadata.get("generation")
@@ -107,18 +118,18 @@ def recipe_for_asset(
 
     block = storyboard_by_id.get((page_map or {}).get(str(asset_row.get("id"))))
     if isinstance(block, dict) and block.get("source") == "ai":
-        return with_recipe("page", content_roles.canonicalize_storyboard_block(block))
+        return with_recipe("page", _stored_recipe(block))
 
     # 옛 다시 만들기는 요청 필드보다 저장 콘티를 먼저 사용한다.
     retry_id = payload.get("retryBlockId")
     stored = storyboard_by_id.get(retry_id) if retry_id else None
     is_editor_job = (producing_job or {}).get("kind", "editor_image") == "editor_image"
     if is_editor_job and isinstance(stored, dict) and stored.get("source") == "ai":
-        return with_recipe("editor_retry", content_roles.canonicalize_storyboard_block(stored),
+        return with_recipe("editor_retry", _stored_recipe(stored),
                            "anchor" if payload.get("mode") == "vary" else "self",
                            _source_asset_id(payload))
     if is_editor_job and payload.get("mode") == "new" and not retry_id:
-        return with_recipe("editor_new", content_roles.canonicalize_storyboard_block(payload))
+        return with_recipe("editor_new", _stored_recipe(payload))
     elif is_editor_job and payload.get("mode") == "vary":
         source_id = _source_asset_id(payload)
         anchor = anchor_resolved or {}

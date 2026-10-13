@@ -1151,6 +1151,20 @@ async def save_analysis(
     # 지금 analysis.colors 를 읽는 코드는 없지만, 2026-08-17 사고의 플레이스홀더가 실제로 여기
     # 3건 저장됐다. 나중에 누가 이 필드를 읽기 시작할 때 오염을 물려받지 않게 입구에서 막는다.
     analysis = product_photos.sanitize_analysis_colors(analysis)
+    if "mdComment" in analysis and not (merge and analysis["mdComment"] is None):
+        comment = analysis["mdComment"]
+        if not isinstance(comment, str):
+            raise _bad_request(
+                "invalid_md_comment",
+                "MD 코멘트를 다시 확인해 주세요.",
+            )
+        comment = comment.strip()
+        if len(comment) > 300:
+            raise _bad_request(
+                "md_comment_too_long",
+                "MD 코멘트는 300자까지 쓸 수 있어요.",
+            )
+        analysis = {**analysis, "mdComment": comment}
     if "brandUseCategory" in analysis:
         category = analysis.get("brandUseCategory")
         if category is not None and not isinstance(category, str):
@@ -1271,9 +1285,14 @@ async def measure_garment_colors(request: Request, project_id: str, user_id: str
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
     # 커넥션은 놓고 R2·LLM·이미지 작업을 한다. 서비스가 필요할 때 다시 연다.
-    status, contract = await garment_color_measure.ensure_garment_color_evidence(
-        request.app.state.settings, request.app.state.pool, getattr(request.app.state, "r2", None),
-        user_id=user_id, project_id=project_id)
+    try:
+        status, contract = await garment_color_measure.ensure_garment_color_evidence(
+            request.app.state.settings, request.app.state.pool, getattr(request.app.state, "r2", None),
+            user_id=user_id, project_id=project_id)
+    except ValueError as exc:
+        if str(exc) == "unknown_cut_type":
+            raise _bad_request("unknown_cut_type", "지원하지 않는 컷 종류예요.") from exc
+        raise
     try:
         summary = garment_color_evidence.public_summary(contract) if contract is not None else None
     except ValueError:
@@ -3042,6 +3061,8 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
     try:
         canonical = content_roles.canonicalize_storyboard(blocks, for_storage=True)
     except ValueError as exc:
+        if str(exc) == "unknown_cut_type":
+            raise _bad_request("unknown_cut_type", "지원하지 않는 컷 종류예요.") from exc
         if str(exc) == "invalid_example_selection_origin":
             raise _bad_request("invalid_example_selection_origin", "생성예시 선택 출처 값이 올바르지 않아요.")
         if str(exc) == "invalid_similar_cut_relationship":
@@ -3356,6 +3377,21 @@ async def generate_editor_image(
       복원하며, 같은 빈 칸의 진행 중 작업에 합류해 새 크레딧을 예약하지 않습니다.
     - **에지 케이스**: `402 Payment Required` — 행동별 크레딧(기본 5/8/19)이 없으면 발생
     """
+    requested_spec = (
+        body if (body or {}).get("mode") == "new"
+        else (body or {}).get("source") or {}
+        if (body or {}).get("mode") == "vary" else {}
+    )
+    requested_cut_type = (
+        requested_spec.get("cutType") or requested_spec.get("cut_type")
+        if isinstance(requested_spec, dict) else None
+    )
+    if requested_cut_type and (
+        requested_cut_type == "mirror"
+        or (body.get("mode") == "new" and not body.get("retryBlockId")
+            and requested_cut_type not in cut_generator.CUT_TYPES)
+    ):
+        raise _bad_request("unknown_cut_type", "지원하지 않는 컷 종류예요.")
     fill_requested = (body or {}).get("mode") == "fill"
     edit_requested = ((body or {}).get("mode") == "vary"
                       and (body or {}).get("variationMode") in ("color", "closure"))
@@ -3508,7 +3544,7 @@ async def generate_editor_image(
                 trusted_type = root_meta.get("cut_type") or selected_meta.get("cut_type")
                 if not trusted_type:
                     trusted_type = "styling" if root_asset.get("source") == "upload" else source.get("cutType")
-                if (trusted_type not in {"styling", "horizon", "mirror"}
+                if (trusted_type not in {"styling", "horizon"}
                         or selected_meta.get("cut_type") == "product"
                         or selected_meta.get("detail_recipe") or root_meta.get("detail_recipe")):
                     raise _bad_request("similar_source_unsupported", "비슷한 컷은 착용 사진에서 만들 수 있어요.")
@@ -3535,6 +3571,17 @@ async def generate_editor_image(
                 if source_asset_id
                 else None
             )
+            historical_cut_type = (provenance or {}).get("cut_type")
+            if historical_cut_type and historical_cut_type not in cut_generator.CUT_TYPES:
+                raise _bad_request("unknown_cut_type", "지원하지 않는 컷 종류예요.")
+            if (is_similar and not historical_cut_type and not root_meta.get("cut_type")
+                    and root_asset.get("source") == "ai"):
+                from .agents import asset_recipe
+                legacy_recipes = await asset_recipe.resolve_asset_recipes(
+                    conn, user_id, project_id, list(dict.fromkeys([source_asset_id, selected_id])))
+                if any(record.get("cutType") and record["cutType"] not in cut_generator.CUT_TYPES
+                       for record in legacy_recipes.values()):
+                    raise _bad_request("unknown_cut_type", "지원하지 않는 컷 종류예요.")
             if provenance and provenance.get("real_derived") is True:
                 snapshot = provenance.get("facemarket")
                 model_id = (
@@ -3805,6 +3852,8 @@ async def generate_detail_page(
         try:
             generation_storyboard = content_roles.canonicalize_storyboard(storyboard)
         except ValueError as exc:
+            if str(exc) == "unknown_cut_type":
+                raise _bad_request("unknown_cut_type", "지원하지 않는 컷 종류예요.") from exc
             if str(exc) == "invalid_similar_cut_relationship":
                 raise _bad_request("invalid_similar_cut_relationship", "비슷한 컷의 원본 사진 카드를 확인해 주세요.")
             raise

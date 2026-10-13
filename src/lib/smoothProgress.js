@@ -23,6 +23,12 @@ export const PROGRESS_CEILING = 99;
 /** 기어오름 시상수 = expectedMs × 이 값. 클수록 느리고 완만하게 기어간다. */
 const CREEP_RATIO = 0.8;
 
+/** 대기 중에는 남은 거리의 65%만 쓰고 나머지는 완료 마무리에 남긴다. */
+export const CREEP_SHARE = 0.65;
+
+/** 완료 신호 뒤 100%까지 채우는 최대 시간. */
+export const FINISH_MS = 700;
+
 /* 예상 소요시간 — 전부 코드에 근거가 남아 있는 실측값이다.
    임의로 늘리면 바가 실제보다 느리게 기고, 줄이면 일찍 천장에 붙어 멈춘 것처럼 보인다. */
 export const EXPECTED_MS = {
@@ -38,19 +44,20 @@ const clampPercent = (v) => Math.max(0, Math.min(100, Number(v) || 0));
 
 const creepTau = (expectedMs) => Math.max(1, (Number(expectedMs) || 1) * CREEP_RATIO);
 
-/** 앵커(base)에서 ageMs 만큼 기어오른 값. 천장에 점근할 뿐 닿지는 않는다. */
+/** 앵커(base)에서 ageMs 만큼 기어오른 값. 완료 몫을 남긴 한계에 점근한다. */
 export function creepTarget({ base, ageMs, expectedMs, ceiling = PROGRESS_CEILING }) {
   const from = clampPercent(base);
   if (from >= ceiling) return from;
   const age = Math.max(0, Number(ageMs) || 0);
-  return from + (ceiling - from) * (1 - Math.exp(-age / creepTau(expectedMs)));
+  return from + (ceiling - from) * CREEP_SHARE * (1 - Math.exp(-age / creepTau(expectedMs)));
 }
 
 /** creepTarget 의 역함수 — value 가 base 기준 곡선 위 몇 ms 지점인지. 앵커를 옮길 때 쓴다. */
 export function creepAge({ base, value, expectedMs, ceiling = PROGRESS_CEILING }) {
   const from = clampPercent(base);
   if (from >= ceiling) return 0;
-  const frac = (Math.min(Number(value) || 0, ceiling) - from) / (ceiling - from);
+  const room = (ceiling - from) * CREEP_SHARE;
+  const frac = (Math.min(Number(value) || 0, from + room) - from) / room;
   if (!(frac > 0)) return 0;
   return -Math.log(1 - Math.min(frac, 0.999999)) * creepTau(expectedMs);
 }
@@ -80,6 +87,10 @@ export function initialProgressState(startedAt = 0) {
     baseAt: Number.isFinite(started) && started !== 0 ? started : null,
     displayed: 0,
     at: null,
+    velocity: 0,
+    finishAt: null,
+    finishFrom: 0,
+    finishVelocity: 0,
   };
 }
 
@@ -132,6 +143,25 @@ export function advanceProgress(state, {
 }) {
   const prev = state || initialProgressState();
   const at = timeOr(prev.at, now);
+  const dt = Math.max(0, now - at);
+
+  if (done || prev.finishAt != null) {
+    const finishAt = timeOr(prev.finishAt, now);
+    const finishFrom = prev.finishAt == null ? prev.displayed : prev.finishFrom;
+    const finishVelocity = prev.finishAt == null
+      ? Math.max(0, Number(prev.velocity) || 0) : prev.finishVelocity;
+    const remaining = 100 - finishFrom;
+    // 출발 속도가 높으면 시간을 줄인다. 감속 없이 700ms 이내에 끝나야 한다.
+    const duration = finishVelocity > 0
+      ? Math.min(FINISH_MS, remaining / (2 * finishVelocity)) : FINISH_MS;
+    const age = Math.max(0, now - finishAt);
+    const displayed = remaining <= 0 || age >= duration ? 100
+      : Math.max(prev.displayed, Math.min(100, finishFrom + finishVelocity * age
+        + (remaining - finishVelocity * duration) * (age / duration) ** 2));
+    return { ...prev, displayed, at: now, finishAt, finishFrom, finishVelocity,
+      velocity: dt > 0 ? (displayed - prev.displayed) / dt : finishVelocity };
+  }
+
   let base = prev.base;
   let baseAt = timeOr(prev.baseAt, now);
 
@@ -147,11 +177,10 @@ export function advanceProgress(state, {
     baseAt = now - ahead;
   }
 
-  const target = done
-    ? 100
-    : Math.min(ceiling, creepTarget({ base, ageMs: now - baseAt, expectedMs, ceiling }));
+  const target = Math.min(ceiling, creepTarget({ base, ageMs: now - baseAt, expectedMs, ceiling }));
   const displayed = nextDisplayProgress({
-    displayed: prev.displayed, target, dtMs: now - at, catchUpMs,
+    displayed: prev.displayed, target, dtMs: dt, catchUpMs,
   });
-  return { base, baseAt, displayed, at: now };
+  return { ...prev, base, baseAt, displayed, at: now,
+    velocity: dt > 0 ? (displayed - prev.displayed) / dt : prev.velocity };
 }

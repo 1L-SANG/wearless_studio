@@ -1,8 +1,8 @@
 # 공통 데이터 계약 (Common Data Contract)
 
-> 상태: 확정 (2026-06-11, 갱신 2026-07-18) · 근거: `documents/PRD.md`, mock 구현(`src/lib/types.js`, `src/mock/*`), 2026-06-11·06-14·07-17·07-18 결정 세션
+> 상태: 확정 (2026-06-11, 갱신 2026-07-18) · 근거: `documents/PRD.md`, 프론트 API·목 구현(`src/lib/api/`, `src/mock/*`), 2026-06-11·06-14·07-17·07-18 결정 세션
 > 결정 기록: `docs/adr/0001~0007`, 용어는 `/CONTEXT.md`
-> 적용 방식: 이 문서가 계약의 원본이다. `src/lib/types.js`와 mock 레이어를 이 계약에 맞추고, 백엔드(FastAPI·Supabase·R2)와 AI 파이프라인은 같은 shape를 구현한다. 현행 코드와의 차이(마이그레이션 갭)는 `documents/TODO.md`가 추적한다 — 문서와 코드가 다르면 문서가 맞다.
+> 적용 방식: 이 문서가 계약의 원본이다. 프론트 API·목 레이어를 이 계약에 맞추고, 백엔드(FastAPI·Supabase·R2)와 AI 파이프라인은 같은 shape를 구현한다. 현행 코드와의 차이(마이그레이션 갭)는 루트 `TODOS.md`가 추적한다 — 충돌 시 해당 기능의 현행 ADR과 사용자 결정을 함께 확인한다.
 
 ---
 
@@ -29,7 +29,7 @@ Project {
   composeMode: ComposeMode         // 기본 'basic'
   copywriting: boolean             // 기본 true
   selectedMannequinId: string | null
-  adjustCount: number              // @deprecated legacy — 조정 횟수 제한 폐기(fitProfile 재생성 흐름, mannequinAdjustMax=undefined)
+  adjustCount?: number             // 과거 저장값 읽기 전용. 새 입력·제한·프론트 동기화에 사용하지 않음
   createdAt: string                // ISO
   updatedAt: string                // ISO
 }
@@ -46,7 +46,8 @@ ProjectSummary {                   // 보관함 카드 (구 LibraryItem)
 ```
 
 - `composeMode` `copywriting` `selectedMannequinId`는 **서버 동기화 대상 선택값**이다. 프론트는 Zustand에 작업 사본을 두고 변경 시 `patchProject`로 동기화한다 (→ `frontend_state_model.md`).
-- **조정 횟수 제한(구 2회/프로젝트)은 폐기됐다** (2026-07, fitProfile 재생성 흐름 — PRD §7.4). 조정 반영은 재생성(`mannequinGenerate` 크레딧)으로만 이뤄지므로 크레딧이 자연 제한이다. `adjustCount`는 legacy 서버 필드로 남아 있을 뿐 어떤 제한에도 쓰이지 않는다(`LIMITS.mannequinAdjustMax` deprecated).
+- 핏 설정은 `analysis.fitProfile`로 저장하고 이미지 반영은 재생성으로 처리한다. 재생성 횟수 제한은 없으며 적용 단가·무료 수정 정책은 PRD §12.2를 따른다.
+- `adjustCount`와 컷의 과거 조정 필드는 저장값 읽기 호환용이며 새 요청이나 제한 근거로 쓰지 않는다.
 
 ---
 
@@ -108,6 +109,7 @@ Analysis {
   materials: Material[]            // Material { name: string(자유 텍스트), ratio: number(%) }
   sellingPoints: string[]          // 자유 텍스트, max LIMITS.sellingPointMax(5)
   aiSuggestedPoints: string[]      // max LIMITS.aiSuggestedPointMax(2)
+  mdComment: string                // 셀러 직접 입력 선택 메모. 기본값 ''. 앞뒤 공백 제거 후 최대 300자
   selectedModelId: string          // catalogs.models 참조
   matchCandidates: MatchClothing[] // AI가 제안한 매칭 의류 후보
   matchSelections: { clothingId: string, role: 'main' | 'sub' }[]   // max 2
@@ -144,6 +146,9 @@ MatchClothing {
 //       Analysis.washCare (세탁 안내는 분석이 아니라 에디터 자동 블록 — M-02 규칙 기반 생성, PRD §10.14)
 ```
 
+`mdComment`는 지금은 저장만 하고 AI 입력에는 쓰지 않는다. 템플릿이 확정된 뒤 연결한다.
+문자열이 아닌 값은 저장할 수 없다. `merge=1`에서 `null`은 기존 병합 규칙에 따라 키를 삭제한다.
+
 `garmentColorEvidence`는 기존 13개 색상 계열/색상명을 HEX로 바꾸는 값이 아니다. 사진 분석은 이 값을 만들지 않는다. 셀러가 콘티보드에서 마네킹컷으로 넘어갈 때 서버가 필요할 때만 만든다. 필요 조건은 `horizonBackgroundMode='garment-tone'`인 호리존 세트 멤버가 있고 그 대상 색상의 측정 결과가 없는 경우다. 해당 색상의 첫 Front와 첫 Back 원본에서 관찰기는 판매 의류 안쪽 영역만 제안하고, 서버가 사진을 먼저 줄인 뒤 sRGB로 변환한 픽셀에서 색을 측정한다. 측정이 실패해도 이동은 막지 않는다. 생성이 시작될 때 필요한 색의 측정 결과가 아직 없으면(이동 때 측정이 끝나지 않았거나 실패했거나 측정 없이 넘어간 경우) 상세페이지 생성이 한 번 더 측정한다. 끝내 근거가 없으면 배경은 기존 예시를 유지한다. 사진의 관찰색이며 실물색 보정/인증 값은 아니다.
 
 공개 요약은 `{ version: 1, clothingType, colors: [{ colorId, status: 'ready'|'unavailable', reason, observedHex?, backgroundStatus: 'ready'|'reference', backgroundReason, backgroundPolicyVersion }] }`이다. 측정 성공과 배경 변경 가능은 별도 상태다. 프런트는 지원 세트이면 선택을 허용하고 의도만 저장한다. 요약이 없거나, 현재 의류 종류나 정책 버전과 맞지 않거나, 세트의 대상 색상 중 결과가 없는 색이 있으면 아직 측정 전으로 보고 선택을 막거나 reference로 되돌리지 않는다. 대상 색상에 앞면이나 뒷면 사진이 없으면 서버가 잴 수 없으므로 바로 선택을 끄고 이유를 보여 준다. 그 밖에는 대상 색상의 결과가 `unavailable`이거나 `backgroundStatus`가 `reference`일 때만 선택을 끄고 이유를 보여 준다.
@@ -152,22 +157,22 @@ MatchClothing {
 
 ### 3.3 MannequinCut — 마네킹 컷 버전 (단일컷 전환)
 
-마네킹컷은 **단일 컷 + 버전 스트립**이다(구 A/B 2후보안 폐기, 2026-07). 현재 선택 핏은 `analysis.fitProfile`(→ `fit_profile_spec.md`)에 두고, 각 컷은 자신을 실제로 만든 fitProfile 스냅샷을 원본 asset metadata에 함께 보관한다.
+마네킹컷은 **단일 컷 + 버전 스트립**이다. 현재 선택 핏은 `analysis.fitProfile`(→ `fit_profile_spec.md`)에 두고, 각 컷은 자신을 실제로 만든 fitProfile 스냅샷을 원본 asset metadata에 함께 보관한다.
 
 ```ts
 MannequinCut {
   id: string                       // `${candidate}-${version}`
-  candidate: 'A' | 'B'             // @deprecated 단일컷 전환 후 legacy id/API 호환용 — 항상 'A'
+  candidate: 'A' | 'B'             // 과거 저장값 읽기 호환용. 신규 단일컷은 'A'이며 후보 선택 기능 없음
   version: number
   src: string                       // 화면/생성 입력용 resolved asset URL. 톤 조정본이 있으면 최신 mannequinToneAdjusted asset, 없으면 원본 컷 asset
   baseFit: Fit                     // 생성 시 핏 (구 fitLabel '정핏'/'슬림핏')
-  fitAdjust: AdjustFit | null      // @deprecated — FitProfile로 대체
-  lengthAdjust: AdjustLength | null // @deprecated — FitProfile로 대체
+  fitAdjust: AdjustFit | null      // 과거 저장값 읽기 전용. 현재 핏은 FitProfile이 소유
+  lengthAdjust: AdjustLength | null // 과거 저장값 읽기 전용
   matchAdjust: {
     clothingId: string
     fitAdjust: AdjustFit | null
     lengthAdjust: AdjustLength | null
-  } | null                         // @deprecated — 매칭 핏은 fitProfile.matchCut이 소유
+  } | null                         // 과거 저장값 읽기 전용. 현재 매칭 핏은 fitProfile.matchCut이 소유
   fitProfile: FitProfile | null    // 이 버전을 만든 핏. null은 "사진 그대로"
   fitProfileRecorded: boolean      // false면 스냅샷이 없던 구버전 컷이며 analysis.fitProfile 폴백
 }
@@ -195,11 +200,11 @@ StoryboardBlock {
   title?: string                   // @deprecated 전환기 표시 캐시. contentRole에서 다시 계산
   source: BlockSource              // 'ai' | 'mine'
   cutType: CutType | null          // 생성 레시피. 콘티 인스펙터에서 섹션별 허용 컷을 직접 선택. source='mine'이면 null
-  direction?: Direction | ProductDirection | null   // 착용컷은 생성예시에서 파생(ADR-0015). 제품컷은 셀러가 고른 원본 사진의 면이고 대상이 있는 디테일은 대상의 원본 면이다. 예시는 제품컷 방향을 바꾸지 않는다(ADR-0008 2026-10-10 개정). mirror는 null (ADR-0004)
+  direction?: Direction | ProductDirection | null   // 착용컷은 생성예시에서 파생(ADR-0015). 제품컷은 셀러가 고른 원본 사진의 면이고 대상이 있는 디테일은 대상의 원본 면이다. 예시는 제품컷 방향을 바꾸지 않는다(ADR-0008 2026-10-10 개정)
   shot?: ShotType | ProductShotType
   detailTargetId?: string | null   // product/detail 촬영 대상. 서버 소유 분석 후보 ID만 선택; 좌표·사실은 서버에서 원본 검증 후 해석
   detailTargetOrigin?: 'auto' | 'user' // 추천 생성과 수동 선택/해제 구별. 사용자 편집을 재추천으로 덮지 않음
-  outerClosureState?: OuterClosureState | null       // 아우터 착용컷(styling·horizon·mirror) 전용. 누락·모르는 값은 open (ADR-0018)
+  outerClosureState?: OuterClosureState | null       // 아우터 착용컷(styling·horizon) 전용. 누락·모르는 값은 open (ADR-0018)
   colorId?: string                 // ColorGroup.id (단수 — 컬러별 컷은 블록을 색상마다 분리)
   matchIds: string[]               // 매칭 의류 후보 id (UI는 최대 1개, 배열 shape은 구 저장분 호환용)
   faceExposure: FaceExposure       // 기본 'same'
@@ -225,12 +230,12 @@ StoryboardBlock {
 불변식:
 
 - 자동 콘티의 섹션 순서는 `hooking → styling → studio → product`다. `구매 정보`와 `같은 장소`는 섹션을 만들지 않는다.
-- `hero|benefit`은 `hooking`, `coordination|realWear`는 `styling`, `fit`은 `studio`, `productOverview|detail`은 `product` 섹션에 속한다. `custom`은 사용자가 놓은 섹션을 따른다.
+- `hero|benefit`은 `hooking`, `coordination`은 `styling`, `fit`은 `studio`, `productOverview|detail`은 `product` 섹션에 속한다. `custom`은 사용자가 놓은 섹션을 따른다.
 - AI 카드의 `contentRole`은 사용자 입력값이 아니다. `hooking`은 카드 순서, `styling|studio`는 섹션과 `cutType`, `product`는 선택한 `shot`으로 자동 배정한다. `hooking` 섹션의 첫 AI 카드만 `hero`다. 이동·복제·삭제·순서 변경·컷·샷 변경·되돌리기와 서버 저장에서 다시 정규화한다.
 - `source='mine'`은 `cutType=null`, `contentRole='custom'`이다. 현재 UI에서 내 이미지는 AI 사진 목적을 다시 고르지 않으며, 어느 큰 섹션에 놓였는지는 `sectionRole`로 따로 저장한다. 내 이미지는 컷 종류가 아니다.
-- `cutType`은 생성 레시피 값이지만 콘티 인스펙터에서 컷 종류로 직접 고른다. `hooking`은 `styling | horizon`, `styling`은 `styling | mirror`, `studio`는 `horizon`만 허용한다. `product`는 `cutType='product'`로 고정하고 `ghost | detail` 샷을 고른다.
+- `cutType`은 생성 레시피 값이지만 콘티 인스펙터에서 컷 종류로 직접 고른다. `hooking`은 `styling | horizon`, `styling`은 `styling`, `studio`는 `horizon`만 허용한다. `product`는 `cutType='product'`로 고정하고 `ghost | detail` 샷을 고른다.
 - 생성예시 갤러리는 서로 다른 `cutType`을 섞지 않는다. 현재 카드의 `cutType`과 샷·성별·적용 의류 종류가 정확히 맞는 예시만 3열 2줄, 페이지당 최대 6장씩 보여 주고 나머지는 옆 페이지로 넘겨 모두 볼 수 있다. 예시 선택이 `cutType`을 바꾸지는 않는다.
-- `contentRole='detail'`은 상품 전체 색상 중 `ImageAsset.slot='Detail'` 입력이 하나 이상 있으면 유효하다. 목표 `colorId`에 Detail이 없으면 기준색, 그다음 Detail 보유 첫 색상의 사진을 구조·재질 근거로 쓰고 색만 목표 색상군으로 전환한다.
+- `contentRole='detail'`은 셀러 원본의 확인 가능한 부분을 근거로 만든다. 별도 `Detail` 슬롯 사진은 필수 조건이 아니다. 선택한 `detailTargetId`의 원본 바인딩과 영역을 서버가 검증하며, 입력·검수는 ADR-0012, 후보 선택·발행은 ADR-0014를 따른다.
 - `taxonomyVersion: 3`만 새로 저장한다. v2의 `benefit`은 `hooking`, `fit`은 `cutType='horizon'`이거나 `contentRole='fit'`이면 `studio`, 그 외에는 `styling`으로 읽을 때 자동 승격한다.
 - `sectionTitle`과 `title`은 현재 구현의 전환기 캐시일 뿐 기준 데이터가 아니다. 읽을 때 enum 라벨로 덮어쓰며, 후속 정리에서 저장 shape에서 제거한다.
 - 공개된 정상 조합의 `source='ai'` 블록은 자동 배정 뒤 `exampleId`가 사실상 필수다. 같은 공간의 pose·방향 호환 자산이 0장인 예외에는 미배정 상태와 오류 안내를 유지하며 `all`로 강등하지 않는다.
@@ -247,9 +252,8 @@ StoryboardBlock {
 | `benefit` | `hooking` | `styling` 또는 `horizon` | 사람용 ShotType · front/back/side |
 | `coordination` | `styling` | `styling` | 사람용 ShotType · front/back/side |
 | `fit` | `studio` | `horizon` | 사람용 ShotType · front/back/side |
-| `realWear` | `styling` | `mirror` | full/medium · direction=null |
 | `productOverview` | `product` | `product` | ghost · front/back |
-| `detail` | `product` | `product` | detail · front/back · 상품 전체 중 Detail 입력 필수 |
+| `detail` | `product` | `product` | detail · front/back · 검증된 셀러 원본 근거 |
 | `custom` | 현재 놓인 섹션 | `null` | 직접 업로드한 내 이미지. AI 생성 옵션 없음 |
 
 어댑터와 서버는 이 표에 맞지 않는 조합을 그대로 저장하거나 생성기에 보내지 않는다. 섹션·컷·샷이 바뀌면 내부 목적과 유효 옵션을 다시 맞추되, 섹션에서 허용된 사용자 컷 선택을 이전 `contentRole`의 기본 레시피로 덮어쓰지 않는다.
@@ -308,6 +312,9 @@ Element (type='text') + {
   text: string                     // 자유 텍스트
   placeholder?: string             // text가 비었을 때 편집 화면에만 보이는 안내 문구. 정본·미리보기·내보내기에는 포함하지 않음
   style: TextStyle                 // h는 렌더 시 auto
+  textSizing?: 'auto' | 'fixed'  // 수동 추가 기본 auto
+  sourceBlockId?: string           // 생성 카피가 연결된 콘티 블록 ID
+  copyRole?: string               // 생성·대기 화면 카피 병합 키
 }
 Element (type='shape') + {
   shape: ShapeId
@@ -414,8 +421,8 @@ Account { name: string, avatar: string, credits: number, plan: PlanTier }
 | Fit | `slim` `regular` `semi_over` `over` | 슬림핏/정핏/세미오버/오버핏 | |
 | ComposeMode | `basic` `extended` | 기본형/확장형 | 같은 섹션 구조에서 사진 수만 다름. 이 두 값 외에는 읽기·쓰기 모두 거부 |
 | **StoryboardSectionRole** | `hooking` `styling` `studio` `product` | 후킹/스타일링/스튜디오/의류 확인 | 사용자에게 보이는 공식 4섹션, 순서 고정 (ADR-0005) |
-| **ContentRole** | `hero` `benefit` `coordination` `fit` `realWear` `productOverview` `detail` `custom` | 첫 장면/핵심 장점/코디 활용/핏 확인/실제 착용 느낌/제품 전체/디테일/직접 구성 | 콘티에서는 비노출 자동값. 후킹은 순서, 스타일링·스튜디오는 섹션과 컷, 의류 확인은 샷으로 파생. 에디터 새 이미지 추가에서는 현행 목적 선택값 (ADR-0005) |
-| **CutType** | `styling` `horizon` `product` `mirror` | 스타일링컷/호리존컷/제품컷/거울샷 | 생성 레시피 값. 후킹은 styling/horizon, 스타일링은 styling/mirror, 스튜디오는 horizon, 의류 확인은 product만 허용 (ADR-0003~0005) |
+| **ContentRole** | `hero` `benefit` `coordination` `fit` `productOverview` `detail` `custom` | 첫 장면/핵심 장점/코디 활용/핏 확인/제품 전체/디테일/직접 구성 | 콘티에서는 비노출 자동값. 후킹은 순서, 스타일링·스튜디오는 섹션과 컷, 의류 확인은 샷으로 파생. 에디터 새 이미지 추가에서도 컷·샷에서 파생하는 내부값 (ADR-0005) |
+| **CutType** | `styling` `horizon` `product` | 스타일링컷/호리존컷/제품컷 | 생성 레시피 값. 콘티 인스펙터는 섹션과 무관하게 세 촬영 방식의 선택지를 제공하며 내부 역할은 자동 결정 (ADR-0003~0005) |
 | **BlockSource** | `ai` `mine` | AI 생성/내 이미지 | ★ 신설 — '내 이미지'는 컷 종류가 아님 |
 | AutoBlockKind | `size` `care` `ai-notice` | 사이즈/세탁/AI 생성 안내 | 2026-06-09 결정 유지 |
 | EditorInfoType | `materials` `options` `shipping_returns` `required_notice` `benefit_copy` `fit_copy` `model_info` `fabric_properties` `color_description` `brand_story` `faq` `reviews` `related_products` `promotion` `social` `header` `fit_guide` `size_matrix` | 에디터의 구매 정보·문구·선택 콘텐츠 | `kind='info'`일 때 사용. AutoBlockKind 3종과 겹치지 않음. ★ `header`(타이포 상품명 헤더)·`fit_guide`(핏 도식 비교)·`size_matrix`(키×몸무게 추천 사이즈)는 2026-07-29 상세페이지 분석에서 승격 (§3.5.1) |
@@ -423,7 +430,7 @@ Account { name: string, avatar: string, credits: number, plan: PlanTier }
 | Direction | `front` `back` `side` | 정면/뒷면/사이드 | 모델 컷용 |
 | ProductDirection | `front` `back` | 앞면, 뒷면 | 고른 원본 사진의 면. 화면은 `productSourcePhotos`의 사진 고르기로 보여준다(ADR-0008 2026-10-10 개정) |
 | ShotType | `full` `medium` | 풀샷/중간샷 | 서비스 착용컷은 두 값만 쓴다. 생성예시 선별 도구의 `medium_knee`는 수집 원본 `knee`·`medium`을 합치는 선별 전용 토큰이며 서비스 저장값이 아니다(ADR-0007) |
-| ProductShotType | `ghost` `detail` | 고스트샷/디테일샷 | 고스트샷은 옷 전체이며 기본은 입은 듯한 부피, 플랫레이 생성예시를 고르면 펼친 표현·구도를 따른다. 기존 `flatlay` 입력은 `ghost`로 정규화. `detail`은 상품 전체 중 Detail 입력 사진 필요. 목표 색상에 없으면 타색 Detail의 구조·재질을 유지하고 색만 전환 |
+| ProductShotType | `ghost` `detail` | 고스트샷/디테일샷 | 고스트샷은 옷 전체이며 기본은 입은 듯한 부피, 플랫레이 생성예시를 고르면 펼친 표현·구도를 따른다. 기존 `flatlay` 입력은 `ghost`로 정규화. `detail`은 셀러 원본과 촬영 대상의 확인 가능한 부분을 생성·검수 근거로 사용하며, 별도 Detail 슬롯 사진을 필수로 요구하지 않음(ADR-0012·0014) |
 | **OuterClosureState** | `closed` `openToChest` `partial` `openToWaist` `open` | 전체 닫힘/가슴까지/반만 열림/배까지/전체 열림 | 아우터 착용컷 전용. 화면 위에서 아래 순서. 누락·모르는 값은 `open`, 그 외 컷·카테고리에서는 무시. `openToChest`·`openToWaist`는 2026-10-10 추가, `partial`은 "명치 아래까지"로 뜻을 좁힘. 두 칸 옷은 `closed`·`open`만 쓴다(ADR-0018) |
 | **ProjectStatus** | `draft` `generating` `done` | 초안/생성 중/완료 | ★ 신설 |
 | **PlanTier** | `basic` `plus` `seller` | Basic/Plus/Seller | ★ 신설 — 라벨 대문자, 토큰 소문자 |
@@ -433,8 +440,8 @@ Account { name: string, avatar: string, credits: number, plan: PlanTier }
 | SwatchId | `white` `gray` `black` `ivory` `beige` `brown` `purple` `red` `yellow` `green` `blue` `navy` `pink` | 13색 팔레트(purple 2026-08-15 추가) | MONOTONE_SWATCHES = white·gray·black·ivory·beige |
 | **StyleTag** | `basic` `daily` `minimal` `casual` `formal` `classic` `sporty` `trendy` `street` `chic` `feminine` `lovely` `romantic` `vintage` `retro` `modern` `luxury` `preppy` `workwear` `athleisure` `cozy` `unique` `sophisticated` `y2k` | 베이식/데일리/미니멀/캐주얼/포멀/클래식/스포티/트렌디/스트릿/시크/페미닌/러블리/로맨틱/빈티지/레트로/모던/럭셔리/프레피/워크웨어/애슬레저/코지/유니크/소피스티케이티드/Y2K | ★ 닫힌 enum(24) — AG-01 `styleTags` 출력·M-01 매칭 친화도(`style_affinity`) 공통 정본. 단일 소스 = `server/app/agents/style_tags.py`. 앞 8=affinity 부트스트랩, 뒤 16=운영자 확장. 저장 안 함(중간 산출물) |
 | **MeasurementKey** | `totalLength` `shoulderWidth` `chestWidth` `sleeveLength` `waistWidth` `hipWidth` `thighWidth` `rise` `hemWidth` `armhole` | 총장/어깨너비/가슴단면/소매길이/허리단면/엉덩이단면/허벅지단면/밑위/밑단단면/암홀 | ★ 한국어 키 → 토큰화 |
-| **AdjustFit** | `slimmer` `looser` | 더 슬림하게/더 여유있게 | '현재' = 파라미터 생략 |
-| **AdjustLength** | `shorter` `longer` | 더 짧게/더 길게 | |
+| **AdjustFit** | `slimmer` `looser` | 더 슬림하게/더 여유있게 | 과거 저장값 읽기 전용. 새 요청은 FitProfile 사용 |
+| **AdjustLength** | `shorter` `longer` | 더 짧게/더 길게 | 과거 저장값 읽기 전용. 새 요청은 FitProfile 사용 |
 | FaceExposure | `same` `show` `hide` | 동일/노출/비노출 | |
 | CameraAngle | `same` `low` `high` | 동일/로우/하이 | |
 | PoseId | `auto` `stand` `walk` `sit` `lean` `turn` | AI 자동/서기/걷기/앉기/기대기/돌아보기 | |
@@ -480,18 +487,17 @@ GenerationExample {
 - 스타일링 공용은 사람 검토를 거친 풀샷 `[top,outer]`만 허용한다. 일반 호리존 풀샷은 성별이 지원하는 전 의류, 호리존 중간샷은 상단 크롭 계열(여성 `[top,outer,dress]`, 남성 `[top,outer]`)끼리 공유한다. 하의 중간샷은 `[bottom]` 전용이다(ADR-0006).
 - UI와 서버는 현재 `Product.clothingType`이 적용 목록에 있는지 검증한다. 목록은 `StoryboardBlock`에 복제하지 않고 `exampleId`가 가리키는 생성예시 정본에서 읽는다.
 - `refScope`는 예시에서 전부·배경·포즈 중 무엇을 참고할지 나타내는 별도 축이며 의류 종류 적용 범위로 재사용하지 않는다.
-- `refScope='all'`은 장소·조명·분위기·포즈·프레이밍·구성을 함께 참고하되 컷 종류별 배경 규칙을 적용한다. `styling | mirror`는 포즈 의미와 카메라 거리·헤드룸·인물 크기, 장소 유형·시간대·큰 색감·광원 논리·전체 분위기와 톤을 유지하면서 같은 시각적 가족의 자연스러운 다른 구체 장소를 만든다. 장소 차이를 위한 구조·가구·식물·간판·설비·소품 변경 개수는 두지 않으며, 없던 요소를 억지로 추가·이동하지 않는다. `horizon`은 같거나 거의 같은 일반적인 중립 스튜디오 배경·조명·그림자를 허용하며 강제로 다른 세트를 만들지 않는다(ADR-0011).
+- `refScope='all'`은 장소·조명·분위기·포즈·프레이밍·구성을 함께 참고하되 컷 종류별 배경 규칙을 적용한다. `styling`은 포즈 의미와 카메라 거리·헤드룸·인물 크기, 장소 유형·시간대·큰 색감·광원 논리·전체 분위기와 톤을 유지하면서 같은 시각적 가족의 자연스러운 다른 구체 장소를 만든다. 장소 차이를 위한 구조·가구·식물·간판·설비·소품 변경 개수는 두지 않으며, 없던 요소를 억지로 추가·이동하지 않는다. `horizon`은 같거나 거의 같은 일반적인 중립 스튜디오 배경·조명·그림자를 허용하며 강제로 다른 세트를 만들지 않는다(ADR-0011).
 - `product`의 `all`은 제품 단독컷 계약으로 예시의 중립 배경·프레이밍·구성을 따를 수 있으며, 알아볼 수 있는 실제 장소 변주 규칙의 대상이 아니다.
 - `refScope='pose'`는 자세만 참고한다. `pose` 자산의 캔버스나 원본 크롭은 프레이밍 근거가 아니며 현재 카드의 `shot`과 `cutType`이 카메라 거리·몸 크기·크롭을 정한다.
 - `refScope='bg'`는 빈 장소 플레이트를 결과의 정확한 기본 무대로 사용하는 호환 하위 방식이다. 예시 인물의 포즈·몸 방향·프레이밍은 전달하지 않으며 현재 카드의 `shot`·`cutType`과 생성 조건이 새 인물의 포즈·프레이밍을 정한다. 신규 일반 생성예시 UI와 `all` 품질 실험에는 노출하지 않지만 과거 저장값·조건부 API 호환은 유지한다. 어느 범위에서도 예시 속 의류·신발·액세서리의 구체적인 디자인을 가져오지 않는다(ADR-0009, ADR-0011).
 - `pose`·`bg`는 선택적 전용 variant다. 전용 자산이 없으면 `all`로 대체하지 않으며, UI와 서버는 실제 발행된 variant만 사용 가능하다고 판단한다. 제품 `ghost | detail` 예시는 `all`만 사용한다.
-- 사용자가 고른 매칭 의류는 `styling | horizon | mirror` 모든 착용컷의 상품 고유 의류 기준이다. 판매 상품과 매칭 의류만 고유 디자인·색·구조의 근거로 쓰며, 이 둘이 제공하지 않은 코디 영역은 무지·무브랜드의 중립 기본 의류·신발로만 채울 수 있다. 제품 단독컷에는 매칭 의류를 적용하지 않는다.
+- 사용자가 고른 매칭 의류는 `styling | horizon` 모든 착용컷의 상품 고유 의류 기준이다. 판매 상품과 매칭 의류만 고유 디자인·색·구조의 근거로 쓰며, 이 둘이 제공하지 않은 코디 영역은 무지·무브랜드의 중립 기본 의류·신발로만 채울 수 있다. 제품 단독컷에는 매칭 의류를 적용하지 않는다.
 
 - **현행 추가**: `productSourcePhotos`(제품컷 원본 사진 고르기 라벨. `{ value: 'front', slot: 'Front', label: '내 앞면 사진' }`, `{ value: 'back', slot: 'Back', label: '내 뒷면 사진' }`, 2026-10-10에 `productDirections`를 대체), `productShotTypes`, `outerClosureStates`(아우터 열림 정도 5종, 화면 위에서 아래 순서. 항목은 `{ value, label, caption }`이며 caption은 카드 표시용: 가슴까지 열림, 배까지 열림), `measurementLabels`(key를 한국어로)
 - **로컬 의미 계약**: `storyboardSections`, `contentRoles`에 해당하는 값과 라벨은 `storyboardTaxonomy.js`가 제공한다. 카탈로그 응답과 중복 저장하지 않는다. `contentRoles` 라벨은 콘티보드에는 노출하지 않고 에디터의 `새 이미지 추가` 등 별도 흐름에서만 사용한다.
-- **후속**: `editorInfoTypes`는 구매 정보 UI 구현 때 카탈로그에 추가한다(`TODO.md`).
 - **컷 종류 노출 범위**: `CutType`은 생성 레시피의 정본이다. 콘티 인스펙터는 현재 섹션에서 허용된 값만 쉬운 라벨로 직접 고르게 하되, 별도 사용자 분류 enum·상단 탭·페이지 섹션으로 복제하지 않는다.
-- **생성예시 불변 릴리스 기록(2단계 운영 적용 완료, 2026-07-20; 소비 규칙 2026-07-21 개정)**: `server/tools/release_genexamples.py`가 확정 manifest를 검증해 서버 레지스트리 v2와 위 프론트 카탈로그를 같은 릴리스에서 만든다. QC 승인 예시 192개(`all` 192·`pose` 12·`bg` 14)와 파생 thumb 192개를 R2 불변 경로 `2026-07-19-pilot-qc-01`로 발행했다. 레지스트리 v2는 원본 variant URL·thumb·적용 의류 종류·컷·샷·성별을 함께 가진다. 프론트 `MoodGuide`는 실제 v2 JSON을 소비해 현재 카드의 `cutType`·샷·상품 종류·성별로 정확히 필터링하고 페이지당 최대 6장을 노출한다. 핏·코디의 세 착용 `cutType`을 한 갤러리에 섞지 않는다. 생성예시 원본·재생성본과 R2 릴리스 계약은 바꾸지 않는다.
+- **생성예시 불변 릴리스 기록(2단계 운영 적용 완료, 2026-07-20; 소비 규칙 2026-07-21 개정)**: `server/tools/release_genexamples.py`가 확정 manifest를 검증해 서버 레지스트리 v2와 위 프론트 카탈로그를 같은 릴리스에서 만든다. QC 승인 예시 192개(`all` 192·`pose` 12·`bg` 14)와 파생 thumb 192개를 R2 불변 경로 `2026-07-19-pilot-qc-01`로 발행했다. 레지스트리 v2는 원본 variant URL·thumb·적용 의류 종류·컷·샷·성별을 함께 가진다. 프론트 `MoodGuide`는 실제 v2 JSON을 소비해 현재 카드의 `cutType`·샷·상품 종류·성별로 정확히 필터링하고 페이지당 최대 6장을 노출한다. 서로 다른 착용 `cutType`을 한 갤러리에 섞지 않는다. 생성예시 원본·재생성본과 R2 릴리스 계약은 바꾸지 않는다.
 - **활성 생성예시 집합(2026-07-28 당시)**: 사용자 최종 제외 16개 ID는 활성 선택 원본·서비스 자산·프론트 카탈로그·서버 레지스트리에서 제거한다. 당시 활성 선택은 **191개(착용 169·제품 22)**이고, 생성 manifest의 기대 작업 수는 **529개(`all` 191 + `pose` 169 + `bg` 169)**였다. 당시 프론트·서버 활성 레지스트리는 **176개**를 소비했다. 제외 tombstone은 재선택·재생성을 막는 비활성 차단 기록으로만 남으며 카탈로그 항목으로 반환하지 않는다. 과거 선택 207개와 불변 R2 발행 192개는 감사·롤백 역사이므로 삭제하거나 덮어쓰지 않는다.
 - **아우터·원피스 개별 스타일링 보강 릴리스(2026-07-31, 이전 정본)**: 사용자 검토 52개 중 승인 43개와 수정 후 승인 2개를 합친 45개만 새 `all`로 발행하고 제외 7개는 발행하지 않았다. 기존 활성 176개를 함께 봉인한 불변 릴리스 `2026-07-31-individual-styling-01`에서 프론트·서버 활성 레지스트리는 **221개(착용 199·제품 22)**였다. R2는 `all` 221·`pose` 12·`bg` 14·결정적 WebP `thumb` 221, 총 **468개**이고 원격 key·파일 크기 전수 대조에서 누락·추가·불일치가 모두 0이었다. 신규 45개는 여성 아우터 13(풀 8·중간 5), 남성 아우터 16(풀 8·중간 8), 여성 원피스 16(풀 9·중간 7)이며, 이 여섯 스타일링 조합을 공개 조합표에 함께 열었다.
 - **상의·하의 개별 스타일링 보강 릴리스(2026-08-03, 현재 정본)**: 사용자 최종 확정 45개(여성 하의 11·여성 상의 12·남성 하의 11·남성 상의 11)를 포함한 불변 릴리스 `2026-08-03-individual-styling-01`이 현재 프론트·서버 카탈로그의 정본이다. 두 카탈로그는 같은 **254개(착용 244·제품 10)** ID를 소비한다. R2는 `all` 254·`pose` 12·`bg` 14·결정적 WebP `thumb` 254, 총 **534개**다. 2026-08-03 재검증에서 공개 R2 객체 534개를 다시 내려받아 로컬 봉인본과 SHA-256을 전수 대조했고 누락·추가·바이트 불일치가 모두 0이었다. 제작자 QC HOLD 8개는 사용자의 묶음별 최종 확정을 오너 승인으로 적용하되 원래 판정과 사유를 감사 기록에 보존한다.
@@ -517,7 +523,7 @@ GenerationExample {
 |---|---|---|---|
 | `createProject()` | — | `Project` | 새 제작 시작. 구 `resetDraft()` 대체 |
 | `getProject(projectId)` | | `Project` | |
-| `patchProject(projectId, patch)` | 선택값 patch | `Project` | 수용 필드 **화이트리스트**: composeMode·copywriting·selectedMannequinId만. **adjustCount·status는 서버 전용** — 페이로드에 오면 무시/거부(adjustCount는 legacy 필드, status는 생성 job의 부수효과로만 변경). frontend_state_model §6 |
+| `patchProject(projectId, patch)` | 선택값 patch | `Project` | 수용 필드 **화이트리스트**: composeMode·copywriting·selectedMannequinId만. `status`는 생성 job의 부수효과로만 바꾸고 `adjustCount`는 과거 저장값 읽기 전용으로 새 요청에 받지 않는다. frontend_state_model §6 |
 | `getLibrary()` | | `ProjectSummary[]` | |
 | `getAccount()` | | `Account` | |
 | `getCatalogs()` | | `Catalogs` | |
@@ -525,10 +531,9 @@ GenerationExample {
 | `saveProduct(projectId, patch)` | | `Product` | 실측·의류 종류 포함 (Product 소유) |
 | `analyzeProduct(projectId, { onProgress })` | | `Analysis` | 실측은 항상 null로 반환 |
 | `saveAnalysis(projectId, patch)` | | `Analysis` | |
-| `getMatchClothing(projectId)` | | `MatchClothing[]` | 각 항목의 `isCustom`·`isCompatible` 보존. **과도기 함수** — 마네킹·콘티 화면이 매칭 후보를 별도로 읽는다. 최종은 `analyzeProduct` 응답(`analysis.matchCandidates`)에 포함되어 제거 예정(TODO.md) |
+| `getMatchClothing(projectId)` | | `MatchClothing[]` | 각 항목의 `isCustom`·`isCompatible`을 보존한다. 분석·마네킹·콘티 화면이 같은 매칭 선택을 읽는다. |
 | `getMannequins(projectId)` | | `MannequinCut[]` | |
 | `generateMannequins(projectId, { onProgress })` | | `{ data: MannequinCut[], credits }` | `mannequinGenerate` · 페이지 최초 진입 시 자동 호출 |
-| `adjustMannequin(projectId, { baseId, fitAdjust?, lengthAdjust?, matchAdjust?, onProgress })` | enum 값만 | ~~`{ data: MannequinCut, credits }`~~ | **@deprecated (2026-07)** — fitProfile 재생성으로 통합, 페이지에서 미호출 (`mannequinAdjust`=0). 서버 `:adjust`는 항상 **410 Gone**(잡 미생성) |
 | `regenerateMannequin(projectId, { fitProfile, onProgress })` | 확인 스텝에서 확정한 FitProfile(축+matchCut) | `{ data: MannequinCut[], credits }` | `mannequinGenerate` · 요청 시에는 잡 스냅샷만 남기고, 성공 종결에서 새 버전과 analysis.fitProfile을 함께 확정·자동 선택 (구 `regenerateMannequins` 대체) |
 | `getStoryboard(projectId)` | | `StoryboardBlock[]` | 저장된 배열을 반환. 화면은 working copy를 만들기 전에 v2를 v3 공식 4섹션으로 승격하고 허용 컷·샷과 내부 역할을 정규화 |
 | `saveStoryboard(projectId, blocks)` | | `StoryboardBlock[]` | 생성 CTA 시 반드시 호출. taxonomyVersion=3만 저장 |
@@ -539,7 +544,7 @@ GenerationExample {
 | `generateImage(projectId, req)` | `NewCutRequest \| VaryRequest` (아래) | `{ data: WardrobeImage, credits, creditsCharged }` | 표시 단가는 `editorEdit` / `editorSimilar` / `editorImage`, 원장 action은 `editorImage` |
 | `fillEmptySlot(projectId, req)` | `FillRequest`와 필수 `idempotencyKey`, `onJobStarted`, `onProgress` | `{ data: WardrobeImage, credits, contextFill }` | `editorImage`, 계획 없는 칸만 받음 |
 | `uploadAsset(file)` | `File` | `ImageAsset` | 실서비스 계약 — mock은 `pickAnyImage()`(mock 전용 헬퍼)로 대행 |
-| `download(projectId, format)` | `'long' \| 'zip'` | `{ ok }` | 실제 렌더링은 P1 |
+| `download(projectId, format)` | `'long' \| 'zip'` | `{ ok }` | 에디터 실제 다운로드는 `editorExport.js`의 클라이언트 렌더가 담당한다 |
 
 ```ts
 NewCutRequest {                    // AI 탭 '새 이미지 추가'
@@ -552,7 +557,7 @@ NewCutRequest {                    // AI 탭 '새 이미지 추가'
   contentRole: ContentRole          // inferContentRole(cutType, shot)로 내부 자동 결정 — UI 선택 아님(콘티보드와 동일 규칙).
                                     // '첫 장면(hero)·핵심 장점(benefit)' 목적은 에디터 신규 생성에서 제거(2026-08-13 오너 결정)
   cutType: CutType                 // 에디터도 콘티보드처럼 컷 종류를 UI에서 직접 선택(2026-08-13 개편). 발행 예시 없는 컷 종류는 비활성
-  direction: Direction | ProductDirection | null   // mirror는 null, 방향 없음 (ADR-0004). 제품컷은 고른 원본 사진의 면 (ADR-0008 2026-10-10 개정)
+  direction: Direction | ProductDirection | null   // 제품컷은 고른 원본 사진의 면 (ADR-0008 2026-10-10 개정)
   shot: ShotType | ProductShotType
   modelId: string
   outerClosureState?: OuterClosureState | null  // 아우터 착용 이미지 전용 — 에디터 UI에 노출(2026-08-13), 기본값 open. 칸 수 규칙은 콘티와 같다(ADR-0018)
@@ -697,7 +702,7 @@ generation: {
 
 ## 7. 현행 코드와의 갭 (마이그레이션 TODO)
 
-→ **`documents/TODO.md` §1로 이관.** 코드가 이 계약을 아직 못 따라간 항목(✅ 완료 기록 + 🔶 남음 + 🆕 신규)은 작업 때마다 각 설계 문서를 고치지 않고 TODO.md 한곳에서 추적한다.
+→ **루트 `TODOS.md` §1로 이관.** 코드가 이 계약을 아직 못 따라간 항목(✅ 완료 기록 + 🔶 남음 + 🆕 신규)은 작업 때마다 각 설계 문서를 고치지 않고 TODOS.md 한곳에서 추적한다.
 
 ---
 

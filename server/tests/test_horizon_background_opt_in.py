@@ -70,7 +70,7 @@ def test_complete_reference_manifest_keeps_order_without_layout_input():
     assert "BACKGROUND LAYOUT" not in manifest and "POSE CONTROL" not in manifest
 
 
-@pytest.mark.parametrize("recipe", ["styling", "mirror", "product"])
+@pytest.mark.parametrize("recipe", ["styling", "product"])
 def test_other_cut_types_ignore_tone_and_keep_model_contract(recipe):
     settings = make_settings(model_image_high="configured-model")
     original = {"cutType": recipe}

@@ -41,7 +41,7 @@ function media(block = root, { locked = false, counts = new Map(), addSimilar = 
 }
 
 test('only eligible original cards offer a plain-text similar-cut button with the cut number', () => {
-  for (const cutType of ['horizon', 'styling', 'mirror']) {
+  for (const cutType of ['horizon', 'styling']) {
     const button = findClass(media({ ...root, cutType }), 'sb-similar-oncard');
     assert.ok(button, cutType);
     assert.equal(button.type, 'button');
@@ -53,7 +53,7 @@ test('only eligible original cards offer a plain-text similar-cut button with th
   }
   for (const block of [
     { ...root, similarSourceBlockId: 'original' }, { ...root, source: 'mine' },
-    { ...root, cutType: 'product' }, { ...root, cutType: null }, { ...root, exampleId: null },
+    { ...root, cutType: 'product' }, { ...root, cutType: 'mirror' }, { ...root, cutType: null }, { ...root, exampleId: null },
   ]) assert.equal(findClass(media(block), 'sb-similar-oncard'), undefined);
 });
 
@@ -78,7 +78,7 @@ test('similar-cut clicks call the existing action with the original ID and isola
 
 test('single, paired and four-cut layouts all render the same per-card controls', () => {
   const items = [root, { ...root, id: 'child', similarSourceBlockId: 'root' },
-    { ...root, id: 'product', cutType: 'product' }, { ...root, id: 'mirror', cutType: 'mirror' }]
+    { ...root, id: 'product', cutType: 'product' }, { ...root, id: 'styling', cutType: 'styling' }]
     .map((block, i) => ({ block, index: i + 1 }));
   controls = { locked: true, counts: new Map([['root', 1]]), addSimilar: () => {} };
   const shared = { total: 4, catalogs: {}, colorOpts: [], selectedId: 'root', locked: true,

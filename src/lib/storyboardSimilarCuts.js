@@ -2,7 +2,7 @@
 const RECIPE_FIELDS = ['cutType', 'shot', 'direction', 'sideStyle', 'colorId', 'colorIds', 'modelId', 'exampleId', 'exampleSelectionOrigin', 'refScope', 'refImages', 'refAssetIds', 'matchIds', 'matchIdsOrigin', 'outerClosureState', 'horizonBackgroundMode', 'spaceGroupId', 'spaceVariation', 'faceExposure', 'angle', 'thumb', 'previewThumb', 'baseThumb'];
 const excludedOwnership = key => /^(space|hook|colorway)/.test(key) && !['spaceGroupId', 'spaceVariation'].includes(key);
 export const canPlanSimilarCut = (block) => !!block && block.source === 'ai'
-  && ['styling', 'horizon', 'mirror'].includes(block.cutType)
+  && ['styling', 'horizon'].includes(block.cutType)
   && !block.similarSourceBlockId && !!block.exampleId;
 export function createSimilarCutBlock(source, id) {
   if (!canPlanSimilarCut(source)) throw new Error('착용 사진을 기준으로 비슷한 컷을 추가할 수 있어요.');
@@ -19,7 +19,7 @@ export function inheritSimilarCutRecipes(blocks) {
   const out = blocks.map(block => {
     if (!block.similarSourceBlockId) return block;
     const source = byId.get(block.similarSourceBlockId);
-    if (!source || source.source !== 'ai' || source.similarSourceBlockId || !['styling', 'horizon', 'mirror'].includes(source.cutType)) return block; // Preserve invalid dependencies for server validation.
+    if (!source || source.source !== 'ai' || source.similarSourceBlockId || !['styling', 'horizon'].includes(source.cutType)) return block; // Preserve invalid dependencies for server validation.
     const next = { ...block };
     for (const key of RECIPE_FIELDS) {
       if (key in source) next[key] = source[key]; else delete next[key];
@@ -41,8 +41,8 @@ export function reconcileSimilarCutMutation(previous, next) {
   const byId = new Map(next.map(block => [block.id, block]));
   const removed = new Set(previous.filter(block => {
     const current = byId.get(block.id);
-    return !current || (block.source === 'ai' && ['styling', 'horizon', 'mirror'].includes(block.cutType)
-      && (current.source !== 'ai' || !['styling', 'horizon', 'mirror'].includes(current.cutType)));
+    return !current || (block.source === 'ai' && ['styling', 'horizon'].includes(block.cutType)
+      && (current.source !== 'ai' || !['styling', 'horizon'].includes(current.cutType)));
   }).map(block => block.id));
   const cleaned = next.some(block => removed.has(block.similarSourceBlockId))
     ? next.filter(block => !removed.has(block.similarSourceBlockId)) : next;

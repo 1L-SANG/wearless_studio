@@ -344,7 +344,7 @@
 
 **고정된 생성 지시와 관측 기준만 사용하는 원칙은 유지해야 합니다.**
 
-셀러의 문장을 그대로 생성 지시로 보내지 않고, ‘목 파임 복원’ 같은 허용된 항목과 선택한 사진 근거를 서버가 정해진 지시로 변환합니다. 현재도 조정은 `promptEn`과 관측 문구를 사용합니다. [server/app/agents/mannequin_adjust.py:19](/Users/daily/Documents/wearless_studio/server/app/agents/mannequin_adjust.py:19)
+셀러의 문장을 그대로 생성 지시로 보내지 않고, ‘목 파임 복원’ 같은 허용된 항목과 선택한 사진 근거를 서버가 정해진 지시로 변환합니다. 현재도 조정은 `promptEn`과 관측 문구를 사용합니다. [server/app/agents/mannequin_fit_edit.py:19](/Users/daily/Documents/wearless_studio/server/app/agents/mannequin_fit_edit.py:19)
 
 필요한 변경은 다섯 영역입니다.
 
@@ -360,14 +360,14 @@
 
 - 최초 생성에는 상품의 확인된 구조와 기본 착용 목표를 넣습니다.
 - 현재 결과의 한 부위가 잘못됐으면 편집을 우선합니다.
-- 원본에서 확인되지 않은 구조는 현재 생성본을 근거로 확정하지 않습니다. 이는 현행 편집 프롬프트에도 있는 원칙입니다. [server/prompts/mannequin_adjust_v2.txt:9](/Users/daily/Documents/wearless_studio/server/prompts/mannequin_adjust_v2.txt:9)
+- 원본에서 확인되지 않은 구조는 현재 생성본을 근거로 확정하지 않습니다. 이는 현행 편집 프롬프트에도 있는 원칙입니다. [server/prompts/mannequin_fit_edit_v2.txt:9](/Users/daily/Documents/wearless_studio/server/prompts/mannequin_fit_edit_v2.txt:9)
 - 첫 출시에서는 한 번에 한 가지 복원 과제를 수행하는 편이 안전합니다. 넣어 입기 문제에서 부차 지시는 실패했고, 전용 과제로 분리한 이유가 기록돼 있습니다. 다만 이것이 모든 디테일 편집에 통한다는 것은 가설입니다. [server/app/agents/mannequin_untuck.py:9](/Users/daily/Documents/wearless_studio/server/app/agents/mannequin_untuck.py:9)
 
 기존 조정 경로에는 먼저 해결할 계약 문제가 있습니다.
 
 제공된 폴백 사유는 `invalid_fit_snapshot` 16건, `incompatible_parent` 2건, `no_adjust_directives` 2건입니다. 스냅샷이 존재한다는 사실만으로 편집 가능한 입력이라는 뜻은 아닙니다. 해당 기간 잡과 배포 버전을 연결해 각각의 원인을 확인해야 합니다. 이번 읽기만으로 원인을 특정하지는 않았습니다.
 
-또한 현재 변경 목록은 **이전 프로필과 달라진 값**으로 계산합니다. 같은 ‘레귤러’를 유지하면서 잘못 그려진 결과를 다시 바로잡고 싶은 요청이나 원본 복원 요청은 이 비교만으로 표현할 수 없습니다. ‘값 변경’과 별도로 **같은 목표 재적용, 원본 복원**이라는 작업 종류가 필요합니다. [server/app/agents/fit_axes.py:334](/Users/daily/Documents/wearless_studio/server/app/agents/fit_axes.py:334), [server/app/agents/mannequin_adjust.py:28](/Users/daily/Documents/wearless_studio/server/app/agents/mannequin_adjust.py:28)
+또한 현재 변경 목록은 **이전 프로필과 달라진 값**으로 계산합니다. 같은 ‘레귤러’를 유지하면서 잘못 그려진 결과를 다시 바로잡고 싶은 요청이나 원본 복원 요청은 이 비교만으로 표현할 수 없습니다. ‘값 변경’과 별도로 **같은 목표 재적용, 원본 복원**이라는 작업 종류가 필요합니다. [server/app/agents/fit_axes.py:334](/Users/daily/Documents/wearless_studio/server/app/agents/fit_axes.py:334), [server/app/agents/mannequin_fit_edit.py:28](/Users/daily/Documents/wearless_studio/server/app/agents/mannequin_fit_edit.py:28)
 
 검사는 기존 축 검사를 그대로 확대하는 것만으로 부족합니다.
 
@@ -516,7 +516,7 @@ Resume in Codex: codex resume 01a0812a-32b5-75d2-a23c-f48fc33ae570
 
 1. **큰 틀 축(핏, 기장, 소매, 컷, 실루엣)은 보조로 내려간다.** 두 안 모두 "선택 메뉴"에서 "내 옷과 달라진 부분을 바로잡는 화면"으로 중심을 옮기자고 했다. 소매 축은 민소매에 노출되는 것부터 잘못이므로 둘 다 숨기거나 삭제한다.
 2. **"이 부분이 달라요"를 가리키는 부위 지정과 고정 어휘 복원이 핵심 기능이다.** 자유 텍스트 비주입 원칙은 둘 다 유지한다. 한 번에 한 과제(untuck 선례)도 둘 다 채택했다.
-3. **편집 경로 정비가 선결 과제다.** 운영에서 셀러 조정이 재생성으로 폴백된 사유(invalid_fit_snapshot 16건)를 먼저 규명해야 한다. Codex는 여기에 더해 현재 조정 계약이 "이전 값과 달라진 축"만 표현하므로 "같은 값 재적용"과 "원본 복원"이라는 작업 종류가 새로 필요하다고 짚었다(`fit_axes.py:334`, `mannequin_adjust.py:28`). 타당하며 채택한다.
+3. **편집 경로 정비가 선결 과제다.** 운영에서 셀러 조정이 재생성으로 폴백된 사유(invalid_fit_snapshot 16건)를 먼저 규명해야 한다. Codex는 여기에 더해 현재 조정 계약이 "이전 값과 달라진 축"만 표현하므로 "같은 값 재적용"과 "원본 복원"이라는 작업 종류가 새로 필요하다고 짚었다(`fit_axes.py:334`, `mannequin_fit_edit.py:28`). 타당하며 채택한다.
 4. **최초 복원 1회는 서비스 부담.** 시스템이 틀린 것을 고치는 비용은 우리가 진다는 신호를 둘 다 제안했다.
 5. **구조 특징으로 항목을 켠다.** Claude안은 "종류가 아니라 구조 특징(앞여밈, 긴팔, 스트링)으로 켠다"고 했고, Codex안도 "자유 명칭 문자열이 아니라 민소매 여부, 후드 유무, 앞여밈 유무 같은 확인된 구조 정보가 필요하다"고 했다. 독립 작성에서 같은 결론에 도달했다.
 

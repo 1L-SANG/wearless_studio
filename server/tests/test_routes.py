@@ -40,6 +40,31 @@ def test_account_reads_retired_plans_as_free(client, make_token, monkeypatch, pl
     assert response.json()["plan"] == expected
 
 
+@pytest.mark.parametrize("body", [
+    {"mode": "new", "cutType": "mirror"},
+    {"mode": "new", "cut_type": "mirror"},
+    {"mode": "new", "cutType": "mirror", "contentRole": "coordination"},
+    {"mode": "vary", "source": {"cutType": "mirror"}},
+    {"mode": "vary", "source": {"cut_type": "mirror"}},
+])
+def test_editor_rejects_retired_cut_type_before_job_or_credit_reservation(client, make_token, body):
+    response = client.post(
+        "/v1/projects/p1/editor:generate-image", headers=_auth(make_token), json=body,
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "unknown_cut_type"
+
+
+@pytest.mark.parametrize("hints", [{}, {"contentRole": "coordination"}, {"sectionRole": "styling"}])
+def test_storyboard_rejects_retired_cut_type_before_storage(client, make_token, hints):
+    response = client.put(
+        "/v1/projects/p1/storyboard", headers=_auth(make_token),
+        json=[{"id": "retired", "source": "ai", "cutType": "mirror", **hints}],
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "unknown_cut_type"
+
+
 @pytest.mark.parametrize("enabled", [False, True])
 def test_account_exposes_server_topup_bonus_flag(client, make_token, monkeypatch, enabled):
     client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=enabled)
@@ -808,7 +833,6 @@ def test_editor_vary_inherits_trusted_source_license_snapshot(
         ("horizon", {"refBgAssetId": "44444444-4444-4444-4444-444444444444"}),
         ("horizon", {}),
         ("styling", {}),
-        ("mirror", {}),
     ],
 )
 def test_editor_real_vary_accepts_similar_and_detail_but_rejects_changes(
@@ -1019,7 +1043,6 @@ def test_editor_new_real_studio_cut_is_accepted(
 
 @pytest.mark.parametrize("cut_type,extra", [
     pytest.param("styling", {}, id="styling"),
-    pytest.param("mirror", {}, id="mirror"),
     # 2026-09-26: 첫 장면(hooking) 섹션도 열렸다 — hero 컷이 같은 길로 간다.
     pytest.param("styling", {"contentRole": "hero"}, id="hooking-hero"),
     # 2026-09-28: product 섹션도 열렸다 — 그 섹션에 착용 컷을 청하면 스타일링과 똑같이
@@ -1030,7 +1053,7 @@ def test_editor_new_real_studio_cut_is_accepted(
 def test_editor_new_real_styling_and_hooking_cuts_are_accepted(
     client, make_token, monkeypatch, cut_type, extra,
 ):
-    """실제 모델 + styling 섹션(스타일링·거울샷)·hooking 섹션(첫 장면) = 스튜디오 컷과 똑같이
+    """실제 모델 + styling 섹션(스타일링)·hooking 섹션(첫 장면) = 스튜디오 컷과 똑같이
     실제 얼굴로 만든다.
 
     styling 은 2026-09-25, hooking 은 2026-09-26 사용자 결정 — 그 전에는 409
@@ -1272,3 +1295,54 @@ def test_patch_unknown_status_field_ignored_not_500(client, make_token):
         json={"status": "done", "adjustCount": 9},
     )
     assert res.status_code == 503  # db_unavailable (검증은 통과)
+
+
+@pytest.mark.parametrize("hints", [{}, {"contentRole": "coordination"}, {"sectionRole": "styling"}])
+def test_detail_request_rejects_saved_retired_cut_before_job_or_credit(client, make_token, monkeypatch, hints):
+    from fastapi.testclient import TestClient
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(routes.repo, "get_project", AsyncMock(return_value={"id": "p1"}))
+    monkeypatch.setattr(routes.repo, "get_analysis", AsyncMock(return_value={}))
+    monkeypatch.setattr(routes.repo, "get_product", AsyncMock(return_value={"clothingType": "top"}))
+    monkeypatch.setattr(routes.repo, "get_editor_blocks", AsyncMock(return_value=[]))
+    monkeypatch.setattr(routes.repo, "get_storyboard", AsyncMock(return_value=[
+        {"id": "retired", "source": "ai", "cutType": "mirror", **hints},
+    ]))
+    create = AsyncMock()
+    reserve = AsyncMock()
+    monkeypatch.setattr(routes.repo, "create_job", create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", reserve)
+    patch_route_db(monkeypatch, routes)
+    response = TestClient(client.app, raise_server_exceptions=False).post(
+        "/v1/projects/p1/detail-page:generate", headers=_auth(make_token),
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "unknown_cut_type"
+    create.assert_not_awaited()
+    reserve.assert_not_awaited()
+
+
+def test_garment_color_request_rejects_saved_retired_cut_without_observation(client, make_token, monkeypatch):
+    from fastapi.testclient import TestClient
+    from unittest.mock import AsyncMock
+
+    from app.services import garment_color_measure
+
+    monkeypatch.setattr(routes.repo, "get_project", AsyncMock(return_value={"id": "p1"}))
+    monkeypatch.setattr(routes.repo, "get_analysis", AsyncMock(return_value={}))
+    monkeypatch.setattr(routes.repo, "get_product", AsyncMock(return_value={"clothingType": "top"}))
+    monkeypatch.setattr(routes.repo, "get_storyboard", AsyncMock(return_value=[
+        {"id": "retired", "source": "ai", "cutType": "mirror"},
+    ]))
+    observe = AsyncMock(side_effect=AssertionError("must reject before paid observation"))
+    monkeypatch.setattr(garment_color_measure.garment_color_observer, "observe", observe)
+    from conftest import FakePool
+    client.app.state.pool = FakePool()
+    patch_route_db(monkeypatch, routes)
+    response = TestClient(client.app, raise_server_exceptions=False).post(
+        "/v1/projects/p1/analysis/garment-colors:measure", headers=_auth(make_token),
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "unknown_cut_type"
+    observe.assert_not_awaited()

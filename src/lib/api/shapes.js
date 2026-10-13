@@ -122,7 +122,7 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
 
   // 스타일링 섹션은 **장소 세트만** 자동 배치한다 — 세트에 안 묶인 낱장 컷을 하나 얹던
   // 규칙은 폐기(2026-08-16 오너: "공간세트 2개 말고 컷 하나가 더 붙는 것 없애줘").
-  // 낱장 스타일링컷·거울샷은 셀러가 '컷 추가'로 직접 넣는 수동 선택지로만 남는다.
+  // 낱장 스타일링컷은 셀러가 '컷 추가'로 직접 넣는 수동 선택지로만 남는다.
   for (const set of stylingSets) {
     blocks.push(...(set
       ? setMemberBlocks(set, base, SECTION_ROLES.STYLING, CONTENT_ROLES.COORDINATION)
@@ -197,7 +197,7 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
     }));
   }
   return ensureSections(blocks.map((block) => (
-    ['styling', 'horizon', 'mirror'].includes(block.cutType)
+    ['styling', 'horizon'].includes(block.cutType)
       ? { ...block, matchIds: matchIdsFor(block.colorId) }
       : block
   )));
@@ -291,7 +291,7 @@ export function defaultAnalysisShape(clothingType = 'top') {
     // 있는데 여기 없어서 http 경로에서만 유실됐다 — AI 가 "후드 집업" 을 추측해도 폼에 안 떴다.
     customCategory: null,
     fit: null, suggestedName: '',
-    materials: [], sellingPoints: [], aiSuggestedPoints: [],
+    materials: [], sellingPoints: [], aiSuggestedPoints: [], mdComment: '',
     styleTags: [], swatchSuggestions: [],
     selectedModelId: null, stylingModelId: null, brandUseCategory: null, models: [],
     matchClothing: [],

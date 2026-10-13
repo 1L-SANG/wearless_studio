@@ -381,9 +381,7 @@ def test_snapshot_real_job_notice_states_masked_model(monkeypatch):
 def test_snapshot_real_identity_is_attached_to_every_worn_cut(monkeypatch):
     """열린 섹션(첫 장면·스타일링·스튜디오)의 착용 컷에 인물 증거가 붙는다.
 
-    이력: 2026-09-11 에 거울샷도 실제 모델로 합쳐졌고(그 전엔 가상모델로 갈려 한 페이지에
-    인물이 둘이었다), 2026-09-14 에 범위를 studio 섹션으로 좁혔다가, 2026-09-25 사용자
-    결정으로 styling 섹션(거울샷 포함)을, 2026-09-26 에 hooking 을 다시 열었다.
+    2026-09-25 사용자 결정으로 styling 섹션을, 2026-09-26 에 hooking 을 다시 열었다.
     """
     captured = {}
     _patch_inputs(monkeypatch, captured,
@@ -391,7 +389,7 @@ def test_snapshot_real_identity_is_attached_to_every_worn_cut(monkeypatch):
                   storyboard=[
                       {"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full"},
                       {"id": "b1b", "source": "ai", "cutType": "horizon", "shot": "medium"},
-                      {"id": "b3", "source": "ai", "cutType": "mirror", "shot": "full"},
+                      {"id": "b3", "source": "ai", "cutType": "styling", "shot": "full", "faceExposure": "hide"},
                   ])
     row = _license_row()
     app, main_r2 = _app(row)
@@ -402,7 +400,7 @@ def test_snapshot_real_identity_is_attached_to_every_worn_cut(monkeypatch):
     by_block = {c["block"]: c for c in captured["calls"]}
     assert by_block["b1"]["has_face"] is True and len(by_block["b1"]["images"]) == 3
     assert by_block["b1b"]["has_face"] is True and len(by_block["b1b"]["images"]) == 3
-    # 거울샷(styling 섹션)도 같은 등록자 증거로 만든다(2026-09-25). 얼굴 노출은 없어
+    # 얼굴을 가린 스타일링 컷도 같은 등록자 증거로 만든다. 얼굴 노출은 없어
     # has_face 는 False 그대로다(검증-얼굴 배지는 얼굴이 보이는 컷에만).
     assert by_block["b3"]["has_face"] is False and len(by_block["b3"]["images"]) == 3
     assert by_block["b3"]["images"][0] == by_block["b1"]["images"][0]

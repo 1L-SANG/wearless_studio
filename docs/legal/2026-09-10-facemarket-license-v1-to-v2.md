@@ -27,7 +27,7 @@
 
 | 컷 | 실제 얼굴 | 게이트 |
 |---|---|---|
-| `horizon` · `styling` · `mirror` · `base_edit` | 들어간다 | `facemarket.real_identity_allowed_cut` — 컷 종류만 본다 |
+| `horizon` · `styling` · `base_edit` | 들어간다 | `facemarket.real_identity_allowed_cut` — 컷 종류만 본다 |
 | `product` 등 사람 없는 컷 | 안 들어간다 | 같음 |
 
 없어진 것: 409 `real_model_horizon_only` · 409 `real_model_use_not_consented` · 400 `styling_model_required`,

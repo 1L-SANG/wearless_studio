@@ -83,8 +83,8 @@ def test_virtual_models_are_untouched(section):
 
 def test_old_blocks_without_a_section_are_judged_by_their_recipe():
     """옛 블록엔 sectionRole 이 없다 — contentRole·cutType 에서 섹션을 추론한다."""
-    # horizon → studio, styling·mirror → styling 섹션: 둘 다 열려 있다(2026-09-25).
-    for cut_type in ("horizon", "styling", "mirror"):
+    # horizon → studio, styling → styling 섹션: 둘 다 열려 있다(2026-09-25).
+    for cut_type in ("horizon", "styling"):
         assert identity_scope.block_allowed(
             {"source": "ai", "cutType": cut_type}, REAL_MODEL) is True, cut_type
     # hero·benefit → hooking 섹션: 2026-09-26 부터 열려 있다.

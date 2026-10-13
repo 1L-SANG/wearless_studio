@@ -362,6 +362,15 @@ def test_server_example_validation_rejects_id_applicability_cut_and_gender_but_a
         assert error[2] == {"exampleId": example_id}
 
 
+@pytest.mark.parametrize("hints", [{}, {"contentRole": "coordination"}, {"sectionRole": "styling"}])
+def test_retired_cut_type_is_rejected_before_role_or_section_inference(hints):
+    raw = {"source": "ai", "cutType": "mirror", **hints}
+    with pytest.raises(ValueError, match="unknown_cut_type"):
+        cut.normalize_spec(raw)
+    with pytest.raises(ValueError, match="unknown_cut_type"):
+        content_roles.canonicalize_storyboard([raw], for_storage=True)
+
+
 def test_normalize_cut_type_only_request_uses_defensive_inference():
     spec = cut.normalize_spec({
         "cutType": "horizon", "direction": "side", "shot": "medium",
@@ -374,38 +383,21 @@ def test_normalize_cut_type_only_request_uses_defensive_inference():
 
 def test_normalize_spec_uses_content_role_before_conflicting_cut_fields():
     spec = cut.normalize_spec({
-        "contentRole": "realWear",
+        "contentRole": "coordination",
         "cutType": "product",
         "direction": "front",
         "shot": "ghost",
     })
 
     assert (spec["cutType"], spec["direction"], spec["shot"]) == (
-        "mirror", None, "full",
+        "styling", "front", "full",
     )
-
-
-def test_normalize_mirror_strips_direction_and_clamps():
-    spec = cut.normalize_spec({
-        "cutType": "mirror", "direction": "side", "shot": "close",
-        "faceExposure": "same", "pose": "walk",
-    })
-    assert spec["direction"] is None          # 거울샷은 방향 개념 없음
-    assert spec["shot"] == "full"             # 폐기 샷은 역할 기본값으로 복귀
-    assert spec["faceExposure"] == "hide"     # 기본 '폰으로 가림'
-    assert "pose" not in spec                 # 과거 포즈 선택값은 제거
-
-
-def test_normalize_mirror_keeps_medium_and_show():
-    spec = cut.normalize_spec({"cutType": "mirror", "shot": "medium", "faceExposure": "show"})
-    assert spec["shot"] == "medium" and spec["faceExposure"] == "show"
 
 
 @pytest.mark.parametrize(("content_role", "retired_shot", "expected"), [
     ("benefit", "close", "medium"),
     ("fit", "knee", "full"),
     ("coordination", "close", "full"),
-    ("realWear", "knee", "full"),
 ])
 def test_normalize_retired_worn_shots_to_role_default(content_role, retired_shot, expected):
     spec = cut.normalize_spec({"contentRole": content_role, "shot": retired_shot})
@@ -475,7 +467,7 @@ def test_normalize_model_id_accepts_camel_and_snake_and_sanitizes():
         "cutType": "styling", "modelId": "  mA\nignore  "
     })["modelId"] == "mA ignore"
     assert cut.normalize_spec({"cutType": "horizon", "model_id": "mB"})["modelId"] == "mB"
-    assert cut.normalize_spec({"cutType": "mirror"})["modelId"] is None
+    assert cut.normalize_spec({"cutType": "styling"})["modelId"] is None
 
 
 @pytest.mark.parametrize("value", ["closed", "openToChest", "partial", "openToWaist", "open"])
@@ -490,7 +482,7 @@ def test_normalize_outer_closure_defaults_open_and_accepts_snake_case():
         {"cutType": "horizon", "outerClosureState": "unknown"},
         clothing_type="outer")["outerClosureState"] == "open"
     assert cut.normalize_spec(
-        {"cutType": "mirror", "outer_closure_state": "partial"},
+        {"cutType": "styling", "outer_closure_state": "partial"},
         clothing_type="아우터")["outerClosureState"] == "partial"
 
 
@@ -534,7 +526,7 @@ def test_virtual_model_loader_resolves_c_pack_and_excludes_product(tmp_path, mon
         )
         product = cut.normalize_spec({"cutType": "product", "modelId": "mA"})
         assert cut.resolve_virtual_model_assets(product) is None
-        unknown = cut.normalize_spec({"cutType": "mirror", "modelId": "missing"})
+        unknown = cut.normalize_spec({"cutType": "styling", "modelId": "missing"})
         assert cut.resolve_virtual_model_assets(unknown) is None
         assert "unknown virtual model missing" in caplog.text
     finally:
@@ -714,13 +706,12 @@ def test_example_asset_registry_v2_preserves_metadata_and_legacy_shapes(tmp_path
         cut.load_example_asset_registry.cache_clear()
 
 
-def test_pose_direction_preflight_matches_worn_and_mirror_rules(tmp_path, monkeypatch):
+def test_pose_direction_preflight_matches_worn_rules(tmp_path, monkeypatch):
     registry = {
         "_meta": {"defaultBaseUrl": "https://images.example.test"},
         "assets": {
             "front": {"pose": "front.png", "cutType": "styling", "direction": "front"},
             "back": {"pose": "back.png", "cutType": "horizon", "direction": "back"},
-            "mirror": {"pose": "mirror.png", "cutType": "mirror", "direction": "front"},
             "legacy": {"pose": "legacy.png"},
         },
     }
@@ -733,12 +724,6 @@ def test_pose_direction_preflight_matches_worn_and_mirror_rules(tmp_path, monkey
             "front", cut.normalize_spec({"cutType": "styling", "direction": "front"}))
         assert not cut.pose_direction_compatible(
             "back", cut.normalize_spec({"cutType": "styling", "direction": "front"}))
-        assert cut.pose_direction_compatible(
-            "mirror", cut.normalize_spec({"cutType": "mirror"}))
-        assert not cut.pose_direction_compatible(
-            "front", cut.normalize_spec({"cutType": "mirror"}))
-        assert not cut.pose_direction_compatible(
-            "mirror", cut.normalize_spec({"cutType": "horizon", "direction": "front"}))
         assert not cut.pose_direction_compatible(
             "legacy", cut.normalize_spec({"cutType": "styling", "direction": "front"}))
     finally:
@@ -914,8 +899,6 @@ def test_resolved_example_manifest_and_prompt_apply_pose_only_scope():
     assert "hidden lower-body landmarks do not control the crop" in p
     assert "Do not copy the mannequin's body shape" in p
     assert "without inventing that pocket" in p
-    assert "one plain unbranded phone" in p
-    assert "do not copy a case, logo, screen content" in p
     assert "adjust it naturally" not in p
     assert "render it from the requested" not in p
     assert "Do not transfer any background, lighting, color grade, clothing" in p
@@ -1000,18 +983,6 @@ def _render(spec_raw, clothing_type="top", product=None, analysis=None, manifest
     tpl = cut.load_cut_template()
     spec = cut.normalize_spec(spec_raw, clothing_type=clothing_type)
     return cut.render_cut_prompt(tpl, spec, product or {}, analysis or {}, clothing_type, manifest)
-
-
-def test_render_mirror_prompt_sections():
-    p = _render({"cutType": "mirror", "shot": "medium"},
-                product={"name": "골지 니트", "clothing_type": "top"},
-                analysis={"materials": [{"name": "코튼", "ratio": 60}]})
-    assert "MIRROR SELFIE" in p               # 거울샷 섹션
-    assert "smartphone naturally covers" in p  # 얼굴 기본 = 폰으로 가림
-    assert "Camera angle" not in p            # 방향 지시 없음
-    assert "${" not in p                      # 미해결 토큰 없음
-    assert "PRODUCT CONTEXT" in p             # ground-truth 블록 주입
-    assert "head to the hip" in p           # medium × top 크롭
 
 
 def test_render_bottom_medium_uses_lower_crop():
@@ -1138,8 +1109,8 @@ def test_render_outer_closure_states_and_hardware_guard(state, phrase, inner_phr
 
 
 @pytest.mark.parametrize("state", [None, "unknown"])
-def test_render_outer_closure_defaults_open_and_applies_to_mirror(state):
-    p = _render({"cutType": "mirror", "shot": "full", "outerClosureState": state}, clothing_type="outer")
+def test_render_outer_closure_defaults_open_for_styling(state):
+    p = _render({"cutType": "styling", "shot": "full", "outerClosureState": state}, clothing_type="outer")
     assert "FULLY OPEN" in p
     assert "keep the inner T-shirt exactly the same as in the attached MANNEQUIN" in p
 
@@ -1194,7 +1165,7 @@ def test_render_front_direction_declares_band():
 
 
 def test_render_leaves_no_section_markers():
-    for spec in ({"cutType": "mirror"}, {"cutType": "product", "shot": "ghost"},
+    for spec in ({"cutType": "styling"}, {"cutType": "product", "shot": "ghost"},
                  {"cutType": "horizon", "shot": "medium"}):
         p = _render(spec)
         assert "[[" not in p                  # 섹션 마커가 모델 프롬프트에 새지 않는다
@@ -1221,8 +1192,6 @@ def test_render_example_mood_only_for_side_and_back():
         p = _render({"cutType": "horizon", "shot": "full", "direction": direction,
                      "exampleId": "ex_horizon_top_full_1"})
         assert "Composition nuance" not in p
-    mirror = _render({"cutType": "mirror", "shot": "full", "exampleId": "ex_mirror_top_full_1"})
-    assert "Composition nuance" in mirror         # 거울샷은 정면 대역 — 뉘앙스 적용
 
 
 def test_render_raises_on_stray_section_marker():

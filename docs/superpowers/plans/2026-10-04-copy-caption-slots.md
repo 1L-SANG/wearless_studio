@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python/FastAPI worker + Pillow, Vite React JavaScript/JSX, Node test runner, pytest.
 
-**Spec:** `docs/superpowers/specs/2026-08-04-editor-text-slots-design.md`, `docs/superpowers/specs/2026-08-14-hooking-first-screen-design.md`, `documents/editor_wait_dev_spec.md`, 작업지시서 B1.
+**Spec:** `documents/editor_text_presets.md`, `docs/superpowers/specs/2026-08-14-hooking-first-screen-design.md`, `documents/editor_wait_dev_spec.md`, 작업지시서 B1.
 
 ## Global Constraints
 

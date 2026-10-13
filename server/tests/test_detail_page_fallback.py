@@ -595,12 +595,13 @@ def test_pose_example_direction_precedes_profile_face_manifest_and_qc(monkeypatc
             "toDirection": example_direction, "toSideStyle": example_side}]
 
 
-def test_mirror_pose_mismatch_remains_empty(monkeypatch):
+def test_retired_mirror_stops_job_before_generation_and_releases_credits(monkeypatch):
     monkeypatch.setattr(dpj.cut_generator, "load_example_asset_registry", lambda: (None, {
         "pose": {"cutType": "styling", "direction": "back", "pose": "pose.png"}}))
     result = _run(monkeypatch, [_block(cutType="mirror", exampleId="pose", refScope="pose")])
     assert result["generated"] == {}
-    assert any(payload.get("reason") == "pose_direction_incompatible" for _, payload in result["events"])
+    assert result["failure"]["metadata"]["error"] == "unknown_cut_type"
+    assert result["failure"]["reserved"] == 19
 
 
 def test_two_invalid_generation_contracts_emit_one_bounded_critical_per_job(monkeypatch, caplog):

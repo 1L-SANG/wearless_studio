@@ -100,7 +100,6 @@ R2 업로드, 카탈로그 수정, 서비스 적용, 커밋·푸시를 수행하
 - 공간 세트: 하나의 대표 공간과 독립 생성된 멤버 컷을 묶는 `SeriesPlan`
 - `horizon`: 중립 스튜디오 계열
 - `product/ghost | product/detail`: 사람 없는 제품컷
-- `mirrorSelfie`: 거울 반사·휴대폰·얼굴 가림을 검사하는 styling 하위 방식
 
 `pose` 또는 `bg` 파일이 없을 때 `all` 이미지로 대신하면 안 된다. 반대 방향도 금지한다.
 
@@ -691,10 +690,10 @@ Preserve only PRODUCT-supported permanent text and logos.
 {
   "directionMode": "exact | retarget",
   "poseDynamics": "reference_kinematics | natural_asymmetry | controlled_stillness | natural_motion",
-  "camera": "reference_geometry | handheld_oblique | handheld_eye_level | tripod_centered | mirror_phone | product_camera",
+  "camera": "reference_geometry | handheld_oblique | handheld_eye_level | tripod_centered | product_camera",
   "framing": "reference_crop | casual_off_center | centered_catalog | product_close",
-  "capture": "phone_snapshot | casual_digital | editorial | studio_catalog | mirror_selfie | product_catalog",
-  "scene": "reference_location | lifestyle_location | horizon_studio | mirror_room | product_studio",
+  "capture": "phone_snapshot | casual_digital | editorial | studio_catalog | product_catalog",
+  "scene": "reference_location | lifestyle_location | horizon_studio | product_studio",
   "light": "reference_integrated | natural_soft | natural_hard | mixed_available | studio_soft | product_diffused"
 }
 ```

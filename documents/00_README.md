@@ -1,57 +1,38 @@
-# Wearless — 문서 인덱스
+# Wearless 문서 인덱스
 
-> 패션 셀러용 AI 상세페이지 제작 스튜디오. 이 폴더는 Wearless의 **살아있는 제품·기술 문서 묶음**이다.
-> 현행 구현: **Vite + React SPA**(`src/`, 듀얼 어댑터 mock|http). **FastAPI + Supabase + R2 백엔드 구축·배포 완료** — 연동 진행 현황은 `backend_integration_plan.md`.
-> **Next.js 전환은 지금 하지 않는다** — DAU·SEO·공유 링크 신호가 올 때 별도 결정한다(`03_기술스택_결정서.md` §4).
-> 최종 갱신: 2026-07-19
+Wearless는 패션 셀러가 상품 사진으로 상세페이지를 만들고 편집·다운로드하는 Vite·React SPA다. 백엔드는 FastAPI, Supabase와 R2를 사용한다. 요구사항은 현재 PRD·공통 데이터 계약·용어집과 해당 기능의 현행 ADR을 함께 읽는다. 계획·연구·체크포인트는 요구사항 정본이 아니다.
 
----
-
-## 1. 문서 구성
+## 현재 정본
 
 | 문서 | 내용 |
 |---|---|
-| `PRD.md` | 정본 PRD — 17개 섹션 (화면·정책·데이터·MVP 우선순위) |
-| `storyboard_sections_design.md` | 콘티보드 분류의 이전 결정 기록 — 현행은 ADR-0005 후속 결정의 후킹 → 스타일링 → 스튜디오 → 의류 확인 |
-| `03_기술스택_결정서.md` | 스택 결정 — Vite 유지·점진 도입 로드맵·Next 전환 신호 |
-| `common_data_contract.md` | 공통 데이터 계약 — 엔티티·enum·API·멱등/크레딧 규약 (`src/lib/types.js`와 동기) |
-| `frontend_state_model.md` | 프론트 상태 3계층 모델 (서버/전역 클라이언트/화면 로컬) |
-| `ai_agent_modules.md` | AI 에이전트 모듈 정의 — tier→모델 라우팅 단일 소스(잠정 배정) |
-| `ai_pipeline_spec.md` | AI 파이프라인 명세 — PL-1~6, job 모델, 크레딧 트랜잭션 |
-| `backend_integration_plan.md` | 백엔드 연동 계획 + **실행 로드맵(§10)** ← 진행 현황·남은 단계의 정본 |
-| `/CONTEXT.md` · `/docs/adr/` | 용어집 · 아키텍처 결정 기록(ADR 0001~0009) |
-| ~~`/handoff/`~~ | 과거 프로토타입 인수인계 산출물 — 2026-07-30 삭제. 계약 정본은 위 문서들과 `src/lib/types.js`, 화면은 실제 앱 참조 |
+| [PRD.md](PRD.md) | 화면·생성 흐름·정책·제품 요구사항 |
+| [common_data_contract.md](common_data_contract.md) | 엔티티·enum·API·크레딧·멱등 계약 |
+| [CONTEXT.md](../CONTEXT.md) | 도메인 용어집 |
+| [DESIGN.md](../DESIGN.md) | 셀러 디자인·모바일 입력 정책·AI 캡션과 수동 텍스트 기준 |
+| [현재 ADR](../docs/adr/) | 기능별 결정과 이유. 대체된 결정 대신 현행 본문을 적용 |
+| [frontend_state_model.md](frontend_state_model.md) | 서버 상태·전역 선택값·화면 로컬 상태의 소유권 |
+| [backend_integration_plan.md](backend_integration_plan.md) | 저장·API·작업 실행·크레딧 트랜잭션의 경계 |
+| [ai_pipeline_spec.md](ai_pipeline_spec.md) | 현재 분석·마네킹·상세페이지·에디터 파이프라인 |
+| [ai_agent_modules.md](ai_agent_modules.md) | 현재 AI 모듈의 입력·출력·호출 책임 |
+| [editor_text_presets.md](editor_text_presets.md) | 텍스트 프리셋 값·안내 문구 정리·카피 슬롯 계약 |
+| [mannequin_ui_direction.md](mannequin_ui_direction.md) · [fit_profile_spec.md](fit_profile_spec.md) | 단일 마네킹컷·버전·핏 설정·재생성 |
+| [genexamples_release_contract.md](genexamples_release_contract.md) · [space_set_release_contract.md](space_set_release_contract.md) | 생성예시와 촬영 세트의 발행·소비 계약 |
+| [credit_system_design.md](credit_system_design.md) | 크레딧 원천·차감·구독·추가 구매의 구현 계약 |
+| [TODOS.md](../TODOS.md) | 루트의 현재 할 일과 구현 갭 |
+| [CLAUDE.md](../CLAUDE.md) | 공통 작업 규칙 |
 
-## 2. 읽는 순서 (역할별)
+## 읽는 순서
 
-- **PM/기획** → `PRD.md` → `backend_integration_plan.md` §11 (미확정 정책: 크레딧 단가·환불·보존 기한)
-- **프론트엔드** → `frontend_state_model.md` → `common_data_contract.md` → `PRD.md §10`(에디터)
-- **백엔드** → `common_data_contract.md`(계약) → `backend_integration_plan.md`(스키마·HTTP·job) → `ai_pipeline_spec.md`
-- **디자이너** → `src/styles/tokens.css` + `PRD.md §14`
-- **콘티·생성예시** → `PRD.md` §8 → `storyboard_sections_design.md` §8 → ADR-0004~0011
+- 제품·기획: PRD, CONTEXT, 해당 기능의 현행 ADR.
+- 프론트: 공통 데이터 계약, 프론트 상태 모델, 해당 PRD 화면. 실제 API 경계는 `src/lib/api/`다.
+- 백엔드: 공통 데이터 계약, 저장·API·작업 실행 계약, AI 파이프라인. 실제 검증은 `server/app/schemas.py`와 해당 라우트·워커를 확인한다.
+- 디자인: DESIGN, PRD §14, `src/styles/tokens.css`와 실제 앱 화면.
+- 콘티·생성예시: PRD §8, ADR-0004~0011, 생성예시·촬영 세트 릴리스 계약. 디테일은 ADR-0012·0014, 호리존 배경 맞춤은 ADR-0013도 읽는다.
+- 에디터 텍스트: PRD §10.11, editor_text_presets.md, 현재 프리셋과 조립 코드.
 
-## 3. 진행 현황 및 남은 단계 (정본은 `backend_integration_plan.md` §10)
+## 구현 경계
 
-1. ✅ **AI 품질 스파이크** — 완료 (2026-06-19, 마네킹 핏 10/10 통과)
-2. ✅ **Phase 0~4** — FastAPI 골격 · Supabase(스키마+Auth) · 백엔드 배포(현재 **AWS ECS Fargate** `api.wearless.kr` — Railway에서 이전 완료) · 듀얼 어댑터 · R2 업로드 · 분석·매칭(M-01) · AI job + 크레딧 원장(reserve-confirm) · AG-04 마네킹 생성(핏 확인·fitProfile 재생성 흐름) — 완료
-3. **Phase 5~7** — 콘티·에디터 영속화 → 다운로드(클라 렌더) → mock 제거 — **진행 예정**
-4. **PG(결제)** — 크레딧 원장 위의 '충전' 기능으로 맨 마지막. 베타는 수동 지급으로 PG 없이 런칭 가능
+화면은 `src/lib/api/`를 통해 데이터를 읽고 쓴다. HTTP와 mock 어댑터는 현재 용도에 따라 유지하며, 공개 입력·분석은 로컬 draft를 로그인 후 서버 프로젝트로 승격한다. 크레딧은 서버가 예약·확정하고 화면은 응답 잔액을 반영한다. 다운로드는 에디터의 클라이언트 PNG·ZIP 렌더가 담당한다.
 
-## 4. 반드시 먼저 정할 것 (Blocking)
-
-| 항목 | 현재 상태 | 위치 |
-|---|---|---|
-| 크레딧 단가 (마네킹 생성·재생성, 콘티 컷당, 에디터 이미지) | 45 / 19 / 19 (마네킹 조정은 폐기, 단가 0, fitProfile 재생성으로 통합) | **2026-09-11 v6 배선 완료.** 서버 `config.credit_cost_*`와 `src/lib/limits.js` 미러. 1cr=50원, 남은 별도 트랙은 PRD §12.2 |
-| 크레딧 실패 환불·재시도 정책 | 미정 | PRD §12.2 · backend plan §11 |
-| 각종 상한 (강조 특징/색상/매칭) | 5 / 3 / 2 (구 '조정 2회' 상한 폐기) | `src/lib/limits.js` |
-| 인증·소유권 | ✅ 구현 완료 (Supabase Auth+RLS) | backend plan §2~§3·§9 |
-
-## 5. 알아둘 점
-
-- 현행 앱은 **듀얼 어댑터**로 동작한다(`VITE_API_MODE=mock|http`). 기본값은 mock(`src/mock/`)이며, 이 mock은 단순 더미가 아니라 **실행 가능한 계약**(유료 job 멱등 합류, 크레딧 봉투, 매칭 소유권 머지)이자 parity 기준이므로 Phase 7 전까지 제거하지 않는다.
-- 모든 API 함수는 **async Promise**이고, 장시간 작업의 실서버 경로는 job 폴링을 `onProgress` 콜백으로 바꾼다. `onStep` 체크리스트는 현재 mock에만 있으며 HTTP 배선은 TODO다(backend plan §5).
-- **실측은 AI가 추정하지 않는다** — 분석 응답에서 measurement value는 null, 사용자가 직접 입력한다.
-- **세탁 안내는 분석이 아니라 에디터 자동 블록**에서 생성된다.
-- **콘티보드의 사용자 분류는 네 섹션**이다 — 후킹 → 스타일링 → 스튜디오 → 의류 확인. `contentRole`은 계속 비노출 자동값이며, v2의 세 섹션 저장본은 v3 네 섹션으로 자동 승격한다(ADR-0005 후속 결정).
-- **사진 양은 기본형·확장형 두 가지**다. 페이지 순서는 같고 확장형이 사진만 더 많이 만든다.
-- 디자인 토큰은 `src/styles/tokens.css`의 `var(--*)`만 사용한다. 임의 색·토큰 금지.
+실측은 셀러가 입력하며 AI가 추정하지 않는다. 세탁 안내는 에디터 자동 블록에서 만든다. 콘티의 공식 섹션은 후킹·스타일링·스튜디오·의류 확인이고, 컷 종류는 스타일링·호리존·제품이다. 사진 양은 같은 섹션 순서에서 기본형·확장형으로 나뉜다.

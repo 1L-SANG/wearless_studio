@@ -28,7 +28,7 @@ position. Only an explicit requestedChanges direction or pose may override its n
 direction or sitting/standing state; it does not authorize a new location, new furniture,
 new accessories, a changed product design, zooming out or revealing a hidden face.
 Otherwise do not plan a hidden garment side or a camera orbit. Use existing supports only.
-For mirror photos preserve the phone, the hand holding it, mirror geometry and face covering.
+Preserve any existing face-covering prop and its valid hand contact.
 If the face is hidden, use a small compatible body gesture rather than revealing it to smile.
 Preserve existing props, valid grips, physical supports and clothing category/closures.
 Use only a simple action that does not require conflicting left/right instructions or hands

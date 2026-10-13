@@ -221,7 +221,7 @@ mount →
 - `test_admin_guard_adoption.py` 확장 — (a) `require_admin(` 호출은 전부 `(conn, user_id, request)` 형태, (b) `require_admin_identity(` 는 `facemarket_admin_devices.py` 의 register·me 둘뿐, (c) `repo.is_admin` 직접 호출 금지 목록에 새 파일 추가.
 - `test_main_openapi.py` — `app_env=prod` 에서 `/openapi.json` 404·`/docs` 404, `dev` 에서 둘 다 200. CORS preflight 에 `X-Admin-Device` 허용.
 - `test_admin_device_config.py` — 게이트 플래그 기본값(코드 shadow·테스트 off)과 허용값 밖 입력의 shadow 폴백.
-- 기존 admin 라우트 테스트: `conftest.make_settings` 기본에 `admin_device_gate="off"` 를 둔다(`garment_qc_mode="off"` 와 같은 선례·같은 이유 — 관련 없는 테스트가 FakeConn 위에서 기기 조회를 돌리지 않게). 기기 테스트만 `shadow`/`enforce` 를 명시적으로 켠다. 기존 테스트 파일은 **수정 0** 이 제약.
+- 기존 admin 라우트 테스트: `conftest.make_settings` 기본에 `admin_device_gate="off"` 를 둔다(관련 없는 테스트가 FakeConn 위에서 기기 조회를 돌리지 않게). 기기 테스트만 `shadow`/`enforce` 를 명시적으로 켠다. 기존 테스트 파일은 **수정 0** 이 제약.
 
 ### 프런트 (`tests/frontend/`)
 

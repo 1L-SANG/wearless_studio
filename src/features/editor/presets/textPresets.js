@@ -1,13 +1,10 @@
 /* =============================================================
    features/editor/presets/textPresets.js — 텍스트 프리셋 3종
-   값의 정본은 docs/superpowers/specs/2026-08-04-editor-text-slots-design.md
-   (셀러 텍스트 568건 실측 타이포 위계). 여기서 임의로 바꾸면 텍스트 자리
-   슬롯 구현(대기 중)이 같은 값을 읽을 때 결이 갈라진다 — 자동 배치 쪽
-   (editorWaitSkeleton·page_assembler)은 아직 이 값을 안 읽는다.
+   값의 정본은 documents/editor_text_presets.md
+   현재 프리셋 값과 요소 생성·선택·저장 동작을 함께 정의한다.
 
-   요소는 기본 문구(DEFAULT_TEXT_BODY) + textSizing 'auto'로 만든다. 빈 상자로 시작하던
-   예전 방식(4e53fe7)은 "어디에 생겼는지·얼마나 큰지 안 보인다"는 오너 지적으로 되돌렸다
-   (2026-08-16). 대신 첫 편집에서 그 문구가 통째로 선택돼 타이핑하면 갈아 끼워진다.
+   요소는 기본 문구(DEFAULT_TEXT_BODY)와 textSizing 'auto'로 만든다.
+   첫 편집에서 기본 문구를 통째로 선택해 입력한 내용으로 바꾼다.
    `sample`·`previewSize`는 패널 목록 표시용일 뿐 콘텐츠가 아니다.
 
    node --test 에서 직접 import 되므로 Vite 별칭(@/) 대신 상대 경로만 쓴다.
@@ -27,12 +24,8 @@ export const TEXT_INK = '#0e0d14';
 export const TEXT_MUTED = '#6b6b73';
 export const TEXT_FAINT = '#9a9aa2';
 
-/* previewSize는 패널 축소판 크기 — 실제 크기 순서(40>26>19>17)를 보존해야
-   목록에서 "꼬리표가 설명글보다 크다"는 사실이 왜곡되지 않는다. */
-/* 꼬리표(POINT 01)는 뺐다(오너 8/16) — 실측에서도 11%뿐이고, 같은 라벨은 '특징 포인트'
-   정보 블록이 이미 제공한다. 남은 셋은 실측 상위 3종 그대로다:
-   소제목 372건(65.5%)·문단 75건(13.2%)이 본문 텍스트의 대부분이고, 큰 제목은 첫 화면의
-   한 방 문구다(§2-A). 크기도 스펙 값 그대로 — 40/26/17px. */
+/* previewSize는 패널 축소판 크기다. 콘텐츠의 큰 제목, 소제목, 설명글 크기 관계를
+   유지하며 실제 텍스트는 현재 정본의 40, 26, 17px를 사용한다. */
 export const TEXT_PRESETS = [
   { key: 'headline', label: '큰 제목', hint: '첫 화면 한 방 문구', previewSize: 22,
     style: { size: 40, weight: 600, color: TEXT_INK } },

@@ -51,6 +51,29 @@ def test_single_color_ghost_tags_keep_original_text_and_geometry(direction, tag)
     assert (label["x"], label["y"], label["w"], label["h"]) == (60, 44, 400, 38)
 
 
+@pytest.mark.parametrize("direction,tag", [("front", "FRONT"), ("back", "BACK")])
+@pytest.mark.parametrize("color_name", ["네이비", "워시드네이비" * 4, ("긴 색상 이름 " * 30).strip()],
+                         ids=["short", "unspaced_long", "spaced_long"])
+def test_color_tag_fits_the_400px_box_kept_by_an_already_open_old_frontend(direction, tag, color_name):
+    product = {**PRODUCT, "colors": [{"id": "navy", "name": color_name}, {"id": "base", "name": "아이보리"}]}
+    block = assemble(_ghost_storyboard(direction), [], [], product, False)[1]
+    server_label = next(el for el in block["elements"] if el.get("copyRole") == "label")
+    assert server_label["w"] == 880
+
+    # base 16b55edc의 mergeServerBlocks는 미편집 라벨의 text/h/style만 받으며 w=400은 유지한다.
+    old_client_label = {
+        "x": 60, "y": 44, "w": 400,
+        "text": server_label["text"], "h": server_label["h"], "style": server_label["style"],
+    }
+    assert old_client_label["text"] == f"{tag} · {color_name}"
+    assert len(old_client_label["text"]) * (
+        old_client_label["style"]["size"] + old_client_label["style"]["tracking"]
+    ) <= old_client_label["w"]
+    assert old_client_label["y"] + old_client_label["h"] <= block["elements"][0]["y"]
+    if color_name == "네이비":
+        assert (old_client_label["style"]["size"], old_client_label["style"]["tracking"]) == (28, 3)
+
+
 @pytest.mark.parametrize("layout,directions", [("twoColumn", ["front", "back"]), ("threeColumn", ["front", "back", "front"])])
 @pytest.mark.parametrize("color_name", ["네이비", ("워시드 네이비 " * 12).strip()])
 def test_row_color_labels_stay_below_their_own_photo_and_fit_the_column(layout, directions, color_name):
@@ -245,14 +268,6 @@ def test_explicit_detail_role_sets_editor_identity():
     assert block["name"] == "디테일"
 
 
-def test_cut_type_inference_maps_mirror_to_real_wear():
-    storyboard = [{"id": "mirror", "source": "ai", "cutType": "mirror"}]
-    block = assemble(storyboard, [], [], PRODUCT, False)[0]
-    assert block["kind"] == "styling"
-    assert block["contentRole"] == "realWear"
-    assert block["name"] == "실제 착용 느낌"
-
-
 def test_mine_block_preserves_explicit_section_role():
     storyboard = [{
         "id": "mine-product", "source": "mine", "sectionRole": "product",
@@ -324,10 +339,10 @@ def test_ai_notice_with_license_states_verified_real_model():
 def test_ai_notice_partial_license_does_not_claim_whole_page_is_real_model():
     """일부 컷만 라이선스 얼굴이면 페이지 전체를 '가상인물 아님' 으로 주장하면 안 된다.
 
-    얼굴 레퍼런스는 얼굴이 식별되는 컷에만 붙는다(거울샷·뒷모습·하반신 제외 — cut_generator
+    얼굴 레퍼런스는 얼굴이 식별되는 컷에만 붙는다(뒷모습·하반신 제외 — cut_generator
     ._face_fits). 그 제외 컷에도 인물은 렌더되지만 **AI 가 지어낸 가상인물**이라 26.06 표기
     의무 대상이다. 페이지 전체 고지를 뒤집으면 표기 의무 대상 컷에 반대 표기가 붙는다(허위표시).
-    거울샷 얼굴 기본값이 hide 라 이 경로는 **기본 설정으로 도달 가능**하다.
+    뒷모습 컷에서 이 경로는 도달 가능하다.
     """
     notice = {"modelName": "김*연", "licenseId": "lic-123", "faceCuts": 1, "totalCuts": 3}
     el = build_auto_blocks(PRODUCT, license_notice=notice)[2]["elements"][0]
@@ -480,7 +495,7 @@ def test_single_photo_labels_follow_content_role_and_point_sequence():
         {"id": "back", "sectionRole": "product", "contentRole": "productOverview", "source": "ai", "cutType": "product", "direction": "back"},
         {"id": "detail", "sectionRole": "product", "contentRole": "detail", "source": "ai", "cutType": "product"},
         {"id": "coord", "sectionRole": "styling", "contentRole": "coordination", "source": "ai", "cutType": "styling"},
-        {"id": "wear", "sectionRole": "styling", "contentRole": "realWear", "source": "ai", "cutType": "mirror"},
+        {"id": "wear", "sectionRole": "styling", "contentRole": "coordination", "source": "ai", "cutType": "styling"},
     ]
     blocks = assemble(storyboard, [], [], PRODUCT, False)[:len(storyboard)]
 

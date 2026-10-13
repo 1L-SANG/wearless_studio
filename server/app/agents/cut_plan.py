@@ -15,7 +15,7 @@ from .outer_closure import STATES as _CLOSURES
 
 
 RecipeFamily = Literal["styling", "horizon", "product"]
-CaptureMode = Literal["lifestyle", "mirrorSelfie", "studio"]
+CaptureMode = Literal["lifestyle", "studio"]
 ProductVariant = Literal["ghost", "detail"]
 ReferenceMode = Literal["none", "all", "pose", "bg"]
 SignatureFraming = Literal["bottom", "dress"]
@@ -41,7 +41,6 @@ _PRODUCT_SHOTS = frozenset({"ghost", "detail"})
 _WORN_DIRECTIONS = frozenset({"front", "side", "back"})
 _PRODUCT_DIRECTIONS = frozenset({"front", "back"})
 _WORN_FACES = frozenset({"same", "show", "hide"})
-_MIRROR_FACES = frozenset({"show", "hide"})
 
 _PRODUCT_TRUTH_ATTRIBUTES = (
     "construction",
@@ -285,10 +284,6 @@ def _recipe(spec: Mapping[str, Any]) -> tuple[
                 or face not in _WORN_FACES:
             raise CutPlanError("invalid_styling_spec")
         return "styling", "lifestyle", None
-    if cut_type == "mirror":
-        if shot not in _WORN_SHOTS or direction is not None or face not in _MIRROR_FACES:
-            raise CutPlanError("invalid_mirror_spec")
-        return "styling", "mirrorSelfie", None
     if cut_type == "horizon":
         if shot not in _WORN_SHOTS or direction not in _WORN_DIRECTIONS \
                 or face not in _WORN_FACES:

@@ -20,10 +20,8 @@ test('N12 addBlock accepts cut types that older section-specific gates rejected'
   const acceptsDrop = (sectionRole, cutType) => allowedCutTypeOptionsForSection(sectionRole)
     .some((option) => option.value === cutType);
   assert.equal(acceptsDrop('hooking', 'product'), true);
-  assert.equal(acceptsDrop('studio', 'mirror'), true);
+  assert.equal(acceptsDrop('studio', 'horizon'), true);
   assert.equal(acceptsDrop('product', 'styling'), true);
-  assert.match(addBlockSource, /!reservation && droppedCutType === 'mirror' && sectionRole !== SECTION_ROLES\.STYLING/);
-  assert.match(addBlockSource, /거울컷은 스타일링 섹션에만 추가할 수 있어요/);
 });
 
 test('N12 product conversion still clears worn-only matching fields', () => {

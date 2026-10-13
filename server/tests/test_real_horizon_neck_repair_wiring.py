@@ -15,7 +15,7 @@ from test_real_horizon_neck_repair import IDENTITY, REAL, png
 
 def run_detail(monkeypatch, *, cut="horizon", model=REAL, attached=True,
                outcome="applied", enabled=True, generation_model="gpt-image-2",
-               duplicate=False, best_of=None, qc=None, repair=None):
+               duplicate=False, qc=None, repair=None):
     events, edits, generated = [], [], []
     qwen_bytes = png(color="gray")
     api_bytes = png((120, 180), "black")
@@ -45,8 +45,6 @@ def run_detail(monkeypatch, *, cut="horizon", model=REAL, attached=True,
     monkeypatch.setattr(face_identity, "apply_face_pass", qwen)
     monkeypatch.setattr(face_identity, "identity_score", lambda *_a, **_k: 0.9)
     monkeypatch.setattr(dpj, "_emit", emit)
-    if best_of:
-        monkeypatch.setattr(dpj.image_qc, "best_of", best_of)
     if qc:
         monkeypatch.setattr(dpj.cut_output_qc, "verdict", qc)
     if repair:
@@ -54,7 +52,7 @@ def run_detail(monkeypatch, *, cut="horizon", model=REAL, attached=True,
     r2 = _RecordingR2(events)
     app = fake_worker_app(make_settings(
         gemini_api_key="test", r2_bucket="b", face_identity_enabled=True,
-        model_detail_cut=generation_model, garment_qc_mode="off",
+        model_detail_cut=generation_model,
         cut_output_qc_mode="repair" if qc else "off",
         real_horizon_neck_repair_enabled=enabled,
     ), r2=r2, gemini=Client())
@@ -92,7 +90,7 @@ def test_detail_runs_gpt_then_qwen_then_one_sunburst_and_saves_the_raw_result(mo
 
 
 @pytest.mark.parametrize("kwargs", [
-    {"cut": "styling"}, {"cut": "mirror"}, {"cut": "product"},
+    {"cut": "styling"}, {"cut": "product"},
     {"model": "mA", "attached": False}, {"outcome": "skipped:too_small"},
     {"enabled": False}, {"generation_model": "gemini-3-pro-image"},
 ])
@@ -123,7 +121,7 @@ def test_sunburst_rejection_keeps_qwen_bytes_outcome_and_warns(monkeypatch):
     meta = run.result[1][0]["metadata"]
     assert meta["face_pass"] == "applied"
     assert not meta["neck_repair"]["applied"]
-    assert {"code": "real_horizon_neck_repair_unavailable", "blockId": "b1"} in run.result[6]
+    assert {"code": "real_horizon_neck_repair_unavailable", "blockId": "b1"} in run.result[5]
 
 
 def test_only_the_final_accepted_stage2_gets_neck_repair(monkeypatch):
@@ -145,33 +143,9 @@ def test_only_the_final_accepted_stage2_gets_neck_repair(monkeypatch):
     assert run.result[1][0]["metadata"]["face_recipe"] == "stage2-recipe"
 
 
-def test_candidate_selection_uses_the_chosen_qwen_outcome(monkeypatch):
-    selected = png(color="red")
-
-    async def best_of(settings, product_images, initial, generate_candidate):
-        await generate_candidate()
-        # 선택은 initial이다. 마지막 후보의 얼굴 패스 결과로 적용 조건을 정하지 않는다.
-        return initial, {"chosenIndex": 0}, []
-
-    calls = 0
-    real_generate = dpj.cut_generator.generate
-
-    async def generate(*args, **kwargs):
-        nonlocal calls
-        image, mime = await real_generate(*args, **kwargs)
-        calls += 1
-        if calls > 1:
-            kwargs["face_pass_outcome"]["face_pass"] = "skipped:too_small"
-            return selected, mime
-        return image, mime
-
-    monkeypatch.setattr(dpj.cut_generator, "generate", generate)
-    run = run_detail(monkeypatch, best_of=best_of)
-    assert len(run.generated) == 2 and len(run.edits) == 1
-    assert run.edits[0][1].data == run.qwen
 
 
-@pytest.mark.parametrize("cut,expected_edits", [("horizon", 1), ("styling", 0), ("mirror", 0)])
+@pytest.mark.parametrize("cut,expected_edits", [("horizon", 1), ("styling", 0)])
 def test_editor_new_real_cut_repairs_only_horizon_before_private_storage(monkeypatch, cut, expected_edits):
     original, edited = png(), png((120, 180), "gray")
     events, captured, edits, caches = [], {}, [], []
@@ -266,8 +240,7 @@ def test_editor_new_real_cut_repairs_only_horizon_before_private_storage(monkeyp
     assert len(edits) == expected_edits
     assert r2.saved == [edited if expected_edits else original]
     assert captured["image"]["metadata"]["facemarket_real_derived"]
-    if cut != "mirror":
-        assert captured["image"]["metadata"]["face_pass"] == "applied"
+    assert captured["image"]["metadata"]["face_pass"] == "applied"
     assert caches == [eij.PRIVATE_NO_STORE]
     assert captured["charge"] == 1
     if expected_edits:

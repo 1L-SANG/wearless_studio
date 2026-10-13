@@ -4,6 +4,7 @@ import { uid } from '@/lib/ids.js';
 import { CREDIT_COSTS, editorImageCreditCost } from '@/lib/limits.js';
 import { classifyEditorAssetInfo, extractEditorAssetId } from '@/lib/editorAssetInfo.js';
 import { OUTER_CLOSURE_VALUES, outerClosureDisplayValue, outerClosureRange } from '@/lib/outerClosure.js';
+import { isSupportedCutType } from '@/lib/storyboardTaxonomy.js';
 
 // Mirrors ADR-0019's server recipe fields. UI-only canvas and preview fields stay out.
 const RECIPE_FIELDS = [
@@ -251,6 +252,12 @@ export const mockAdapter = {
     const source = all.get(extractEditorAssetId(body.source?.src))
       || [...all.values()].find((image) => image.src === body.source?.src || image.url === body.source?.src);
     const info = source && assetInfo(source);
+    const requestedCutType = body.mode === 'vary'
+      ? info?.kind === 'upload' ? null : info?.cutType || body.source?.cutType
+      : body.cutType;
+    if (requestedCutType != null && !isSupportedCutType(requestedCutType)) {
+      throw Object.assign(error('unknown_cut_type', '지원하지 않는 컷 종류예요. 새 이미지를 선택해 주세요.'), { requestNotSent: true });
+    }
     const plan = isEdit ? editPlan(projectId, body) : null;
     return submit(projectId, body, request, async (callbacks) => {
       if (plan) {
@@ -273,9 +280,7 @@ export const mockAdapter = {
         const colorId = root.wardrobeGroup || assetInfo(root).colorId || source.wardrobeGroup || 'misc';
         result = await base.generateImage(projectId, { mode: 'new', cutType, colorId, ...callbacks },
           { creditCost: editorImageCreditCost(body) });
-        const actions = cutType === 'mirror'
-          ? [['soft-smile', '거울 구도를 유지하며 부드럽게 웃기'], ['relaxed-expression', '거울 구도를 유지하며 편안한 표정 짓기'], ['small-head-tilt', '휴대폰 위치를 유지하며 고개 살짝 기울이기']]
-          : [['relax-arms', '팔의 힘을 풀고 자연스럽게 서기'], ['glance-side', '시선을 살짝 옆으로 옮기기'], ['soft-smile', '고개를 살짝 기울이며 부드럽게 웃기']];
+        const actions = [['relax-arms', '팔의 힘을 풀고 자연스럽게 서기'], ['glance-side', '시선을 살짝 옆으로 옮기기'], ['soft-smile', '고개를 살짝 기울이며 부드럽게 웃기']];
         const previous = [...all.values()].filter((image) => image.similarCut?.rootAssetId === rootId);
         const [actionKey, actionSummary] = actions[previous.length % actions.length];
         result.data.similarCut = { version: 1, rootAssetId: rootId, sourceAssetId: source.assetId,

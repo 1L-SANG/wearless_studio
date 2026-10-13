@@ -650,7 +650,8 @@ def test_server_safety_net_clears_signature_reference_from_unsupported_recipe(
 def test_direct_prompt_rejects_signature_id_on_unsupported_recipe(
     cut_type, shot, direction,
 ):
-    with pytest.raises(ValueError, match="unsupported_signature_recipe"):
+    reason = "unknown_cut_type" if cut_type == "mirror" else "unsupported_signature_recipe"
+    with pytest.raises(ValueError, match=reason):
         cut_generator.build_prompt(
             _bottom_sig_spec(cutType=cut_type, shot=shot, direction=direction),
             _bottom_product(),

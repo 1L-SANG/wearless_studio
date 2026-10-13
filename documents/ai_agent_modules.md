@@ -36,8 +36,7 @@ OPENAI_API_KEY=   # detail_cut GPT Image 2 + OpenAI text 폴백
 | AG-02 | copywriter (카피라이팅) | text | `generateDetailPage`(copy 단계) | — | ✅ (백엔드 라이브) |
 | AG-03 | copy-qc (카피 검수) | text | `generateDetailPage`(copy 단계 직후) | — | ✅ (백엔드 라이브) |
 | AG-04 | mannequin-generator (마네킹 생성) | image_high | `generateMannequins`, `regenerateMannequin({fitProfile})` | mannequinGenerate | ✅ (백엔드 라이브) |
-| AG-05 | mannequin-adjuster (마네킹 조정) | image_high | ~~`adjustMannequin`~~ | ~~mannequinAdjust~~(0) | ⛔ 폐기 — fitProfile 재생성으로 통합 |
-| AG-06 | cut-generator (사진 생성 — 내부 mirror 레시피 포함) | detail_cut(PL-4 일반 컷) / image_signature(첫 시그니처) / image_high(에디터) | `generateDetailPage`(컷 단계), `generateImage(mode:'new')` | storyboardPerCut / editorImage | ✅ (백엔드 라이브 — detail_page_job·editor_image_job) |
+| AG-06 | cut-generator (사진 생성) | detail_cut(PL-4 일반 컷) / image_signature(첫 시그니처) / image_high(에디터) | `generateDetailPage`(컷 단계), `generateImage(mode:'new')` | storyboardPerCut / editorImage | ✅ (백엔드 라이브 — detail_page_job·editor_image_job) |
 | AG-07 | cut-variator (비슷한 컷 계획 실행) | image_high | `generateImage(mode:'vary', variationMode:'similar')`, 콘티 비슷한 컷 | editorImage | ✅ (백엔드 라이브, editor_image_job과 detail_page_job) |
 | AG-08 | selling-point-extractor (강조 특징 발굴) | text | `analyzeProduct` 내부 — AG-01과 **병렬**(같은 job), 실패 시 AG-01 points 폴백 | — | ✅ (2026-07-13) |
 | M-01 | matching-recommender (매칭 추천) | **비-AI** (룰베이스) | `analyzeProduct` 내부 | — | ✅ (백엔드 라이브) |
@@ -72,7 +71,7 @@ OPENAI_API_KEY=   # detail_cut GPT Image 2 + OpenAI text 폴백
 | 호출 시점 | PL-4 copy 단계: `project.copywriting=true`일 때 카피 대상 블록별. (세탁 안내는 AG-02 대상 아님 — 에디터 자동 블록을 M-02가 규칙 기반으로 생성, §4) |
 | 입력 | `{ contentRole, sectionRole, cutType, product: { name, clothingType, measurementsKnown }, analysis: { fit, materials, sellingPoints, targetGenders, matchSelections }, colorLabel }`. `blockKind`는 예전 콘티를 읽는 동안의 폴백일 뿐 새 입력의 기준이 아니다. |
 | 출력 | `{ texts: { role: 'headline'\|'body', text }[] }` — 블록당 1~3개 |
-| 카피 방향 | PRD §11.3의 `contentRole`별 방향을 시스템 프롬프트로 고정한다. 첫 장면은 짧은 헤드라인, 나머지는 핵심 장점·코디·핏·실제 착용 느낌·제품 전체·확인된 디테일에 맞는 본문을 만든다. |
+| 카피 방향 | PRD §11.3의 `contentRole`별 방향을 시스템 프롬프트로 고정한다. 첫 장면은 짧은 헤드라인, 나머지는 핵심 장점·코디·핏·제품 전체·확인된 디테일에 맞는 본문을 만든다. |
 | 프롬프트 핵심 제약 | 사용자 확인 정보 우선 · 미확인 소재/세탁법/기능성 단정 금지 · 과장 효능 금지 (PRD §11.2) |
 | 실패 | 해당 블록 카피 생략하고 진행(생성 전체를 실패시키지 않음) — 사용자가 에디터에서 직접 입력 가능 |
 
@@ -95,47 +94,35 @@ OPENAI_API_KEY=   # detail_cut GPT Image 2 + OpenAI text 폴백
 |---|---|
 | tier | `image_high` (Gemini 3 Pro 단일 티어 — Flash 프로모션 없음) |
 | 호출 시점 | 마네킹 페이지 최초 진입 시 **자동** `generateMannequins` / 핏 확인 후 `regenerateMannequin(projectId, { fitProfile })` (PL-2/3) |
-| 생성 방식 | **성별 베이스 + 의류 스왑** (스파이크 결정 2026-06-12). 맨바닥 독립 생성이 아니라, **분석에서 고른 성별(`targetGenders`)이 베이스 마네킹(남/여 각 고정 1장, 운영자 시드)을 결정**하고 그 위에 의류만 교체. **단일 후보 생성**(DB/API 호환을 위해 legacy `candidate='A'` 유지 — 구 A/B 2후보안 폐기). 핏은 `fitProfile`(축 선언 + `matchCut`)이 프롬프트 블록으로 주입되고, 선택된 매칭 하의 이미지가 있으면 함께 착장. |
+| 생성 방식 | **성별 베이스 + 의류 스왑** (스파이크 결정 2026-06-12). 맨바닥 독립 생성이 아니라, **분석에서 고른 성별(`targetGenders`)이 베이스 마네킹(남/여 각 고정 1장, 운영자 시드)을 결정**하고 그 위에 의류만 교체. **단일컷 생성**(저장 ID 호환을 위해 `candidate='A'` 유지). 핏은 `fitProfile`(축 선언 + `matchCut`)이 프롬프트 블록으로 주입되고, 선택된 매칭 하의 이미지가 있으면 함께 착장. |
 | 입력 | `{ baseMannequinUrl: 성별 베이스 URL, productImages: 기준 색상 전 각도 URL[], matchImage?: 매칭 하의 URL, fitProfile }` — 매칭 하의 이미지가 없는 잡에선 `effective_fit_profile`이 `matchCut`을 제거(없는 옷 지시 방지, `server/app/agents/mannequin.py`) |
 | 출력 | `{ imageUrl }` → 서버가 `MannequinCut { id, candidate:'A'(legacy), version, src }`로 포장 — 재생성 시 새 버전으로 스트립에 추가·자동 선택 |
 | QC | Pillow 휴리스틱 QC + AG-P2 비전 QC 2중 — **현재 둘 다 shadow/off**(로그만, 게이팅 안 함 — `MANNEQUIN_QC_ENABLED=false`, `image_qc='off'`). 게이팅 활성 시 최대 2회 교정 재시도(`mannequin_max_attempts=2`) |
 | 프롬프트 핵심 제약 | **베이스 마네킹의 인물·포즈·구도·배경 동결, 의류만 교체** · 의류 구조·디테일·컬러 보존 최우선 · 모델 얼굴 없음 |
-| 실패 | 성공 시 잡당 `mannequinGenerate`(=45) 차감(예약량과 동일 — 구 "성공 후보 수 × 1" 폐기), 실패 시 미차감(예약 release). finalize는 lease-fenced 원자 처리 |
-
-### AG-05 mannequin-adjuster — 마네킹 조정 ~~(폐기)~~
-
-> **폐기 (2026-07)**: 마네킹 페이지의 slimmer/looser 조정 흐름이 **fitProfile 기반 재생성**(AG-04 `regenerateMannequin`)으로 통합되면서 페이지에서 더 이상 호출하지 않는다. 크레딧 항목 `mannequinAdjust`도 deprecated(비용 0). 서버 `:adjust` 라우트는 항상 **410 Gone** — 잡을 생성하지 않는다(단가 0 상태에서 잡 생성을 허용하면 무과금 AI 생성 경로가 되므로 차단). 워커(`mannequin_adjust_job`)는 **툼스톤** — 큐에 남은 legacy 잡을 **AI 호출 없이** 실패 종결(예약 크레딧 release)만 한다(생성 코드 제거, 같은 무과금 경로 차단). 프롬프트 헬퍼(`mannequin_adjuster.py`)는 AG-07이 재사용해 파일만 잔존 — 아래 표는 레거시 기록.
-
-| | |
-|---|---|
-| tier | `image_high` (레거시 기록이며 현재 AI 호출 없음) |
-| 호출 시점 | (구) '의류 조정하기' → `adjustMannequin` (PL-3) |
-| 입력 | `{ baseImageUrl, fitAdjust?: 'slimmer'\|'looser', lengthAdjust?: 'shorter'\|'longer', matchAdjust?: { item: MatchingItem, fitAdjust?, lengthAdjust? } }` — '현재'는 필드 생략 (계약 §6) |
-| 출력 | `{ imageUrl }` → 새 버전 MannequinCut. 조정 상태는 서버가 누적 기록 |
-| 프롬프트 핵심 제약 | 지시된 차원만 변경, 나머지(의류 디테일·구도) 동결 — 연속 조정의 시각적 일관성(PRD §17 R&D 인지) |
+| 실패 | 성공 시 잡당 `mannequinGenerate`(=45) 차감(예약량과 동일), 실패 시 미차감(예약 release). finalize는 lease-fenced 원자 처리 |
 
 ### AG-06 cut-generator — 이미지 생성 (상위 계열: styling·horizon·product)
 
-`cutType`은 페이지를 나누는 콘티 분류가 아니라 이미지 생성 레시피 입력이다. 실행 전 `styling|horizon|product` 세 계열로 컴파일하며, 기존 저장값 `mirror`는 `styling/mirrorSelfie` 하위 방식으로 읽는다. 콘티 카드 인스펙터에서 사용자가 섹션별 허용 컷 종류를 직접 고르면, 앞 단계가 그 값을 저장하고 내부 `contentRole`을 자동으로 맞춘다. AG-06은 선택된 계열을 렌더링하며, 생성예시는 별도 `all|pose|bg` 범위 안에서 가능한 구도와 분위기를 보탠다(ADR-0005·0010).
+`cutType`은 페이지를 나누는 콘티 분류가 아니라 이미지 생성 레시피 입력이다. 실행 전 `styling|horizon|product` 세 계열로 컴파일한다. 콘티 카드 인스펙터에서 사용자가 섹션별 허용 컷 종류를 직접 고르면, 앞 단계가 그 값을 저장하고 내부 `contentRole`을 자동으로 맞춘다. AG-06은 선택된 계열을 렌더링하며, 생성예시는 별도 `all|pose|bg` 범위 안에서 가능한 구도와 분위기를 보탠다(ADR-0005·0010).
 
 | | |
 |---|---|
 | tier | PL-4 일반 컷은 `detail_cut` GPT를 쓰고, 첫 시그니처 컷은 별도 `image_signature` 계약을 쓴다. PL-5 에디터만 기존 `image_high` 계약을 유지한다. exact 여부는 모델 선택이 아니라 과거 입력·프롬프트 패킷 적용 여부를 구분한다. |
 | 호출 시점 | ① PL-4: 저장된 콘티의 `source='ai'` 블록별 1콜 ② 에디터 `새 이미지 추가` → `generateImage(mode:'new')` (PL-5) |
-| 입력 | `{ contentRole, sectionRole?, cutType, direction, shot, outerClosureState?, colorGroup: { swatchId, images: URL[] }, baseMannequinUrl?, modelId?, pose?, matchItems?: MatchingItem[], faceExposure, angle, refImages?: URL[] }`. `baseMannequinUrl`(project.selectedMannequinId의 컷)은 **기준색 착용컷에만** 넣고 다른 색상에서는 빼서 현재 `colorGroup`의 셀러 상품 사진이 색상 정본이 되게 한다. `cutType`과 현재 색상·방향·샷 등 콘티 값은 사용자 선택의 정본이며, 생성예시보다 우선한다. 서버는 섹션별 허용 컷과 세부 옵션을 검증한다. `contentRole`은 후킹의 순서, 스타일링·스튜디오의 섹션과 `cutType`, 의류 확인의 `shot`에서 파생한 내부값으로 일치시킨다. 유효한 사용자 컷 선택을 예전 역할 기본값으로 덮어쓰지 않는다. **mirror 계약(ADR-0004·0007)**: `direction=null` · `shot`은 full/medium만 · `faceExposure`는 hide(기본, 폰으로 가림)/show만 · `pose='auto'` 고정. 유효한 `cutType`을 해석할 수 없을 때만 **에러**(`unknown_cut_type`)다. `product+detail`은 상품 전체 중 실제 `Detail` 입력 이미지가 생성 입력에 포함돼야 한다. 목표 색상에 없으면 기준색, 그다음 Detail 보유 첫 색상의 구조·재질을 근거로 쓰고 색만 목표 색상군으로 전환하며, 전 색상에 없으면 `detail_reference_required`로 해당 사진을 실패시킨다. |
+| 입력 | `{ contentRole, sectionRole?, cutType, direction, shot, outerClosureState?, colorGroup: { swatchId, images: URL[] }, baseMannequinUrl?, modelId?, pose?, matchItems?: MatchingItem[], faceExposure, angle, refImages?: URL[] }`. `baseMannequinUrl`(project.selectedMannequinId의 컷)은 **기준색 착용컷에만** 넣고 다른 색상에서는 빼서 현재 `colorGroup`의 셀러 상품 사진이 색상 정본이 되게 한다. `cutType`과 현재 색상·방향·샷 등 콘티 값은 사용자 선택의 정본이며, 생성예시보다 우선한다. 서버는 섹션별 허용 컷과 세부 옵션을 검증한다. `contentRole`은 후킹의 순서, 스타일링·스튜디오의 섹션과 `cutType`, 의류 확인의 `shot`에서 파생한 내부값으로 일치시킨다. 유효한 사용자 컷 선택을 예전 역할 기본값으로 덮어쓰지 않는다. 유효한 `cutType`을 해석할 수 없을 때만 **에러**(`unknown_cut_type`)다. `product+detail`은 상품 전체 중 실제 `Detail` 입력 이미지가 생성 입력에 포함돼야 한다. 목표 색상에 없으면 기준색, 그다음 Detail 보유 첫 색상의 구조·재질을 근거로 쓰고 색만 목표 색상군으로 전환하며, 전 색상에 없으면 `detail_reference_required`로 해당 사진을 실패시킨다. |
 | 출력 | `{ imageUrl, cutType }` → PL-4에선 블록 이미지, PL-5에선 `WardrobeImage { ai:true, cutType }` |
 | 색상 변형 | 별도 에이전트 아님 — `colorGroup`이 추가 색상이면 같은 의류를 해당 스와치로 재현 (PRD §17 '색상별 동일 의류 재현' R&D 인지) |
 | 확정 GPT exact 적용 조건 | `styling/direct` + front + full/medium + `refScope='all'` + `pose='auto'` + `spaceGroupId` 없음 + 예시 방향 호환 + 서비스 예시 선택은 exact 프로필 요청 조건이다. 실행하려면 기준 색상 + 선택 resolved 마네킹 + 대체되지 않은 선택 가상모델 + 큐레이션된 서비스 예시가 모두 있어야 한다. 요청 뒤 조건이나 카탈로그가 빠진 경우 generic으로 바꾸지 않고 실패시킨다. 처음부터 구조적 요청 범위 밖인 컷만 기존 generic 경로다. |
 | exact 이미지 입력 순서 | 선택 resolved 마네킹 → `grid_face_direction` → `grid_fullbody` → 셀러 원본 1~4장을 합친 라벨 근거 그리드 **한 장** → 선택 매칭 최대 한 장 → 서비스 생성예시. 방향 시트 두 장은 한 원자 쌍이다. SHA/길이로 검증한 각 입력은 provider multipart에도 그 바이트와 MIME 그대로 전송하며 PNG 재인코딩을 거치지 않는다. |
 | exact 프롬프트·출력 | hash-pinned `cut_generate_confirmed_gpt_v1.txt`의 기존 iPhone 기본 Photo + Adjacent V4 문구를 그대로 사용한다. GPT snapshot·`medium`·PNG는 과거 확정 조건을 유지한다. `DETAIL_CUT_IMAGE_SIZE=4K`만 과거 `1024x1536` 대신 GPT 유효 최대 2:3 `2336x3504`로 요청하는 의도적 provider-level 차이다. |
-| 프롬프트 핵심 제약 | 상품 동일성 보존 최우선(상품의 텍스트·로고 포함) · 기준색에서만 선택 마네킹컷의 의류 국소 색·핏·실루엣 준수(PRD §7.1) · product는 모델 없음(ghost/detail) · 디테일은 입력 근거 밖의 원단·안감·부자재 생성 금지 · mirrorSelfie는 캐주얼 거울 셀피 구도(스튜디오 연출 아님) |
+| 프롬프트 핵심 제약 | 상품 동일성 보존 최우선(상품의 텍스트·로고 포함) · 기준색에서만 선택 마네킹컷의 의류 국소 색·핏·실루엣 준수(PRD §7.1) · product는 모델 없음(ghost/detail) · 디테일은 입력 근거 밖의 원단·안감·부자재 생성 금지 |
 | 실패 | exact 대상으로 판정된 뒤 모델 시트 SHA/길이, AG-01 근거·현재 셀러 원본 바인딩, 생성예시/연출 카탈로그 또는 필수 입력이 없거나 달라지면 해당 컷은 **fail-closed**하며 generic으로 강등하지 않는다. PL-4는 AI 컷 한 장이라도 미완성이면 전체 실패·예약 전액 해제(`incomplete_cuts` 또는 `all_cuts_failed`)하며 부분 페이지를 출고하지 않는다. PL-5는 throw + 미차감. |
 
-> **구현 구조 (2026-06-20 결정 → 2026-08 개정)**: generic 프롬프트는 **단일 섹션 템플릿** `server/prompts/cut_generate_v1.txt`의 하위 실행 섹션으로 통합 — 구 `prompts/cuts/*` 컷별 파일은 삭제됐다. `server/app/agents/cut_plan.py`가 저장 호환용 mirror까지 읽어 세 상위 계열과 항목별 정본을 먼저 확정하고, `cut_generator.py`는 활성 하위 섹션만 렌더한다. PL-4의 일반 컷은 모두 `detail_cut` GPT를 사용하되, 확정 조건을 모두 만족한 블록만 별도의 hash-pinned exact 프롬프트·패킷을 쓴다. 첫 시그니처 컷은 `image_signature`, 에디터 새 이미지·마네킹·매칭·AG-07은 공유 `image_high`의 기존 경로를 유지한다. `styling` = 일상/룩북 컷(별도 '일상' cutType 신설 안 함 — 라벨만).
+> **구현 구조 (2026-06-20 결정 → 2026-08 개정)**: generic 프롬프트는 **단일 섹션 템플릿** `server/prompts/cut_generate_v1.txt`의 하위 실행 섹션으로 통합 — 구 `prompts/cuts/*` 컷별 파일은 삭제됐다. `server/app/agents/cut_plan.py`가 세 상위 계열과 항목별 정본을 먼저 확정하고, `cut_generator.py`는 활성 하위 섹션만 렌더한다. PL-4의 일반 컷은 모두 `detail_cut` GPT를 사용하되, 확정 조건을 모두 만족한 블록만 별도의 hash-pinned exact 프롬프트·패킷을 쓴다. 첫 시그니처 컷은 `image_signature`, 에디터 새 이미지·마네킹·매칭·AG-07은 공유 `image_high`의 기존 경로를 유지한다. `styling` = 일상/룩북 컷(별도 '일상' cutType 신설 안 함 — 라벨만).
 > **다양성은 AG-06의 책임이 아니다**: AG-06은 주어진 1개 spec(direction/shot/pose/angle)을 충실히 렌더할 뿐, 같은 사진 목적 안의 구도 변주는 **콘티(shot-list) 구성 단계**가 정한다 — §5 '컷 다양성' 참조.
 > **현재 배선과 연구 경계 (2026-08-18)**: 확정 GPT exact 경로는 리사이즈·재인코딩하지 않은 원본 바이트/MIME의 `grid_face_direction + grid_fullbody`를 원자 쌍으로 사용하고, provider에도 동일 바이트/MIME를 보낸다. 그 밖의 generic VIRTUAL 착용컷은 기존 `face_front + body_front` 계약과 OpenAI 호환 PNG 정규화를 유지한다. exact 대상으로 들어온 뒤 자산이 없다고 generic 쌍으로 바꾸지 않는다. 아래 `C방식 3장`은 2026-08-04 연구 기록이며 현재 exact 입력 계약이 아니다.
 >
-> **가상모델 아이덴티티·체형 레퍼런스 연구 기록 (2026-08-04 — C방식 3장)**: 사람컷(styling·horizon·mirror)에서 `modelId`가 지정되면 해당 가상모델의 **face_front 원본 베이스컷 1장 + 세드카드 그리드(2x2 멀티앵글, 자르지 않은 통짜) 1장 + body_front 전신 정면 1장**을 첨부하는 방식을 검증했다. 얼굴 2장의 근거는 v3 매트릭스(5조합×4포즈×3모델=60컷) + C 스트레스(표정3·비정형포즈4×2모델=16컷): ① 원본 1장 단독은 **버즈컷 표본 착시** — 헤어 있는 모델(m1·w1)에서 컷마다 헤어스타일이 변해 컷 간 일관성 실패 ② 그리드가 각도·헤어 정보를 공급해 헤어 고정 + 질감(주근깨) 최고 보존 ③ 표정 변화·착석·뒷모습(그리드 사각지대)까지 16/16 아이덴티티 유지 ④ 그리드 레이아웃이 출력에 새어나온 사례 0/28. **원본이 얼굴 질감의 정본, 그리드는 각도·헤어의 정본, body_front는 키 인상·어깨·몸통·팔다리 비율과 자연스러운 체형의 정본**으로 역할을 나눴고, body_front의 의상·배경·포즈·신발·프레이밍은 복사 금지 라벨로 격리했다. 이 기록은 최신 운영 입력 결정으로 자동 승격하지 않는다.
+> **가상모델 아이덴티티·체형 레퍼런스 연구 기록 (2026-08-04 — C방식 3장)**: 사람컷(styling·horizon)에서 `modelId`가 지정되면 해당 가상모델의 **face_front 원본 베이스컷 1장 + 세드카드 그리드(2x2 멀티앵글, 자르지 않은 통짜) 1장 + body_front 전신 정면 1장**을 첨부하는 방식을 검증했다. 얼굴 2장의 근거는 v3 매트릭스(5조합×4포즈×3모델=60컷) + C 스트레스(표정3·비정형포즈4×2모델=16컷): ① 원본 1장 단독은 **버즈컷 표본 착시** — 헤어 있는 모델(m1·w1)에서 컷마다 헤어스타일이 변해 컷 간 일관성 실패 ② 그리드가 각도·헤어 정보를 공급해 헤어 고정 + 질감(주근깨) 최고 보존 ③ 표정 변화·착석·뒷모습(그리드 사각지대)까지 16/16 아이덴티티 유지 ④ 그리드 레이아웃이 출력에 새어나온 사례 0/28. **원본이 얼굴 질감의 정본, 그리드는 각도·헤어의 정본, body_front는 키 인상·어깨·몸통·팔다리 비율과 자연스러운 체형의 정본**으로 역할을 나눴고, body_front의 의상·배경·포즈·신발·프레이밍은 복사 금지 라벨로 격리했다. 이 기록은 최신 운영 입력 결정으로 자동 승격하지 않는다.
 > - **첨부 순서·매니페스트**: `images = [mannequin?, model_face?, model_sheet?, model_body?, *prod(slot순), match?, *mood]` — MODEL 3장은 마네킹 다음. 고정 라벨(셀러 데이터 미포함 — 빼지 말 것):
 >   - model_face: `MODEL — frontal close-up of the model (identity ground truth; do NOT copy this image's pose, framing, or clothing)`
 >   - model_sheet: `MODEL SHEET — a 2x2 grid of four studio portraits of the SAME single person (identity reference only). Do NOT copy the grid layout, framing, poses, or clothing; the output must be one single normal photograph, never a grid`
@@ -145,7 +132,7 @@ OPENAI_API_KEY=   # detail_cut GPT Image 2 + OpenAI text 폴백
 
 ### AG-07 cut-variator — 현재 이미지 수정
 
-**2026-10-09 C 방식 통합:** 새 착용컷 UI는 `variationMode='similar'`를 보내며 `similar_cut.py`가 원본·상품 구조·이전 동작을 비전 분석해 한 동작을 계획한다. 기존 text/vision 공급자 설정을 사용하고, 생성은 기존 에디터 이미지 모델 설정을 따른다. 계획을 작업 lease와 원본별 이력 비교 아래 먼저 저장한 뒤 AG-07로 생성한다. 최초 원본을 재사용하고 최근 완료/예약 동작 12개와 다른 행동을 요청한다. 계획 실패 시 단순 변주로 전환하지 않는다. 거울 원본은 폰·반사·얼굴 가림을 유지한다. Gemini는 원본 비율 추종을 요청하고, GPT는 원본 크기와 요청 해상도에서 유효 출력 크기를 산정한다. 실제 동일성·새로운 포즈가 항상 보장된다는 뜻은 아니다.
+**2026-10-09 C 방식 통합:** 새 착용컷 UI는 `variationMode='similar'`를 보내며 `similar_cut.py`가 원본·상품 구조·이전 동작을 비전 분석해 한 동작을 계획한다. 기존 text/vision 공급자 설정을 사용하고, 생성은 기존 에디터 이미지 모델 설정을 따른다. 계획을 작업 lease와 원본별 이력 비교 아래 먼저 저장한 뒤 AG-07로 생성한다. 최초 원본을 재사용하고 최근 완료/예약 동작 12개와 다른 행동을 요청한다. 계획 실패 시 단순 변주로 전환하지 않는다. Gemini는 원본 비율 추종을 요청하고, GPT는 원본 크기와 요청 해상도에서 유효 출력 크기를 산정한다. 실제 동일성·새로운 포즈가 항상 보장된다는 뜻은 아니다.
 
 **2026-10-10 옛 수정 경로 삭제(ADR-0016 개정):** AG-07은 비슷한 컷 계획을 실행할 때만 쓴다. 변경값(방향, 샷, 포즈, 표정, 배경)을 프롬프트로 바꿔 한 장을 다시 그리던 옛 경로(`cut_vary_v1.txt`, 빈 변경의 제품컷 `이미지 수정`, 배경 참조 `refBg`)는 삭제했다. 원본 검수 레시피가 있는 디테일컷의 `같은 부위 다시 촬영`은 AG-07이 아니라 디테일 전용 경로(`detail_shot_runtime`, ADR-0012)로 처리한다. 그 밖의 vary 요청은 라우트가 400 `vary_unsupported`로 거절한다.
 
@@ -175,7 +162,7 @@ OPENAI_API_KEY=   # detail_cut GPT Image 2 + OpenAI text 폴백
 - **입력**: `{ storyboard: StoryboardBlock[], cutResults: { blockId, imageUrl }[], copyResults: { blockId, texts }[], product(실측 포함), copywriting }`.
 - **로직**: `sectionRole` 순서와 `contentRole`별 레이아웃·카피 위치로 `EditorBlock[]`을 배치한다(기준 폭 1000). 구 `blockKind`는 오래된 데이터의 폴백으로만 읽는다. AI 호출 없음.
   - **사진 섹션** = 후킹(`hooking`) → 스타일링(`styling`) → 스튜디오(`studio`) → 의류 확인(`product`). 같은 장소는 별도 섹션을 만들지 않는다.
-  - **구매 정보** = 콘티 밖에서 에디터 블록으로 구성한다(PRD §10.14). 현재 라이브 조립기는 사이즈·세탁·AI 안내 자동 블록 3종까지 만든다. 소재·옵션·배송·교환·필수 고지 등을 `kind='info'`와 `infoType` 일반 블록으로 만들고, 빈 필수값을 `정보 입력 필요`로 보여주는 부분은 `TODO.md`의 에디터 구매 정보 항목에서 추적한다.
+  - **구매 정보** = 콘티 밖에서 에디터 블록으로 구성한다(PRD §10.14). 현재 라이브 조립기는 사이즈·세탁·AI 안내 자동 블록 3종까지 만든다. 소재·옵션·배송·교환·필수 고지 등을 `kind='info'`와 `infoType` 일반 블록으로 만들고, 빈 필수값을 `정보 입력 필요`로 보여주는 부분은 `TODOS.md`의 에디터 구매 정보 항목에서 추적한다.
   - **사이즈 안내** = `product.measurements`.
   - **세탁 안내** = **규칙 기반 프리셋**(AI 아님): `clothingType`별 대표 소재(가장 많이 팔리는 소재)에 맞춘 세탁 문구를 미리 정해두고 선택, 소재가 애매하면 **기본 세탁방침**으로 폴백. 실제 케어라벨 확인 권장 문구 포함. (A1 결정 2026-06-14)
   - **AI 생성 안내** = AI 이미지 사용·차이 가능 고지.

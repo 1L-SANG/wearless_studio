@@ -52,7 +52,7 @@ test('extended seed gives each extra color one full-medium pair with one matchin
     projectId: 'colorway-pair', clothingType: 'top', targetGenders: ['women'], matchClothing: MATCHES,
   });
   const baseWorn = blocks.filter((block) => (
-    ['styling', 'horizon', 'mirror'].includes(block.cutType) && block.colorId === 'base'
+    ['styling', 'horizon'].includes(block.cutType) && block.colorId === 'base'
   ));
   const pair = blocks.filter((block) => block.colorwayGroupId);
 
@@ -73,7 +73,7 @@ test('extended entry assigns each color once and shares that match across its fu
     projectId: 'colorway-entry-matches', clothingType: 'top', targetGenders: ['women'],
     matchClothing: MATCHES,
   });
-  const worn = blocks.filter((block) => ['styling', 'horizon', 'mirror'].includes(block.cutType));
+  const worn = blocks.filter((block) => ['styling', 'horizon'].includes(block.cutType));
   const byColor = Map.groupBy(worn, (block) => block.colorId);
 
   assert.ok(byColor.get('base').every((block) => block.matchIds.join() === 'match-light'));

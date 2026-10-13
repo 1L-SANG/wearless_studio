@@ -33,7 +33,7 @@ test('컷 실패 이벤트의 이유와 다시 만들기 가능 여부는 새로
 });
 
 test('모든 종류의 실패 칸 다시 만들기는 서버 복원용 블록 id를 보낸다', () => {
-  for (const cutType of ['product', 'styling', 'mirror', 'horizon']) {
+  for (const cutType of ['product', 'styling', 'horizon']) {
     const result = buildFailedCutRetry([{ id: 'failed', source: 'ai', cutType }], 'failed');
     assert.equal(result.request.retryBlockId, 'failed');
   }

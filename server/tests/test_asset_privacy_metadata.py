@@ -147,35 +147,3 @@ def test_mannequin_finalize_marks_cuts_as_not_real_derived(monkeypatch):
     assert params[-1].obj["facemarket_real_derived"] is False
     # 생성 계보는 그대로 남아야 한다 — 마커는 덧붙이는 것이지 덮어쓰는 게 아니다.
     assert params[-1].obj["generationPath"] == "fresh"
-
-
-def test_mannequin_adjust_finalize_marks_cut_as_not_real_derived(monkeypatch):
-    """조정컷도 같은 파이프라인 산출물이다. 여기만 빠지면 조정 후 커버가 다시 느려진다."""
-    async def fake_consume(*_args, **_kwargs):
-        return 9
-
-    monkeypatch.setattr(repo, "_consume_buckets", fake_consume)
-    conn = _Conn()
-
-    asyncio.run(repo.finalize_mannequin_adjust_success(
-        conn,
-        job_id="job-1",
-        lease_token="lease",
-        user_id="user-1",
-        project_id="project-1",
-        base_candidate="A",
-        cut={
-            "asset_id": "asset-1",
-            "bucket": "r2",
-            "key": "ai/asset-1.png",
-            "mime": "image/png",
-            "base_fit": "regular",
-        },
-        reserved=0,
-        charge=0,
-        metadata={},
-    ))
-
-    sql, params = _asset_insert(conn)
-    assert "height, metadata)" in sql
-    assert params[-1].obj["facemarket_real_derived"] is False

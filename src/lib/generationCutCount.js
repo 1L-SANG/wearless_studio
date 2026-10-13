@@ -11,9 +11,10 @@
    ============================================================= */
 
 import scopes from '../data/identityScopes.json' with { type: 'json' };
+import { filterSupportedStoryboardBlocks } from './storyboardTaxonomy.js';
 
 const CLOSURES = ['closed', 'openToChest', 'partial', 'openToWaist', 'open'];
-const WORN_CUTS = new Set(['styling', 'horizon', 'mirror']);
+const WORN_CUTS = new Set(['styling', 'horizon']);
 const EXCLUDED_EXAMPLES = new Set(scopes.confirmedGptExcludedExampleIds || []);
 
 function closureRange(value) {
@@ -54,7 +55,7 @@ function effectiveClosure(block, clothingType, frontClosure) {
 export function uniqueGenerationCutCount(blocks, { clothingType, frontClosure } = {}) {
   const seen = new Set();
   let count = 0;
-  for (const block of (Array.isArray(blocks) ? blocks : [])) {
+  for (const block of filterSupportedStoryboardBlocks(Array.isArray(blocks) ? blocks : [])) {
     if (!block || block.source === 'mine') continue;
     if (block.spaceGroupId || block.similarSourceBlockId) { count += 1; continue; }
     const key = JSON.stringify({

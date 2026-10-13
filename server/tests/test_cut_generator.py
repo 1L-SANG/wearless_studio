@@ -3,7 +3,7 @@
 스펙 정규화·섹션 렌더의 세부 계약은 test_cuts.py 가 담당한다. 여기는 워커가 쓰는
 진입점(build_prompt/generate 경로)의 회귀만 지킨다: 매니페스트 토큰 유출 금지(architect
 DEFECT 1), 빈 이미지 폴백 문구, 미상 cutType 은 조용한 styling 폴백이 아니라 ValueError,
-mirror 가 정식 컷으로 렌더되는지.
+지원하는 컷 종류만 렌더되는지.
 """
 
 import asyncio
@@ -15,8 +15,8 @@ from app.agents import cut_generator as cg
 from conftest import make_settings
 
 
-def test_cut_types_constant_includes_mirror():
-    assert cg.CUT_TYPES == ("styling", "horizon", "product", "mirror")
+def test_cut_types_constant_lists_supported_recipes():
+    assert cg.CUT_TYPES == ("styling", "horizon", "product")
 
 
 @pytest.mark.parametrize("state,phrase", [("closed", "FULLY CLOSED"), ("openToChest", "OPEN DOWN TO THE CHEST"),
@@ -256,18 +256,11 @@ def test_detail_refs_default_direction_is_front_backward_compat():
     assert ("Detail", "d1") in images
 
 
-def test_build_prompt_unknown_cut_type_raises():
+@pytest.mark.parametrize("cut_type", ["daily", "mirror"])
+def test_build_prompt_unknown_cut_type_raises(cut_type):
     # 회귀 방지: 미상 cutType(예: 폐기 토큰 'daily')을 styling 으로 조용히 대체 렌더하지 않는다 —
-    # 병렬 백엔드 머지에서 mirror 가 styling 으로 무음 폴백되던 사고의 재발 금지.
-    with pytest.raises(ValueError):
-        cg.build_prompt({"cutType": "daily"}, {"name": "니트"})
-
-
-def test_build_prompt_mirror_is_first_class():
-    p = cg.build_prompt({"cutType": "mirror", "shot": "medium"}, {"name": "골지 니트", "clothing_type": "top"})
-    assert "MIRROR SELFIE" in p               # 거울샷 전용 섹션으로 렌더
-    assert "${" not in p and "[[" not in p    # 토큰·섹션 마커 유출 없음
-    assert "PRODUCT CONTEXT" in p and "골지 니트" in p
+    with pytest.raises(ValueError, match="unknown_cut_type"):
+        cg.build_prompt({"cutType": cut_type}, {"name": "니트"})
 
 
 def test_build_prompt_respects_given_manifest():
@@ -470,26 +463,6 @@ def test_repeated_example_micro_pose_is_absent_outside_eligible_contract(
     assert "SECOND-USE MICRO-POSE" not in prompt
 
 
-def test_repeated_all_example_mirror_cut_uses_the_common_rule():
-    manifest = cg.build_manifest(
-        [{"slot": "Front"}], has_mannequin=False, has_match=False,
-        mood_count=0, example_scope="all",
-    )
-    prompt = cg.build_prompt(
-        {
-            "cutType": "mirror", "shot": "full", "faceExposure": "hide",
-            "refScope": "all", "exampleId": "mirror-example",
-            "_exampleRepeatIndex": 2,
-        },
-        PRODUCT_TOP,
-        manifest=manifest,
-    )
-
-    assert "REPEATED ALL-SCOPE EXAMPLE" in prompt
-    assert "THIRD-USE MICRO-POSE" in prompt
-    assert "SAME support side" in prompt
-
-
 def test_all_scope_uses_example_direction_instead_of_legacy_manual_direction(monkeypatch):
     monkeypatch.setattr(
         cg,
@@ -515,8 +488,8 @@ def test_all_scope_uses_example_direction_instead_of_legacy_manual_direction(mon
         manifest=manifest,
     )
 
-    assert "DIRECTION-CHANGED STYLING/MIRROR SCENE TRANSFER" not in prompt
-    assert "STYLING/MIRROR ART-DIRECTION TRANSFER" in prompt
+    assert "DIRECTION-CHANGED STYLING SCENE TRANSFER" not in prompt
+    assert "STYLING ART-DIRECTION TRANSFER" in prompt
     assert "POSE FROM EXAMPLE" in prompt
     assert "Camera angle: front-facing" in prompt
 
@@ -609,7 +582,7 @@ def test_all_scope_keeps_hidden_reference_when_legacy_direction_is_ignored(monke
         manifest=manifest,
     )
 
-    assert "DIRECTION-CHANGED STYLING/MIRROR SCENE TRANSFER" not in prompt
+    assert "DIRECTION-CHANGED STYLING SCENE TRANSFER" not in prompt
     assert "Face handling: match the reference's hidden-face composition" in prompt
 
 
@@ -635,21 +608,6 @@ def test_horizon_changed_direction_uses_scene_only_reference_section():
     assert "Follow the attached EXAMPLE REFERENCE's framing" not in prompt
     assert "reference: captureTone, light, scene" in prompt
     assert "reference: camera" not in prompt
-
-
-def test_mirror_bg_includes_reflection_mechanics():
-    manifest = cg.build_manifest(
-        [{"slot": "Front"}], has_mannequin=False, has_match=False,
-        mood_count=0, example_scope="bg",
-    )
-    prompt = cg.build_prompt(
-        {"cutType": "mirror", "shot": "full", "refScope": "bg", "exampleId": "ex-bg"},
-        {"name": "니트", "clothingType": "top", "colors": []},
-        manifest=manifest,
-    )
-    assert "EDIT TASK — INSERT A MODEL" in prompt
-    assert "MIRROR-CUT MECHANICS" in prompt
-    assert "physically correct mirror reflection" in prompt
 
 
 def test_space_set_medium_is_independent_camera_result_not_full_crop(monkeypatch):
@@ -990,9 +948,6 @@ def test_wants_face_only_for_cuts_that_actually_show_a_face():
 
     # product = 사람·신체 노출 금지([[CUT:product]]) → faceExposure=None
     assert cg.wants_face({"cutType": "product", "shot": "ghost"}, "top") is False
-    # 거울샷 기본 = 폰이 얼굴을 가림(hide). 명시적 show 일 때만 첨부.
-    assert cg.wants_face({"cutType": "mirror", "shot": "full"}, "top") is False
-    assert cg.wants_face({"cutType": "mirror", "shot": "full", "faceExposure": "show"}, "top") is True
     # 셀러가 명시적으로 비식별을 골랐으면 존중
     assert cg.wants_face({"cutType": "styling", "shot": "full", "faceExposure": "hide"}, "top") is False
     # 뒷모습 = 얼굴이 프레임 밖
@@ -1144,7 +1099,7 @@ def test_build_prompt_face_ignored_on_cuts_that_hide_the_face():
     # 방어선 이중화: 호출자가 has_face=True 를 잘못 넘겨도 얼굴이 안 담기는 컷이면
     # 정체성 지시를 렌더하지 않는다(첨부 판정과 동일 규칙 _face_fits).
     for spec in ({"cutType": "product", "shot": "ghost"},
-                 {"cutType": "mirror", "shot": "full"},
+                 {"cutType": "styling", "shot": "full", "faceExposure": "hide"},
                  {"cutType": "styling", "shot": "full", "direction": "back"}):
         p = cg.build_prompt(spec, PRODUCT_TOP, has_face=True)
         assert "MODEL IDENTITY" not in p

@@ -37,7 +37,7 @@ THUMB_QUALITY = 82
 _SAFE_PATH_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
 _CLOTHING_TYPES = {"top", "bottom", "outer", "dress"}
-_WORN_CUTS = {"styling", "horizon", "mirror"}
+_WORN_CUTS = {"styling", "horizon"}
 _GENDERS = {"women", "men"}
 _DIRECTIONS = {"front", "side", "back"}
 #: side 는 direction 하나로 같은 그림이 되지 않는다 — 사선(threeQuarter)과 완전
