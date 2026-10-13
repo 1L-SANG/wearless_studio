@@ -3590,11 +3590,14 @@
 
 /* ADR-0020: 오브와 메뉴는 블록 여백의 편집 크롬, 사진별 결과는 별도로 보관한다. */
 .canvas-ai-layer { --canvas-ai-soft: 0 6px 14px -8px color-mix(in srgb, var(--fg-1) 42%, transparent); --canvas-ai-soft-light: 0 6px 14px -8px color-mix(in srgb, var(--fg-1) 22%, transparent);
-  position: absolute; right: var(--canvas-ai-right, 100%); top: var(--canvas-ai-top, 0px); width: 40px; height: 40px;
+  position: absolute; right: var(--canvas-ai-right, 100%); top: var(--canvas-ai-top, 0px); width: max-content; max-width: var(--canvas-ai-trigger-max-width, calc(100vw - 32px)); height: 40px;
   transform: scale(var(--inv, 1)); transform-origin: top right; z-index: 9; visibility: hidden; }
 .canvas-ai-layer.is-placed { visibility: visible; }
-.canvas-ai-orb { --d: 30px; appearance: none; position: relative; display: inline-grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%; background: transparent; cursor: pointer; }
+.canvas-ai-orb { --d: 30px; appearance: none; position: relative; display: inline-flex; align-items: center; gap: 8px; width: max-content; max-width: var(--canvas-ai-trigger-max-width, calc(100vw - 32px)); height: 40px; padding: 0; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--fg-2); cursor: pointer; }
 .canvas-ai-orb span { display: block; box-sizing: border-box; pointer-events: none; }
+.canvas-ai-orb > .canvas-ai-orb-hit { display: grid; place-items: center; width: 40px; height: 40px; flex: none; }
+.canvas-ai-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; font: 600 13px/1 var(--font-body); letter-spacing: -0.02em; white-space: nowrap; }
+.canvas-ai-orb:is(:hover, :focus-visible, [aria-expanded="true"]) { color: var(--fg-1); }
 .canvas-ai-core { position: relative; isolation: isolate; width: var(--d); height: var(--d); overflow: hidden; border-radius: 50%; background: color-mix(in srgb, var(--bg-1) 98%, var(--fg-1));
   box-shadow: 0 3px 8px -3px color-mix(in srgb, var(--fg-1) 32%, transparent); transition: box-shadow 160ms ease, transform 160ms ease; }
 .canvas-ai-light-a, .canvas-ai-light-b { position: absolute; inset: -20%; border-radius: 50%; filter: blur(calc(var(--d) * .13)); }
@@ -3605,16 +3608,17 @@
 .canvas-ai-orb:hover .canvas-ai-core { box-shadow: 0 4px 10px -3px color-mix(in srgb, var(--fg-1) 42%, transparent); }
 .canvas-ai-orb:is(:hover, :focus-visible) .canvas-ai-highlight { opacity: 1; }
 .canvas-ai-orb:active .canvas-ai-core { transform: translateY(1px); }
-.canvas-ai-orb:focus-visible { outline: 2px solid var(--fg-1); outline-offset: 2px; }
+.canvas-ai-orb:focus-visible { outline: none; }
+.canvas-ai-orb:focus-visible .canvas-ai-core { outline: 2px solid var(--fg-1); outline-offset: 2px; }
 @keyframes canvasAiGlassA { to { transform: rotate(1turn); } }
 @keyframes canvasAiGlassB { to { transform: rotate(-1turn); } }
-.canvas-ai-read { box-sizing: border-box; position: absolute; right: 45px; top: 20px; width: max-content; max-width: var(--canvas-ai-read-width, 180px); transform: translateY(-50%);
+.canvas-ai-read { box-sizing: border-box; position: absolute; right: calc(100% + 5px); top: 20px; width: max-content; max-width: var(--canvas-ai-read-width, 180px); transform: translateY(-50%);
   display: flex; flex-direction: column; align-items: flex-end; text-align: right; gap: 1px; pointer-events: none; }
 .canvas-ai-read b { font: 600 13px/17px var(--font-body); color: var(--fg-1); letter-spacing: -.1px; text-wrap: balance; }
 .canvas-ai-read small { font: 500 12px/16px var(--font-body); color: var(--fg-2); }
 .canvas-ai-read.is-orb { padding: 4px 10px; border-radius: var(--r-pill); background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong), var(--canvas-ai-soft-light); }
 .canvas-ai-read.is-orb b { font-weight: 500; font-size: 12px; }
-.canvas-ai-layer.is-fixed .canvas-ai-read { right: auto; left: 45px; align-items: flex-start; text-align: left; }
+.canvas-ai-layer.is-fixed .canvas-ai-read { right: auto; left: calc(100% + 5px); align-items: flex-start; text-align: left; }
 .canvas-ai-menu { position: absolute; right: 0; top: var(--canvas-ai-menu-top, 50px); display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
   width: max-content; max-width: min(280px, calc(100vw - 32px)); max-height: var(--canvas-ai-menu-max-height, 500px); overflow: auto; padding: 4px; margin: -4px; scrollbar-width: thin; }
 .canvas-ai-layer.is-fixed .canvas-ai-menu { right: auto; left: 0; align-items: flex-start; }

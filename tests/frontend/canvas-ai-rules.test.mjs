@@ -7,10 +7,11 @@ import { canvasAiHookHarness, editorCanvasAiHandlers } from './helpers/editorCan
 
 const rect = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height });
 const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 0.000001, `${actual} != ${expected}`);
+const triggerWidth = 92; // 40px orb hit area, 8px gap, 44px measured label.
 
 // These literal screen anchors catch photo-relative positioning and scale-dependent drift.
 for (const row of [
-  { width: 1440, scale: 0.4, canvasWidth: 832, blockLeft: 536, orbLeft: 484, orbTop: 156, fixed: false },
+  { width: 1440, scale: 0.4, canvasWidth: 832, blockLeft: 536, orbLeft: 432, orbTop: 156, fixed: false },
   { width: 1440, scale: 0.6, canvasWidth: 832, blockLeft: 436, orbLeft: 336, orbTop: 76, fixed: true },
   { width: 1440, scale: 1, canvasWidth: 832, blockLeft: 236, orbLeft: 336, orbTop: 76, fixed: true },
   { width: 1280, scale: 0.4, canvasWidth: 752, blockLeft: 496, orbLeft: 444, orbTop: 156, fixed: false },
@@ -23,9 +24,9 @@ for (const row of [
     for (const elementRect of [rect(row.blockLeft + 510 * row.scale, 176, 430 * row.scale, 640 * row.scale),
       rect(row.blockLeft + 360 * row.scale, 176, 280 * row.scale, 420 * row.scale),
       rect(row.blockLeft + 510 * row.scale, 422, 430 * row.scale, 640 * row.scale)]) {
-      const placement = calculateCanvasAiPlacement({ blockRect, elementRect, viewportRect, scale: row.scale, menuHeight: 120, resultHeight: 200 });
+      const placement = calculateCanvasAiPlacement({ blockRect, elementRect, viewportRect, scale: row.scale, triggerWidth, menuHeight: 120, resultHeight: 200 });
       assert.equal(placement.fixed, row.fixed);
-      close(blockRect.right - placement.right * row.scale - 40, row.orbLeft);
+      close(blockRect.right - placement.right * row.scale - placement.triggerWidth, row.orbLeft);
       close(blockRect.top + placement.top * row.scale, !row.fixed && elementRect.top === 422 ? 402 : row.orbTop);
       assert.equal(placement.menuUp, false);
       assert.equal(placement.resultWidth, 150);
@@ -53,17 +54,72 @@ test('orb clamps vertically at the viewport edges while retaining the left block
   close(bottom.resultTop, 1610);
 });
 
-test('156px margin is still anchored and 155px alone triggers fixed placement', () => {
+for (const row of [
+  { margin: 250, showLabel: true, fixed: false, width: 92, center: 166, readWidth: 133 },
+  { margin: 176, showLabel: false, fixed: false, width: 40, center: 144, readWidth: 111 },
+  { margin: 150, showLabel: false, fixed: true, width: 40, center: 36, readWidth: 763 },
+  { margin: 208, showLabel: true, fixed: false, width: 92, center: 124, readWidth: 91 },
+  { margin: 207, showLabel: false, fixed: false, width: 40, center: 175, readWidth: 142 },
+  { margin: 156, showLabel: false, fixed: false, width: 40, center: 124, readWidth: 91 },
+  { margin: 155, showLabel: false, fixed: true, width: 40, center: 36, readWidth: 763 },
+]) {
+  test(`${row.margin}px margin chooses the label and fixed placement independently`, () => {
+    const blockRect = rect(320 + row.margin, 140, 400, 568);
+    const placement = calculateCanvasAiPlacement({ blockRect, elementRect: rect(780, 166, 172, 258),
+      viewportRect: rect(320, 60, 832, 740), scale: 0.4, triggerWidth, menuHeight: 120, resultHeight: 200 });
+    assert.equal(placement.fixed, row.fixed);
+    assert.equal(placement.showLabel, row.showLabel);
+    assert.equal(placement.triggerWidth, row.width);
+    const edge = blockRect.right - placement.right * 0.4;
+    close(edge - row.width + 20, 320 + row.center);
+    close(placement.readWidth, row.readWidth);
+    assert.ok(placement.readWidth >= 0);
+    if (!row.fixed) {
+      close(edge, blockRect.left - 12);
+      close(blockRect.right - placement.resultRight * 0.4, edge);
+    }
+  });
+}
+
+test('fixed placement keeps the original orb and centered result positions without a label', () => {
   const viewportRect = rect(320, 60, 832, 740);
-  const anchored = calculateCanvasAiPlacement({ blockRect: rect(476, 140, 400, 568), elementRect: rect(500, 166, 352, 528), viewportRect, scale: 0.4, menuHeight: 120, resultHeight: 200 });
-  const fixed = calculateCanvasAiPlacement({ blockRect: rect(475, 140, 400, 568), elementRect: rect(780, 650, 172, 258), viewportRect, scale: 0.4, menuHeight: 120, resultHeight: 200 });
-  assert.equal(anchored.fixed, false);
+  const fixed = calculateCanvasAiPlacement({ blockRect: rect(470, 140, 400, 568), elementRect: rect(780, 650, 172, 258), viewportRect, scale: 0.4, triggerWidth, menuHeight: 120, resultHeight: 200 });
   assert.equal(fixed.fixed, true);
-  close(875 - fixed.right * 0.4 - 40, 336);
+  close(870 - fixed.right * 0.4 - 40, 336);
   close(140 + fixed.top * 0.4, 76);
-  close(875 - fixed.resultRight * 0.4 - 150, 661);
+  close(870 - fixed.resultRight * 0.4 - 150, 661);
   close(140 + fixed.resultTop * 0.4, 330);
   assert.equal(fixed.tooltipSide, 'right');
+  close(fixed.readWidth, 763);
+});
+
+test('the trigger, menu and result retain the block edge while the orb moves left by the label and gap', () => {
+  const blockRect = rect(576, 120, 400, 614), viewportRect = rect(320, 60, 832, 840);
+  for (const width of [80, 92, 108]) {
+    const placement = calculateCanvasAiPlacement({ blockRect, viewportRect, elementRect: rect(780, 422, 172, 258), scale: 0.4, triggerWidth: width, menuHeight: 160, resultHeight: 200 });
+    const edge = blockRect.right - placement.right * 0.4;
+    close(edge, 564);
+    close(blockRect.right - placement.resultRight * 0.4, 564);
+    close(edge - width + 20, 544 - (width - 40));
+    close(placement.readWidth, 191 - (width - 40));
+    assert.equal(placement.fixed, false);
+    assert.equal(placement.tooltipSide, 'left');
+  }
+});
+
+test('fixed trigger and its description fit narrow canvas viewports without negative reading space', () => {
+  for (const width of [80, 96, 120, 320, 360, 375, 390, 414]) {
+    const blockRect = rect(340, 140, 400, 568), viewportRect = rect(320, 60, width, 740);
+    const placement = calculateCanvasAiPlacement({ blockRect, viewportRect, elementRect: rect(350, 166, 352, 528), scale: 0.4, triggerWidth, menuHeight: 120, resultHeight: 200 });
+    const edge = blockRect.right - placement.right * 0.4;
+    assert.equal(placement.fixed, true);
+    close(edge, 376);
+    assert.equal(placement.showLabel, false);
+    assert.equal(placement.triggerWidth, 40);
+    assert.ok(edge <= viewportRect.right - 16);
+    assert.ok(placement.readWidth >= 0);
+    close(placement.readWidth, Math.max(0, viewportRect.right - 8 - (edge + 5)));
+  }
 });
 
 test('menu goes up when below overflows and its complete height fits above', () => {

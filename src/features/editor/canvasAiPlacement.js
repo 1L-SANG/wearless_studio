@@ -15,16 +15,21 @@ function readRect(value) {
  * Rects and menu/result group heights are screen pixels. Positions returned here
  * are unscaled block coordinates; right/resultRight are offsets from block.right.
  * Widths and menuMaxHeight stay in screen pixels for the inverse-scaled UI layer.
+ * triggerWidth measures the orb, gap and label even when the label is hidden.
  */
-export function calculateCanvasAiPlacement({ blockRect, elementRect, viewportRect, scale = 1, menuHeight = 0, resultHeight = 0 } = {}) {
+export function calculateCanvasAiPlacement({ blockRect, elementRect, viewportRect, scale = 1, triggerWidth = ORB_HIT_SIZE, menuHeight = 0, resultHeight = 0 } = {}) {
   const block = readRect(blockRect), element = readRect(elementRect), viewport = readRect(viewportRect);
   if (!block || !element || !viewport || !Number.isFinite(scale) || scale <= 0 || viewport.width <= 0 || viewport.height <= 0) return null;
 
-  const fixed = block.left - viewport.left < 156;
-  const centerX = fixed ? viewport.left + 16 + ORB_HIT_SIZE / 2 : block.left - 32;
+  const labelOffset = Math.max(0, (Number.isFinite(triggerWidth) ? triggerWidth : ORB_HIT_SIZE) - ORB_HIT_SIZE);
+  const margin = block.left - viewport.left;
+  const fixed = margin < 156;
+  const showLabel = !fixed && labelOffset > 0 && margin >= 156 + labelOffset;
+  const width = showLabel ? ORB_HIT_SIZE + labelOffset : ORB_HIT_SIZE;
+  const edge = fixed ? viewport.left + 16 + width : block.left - 12;
+  const centerX = edge - width + ORB_HIT_SIZE / 2;
   const centerY = fixed ? viewport.top + 16 + ORB_HIT_SIZE / 2 : clamp(element.top, viewport.top + 28, viewport.bottom - 28);
   const orbTop = centerY - ORB_HIT_SIZE / 2;
-  const edge = centerX + ORB_HIT_SIZE / 2;
   const height = Math.max(0, Number.isFinite(menuHeight) ? menuHeight : 0);
   const menuBelow = orbTop + ORB_HIT_SIZE + 10;
   const roomBelow = Math.max(0, viewport.bottom - 12 - menuBelow);
@@ -47,9 +52,11 @@ export function calculateCanvasAiPlacement({ blockRect, elementRect, viewportRec
     menuTop: (menuTop - block.top) / scale,
     menuUp,
     fixed,
+    showLabel,
+    triggerWidth: width,
     resultWidth: RESULT_WIDTH,
     menuMaxHeight,
-    readWidth: Math.max(0, fixed ? viewport.right - 8 - (centerX + 25) : centerX - 25 - (viewport.left + 8)),
+    readWidth: Math.max(0, fixed ? viewport.right - 8 - (edge + 5) : centerX - 25 - (viewport.left + 8)),
     tooltipSide: fixed ? 'right' : 'left',
   };
 }
