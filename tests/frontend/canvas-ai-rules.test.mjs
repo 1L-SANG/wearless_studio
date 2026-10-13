@@ -7,14 +7,15 @@ import { canvasAiHookHarness, editorCanvasAiHandlers } from './helpers/editorCan
 
 const rect = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height });
 const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 0.000001, `${actual} != ${expected}`);
-const triggerWidth = 92; // 40px orb hit area, 8px gap, 44px measured label.
+const triggerWidth = 107; // 3px + 40px orb hit + 4px gap + 44px label + 16px tail.
+const labelWidth = 44;
 
 // These literal screen anchors catch photo-relative positioning and scale-dependent drift.
 for (const row of [
-  { width: 1440, scale: 0.4, canvasWidth: 832, blockLeft: 536, orbLeft: 432, orbTop: 156, fixed: false },
+  { width: 1440, scale: 0.4, canvasWidth: 832, blockLeft: 536, orbLeft: 417, orbTop: 156, fixed: false },
   { width: 1440, scale: 0.6, canvasWidth: 832, blockLeft: 436, orbLeft: 336, orbTop: 76, fixed: true },
   { width: 1440, scale: 1, canvasWidth: 832, blockLeft: 236, orbLeft: 336, orbTop: 76, fixed: true },
-  { width: 1280, scale: 0.4, canvasWidth: 752, blockLeft: 496, orbLeft: 444, orbTop: 156, fixed: false },
+  { width: 1280, scale: 0.4, canvasWidth: 752, blockLeft: 496, orbLeft: 438, orbTop: 156, fixed: false },
   { width: 1280, scale: 0.6, canvasWidth: 752, blockLeft: 396, orbLeft: 336, orbTop: 76, fixed: true },
   { width: 1280, scale: 1, canvasWidth: 752, blockLeft: 196, orbLeft: 336, orbTop: 76, fixed: true },
 ]) {
@@ -24,7 +25,7 @@ for (const row of [
     for (const elementRect of [rect(row.blockLeft + 510 * row.scale, 176, 430 * row.scale, 640 * row.scale),
       rect(row.blockLeft + 360 * row.scale, 176, 280 * row.scale, 420 * row.scale),
       rect(row.blockLeft + 510 * row.scale, 422, 430 * row.scale, 640 * row.scale)]) {
-      const placement = calculateCanvasAiPlacement({ blockRect, elementRect, viewportRect, scale: row.scale, triggerWidth, menuHeight: 120, resultHeight: 200 });
+      const placement = calculateCanvasAiPlacement({ blockRect, elementRect, viewportRect, scale: row.scale, triggerWidth, labelWidth, menuHeight: 120, resultHeight: 200 });
       assert.equal(placement.fixed, row.fixed);
       close(blockRect.right - placement.right * row.scale - placement.triggerWidth, row.orbLeft);
       close(blockRect.top + placement.top * row.scale, !row.fixed && elementRect.top === 422 ? 402 : row.orbTop);
@@ -39,7 +40,7 @@ test('2x2 lower-row orb follows the selected top without covering the upper row'
   close(placement.right, 1030);
   close(placement.top, 705);
   close(placement.resultTop, 825);
-  close(placement.menuTop, 830);
+  close(placement.menuTop, 837.5);
 });
 
 test('orb clamps vertically at the viewport edges while retaining the left block margin', () => {
@@ -50,58 +51,64 @@ test('orb clamps vertically at the viewport edges while retaining the left block
   const bottom = calculateCanvasAiPlacement({ ...inputs, elementRect: rect(600, 950, 352, 528) });
   close(bottom.top, 2130); // screen top 852, center 872
   assert.equal(bottom.menuUp, true);
-  close(bottom.menuTop, 1705);
+  close(bottom.menuTop, 1697.5);
   close(bottom.resultTop, 1610);
 });
 
 for (const row of [
-  { margin: 250, showLabel: true, fixed: false, width: 92, center: 166, readWidth: 133 },
-  { margin: 176, showLabel: false, fixed: false, width: 40, center: 144, readWidth: 111 },
-  { margin: 150, showLabel: false, fixed: true, width: 40, center: 36, readWidth: 763 },
-  { margin: 208, showLabel: true, fixed: false, width: 92, center: 124, readWidth: 91 },
-  { margin: 207, showLabel: false, fixed: false, width: 40, center: 175, readWidth: 142 },
-  { margin: 156, showLabel: false, fixed: false, width: 40, center: 124, readWidth: 91 },
-  { margin: 155, showLabel: false, fixed: true, width: 40, center: 36, readWidth: 763 },
+  { margin: 250, showLabel: true, fixed: false, width: 107, center: 154, readWidth: 124 },
+  { margin: 176, showLabel: false, fixed: false, width: 46, center: 141, readWidth: 111 },
+  { margin: 150, showLabel: false, fixed: true, width: 46, center: 39, readWidth: 757 },
+  { margin: 208, showLabel: true, fixed: false, width: 107, center: 112, readWidth: 82 },
+  { margin: 207, showLabel: false, fixed: false, width: 46, center: 172, readWidth: 142 },
+  { margin: 156, showLabel: false, fixed: false, width: 46, center: 121, readWidth: 91 },
+  { margin: 155, showLabel: false, fixed: true, width: 46, center: 39, readWidth: 757 },
 ]) {
   test(`${row.margin}px margin chooses the label and fixed placement independently`, () => {
     const blockRect = rect(320 + row.margin, 140, 400, 568);
     const placement = calculateCanvasAiPlacement({ blockRect, elementRect: rect(780, 166, 172, 258),
-      viewportRect: rect(320, 60, 832, 740), scale: 0.4, triggerWidth, menuHeight: 120, resultHeight: 200 });
+      viewportRect: rect(320, 60, 832, 740), scale: 0.4, triggerWidth, labelWidth, menuHeight: 120, resultHeight: 200 });
     assert.equal(placement.fixed, row.fixed);
     assert.equal(placement.showLabel, row.showLabel);
     assert.equal(placement.triggerWidth, row.width);
     const edge = blockRect.right - placement.right * 0.4;
-    close(edge - row.width + 20, 320 + row.center);
+    close(edge - row.width + 23, 320 + row.center);
     close(placement.readWidth, row.readWidth);
     assert.ok(placement.readWidth >= 0);
     if (!row.fixed) {
       close(edge, blockRect.left - 12);
       close(blockRect.right - placement.resultRight * 0.4, edge);
+      close(edge - row.width - 5 - placement.readWidth, 322); // viewport.left + 2px.
     }
   });
 }
 
-test('fixed placement keeps the original orb and centered result positions without a label', () => {
+test('fixed placement includes capsule padding and keeps the orb height and centered result', () => {
   const viewportRect = rect(320, 60, 832, 740);
-  const fixed = calculateCanvasAiPlacement({ blockRect: rect(470, 140, 400, 568), elementRect: rect(780, 650, 172, 258), viewportRect, scale: 0.4, triggerWidth, menuHeight: 120, resultHeight: 200 });
+  const fixed = calculateCanvasAiPlacement({ blockRect: rect(470, 140, 400, 568), elementRect: rect(780, 650, 172, 258), viewportRect, scale: 0.4, triggerWidth, labelWidth, menuHeight: 120, resultHeight: 200 });
   assert.equal(fixed.fixed, true);
-  close(870 - fixed.right * 0.4 - 40, 336);
+  close(870 - fixed.right * 0.4 - 46, 336);
   close(140 + fixed.top * 0.4, 76);
   close(870 - fixed.resultRight * 0.4 - 150, 661);
   close(140 + fixed.resultTop * 0.4, 330);
   assert.equal(fixed.tooltipSide, 'right');
-  close(fixed.readWidth, 763);
+  close(fixed.readWidth, 757);
 });
 
-test('the trigger, menu and result retain the block edge while the orb moves left by the label and gap', () => {
+test('the measured capsule including padding, menu and result retain the block edge', () => {
   const blockRect = rect(576, 120, 400, 614), viewportRect = rect(320, 60, 832, 840);
-  for (const width of [80, 92, 108]) {
-    const placement = calculateCanvasAiPlacement({ blockRect, viewportRect, elementRect: rect(780, 422, 172, 258), scale: 0.4, triggerWidth: width, menuHeight: 160, resultHeight: 200 });
+  for (const row of [
+    { width: 95, labelWidth: 32, center: 492, readWidth: 142 },
+    { width: 107, labelWidth: 44, center: 480, readWidth: 130 },
+    { width: 123, labelWidth: 60, center: 464, readWidth: 114 },
+    { width: 110, labelWidth: 44, center: 477, readWidth: 127 },
+  ]) {
+    const placement = calculateCanvasAiPlacement({ blockRect, viewportRect, elementRect: rect(780, 422, 172, 258), scale: 0.4, triggerWidth: row.width, labelWidth: row.labelWidth, menuHeight: 160, resultHeight: 200 });
     const edge = blockRect.right - placement.right * 0.4;
     close(edge, 564);
     close(blockRect.right - placement.resultRight * 0.4, 564);
-    close(edge - width + 20, 544 - (width - 40));
-    close(placement.readWidth, 191 - (width - 40));
+    close(edge - placement.triggerWidth + 23, row.center);
+    close(placement.readWidth, row.readWidth);
     assert.equal(placement.fixed, false);
     assert.equal(placement.tooltipSide, 'left');
   }
@@ -110,12 +117,12 @@ test('the trigger, menu and result retain the block edge while the orb moves lef
 test('fixed trigger and its description fit narrow canvas viewports without negative reading space', () => {
   for (const width of [80, 96, 120, 320, 360, 375, 390, 414]) {
     const blockRect = rect(340, 140, 400, 568), viewportRect = rect(320, 60, width, 740);
-    const placement = calculateCanvasAiPlacement({ blockRect, viewportRect, elementRect: rect(350, 166, 352, 528), scale: 0.4, triggerWidth, menuHeight: 120, resultHeight: 200 });
+    const placement = calculateCanvasAiPlacement({ blockRect, viewportRect, elementRect: rect(350, 166, 352, 528), scale: 0.4, triggerWidth, labelWidth, menuHeight: 120, resultHeight: 200 });
     const edge = blockRect.right - placement.right * 0.4;
     assert.equal(placement.fixed, true);
-    close(edge, 376);
+    close(edge, 382);
     assert.equal(placement.showLabel, false);
-    assert.equal(placement.triggerWidth, 40);
+    assert.equal(placement.triggerWidth, 46);
     assert.ok(edge <= viewportRect.right - 16);
     assert.ok(placement.readWidth >= 0);
     close(placement.readWidth, Math.max(0, viewportRect.right - 8 - (edge + 5)));
@@ -124,17 +131,17 @@ test('fixed trigger and its description fit narrow canvas viewports without nega
 
 test('menu goes up when below overflows and its complete height fits above', () => {
   const input = { blockRect: rect(576, 120, 400, 614), elementRect: rect(780, 600, 172, 258), viewportRect: rect(320, 60, 832, 740), scale: 0.4, resultHeight: 200 };
-  assert.equal(calculateCanvasAiPlacement({ ...input, menuHeight: 158 }).menuUp, false);
-  const above = calculateCanvasAiPlacement({ ...input, menuHeight: 159 });
+  assert.equal(calculateCanvasAiPlacement({ ...input, menuHeight: 155 }).menuUp, false);
+  const above = calculateCanvasAiPlacement({ ...input, menuHeight: 156 });
   assert.equal(above.menuUp, true);
   close(above.menuTop, 727.5);
-  assert.equal(above.menuMaxHeight, 498);
+  assert.equal(above.menuMaxHeight, 495);
 });
 
 for (const row of [
-  { name: 'fixed fallback', blockLeft: 451, photoTop: 150, menuHeight: 248, menuUp: false, menuMaxHeight: 222, menuTop: -35 },
-  { name: 'long detail menu near top', blockLeft: 576, photoTop: 150, menuHeight: 500, menuUp: false, menuMaxHeight: 168, menuTop: 100 },
-  { name: 'long detail menu near bottom', blockLeft: 576, photoTop: 280, menuHeight: 500, menuUp: true, menuMaxHeight: 178, menuTop: -170 },
+  { name: 'fixed fallback', blockLeft: 451, photoTop: 150, menuHeight: 248, menuUp: false, menuMaxHeight: 219, menuTop: -27.5 },
+  { name: 'long detail menu near top', blockLeft: 576, photoTop: 150, menuHeight: 500, menuUp: false, menuMaxHeight: 165, menuTop: 107.5 },
+  { name: 'long detail menu near bottom', blockLeft: 576, photoTop: 280, menuHeight: 500, menuUp: true, menuMaxHeight: 175, menuTop: -170 },
 ]) {
   test(`${row.name} uses the larger scrollable side when neither side fits`, () => {
     const placement = calculateCanvasAiPlacement({ blockRect: rect(row.blockLeft, 140, 400, 568), elementRect: rect(600, row.photoTop, 352, 528), viewportRect: rect(320, 60, 832, 300), scale: 0.4, menuHeight: row.menuHeight, resultHeight: 200 });
@@ -179,7 +186,7 @@ test('worn and upload actions include immediate similar and optional outer closu
   const worn = buildCanvasAiMenu(menuInput);
   assert.deepEqual(ids(worn), ['similar', 'color', 'closure']);
   assert.equal(worn.branches[0].direct, true);
-  assert.equal(worn.branches[0].ring, true);
+  assert.equal(worn.branches[0].ring, false);
   assert.equal(worn.branches[0].description, '지금 이미지와 비슷한 컷을 생성해요');
   assert.deepEqual(ids(buildCanvasAiMenu({ ...menuInput, assetRecipe: { upload: true, recipe: null } })), ['similar', 'color', 'closure']);
   assert.deepEqual(ids(buildCanvasAiMenu({ ...menuInput, clothingType: 'top' })), ['similar', 'color']);
@@ -218,7 +225,7 @@ test('detail only offers same-area reshoot and other observed targets', () => {
     assetRecipe: { cutType: 'product', recipe: { cutType: 'product', shot: 'detail', detailTargetId: 'pocket', colorId: 'black', direction: 'front' } } });
   assert.deepEqual(ids(menu), ['reshoot', 'detail']);
   assert.equal(menu.branches[0].description, '같은 부위를 다시 생성해요');
-  assert.equal(menu.branches[0].ring, true);
+  assert.equal(menu.branches[0].ring, false);
   assert.equal(menu.branches[1].label, '다른 부위');
   assert.deepEqual(menu.branches[1].options.map((option) => [option.value, option.current, option.disabled]), [['pocket', true, true], ['cuff', false, false]]);
   const legacy = buildCanvasAiMenu({ ...menuInput, assetRecipe: { cutType: 'product', recipe: null } });
@@ -261,6 +268,25 @@ test('planned and unplanned slots preserve ADR0019 classification and direct act
   assert.equal(fill.kind, 'unplanned');
   assert.equal(fill.branches[0].price, '무료');
   assert.equal(fill.branches[1].description, '빈 칸에 어울리는 컷을 생성해요');
+});
+
+test('only fill gets a rotating ring across filled images and planned or unplanned slots', () => {
+  const empty = { ...image, src: null };
+  const storyboard = [{ id: empty.sourceBlockId, source: 'ai', cutType: 'styling' }];
+  const menus = [
+    buildCanvasAiMenu(menuInput),
+    buildCanvasAiMenu({ ...menuInput, assetRecipe: { upload: true, recipe: null } }),
+    buildCanvasAiMenu({ ...menuInput, assetRecipe: { cutType: 'product', recipe: { shot: 'ghost' } } }),
+    buildCanvasAiMenu({ ...menuInput, assetRecipe: { cutType: 'product', recipe: { shot: 'detail' } } }),
+    buildCanvasAiMenu({ ...menuInput, assetRecipe: { cutType: 'product', recipe: null } }),
+    buildCanvasAiMenu({ ...menuInput, element: empty, storyboard, failedCutRetry: { retryable: true } }),
+    buildCanvasAiMenu({ ...menuInput, element: empty, storyboard, block: { ...block, templateId: 'template' } }),
+  ];
+  const branches = menus.flatMap((menu) => menu.branches);
+  assert.deepEqual(branches.filter((branch) => branch.ring).map((branch) => branch.id), ['fill']);
+  for (const id of ['similar', 'reshoot', 'retry', 'fill']) {
+    assert.equal(branches.find((branch) => branch.id === id).direct, true);
+  }
 });
 
 test('pending, hidden and automatic slots have no actions', () => {

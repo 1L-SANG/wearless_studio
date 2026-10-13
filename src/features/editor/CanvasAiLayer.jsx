@@ -83,6 +83,7 @@ export function CanvasAiLayer({ block, element, scale, wrapRef, menu, loading, a
   const layerRef = useRef(null);
   const menuRef = useRef(null);
   const orbRef = useRef(null);
+  const triggerMeasureRef = useRef(null);
   const labelMeasureRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [branchId, setBranchId] = useState(null);
@@ -118,10 +119,11 @@ export function CanvasAiLayer({ block, element, scale, wrapRef, menu, loading, a
     const layer = layerRef.current;
     const wrap = wrapRef.current;
     const labelNode = labelMeasureRef.current;
+    const triggerNode = triggerMeasureRef.current;
     const blockNode = layer?.closest('.canvas-block');
     const elementNode = [...(blockNode?.querySelectorAll('[data-elid]') || [])]
       .find((node) => node.dataset.elid === element.id);
-    if (!layer || !wrap || !blockNode || !elementNode || !labelNode) return;
+    if (!layer || !wrap || !blockNode || !elementNode || !labelNode || !triggerNode) return;
     let frame;
     let active = true;
     const measure = () => {
@@ -130,13 +132,14 @@ export function CanvasAiLayer({ block, element, scale, wrapRef, menu, loading, a
       layer.style.setProperty('--canvas-ai-branch-width', `${branchWidth}px`);
       const rect = elementNode.getBoundingClientRect();
       const viewportRect = wrap.getBoundingClientRect();
-      layer.style.setProperty('--canvas-ai-trigger-max-width', `${Math.max(40, viewportRect.width - 32)}px`);
-      const triggerWidth = 40 + 8 + labelNode.getBoundingClientRect().width;
+      layer.style.setProperty('--canvas-ai-trigger-max-width', `${Math.max(46, viewportRect.width - 32)}px`);
+      const triggerWidth = triggerNode.getBoundingClientRect().width;
+      const labelWidth = labelNode.getBoundingClientRect().width;
       const menuHeight = menuRef.current?.scrollHeight || 0;
       const ratio = Math.max(.1, Number(job?.sourceHeight || element.h) / Math.max(1, Number(job?.sourceWidth || element.w)));
       const frameHeight = Math.min(150 * ratio, Math.max(60, viewportRect.height - 108));
       const placement = calculateCanvasAiPlacement({ blockRect: blockNode.getBoundingClientRect(),
-        elementRect: rect, viewportRect, scale, triggerWidth, menuHeight, resultHeight: frameHeight + 84 });
+        elementRect: rect, viewportRect, scale, triggerWidth, labelWidth, menuHeight, resultHeight: frameHeight + 84 });
       const values = { right: `${placement.right}px`, top: `${placement.top}px`,
         'menu-top': `${(placement.menuTop - placement.top) * scale}px`,
         'menu-max-height': `${placement.menuMaxHeight}px`, 'read-width': `${placement.readWidth}px`,
@@ -154,6 +157,7 @@ export function CanvasAiLayer({ block, element, scale, wrapRef, menu, loading, a
     const observer = new ResizeObserver(queue);
     observer.observe(wrap); observer.observe(blockNode);
     observer.observe(labelNode);
+    observer.observe(triggerNode);
     if (orbRef.current) observer.observe(orbRef.current);
     if (menuRef.current) observer.observe(menuRef.current);
     return () => { active = false; cancelAnimationFrame(frame); wrap.removeEventListener('scroll', queue); window.removeEventListener('resize', queue); observer.disconnect(); };
@@ -202,8 +206,10 @@ export function CanvasAiLayer({ block, element, scale, wrapRef, menu, loading, a
     <div className="canvas-ai-measure" aria-hidden="true">{menu.branches.map((item) => <span key={item.id}
       className={`canvas-ai-pill canvas-ai-branch${item.ring ? ' btn-glowring' : ''}`}>
       {branchIcon(item)}<span>{item.label}</span>{!item.direct && <Chevron />}</span>)}
-      <span ref={labelMeasureRef} className="canvas-ai-label">AI 생성</span></div>
-    <button type="button" ref={orbRef} className="canvas-ai-orb" aria-label="AI 생성"
+      <span ref={triggerMeasureRef} className="canvas-ai-trigger-measure canvas-ai-orb is-labelled">
+        <span className="canvas-ai-orb-hit" /><span ref={labelMeasureRef} className="canvas-ai-label">AI 생성</span>
+      </span></div>
+    <button type="button" ref={orbRef} className={`canvas-ai-orb${showLabel ? ' is-labelled' : ''}`} aria-label="AI 생성"
       aria-haspopup="menu" aria-expanded={open}
       onMouseEnter={() => { if (!open) setHover({ description: '이 사진으로 새 컷을 생성해요', orb: true }); }}
       onMouseLeave={() => setHover(null)} onFocus={() => { if (!open) setHover({ description: '이 사진으로 새 컷을 생성해요', orb: true }); }}

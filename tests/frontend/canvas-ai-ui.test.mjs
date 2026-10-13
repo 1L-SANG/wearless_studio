@@ -117,14 +117,15 @@ test('Escape restores orb focus without showing a duplicate description beside t
   }
 });
 
-test('the first visible placement uses a measured label even when the trigger starts at 40px', () => {
+test('the first visible placement measures the whole capsule while its label is hidden', () => {
   const properties = new Map();
   let labelWidth = 44;
   const photo = { dataset: { elid: 'photo' }, getBoundingClientRect: () => ({ left: 780, top: 166, width: 172, height: 258 }) };
   const blockNode = { querySelectorAll: () => [photo], getBoundingClientRect: () => ({ left: 520, top: 140, width: 400, height: 568 }) };
   const nodes = {
     'canvas-ai-layer': { closest: () => blockNode, querySelectorAll: () => [], style: { setProperty: (key, value) => properties.set(key, value) } },
-    'canvas-ai-orb': { getBoundingClientRect: () => ({ width: 40 }) },
+    'canvas-ai-orb': { getBoundingClientRect: () => ({ width: 46 }) },
+    'canvas-ai-trigger-measure': { getBoundingClientRect: () => ({ width: 63 + labelWidth }) },
     'canvas-ai-label': { getBoundingClientRect: () => ({ width: labelWidth }) },
     wrap: { getBoundingClientRect: () => ({ left: 320, top: 60, width: 832, height: 740 }), addEventListener() {}, removeEventListener() {} },
   };
@@ -132,7 +133,7 @@ test('the first visible placement uses a measured label even when the trigger st
   assert.doesNotMatch(view.tree.props.className, /is-placed/);
   for (const row of [
     { labelWidth: 44, showLabel: false, readWidth: '135px' },
-    { labelWidth: 30, showLabel: true, readWidth: '97px' },
+    { labelWidth: 30, showLabel: true, readWidth: '88px' },
     { labelWidth: 44, showLabel: false, readWidth: '135px' },
   ]) {
     labelWidth = row.labelWidth;
@@ -186,7 +187,7 @@ test('오브와 로고 채움은 확정한 크기와 속도이며 동작 줄이�
   assert.match(css, /canvasAiFill 2\.4s ease-in-out/);
   assert.match(css, /canvasAiDrain 2s linear/);
   assert.match(css, /prefers-reduced-motion: reduce/);
-  assert.match(css, /\.canvas-ai-pill\.btn-glowring[^}]*color: var\(--bg-1\)/);
+  assert.match(css, /\.canvas-ai-pill\.btn-glowring[^}]*color: var\(--fg-1\)/);
   assert.doesNotMatch(layer, /className="spin"/);
 });
 
