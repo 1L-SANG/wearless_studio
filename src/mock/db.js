@@ -698,6 +698,7 @@ export function buildDraft() {
     storyboardDirty: false,
     editorBlocks,
     wardrobe,
+    wardrobeGifs: {},
   };
 }
 

@@ -1,3 +1,4 @@
+import { gifImageFields, isGifImage } from '../../lib/gif/gifMedia.js';
 const USER_IMAGE_SOURCES = new Set(['mine', 'upload', 'uploaded', 'user']);
 
 function normalizedSrc(value) {
@@ -21,7 +22,8 @@ export function isWardrobeImageUsed(blocks = [], image = null) {
   return (blocks || []).some((block) => (block?.elements || []).some((element) => (
     element?.type === 'image'
     && ((imageId && String(element.id || '').trim() === imageId)
-      || (imageSrc && normalizedSrc(element.src) === imageSrc))
+      || (imageSrc && normalizedSrc(element.src) === imageSrc)
+      || (image?.posterSrc && normalizedSrc(element.src) === image.posterSrc))
   )));
 }
 
@@ -36,10 +38,11 @@ function wardrobeImageFromElement(element, group) {
   return {
     id: element.id || `editor-image-${group}-${normalizedSrc(element.src)}`,
     src: normalizedSrc(element.src),
+    ...(isGifImage(element) ? gifImageFields(element) : {}),
     ...(element.sourceBlockId ? { sourceBlockId: element.sourceBlockId } : {}),
     cutType: element.cutType || null,
-    width: Number(element.width || element.w) || undefined,
-    height: Number(element.height || element.h) || undefined,
+    width: Number(element.gifMeta?.width || element.width || element.w) || undefined,
+    height: Number(element.gifMeta?.height || element.height || element.h) || undefined,
     ...(group === 'misc'
       ? { userUploaded: true, wardrobeGroup: 'misc' }
       : { generated: true, wardrobeGroup: group }),

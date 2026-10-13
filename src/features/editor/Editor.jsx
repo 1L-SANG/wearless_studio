@@ -39,9 +39,10 @@ import {
   isRealModelSelection,
 } from '@/features/analysis/modelSelection.js';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel, FrameMini } from '@/features/editor/EditorPanels.jsx';
-import { GifThumbnailPanel } from '@/features/editor/GifThumbnailPanel.jsx';
+import { isGifImage, gifImageFields, collectGifImages } from '@/lib/gif/gifMedia.js';
+import { downloadGifImage, downloadGifImages } from './editorExport.js';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
-import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isAutoManagedBlock, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
+import { applyInfoTemplate, applySlotFillToInfo, convertGifToStill, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isAutoManagedBlock, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { DEFAULT_TEXT_BODY, buildTextPresetElement, dropUntouchedPlaceholders, textPresetBox, textPresetDropPlacement } from '@/features/editor/presets/textPresets.js';
 import { buildColorOpts, visibleColorOpts } from '@/lib/colorOpts.js';
 import { retryRead } from '@/lib/retryRead.js';
@@ -518,17 +519,17 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       );
     }
     // 140px 미리보기에 원본(수천 px)을 그리면 스크롤이 무거워지고 탭 메모리가 커진다.
-    const imgSrc = imageWidth ? thumbUrl(el.src, imageWidth) : el.src;
+    const imgSrc = imageWidth && !isGifImage(el) ? thumbUrl(el.src, imageWidth) : el.src;
     return (
       <div {...common} {...imageDropProps} className={cls(imageDropOver ? 'image-drop-over' : '')} style={{ ...base, borderRadius: el.radius, ...imageFrameStyle }}
         onDoubleClick={preview ? undefined : (e) => { e.stopPropagation(); onCropStart && onCropStart(el); }}>
         {el.crop ? (
           /* 커밋된 인라인 크롭: 프레임(overflow hidden) 안에 원본을 -ox,-oy 오프셋으로 */
           <div className="el-cropped" style={{ borderRadius: el.radius }}>
-            <img src={imgSrc} alt="" draggable={false} style={{ left: -el.crop.ox, top: -el.crop.oy, width: el.crop.iw, height: el.crop.ih }} />
+            <img src={imgSrc} data-gif-poster={isGifImage(el) ? el.posterSrc : undefined} alt="" draggable={false} style={{ left: -el.crop.ox, top: -el.crop.oy, width: el.crop.iw, height: el.crop.ih }} />
           </div>
         ) : (
-          <img src={imgSrc} alt="" style={{ borderRadius: el.radius, objectFit: el.fit || 'cover' }} draggable={false} />
+          <img src={imgSrc} data-gif-poster={isGifImage(el) ? el.posterSrc : undefined} alt="" style={{ borderRadius: el.radius, objectFit: el.fit || 'cover' }} draggable={false} />
         )}
         {canvasAiSlotArrivalVisible(el, canvasAiJob) && <span className="canvas-ai-slot-arrived">새 컷</span>}
         {imageDropOver && <ImageDropGuide scale={scale} width={el.w} height={el.h} rotate={el.rotate} />}
@@ -2164,6 +2165,17 @@ export function Editor() {
       setDlBusy(false);
     }
   };
+  const gifImages = collectGifImages(blocks || []);
+  const receiveGifs = async (images = gifImages, single = false) => {
+    if (dlBusy || !images.length) return;
+    setDlBusy(true);
+    try {
+      if (single) await downloadGifImage(images[0]);
+      else await downloadGifImages(images);
+    } catch (error) {
+      toast.push(error.message || 'GIF를 받지 못했어요. 다시 시도해 주세요', { icon: 'x' });
+    } finally { setDlBusy(false); }
+  };
   const runDownload = async () => {
     const accountGeneration = clientEvents.getAccountGeneration();
     if (dlBusy) return;
@@ -2176,7 +2188,7 @@ export function Editor() {
     const onProgress = (done, total, stage = 'capture') => setDlProg({ done: done + 1, total, stage });
     try {
       const result = await exportStorefrontDownload(
-        nodes, productName, onProgress, dlSettings, provenanceOpts(),
+        nodes, productName, onProgress, dlSettings, { ...provenanceOpts(), gifImages },
       );
       setDownload(false);
       finishExport(result.delivery === 'split'
@@ -2319,6 +2331,9 @@ export function Editor() {
       const filled = {
         ...slot,
         src: im.src,
+        ...gifImageFields(im),
+        width: im.width,
+        height: im.height,
         cutType: im.cutType || null,
         ...(im.userUploaded ? { userUploaded: true } : {}),
         ...(im.wardrobeGroup ? { wardrobeGroup: im.wardrobeGroup } : {}),
@@ -2337,6 +2352,7 @@ export function Editor() {
     });
     const el = {
       id: uid('el'), type: 'image', ...geometry, src: im.src, radius: 12,
+      ...(isGifImage(im) ? gifImageFields(im) : {}),
       ...(im.cutType ? { cutType: im.cutType } : {}),
       ...(im.userUploaded ? { userUploaded: true } : {}),
       ...(im.wardrobeGroup ? { wardrobeGroup: im.wardrobeGroup } : {}),
@@ -2365,6 +2381,7 @@ export function Editor() {
       // 정보 블록 슬롯이면 info(폼 정본)에도 동기화 — 재생성 때 사진-포인트 연결 유지
       setSlotImage(pendingSlot.blockId, pendingSlot.elId, {
         src: im.src,
+        ...gifImageFields(im),
         cutType: im.cutType || null,
         width: im.width,
         height: im.height,
@@ -2374,6 +2391,12 @@ export function Editor() {
       setPendingSlot(null);
       if (!keepTab) setTab('image');
     } else insertImage(im, { keepTab });
+  };
+  const saveWardrobeGif = async (result, options) => {
+    const image = await api.saveWardrobeGif(projectId, result, options);
+    if (options?.signal?.aborted) return;
+    setWardrobe((current) => ({ ...current, misc: [image, ...(current?.misc || [])] }));
+    return image;
   };
   const patchImageImport = (id, patch) => {
     if (!id) return;
@@ -2498,10 +2521,14 @@ export function Editor() {
   const wardrobeImageInUse = (image) => (
     isWardrobeImageUsed(latestBlocks.current || blocks, image)
   );
-  const deleteWardrobeImage = (image) => {
+  const deleteWardrobeImage = async (image) => {
     if (wardrobeImageInUse(image)) {
       toast.push('현재 에디팅에 사용 중인 사진은 삭제할 수 없어요', { icon: 'alertTri' });
       return;
+    }
+    if (isGifImage(image)) {
+      try { await api.deleteWardrobeGif(projectId, image.id); }
+      catch (error) { toast.push(error.message || 'GIF를 삭제하지 못했어요', { icon: 'x' }); return; }
     }
     setWardrobe((current) => {
       const next = {};
@@ -2845,10 +2872,11 @@ export function Editor() {
   };
   const submitInfo = (info) => {
     const m = infoModal; if (!m) return;
-    const built = buildInfoBlock(m.type, info, infoCtx);
+    const wardrobeImages = Object.values(wardrobe || {}).flat();
+    const built = carrySlotImages([], buildInfoBlock(m.type, info, infoCtx), wardrobeImages);
     if (m.blockId) {
       // 슬롯에 채워 둔 사진(실측도·특징 포인트)은 재생성 후에도 이월한다
-      setBlocks((bs) => bs.map((b) => (b.id === m.blockId ? { ...carrySlotImages(b.elements, built), id: b.id } : b)));
+      setBlocks((bs) => bs.map((b) => (b.id === m.blockId ? { ...carrySlotImages(b.elements, built, wardrobeImages), id: b.id } : b)));
       setSelBlock(m.blockId);
       toast.push('내용을 업데이트했어요', { icon: 'check' });
     } else {
@@ -3250,13 +3278,12 @@ export function Editor() {
     { id: 'frame', icon: 'layout', label: '프레임' },
     { id: 'text', icon: 'type', label: '텍스트' },
     { id: 'shape', icon: 'shapes', label: '오브젝트' },
-    { id: 'gif', icon: 'film', label: 'GIF' },
   ];
   const panelTitle = (() => {
     if (tab === 'image' && selectedElObj) {
       if (selectedElObj.type === 'shape') return '도형';
       if (selectedElObj.type === 'line') return '선';
-      return '이미지';
+      return isGifImage(selectedElObj) ? 'GIF' : '이미지';
     }
     return TOOLS.find((t) => t.id === tab)?.label;
   })();
@@ -3264,9 +3291,9 @@ export function Editor() {
   const renderPanel = () => {
     switch (tab) {
       case 'ai': return <AIPanel pendingGenerateRequest={pendingGenerateRequest} generateSubmitting={generateSubmitting} product={product} detailRecommendations={analysis?.detailRecommendations} frontClosure={analysis?.frontClosure} catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} brandUseCategory={analysis?.brandUseCategory} brandUseCategorySaving={brandUseCategorySaving} onBrandUseCategoryChange={saveBrandUseCategory} onConfirmPendingGenerate={() => retryFailedCut({ confirmPending: true })} onGenerate={generateImage} onPickMoodRef={() => api.pickRefImage(projectId)} />;
-      case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onFreshSeen={freshSeen}
+      case 'wardrobe': return <WardrobePanel onSaveGif={saveWardrobeGif} wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onFreshSeen={freshSeen}
         onImageDragStart={() => setFrameDragging(true)} onImageDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />;
-      case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}
+      case 'image': return <ImagePanel onConvertGif={(image) => setBlocks((current) => current.map((block) => convertGifToStill(block, image.id)))} onDownloadGif={(image) => receiveGifs([image], true)} downloadingGif={dlBusy} el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}
         onCrop={(el) => startCrop(blockIdOf(el.id), el)}
         />;
       case 'frame': return (
@@ -3276,7 +3303,6 @@ export function Editor() {
       );
       case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={addText} />;
       case 'shape': return <ShapePanel catalogs={catalogs} onAdd={addShape} block={(selEls.length === 0 && selBlock) ? blocks.find((b) => b.id === selBlock) : null} onBgChange={changeBg} />;
-      case 'gif': return <GifThumbnailPanel wardrobe={wardrobe} detailColorOpts={detailColorOpts} />;
       default: return null;
     }
   };
@@ -3725,7 +3751,7 @@ export function Editor() {
                 <CanvasBlock block={b} scale={scale} idx={i} imageImports={imageImports.filter((item) => item.blockId === b.id)}
                   canvasAiJobs={canvasAi.jobs} onCanvasAiCancel={(id) => canvasAi.controller.cancel(id)} onCanvasAiDismiss={(id) => canvasAi.controller.dismiss(id)}
                   canvasAi={canvasAi.block?.id === b.id && canvasAi.element?.type === 'image' && selEls.length === 1
-                    && !canvasAi.element.hidden && !['pending', 'unsupported'].includes(canvasAi.menu.kind) ? (
+                    && !isGifImage(canvasAi.element) && !canvasAi.element.hidden && !['pending', 'unsupported'].includes(canvasAi.menu.kind) ? (
                     <CanvasAiLayer block={b} element={canvasAi.element} scale={scale} wrapRef={wrapRef}
                       menu={canvasAi.menu} loading={canvasAi.loading} assetError={canvasAi.assetError}
                       job={canvasAi.jobs.get(canvasAi.element.id)}
@@ -3855,6 +3881,8 @@ export function Editor() {
             active={Boolean(dlError && dlOriginalError)} error={dlOriginalError} projectId={projectId} />
           <EditorDownloadModal
             settings={dlSettings}
+            gifCount={gifImages.length}
+            onDownloadGifs={() => receiveGifs()}
             summary={dlSummary}
             notice={dlNotice}
             busy={dlBusy}

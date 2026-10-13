@@ -1,5 +1,5 @@
 import { toBytesUrl } from '../../features/editor/editorExport.js';
-import { coverCrop, planLadder, presetSize, shouldStopLadder, GIF_HARD_BYTES, GIF_SOFT_BYTES } from './gifLadder.js';
+import { coverCrop, planLadder, presetSize, shouldStopLadder, GIF_HARD_BYTES, GIF_SOFT_BYTES, GIF_PHOTO_DELAY_MS } from './gifLadder.js';
 
 export const VIDEO_FORMAT_MESSAGE = 'MP4(H.264)로 바꿔 올려 주세요';
 
@@ -141,7 +141,7 @@ function firstFrameJpg(canvas) {
   });
 }
 
-export async function encodeGif({ mode = 'photo', sources = [], video, preset = 'ably', delayMs = 1500,
+export async function encodeGif({ mode = 'photo', sources = [], video, preset = 'original',
   start = 0, duration = 3, onProgress, signal }) {
   checkAbort(signal);
   if (mode === 'photo' && (sources.length < 2 || sources.length > 8)) throw new Error('사진을 2~8장 선택해 주세요');
@@ -149,17 +149,20 @@ export async function encodeGif({ mode = 'photo', sources = [], video, preset = 
   const steps = planLadder(mode);
   onProgress?.(0);
   const images = mode === 'photo' ? await Promise.all(sources.map((src) => loadGifImage(src, { signal }))) : [];
+  const sourceSize = mode === 'photo'
+    ? { width: images[0].naturalWidth, height: images[0].naturalHeight }
+    : { width: video.videoWidth, height: video.videoHeight };
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d', { willReadFrequently: true });
   if (!context) throw new Error('이 브라우저에서 GIF를 만들지 못했어요');
   try {
     const result = await runLadder(mode, async (step, stepIndex) => {
-      const { width, height } = presetSize(preset, step.scale);
+      const { width, height } = presetSize(preset, step.scale, sourceSize);
       canvas.width = width;
       canvas.height = height;
       const times = mode === 'video' ? videoFrameTimes(start, Math.min(duration, step.duration ?? duration), video.duration, step.fps) : [];
       const frames = mode === 'photo' ? images.length : times.length;
-      const frameDelay = mode === 'photo' ? delayMs : 1000 / step.fps;
+      const frameDelay = mode === 'photo' ? GIF_PHOTO_DELAY_MS : 1000 / step.fps;
       let jpgBlob;
       const bytes = await encodeWithWorker({ width, height, frames, delayMs: frameDelay, colors: step.colors, signal,
         onProgress: (fraction) => onProgress?.(Math.floor((stepIndex + fraction) / steps.length * 99)),
@@ -167,7 +170,7 @@ export async function encodeGif({ mode = 'photo', sources = [], video, preset = 
           checkAbort(signal);
           if (mode === 'video') await seekGifVideo(video, times[index], { signal });
           const image = mode === 'photo' ? images[index] : video;
-          const crop = coverCrop(image.naturalWidth || image.videoWidth, image.naturalHeight || image.videoHeight, width, height);
+          const crop = coverCrop(image.naturalWidth || image.videoWidth, image.naturalHeight || image.videoHeight, width, height, { anchorY: 0.08 });
           context.fillStyle = 'white';
           context.fillRect(0, 0, width, height);
           context.drawImage(image, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, width, height);

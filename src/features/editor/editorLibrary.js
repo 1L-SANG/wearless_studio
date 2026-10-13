@@ -1,3 +1,4 @@
+import { gifImageFields, isGifImage } from '../../lib/gif/gifMedia.js';
 /* =============================================================
    features/editor/editorLibrary.js — 상세페이지 반복 작업용 로컬 라이브러리.
    DOM/React와 무관한 순수 정의만 두어 클릭 추가와 drag 추가가 같은 결과를 쓴다.
@@ -1666,6 +1667,7 @@ export function buildImageBlock(image, idFn) {
     w: imageWidth,
     h: imageHeight,
     src: image.src,
+    ...(isGifImage(image) ? gifImageFields(image) : {}),
     radius: 0,
     ...(image.cutType ? { cutType: image.cutType } : {}),
     ...(image.userUploaded ? { userUploaded: true } : {}),
@@ -1761,7 +1763,7 @@ export function objectPresetInitialSelectionIds(presetId, elements) {
 }
 
 export function encodeWardrobeImage(image, dimensions = {}) {
-  const payload = { src: image?.src || null, cutType: image?.cutType || null };
+  const payload = { src: image?.src || null, cutType: image?.cutType || null, ...(isGifImage(image) ? gifImageFields(image) : {}) };
   if (image?.id) payload.id = image.id;
   if (image?.userUploaded) payload.userUploaded = true;
   if (image?.wardrobeGroup) payload.wardrobeGroup = image.wardrobeGroup;
@@ -1776,7 +1778,7 @@ export function decodeWardrobeImage(value) {
   try {
     const parsed = JSON.parse(value || '');
     if (!parsed || typeof parsed.src !== 'string' || !parsed.src) return null;
-    const image = { src: parsed.src, cutType: parsed.cutType || null };
+    const image = { src: parsed.src, cutType: parsed.cutType || null, ...(isGifImage(parsed) ? gifImageFields(parsed) : {}) };
     if (parsed.id) image.id = parsed.id;
     if (parsed.userUploaded) image.userUploaded = true;
     if (parsed.wardrobeGroup) image.wardrobeGroup = parsed.wardrobeGroup;

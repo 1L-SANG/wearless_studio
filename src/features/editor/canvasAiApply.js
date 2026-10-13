@@ -1,3 +1,4 @@
+import { gifImageFields, isGifImage } from '../../lib/gif/gifMedia.js';
 export function canvasAiProgressVisible(job) {
   return Boolean(job && !job.dismissed && ['cancel', 'busy', 'failed'].includes(job.status));
 }
@@ -68,6 +69,12 @@ export function replaceCanvasAiImage(blocks, job, image) {
   const element = block?.elements?.find((item) => item.id === job.elementId);
   if (!element || element.type !== 'image' || element.src !== job.sourceSrc) return blocks;
   return blocks.map((item) => item.id !== job.blockId ? item : { ...item,
-    elements: item.elements.map((el) => el.id !== job.elementId ? el : { ...el, src: image.src, crop: null }),
+    elements: item.elements.map((el) => {
+      if (el.id !== job.elementId) return el;
+      const next = { ...el, src: image.src, crop: null };
+      if (isGifImage(image)) Object.assign(next, gifImageFields(image));
+      else { delete next.kind; delete next.posterSrc; delete next.gifMeta; }
+      return next;
+    }),
   });
 }
