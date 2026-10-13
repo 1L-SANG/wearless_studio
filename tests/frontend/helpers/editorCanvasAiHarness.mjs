@@ -1,3 +1,4 @@
+import { isGifImage } from '../../../src/lib/gif/gifMedia.js';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { extractEditorAssetId } from '../../../src/lib/editorAssetInfo.js';
@@ -30,7 +31,7 @@ export function canvasAiHookHarness({ blocks, selectedId, wardrobe = {}, storybo
     useState: (initial) => [initial && 'loading' in initial
       ? { id: assetId, loading: false, info: assetRecipe } : initial, () => {}],
     api: { getEditorAssetInfo: async () => ({ items: {} }), ...api }, isMockMode: true,
-    extractEditorAssetId, buildFailedCutRetry, buildCanvasAiMenu, buildCanvasAiRequest, canvasAiSourceDimensions, resolveCanvasAiSubmission,
+    isGifImage, extractEditorAssetId, buildFailedCutRetry, buildCanvasAiMenu, buildCanvasAiRequest, canvasAiSourceDimensions, resolveCanvasAiSubmission,
     createCanvasAiJobController: (options) => createCanvasAiJobController({ ...options,
       createKey: randomUUID,
       schedule: (callback) => { const id = ++timerId; scheduled.set(id, callback); return id; },

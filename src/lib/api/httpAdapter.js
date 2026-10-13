@@ -1,3 +1,4 @@
+import { uploadWardrobeGif, readWardrobeGifs, writeWardrobeGifs, mergeWardrobeGifs } from './gifWardrobe.js';
 import { publicAnalysisForm } from './publicAnalysisRequest.js';
 import { stripFeatureClientFields } from '../featureRun.js';
 /* =============================================================
@@ -992,7 +993,16 @@ export const httpAdapter = {
   },
   // 에디터 Wardrobe(의류 탭, 계약 §3.6) — Record<colorId|'misc', WardrobeImage[]>.
   async getWardrobe(projectId) {
-    return http(`/v1/projects/${projectId}/wardrobe`);
+    const wardrobe = await http(`/v1/projects/${projectId}/wardrobe`);
+    return mergeWardrobeGifs(wardrobe, readWardrobeGifs(projectId));
+  },
+  async saveWardrobeGif(projectId, result, options = {}) {
+    const image = await uploadWardrobeGif(projectId, result, uploadPhoto, options);
+    writeWardrobeGifs(projectId, [image, ...readWardrobeGifs(projectId)]);
+    return image;
+  },
+  async deleteWardrobeGif(projectId, id) {
+    writeWardrobeGifs(projectId, readWardrobeGifs(projectId).filter((image) => image.id !== id));
   },
   async getEditorAssetInfo(projectId, assetIds) {
     return http(`/v1/projects/${projectId}/editor:asset-info`, {

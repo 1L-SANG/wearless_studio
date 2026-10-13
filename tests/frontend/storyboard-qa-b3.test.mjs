@@ -352,6 +352,6 @@ test('Editor clothing upload regression keeps uploadPhoto and uploaded.url witho
   assert.match(uploadEditorImage, /const prepared = await toUploadableImage\(file\)/);
   assert.match(uploadEditorImage, /const uploaded = await api\.uploadPhoto\(projectId, \{/);
   assert.match(uploadEditorImage, /id: uploaded\.assetId \|\| uid\('w'\),\s*src: uploaded\.url/);
-  assert.match(uploadEditorImage, /setWardrobe\(\(current\) => \(\{ \.\.\.current, misc:/);
+  assert.match(uploadEditorImage, /setWardrobe\(\(current\) => \(\{ \.\.\.current, \[colorId\]:/);
   assert.doesNotMatch(uploadEditorImage, /pickAnyImage/);
 });

@@ -1,3 +1,4 @@
+import { isGifImage } from '../../lib/gif/gifMedia.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, isMockMode } from '../../lib/api/index.js';
 import { extractEditorAssetId } from '../../lib/editorAssetInfo.js';
@@ -49,8 +50,8 @@ export function useCanvasAi({ projectId, blocks, wardrobe, storyboard, selectedI
   const wardrobeImage = Object.entries(wardrobe || {}).flatMap(([group, images]) =>
     images.map((image) => ({ ...image, wardrobeGroup: group })))
     .find((image) => image.src && image.src === element?.src);
-  const assetId = extractEditorAssetId(element?.src) || wardrobeImage?.assetId
-    || (isMockMode && element?.src ? wardrobeImage?.id || element.src : null);
+  const assetId = isGifImage(element) ? null : (extractEditorAssetId(element?.src) || wardrobeImage?.assetId
+    || (isMockMode && element?.src ? wardrobeImage?.id || element.src : null));
   useEffect(() => {
     let alive = true;
     if (!assetId) {
@@ -78,7 +79,7 @@ export function useCanvasAi({ projectId, blocks, wardrobe, storyboard, selectedI
     assetRecipe: info, product, clothingType, colorOpts, frontClosure: analysis?.frontClosure,
     detailRecommendations: analysis?.detailRecommendations, failedCutRetry: retry });
   const start = (action, value, natural = null) => {
-    if (!block || !element || (element.src && (!info || assetState.loading))) return;
+    if (!block || !element || isGifImage(element) || (element.src && (!info || assetState.loading))) return;
     const request = buildCanvasAiRequest({ action, value,
       source: { ...menu.source, wardrobeGroup: wardrobeImage?.wardrobeGroup || menu.source?.wardrobeGroup },
       assetRecipe: info, product, slot: { blockId: block.id, elementId: element.id }, failedCutRetry: retry,
