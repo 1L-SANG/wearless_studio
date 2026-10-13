@@ -1211,8 +1211,8 @@ test('많이 잘리는 배지는 선택 사진의 25% 초과에만 표시하고 
     buttonNamed(h.render(), 'GIF 생성하기').props.onClick();
     buttonNamed(h.render(), '1:1').props.onClick();
     photoButtons(h.render())[0].props.onClick(); photoButtons(h.render())[1].props.onClick();
-    assert.ok(!textOf(photoButtons(h.render())[0]).includes('많이 잘려요'));
-    assert.ok(textOf(photoButtons(h.render())[1]).includes('많이 잘려요'));
+    assert.ok(!textOf(photoButtons(h.render())[0]).includes('위아래가 잘려요'));
+    assert.ok(textOf(photoButtons(h.render())[1]).includes('위아래가 잘려요'));
     assert.equal(buttonNamed(h.render(), 'GIF 만들기').props.disabled, false);
   } finally { await h.close(); }
 });
@@ -1293,7 +1293,7 @@ test('사진이 로드되면 캔버스에서 온 잘못된 치수 대신 실제 
     photoButtons(h.render())[0].props.onClick(); photoButtons(h.render())[1].props.onClick();
     const image = nodes(photoButtons(h.render())[0], n => n.type === 'img')[0];
     image.props.onLoad({ currentTarget: { naturalWidth: 240, naturalHeight: 480 } });
-    assert.ok(textOf(photoButtons(h.render())[0]).includes('많이 잘려요'));
+    assert.ok(textOf(photoButtons(h.render())[0]).includes('위아래가 잘려요'));
   } finally { await h.close(); }
 });
 
@@ -1454,5 +1454,80 @@ test('줄이는 중 진행률을 보이고 실패 뒤 원본 그대로 담기를
     assert.equal(buttonNamed(h.render(), '그대로 담기').props.disabled, false);
     await buttonNamed(h.render(), '그대로 담기').props.onClick();
     assert.equal(h.runtime.saved.length, 1);
+  } finally { await h.close(); }
+});
+
+
+test('cropLossInfo는 가로 손실과 세로 손실을 구분하고 기존 손실률을 유지한다', async () => {
+  const { cropLossInfo } = await import('../../src/lib/gif/gifLadder.js');
+  assert.equal(typeof cropLossInfo, 'function');
+  assert.deepEqual(cropLossInfo(200, 100, 800, 800), { ratio: 0.5, axis: 'x' });
+  assert.deepEqual(cropLossInfo(100, 200, 800, 800), { ratio: 0.5, axis: 'y' });
+  assert.deepEqual(cropLossInfo(100, 100, 800, 800), { ratio: 0, axis: 'x' });
+  assert.deepEqual(cropLossInfo(100, 100, 300, 400), { ratio: 0.25, axis: 'x' });
+  assert.throws(() => cropLossInfo(0, 100, 800, 800), /Invalid GIF crop size/);
+});
+
+test('추천 규격은 네 후보의 전체 손실 합을 비교하고 현재 최선과 동률은 유지한다', async () => {
+  const { recommendCropPreset } = await import('../../src/lib/gif/gifCropWarning.js');
+  const portrait = { width: 200, height: 300 }, landscape = { width: 150, height: 100 };
+  assert.equal(recommendCropPreset([portrait, landscape, landscape], 'original'), 'square');
+  assert.equal(recommendCropPreset([landscape, landscape], 'square'), 'original');
+  assert.equal(recommendCropPreset([portrait, portrait, landscape], 'original'), 'original');
+  assert.equal(recommendCropPreset([{ width: 500, height: 600 }], 'ably'), 'ably');
+  assert.equal(recommendCropPreset([{ width: 800, height: 1067 }], 'square'), 'cafe24');
+  assert.equal(recommendCropPreset([portrait, { width: 500, height: 600 }, { width: 500, height: 600 }], 'square'), 'ably');
+  assert.equal(recommendCropPreset([portrait, { width: 200, height: 100 }, { width: 200, height: 100 }], 'original'), 'original');
+  assert.equal(recommendCropPreset([], 'square'), 'square');
+  assert.equal(recommendCropPreset([null, landscape], 'ably'), 'ably');
+});
+
+test('잘림 안내는 선택 번호와 원인, 추천 규격을 조합하고 최선이면 빼기만 안내한다', async () => {
+  const { cropWarningText } = await import('../../src/lib/gif/gifCropWarning.js');
+  const portrait = { width: 200, height: 300 }, landscape = { width: 150, height: 100 };
+  assert.equal(cropWarningText([portrait, landscape, landscape], 'original'),
+    '2번, 3번은 가로 사진이라 세로 틀에 맞추면 양옆이 잘려요. 빼거나, 규격을 1:1로 바꿔 보세요.');
+  assert.equal(cropWarningText([portrait, portrait, landscape], 'original'),
+    '3번은 가로 사진이라 세로 틀에 맞추면 양옆이 잘려요. 빼 주세요.');
+  assert.equal(cropWarningText([{ width: 100, height: 400 }, { width: 100, height: 400 }], 'square'),
+    '1번, 2번은 틀보다 세로가 길어 위아래가 잘려요. 빼거나, 규격을 원본 비율로 바꿔 보세요.');
+  assert.equal(cropWarningText([landscape, landscape], 'cafe24'),
+    '1번, 2번은 가로 사진이라 세로 틀에 맞추면 양옆이 잘려요. 빼거나, 규격을 원본 비율로 바꿔 보세요.');
+  assert.equal(cropWarningText([{ width: 100, height: 100 }], 'original'), '');
+  assert.equal(cropWarningText([{ width: 400, height: 300 }], 'square'), '');
+  assert.match(cropWarningText([{ width: 100, height: 300 }, { width: 500, height: 600 }, { width: 500, height: 600 }], 'square'), /5:6으로 바꿔 보세요/);
+  assert.equal(cropWarningText([], 'original'), '');
+  assert.equal(cropWarningText([null, landscape], 'original'), '');
+  assert.equal(cropWarningText([{ width: 100, height: 100 }], 'cafe24').includes('가로 사진'), false);
+  const mixed = cropWarningText([portrait, landscape], 'square');
+  assert.match(mixed, /1번은 틀보다 세로가 길어 위아래가 잘려요/);
+  assert.match(mixed, /2번은 틀보다 가로가 넓어 양옆이 잘려요/);
+});
+
+test('패널 잘림 안내와 배지는 규격 변경, 사진 해제, 실제 치수 로드에 즉시 따라간다', async () => {
+  const h = await panelHarness();
+  const notice = tree => nodes(tree, n => n.props?.role === 'status' && textOf(n).includes('잘려요'));
+  try {
+    h.props.wardrobe = { navy: [
+      { id: 'a', src: '/a.jpg', width: 200, height: 300 },
+      { id: 'b', src: '/b.jpg', width: 150, height: 100 },
+      { id: 'c', src: '/c.jpg', width: 150, height: 100 },
+    ] };
+    buttonNamed(h.render(), 'GIF 생성하기').props.onClick();
+    assert.equal(notice(h.render()).length, 0);
+    for (let i = 0; i < 3; i++) photoButtons(h.render())[i].props.onClick();
+    assert.match(textOf(notice(h.render())[0]), /2번, 3번은.*1:1로 바꿔/);
+    assert.match(textOf(photoButtons(h.render())[1]), /양옆이 잘려요/);
+    buttonNamed(h.render(), '1:1').props.onClick();
+    assert.match(textOf(notice(h.render())[0]), /위아래가 잘려요.*양옆이 잘려요.*빼 주세요/);
+    photoButtons(h.render())[1].props.onClick();
+    photoButtons(h.render())[2].props.onClick();
+    assert.match(textOf(notice(h.render())[0]), /1번은.*원본 비율로 바꿔/);
+    buttonNamed(h.render(), '원본 비율').props.onClick();
+    assert.equal(notice(h.render()).length, 0);
+    photoButtons(h.render())[1].props.onClick();
+    assert.match(textOf(notice(h.render())[0]), /2번은/);
+    nodes(photoButtons(h.render())[1], n => n.type === 'img')[0].props.onLoad({ currentTarget: { naturalWidth: 200, naturalHeight: 300 } });
+    assert.equal(notice(h.render()).length, 0);
   } finally { await h.close(); }
 });

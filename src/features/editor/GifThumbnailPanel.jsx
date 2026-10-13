@@ -1,7 +1,8 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { Button, Icon } from '@/components/ui.jsx';
 import { thumbUrl } from '@/lib/imageCdn.js';
-import { GIF_PRESETS, GIF_HARD_BYTES, cropLossRatio, presetSize } from '@/lib/gif/gifLadder.js';
+import { GIF_PRESETS, GIF_HARD_BYTES, cropLossInfo, presetSize } from '@/lib/gif/gifLadder.js';
+import { cropWarningText } from '@/lib/gif/gifCropWarning.js';
 import { encodeGif } from '@/lib/gif/encodeGif.js';
 import { inspectGifAttachment, prepareGifAttachment, reduceGifAttachment } from '@/lib/gif/gifAttachment.js';
 import { isGifImage, wardrobePhotoGroups } from '@/lib/gif/gifMedia.js';
@@ -30,6 +31,7 @@ export function GifThumbnailPanel({ wardrobe, detailColorOpts = [], onSaveGif, o
   const sizeOf = photo => dimensions[photo?.src] || (photo?.width && photo?.height ? photo : null);
   const firstSize = sizeOf(selected[0]);
   const targetSize = preset !== 'original' || firstSize ? presetSize(preset, 1, firstSize) : null;
+  const cropWarning = cropWarningText(selected.map(sizeOf), preset);
 
   useEffect(() => {
     setSelectedIds(ids => {
@@ -145,7 +147,7 @@ export function GifThumbnailPanel({ wardrobe, detailColorOpts = [], onSaveGif, o
           <div className={`wardrobe-grid ${styles.photoGrid}`}>
             {group.photos.map((photo, index) => {
               const order = selectedIds.indexOf(photo.id), size = sizeOf(photo);
-              const cropped = order >= 0 && size && targetSize && cropLossRatio(size.width, size.height, targetSize.width, targetSize.height) > 0.25;
+              const crop = order >= 0 && size && targetSize && cropLossInfo(size.width, size.height, targetSize.width, targetSize.height);
               return <button type="button" key={photo.id} className={`ward-cell ${styles.tile}${order >= 0 ? ` ${styles.selected}` : ''}`}
                 data-gif-photo-id={photo.id}
                 aria-pressed={order >= 0} aria-label={`${group.label} 사진 ${index + 1}${order >= 0 ? `, 선택 순서 ${order + 1}` : ''}`}
@@ -158,7 +160,7 @@ export function GifThumbnailPanel({ wardrobe, detailColorOpts = [], onSaveGif, o
                       ? current : { ...current, [photo.src]: { width, height } });
                   }} />
                 {order >= 0 && <span className={styles.order}>{order + 1}</span>}
-                {cropped && <span className={styles.cropBadge}>많이 잘려요</span>}
+                {crop?.ratio > 0.25 && <span className={styles.cropBadge}>{crop.axis === 'x' ? '양옆이 잘려요' : '위아래가 잘려요'}</span>}
               </button>;
             })}
           </div>
@@ -166,6 +168,10 @@ export function GifThumbnailPanel({ wardrobe, detailColorOpts = [], onSaveGif, o
         {!photos.length && <p className={styles.hint}>이미지 탭에서 사진을 추가해 주세요</p>}
       </section>
       <div className={styles.footer}>
+        <div className={styles.footerCard}>
+        {cropWarning && <p className={styles.cropNotice} role="status" aria-live="polite">
+          <span className={styles.cropMark} aria-hidden="true">!</span><span>{cropWarning}</span>
+        </p>}
         <fieldset className={styles.options} disabled={busy}>
           <legend className={styles.label}>규격</legend>
           <div className={styles.ratios}>{GIF_PRESETS.map(option => <button type="button" className={styles.ratio} key={option.id}
@@ -177,6 +183,7 @@ export function GifThumbnailPanel({ wardrobe, detailColorOpts = [], onSaveGif, o
           <span role="status" aria-live="polite">{busy ? `만드는 중 ${progress}%` : 'GIF 만들기'}</span>
         </Button>
         {error && <p role="alert" className={styles.error}>{error}</p>}
+        </div>
       </div>
     </> : <>
       <input ref={fileInput} type="file" className={styles.fileInput} accept="image/gif,.gif" onChange={attach} disabled={busy} aria-label="GIF 첨부" />

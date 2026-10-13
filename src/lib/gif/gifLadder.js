@@ -64,3 +64,10 @@ export function cropLossRatio(sourceW, sourceH, width, height) {
   const { sw, sh } = coverCrop(sourceW, sourceH, width, height);
   return Math.max(0, Math.min(1, 1 - sw * sh / (sourceW * sourceH)));
 }
+
+export function cropLossInfo(sourceW, sourceH, width, height) {
+  return {
+    ratio: cropLossRatio(sourceW, sourceH, width, height),
+    axis: sourceW / sourceH >= width / height ? 'x' : 'y',
+  };
+}

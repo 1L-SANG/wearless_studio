@@ -17,6 +17,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  padding-bottom: 0;
 }
 
 .panel:has(> .creating),
@@ -29,11 +30,16 @@
 .creating > .header { flex-shrink: 0; }
 .panel:has(> .creating) > :first-child { flex-shrink: 0; }
 
+/* Extend the footer through the editor panel's 18px side insets. */
+.panel:has(> .creating) { margin-inline: calc(-1 * (var(--sp-16) + var(--sp-2))); }
+.panel:has(> .creating) > :first-child,
+.creating > .header { margin-inline: calc(var(--sp-16) + var(--sp-2)); }
+
 .photoArea {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--sp-4);
+  padding: var(--sp-4) calc(var(--sp-16) + var(--sp-2));
   user-select: none;
   -webkit-user-select: none;
 }
@@ -44,13 +50,36 @@
   position: sticky;
   bottom: 0;
   flex-shrink: 0;
+  padding: 0 var(--sp-12) var(--sp-12);
+  background: var(--bg-2);
+}
+
+.footerCard {
   display: flex;
   flex-direction: column;
   gap: var(--sp-12);
-  padding: var(--sp-12) var(--sp-4);
-  border-top: 1px solid var(--ring-strong);
-  background: var(--bg-2);
+  padding: var(--sp-16);
+  border-radius: var(--r-6);
+  background: var(--bg-1);
+  box-shadow: var(--elev-card), 0 0 0 1px var(--ring-strong);
 }
+
+.cropNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-8);
+  margin: 0;
+  padding: var(--sp-8);
+  border: 1px solid var(--ring-strong);
+  border-radius: var(--r-4);
+  background: var(--bg-2);
+  color: var(--fg-2);
+  font-size: 12px;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.cropMark { flex: none; font-weight: 600; }
 
 .fileInput { display: none; }
 
