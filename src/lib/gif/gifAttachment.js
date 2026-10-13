@@ -160,7 +160,7 @@ export async function reduceGifAttachment(info, { signal, onProgress } = {}) {
         frames: schedule.length, delayMs };
     } finally { iterator.return(); }
   }, { signal });
-  if (result.bytes > GIF_HARD_BYTES) throw new Error('줄여도 4.7MB를 넘어요. 더 짧은 GIF를 올려 주세요');
+  if (result.bytes > GIF_HARD_BYTES) throw new Error('줄여도 5MB를 넘어요. 더 짧은 GIF를 올려 주세요');
   onProgress?.(100);
   return result;
 }

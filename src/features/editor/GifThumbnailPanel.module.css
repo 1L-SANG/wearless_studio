@@ -13,6 +13,45 @@
   min-width: 0;
 }
 
+:global(.ed-left):has(.creating) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panel:has(> .creating),
+.creating {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.creating > .header { flex-shrink: 0; }
+.panel:has(> .creating) > :first-child { flex-shrink: 0; }
+
+.photoArea {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-4);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.photoArea > * { flex-shrink: 0; }
+
+.footer {
+  position: sticky;
+  bottom: 0;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-12);
+  padding: var(--sp-12) var(--sp-4);
+  border-top: 1px solid var(--ring-strong);
+  background: var(--bg-2);
+}
+
 .fileInput { display: none; }
 
 .label {
@@ -108,8 +147,8 @@
 .actions a:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 .header { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); }
 .textButton { border: 0; background: transparent; color: var(--fg-2); font: inherit; font-size: 12px; padding: var(--sp-8) 0; cursor: pointer; }
-.addTile { min-width: 0; border-color: var(--ring-strong); border-radius: var(--r-4); background: var(--bg-1); color: var(--fg-2); font-family: var(--font-body); font-size: 12px; padding: var(--sp-4); cursor: pointer; }
-.addTile:hover { border-color: var(--fg-3); background: var(--bg-2); }
+.addTile:global(.sb-addslot) { width: 100%; aspect-ratio: 3 / 4; min-width: 0; border: 1.5px dashed var(--ring-strong); border-radius: var(--r-4); background: var(--bg-1); color: var(--fg-2); font-family: var(--font-body); font-size: 12px; padding: var(--sp-4); cursor: pointer; }
+.addTile:global(.sb-addslot):hover { border-color: var(--fg-3); background: var(--bg-2); }
 .addTile:disabled { cursor: default; opacity: 0.5; }
 .cropBadge { position: absolute; bottom: var(--sp-4); left: var(--sp-4); right: var(--sp-4); border-radius: var(--r-4); background: var(--cta-bg); color: var(--cta-fg); font-size: 10px; padding: var(--sp-2); text-wrap: balance; }
 .download:global(.ward-rm) { right: 28px; }

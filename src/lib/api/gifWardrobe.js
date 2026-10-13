@@ -4,7 +4,7 @@ import { isGifImage } from '../gif/gifMedia.js';
 
 export async function uploadWardrobeGif(projectId, result, uploadPhoto, options = {}) {
   const { blob, jpgBlob, width, height, frames, delayMs } = result || {};
-  if (blob?.size > GIF_HARD_BYTES && !options.allowOversize) throw new Error('GIF는 4.7MB 이하만 저장할 수 있어요');
+  if (blob?.size > GIF_HARD_BYTES && !options.allowOversize) throw new Error('GIF는 5MB 이하만 저장할 수 있어요');
   if (blob?.type !== 'image/gif' || jpgBlob?.type !== 'image/jpeg'
     || getUploadValidationError(blob) || getUploadValidationError(jpgBlob)
     || ![width, height, frames, delayMs].every((value) => Number.isFinite(value) && value > 0)) {

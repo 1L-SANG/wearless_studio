@@ -20,6 +20,8 @@ export function GifThumbnailPanel({ wardrobe, detailColorOpts = [], onSaveGif, o
   const [dimensions, setDimensions] = useState({});
   const fileInput = useRef(null);
   const operation = useRef(null);
+  const selectionDrag = useRef(null);
+  const suppressDragClick = useRef(false);
   const groups = useMemo(() => wardrobePhotoGroups(wardrobe, detailColorOpts), [wardrobe, detailColorOpts]);
   const photos = useMemo(() => groups.flatMap(group => group.photos), [groups]);
   const selected = selectedIds.map(id => photos.find(photo => photo.id === id)).filter(Boolean);
@@ -63,7 +65,7 @@ export function GifThumbnailPanel({ wardrobe, detailColorOpts = [], onSaveGif, o
   const save = async (result, options, allowOversize = false) => {
     if (options.signal.aborted) return;
     if (!allowOversize && Math.max(result.bytes || 0, result.blob.size) > GIF_HARD_BYTES) {
-      throw new Error(creating ? '용량이 커서 담지 못했어요. 사진 수를 줄여 주세요' : '줄여도 4.7MB를 넘어요. 더 짧은 GIF를 올려 주세요');
+      throw new Error(creating ? '용량이 커서 담지 못했어요. 사진 수를 줄여 주세요' : '줄여도 5MB를 넘어요. 더 짧은 GIF를 올려 주세요');
     }
     await onSaveGif(result, { signal: options.signal, allowOversize });
     if (options.signal.aborted) return;
@@ -85,12 +87,55 @@ export function GifThumbnailPanel({ wardrobe, detailColorOpts = [], onSaveGif, o
       else await save(await prepareGifAttachment(info, options), options);
     });
   };
+  const photoTile = (area, target) => {
+    const tile = target?.closest?.('[data-gif-photo-id]');
+    return tile && area.contains(tile) ? tile : null;
+  };
+  const startSelection = event => {
+    if (busy || event.pointerType !== 'mouse' || event.button !== 0) return;
+    const tile = photoTile(event.currentTarget, event.target);
+    const capture = tile || event.currentTarget;
+    suppressDragClick.current = false;
+    selectionDrag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, tile, capture, moved: false };
+    capture.setPointerCapture(event.pointerId);
+  };
+  const moveSelection = event => {
+    const drag = selectionDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId || busy) return;
+    if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 4) return;
+    const tile = photoTile(event.currentTarget, event.currentTarget.ownerDocument.elementFromPoint(event.clientX, event.clientY));
+    const crossed = drag.moved ? [tile] : [drag.tile, tile];
+    drag.moved = true;
+    suppressDragClick.current = true;
+    event.preventDefault();
+    setSelectedIds(ids => {
+      let next = ids;
+      for (const item of crossed) {
+        const photo = item && photos.find(photo => String(photo.id) === item.dataset.gifPhotoId);
+        if (photo && !next.includes(photo.id) && next.length < 8) next = [...next, photo.id];
+      }
+      return next;
+    });
+  };
+  const endSelection = event => {
+    const drag = selectionDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    selectionDrag.current = null;
+    if (drag.capture.hasPointerCapture(event.pointerId)) drag.capture.releasePointerCapture(event.pointerId);
+  };
 
-  return <div className={styles.panel}>
+  return <div className={`${styles.panel}${creating ? ` ${styles.creating}` : ''}`}>
     {creating ? <>
-      <div className={styles.header}><h3 className={styles.label}>새 GIF 만들기</h3>
+      <div className={styles.header}><h3 className={styles.label}>GIF 생성하기</h3>
         <button type="button" className={styles.textButton} onClick={cancel}>취소</button></div>
-      <section aria-label="보관함 사진" className={styles.section}>
+      <section aria-label="보관함 사진" className={`${styles.section} ${styles.photoArea}`}
+        onPointerDown={startSelection} onPointerMove={moveSelection} onPointerUp={endSelection}
+        onPointerCancel={endSelection} onLostPointerCapture={endSelection}
+        onClickCapture={event => {
+          if (suppressDragClick.current && event.detail !== 0) {
+            event.preventDefault(); event.stopPropagation(); suppressDragClick.current = false;
+          }
+        }}>
         <p className={styles.hint}>사진 2~8장을 고르세요 · 고른 순서로 돌아가요 · {selected.length}/8</p>
         {groups.map(group => <div className="wardrobe-group" key={group.id}>
           <h3 className={styles.groupHeading}>
@@ -102,6 +147,7 @@ export function GifThumbnailPanel({ wardrobe, detailColorOpts = [], onSaveGif, o
               const order = selectedIds.indexOf(photo.id), size = sizeOf(photo);
               const cropped = order >= 0 && size && targetSize && cropLossRatio(size.width, size.height, targetSize.width, targetSize.height) > 0.25;
               return <button type="button" key={photo.id} className={`ward-cell ${styles.tile}${order >= 0 ? ` ${styles.selected}` : ''}`}
+                data-gif-photo-id={photo.id}
                 aria-pressed={order >= 0} aria-label={`${group.label} 사진 ${index + 1}${order >= 0 ? `, 선택 순서 ${order + 1}` : ''}`}
                 disabled={busy || (order < 0 && selectedIds.length >= 8)}
                 onClick={() => setSelectedIds(ids => ids.includes(photo.id) ? ids.filter(id => id !== photo.id) : ids.length < 8 ? [...ids, photo.id] : ids)}>
@@ -119,28 +165,31 @@ export function GifThumbnailPanel({ wardrobe, detailColorOpts = [], onSaveGif, o
         </div>)}
         {!photos.length && <p className={styles.hint}>이미지 탭에서 사진을 추가해 주세요</p>}
       </section>
-      <fieldset className={styles.options} disabled={busy}>
-        <legend className={styles.label}>규격</legend>
-        <div className={styles.ratios}>{GIF_PRESETS.map(option => <button type="button" className={styles.ratio} key={option.id}
-          aria-pressed={preset === option.id} onClick={() => setPreset(option.id)}>
-          <span aria-hidden="true" className={`${styles.ratioFrame} ${styles[option.id]}`} /><span>{option.label}</span>
-        </button>)}</div>
-      </fieldset>
-      <Button variant="primary" block onClick={makeGif} disabled={busy || selected.length < 2 || !onSaveGif}>
-        <span role="status" aria-live="polite">{busy ? `만드는 중 ${progress}%` : 'GIF 만들기'}</span>
-      </Button>
+      <div className={styles.footer}>
+        <fieldset className={styles.options} disabled={busy}>
+          <legend className={styles.label}>규격</legend>
+          <div className={styles.ratios}>{GIF_PRESETS.map(option => <button type="button" className={styles.ratio} key={option.id}
+            aria-pressed={preset === option.id} onClick={() => setPreset(option.id)}>
+            <span aria-hidden="true" className={`${styles.ratioFrame} ${styles[option.id]}`} /><span>{option.label}</span>
+          </button>)}</div>
+        </fieldset>
+        <Button variant="primary" block onClick={makeGif} disabled={busy || selected.length < 2 || !onSaveGif}>
+          <span role="status" aria-live="polite">{busy ? `만드는 중 ${progress}%` : 'GIF 만들기'}</span>
+        </Button>
+        {error && <p role="alert" className={styles.error}>{error}</p>}
+      </div>
     </> : <>
       <input ref={fileInput} type="file" className={styles.fileInput} accept="image/gif,.gif" onChange={attach} disabled={busy} aria-label="GIF 첨부" />
-      <Button variant="primary" block disabled={busy} onClick={() => { setCreating(true); setPreset('original'); setSelectedIds([]); setAttachment(null); setError(''); }}>새 GIF 만들기</Button>
+      <Button variant="primary" block disabled={busy} onClick={() => { setCreating(true); setPreset('original'); setSelectedIds([]); setAttachment(null); setError(''); }}>GIF 생성하기</Button>
       {attachment && <section className={styles.section} aria-label="GIF 용량 확인">
-        <p className={styles.hint}>4.7MB를 넘어요. 용량을 줄여서 담을까요?</p>
+        <p className={styles.hint}>5MB를 넘어요. 용량을 줄여서 담을까요?</p>
         <div className={`modal-actions ${styles.actions}`}>
           <Button variant="primary" disabled={busy} onClick={() => perform(async options => save(await reduceGifAttachment(attachment, options), options), true)}>
             {busy && reducing ? `줄이는 중 ${progress}%` : '줄여서 담기'}
           </Button>
           <Button variant="ghost" disabled={busy} onClick={() => perform(async options => save(await prepareGifAttachment(attachment, options), options, true))}>그대로 담기</Button>
         </div>
-        <p className={styles.hint}>4.7MB를 넘어 카페24에 올라가지 않을 수 있어요</p>
+        <p className={styles.hint}>5MB를 넘어 카페24에 올라가지 않을 수 있어요</p>
       </section>}
       {busy && <p role="status" className={styles.hint}>담는 중 {progress}%</p>}
       <section className={styles.section} aria-label="보관한 GIF">
@@ -157,7 +206,7 @@ export function GifThumbnailPanel({ wardrobe, detailColorOpts = [], onSaveGif, o
                 <img src={hoveredGif === image.id ? image.src : thumbUrl(image.posterSrc, 240)} alt="" loading="lazy" draggable={false} />
                 <span className={styles.gifBadge}>GIF · {(image.gifMeta.bytes / 1_000_000).toFixed(1)}MB</span>
               </button>
-              {image.gifMeta.bytes > GIF_HARD_BYTES && <span className="sr-only">4.7MB를 넘어 카페24에 올라가지 않을 수 있어요</span>}
+              {image.gifMeta.bytes > GIF_HARD_BYTES && <span className="sr-only">5MB를 넘어 카페24에 올라가지 않을 수 있어요</span>}
               <button type="button" className={`ward-rm ${styles.download}`} aria-label="GIF 받기" title="GIF 받기" onClick={() => onDownloadGif?.(image)}><Icon name="download" size={12} /></button>
               <button type="button" className={`ward-rm${used ? ' disabled' : ''}`} aria-disabled={used}
                 aria-label={used ? '현재 에디팅에 사용 중인 GIF' : 'GIF 삭제'} onClick={() => onDeleteImage?.(image)}><Icon name="x" size={12} /></button>
@@ -166,6 +215,6 @@ export function GifThumbnailPanel({ wardrobe, detailColorOpts = [], onSaveGif, o
         </div>
       </section>
     </>}
-    {error && <p role="alert" className={styles.error}>{error}</p>}
+    {!creating && error && <p role="alert" className={styles.error}>{error}</p>}
   </div>;
 }

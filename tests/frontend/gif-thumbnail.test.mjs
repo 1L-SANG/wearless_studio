@@ -20,7 +20,7 @@ test('사진 사다리는 설계서의 단계와 순서를 그대로 따른다',
 
 test('소프트 목표는 축소 전에 멈추고 하드 상한 실패는 마지막 단계까지 간다', () => {
   assert.equal(GIF_SOFT_BYTES, 1_500_000);
-  assert.equal(GIF_HARD_BYTES, 4_700_000);
+  assert.equal(GIF_HARD_BYTES, 5_000_000);
   for (const mode of ['photo', 'attachment']) {
     const hardStart = 2;
     const last = planLadder(mode).length - 1;
@@ -132,7 +132,7 @@ function decodeFrame(frame) {
   assert.fail('LZW 종료 코드가 있어야 한다');
 }
 
-test('노이즈가 있는 800×1067 사진 6장을 실제 GIF89a·무한 반복·150cs·4.7MB 이하로 인코딩한다', async () => {
+test('노이즈가 있는 800×1067 사진 6장을 실제 GIF89a·무한 반복·150cs·5MB 이하로 인코딩한다', async () => {
   const { encodeGifFrames } = await import('../../src/lib/gif/gifEncodeWorker.js');
   const width = 800, height = 1067;
   const frames = Array.from({ length: 6 }, (_, index) => {
@@ -393,7 +393,7 @@ const photoButtons = (tree) => nodes(tree, (node) => node.type === 'button' && n
 test('패널은 8장 한도를 지키고 실패·용량 경고·설정 변경을 처리한다', async () => {
   const harness = await panelHarness();
   try {
-    buttonNamed(harness.render(), '새 GIF 만들기').props.onClick();
+    buttonNamed(harness.render(), 'GIF 생성하기').props.onClick();
     let tree;
     for (let i = 0; i < 8; i += 1) { tree = harness.render(); photoButtons(tree)[i].props.onClick(); }
     tree = harness.render();
@@ -414,6 +414,82 @@ test('패널은 8장 한도를 지키고 실패·용량 경고·설정 변경을
   } finally { await harness.close(); }
 });
 
+
+function photoPointerArea(h) {
+  const area = nodes(h.render(), n => n.props['aria-label'] === '보관함 사진')[0];
+  const tiles = photoButtons(h.render()).map(button => {
+    const tile = { dataset: { gifPhotoId: button.props['data-gif-photo-id'] },
+      closest: () => tile, setPointerCapture() {}, hasPointerCapture: () => true, releasePointerCapture() {} };
+    return tile;
+  });
+  const container = { contains: tile => tiles.includes(tile),
+    ownerDocument: { elementFromPoint: x => tiles[Math.floor(x / 100)] || null },
+    setPointerCapture() {}, hasPointerCapture: () => true, releasePointerCapture() {} };
+  return { area, event: (index, extra = {}) => ({ pointerId: 1, pointerType: 'mouse', button: 0, buttons: 1,
+    clientX: index * 100 + 10, clientY: 10, currentTarget: container, target: tiles[index] || container,
+    preventDefault() {}, ...extra }) };
+}
+
+test('사진 영역에서 드래그하면 지나간 세 타일을 순서대로 선택하고 뒤따르는 클릭은 무시한다', async () => {
+  const h = await panelHarness();
+  try {
+    buttonNamed(h.render(), 'GIF 생성하기').props.onClick();
+    const { area, event } = photoPointerArea(h);
+    assert.equal(typeof area.props.onPointerDown, 'function');
+    area.props.onPointerDown(event(-1));
+    for (const index of [2, 0, 1, 2]) area.props.onPointerMove(event(index));
+    area.props.onPointerUp(event(2, { buttons: 0 }));
+    let prevented = false, stopped = false;
+    area.props.onClickCapture({ detail: 1, preventDefault() { prevented = true; }, stopPropagation() { stopped = true; } });
+    assert.ok(prevented && stopped);
+    const photos = photoButtons(h.render());
+    assert.match(photos[2].props['aria-label'], /선택 순서 1/);
+    assert.match(photos[0].props['aria-label'], /선택 순서 2/);
+    assert.match(photos[1].props['aria-label'], /선택 순서 3/);
+    await buttonNamed(h.render(), 'GIF 만들기').props.onClick();
+    assert.deepEqual(h.runtime.encodeCalls[0].sources, ['/assets/photo0.jpg', '/assets/style.jpg', '/assets/flat.jpg']);
+  } finally { await h.close(); }
+});
+
+test('타일에서 시작한 드래그는 기존 선택을 보존하고 8장까지만 추가하며 취소 후 멈춘다', async () => {
+  const h = await panelHarness();
+  try {
+    buttonNamed(h.render(), 'GIF 생성하기').props.onClick();
+    photoButtons(h.render())[1].props.onClick();
+    const { area, event } = photoPointerArea(h);
+    assert.equal(typeof area.props.onPointerDown, 'function');
+    area.props.onPointerDown(event(0));
+    for (let i = 1; i < 10; i++) area.props.onPointerMove(event(i));
+    assert.equal(photoButtons(h.render()).filter(n => n.props['aria-pressed']).length, 8);
+    assert.match(photoButtons(h.render())[1].props['aria-label'], /선택 순서 1/);
+    assert.match(photoButtons(h.render())[0].props['aria-label'], /선택 순서 2/);
+    area.props.onPointerCancel(event(9));
+    photoButtons(h.render())[0].props.onClick();
+    area.props.onPointerMove(event(8));
+    assert.equal(photoButtons(h.render()).filter(n => n.props['aria-pressed']).length, 7);
+    assert.equal(photoButtons(h.render())[8].props['aria-pressed'], false);
+  } finally { await h.close(); }
+});
+
+test('움직이지 않은 마우스 클릭은 선택과 해제를 유지하고 캡처 해제 뒤 드래그는 멈춘다', async () => {
+  const h = await panelHarness();
+  try {
+    buttonNamed(h.render(), 'GIF 생성하기').props.onClick();
+    const { area, event } = photoPointerArea(h);
+    assert.equal(typeof area.props.onPointerDown, 'function');
+    for (const selected of [true, false]) {
+      area.props.onPointerDown(event(0));
+      area.props.onPointerUp(event(0, { buttons: 0 }));
+      area.props.onClickCapture({ detail: 1, preventDefault() { assert.fail('클릭은 유지한다'); } });
+      photoButtons(h.render())[0].props.onClick();
+      assert.equal(photoButtons(h.render())[0].props['aria-pressed'], selected);
+    }
+    area.props.onPointerDown(event(0));
+    area.props.onLostPointerCapture(event(0));
+    area.props.onPointerMove(event(1));
+    assert.equal(photoButtons(h.render()).filter(n => n.props['aria-pressed']).length, 0);
+  } finally { await h.close(); }
+});
 
 test('GIF 제작은 의류 안에서 열고 기존 스타일 규칙을 지킨다', () => {
   const editor = source('src/features/editor/Editor.jsx');
@@ -509,7 +585,7 @@ test('축소한 최종 GIF와 첫 컷 JPG는 같은 크기와 선택 선두 사�
 test('원본 사진이 바뀌면 진행 중 인코딩을 취소하고 늦은 결과를 미리보기에 쓰지 않는다', async () => {
   const harness = await panelHarness();
   try {
-    buttonNamed(harness.render(), '새 GIF 만들기').props.onClick();
+    buttonNamed(harness.render(), 'GIF 생성하기').props.onClick();
     let tree = harness.render();
     photoButtons(tree)[0].props.onClick();
     tree = harness.render();
@@ -568,7 +644,7 @@ test('소프트 미달이면 첫 하드 통과본의 GIF·JPG·설정을 보존�
 
 test('색 보정본이 상한을 넘거나 두 번째 단계가 첫 통과본이어도 하드 통과 결과를 보존한다', async () => {
   const { runLadder } = await import('../../src/lib/gif/encodeGif.js');
-  for (const [sizes, winner] of [[[4_700_000, 5_200_000], 0], [[5_200_000, 2_000_000], 1]]) {
+  for (const [sizes, winner] of [[[5_000_000, 5_200_000], 0], [[5_200_000, 2_000_000], 1]]) {
     const calls = [];
     const result = await runLadder('photo', async (_step, index) => {
       calls.push(index);
@@ -585,7 +661,7 @@ test('색 보정본이 상한을 넘거나 두 번째 단계가 첫 통과본이
 
 test('사진 타일은 240px 썸네일을 쓰고 GIF 인코더에는 원본 사진을 보낸다', async () => {
   const harness = await panelHarness();
-  buttonNamed(harness.render(), '새 GIF 만들기').props.onClick();
+  buttonNamed(harness.render(), 'GIF 생성하기').props.onClick();
   const original = 'https://cdn.example.com/styling.jpg';
   harness.props.wardrobe = { navy: harness.props.wardrobe.navy.map((photo) => photo.id === 'style' ? { ...photo, src: original } : photo) };
   try {
@@ -649,11 +725,20 @@ test('목 저장은 GIF와 JPG 원본 blob을 한 항목으로 보관하고 프�
   } finally { await h.close(); }
 });
 
-test('GIF 저장은 4.7MB 초과와 poster 업로드 실패 시 항목을 만들지 않는다', async () => {
+test('GIF 저장은 정확히 5MB인 원본을 허용한다', async () => {
+  const { uploadWardrobeGif } = await import('../../src/lib/api/gifWardrobe.js');
+  const image = await uploadWardrobeGif('p', { ...gifResult(), blob: new Blob([new Uint8Array(5_000_000)], { type: 'image/gif' }) },
+    async (_id, photo) => ({ assetId: photo.filename, url: '/' + photo.filename }));
+  assert.equal(image.gifMeta.bytes, 5_000_000);
+  assert.equal(image.src, '/thumbnail.gif');
+  assert.equal(image.posterSrc, '/thumbnail.jpg');
+});
+
+test('GIF 저장은 5MB 초과와 poster 업로드 실패 시 항목을 만들지 않는다', async () => {
   const { uploadWardrobeGif } = await import('../../src/lib/api/gifWardrobe.js');
   let uploads = 0;
-  await assert.rejects(uploadWardrobeGif('p', { ...gifResult(), blob: new Blob([new Uint8Array(4_700_001)], { type: 'image/gif' }) },
-    async () => { uploads++; }), /4.7MB/);
+  await assert.rejects(uploadWardrobeGif('p', { ...gifResult(), blob: new Blob([new Uint8Array(5_000_001)], { type: 'image/gif' }) },
+    async () => { uploads++; }), /5MB/);
   assert.equal(uploads, 0);
   await assert.rejects(uploadWardrobeGif('p', gifResult(), async (_id, photo) => {
     uploads++; if (photo.mime === 'image/jpeg') throw new Error('poster failed');
@@ -939,14 +1024,14 @@ test('정보 카드에서 GIF를 새로 고르거나 앞 카드를 지워도 파
 });
 
 
-test('새 GIF 만들기는 선택 순서를 인코딩하고 자동 저장한 뒤 보관함으로 복귀한다', async () => {
+test('GIF 생성하기는 선택 순서를 인코딩하고 자동 저장한 뒤 보관함으로 복귀한다', async () => {
   const h = await panelHarness();
   try {
     let tree = h.render();
     assert.equal(photoButtons(tree).length, 0);
     assert.ok(textOf(tree).includes('보관한 GIF'));
     assert.ok(buttonNamed(tree, '＋ GIF 첨부'));
-    buttonNamed(tree, '새 GIF 만들기').props.onClick();
+    buttonNamed(tree, 'GIF 생성하기').props.onClick();
     tree = h.render();
     const photos = photoButtons(tree);
     assert.equal(nodes(photos[0], n => n.type === 'img')[0].props.src, '/assets/style.jpg');
@@ -955,7 +1040,7 @@ test('새 GIF 만들기는 선택 순서를 인코딩하고 자동 저장한 뒤
     await buttonNamed(h.render(), 'GIF 만들기').props.onClick();
     assert.deepEqual(h.runtime.encodeCalls[0].sources, ['/assets/flat.jpg', '/assets/style.jpg']);
     assert.equal(h.runtime.saved.length, 1);
-    assert.ok(buttonNamed(h.render(), '새 GIF 만들기'));
+    assert.ok(buttonNamed(h.render(), 'GIF 생성하기'));
     assert.ok(!textOf(h.render()).includes('의류에 저장'));
     assert.equal(nodes(h.render(), n => n.props['aria-label'] === 'GIF 결과').length, 0);
   } finally { await h.close(); }
@@ -964,7 +1049,7 @@ test('새 GIF 만들기는 선택 순서를 인코딩하고 자동 저장한 뒤
 test('자동 저장 실패는 만들기에 남아 오류를 표시하며 중복 실행을 막는다', async () => {
   const h = await panelHarness();
   try {
-    buttonNamed(h.render(), '새 GIF 만들기').props.onClick();
+    buttonNamed(h.render(), 'GIF 생성하기').props.onClick();
     photoButtons(h.render())[0].props.onClick();
     photoButtons(h.render())[1].props.onClick();
     let reject; let count = 0;
@@ -977,7 +1062,7 @@ test('자동 저장 실패는 만들기에 남아 오류를 표시하며 중복 
     assert.ok(textOf(h.render()).includes('저장 실패'));
     h.props.onSaveGif = async () => { count++; };
     await buttonNamed(h.render(), 'GIF 만들기').props.onClick();
-    assert.ok(buttonNamed(h.render(), '새 GIF 만들기'));
+    assert.ok(buttonNamed(h.render(), 'GIF 생성하기'));
     assert.equal(count, 2);
   } finally { await h.close(); }
 });
@@ -1123,7 +1208,7 @@ test('많이 잘리는 배지는 선택 사진의 25% 초과에만 표시하고 
   const h = await panelHarness();
   try {
     h.props.wardrobe = { navy: [{ id: 'a', src: '/a.jpg', width: 100, height: 100 }, { id: 'b', src: '/b.jpg', width: 100, height: 300 }] };
-    buttonNamed(h.render(), '새 GIF 만들기').props.onClick();
+    buttonNamed(h.render(), 'GIF 생성하기').props.onClick();
     buttonNamed(h.render(), '1:1').props.onClick();
     photoButtons(h.render())[0].props.onClick(); photoButtons(h.render())[1].props.onClick();
     assert.ok(!textOf(photoButtons(h.render())[0]).includes('많이 잘려요'));
@@ -1147,7 +1232,7 @@ test('큰 GIF는 확인 뒤 선택한 축소 또는 원본 저장 경로만 실�
       assert.equal(input.props.accept, 'image/gif,.gif');
       await input.props.onChange({ target: { files: [new Blob()], value: 'file' } });
       assert.deepEqual(calls, []);
-      assert.ok(textOf(h.render()).includes('4.7MB를 넘어요. 용량을 줄여서 담을까요?'));
+      assert.ok(textOf(h.render()).includes('5MB를 넘어요. 용량을 줄여서 담을까요?'));
       await buttonNamed(h.render(), shrink ? '줄여서 담기' : '그대로 담기').props.onClick();
       assert.deepEqual(calls, shrink ? ['reduce', false] : ['original', true]);
       assert.ok(!textOf(h.render()).includes('용량을 줄여서 담을까요'));
@@ -1204,7 +1289,7 @@ test('사진이 로드되면 캔버스에서 온 잘못된 치수 대신 실제 
   const h = await panelHarness();
   try {
     h.props.wardrobe = { navy: [{ id: 'a', src: '/a.jpg', width: 400, height: 400 }, { id: 'b', src: '/b.jpg', width: 100, height: 100 }] };
-    buttonNamed(h.render(), '새 GIF 만들기').props.onClick(); buttonNamed(h.render(), '1:1').props.onClick();
+    buttonNamed(h.render(), 'GIF 생성하기').props.onClick(); buttonNamed(h.render(), '1:1').props.onClick();
     photoButtons(h.render())[0].props.onClick(); photoButtons(h.render())[1].props.onClick();
     const image = nodes(photoButtons(h.render())[0], n => n.type === 'img')[0];
     image.props.onLoad({ currentTarget: { naturalWidth: 240, naturalHeight: 480 } });
@@ -1294,7 +1379,7 @@ test('첨부 축소는 가까운 프레임을 반복 샘플링하고 마지막 �
     const progress = [];
     const pending = reduceGifAttachment(info, { onProgress: v => progress.push(v) });
     if (winner === 8) {
-      await assert.rejects(pending, { message: '줄여도 4.7MB를 넘어요. 더 짧은 GIF를 올려 주세요' });
+      await assert.rejects(pending, { message: '줄여도 5MB를 넘어요. 더 짧은 GIF를 올려 주세요' });
       assert.equal(attempts.length, 8);
     } else {
       const result = await pending;
@@ -1312,7 +1397,7 @@ test('첨부 축소는 가까운 프레임을 반복 샘플링하고 마지막 �
   }, index => index < winner);
 });
 
-test('800×1196·30장·약 11MB 노이즈 첨부 GIF를 실제로 4.7MB 이하로 줄이고 통과 단계를 기록한다', async t => {
+test('800×1196·30장·약 11MB 노이즈 첨부 GIF를 실제로 5MB 이하로 줄이고 통과 단계를 기록한다', async t => {
   const { GIFEncoder } = (await import('gifenc')).default;
   const { inspectGifAttachment, reduceGifAttachment } = await import('../../src/lib/gif/gifAttachment.js');
   const width = 800, height = 1196, gif = GIFEncoder();
@@ -1362,10 +1447,10 @@ test('줄이는 중 진행률을 보이고 실패 뒤 원본 그대로 담기를
     await nodes(h.render(), n => n.type === 'input')[0].props.onChange({ target: { files: [new Blob()], value: 'file' } });
     const pending = buttonNamed(h.render(), '줄여서 담기').props.onClick();
     const during = h.render();
-    rejectReduction(new Error('줄여도 4.7MB를 넘어요. 더 짧은 GIF를 올려 주세요'));
+    rejectReduction(new Error('줄여도 5MB를 넘어요. 더 짧은 GIF를 올려 주세요'));
     await pending;
     assert.equal(buttonNamed(during, '줄이는 중 42%')?.props.disabled, true);
-    assert.equal(textOf(nodes(h.render(), n => n.props.role === 'alert')[0]), '줄여도 4.7MB를 넘어요. 더 짧은 GIF를 올려 주세요');
+    assert.equal(textOf(nodes(h.render(), n => n.props.role === 'alert')[0]), '줄여도 5MB를 넘어요. 더 짧은 GIF를 올려 주세요');
     assert.equal(buttonNamed(h.render(), '그대로 담기').props.disabled, false);
     await buttonNamed(h.render(), '그대로 담기').props.onClick();
     assert.equal(h.runtime.saved.length, 1);

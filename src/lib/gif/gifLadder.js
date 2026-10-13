@@ -1,5 +1,5 @@
 export const GIF_SOFT_BYTES = 1_500_000;
-export const GIF_HARD_BYTES = 4_700_000;
+export const GIF_HARD_BYTES = 5_000_000;
 export const GIF_PHOTO_DELAY_MS = 1500;
 
 export const GIF_PRESETS = [
