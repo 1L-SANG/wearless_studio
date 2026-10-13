@@ -311,6 +311,7 @@ const CHROME_SELECTOR = [
   // 아니다. 남겨 두면 완성본 PNG에 회색 네모가 그대로 찍힌다 — 사진을 비워 둔 채
   // 내려받는 순간 상품 페이지에 빈 상자가 인쇄되는 셈이다(2026-08-17).
   '.el-slot',
+  '.editor-snap-guide', '.editor-gap-guide',
 ].join(',');
 
 // 한 번의 다운로드 안에서만 성공한 이미지 바이트를 재사용한다. 재시도는 새 캐시다.
@@ -702,6 +703,21 @@ function saveBlob(blob, filename) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
+// Downloads the original selected photo. Canvas crop/rotation are deliberately
+// not baked into these bytes; full-page export continues through its own path.
+export async function downloadEditorPhoto(image, productName, { fetchImage = clientApiFetch, save = saveBlob } = {}) {
+  if (!image?.src) throw new Error('받을 사진을 선택해 주세요.');
+  const response = await fetchImage(toBytesUrl(image.src));
+  const type = (response.headers.get('content-type') || '').split(';')[0];
+  if (!response.ok || !type.startsWith('image/')) {
+    throw attachResponseError(new Error('사진을 받지 못했어요. 다시 시도해 주세요.'), response);
+  }
+  const blob = await readClientResponse(response, 'blob');
+  const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/avif': 'avif', 'image/gif': 'gif', 'image/svg+xml': 'svg' }[type] || 'png';
+  const name = `${productName || 'wearless'}-${image.cutType || 'photo'}`.replace(/[\\/:*?"<>|]/g, '-');
+  save(blob, `${name}.${ext}`);
 }
 
 /* ---- 공개 API — 각 함수는 { softFailed, verifyUrl, notarizeWarning } 를 돌려준다

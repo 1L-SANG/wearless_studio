@@ -52,12 +52,15 @@ import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHei
 import {
   buildExportSummary,
   exportBlockPng,
+  downloadEditorPhoto,
   exportNodeHeight,
   exportStorefrontDownload,
   readExportSettings,
   writeExportSettings,
 } from '@/features/editor/editorExport.js';
-import { snapEditorDragDelta } from '@/features/editor/editorSnap.js';
+import { snapEditorDragDelta, snapEditorSpacing } from '@/features/editor/editorSnap.js';
+import { beginEditorCrop, dragEditorCrop, ratioEditorCrop, zoomEditorCrop, applyEditorCrop } from './editorCrop.js';
+import { replaceEditorPhoto, photoMoveDestination, transferEditorPhoto } from './editorPhotoEditing.js';
 import { copyEditorBlock, copyEditorElements, pasteEditorBlock, pasteEditorElements } from '@/features/editor/editorClipboard.js';
 import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, textPresetKeyFromDragTypes, objectDescriptorFromDragTypes, objectDropBox, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, DETAIL_PAGE_TEMPLATE_SETS, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildDetailPageTemplateSet, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, getDetailPageFrame, objectPresetInitialSelectionIds, upgradeLegacyKiwiTemplateBlocks } from '@/features/editor/editorLibrary.js';
@@ -726,7 +729,7 @@ function DragObjectGhost({ kind, id, w, h }) {
   ));
 }
 
-function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onElementDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx, canvasAi, canvasAiJobs, onCanvasAiCancel, onCanvasAiDismiss }) {
+function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onElementDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, onCropRatio, onCropZoom, idx, canvasAi, canvasAiJobs, onCanvasAiCancel, onCanvasAiDismiss }) {
   // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
   const blockH = getBlockRenderHeight(block);
@@ -855,20 +858,25 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         ))}
         <div className="editor-snap-guide vertical" data-editor-snap-guide="vertical" aria-hidden="true" />
         <div className="editor-snap-guide horizontal" data-editor-snap-guide="horizontal" aria-hidden="true" />
+        {[0, 1, 2, 3].map(i => <span key={i} className="editor-gap-guide" data-editor-gap-guide={i} aria-hidden="true"><i /><small /></span>)}
         {(imageImports || []).map((item) => <ImageImportWait key={item.id} item={item} scale={scale} />)}
         {/* 인라인 크롭 오버레이 — 고스트(원본 전체) + 밝은 프레임(8핸들), 밖은 딤.
             딤 영역(레이어 자신) 클릭 = "빈 곳 클릭" → 크롭 확정 */}
         {crop && (
           <div className="crop-layer" onClick={(e) => { e.stopPropagation(); if (e.target === e.currentTarget) onCropCommit && onCropCommit(); }}>
             <div className="crop-ghost" style={{ left: crop.fx - crop.ox, top: crop.fy - crop.oy, width: crop.iw, height: crop.ih }}
-              onPointerDown={(e) => onCropDrag(e, 'img')}>
+              aria-hidden="true">
               <img src={crop.src} alt="" draggable={false} />
             </div>
             <div className="crop-frame" style={{ left: crop.fx, top: crop.fy, width: crop.fw, height: crop.fh, borderRadius: crop.radius }}
-              onPointerDown={(e) => onCropDrag(e, 'img')}>
+              data-editor-crop-surface
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => onCropDrag(e, e.shiftKey ? 'img' : 'range')}>
               <div className="crop-frame-image">
                 <img src={crop.src} alt="" draggable={false} style={{ left: -crop.ox, top: -crop.oy, width: crop.iw, height: crop.ih }} />
               </div>
+              {['n', 'e', 's', 'w'].map(d => <span key={d} className={`crop-edge ce-${d}`}
+                onPointerDown={e => onCropDrag(e, 'frame', d)} />)}
               {['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'].map((d) => (
                 <span key={d} className={`crop-h ch-${d}`} onPointerDown={(e) => onCropDrag(e, 'frame', d)} />
               ))}
@@ -890,6 +898,11 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
       </div>
       {crop && (
         <div className="crop-bar" style={{ left: crop.fx, top: crop.fy + crop.fh }} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+          <label className="crop-ratio">비율<select aria-label="자르기 비율" value={crop.ratio || ''} onChange={e => onCropRatio(Number(e.target.value))}>
+            <option value="">자유</option><option value="1">1:1</option><option value="0.75">3:4</option><option value="0.8">4:5</option><option value="1.7777777777777777">16:9</option>
+          </select></label>
+          <button type="button" className="crop-reset" aria-label="자르기 사진 축소" onClick={() => onCropZoom(1 / 1.1)}><Icon name="minus" size={15} /></button>
+          <button type="button" className="crop-reset" aria-label="자르기 사진 확대" onClick={() => onCropZoom(1.1)}><Icon name="plus" size={15} /></button>
           <button className="crop-reset" onClick={(e) => { e.stopPropagation(); onCropReset && onCropReset(); }}>원본</button>
           <button type="button" className="crop-apply" aria-label="크롭 적용" title="크롭 적용" onClick={(e) => { e.stopPropagation(); onCropCommit && onCropCommit(); }}><Icon name="check" size={15} /></button>
           <button type="button" className="crop-cancel" aria-label="크롭 취소" title="크롭 취소" onClick={(e) => { e.stopPropagation(); onCropCancel && onCropCancel(); }}><Icon name="x" size={15} /></button>
@@ -1018,6 +1031,7 @@ export function Editor() {
   if (!saveGuard.current) saveGuard.current = createLatestEditorSaveGuard();
   const setBlocks = useCallback((u) => setBlocksState((prev) => {
     const source = typeof u === 'function' ? u(prev) : u;
+    if (source === prev) { latestBlocks.current = prev; return prev; }
     const next = normalizeEditorSelectionGroups(expandBlockHeights(upgradeLegacyKiwiTemplateBlocks(source, uid)));
     latestBlocks.current = next;
     return next;
@@ -1208,7 +1222,15 @@ export function Editor() {
   }, [selEl]);
   // inline crop mode (Figma식): { blockId, elId, src, radius, fx,fy,fw,fh, ox,oy,iw,ih }
   // frame = 보이는 창(fx..fh, 블록 좌표), image drawn at frame-relative -ox,-oy size iw×ih
-  const [cropping, setCropping] = useState(null);
+  const [cropping, setCroppingState] = useState(null);
+  const croppingRef = useRef(null);
+  const setCropping = useCallback((update) => {
+    const next = typeof update === 'function' ? update(croppingRef.current) : update;
+    croppingRef.current = next;
+    setCroppingState(next);
+  }, []);
+  const [photoDownloadBusy, setPhotoDownloadBusy] = useState(false);
+  const photoDownloadLock = useRef(false);
   const [lockRatio, setLockRatio] = useState(true); // 이미지 패널 자물쇠 = moveable keepRatio
   const [mvTargets, setMvTargets] = useState([]);  // DOM nodes for react-moveable
   const [mvGuides, setMvGuides] = useState([]);    // Phase0 스파이크: elementGuidelines 소스(형제 요소+센티넬), effect-수집(identity 안정)
@@ -1279,7 +1301,7 @@ export function Editor() {
       ? [...wrap.querySelectorAll('.canvas-block')].filter((node) => node.dataset.blockid === blockId)
       : [...wrap.querySelectorAll('.canvas-block')];
     blocksToClear.forEach((blockNode) => {
-      blockNode.querySelectorAll('[data-editor-snap-guide]').forEach((guide) => {
+      blockNode.querySelectorAll('[data-editor-snap-guide], [data-editor-gap-guide]').forEach((guide) => {
         guide.style.display = 'none';
       });
     });
@@ -1301,6 +1323,17 @@ export function Editor() {
       horizontal.style.display = guides.horizontal == null ? 'none' : 'block';
       if (guides.horizontal != null) horizontal.style.top = `${guides.horizontal}px`;
     }
+    blockNode.querySelectorAll('[data-editor-gap-guide]').forEach((node, index) => {
+      const gap = guides.gaps?.[index];
+      node.style.display = gap ? 'block' : 'none';
+      if (!gap) return;
+      node.classList.toggle('vertical', gap.axis === 'y');
+      node.style.left = `${gap.axis === 'x' ? gap.from : gap.cross}px`;
+      node.style.top = `${gap.axis === 'x' ? gap.cross : gap.from}px`;
+      node.style.width = `${gap.axis === 'x' ? gap.to - gap.from : 0}px`;
+      node.style.height = `${gap.axis === 'y' ? gap.to - gap.from : 0}px`;
+      node.querySelector('small').textContent = gap.distance;
+    });
   }, []);
 
   useEffect(() => () => {
@@ -1807,6 +1840,18 @@ export function Editor() {
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Commit outside crop before the clicked editor action, without swallowing it.
+  // The ref makes canvas selection and document capture idempotent in one event.
+  useEffect(() => {
+    const outside = (event) => {
+      if (!croppingRef.current || !event.target.closest?.('.editor')) return;
+      if (event.target.closest('[data-editor-crop-surface], .crop-bar')) return;
+      flushSync(() => kb.current.cropCommit?.());
+    };
+    document.addEventListener('click', outside, true);
+    return () => document.removeEventListener('click', outside, true);
+  }, []);
+
   // 크롭 중 휠 = 사진 확대/축소(프레임 고정, 중앙 기준). Ctrl+휠(캔버스 줌)은 그대로 둔다.
   // 로직을 effect 안에 인라인으로 둬 early-return 뒤 선언(TDZ)에 의존하지 않게 한다.
   useEffect(() => {
@@ -1817,17 +1862,7 @@ export function Editor() {
       if (!e.target.closest || !e.target.closest('.crop-layer')) return;
       e.preventDefault(); e.stopPropagation();
       const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
-      setCropping((c) => {
-        if (!c || !c.iw || !c.ih) return c;
-        const ratio = c.ih / c.iw;
-        const minIw = Math.max(c.fw, c.fh / ratio);          // 프레임보다 작아지지 않게(빈틈 방지)
-        const niw = Math.min(c.fw * 12, Math.max(minIw, c.iw * factor));
-        const nih = niw * ratio;
-        const cx = (c.ox + c.fw / 2) / c.iw, cy = (c.oy + c.fh / 2) / c.ih;  // 프레임 중앙의 사진 지점 유지
-        const ox = Math.min(Math.max(0, cx * niw - c.fw / 2), Math.max(0, niw - c.fw));
-        const oy = Math.min(Math.max(0, cy * nih - c.fh / 2), Math.max(0, nih - c.fh));
-        return { ...c, iw: niw, ih: nih, ox, oy };
-      });
+      setCropping(c => c ? zoomEditorCrop(c, factor) : c);
     };
     wrap.addEventListener('wheel', onWheel, { passive: false });
     return () => wrap.removeEventListener('wheel', onWheel);
@@ -1853,12 +1888,12 @@ export function Editor() {
 
   // keep react-moveable bound to the current selection's DOM nodes
   useEffect(() => {
-    if (!blocks || preview) { setMvTargets([]); return; }
+    if (!blocks || preview || cropping) { setMvTargets([]); return; }
     const wrap = wrapRef.current; if (!wrap) { setMvTargets([]); return; }
     const ids = editEl ? selEls.filter((id) => id !== editEl) : selEls;
     const nodes = ids.map((id) => wrap.querySelector(`[data-elid="${id}"]`)).filter(Boolean);
     setMvTargets(nodes);
-  }, [selEls, blocks, scale, tab, preview, editEl, layerFloat]);
+  }, [selEls, blocks, scale, tab, preview, editEl, layerFloat, cropping]);
 
   // Phase0 스파이크: elementGuidelines 소스 = 선택 요소가 속한 블록의 형제 요소 노드 + 캔버스 센티넬.
   // mvTargets 와 동일한 effect+state 패턴(렌더-타임 DOM 쿼리 금지) — deps 는 제스처-안정이라
@@ -2062,7 +2097,12 @@ export function Editor() {
     editorClipboard.current = { blockId: targetBlock.id, elements: pasted.elements };
     return true;
   };
-  const patchEl = (patch) => setBlocks((bs) => bs.map((b) => ({ ...b, elements: b.elements.map((e) => e.id === selEl ? { ...e, ...patch } : e) })));
+  const patchEl = (patch) => setBlocks((bs) => {
+    const selected = bs.flatMap(b => b.elements).find(e => e.id === selEl);
+    if (!selected || Object.entries(patch).every(([key, value]) => JSON.stringify(selected[key]) === JSON.stringify(value))) return bs;
+    return bs.map(b => b.elements.some(e => e.id === selEl)
+      ? { ...b, elements: b.elements.map(e => e.id === selEl ? { ...e, ...patch } : e) } : b);
+  });
   const patchBubbleAppearance = (patch) => setBlocks((bs) => patchSelectedBubbleAppearance(bs, selEls.length ? selEls : [selEl], patch));
   const patchElById = (blockId, elId, patch) => setBlocks((bs) => bs.map((b) => b.id === blockId ? { ...b, elements: b.elements.map((e) => e.id === elId ? { ...e, ...patch } : e) } : b));
   const commitText = (blockId, elementId, value, elementPatch) => {
@@ -2373,7 +2413,14 @@ export function Editor() {
       });
       setPendingSlot(null);
       if (!keepTab) setTab('image');
-    } else insertImage(im, { keepTab });
+    } else {
+      const targetId = cropping?.elId || (selEls.length === 1 ? selEl : null);
+      const selected = (latestBlocks.current || blocks).flatMap(b => b.elements).find(el => el.id === targetId);
+      if (selected?.type === 'image') {
+        lastPush.current = 0;
+        setBlocks(bs => replaceEditorPhoto(bs, targetId, im));
+      } else insertImage(im, { keepTab: true });
+    }
   };
   const patchImageImport = (id, patch) => {
     if (!id) return;
@@ -2863,7 +2910,7 @@ export function Editor() {
     }
     setInfoModal(null);
   };
-  const undo = () => { const h = hist.current; if (!h.past.length) { toast.push('되돌릴 작업이 없어요'); return; } const snap = h.past.pop(); h.future.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('실행 취소', { icon: 'undo' }); };
+  const undo = () => { if (croppingRef.current) flushSync(() => kb.current.cropCommit?.()); const h = hist.current; if (!h.past.length) { toast.push('되돌릴 작업이 없어요'); return; } const snap = h.past.pop(); h.future.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('실행 취소', { icon: 'undo' }); };
   const redo = () => { const h = hist.current; if (!h.future.length) { toast.push('다시 실행할 작업이 없어요'); return; } const snap = h.future.pop(); h.past.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('다시 실행', { icon: 'redo' }); };
   const save = async () => {
     const source = latestBlocks.current || blocks;
@@ -3056,6 +3103,13 @@ export function Editor() {
     const previousUserSelect = document.body.style.userSelect;
     let active = false;
     let latest = null;
+    let latestTransfer = null;
+    let photoGhost = null;
+    let scrollFrame = null;
+    let lastPointer = null;
+    const photo = selected.length === 1 && selected[0].type === 'image' && selected[0].src
+      && !selected[0].groupId && !selected[0].system && !selected[0].genPending && !genActive ? selected[0] : null;
+    const clearTransferHint = () => wrapRef.current?.querySelectorAll('.photo-move-target').forEach(node => node.classList.remove('photo-move-target'));
     activePointerDragCleanup.current?.();
     hidePointerSnapGuides();
     try { pointerTarget?.setPointerCapture?.(pointerId); } catch { /* detached pointer target */ }
@@ -3072,19 +3126,66 @@ export function Editor() {
         document.body.style.userSelect = 'none';
       }
       pointerEvent.preventDefault();
+      lastPointer = pointerEvent;
+      const currentBlockRect = blockNode?.querySelector('.block-clip')?.getBoundingClientRect() || blockRect;
+      // Include scroll displacement, so a held photo remains under the pointer.
+      const rawDelta = [(clientDx + blockRect.left - currentBlockRect.left) / zoom,
+        (clientDy + blockRect.top - currentBlockRect.top) / zoom];
       const snapped = snapEditorDragDelta({
         startRects,
         guideRects,
-        delta: [clientDx / (scale || 1), clientDy / (scale || 1)],
+        delta: rawDelta,
         scale,
         blockWidth: 1000,
         blockHeight,
+        altKey: pointerEvent.altKey,
       });
-      const [dx, dy] = clampDragDelta(clampRects, snapped.delta, blockHeight);
+      const spacing = snapEditorSpacing({ startRects, guideRects, delta: snapped.delta, scale, altKey: pointerEvent.altKey });
+      const wanted = [snapped.guides.vertical != null ? snapped.delta[0] : spacing.delta[0],
+        snapped.guides.horizontal != null ? snapped.delta[1] : spacing.delta[1]];
+      const [dx, dy] = clampDragDelta(clampRects, wanted, blockHeight);
       showPointerSnapGuides(block.id, {
         vertical: Math.abs(dx - snapped.delta[0]) < 0.01 ? snapped.guides.vertical : null,
         horizontal: Math.abs(dy - snapped.delta[1]) < 0.01 ? snapped.guides.horizontal : null,
+        gaps: snapEditorSpacing({ startRects, guideRects, delta: [dx, dy], scale, altKey: pointerEvent.altKey, snapping: false }).gaps,
       });
+      clearTransferHint();
+      latestTransfer = null;
+      if (photo) {
+        const left = currentBlockRect.left + (photo.x + rawDelta[0]) * zoom;
+        const top = currentBlockRect.top + (photo.y + rawDelta[1]) * zoom;
+        const rects = [...wrapRef.current.querySelectorAll('.canvas-block')].map(node => {
+          const clip = node.querySelector('.block-clip').getBoundingClientRect();
+          return { id: node.dataset.blockid, left: clip.left, top: clip.top, width: clip.width, height: clip.height, node };
+        });
+        const destination = photoMoveDestination({ sourceBlockId: block.id, blocks: rects,
+          pointer: { x: pointerEvent.clientX, y: pointerEvent.clientY }, photoRect: { left, top, width: photo.w * zoom, height: photo.h * zoom } });
+        const outside = pointerEvent.clientY < currentBlockRect.top || pointerEvent.clientY > currentBlockRect.bottom;
+        if (outside || destination) {
+          if (!photoGhost) {
+            photoGhost = document.createElement('div');
+            photoGhost.className = 'editor-photo-drag-preview'; photoGhost.setAttribute('aria-hidden', 'true');
+            const stage = document.createElement('div');
+            stage.style.cssText = `width:${photo.w}px;height:${photo.h}px;transform:scale(${zoom});transform-origin:top left;`;
+            const clone = nodes[photo.id].cloneNode(true);
+            clone.removeAttribute('data-elid'); clone.classList.remove('on');
+            clone.style.left = '0'; clone.style.top = '0';
+            stage.appendChild(clone); photoGhost.appendChild(stage); document.body.appendChild(photoGhost);
+          }
+          photoGhost.hidden = false;
+          photoGhost.style.left = `${left}px`; photoGhost.style.top = `${top}px`;
+          photoGhost.style.width = `${photo.w * zoom}px`; photoGhost.style.height = `${photo.h * zoom}px`;
+          nodes[photo.id].style.opacity = '0.35';
+        } else {
+          if (photoGhost) photoGhost.hidden = true;
+          nodes[photo.id].style.opacity = photo.opacity ?? 1;
+        }
+        if (destination) {
+          destination.node.classList.add('photo-move-target');
+          latestTransfer = { targetBlockId: destination.id, x: (left - destination.left) / zoom, y: (top - destination.top) / zoom };
+          hidePointerSnapGuides(block.id);
+        }
+      }
       latest = Object.fromEntries(moveIds.map((id) => [id, {
         x: Math.round(modelStart[id].x + dx),
         y: Math.round(modelStart[id].y + dy),
@@ -3098,6 +3199,18 @@ export function Editor() {
       // 직접 선택 요소를 잡아 끄는 경로는 Moveable 이벤트를 거치지 않는다. DOM 요소만
       // 이동시키면 바깥 그룹 박스가 출발점에 남으므로, 같은 프레임에 함께 갱신한다.
       syncPointerGroupSelectionBounds();
+      if (scrollFrame == null) scrollFrame = window.requestAnimationFrame(autoScroll);
+    };
+    const autoScroll = () => {
+      scrollFrame = null;
+      if (!active || !lastPointer) return;
+      const wrap = wrapRef.current, bounds = wrap?.getBoundingClientRect();
+      if (!bounds || lastPointer.clientX < bounds.left || lastPointer.clientX > bounds.right) return;
+      const step = lastPointer.clientY > bounds.bottom - 36 ? 12 : lastPointer.clientY < bounds.top + 36 ? -12 : 0;
+      if (!step) return;
+      const previous = wrap.scrollTop;
+      wrap.scrollTop += step;
+      if (wrap.scrollTop !== previous) move(lastPointer);
     };
     const cleanup = () => {
       window.removeEventListener('pointermove', move);
@@ -3108,6 +3221,10 @@ export function Editor() {
         if (pointerTarget?.hasPointerCapture?.(pointerId)) pointerTarget.releasePointerCapture(pointerId);
       } catch { /* detached pointer target */ }
       document.body.style.userSelect = previousUserSelect;
+      if (scrollFrame != null) window.cancelAnimationFrame(scrollFrame);
+      scrollFrame = null;
+      photoGhost?.remove(); photoGhost = null; clearTransferHint();
+      if (photo) nodes[photo.id].style.opacity = photo.opacity ?? 1;
       gesturing.current = false; setCanvasGesture(false);
       hidePointerSnapGuides(block.id);
       if (pointerGroupRectFrame.current != null) {
@@ -3118,8 +3235,25 @@ export function Editor() {
     };
     const end = (pointerEvent) => {
       if (pointerId != null && pointerEvent?.pointerId != null && pointerEvent.pointerId !== pointerId) return;
+      if (active && pointerEvent?.type === 'pointerup') move(pointerEvent);
       cleanup();
       if (!active || !latest) return;
+      if (pointerEvent?.type !== 'pointerup') {
+        moveIds.forEach(id => { nodes[id].style.left = `${modelStart[id].x}px`; nodes[id].style.top = `${modelStart[id].y}px`; });
+        syncPointerGroupSelectionBounds();
+        return;
+      }
+      if (latestTransfer && photo) {
+        const current = latestBlocks.current || blocks;
+        const next = transferEditorPhoto(current, { elementId: photo.id, sourceBlockId: block.id, ...latestTransfer,
+          emptyId: uid('el'), generationActive: genActiveRef.current });
+        if (next !== current) {
+          lastPush.current = 0; setBlocks(next);
+          setSelBlock(latestTransfer.targetBlockId); setSelEl(photo.id); setSelEls([photo.id]);
+          return;
+        }
+      }
+      lastPush.current = 0;
       setBlocks((current) => current.map((item) => item.id === block.id ? {
         ...item,
         elements: item.elements.map((candidate) => latest[candidate.id]
@@ -3192,20 +3326,20 @@ export function Editor() {
 
   /* ---- inline crop (Figma식, PRD §10.10) — 모달 없이 블록 안에서 ---- */
   const startCrop = (blockId, el) => {
-    if (!el || el.type !== 'image' || !el.src) return;
-    const c = el.crop || { ox: 0, oy: 0, iw: el.w, ih: el.h };
-    clearSel();                                   // moveable 박스 → 크롭 핸들로 전환
-    setCropping({ blockId, elId: el.id, src: el.src, radius: el.radius || 0,
-      fx: el.x, fy: el.y, fw: el.w, fh: el.h, ...c });
+    if (!el || el.type !== 'image' || !el.src || el.locked || el.genPending) return;
+    // Keep the inspector's selection; Moveable is hidden while the draft is open.
+    const image = canvasRef.current?.querySelector(`[data-elid="${el.id}"] img`);
+    setCropping(beginEditorCrop(blockId, el, { width: image?.naturalWidth, height: image?.naturalHeight }));
   };
   const commitCrop = () => {
-    setCropping((c) => {
-      if (c) patchElById(c.blockId, c.elId, {
-        x: Math.round(c.fx), y: Math.round(c.fy), w: Math.round(c.fw), h: Math.round(c.fh),
-        crop: { ox: Math.round(c.ox), oy: Math.round(c.oy), iw: Math.round(c.iw), ih: Math.round(c.ih) },
-      });
-      return null;
-    });
+    const c = croppingRef.current;
+    if (!c) return;
+    setCropping(null);
+    const current = latestBlocks.current || blocks;
+    const next = applyEditorCrop(current, c);
+    if (next === current) return;
+    lastPush.current = 0;
+    setBlocks(next);
   };
   const cancelCrop = () => setCropping(null);
   // 크롭 리셋 — 프레임을 원본 이미지 전체로 되돌린다(자른 것 원위치, 오프셋 0).
@@ -3215,28 +3349,27 @@ export function Editor() {
     if (e.button != null && e.button !== 0) return;
     e.stopPropagation(); e.preventDefault();
     const sx = e.clientX, sy = e.clientY;
-    const c0 = { ...cropping };
-    const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+    const c0 = croppingRef.current;
+    if (!c0) return;
+    const previousUserSelect = document.body.style.userSelect;
     const move = (ev) => {
       const dx = (ev.clientX - sx) / (scale || 1), dy = (ev.clientY - sy) / (scale || 1);
-      setCropping((c) => {
-        if (!c) return c;
-        let { fx, fy, fw, fh, ox, oy } = c0;
-        const { iw, ih } = c0;
-        if (mode === 'img') {                 // 내부 이미지 위치 조정 (프레임 고정)
-          ox = clamp(c0.ox - dx, 0, Math.max(0, iw - fw)); oy = clamp(c0.oy - dy, 0, Math.max(0, ih - fh));
-        } else {                              // 프레임 8방향 핸들 (이미지는 캔버스에 고정)
-          if (dir.includes('e')) fw = clamp(c0.fw + dx, 24, iw - c0.ox);
-          if (dir.includes('s')) fh = clamp(c0.fh + dy, 24, ih - c0.oy);
-          if (dir.includes('w')) { const d = clamp(dx, -c0.ox, c0.fw - 24); fx = c0.fx + d; fw = c0.fw - d; ox = c0.ox + d; }
-          if (dir.includes('n')) { const d = clamp(dy, -c0.oy, c0.fh - 24); fy = c0.fy + d; fh = c0.fh - d; oy = c0.oy + d; }
-        }
-        return { ...c, fx, fy, fw, fh, ox, oy };
-      });
+      setCropping(c => c && c.elId === c0.elId ? dragEditorCrop(c0, mode, dir || '', dx, dy) : c);
     };
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); document.body.style.userSelect = ''; };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); window.removeEventListener('blur', up); document.body.style.userSelect = previousUserSelect; };
     document.body.style.userSelect = 'none';
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up); window.addEventListener('blur', up);
+  };
+
+  const downloadPhoto = async (el) => {
+    if (photoDownloadLock.current) return;
+    photoDownloadLock.current = true; setPhotoDownloadBusy(true);
+    const accountGeneration = clientEvents.getAccountGeneration();
+    try { await downloadEditorPhoto(el, productName); }
+    catch (error) {
+      clientEvents.bindGeneration(error, accountGeneration);
+      toast.push(error.message || '사진을 받지 못했어요. 다시 시도해 주세요.', { icon: 'x', variant: 'error', error, actionName: 'download', accountGeneration });
+    } finally { photoDownloadLock.current = false; setPhotoDownloadBusy(false); }
   };
 
   // keep latest action handlers for the global keyboard effect (incl. crop keys)
@@ -3245,7 +3378,7 @@ export function Editor() {
 
   const TOOLS = [
     { id: 'ai', icon: 'sparkles', label: 'AI' },
-    { id: 'wardrobe', icon: 'shirt', label: '의류', dot: true }, // 생성 점 표시는 결과가 쌓이는 의류 탭에
+    { id: 'wardrobe', icon: 'shirt', label: '보관함', dot: true },
     { id: 'image', icon: 'image', label: '이미지' },
     { id: 'frame', icon: 'layout', label: '프레임' },
     { id: 'text', icon: 'type', label: '텍스트' },
@@ -3267,6 +3400,7 @@ export function Editor() {
         onImageDragStart={() => setFrameDragging(true)} onImageDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}
         onCrop={(el) => startCrop(blockIdOf(el.id), el)}
+        onDownload={downloadPhoto} downloadBusy={photoDownloadBusy}
         />;
       case 'frame': return (
         <FramePanel onAdd={addFrame} recommendGender={recommendGender} onPickInfo={openInfoPreset}
@@ -3741,6 +3875,7 @@ export function Editor() {
                   selectedBlockId={blockFocused ? selBlock : null} selEls={selEls} editEl={editEl} onEdit={setEditEl}
                   crop={cropping && cropping.blockId === b.id ? cropping : null}
                   onCropDrag={cropDrag} onCropStart={startCrop} onCropCommit={commitCrop} onCropCancel={cancelCrop} onCropReset={resetCrop}
+                  onCropRatio={ratio => setCropping(c => c ? ratioEditorCrop(c, ratio) : c)} onCropZoom={factor => setCropping(c => c ? zoomEditorCrop(c, factor) : c)}
                   onSelectBlock={(id) => { setSelBlock(id); setBlockFocused(true); clearSel(); setTab('shape'); }} onSelectEl={selectEl}
                   onElPatch={patchElById} onTextCommit={commitText} onElementDragStart={startElementDrag}
                   shouldSuppressBlankClick={consumeMarqueeClick}

@@ -83,12 +83,13 @@ export function snapEditorDragDelta({
   scale = 1,
   blockWidth = DEFAULT_BLOCK_WIDTH,
   blockHeight,
+  altKey = false,
 } = {}) {
   const selectedBounds = groupBounds(startRects);
   const rawDx = finiteNumber(delta?.[0]);
   const rawDy = finiteNumber(delta?.[1]);
 
-  if (!selectedBounds) {
+  if (!selectedBounds || altKey) {
     return { delta: [rawDx, rawDy], guides: { vertical: null, horizontal: null } };
   }
 
@@ -121,4 +122,31 @@ export function snapEditorDragDelta({
       horizontal: ySnap ? ySnap.coordinate : null,
     },
   };
+}
+
+export function snapEditorSpacing({ startRects = [], guideRects = [], delta = [0, 0], scale = 1, altKey = false, snapping = true } = {}) {
+  const bounds = groupBounds(startRects);
+  if (!bounds || altKey) return { delta, gaps: [] };
+  const threshold = SCREEN_THRESHOLD / (scale > 0 ? scale : 1);
+  const next = [...delta], gaps = [];
+  for (const [axis, index, start, end, crossStart, crossEnd] of [
+    ['x', 0, 'left', 'right', 'top', 'bottom'], ['y', 1, 'top', 'bottom', 'left', 'right'],
+  ]) {
+    const moved = { ...bounds, [start]: bounds[start] + delta[index], [end]: bounds[end] + delta[index],
+      [crossStart]: bounds[crossStart] + delta[1 - index], [crossEnd]: bounds[crossEnd] + delta[1 - index] };
+    const neighbors = guideRects.map(rectBounds).filter(r => r[crossStart] < moved[crossEnd] && r[crossEnd] > moved[crossStart]);
+    const before = neighbors.filter(r => r[end] <= moved[start]).sort((a, b) => b[end] - a[end]);
+    const after = neighbors.filter(r => r[start] >= moved[end]).sort((a, b) => a[start] - b[start]);
+    let correction = null;
+    const size = bounds[end] - bounds[start];
+    if (before[0] && after[0]) correction = (before[0][end] + after[0][start] - size) / 2 - moved[start];
+    else if (before.length >= 2) correction = before[0][end] + (before[0][start] - before[1][end]) - moved[start];
+    else if (after.length >= 2) correction = after[0][start] - (after[1][start] - after[0][end]) - moved[end];
+    if (snapping && correction != null && Math.abs(correction) <= threshold) next[index] += correction;
+    const from = bounds[start] + next[index], to = bounds[end] + next[index];
+    const cross = (moved[crossStart] + moved[crossEnd]) / 2;
+    if (before[0] && from > before[0][end]) gaps.push({ axis, from: before[0][end], to: from, cross, distance: Math.round(from - before[0][end]) });
+    if (after[0] && after[0][start] > to) gaps.push({ axis, from: to, to: after[0][start], cross, distance: Math.round(after[0][start] - to) });
+  }
+  return { delta: next, gaps };
 }
