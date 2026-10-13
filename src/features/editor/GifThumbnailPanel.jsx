@@ -64,12 +64,12 @@ export function GifThumbnailPanel({ wardrobe, detailColorOpts = [], onSaveGif, o
       if (operation.current === controller) { operation.current = null; setBusy(false); }
     }
   };
-  const save = async (result, options, allowOversize = false) => {
+  const save = async (result, options) => {
     if (options.signal.aborted) return;
-    if (!allowOversize && Math.max(result.bytes || 0, result.blob.size) > GIF_HARD_BYTES) {
-      throw new Error(creating ? '용량이 커서 담지 못했어요. 사진 수를 줄여 주세요' : '줄여도 5MB를 넘어요. 더 짧은 GIF를 올려 주세요');
+    if (Math.max(result.bytes || 0, result.blob.size) > GIF_HARD_BYTES) {
+      throw new Error(creating ? '용량이 커서 담지 못했어요. 사진 수를 줄여 주세요' : '줄여도 5MB를 넘어요. 사진 수나 원본 크기를 줄여 주세요');
     }
-    await onSaveGif(result, { signal: options.signal, allowOversize });
+    await onSaveGif(result, { signal: options.signal });
     if (options.signal.aborted) return;
     setCreating(false); setSelectedIds([]); setAttachment(null);
   };
@@ -189,14 +189,14 @@ export function GifThumbnailPanel({ wardrobe, detailColorOpts = [], onSaveGif, o
       <input ref={fileInput} type="file" className={styles.fileInput} accept="image/gif,.gif" onChange={attach} disabled={busy} aria-label="GIF 첨부" />
       <Button variant="primary" block disabled={busy} onClick={() => { setCreating(true); setPreset('original'); setSelectedIds([]); setAttachment(null); setError(''); }}>GIF 생성하기</Button>
       {attachment && <section className={styles.section} aria-label="GIF 용량 확인">
-        <p className={styles.hint}>5MB를 넘어요. 용량을 줄여서 담을까요?</p>
+        <p className={styles.hint}>5MB를 넘어요. 재생시간은 유지하고 용량을 줄일까요?</p>
         <div className={`modal-actions ${styles.actions}`}>
           <Button variant="primary" disabled={busy} onClick={() => perform(async options => save(await reduceGifAttachment(attachment, options), options), true)}>
             {busy && reducing ? `줄이는 중 ${progress}%` : '줄여서 담기'}
           </Button>
-          <Button variant="ghost" disabled={busy} onClick={() => perform(async options => save(await prepareGifAttachment(attachment, options), options, true))}>그대로 담기</Button>
+          <Button variant="ghost" onClick={cancel}>취소</Button>
         </div>
-        <p className={styles.hint}>5MB를 넘어 카페24에 올라가지 않을 수 있어요</p>
+        <p className={styles.hint}>재생시간과 길이는 그대로예요. 5MB 이하만 담을 수 있어요</p>
       </section>}
       {busy && <p role="status" className={styles.hint}>담는 중 {progress}%</p>}
       <section className={styles.section} aria-label="보관한 GIF">

@@ -45,14 +45,14 @@ export async function runLadder(mode, encodeAttempt, { signal } = {}) {
     checkAbort(signal);
     const result = { ...encoded, bytes: encoded.blob.size, colors: step.colors, scale: step.scale, stepIndex };
     if (!firstHardResult && result.bytes <= GIF_HARD_BYTES) firstHardResult = result;
-    // Soft attempts end before 128-color or reduced-size steps for photos.
+    // The soft target only tries the two full-size color settings.
     if (shouldStopLadder(mode, stepIndex, result.bytes) || (stepIndex === 1 && firstHardResult)) {
       return result.bytes <= GIF_SOFT_BYTES ? result : firstHardResult || result;
     }
   }
 }
 
-export async function encodeWithWorker({ width, height, frames, delayMs, colors, readFrame, onProgress, signal },
+export async function encodeWithWorker({ width, height, frames, delayMs, colors, preserveColors = false, readFrame, onProgress, signal },
   createWorker = () => new Worker(new URL('./gifEncodeWorker.js', import.meta.url), { type: 'module' })) {
   checkAbort(signal);
   const worker = createWorker();
@@ -77,7 +77,7 @@ export async function encodeWithWorker({ width, height, frames, delayMs, colors,
     try { worker.postMessage(data, transfer); } catch (error) { fail(error); }
   });
   try {
-    await request({ type: 'start', settings: { width, height, delayMs: Array.isArray(delayMs) ? delayMs[0] : delayMs, colors } });
+    await request({ type: 'start', settings: { width, height, delayMs: Array.isArray(delayMs) ? delayMs[0] : delayMs, colors, preserveColors } });
     for (let index = 0; index < frames; index += 1) {
       checkAbort(signal);
       const rgba = await readFrame(index);

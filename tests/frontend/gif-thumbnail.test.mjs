@@ -10,7 +10,7 @@ const source = (path) => readFileSync(new URL(path, root), 'utf8');
 test('사진 사다리는 설계서의 단계와 순서를 그대로 따른다', () => {
   assert.deepEqual(planLadder('photo'), [
     { colors: 256, scale: 1 }, { colors: 192, scale: 1 },
-    { colors: 256, scale: 0.8 }, { colors: 128, scale: 0.8 }, { colors: 128, scale: 0.64 },
+    { colors: 256, scale: 0.8 }, { colors: 192, scale: 0.8 }, { colors: 192, scale: 0.64 },
   ]);
   assert.throws(() => planLadder('other'), /mode/);
   const steps = planLadder('photo');
@@ -618,7 +618,7 @@ test('원본 사진이 바뀌면 진행 중 인코딩을 취소하고 늦은 결
 
 
 
-test('소프트 미달이면 첫 하드 통과본의 GIF·JPG·설정을 보존하고 128색을 시도하지 않는다', async () => {
+test('소프트 미달이면 첫 하드 통과본의 GIF·JPG·설정을 보존하고 폭을 줄이지 않는다', async () => {
   const { runLadder } = await import('../../src/lib/gif/encodeGif.js');
   for (const mode of ['photo', 'attachment']) {
     const first = { blob: new Blob([new Uint8Array(2_000_000)]), jpgBlob: new Blob(['first JPG']), width: 800, height: 1067, frames: mode === 'photo' ? 6 : 30, delayMs: mode === 'photo' ? 1500 : 100 };
@@ -628,7 +628,7 @@ test('소프트 미달이면 첫 하드 통과본의 GIF·JPG·설정을 보존�
       return index === 0 ? first : { ...first, blob: new Blob([new Uint8Array(1_800_000)]), jpgBlob: new Blob(['second JPG']), frames: 24, delayMs: 125 };
     });
     assert.deepEqual(calls.map(({ index }) => index), [0, 1]);
-    assert.ok(calls.every(({ colors, scale }) => colors > 128 && scale === 1));
+    assert.ok(calls.every(({ colors, scale }) => colors >= 192 && scale === 1));
     assert.equal(result.stepIndex, 0);
     assert.equal(result.blob, first.blob);
     assert.equal(result.jpgBlob, first.jpgBlob);
@@ -1086,7 +1086,7 @@ test('GIF 첨부 검사는 형식, 4000px, 25MB 순서로 실패하며 경계값
   assert.equal(validateGifAttachment({ type: '', name: 'A.GIF', size: 25 * 1024 * 1024 }, 4000, 4000), null);
 });
 
-test('gifuct 프레임은 dispose 2와 3을 합성하고 원본 delay로 4초까지 다시 인코딩한다', async () => {
+test('gifuct 프레임은 dispose 2와 3을 합성하고 4초를 넘겨도 원본 delay를 유지한다', async () => {
   const { GIFEncoder } = (await import('gifenc')).default;
   const { inspectGifAttachment, gifFrameSchedule, composeGifFrames } = await import('../../src/lib/gif/gifAttachment.js');
   const { createFrameEncoder } = await import('../../src/lib/gif/gifEncodeWorker.js');
@@ -1101,7 +1101,7 @@ test('gifuct 프레임은 dispose 2와 3을 합성하고 원본 delay로 4초까
   const info = await inspectGifAttachment(input);
   assert.equal(info.frames, 4); assert.equal(info.delayMs, 1250);
   const schedule = gifFrameSchedule(info.parsed);
-  assert.deepEqual(schedule.map(f => f.delayMs), [1500, 500, 1500, 500]);
+  assert.deepEqual(schedule.map(f => f.delayMs), [1500, 500, 1500, 1500]);
   const frames = [...composeGifFrames(info.parsed, schedule)];
   assert.deepEqual([...frames[1].slice(0,4)], [0,0,255,255]);
   assert.deepEqual([...frames[2].slice(0,4)], [255,0,0,255], 'dispose 3 restores red');
@@ -1112,7 +1112,7 @@ test('gifuct 프레임은 dispose 2와 3을 합성하고 원본 delay로 4초까
     return { blob: new Blob([out.finish()], { type: 'image/gif' }) };
   });
   assert.ok(result.bytes <= GIF_HARD_BYTES);
-  assert.deepEqual(parseGif(new Uint8Array(await result.blob.arrayBuffer())).frames.map(f => f.delay), [150,50,150,50]);
+  assert.deepEqual(parseGif(new Uint8Array(await result.blob.arrayBuffer())).frames.map(f => f.delay), [150,50,150,150]);
 });
 
 test('블록 ZIP은 공증한 PNG와 GIF 원본을 담고 원본만 받기는 단일 GIF를 바로 받는다', async () => {
@@ -1217,7 +1217,7 @@ test('많이 잘리는 배지는 선택 사진의 25% 초과에만 표시하고 
   } finally { await h.close(); }
 });
 
-test('큰 GIF는 확인 뒤 선택한 축소 또는 원본 저장 경로만 실행한다', async () => {
+test('큰 GIF는 축소나 취소만 제공하고 원본 그대로 저장하지 않는다', async () => {
   for (const shrink of [true, false]) {
     const h = await panelHarness();
     try {
@@ -1227,20 +1227,21 @@ test('큰 GIF는 확인 뒤 선택한 축소 또는 원본 저장 경로만 실�
         prepareGifAttachment: async value => { assert.equal(value, info); calls.push('original'); return h.runtime.result; },
         reduceGifAttachment: async value => { assert.equal(value, info); calls.push('reduce'); return h.runtime.result; },
       };
-      h.props.onSaveGif = async (_result, options) => calls.push(options.allowOversize);
+      h.props.onSaveGif = async (_result, options) => { assert.ok(options.signal); assert.equal(options.allowOversize, undefined); calls.push('save'); };
       const input = nodes(h.render(), n => n.type === 'input')[0];
       assert.equal(input.props.accept, 'image/gif,.gif');
       await input.props.onChange({ target: { files: [new Blob()], value: 'file' } });
       assert.deepEqual(calls, []);
-      assert.ok(textOf(h.render()).includes('5MB를 넘어요. 용량을 줄여서 담을까요?'));
-      await buttonNamed(h.render(), shrink ? '줄여서 담기' : '그대로 담기').props.onClick();
-      assert.deepEqual(calls, shrink ? ['reduce', false] : ['original', true]);
-      assert.ok(!textOf(h.render()).includes('용량을 줄여서 담을까요'));
+      assert.ok(!buttonNamed(h.render(), '그대로 담기'));
+      assert.ok(buttonNamed(h.render(), '취소'));
+      await buttonNamed(h.render(), shrink ? '줄여서 담기' : '취소').props.onClick();
+      assert.deepEqual(calls, shrink ? ['reduce', 'save'] : []);
+      assert.ok(!buttonNamed(h.render(), '줄여서 담기'));
     } finally { await h.close(); }
   }
 });
 
-test('실제 GIF 축소 경로는 800px RGBA, 10fps와 4초 상한으로 디코드 후 워커 재인코딩한다', async () => {
+test('실제 GIF 축소는 800px RGBA에서 모든 프레임과 4.5초 재생시간을 유지한다', async () => {
   const { GIFEncoder } = (await import('gifenc')).default;
   const { inspectGifAttachment, reduceGifAttachment } = await import('../../src/lib/gif/gifAttachment.js');
   const { createFrameEncoder } = await import('../../src/lib/gif/gifEncodeWorker.js');
@@ -1265,12 +1266,12 @@ test('실제 GIF 축소 경로는 800px RGBA, 10fps와 4초 상한으로 디코�
   try {
     const progress = [];
     const result = await reduceGifAttachment(info, { onProgress: v => progress.push(v) });
-    assert.equal(result.width, 800); assert.equal(result.height, 3); assert.equal(result.frames, 40);
-    assert.equal(result.delayMs, 100); assert.equal(await result.jpgBlob.text(), '800x3');
+    assert.equal(result.width, 800); assert.equal(result.height, 3); assert.equal(result.frames, 90);
+    assert.equal(result.delayMs, 50); assert.equal(await result.jpgBlob.text(), '800x3');
     assert.ok(result.bytes <= GIF_HARD_BYTES); assert.equal(result.bytes, result.blob.size);
     const decoded = parseGif(new Uint8Array(await result.blob.arrayBuffer()));
-    assert.equal(decoded.frames.length, 40); assert.ok(decoded.frames.every(f => f.delay === 10));
-    assert.ok(settings.every(s => s.width <= 800)); assert.ok(delays.every(d => d === 100));
+    assert.equal(decoded.frames.length, 90); assert.ok(decoded.frames.every(f => f.delay === 5));
+    assert.ok(settings.every(s => s.width <= 800)); assert.ok(delays.every(d => d === 50));
     assert.equal(terminated, settings.length); assert.equal(progress.at(-1), 100);
   } finally { for (const [key, value] of Object.entries(originals)) if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
 });
@@ -1321,12 +1322,10 @@ test('GIF 블록 다운로드 아이콘은 기존 아이콘 모양의 메뉴에�
   } finally { await vite.close(); }
 });
 
-test('첨부 사다리는 색상·fps·폭·길이 순서로 줄인다', () => {
+test('첨부 사다리는 192색 이상을 유지하며 색상과 폭만 줄인다', () => {
   assert.deepEqual(planLadder('attachment'), [
-    { colors: 256, scale: 1, fps: 10 }, { colors: 192, scale: 1, fps: 10 },
-    { colors: 256, scale: 1, fps: 8 }, { colors: 128, scale: 1, fps: 8 },
-    { colors: 128, scale: 0.8, fps: 8 }, { colors: 128, scale: 0.8, fps: 6 },
-    { colors: 128, scale: 0.64, fps: 8, duration: 2 }, { colors: 128, scale: 0.64, fps: 6, duration: 2 },
+    { colors: 256, scale: 1 }, { colors: 192, scale: 1 },
+    { colors: 256, scale: 0.8 }, { colors: 192, scale: 0.8 }, { colors: 192, scale: 0.64 },
   ]);
 });
 
@@ -1356,7 +1355,7 @@ async function withAttachmentRuntime(run, forceOverflow = () => false) {
       }
       queueMicrotask(() => this.onmessage({ data: reply }));
     }
-    terminate() {}
+    terminate() { this.attempt.terminated = true; }
   };
   globalThis.ImageData = class { constructor(rgba, width, height) { assert.equal(rgba.length, width * height * 4); } };
   globalThis.document = { createElement: () => ({ width: 0, height: 0, getContext: () => ({ putImageData() {} }),
@@ -1365,39 +1364,94 @@ async function withAttachmentRuntime(run, forceOverflow = () => false) {
   finally { for (const [key, value] of Object.entries(originals)) if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
 }
 
-test('첨부 축소는 가까운 프레임을 반복 샘플링하고 마지막 두 단계에서 2초로 자른다', async () => {
+test('첨부 축소는 두 사진의 1.5초 전환을 실제 GIF에 그대로 기록한다', async () => {
+  const { GIFEncoder } = (await import('gifenc')).default;
+  const { inspectGifAttachment, reduceGifAttachment } = await import('../../src/lib/gif/gifAttachment.js');
+  const gif = GIFEncoder();
+  for (const color of [0, 1]) gif.writeFrame(new Uint8Array(4).fill(color), 2, 2,
+    { palette: [[220,40,60],[20,70,200]], delay: 1500 });
+  gif.finish();
+  const info = await inspectGifAttachment(new Blob([gif.bytes()], { type: 'image/gif' }));
+  await withAttachmentRuntime(async () => {
+    const result = await reduceGifAttachment(info);
+    const decoded = parseGif(new Uint8Array(await result.blob.arrayBuffer()));
+    assert.equal(decoded.frames.length, 2);
+    assert.deepEqual(decoded.frames.map(frame => frame.delay), [150, 150]);
+    assert.equal(result.frames * result.delayMs, 3000);
+  });
+});
+
+test('첨부 첫 단계는 256색 안의 원본 색을 양자화 없이 정확히 보존한다', async () => {
+  const { GIFEncoder } = (await import('gifenc')).default;
+  const { parseGIF, decompressFrames } = await import('gifuct-js');
+  const { inspectGifAttachment, reduceGifAttachment } = await import('../../src/lib/gif/gifAttachment.js');
+  const gif = GIFEncoder();
+  gif.writeFrame(new Uint8Array([0,1,0,1]), 2, 2, { palette: [[12,12,12],[13,13,13]], delay: 1500 });
+  gif.finish();
+  const info = await inspectGifAttachment(new Blob([gif.bytes()], { type: 'image/gif' }));
+  await withAttachmentRuntime(async () => {
+    const result = await reduceGifAttachment(info);
+    const [frame] = decompressFrames(parseGIF(await result.blob.arrayBuffer()), true);
+    assert.deepEqual([...frame.patch], [12,12,12,255,13,13,13,255,12,12,12,255,13,13,13,255]);
+    assert.equal(frame.delay, 1500);
+    assert.equal(result.width, 2); assert.equal(result.height, 2);
+  });
+});
+
+test('긴 첨부 GIF도 작업 중단 시 다음 프레임을 보내지 않고 워커를 닫는다', async () => {
+  const { GIFEncoder } = (await import('gifenc')).default;
+  const { inspectGifAttachment, reduceGifAttachment } = await import('../../src/lib/gif/gifAttachment.js');
+  const gif = GIFEncoder();
+  for (let i = 0; i < 120; i++) gif.writeFrame(new Uint8Array(4).fill(i % 2), 2, 2,
+    { palette: [[20,20,20],[200,200,200]], delay: 1500 });
+  gif.finish();
+  const info = await inspectGifAttachment(new Blob([gif.bytes()], { type: 'image/gif' }));
+  await withAttachmentRuntime(async attempts => {
+    const controller = new AbortController();
+    await assert.rejects(reduceGifAttachment(info, { signal: controller.signal,
+      onProgress: value => { if (value > 0) controller.abort(); },
+    }), { name: 'AbortError' });
+    assert.equal(attempts.length, 1);
+    assert.ok(attempts[0].terminated);
+    assert.ok(attempts[0].delays.length < 120);
+  });
+});
+
+test('첨부 축소는 짧고 긴 delay와 전체 길이를 마지막 폭 축소 단계까지 유지한다', async () => {
   const { GIFEncoder } = (await import('gifenc')).default;
   const { inspectGifAttachment, reduceGifAttachment } = await import('../../src/lib/gif/gifAttachment.js');
   const gif = GIFEncoder();
   const palette = [[20,20,20], [80,80,80], [140,140,140], [200,200,200]];
-  for (const [index, delay] of [200, 300, 500, 2000].entries()) {
+  for (const [index, delay] of [10, 20, 1500, 5000].entries()) {
     gif.writeFrame(new Uint8Array(16).fill(index), 4, 4, { palette, delay });
   }
   gif.finish();
   const info = await inspectGifAttachment(new Blob([gif.bytes()], { type: 'image/gif' }));
-  for (const winner of [6, 7, 8]) await withAttachmentRuntime(async attempts => {
+  for (const winner of [0, 2, 4, 5]) await withAttachmentRuntime(async attempts => {
     const progress = [];
     const pending = reduceGifAttachment(info, { onProgress: v => progress.push(v) });
-    if (winner === 8) {
-      await assert.rejects(pending, { message: '줄여도 5MB를 넘어요. 더 짧은 GIF를 올려 주세요' });
-      assert.equal(attempts.length, 8);
+    if (winner === 5) {
+      await assert.rejects(pending, { message: '줄여도 5MB를 넘어요. 사진 수나 원본 크기를 줄여 주세요' });
+      assert.equal(attempts.length, 5);
     } else {
       const result = await pending;
       assert.equal(result.stepIndex, winner);
-      assert.equal(result.frames, winner === 6 ? 16 : 12);
-      assert.equal(result.delayMs, 1000 / (winner === 6 ? 8 : 6));
-      assert.equal(result.frames * result.delayMs, 2000);
+      assert.equal(result.frames, 4);
+      assert.equal(result.frames * result.delayMs, 6530);
+      const decoded = parseGif(new Uint8Array(await result.blob.arrayBuffer()));
+      assert.deepEqual(decoded.frames.map(frame => frame.delay), [1, 2, 150, 500]);
+      assert.ok(result.width <= 4 && result.height <= 4);
       assert.equal(progress.at(-1), 100);
     }
-    assert.deepEqual(attempts[0].pixels.slice(0, 6), [20, 20, 80, 80, 140, 140]);
-    assert.deepEqual(attempts[2].pixels.slice(0, 5), [20, 80, 80, 140, 140]);
-    assert.deepEqual(attempts.map(a => a.delays.length), winner === 6 ? [30,30,24,24,24,18,16] : [30,30,24,24,24,18,16,12]);
-    assert.ok(attempts.every(a => a.delays.every(delay => delay === a.delayMs)));
+    assert.ok(attempts.every(a => a.colors >= 192));
+    assert.ok(attempts.every(a => JSON.stringify(a.delays) === '[10,20,1500,5000]'));
+    assert.ok(attempts.every(a => JSON.stringify(a.pixels) === '[20,80,140,200]'));
+    assert.ok(attempts.every(a => a.terminated));
     assert.ok(progress.every((v, i) => v >= 0 && v <= 100 && (i === 0 || v >= progress[i - 1])));
   }, index => index < winner);
 });
 
-test('800×1196·30장·약 11MB 노이즈 첨부 GIF를 실제로 5MB 이하로 줄이고 통과 단계를 기록한다', async t => {
+test('약 11MB 노이즈 GIF는 시간과 품질 하한을 유지해도 5MB를 넘으면 거절한다', async t => {
   const { GIFEncoder } = (await import('gifenc')).default;
   const { inspectGifAttachment, reduceGifAttachment } = await import('../../src/lib/gif/gifAttachment.js');
   const width = 800, height = 1196, gif = GIFEncoder();
@@ -1416,23 +1470,18 @@ test('800×1196·30장·약 11MB 노이즈 첨부 GIF를 실제로 5MB 이하로
   assert.ok(info.bytes >= 10_000_000 && info.bytes <= 12_000_000, `fixture bytes=${info.bytes}`);
   assert.equal(info.frames, 30); assert.equal(info.delayMs, 100);
   await withAttachmentRuntime(async attempts => {
-    const result = await reduceGifAttachment(info);
-    t.diagnostic(JSON.stringify({ inputBytes: info.bytes, outputBytes: result.bytes, stepIndex: result.stepIndex,
-      width: result.width, height: result.height, fps: 1000 / result.delayMs, duration: result.frames * result.delayMs / 1000,
+    await assert.rejects(reduceGifAttachment(info), { message: '줄여도 5MB를 넘어요. 사진 수나 원본 크기를 줄여 주세요' });
+    t.diagnostic(JSON.stringify({ inputBytes: info.bytes,
       attempts: attempts.map(a => a.bytes) }));
-    assert.ok(result.bytes <= GIF_HARD_BYTES, `output bytes=${result.bytes}`);
-    assert.equal(result.bytes, result.blob.size);
-    assert.ok(result.stepIndex >= 2 && result.stepIndex <= 7);
-    assert.equal(result.stepIndex, attempts.length - 1);
-    assert.ok(attempts.slice(0, -1).every(a => a.bytes > GIF_HARD_BYTES));
-    const decoded = parseGif(new Uint8Array(await result.blob.arrayBuffer()));
-    assert.equal(decoded.width, result.width); assert.equal(decoded.height, result.height);
-    assert.equal(decoded.frames.length, result.frames);
-    assert.equal(await result.jpgBlob.text(), `${result.width}x${result.height}`);
+    assert.equal(attempts.length, 5);
+    assert.ok(attempts.every(a => a.bytes > GIF_HARD_BYTES));
+    assert.ok(attempts.every(a => a.colors >= 192 && a.width >= 512));
+    assert.ok(attempts.every(a => a.delays.length === 30 && a.delays.every(delay => delay === 100)));
+    assert.ok(attempts.every(a => a.terminated));
   });
 });
 
-test('줄이는 중 진행률을 보이고 실패 뒤 원본 그대로 담기를 유지한다', async () => {
+test('줄이는 중 진행률을 보이고 실패 뒤 원본 저장 없이 재시도와 취소를 제공한다', async () => {
   const h = await panelHarness();
   try {
     let rejectReduction;
@@ -1447,13 +1496,41 @@ test('줄이는 중 진행률을 보이고 실패 뒤 원본 그대로 담기를
     await nodes(h.render(), n => n.type === 'input')[0].props.onChange({ target: { files: [new Blob()], value: 'file' } });
     const pending = buttonNamed(h.render(), '줄여서 담기').props.onClick();
     const during = h.render();
-    rejectReduction(new Error('줄여도 5MB를 넘어요. 더 짧은 GIF를 올려 주세요'));
+    rejectReduction(new Error('줄여도 5MB를 넘어요. 사진 수나 원본 크기를 줄여 주세요'));
     await pending;
     assert.equal(buttonNamed(during, '줄이는 중 42%')?.props.disabled, true);
-    assert.equal(textOf(nodes(h.render(), n => n.props.role === 'alert')[0]), '줄여도 5MB를 넘어요. 더 짧은 GIF를 올려 주세요');
-    assert.equal(buttonNamed(h.render(), '그대로 담기').props.disabled, false);
-    await buttonNamed(h.render(), '그대로 담기').props.onClick();
-    assert.equal(h.runtime.saved.length, 1);
+    assert.equal(textOf(nodes(h.render(), n => n.props.role === 'alert')[0]), '줄여도 5MB를 넘어요. 사진 수나 원본 크기를 줄여 주세요');
+    assert.ok(!buttonNamed(h.render(), '그대로 담기'));
+    assert.equal(buttonNamed(h.render(), '줄여서 담기').props.disabled, false);
+    await buttonNamed(h.render(), '취소').props.onClick();
+    assert.equal(h.runtime.saved.length, 0);
+    assert.ok(!buttonNamed(h.render(), '줄여서 담기'));
+  } finally { await h.close(); }
+});
+
+test('첨부 축소 중 취소하면 늦게 완료된 GIF를 보관함에 저장하지 않는다', async () => {
+  const h = await panelHarness();
+  try {
+    let completeReduction, signal;
+    h.runtime.attachment = {
+      inspectGifAttachment: async () => ({ bytes: GIF_HARD_BYTES + 1 }),
+      reduceGifAttachment: (_info, options) => {
+        signal = options.signal;
+        return new Promise(resolve => { completeReduction = resolve; });
+      },
+    };
+    await nodes(h.render(), n => n.type === 'input')[0].props.onChange({ target: { files: [new Blob()], value: 'file' } });
+    const pending = buttonNamed(h.render(), '줄여서 담기').props.onClick();
+    const cancel = buttonNamed(h.render(), '취소');
+    assert.ok(cancel);
+    assert.equal(Boolean(cancel.props.disabled), false);
+    cancel.props.onClick();
+    assert.ok(signal.aborted);
+    completeReduction(h.runtime.result);
+    await pending;
+    assert.equal(h.runtime.saved.length, 0);
+    assert.ok(!buttonNamed(h.render(), '줄여서 담기'));
+    assert.ok(!nodes(h.render(), n => n.props.role === 'alert').length);
   } finally { await h.close(); }
 });
 

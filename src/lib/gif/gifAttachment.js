@@ -40,21 +40,11 @@ export function gifFrameSchedule(parsed) {
   let time = 0;
   const timeline = [];
   for (const [index, frame] of parsed.frames.filter(f => f.image).entries()) {
-    if (time >= 4000) break;
-    const delayMs = Math.min(frameDelay(frame), 4000 - time);
+    const delayMs = frameDelay(frame);
     timeline.push({ index, time, delayMs });
     time += delayMs;
   }
-  if (timeline.length <= 40 && timeline.every(frame => frame.delayMs >= 100)) return timeline;
-  const sampled = [];
-  let cursor = 0;
-  for (let at = 0; at < time; at += 100) {
-    while (cursor + 1 < timeline.length && timeline[cursor + 1].time <= at) cursor++;
-    const index = timeline[cursor].index, delayMs = Math.min(100, time - at);
-    if (sampled.at(-1)?.index === index) sampled.at(-1).delayMs += delayMs;
-    else sampled.push({ index, time: at, delayMs });
-  }
-  return sampled;
+  return timeline;
 }
 
 // gifuct must decode LZW indices at source size. Only one indexed patch exists at
@@ -127,28 +117,20 @@ export async function prepareGifAttachment(info, { signal } = {}) {
 }
 
 export async function reduceGifAttachment(info, { signal, onProgress } = {}) {
-  const timeline = gifFrameSchedule(info.parsed);
-  const durationMs = timeline.at(-1).time + timeline.at(-1).delayMs;
+  checkAbort(signal);
+  const schedule = gifFrameSchedule(info.parsed);
+  const delays = schedule.map(frame => frame.delayMs);
+  const averageDelayMs = delays.reduce((total, delay) => total + delay, 0) / delays.length;
   const steps = planLadder('attachment');
   const baseWidth = Math.min(800, info.width), baseHeight = info.height * baseWidth / info.width;
   onProgress?.(0);
   const result = await runLadder('attachment', async (step, stepIndex) => {
-    const delayMs = 1000 / step.fps;
-    const frameCount = Math.ceil(Math.min(durationMs, (step.duration ?? Infinity) * 1000) * step.fps / 1000);
-    const schedule = [];
-    let cursor = 0;
-    for (let frame = 0; frame < frameCount; frame++) {
-      const time = frame * delayMs;
-      // Equal distances keep the earlier frame; repeated frames preserve holds.
-      while (cursor + 1 < timeline.length && time > (timeline[cursor].time + timeline[cursor + 1].time) / 2) cursor++;
-      schedule.push({ index: timeline[cursor].index, time, delayMs });
-    }
     const width = Math.max(1, Math.round(baseWidth * step.scale)), height = Math.max(1, Math.round(baseHeight * step.scale));
     const iterator = composeGifFrames(info.parsed, schedule, { scale: step.scale, signal });
     let jpgBlob;
     try {
       const bytes = await encodeWithWorker({ width, height, frames: schedule.length, colors: step.colors,
-        delayMs, signal,
+        delayMs: delays, preserveColors: true, signal,
         onProgress: fraction => onProgress?.(Math.floor((stepIndex + fraction) / steps.length * 99)),
         readFrame: async index => {
           const rgba = iterator.next().value;
@@ -157,10 +139,10 @@ export async function reduceGifAttachment(info, { signal, onProgress } = {}) {
         },
       });
       return { blob: new Blob([bytes], { type: 'image/gif' }), jpgBlob, width, height,
-        frames: schedule.length, delayMs };
+        frames: schedule.length, delayMs: averageDelayMs };
     } finally { iterator.return(); }
   }, { signal });
-  if (result.bytes > GIF_HARD_BYTES) throw new Error('줄여도 5MB를 넘어요. 더 짧은 GIF를 올려 주세요');
+  if (result.bytes > GIF_HARD_BYTES) throw new Error('줄여도 5MB를 넘어요. 사진 수나 원본 크기를 줄여 주세요');
   onProgress?.(100);
   return result;
 }
