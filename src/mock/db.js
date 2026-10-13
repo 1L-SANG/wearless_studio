@@ -305,19 +305,33 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
   ) + 50;
   let aiCutCount = 0;
   let pointLabelCount = 0;
-  const singleTag = (contentRole, direction) => {
+  const overviewLabel = (direction, colorId) => {
+    const tag = String(direction || '').toLowerCase() === 'back' ? 'BACK' : 'FRONT';
+    if ((product.colors || []).length < 2 || colorId == null) return tag;
+    const color = product.colors.find((item) => item.id != null && String(item.id) === String(colorId));
+    const name = [color?.name, color?.label, colorDisplayName({ swatchId: color?.swatchId }, '')]
+      .map((value) => String(value || '').trim()).find(Boolean);
+    return name ? `${tag} · ${name}` : tag;
+  };
+  const colorLabelStyle = (text, style, width) => {
+    const scale = Math.min(1, width / (Array.from(text).length * (style.size + (style.tracking || 0))));
+    if (scale === 1) return style;
+    return { ...style, size: Math.floor(style.size * scale * 100) / 100,
+      ...('tracking' in style ? { tracking: Math.floor(style.tracking * scale * 100) / 100 } : {}) };
+  };
+  const singleTag = (contentRole, direction, colorId) => {
     if (contentRole === CONTENT_ROLES.HERO || contentRole === CONTENT_ROLES.BENEFIT) {
       pointLabelCount += 1;
       return `POINT ${String(pointLabelCount).padStart(2, '0')}`;
     }
     if (contentRole === CONTENT_ROLES.FIT) return 'FIT';
-    if (contentRole === CONTENT_ROLES.PRODUCT_OVERVIEW) return direction === 'back' ? 'BACK' : 'FRONT';
+    if (contentRole === CONTENT_ROLES.PRODUCT_OVERVIEW) return overviewLabel(direction, colorId);
     if (contentRole === CONTENT_ROLES.DETAIL) return 'DETAIL';
     if (contentRole === CONTENT_ROLES.COORDINATION || contentRole === CONTENT_ROLES.REAL_WEAR) return 'STYLING';
     return null;
   };
   const rowLabel = (rowBlock) => inferContentRole(rowBlock) === CONTENT_ROLES.PRODUCT_OVERVIEW
-    ? (rowBlock.direction === 'back' ? 'BACK' : 'FRONT') : '';
+    ? overviewLabel(rowBlock.direction, rowBlock.colorId) : '';
   const persistentRowSections = new Set(arr
     .filter((b) => b.source !== 'mine' && (b.layoutRowId || b.layoutRowVersion))
     .map((b) => b.sectionId));
@@ -336,7 +350,7 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     const firstCut = aiCutCount === 0;
     aiCutCount += 1;
     const signature = Boolean(b.hookTitleOverlay);
-    const tag = !firstCut && !signature ? singleTag(contentRole, b.direction) : null;
+    const tag = !firstCut && !signature ? singleTag(contentRole, b.direction, b.colorId) : null;
     const imageY = firstCut || signature || !tag ? 50 : 50 + TAG_SHIFT;
     const els = [Object.assign(IMG(60, imageY, 880, 560, generatedImageFor(b, 880, 560), 12, b.cutType || undefined), { sourceBlockId: b.id })];
     // mock에는 생성 픽셀이 없으므로 시그니처 제목은 서버의 측정 실패 폴백과 같은 흰색이다.
@@ -348,8 +362,9 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
       ));
     }
     if (tag) {
+      const colorTag = contentRole === CONTENT_ROLES.PRODUCT_OVERVIEW && tag !== 'FRONT' && tag !== 'BACK';
       els.push(Object.assign(
-        T(60, 44, 400, TAG_HEIGHT, tag, TAG_STYLE),
+        T(60, 44, colorTag ? 880 : 400, TAG_HEIGHT, tag, colorTag ? colorLabelStyle(tag, TAG_STYLE, 400) : TAG_STYLE),
         { sourceBlockId: b.id, copyRole: 'label', textSlotVersion: 1 },
       ));
     }
@@ -392,9 +407,13 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
       ));
     } else if (layout === 'twoColumn' || layout === 'threeColumn') {
       const labelY = imgTop + h + 16;
+      const labels = chunk.map(rowLabel);
       chunk.forEach((rowBlock, column) => {
+        const label = labels[column];
+        const colorLabel = !['FRONT', 'BACK', ''].includes(label);
         els.push(Object.assign(
-          T(60 + column * (w + 20), labelY, w, ROW_LABEL_HEIGHT, rowLabel(rowBlock), ROW_LABEL_STYLE),
+          T(60 + column * (w + 20), labelY, w, ROW_LABEL_HEIGHT, label,
+            colorLabel ? colorLabelStyle(label, ROW_LABEL_STYLE, w) : ROW_LABEL_STYLE),
           { sourceBlockId: rowBlock.id, copyRole: 'label', textSlotVersion: 1, placeholder: ROW_LABEL_PLACEHOLDER },
         ));
       });

@@ -34,11 +34,14 @@ function mergeAutoCopy(element, incoming) {
   const untouchedBox = geometry && Object.entries(geometry).every(([key, value]) => Object.is(element[key], value));
   const unchangedTextSize = baseline && ['size', 'lineHeight', 'font', 'weight', 'tracking']
     .every(key => Object.is(element.style?.[key], baseline[key]));
+  const labelWidth = element.copyRole === 'label' && incoming.w != null && untouchedBox && unchangedTextSize
+    ? { w: incoming.w } : {};
   return { ...element, text: incoming.text, style,
+    ...labelWidth,
     ...(incoming.h != null && untouchedBox && unchangedTextSize ? { h: incoming.h } : {}),
     genAutoText: incoming.text,
     genAutoStyle: { ...(baseline || {}), ...(incoming.style || {}) },
-    genAutoGeometry: geometry ? { ...geometry, ...(incoming.h != null ? { h: incoming.h } : {}) } : undefined,
+    genAutoGeometry: geometry ? { ...geometry, ...labelWidth, ...(incoming.h != null ? { h: incoming.h } : {}) } : undefined,
   };
 }
 
@@ -275,6 +278,7 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
       if (el.type === 'text' && el.sourceBlockId && el.copyRole) {
         (copyById[el.sourceBlockId] ||= {})[el.copyRole] = {
           text: el.text,
+          w: el.w,
           h: el.h,
           style: el.style,
         };
@@ -311,6 +315,7 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
           copyChanged = true;
           const merged = mergeAutoCopy(el, {
             ...copyTextPatch(rest, serverCopy.text),
+            ...(serverCopy.w != null ? { w: serverCopy.w } : {}),
             ...(serverCopy.h != null ? { h: serverCopy.h } : {}),
             ...(serverCopy.style ? { style: serverCopy.style } : {}),
           });

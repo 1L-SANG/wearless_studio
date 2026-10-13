@@ -2080,10 +2080,10 @@ export function Editor() {
     };
   }));
   // 내용이 빈 일반 텍스트는 요소째 지운다 — 안 그러면 보이지 않는 빈 상자가 페이지·
-  // 레이어 목록에 쌓이고 그 자리의 클릭을 가로챈다(유령 요소). 남기는 것 세 가지:
+  // 레이어 목록에 쌓이고 그 자리의 클릭을 가로챈다(유령 요소). 남기는 것 네 가지:
   // 말풍선(모양 자체가 보임), 자동 관리 블록의 요소(폼·병합이 통째로 재생성),
   // copyRole/sourceBlockId가 달린 카피 자리(생성 완료 때 AI 카피가 착지할 슬롯 —
-  // 지우면 그 컷의 카피가 영영 유실된다).
+  // 지우면 그 컷의 카피가 영영 유실된다), 템플릿의 빈 입력 자리(나중에 값을 입력).
   // "방금 만들었는데 한 글자도 안 친 것"도 같이 지운다: 기본 문구는 편집 시작 때 통째로
   // 선택돼 있어 타이핑하면 갈아 끼워지는 안내일 뿐인데, 그대로 두면 '내용을 입력하세요.'
   // 가 상업 상세페이지에 그대로 발행된다(2026-08-16 리뷰).
@@ -2100,6 +2100,7 @@ export function Editor() {
       && String(target.text ?? '').trim() === DEFAULT_TEXT_BODY;
     if (isAutoManagedBlock(block) || target.type !== 'text' || target.shape === 'bubble'
       || target.copyRole || target.sourceBlockId
+      || (block.templateId && target.placeholder)
       || (String(target.text ?? '').trim() && !untouchedPlaceholder)) return;
     FRESH_TEXT_IDS.delete(elId);
     setBlocks((bs) => bs.map((b) => b.id === block.id
@@ -2210,7 +2211,7 @@ export function Editor() {
   // 컷풀 = wardrobe(생성컷) ⨝ wardrobeContext.storyboard(블록 contentRole). 컷 없으면 no-op(빈 슬롯).
   const roledCutsNow = () => buildRoledCutPool(wardrobe || {}, wardrobeContext.current.storyboard);
   const addFrame = (f, idx) => {
-    const nb = autofillBlocks([buildFrameBlock(f, uid)], roledCutsNow())[0];
+    const nb = autofillBlocks([buildFrameBlock(f, uid, product)], roledCutsNow())[0];
     setBlocks((bs) => { const n = [...bs]; n.splice(idx == null ? n.length : idx, 0, nb); return n; });
     setSelBlock(nb.id); setBlockFocused(true); setSelEl(null); setSelEls([]);
   };
@@ -2219,7 +2220,7 @@ export function Editor() {
   //  ③ 정보·업로드 등 컷 아닌 원본 블록은 그대로 보존. 컷-섹션 블록만 드롭(사진은 슬롯/뒤에 남아 손실 0).
   const overwriteDetailPageTemplate = (setId) => {
     const pool = roledCutsNow();
-    const built = autofillBlocks(buildDetailPageTemplateSet(setId, uid), pool);
+    const built = autofillBlocks(buildDetailPageTemplateSet(setId, uid, product), pool);
     if (!built.length) return;
     const originals = latestBlocks.current || blocks;
     const placed = filledSrcSet(built);

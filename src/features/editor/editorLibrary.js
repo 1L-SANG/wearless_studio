@@ -2,6 +2,7 @@
    features/editor/editorLibrary.js — 상세페이지 반복 작업용 로컬 라이브러리.
    DOM/React와 무관한 순수 정의만 두어 클릭 추가와 drag 추가가 같은 결과를 쓴다.
    ============================================================= */
+import { MEASUREMENT_SCHEMA } from '../../lib/measurementSchema.js';
 
 export const WARDROBE_IMAGE_MIME = 'application/x-wearless-image';
 export const DEFAULT_BUBBLE_STROKE = '#b9b9be';
@@ -42,6 +43,10 @@ const templateText = (x, y, w, h, value, style = {}) => ({
     ...(style.underline ? { underline: true } : {}),
     ...(style.italic ? { italic: true } : {}),
   },
+});
+// 정의의 실측 키는 새 블록을 만들 때만 해석하고 저장 요소에서는 걷어낸다.
+const templateMeasurement = (x, y, w, h, key, style) => ({
+  ...templateText(x, y, w, h, '', style), measurementKey: key, placeholder: '실측',
 });
 const templateBubble = (x, y, w, h, value, options = {}) => ({
   ...templateText(x, y, w, h, value, options.style || {}),
@@ -763,10 +768,10 @@ export const DETAIL_PAGE_TEMPLATE_2 = [
       templateShape(499, 897, 214, 58, '#0b0b0b'), templateText(499, 912, 214, 30, '가슴', { size: 24, color: '#ffffff', align: 'center' }),
       templateShape(713, 897, 215, 58, '#0b0b0b'), templateText(713, 912, 215, 30, '소매', { size: 24, color: '#ffffff', align: 'center' }),
       templateShape(71, 955, 857, 48, '#111111'),
-      templateShape(71, 955, 213, 48, '#ffffff'), templateText(71, 967, 213, 26, '64', { size: 23, color: '#111111', align: 'center' }),
-      templateShape(285, 955, 213, 48, '#ffffff'), templateText(285, 967, 213, 26, '42', { size: 23, color: '#111111', align: 'center' }),
-      templateShape(499, 955, 213, 48, '#ffffff'), templateText(499, 967, 213, 26, '51', { size: 23, color: '#111111', align: 'center' }),
-      templateShape(713, 955, 215, 48, '#ffffff'), templateText(713, 967, 215, 26, '58', { size: 23, color: '#111111', align: 'center' }),
+      templateShape(71, 955, 213, 48, '#ffffff'), templateMeasurement(71, 967, 213, 26, 'totalLength', { size: 23, color: '#111111', align: 'center' }),
+      templateShape(285, 955, 213, 48, '#ffffff'), templateMeasurement(285, 967, 213, 26, 'shoulderWidth', { size: 23, color: '#111111', align: 'center' }),
+      templateShape(499, 955, 213, 48, '#ffffff'), templateMeasurement(499, 967, 213, 26, 'chestWidth', { size: 23, color: '#111111', align: 'center' }),
+      templateShape(713, 955, 215, 48, '#ffffff'), templateMeasurement(713, 967, 215, 26, 'sleeveLength', { size: 23, color: '#111111', align: 'center' }),
       // 물성표 (검은 bg + 1px 인셋 셀 → 외곽 테두리·격자선)
       templateShape(71, 1041, 857, 219, '#111111'),
       templateShape(72, 1042, 214, 72, '#0b0b0b'), templateText(72, 1066, 214, 30, '두께감', { size: 24, color: '#ffffff', align: 'center' }),
@@ -1169,13 +1174,13 @@ export const DETAIL_PAGE_TEMPLATE_4 = [
       // 사이즈표
       templateShape(534, 636, 346, 222, '#e4e4e0'),
       templateShape(534, 636, 205, 54, '#f8f8f5'), templateText(534, 651, 205, 30, '총기장 (A)', { size: 24, weight: 700, color: '#111111', align: 'center' }),
-      templateShape(741, 636, 139, 54, '#f8f8f5'), templateText(741, 651, 139, 30, '64', { size: 24, color: '#111111', align: 'center' }),
+      templateShape(741, 636, 139, 54, '#f8f8f5'), templateMeasurement(741, 651, 139, 30, 'totalLength', { size: 24, color: '#111111', align: 'center' }),
       templateShape(534, 692, 205, 54, '#f8f8f5'), templateText(534, 707, 205, 30, '어깨너비 (B)', { size: 24, weight: 700, color: '#111111', align: 'center' }),
-      templateShape(741, 692, 139, 54, '#f8f8f5'), templateText(741, 707, 139, 30, '42', { size: 24, color: '#111111', align: 'center' }),
+      templateShape(741, 692, 139, 54, '#f8f8f5'), templateMeasurement(741, 707, 139, 30, 'shoulderWidth', { size: 24, color: '#111111', align: 'center' }),
       templateShape(534, 748, 205, 54, '#f8f8f5'), templateText(534, 763, 205, 30, '소매길이 (C)', { size: 24, weight: 700, color: '#111111', align: 'center' }),
-      templateShape(741, 748, 139, 54, '#f8f8f5'), templateText(741, 763, 139, 30, '58', { size: 24, color: '#111111', align: 'center' }),
+      templateShape(741, 748, 139, 54, '#f8f8f5'), templateMeasurement(741, 763, 139, 30, 'sleeveLength', { size: 24, color: '#111111', align: 'center' }),
       templateShape(534, 804, 205, 54, '#f8f8f5'), templateText(534, 819, 205, 30, '가슴단면 (D)', { size: 24, weight: 700, color: '#111111', align: 'center' }),
-      templateShape(741, 804, 139, 54, '#f8f8f5'), templateText(741, 819, 139, 30, '51', { size: 24, color: '#111111', align: 'center' }),
+      templateShape(741, 804, 139, 54, '#f8f8f5'), templateMeasurement(741, 819, 139, 30, 'chestWidth', { size: 24, color: '#111111', align: 'center' }),
       templateText(534, 871, 346, 34, 'Free / cm', { size: 27, color: '#3e3e3c', align: 'right' }),
       templateText(44, 1078, 913, 30, '사이즈는 측정 방법에 따라 1~3cm의 오차가 있을 수 있습니다.', { size: 22, color: '#3e3e3c', align: 'center' }),
     ],
@@ -1466,20 +1471,20 @@ export const DETAIL_PAGE_TEMPLATE_5 = [
       templateShape(301, 337, 167, 167, '#9fb1bd'), templateText(301, 362, 167, 100, 'M', { font: 'Cormorant', size: 82, weight: 700, color: '#ffffff', align: 'center' }), templateText(301, 453, 167, 34, 'Medium', { size: 24, color: '#ffffff', align: 'center' }),
       templateShape(531, 337, 167, 167, '#9fb1bd'), templateText(531, 362, 167, 100, 'L', { font: 'Cormorant', size: 82, weight: 700, color: '#ffffff', align: 'center' }), templateText(531, 453, 167, 34, 'Large', { size: 24, color: '#ffffff', align: 'center' }),
       templateShape(760, 337, 167, 167, '#9fb1bd'), templateText(760, 362, 167, 100, 'XL', { font: 'Cormorant', size: 82, weight: 700, color: '#ffffff', align: 'center' }), templateText(760, 453, 167, 34, 'X-Large', { size: 24, color: '#ffffff', align: 'center' }),
-      templateText(71, 522, 167, 34, '44 ~ 슬림 55', { size: 22, weight: 700, color: '#333333', align: 'center' }),
-      templateText(301, 522, 167, 34, '55 ~ 55 반', { size: 22, weight: 700, color: '#333333', align: 'center' }),
-      templateText(531, 522, 167, 34, '슬림 66 ~ 66반', { size: 22, weight: 700, color: '#333333', align: 'center' }),
-      templateText(760, 522, 167, 34, '66반 이상', { size: 22, weight: 700, color: '#333333', align: 'center' }),
+      { ...templateText(71, 522, 167, 34, '', { size: 22, weight: 700, color: '#333333', align: 'center' }), placeholder: '체형 범위' },
+      { ...templateText(301, 522, 167, 34, '', { size: 22, weight: 700, color: '#333333', align: 'center' }), placeholder: '체형 범위' },
+      { ...templateText(531, 522, 167, 34, '', { size: 22, weight: 700, color: '#333333', align: 'center' }), placeholder: '체형 범위' },
+      { ...templateText(760, 522, 167, 34, '', { size: 22, weight: 700, color: '#333333', align: 'center' }), placeholder: '체형 범위' },
       templateShape(52, 596, 895, 71, '#9fb1bd'),
       templateText(234, 615, 178, 34, 'S', { size: 24, color: '#ffffff', align: 'center' }), templateText(412, 615, 178, 34, 'M', { size: 24, color: '#ffffff', align: 'center' }),
       templateText(590, 615, 178, 34, 'L', { size: 24, color: '#ffffff', align: 'center' }), templateText(768, 615, 178, 34, 'XL', { size: 24, color: '#ffffff', align: 'center' }),
       templateShape(52, 752, 895, 1, '#e5e4e0'), templateShape(52, 837, 895, 1, '#e5e4e0'), templateShape(52, 922, 895, 1, '#e5e4e0'), templateShape(52, 1007, 895, 1, '#e5e4e0'), templateShape(52, 1092, 895, 1, '#e5e4e0'),
-      templateText(52, 693, 182, 34, '허리', { size: 24, weight: 700, color: '#2e2e2d', align: 'center' }), templateText(234, 693, 178, 34, '29', { size: 24, color: '#333333', align: 'center' }), templateText(412, 693, 178, 34, '32', { size: 24, color: '#333333', align: 'center' }), templateText(590, 693, 178, 34, '34.5', { size: 24, color: '#333333', align: 'center' }), templateText(768, 693, 178, 34, '36', { size: 24, color: '#333333', align: 'center' }),
-      templateText(52, 778, 182, 34, '엉덩이', { size: 24, weight: 700, color: '#2e2e2d', align: 'center' }), templateText(234, 778, 178, 34, '44', { size: 24, color: '#333333', align: 'center' }), templateText(412, 778, 178, 34, '46', { size: 24, color: '#333333', align: 'center' }), templateText(590, 778, 178, 34, '47.5', { size: 24, color: '#333333', align: 'center' }), templateText(768, 778, 178, 34, '49', { size: 24, color: '#333333', align: 'center' }),
-      templateText(52, 863, 182, 34, '밑위', { size: 24, weight: 700, color: '#2e2e2d', align: 'center' }), templateText(234, 863, 178, 34, '28', { size: 24, color: '#333333', align: 'center' }), templateText(412, 863, 178, 34, '30', { size: 24, color: '#333333', align: 'center' }), templateText(590, 863, 178, 34, '30', { size: 24, color: '#333333', align: 'center' }), templateText(768, 863, 178, 34, '30', { size: 24, color: '#333333', align: 'center' }),
-      templateText(52, 948, 182, 34, '허벅지', { size: 24, weight: 700, color: '#2e2e2d', align: 'center' }), templateText(234, 948, 178, 34, '27', { size: 24, color: '#333333', align: 'center' }), templateText(412, 948, 178, 34, '28', { size: 24, color: '#333333', align: 'center' }), templateText(590, 948, 178, 34, '29', { size: 24, color: '#333333', align: 'center' }), templateText(768, 948, 178, 34, '30', { size: 24, color: '#333333', align: 'center' }),
-      templateText(52, 1033, 182, 34, '밑단', { size: 24, weight: 700, color: '#2e2e2d', align: 'center' }), templateText(234, 1033, 178, 34, '23', { size: 24, color: '#333333', align: 'center' }), templateText(412, 1033, 178, 34, '23.5', { size: 24, color: '#333333', align: 'center' }), templateText(590, 1033, 178, 34, '24', { size: 24, color: '#333333', align: 'center' }), templateText(768, 1033, 178, 34, '24.5', { size: 24, color: '#333333', align: 'center' }),
-      templateText(52, 1118, 182, 34, '총장', { size: 24, weight: 700, color: '#2e2e2d', align: 'center' }), templateText(234, 1118, 178, 34, '103', { size: 24, color: '#333333', align: 'center' }), templateText(412, 1118, 178, 34, '104', { size: 24, color: '#333333', align: 'center' }), templateText(590, 1118, 178, 34, '105', { size: 24, color: '#333333', align: 'center' }), templateText(768, 1118, 178, 34, '105', { size: 24, color: '#333333', align: 'center' }),
+      templateText(52, 693, 182, 34, '허리', { size: 24, weight: 700, color: '#2e2e2d', align: 'center' }), templateMeasurement(234, 693, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(412, 693, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(590, 693, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(768, 693, 178, 34, null, { size: 24, color: '#333333', align: 'center' }),
+      templateText(52, 778, 182, 34, '엉덩이', { size: 24, weight: 700, color: '#2e2e2d', align: 'center' }), templateMeasurement(234, 778, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(412, 778, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(590, 778, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(768, 778, 178, 34, null, { size: 24, color: '#333333', align: 'center' }),
+      templateText(52, 863, 182, 34, '밑위', { size: 24, weight: 700, color: '#2e2e2d', align: 'center' }), templateMeasurement(234, 863, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(412, 863, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(590, 863, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(768, 863, 178, 34, null, { size: 24, color: '#333333', align: 'center' }),
+      templateText(52, 948, 182, 34, '허벅지', { size: 24, weight: 700, color: '#2e2e2d', align: 'center' }), templateMeasurement(234, 948, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(412, 948, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(590, 948, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(768, 948, 178, 34, null, { size: 24, color: '#333333', align: 'center' }),
+      templateText(52, 1033, 182, 34, '밑단', { size: 24, weight: 700, color: '#2e2e2d', align: 'center' }), templateMeasurement(234, 1033, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(412, 1033, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(590, 1033, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(768, 1033, 178, 34, null, { size: 24, color: '#333333', align: 'center' }),
+      templateText(52, 1118, 182, 34, '총장', { size: 24, weight: 700, color: '#2e2e2d', align: 'center' }), templateMeasurement(234, 1118, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(412, 1118, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(590, 1118, 178, 34, null, { size: 24, color: '#333333', align: 'center' }), templateMeasurement(768, 1118, 178, 34, null, { size: 24, color: '#333333', align: 'center' }),
       templateShape(52, 1176, 895, 2, '#333333'),
       templateText(0, 1213, 1000, 34, '상기 사이즈는 측정방법에 따라 오차가 있을 수 있습니다', { size: 22, color: '#9a9893', align: 'center' }),
     ],
@@ -1494,9 +1499,9 @@ export const DETAIL_PAGE_TEMPLATE_SETS = [
   { id: 'denim-casual', label: '데님 캐주얼', desc: '미리팬츠 데님 · 11컷', accent: '#3a3a39', frames: DETAIL_PAGE_TEMPLATE_5 },
 ];
 
-export function buildDetailPageTemplateSet(setId, idFn) {
+export function buildDetailPageTemplateSet(setId, idFn, product = {}) {
   const set = DETAIL_PAGE_TEMPLATE_SETS.find((entry) => entry.id === setId) || DETAIL_PAGE_TEMPLATE_SETS[0];
-  return set.frames.map((frame) => buildFrameBlock(frame, idFn));
+  return set.frames.map((frame) => buildFrameBlock(frame, idFn, product));
 }
 
 // 상세페이지 세트의 개별 프레임을 id 로 찾는다(모달에서 프레임 하나씩 클릭·드래그 삽입할 때).
@@ -1549,7 +1554,7 @@ export function colorWithOpacity(color = '#ffffff', opacity = 1) {
   return `rgba(${r}, ${g}, ${b}, ${+alpha.toFixed(3)})`;
 }
 
-export function buildFrameBlock(frameOrId, idFn) {
+export function buildFrameBlock(frameOrId, idFn, product = {}) {
   const definition = typeof frameOrId === 'string'
     ? FRAME_LIBRARY_ITEMS.find((item) => item.id === frameOrId)
     : frameOrId;
@@ -1574,9 +1579,15 @@ export function buildFrameBlock(frameOrId, idFn) {
     bgOpacity: 1,
     h: definition.h,
     elements: sourceElements.map((item) => {
+      const { measurementKey, ...fields } = item;
+      if (measurementKey != null) {
+        const value = !product?.measurementsUnknown && (MEASUREMENT_SCHEMA[product?.clothingType] || []).includes(measurementKey)
+          ? product?.measurements?.find((m) => m.key === measurementKey)?.value : null;
+        fields.text = typeof value === 'number' && Number.isFinite(value) ? String(Number(value.toFixed(1))) : '';
+      }
       const element = {
         id: idFn('el'),
-        ...item,
+        ...fields,
         x: item.x,
         y: item.y,
         w: item.w,

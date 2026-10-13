@@ -48,6 +48,25 @@ const CTX = {
 
 const CONTRACT_ELEMENT_TYPES = new Set(['text', 'shape', 'line', 'image']);
 
+test('new size recommendations leave all twenty cells blank and render dashes', () => {
+  const info = defaultInfoFor('size_matrix', CTX);
+  assert.deepEqual(info.heights, ['~160cm', '160~170cm', '170~180cm', '180cm~']);
+  assert.deepEqual(info.weights, ['~55kg', '55~65kg', '65~75kg', '75~85kg', '85kg~']);
+  assert.deepEqual(info.cells, Array.from({ length: 4 }, () => ['', '', '', '', '']));
+  const block = buildInfoBlock('size_matrix', info, CTX, seqId());
+  assert.equal(block.elements.filter((el) => el.text === '—').length, 20);
+});
+
+test('saved size recommendations survive rebuilding without filling or clearing cells', () => {
+  const info = { heights: ['160~170cm'], weights: ['55~65kg', '65~75kg'], cells: [['M', '']], note: '직접 확인' };
+  const saved = JSON.parse(JSON.stringify(info));
+  const block = buildInfoBlock('size_matrix', saved, CTX, seqId());
+  assert.deepEqual(block.info, info);
+  assert.deepEqual(saved, info);
+  assert.ok(block.elements.some((el) => el.text === 'M'));
+  assert.equal(block.elements.filter((el) => el.text === '—').length, 1);
+});
+
 test('every preset builds with defaults using only contract element types and unique ids', () => {
   for (const preset of INFO_PRESET_TYPES) {
     const block = buildInfoBlock(preset.type, defaultInfoFor(preset.type, CTX), CTX, seqId());

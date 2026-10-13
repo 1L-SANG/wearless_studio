@@ -79,6 +79,78 @@ function withoutIds(value) {
     .map(([key, nested]) => [key, withoutIds(nested)]));
 }
 
+const ghostStoryboard = (direction, colorId = 'navy') => [
+  { id: 'hero', sectionRole: 'hooking', contentRole: 'hero', source: 'ai', cutType: 'styling' },
+  { id: 'ghost', sectionRole: 'product', contentRole: 'productOverview', source: 'ai', cutType: 'product', direction, colorId },
+];
+
+test('mock ghost tags resolve color names without truncation and keep single-color labels unchanged', () => {
+  const cases = [
+    [{ id: 'navy', name: '네이비', label: '다른 이름', swatchId: 'black' }, ' · 네이비'],
+    [{ id: 'navy', label: '워시드 블랙', swatchId: 'navy' }, ' · 워시드 블랙'],
+    [{ id: 'navy', swatchId: 'navy' }, ' · 네이비'],
+    [{ id: 'navy', name: '긴 색상 이름 '.repeat(30).trim() }, ` · ${'긴 색상 이름 '.repeat(30).trim()}`],
+    [{ id: 'navy', name: '', swatchId: null }, ''],
+    [{ id: 'other', name: '다른 색' }, ''],
+  ];
+  for (const [color, suffix] of cases) {
+    for (const direction of ['front', 'back']) {
+      const storyboard = ghostStoryboard(direction);
+      const blocks = alignSkeletonToServer(buildEditorBlocksFromStoryboard(storyboard, {
+        ...PRODUCT, colors: [color, { id: 'base', name: '아이보리' }],
+      }, false), false);
+      const label = blocks[1].elements.find((el) => el.copyRole === 'label');
+      const image = blocks[1].elements.find((el) => el.type === 'image');
+      assert.equal(label.text, `${direction === 'back' ? 'BACK' : 'FRONT'}${suffix}`);
+      assert.equal(label.w, suffix ? 880 : 400);
+      assert.equal(label.x, 60);
+      assert.equal(label.y, 44);
+      assert.ok(label.y + label.h <= image.y);
+      if (suffix) assert.ok(Array.from(label.text).length * (label.style.size + (label.style.tracking || 0)) <= 400,
+        '단일 색상 라벨은 이미 열린 구 프론트의 400px 상자에도 들어가야 한다');
+    }
+  }
+  const single = buildEditorBlocksFromStoryboard(ghostStoryboard('front'), {
+    ...PRODUCT, colors: [{ id: 'navy', name: '네이비' }],
+  }, false)[1];
+  const tag = single.elements.find((el) => el.copyRole === 'label');
+  assert.equal(tag.text, 'FRONT');
+  assert.deepEqual([tag.x, tag.y, tag.w, tag.h], [60, 44, 400, 38]);
+});
+
+test('mock row color labels stay below their own photo and fit the column with server parity', () => {
+  for (const [layout, directions, positions, width] of [
+    ['twoColumn', ['front', 'back'], [60, 510], 430],
+    ['threeColumn', ['front', 'back', 'front'], [60, 360, 660], 280],
+  ]) {
+    for (const colorName of ['네이비', '워시드 네이비 '.repeat(12).trim()]) {
+      const storyboard = directions.map((direction, index) => ({
+        ...ghostStoryboard(direction)[1], id: `ghost-${index}`, sectionId: 'ghosts',
+        sectionLayout: layout, layoutRowId: 'ghost-row', layoutRowVersion: 1,
+      }));
+      const product = { ...PRODUCT, colors: [{ id: 'navy', name: colorName }, { id: 'base', name: '아이보리' }] };
+      const mock = buildEditorBlocksFromStoryboard(storyboard, product, false)[0];
+      const labels = mock.elements.filter((el) => el.copyRole === 'label');
+      const photos = mock.elements.filter((el) => el.type === 'image');
+      assert.deepEqual(labels.map((el) => el.text), directions.map((direction) => `${direction === 'back' ? 'BACK' : 'FRONT'} · ${colorName}`));
+      assert.deepEqual(labels.map((el) => [el.x, el.y, el.w]), positions.map((x) => [x, 566, width]));
+      labels.forEach((label, index) => {
+        const photo = photos[index];
+        assert.equal(label.sourceBlockId, photo.sourceBlockId);
+        assert.equal(label.x, photo.x);
+        assert.equal(label.w, photo.w);
+        assert.ok(label.y >= photo.y + photo.h);
+        assert.ok(Array.from(label.text).length * (label.style.size + (label.style.tracking || 0)) <= label.w);
+      });
+      const result = spawnSync(PYTHON, ['-c',
+        'import json,sys; from app.agents.page_assembler import assemble; data=json.load(sys.stdin); print(json.dumps(assemble(data["storyboard"], [], [], data["product"], False)[0]))',
+      ], { cwd: SERVER_DIR, input: JSON.stringify({ storyboard, product }), encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(labels.map(({ id, ...el }) => el), JSON.parse(result.stdout).elements.filter((el) => el.copyRole === 'label').map(({ id, ...el }) => el));
+    }
+  }
+});
+
 test('mock opening renders as one medium two-column row with copy below the images', () => {
   const storyboard = openingStoryboard();
   const opening = openingMockBlock(storyboard);

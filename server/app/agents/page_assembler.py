@@ -260,14 +260,36 @@ def _text_for_role(texts: list[dict], role: str) -> str | None:
     return None
 
 
-def _single_tag(content_role: str, direction, point_number: int) -> tuple[str | None, int]:
+def _overview_label(direction, color_id, product: dict | None) -> str:
+    tag = "BACK" if str(direction or "").lower() == "back" else "FRONT"
+    colors = (product or {}).get("colors") or []
+    if len(colors) < 2 or color_id is None:
+        return tag
+    color = next((item for item in colors if item.get("id") is not None and str(item.get("id")) == str(color_id)), {})
+    # 색 이름은 자유 텍스트이므로 컬러 짝 캡션의 120자 제한을 적용하지 않는다.
+    color_name = next((str(value).strip() for value in (
+        color.get("name"), color.get("label"), _SWATCH_LABELS.get(str(color.get("swatchId") or "").lower()),
+    ) if value and str(value).strip()), "")
+    return f"{tag} · {color_name}" if color_name else tag
+
+
+def _color_label_style(text: str, style: dict, width: int) -> dict:
+    # 한 글자 폭을 1em으로 넉넉하게 잡아 긴 이름도 상자 안 한 줄에 둔다.
+    scale = min(1, width / (len(text) * (style["size"] + style.get("tracking", 0))))
+    if scale == 1:
+        return style
+    return {**style, "size": int(style["size"] * scale * 100) / 100,
+            **({"tracking": int(style["tracking"] * scale * 100) / 100} if "tracking" in style else {})}
+
+
+def _single_tag(content_role: str, direction, point_number: int, product=None, color_id=None) -> tuple[str | None, int]:
     if content_role in {"hero", "benefit"}:
         point_number += 1
         return f"POINT {point_number:02d}", point_number
     if content_role == "fit":
         return "FIT", point_number
     if content_role == "productOverview":
-        return ("BACK" if str(direction or "").lower() == "back" else "FRONT"), point_number
+        return _overview_label(direction, color_id, product), point_number
     if content_role == "detail":
         return "DETAIL", point_number
     if content_role == "coordination":
@@ -275,10 +297,10 @@ def _single_tag(content_role: str, direction, point_number: int) -> tuple[str | 
     return None, point_number
 
 
-def _row_label(row_block: dict) -> str:
+def _row_label(row_block: dict, product=None) -> str:
     if resolve_content_role(row_block) != "productOverview":
         return ""
-    return "BACK" if str(row_block.get("direction") or "").lower() == "back" else "FRONT"
+    return _overview_label(row_block.get("direction"), row_block.get("colorId"), product)
 
 
 def _colorway_pair(first: dict, second: dict) -> bool:
@@ -545,7 +567,7 @@ def assemble(
         tag_text = None
         if not first_cut and not signature:
             tag_text, point_label_count = _single_tag(
-                content_role, b.get("direction"), point_label_count,
+                content_role, b.get("direction"), point_label_count, product, b.get("colorId"),
             )
         image_y = _IMG_Y if first_cut or signature or not tag_text else _IMG_Y + _TAG_SHIFT
         els = [_image_el(block_i, 0, _IMG_X, image_y, img_w, img_h, src, 12, cut_type,
@@ -569,10 +591,12 @@ def assemble(
             el_j += 1
 
         if tag_text:
+            color_tag = content_role == "productOverview" and tag_text not in {"FRONT", "BACK"}
+            tag_style = {"size": _TAG_SIZE, "weight": 700, "tracking": 3, "color": _FAINT, "lineHeight": _TAG_H}
+            # 이미 열린 구 프론트는 라벨 폭 400을 유지하므로 글자도 그 안에 맞춘다.
             els.append(_text_el(
-                block_i, el_j, 60, 44, 400, _TAG_H, tag_text,
-                {"size": _TAG_SIZE, "weight": 700, "tracking": 3, "color": _FAINT,
-                 "lineHeight": _TAG_H},
+                block_i, el_j, 60, 44, 880 if color_tag else 400, _TAG_H, tag_text,
+                _color_label_style(tag_text, tag_style, 400) if color_tag else tag_style,
                 source_block_id=b.get("id"), copy_role="label",
             ))
             el_j += 1
@@ -644,12 +668,15 @@ def assemble(
             ))
         elif layout in {"twoColumn", "threeColumn"}:
             label_y = img_top + height + 16
+            labels = [_row_label(row_block, product) for row_block in chunk]
             for column, row_block in enumerate(chunk):
+                label = labels[column]
+                color_label = label not in {"FRONT", "BACK", ""}
+                style = {"size": _ROW_LABEL_SIZE, "weight": 600, "color": _INK,
+                         "align": "center", "lineHeight": _ROW_LABEL_H}
                 els.append(_text_el(
                     block_i, len(els), 60 + column * (width + 20), label_y, width, _ROW_LABEL_H,
-                    _row_label(row_block),
-                    {"size": _ROW_LABEL_SIZE, "weight": 600, "color": _INK,
-                     "align": "center", "lineHeight": _ROW_LABEL_H},
+                    label, _color_label_style(label, style, width) if color_label else style,
                     source_block_id=row_block.get("id"), copy_role="label",
                     placeholder=_ROW_LABEL_PLACEHOLDER,
                 ))

@@ -363,7 +363,7 @@ infoType별 info shape (frontend `src/features/editor/presets/infoPresets.js`가
 | `benefit_copy` | `{ items: [{title, desc, src}] }` (2~8개, src = 원형 사진 슬롯 이월값) |
 | `faq` | `{ layout: 'cards'\|'chat', title, items: [{question, answer}] }` (2~6개) |
 | `fit_guide` | `{ fits: Fit[], current: Fit\|null }` |
-| `size_matrix` | `{ heights: string[], weights: string[], cells: string[][], note }` |
+| `size_matrix` | `{ heights: string[], weights: string[], cells: string[][], note }` 새 표의 cells는 빈 문자열로 시작하며 빈 칸은 `—`로 표시한다. 저장된 cells는 그대로 유지한다. |
 | `model_info` | `{ models: [{name, height, size, src}] }` (최대 3) — 기본값은 프로젝트가 실제 사용 중인 모델(선택 가상모델 또는 FaceMarket 실존 모델)의 이름·사진으로 프리필 |
 
 `normalizeEditorBlockRole`은 `kind='info'` 블록을 그대로 통과시켜야 한다 — 섹션 역할
