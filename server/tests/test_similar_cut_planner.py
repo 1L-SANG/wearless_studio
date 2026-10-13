@@ -87,15 +87,15 @@ def test_planned_generation_uses_plan_and_does_not_force_global_ratio(monkeypatc
     assert "natural, minor variation)" not in captured["prompt"]
 
 
-def test_mirror_planning_preserves_phone_and_face_visibility(monkeypatch):
+def test_planning_preserves_face_covering_and_respects_expression_request(monkeypatch):
     seen = []
     async def analyze(settings, prompt, images, schema, **kwargs):
         seen.append(prompt)
         return plan(), "gemini"
     monkeypatch.setattr(similar_cut.vision_llm, "analyze_with_fallback", analyze)
     asyncio.run(similar_cut.plan_next(make_settings(), InlineImage("image/jpeg", b"source"),
-        context={}, cut_type="mirror", changes=[{"type": "face", "value": "smile"}], history=[]))
-    assert "phone" in seen[0] and "face" in seen[0] and "smile" in seen[0]
+        context={}, cut_type="styling", changes=[{"type": "face", "value": "smile"}], history=[]))
+    assert "face-covering prop" in seen[0] and "hidden" in seen[0] and "smile" in seen[0]
 
 
 @pytest.mark.parametrize("dimensions", [(900, 900), (1200, 800), (640, 768), (3000, 1000), (1000, 3000)])
@@ -127,3 +127,18 @@ def test_gpt_source_size_override_reaches_existing_provider_without_other_change
     asyncio.run(client.generate_content_image("gpt-image-2", "prompt", [], "2K",
         openai_size_override="1888x1888"))
     assert captured == {"preserve_input_bytes": False, "size_override": "1888x1888"}
+
+
+@pytest.mark.parametrize("cut_type", ["mirror", "daily"])
+def test_retired_cut_type_rejects_before_planning_or_generation(monkeypatch, cut_type):
+    async def unexpected(*args, **kwargs):
+        raise AssertionError("retired cuts must stop before provider calls")
+
+    monkeypatch.setattr(similar_cut.vision_llm, "analyze_with_fallback", unexpected)
+    source = InlineImage("image/jpeg", b"source")
+    with pytest.raises(ValueError, match="unknown_cut_type"):
+        asyncio.run(similar_cut.plan_next(make_settings(), source,
+            context={}, cut_type=cut_type, changes=[], history=[]))
+    with pytest.raises(ValueError, match="unknown_cut_type"):
+        asyncio.run(cut_variator.generate(make_settings(), None, source, [], cut_type,
+            similar_plan=plan()))

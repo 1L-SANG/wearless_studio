@@ -35,7 +35,7 @@ test('컷별 재시도는 선택 모델 하나를 모든 착용 컷에 복원한
   const storyboard = [
     { id: 'h', source: 'ai', cutType: 'horizon', shot: 'full' },
     { id: 's', source: 'ai', cutType: 'styling', shot: 'full' },
-    { id: 'm', source: 'ai', cutType: 'mirror', shot: 'full' },
+    { id: 'm', source: 'ai', cutType: 'styling', shot: 'medium' },
     { id: 'p', source: 'ai', cutType: 'product', shot: 'ghost' },
   ];
   // 저장된 옛 stylingModelId 가 남아 있어도 무시한다(2026-09-11 사용자 결정).

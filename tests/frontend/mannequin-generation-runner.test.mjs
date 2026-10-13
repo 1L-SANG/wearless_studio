@@ -600,7 +600,7 @@ test('generateMannequins signals the job start only after the 200 cache branch h
   const source = readFileSync(new URL('../../src/lib/api/httpAdapter.js', import.meta.url), 'utf8');
   const body = source.slice(
     source.indexOf('async generateMannequins'),
-    source.indexOf('async adjustMannequin'),
+    source.indexOf('async cancelMannequinGeneration'),
   );
   assert.match(body, /\{ onProgress, onJobStarted, idempotencyKey, resumeJobId, expectedQuote \} = \{\}/);
   assert.match(body, /'Idempotency-Key': idempotencyKey/);

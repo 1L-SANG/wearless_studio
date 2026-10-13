@@ -35,7 +35,6 @@ _ALLOWED_VALUES = {
         "handheld_oblique",
         "handheld_eye_level",
         "tripod_centered",
-        "mirror_phone",
         "product_camera",
     },
     "framing": {
@@ -49,14 +48,12 @@ _ALLOWED_VALUES = {
         "casual_digital",
         "editorial",
         "studio_catalog",
-        "mirror_selfie",
         "product_catalog",
     },
     "scene": {
         "reference_location",
         "lifestyle_location",
         "horizon_studio",
-        "mirror_room",
         "product_studio",
     },
     "light": {
@@ -73,7 +70,6 @@ _ALLOWED_VALUES = {
 # product-only work has no human pose and no direction-retarget semantics.
 _FIELDS_BY_CUT = {
     "styling": _KNOWN_FIELDS,
-    "mirror": _KNOWN_FIELDS,
     "horizon": _KNOWN_FIELDS,
     "product": {"camera", "framing", "capture", "scene", "light"},
 }
@@ -114,10 +110,6 @@ _LINES = {
         "tripod_centered": (
             "Camera: use a stable centered catalog viewpoint and coherent lens perspective; "
             "do not distort the body or garment to force symmetry."
-        ),
-        "mirror_phone": (
-            "Camera: preserve physically plausible phone-in-mirror geometry, reflection, "
-            "camera height and subject distance."
         ),
         "product_camera": (
             "Camera: use clean product-photography geometry with undistorted garment "
@@ -160,10 +152,6 @@ _LINES = {
             "Capture character: use restrained e-commerce studio photography with consistent "
             "exposure and no glossy campaign treatment."
         ),
-        "mirror_selfie": (
-            "Capture character: retain a credible casual mirror selfie, including ordinary "
-            "phone-camera rendering rather than a staged editorial photograph."
-        ),
         "product_catalog": (
             "Capture character: use clean factual e-commerce product photography without "
             "decorative editorial styling."
@@ -181,10 +169,6 @@ _LINES = {
         "horizon_studio": (
             "Scene: keep a seamless neutral horizon studio with coherent floor contact and "
             "background tone."
-        ),
-        "mirror_room": (
-            "Scene: keep a physically coherent room or fitting-room reflection with believable "
-            "depth and no duplicated objects."
         ),
         "product_studio": (
             "Scene: keep a minimal product studio that supports silhouette and material truth "

@@ -1,7 +1,7 @@
 # 프론트 상태 모델 (Frontend State Model)
 
 > 상태: 확정 (2026-06-11, 갱신 2026-07-17) · 짝 문서: `documents/common_data_contract.md` · 결정 기록: `docs/adr/0002`, `docs/adr/0005`
-> 현재 코드와 이 모델의 차이(갭·적용 순서)는 `documents/TODO.md`가 추적한다 — 문서가 목표 상태다.
+> 현재 코드와 이 모델의 차이(갭·적용 순서)는 루트 `TODOS.md`가 추적한다 — 문서가 목표 상태다.
 
 ---
 
@@ -34,7 +34,7 @@ Q2. (아니라면) 라우트를 넘어 살아야 하나?
 | Project | `getProject` | `createProject` `patchProject` | 새 제작 시작 / 선택값 변경 / 단계 전환 |
 | Product | `getProduct` | `saveProduct` | 입력 완료 시, 분석 폼에서 실측·의류 종류 수정 시 |
 | Analysis | `analyzeProduct` | `saveAnalysis` | 분석 폼 수정 시 (Product 소유 필드 제외) |
-| MannequinCut[] | `getMannequins` | `generateMannequins` `regenerateMannequin({fitProfile})` | 마네킹 단계 (구 `adjustMannequin` 폐기) |
+| MannequinCut[] | `getMannequins` | `generateMannequins` `regenerateMannequin({fitProfile})` | 마네킹 단계 |
 | StoryboardBlock[] | `getStoryboard` | `saveStoryboard` | **생성 CTA 클릭 시** (편집 중엔 로컬 working copy). 로드할 때 v2 역할 검증·누락값 방어 정규화 |
 | EditorBlock[] | `getEditorBlocks` `generateDetailPage` | `saveEditorBlocks` | 에디터 로드 / 저장·디바운스(구현됨) |
 | Wardrobe | `getWardrobe` | `generateImage` `uploadAsset` | 에디터 |
@@ -60,8 +60,7 @@ useAppStore = {
   selectedMannequinId: string | null,  selectMannequin(id),
   composeMode: 'basic' | 'extended',   setComposeMode(v),
   copywriting: true,                   setCopywriting(v),
-  adjustCount: 0,                      // @deprecated 이전 프로젝트 읽기용. 새 조정 흐름에서는 사용·동기화하지 않음
-}
+  }
 ```
 
 `composeMode`는 `basic | extended`만 허용한다. 서버는 읽기와 쓰기 모두 다른 값을 거부하며, 프론트도 두 값만 생성·동기화한다.
@@ -75,7 +74,7 @@ useAppStore = {
 | 라우트 | 읽는 서버 상태 | 저장(쓰기) 트리거 | store 사용 | 대표 로컬 상태(③) |
 |---|---|---|---|---|
 | `/create/input` | getProduct, getCatalogs → analyzeProduct | 입력 완료 → `saveProduct`(+uploadComplete) 후 분석; 분석 폼 변경 → 필드 소유자 따라 `saveAnalysis` 또는 `saveProduct` | projectId 없으면 `startProject()` | phase(input/analyzing/done), expanded, 칩 draft, 소재 편집 인덱스 |
-| `/create/mannequin` | getMannequins(비면 generateMannequins), getProduct, getProject | 조정/재생성 → api 호출 → `syncCredits`; 컷 선택 → `selectMannequin`; 사진 양 → `setComposeMode` | selectedMannequinId, composeMode (`adjustCount`는 legacy 읽기값) | progress, busy, picking, confirmRegen, 조정 세그 선택값 |
+| `/create/mannequin` | getMannequins(비면 generateMannequins), getProduct, getProject | 조정/재생성 → api 호출 → `syncCredits`; 컷 선택 → `selectMannequin`; 사진 양 → `setComposeMode` | selectedMannequinId, composeMode | progress, busy, picking, confirmRegen, 조정 세그 선택값 |
 | `/create/storyboard` | getStoryboard, getProduct(색상), getAnalysis(매칭 후보·선택) | **생성 CTA → `saveStoryboard` → navigate** | copywriting(`setCopywriting`) | blocks working copy, selectedId, splitOpen, dirty, 스냅샷 ref, drag 상태 |
 | `/create/generating` | generateDetailPage(projectId) | 완료 시 서버가 status='done' | projectId, syncCredits | progress, steps |
 | `/editor/:projectId` | getEditorBlocks, getWardrobe, getCatalogs, getAccount, getProduct | 이미지 생성/변형 → `generateImage` + `syncCredits`; 저장 → `saveEditorBlocks`(저장 버튼+디바운스) | account(표시), syncCredits, projectId | blocks + undo 히스토리, selEls/selBlock, cropping, scale, tab, layerFloat, pendingSlot, varyTarget |
@@ -130,4 +129,4 @@ useAppStore = {
 
 ## 8. 현행 코드 갭과 적용 순서
 
-→ **`documents/TODO.md` §1로 이관.** 상태 계층 관점의 갭·적용 순서(P0 선택값 증발 해결은 ✅ 반영 완료, TanStack Query·Analysis 중복 필드 제거 등은 남음)는 계약 쪽 마이그레이션 갭과 함께 TODO.md 한곳에서 추적한다.
+→ **루트 `TODOS.md` §1로 이관.** 상태 계층 관점의 갭·적용 순서(P0 선택값 증발 해결은 ✅ 반영 완료, TanStack Query·Analysis 중복 필드 제거 등은 남음)는 계약 쪽 마이그레이션 갭과 함께 TODOS.md 한곳에서 추적한다.

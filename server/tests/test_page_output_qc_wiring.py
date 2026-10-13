@@ -55,14 +55,10 @@ def _run_cuts(
             raise RuntimeError("generation failed")
         return f"initial:{spec['id']}".encode(), "image/png"
 
-    async def fake_best_of(_settings, _product_images, initial, _generate_candidate):
-        return InlineImage(initial.mime, b"chosen:" + initial.data), None, []
-
     async def fake_emit(*_args, **_kwargs):
         return None
 
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_generate)
-    monkeypatch.setattr(dpj.image_qc, "best_of", fake_best_of)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     r2 = r2 or _RecordingR2()
@@ -70,7 +66,6 @@ def _run_cuts(
         make_settings(
             gemini_api_key="x",
             r2_bucket="b",
-            garment_qc_mode="off",
             cut_output_qc_mode=cut_qc_mode,
             page_output_qc_mode=page_qc_mode,
         ),
@@ -115,9 +110,9 @@ def test_page_output_qc_off_never_calls_judge(monkeypatch):
     result, r2 = _run_cuts(monkeypatch, page_qc_mode="off")
 
     assert calls == 0
-    assert result[5] is None
-    assert result[6] == []
-    assert r2.saved == [b"chosen:initial:worn", b"chosen:initial:product"]
+    assert result[4] is None
+    assert result[5] == []
+    assert r2.saved == [b"initial:worn", b"initial:product"]
 
 
 def test_page_output_qc_shadow_judges_completed_cut_collection_once(monkeypatch):
@@ -145,13 +140,13 @@ def test_page_output_qc_shadow_judges_completed_cut_collection_once(monkeypatch)
     assert [item["cutType"] for item in call["plan"]] == ["styling", "product"]
     assert [item["productTruthIndexes"] for item in call["plan"]] == [[0], [0]]
     assert [image.data for image in call["generated"]] == [
-        b"chosen:initial:worn",
-        b"chosen:initial:product",
+        b"initial:worn",
+        b"initial:product",
     ]
     assert [image.data for image in call["refs"]] == [b"PRODUCT"]
-    assert result[5] == page_qc
-    assert result[6] == []
-    assert r2.saved == [b"chosen:initial:worn", b"chosen:initial:product"]
+    assert result[4] == page_qc
+    assert result[5] == []
+    assert r2.saved == [b"initial:worn", b"initial:product"]
 
 
 def test_page_output_qc_keeps_middle_failure_at_its_original_index(monkeypatch):
@@ -200,20 +195,20 @@ def test_page_output_qc_keeps_middle_failure_at_its_original_index(monkeypatch):
     ]
     assert [item["outputIndex"] for item in captured["plan"]] == [0, 1, 2]
     assert [image.data if image is not None else None for image in captured["images"]] == [
-        b"chosen:initial:first",
+        b"initial:first",
         None,
-        b"chosen:initial:last",
+        b"initial:last",
     ]
     assert [item["blockId"] for item in result[0]] == ["first", "last"]
-    assert result[5]["overall"] == "FAIL"
-    assert result[5]["outliers"] == [{
+    assert result[4]["overall"] == "FAIL"
+    assert result[4]["outliers"] == [{
         "blockId": "middle",
         "gate": "completeness",
         "evidence": "No generated image was mapped to output index 1.",
         "correction": "Generate this planned cut before publishing the page.",
     }]
-    assert result[6] == []
-    assert r2.saved == [b"chosen:initial:first", b"chosen:initial:last"]
+    assert result[5] == []
+    assert r2.saved == [b"initial:first", b"initial:last"]
 
 
 def test_page_output_qc_maps_each_color_to_deduplicated_truth_indexes(monkeypatch):
@@ -245,7 +240,7 @@ def test_page_output_qc_maps_each_color_to_deduplicated_truth_indexes(monkeypatc
         [0, 1],
         [2, 0],
     ]
-    assert result[6] == []
+    assert result[5] == []
 
 
 def test_page_qc_receives_generated_detail_instead_of_seller_photo(monkeypatch):
@@ -279,8 +274,8 @@ def test_page_qc_receives_generated_detail_instead_of_seller_photo(monkeypatch):
     assert [image.data for image in calls[0][2]] == [b"PRODUCT"]
     assert result[0][0]["blockId"] == "detail"
     assert len(result[1]) == 1
-    assert result[5]["overall"] == "PASS"
-    assert result[6] == []
+    assert result[4]["overall"] == "PASS"
+    assert result[5] == []
     assert r2.saved == [b"CHECKED-DETAIL"]
 
 
@@ -292,9 +287,9 @@ def test_unexpected_page_qc_exception_is_fail_open(monkeypatch):
     result, r2 = _run_cuts(monkeypatch, page_qc_mode="shadow")
 
     assert len(result[0]) == len(result[1]) == 2
-    assert result[5] is None
-    assert result[6] == [{"code": "page_output_qc_unavailable"}]
-    assert r2.saved == [b"chosen:initial:worn", b"chosen:initial:product"]
+    assert result[4] is None
+    assert result[5] == [{"code": "page_output_qc_unavailable"}]
+    assert r2.saved == [b"initial:worn", b"initial:product"]
 
 
 def test_unexpected_cut_qc_exception_is_fail_open(monkeypatch):
@@ -318,9 +313,9 @@ def test_unexpected_cut_qc_exception_is_fail_open(monkeypatch):
     )
 
     assert len(result[0]) == len(result[1]) == 1
-    assert result[4] == []
-    assert result[6] == [{"blockId": "only", "code": "cut_output_qc_unavailable"}]
-    assert r2.saved == [b"chosen:initial:only"]
+    assert result[3] == []
+    assert result[5] == [{"blockId": "only", "code": "cut_output_qc_unavailable"}]
+    assert r2.saved == [b"initial:only"]
 
 
 def test_detail_job_persists_page_qc_in_success_metadata(monkeypatch):
@@ -352,7 +347,6 @@ def test_detail_job_persists_page_qc_in_success_metadata(monkeypatch):
             [{"blockId": "b1", "imageUrl": "/out"}],
             [{"key": "out"}],
             0,
-            [],
             [],
             page_qc,
             [],

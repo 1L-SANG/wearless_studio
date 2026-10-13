@@ -24,7 +24,7 @@ Inspector retains the existing layout. Detail cards show the user's whole produc
 
 ## QC and generation
 
-Dedicated product/detail policy; Sunburst only for this branch. Whole source + non-generative target crop are evidence. Max first generation + one correction, no best-of, no additional image on an unknown/ambiguous timeout. Corrected results are rechecked against original evidence. Only a fully passing result becomes an asset or `cut_done` preview. Failed/unknown results use existing failed-slot/refund paths, and other cuts continue. No 'use anyway' bypass.
+Dedicated product/detail policy; Sunburst only for this branch. Whole source + non-generative target crop are evidence. Max first generation + one correction, no additional image on an unknown/ambiguous timeout. Corrected results are rechecked against original evidence. Only a fully passing result becomes an asset or `cut_done` preview. Failed/unknown results use existing failed-slot/refund paths, and other cuts continue. No 'use anyway' bypass.
 
 Detail QC observes target/framing, design/construction, color/material, permanent markings, temporary photography artifacts, and photographic preparation. Clear failures reject; insufficient evidence is unknown. Judge output is strictly validated, never copied as executable prompt instructions. Report requested model/provider accurately, source/result/contract/prompt hashes, attempts and all judgments. Do not claim provider name is actual model ID.
 
@@ -40,7 +40,7 @@ Checkpoint reuse must include detail policy version and source/target binding. R
 
 ## Independent design comparison
 
-Codex and Claude Opus 5.5/max independently agree on usefulness before generation, source-bound targets, original-reference correction, SKU-separated evaluation, fail-closed publishing and maximum two image attempts. Claude's optional 'use anyway' UI is not adopted: it would bypass the intended quality guarantee and is outside scope. Its staged shadow-only rollout is not completion of the owner's both-features request; enforcement must be checked with actual evaluation before release. Current committed manifests already disable best-of and set initial attempts to one, so larger theoretical defaults are not reported as observed live costs. Existing failed-slot charging semantics are reused, not redesigned.
+Codex and Claude Opus 5.5/max independently agree on usefulness before generation, source-bound targets, original-reference correction, SKU-separated evaluation, fail-closed publishing and maximum two image attempts. Claude's optional 'use anyway' UI is not adopted: it would bypass the intended quality guarantee and is outside scope. Its staged shadow-only rollout is not completion of the owner's both-features request; enforcement must be checked with actual evaluation before release. Generation attempts follow the committed manifest; larger theoretical defaults are not reported as observed live costs. Existing failed-slot charging semantics are reused, not redesigned.
 
 ## Execution ledger
 

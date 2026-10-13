@@ -74,7 +74,7 @@ def generation_boundary(client, monkeypatch):
     return seen, state
 
 
-@pytest.mark.parametrize("cut_type", ["horizon", "styling", "mirror"])
+@pytest.mark.parametrize("cut_type", ["horizon", "styling"])
 def test_off_refuses_editor_real_model_without_job_charge_or_demand(client, make_token, generation_boundary, cut_type):
     seen, _ = generation_boundary
     response = client.post("/v1/projects/p1/editor:generate-image",

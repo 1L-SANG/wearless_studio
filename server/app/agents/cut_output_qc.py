@@ -157,7 +157,7 @@ _PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "cut_output_qc_v1.txt")
 
 _RECIPES = frozenset({"styling", "horizon", "product"})
 _CLOTHING_TYPES = frozenset({"top", "bottom", "outer", "dress"})
-_CAPTURE_MODES = frozenset({"lifestyle", "mirrorSelfie", "studio"})
+_CAPTURE_MODES = frozenset({"lifestyle", "studio"})
 _PRODUCT_VARIANTS = frozenset({"ghost", "detail"})
 _REFERENCE_MODES = frozenset({"none", "all", "pose", "bg"})
 _SHOTS = frozenset({"full", "medium", "ghost", "detail"})
@@ -456,8 +456,8 @@ def normalize_plan(plan: Any) -> dict:
     recipe = source.get("recipeFamily") or recipe_block.get("family") or source.get("recipe")
     # Tolerate the current pre-compiler cutType shape for isolated callers.
     legacy_cut = source.get("cutType")
-    if recipe not in _RECIPES and legacy_cut in {"styling", "horizon", "product", "mirror"}:
-        recipe = "styling" if legacy_cut == "mirror" else legacy_cut
+    if recipe not in _RECIPES and legacy_cut in _RECIPES:
+        recipe = legacy_cut
     recipe = _enum(recipe, _RECIPES)
     if recipe is None:
         errors.append("unknown_recipe")
@@ -475,8 +475,6 @@ def normalize_plan(plan: Any) -> dict:
         errors.append("invalid_signature_background")
 
     capture = source.get("captureMode") or recipe_block.get("captureMode")
-    if legacy_cut == "mirror" and capture is None:
-        capture = "mirrorSelfie"
     capture = _enum(capture, _CAPTURE_MODES)
     variant = source.get("productVariant") or recipe_block.get("productVariant")
     variant = _enum(variant, _PRODUCT_VARIANTS)
@@ -518,12 +516,9 @@ def normalize_plan(plan: Any) -> dict:
     if recipe in {"styling", "horizon"}:
         if shot not in {"full", "medium"}:
             errors.append("invalid_worn_shot")
-        if capture == "mirrorSelfie":
-            if direction is not None or face not in {"show", "hide"}:
-                errors.append("invalid_mirror_controls")
-        elif direction not in _DIRECTIONS or face not in _FACES:
+        if direction not in _DIRECTIONS or face not in _FACES:
             errors.append("invalid_worn_controls")
-        if recipe == "styling" and capture not in {"lifestyle", "mirrorSelfie"}:
+        if recipe == "styling" and capture != "lifestyle":
             errors.append("invalid_styling_capture")
         if recipe == "horizon" and capture != "studio":
             errors.append("invalid_horizon_capture")
@@ -645,7 +640,7 @@ def gate_applicability(contract: Mapping[str, Any]) -> dict[str, bool]:
     applicable["anatomyPerspectiveAsymmetry"] = worn
     applicable["relatedSceneDifferentPlace"] = (
         recipe == "styling"
-        and contract.get("captureMode") in {"lifestyle", "mirrorSelfie"}
+        and contract.get("captureMode") == "lifestyle"
         and contract.get("referenceMode") == "all"
         and contract.get("spaceSetContinuity") is None
     )

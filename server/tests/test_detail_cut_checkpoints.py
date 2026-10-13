@@ -369,7 +369,7 @@ def test_detail_final_reuse_requires_same_accepted_policy(monkeypatch, verdict, 
         first = await _store(app, 'j1')
         cut = await first.for_verified_detail('source-target-policy', 'detail1')
         await cut.save_final(b'CHECKED', 'image/png', {
-            'garmentQc': None, 'cutQc': verdict, 'warnings': [], 'neckRepair': None, 'facePass': {},
+            'cutQc': verdict, 'warnings': [], 'neckRepair': None, 'facePass': {},
         })
         db.error_jobs.add('j1')
         next_store = await _store(app, 'j2')
@@ -495,6 +495,32 @@ def test_a_failed_jobs_base_is_found_by_the_next_job(monkeypatch):
     assert db.ttl_calls[-1][1:] == (ckpts.TTL_SECONDS, True)
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+def test_final_checkpoint_decodes_current_and_legacy_optional_metadata(monkeypatch, legacy):
+    db = _IntentDB()
+    db.install(monkeypatch)
+    settings = _settings()
+    app = _app(settings)
+    meta = {"cutQc": None, "warnings": [], "neckRepair": None, "facePass": {}}
+    if legacy:
+        meta["garmentQc"] = {"chosenIndex": 1, "candidates": [{"verdict": "retry"}]}
+
+    async def exercise():
+        first = await _store(app, "j1")
+        cut = await first.for_cut(STYLING, settings, PRODUCT, [PRODUCT_IMG], {},
+                                  real_identity_attached=False)
+        assert await cut.save_final(b"FINAL", "image/png", meta)
+        db.error_jobs.add("j1")
+        second = await _store(app, "j2")
+        loaded = await second.for_cut(STYLING, settings, PRODUCT, [PRODUCT_IMG], {},
+                                      real_identity_attached=False)
+        assert loaded.final.image == b"FINAL"
+        assert loaded.final.meta == meta
+        assert loaded.base.image is None
+
+    asyncio.run(exercise())
+
+
 @pytest.mark.parametrize("kwargs", [
     {"second_identity": "other-identity"},             # 다른 신원(REAL↔VIRTUAL·다른 라이선스)
     {"second_project": "p2"},                          # 다른 프로젝트
@@ -516,7 +542,7 @@ def test_checkpoints_of_a_successful_job_are_not_reused(monkeypatch):
     first = asyncio.run(_store(app, "j1"))
     cut = asyncio.run(first.for_cut(STYLING, s, PRODUCT, [PRODUCT_IMG], {},
                                     real_identity_attached=False))
-    asyncio.run(cut.save_final(b"FINAL", "image/png", {"garmentQc": None, "cutQc": None,
+    asyncio.run(cut.save_final(b"FINAL", "image/png", {"cutQc": None,
                                                        "warnings": [], "neckRepair": None,
                                                        "facePass": {}}))
     # j1 이 성공 → 지금 지운다, 그리고 error 가 아니다
@@ -641,6 +667,8 @@ def test_detail_cuts_resume_from_base_then_adopt_the_final(monkeypatch):
     assert assets[0]["metadata"]["face_pass"] == "applied"
     final_keys = [k for k in r2.objects if k.endswith("/final.bin")]
     assert len(final_keys) == 1 and "/ai/j2/ckpt/" in final_keys[0]
+    header, _payload = ckpts.unpack(r2.objects[final_keys[0]][0])
+    assert "garmentQc" not in header["meta"]
     assert db.rows[base_keys[0]].get("cleared")             # 완성 컷이 생겼으니 베이스는 지운다
     assert base_keys[0] in r2.deleted
     db.error_jobs.add("j2")                                 # 예: 저장 직후 배포로 잡이 죽었다

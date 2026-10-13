@@ -4,7 +4,7 @@ from .gemini_image import InlineImage, run_cpu_bound
 from .model_routing import resolve_model
 
 
-WORN_CUT_TYPES = ("styling", "horizon", "mirror")
+WORN_CUT_TYPES = ("styling", "horizon")
 KEEP = (
     "Keep everything else exactly the same as the first image: the same person, face, hair, pose, hands, body shape, "
     "camera framing and angle, background, lighting, the inner top, the pants, bag and accessories, and the jacket's "

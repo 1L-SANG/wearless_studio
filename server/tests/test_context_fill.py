@@ -273,9 +273,9 @@ def test_purpose_precedence_skips_info_and_automatic_neighbors():
     assert rules().build_context(**data)["purpose"] == "fit"
     data["blocks"][3]["contentRole"] = "detail"
     assert rules().build_context(**data)["purpose"] == "detail"
-    data["blocks"][3]["elements"][0]["roleHint"] = "realWear"
+    data["blocks"][3]["elements"][0]["roleHint"] = "coordination"
     result = decide(data)
-    assert result["contextFill"]["purpose"] == "realWear"
+    assert result["contextFill"]["purpose"] == "coordination"
     assert result["payload"]["cutType"] == "styling"
 
 
@@ -385,7 +385,7 @@ def test_builder_and_picker_are_separate_and_inputs_unchanged():
     assert data == original
 
 
-@pytest.mark.parametrize("purpose", ["hero", "coordination", "fit", "detail", "productOverview", "realWear"])
+@pytest.mark.parametrize("purpose", ["hero", "coordination", "fit", "detail", "productOverview"])
 def test_labels_are_short_korean_and_context_record_is_complete(purpose):
     data = inputs(purpose=purpose)
     data["product"]["colors"][0]["name"] = "엄청나게긴한국어색상이름스무자를넘기는색상"
@@ -485,3 +485,22 @@ def test_color_compare_card_is_found_by_real_template_id(template_id, expected):
                   assets={asset_id("front"): asset(recipe(cut="product", shot="ghost"))})
     data["blocks"][0].update(templateId=template_id, name="이름을 바꾼 블록")
     assert decide(data)["contextFill"]["rule"] == expected
+
+
+@pytest.mark.parametrize("kind", ["styling", "colorcmp"])
+def test_retired_neighbor_recipe_is_ignored_before_selecting_generation(kind):
+    data = inputs(elements=[image("old"), image("empty", x=110, filled=False)],
+                  assets={asset_id("old"): asset(recipe(cut="mirror"))})
+    data["blocks"][0]["kind"] = kind
+    result = decide(data)
+    assert result["payload"]["mode"] == "new"
+    assert result["payload"]["cutType"] in ("styling", "horizon", "product")
+    assert result["contextFill"]["anchorAssetId"] is None
+
+
+def test_retired_role_hint_is_ignored_when_reading_saved_slot():
+    data = inputs(purpose="realWear")
+    data["blocks"][0]["contentRole"] = "fit"
+    result = decide(data)
+    assert result["contextFill"]["purpose"] == "fit"
+    assert result["payload"]["cutType"] == "horizon"

@@ -11,7 +11,7 @@ from . import content_roles, cut_generator, mannequin, outer_closure
 
 _PHOTO_ROWS = {"twocol", "threecol", "grid2x2", "colorcmp"}
 _UNSUPPORTED = {"info", "size", "care", "ai-notice"}
-_WORN = {"styling", "horizon", "mirror"}
+_WORN = {"styling", "horizon"}
 _DIRECTIONS = ("front", "side", "back")
 _DEFAULT_PURPOSE = {"hooking": "hero", "styling": "coordination", "studio": "fit", "product": "productOverview"}
 _DETAIL_NAMES = {"neckline": "목선", "closure": "여밈", "pocket": "주머니", "waist": "허리", "cuff": "소매 끝",
@@ -68,6 +68,8 @@ def _recipe(record):
     for key in ("cutType", "colorId"):
         if not value.get(key) and record.get(key):
             value[key] = record[key]
+    if value.get("cutType") not in cut_generator.CUT_TYPES:
+        return {}
     return value
 
 

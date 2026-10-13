@@ -50,8 +50,8 @@ AUTHORITY RULES
 
 HARD GATES — return each exactly once in this order:
 1. fileValidity — one complete, decodable output; no blank, corrupt, truncated, tiled, or accidental collage.
-2. recipeIntent — correct styling/horizon/product family and lifestyle/studio/mirrorSelfie or ghost/detail
-   subtype; product cuts contain no person, and mirrorSelfie remains a physically plausible reflection.
+2. recipeIntent — correct styling/horizon/product family and lifestyle/studio or ghost/detail
+   subtype; product cuts contain no person.
 3. framingCrop — the storyboard shot and crop hold. For confirmedGptExampleFraming, compare the candidate
    against requestedFraming, faceExposure and roughFraming literally: subject scale, head boundary and visible
    body range must match even when the coarse shot token is the same. A requested medium rendered as full,
@@ -93,8 +93,8 @@ storyboard.outerClosure levels, measured on the wearer from the neckline down: c
 14. anatomyPerspectiveAsymmetry — plausible hands, limbs, joints, body support, contacts, camera perspective,
     scale and intended asymmetric pose; no mirroring, duplication, fusion, cutout, or unsupported body.
 15. referenceScopeCaptureClass — only scope-authorized example/plate properties transfer; capture remains the
-    requested ordinary commerce snapshot, clean studio, mirror selfie, product ghost, or product detail.
-16. relatedSceneDifferentPlace — required only for styling + lifestyle/mirrorSelfie + all with no space-set.
+    requested ordinary commerce snapshot, clean studio, product ghost, or product detail.
+16. relatedSceneDifferentPlace — required only for styling + lifestyle + all with no space-set.
     Keep the EXAMPLE-owned place type, ordinary non-editorial mood, palette, time of day, lighting logic and
     allowlisted camera relationship, while making the exact recognizable place and layout naturally different.
     A recrop/repaint of the same place or an unrelated scene FAILS. Do not require a count of changed structures

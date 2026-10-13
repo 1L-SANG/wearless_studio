@@ -386,7 +386,7 @@ def test_edit_requires_idempotency_key(client, make_token, edit_route, mode, key
     assert "reserved" not in edit_route
 
 
-@pytest.mark.parametrize("client_cut_type", [None, "product", "mirror"])
+@pytest.mark.parametrize("client_cut_type", [None, "product"])
 def test_upload_similar_without_cut_type(client, make_token, edit_route, client_cut_type):
     edit_route["asset"].update(source="upload", metadata={})
     response = post_edit(client, make_token, "similar", source={"src": SRC, "cutType": client_cut_type})
@@ -678,7 +678,7 @@ def test_asset_info_kind_and_current(client, make_token, edit_route, case, kind)
         record["recipe"] = None
         edit_route["asset"]["source"] = "upload"
     elif case == "worn":
-        record["cutType"] = "mirror"
+        record["cutType"] = "horizon"
     elif case in {"ghost", "detail"}:
         record["recipe"]["shot"] = case
     elif case == "detail_metadata":
@@ -842,7 +842,7 @@ def test_upload_similar_settles_saved_reservation(recording_runtime, monkeypatch
 
 
 @pytest.mark.parametrize("cut_type,enabled,expected", [("styling", True, True), ("horizon", True, True),
-    ("mirror", True, True), ("product", True, False), ("styling", False, False)])
+    ("product", True, False), ("styling", False, False)])
 def test_edit_face_pass_matches_similar_rules(monkeypatch, cut_type, enabled, expected):
     from app.agents.gemini_image import InlineImage
     from types import SimpleNamespace
@@ -1049,3 +1049,34 @@ def test_route_similar_key_rejects_another_descendant_of_same_root(client, make_
     assert changed.status_code == 409 and changed.json()["error"]["code"] == "idempotency_key_reused"
     assert db.jobs[0]["payload"]["_similarCut"]["sourceAssetId"] == B
     assert reserve.await_count == db.inserts == 1
+
+
+def test_similar_rejects_legacy_mirror_provenance_before_reservation(client, make_token, edit_route, monkeypatch):
+    edit_route["asset"]["metadata"] = {}
+    edit_route["record"] = {"cutType": "mirror", "recipe": None}
+    monkeypatch.setattr(repo, "get_asset_facemarket_provenance", AsyncMock(return_value={
+        "real_derived": False, "cut_type": "mirror",
+    }))
+    response = post_edit(client, make_token, "similar", source={"src": SRC, "cutType": "styling"})
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "unknown_cut_type"
+    assert "job" not in edit_route and "reserved" not in edit_route
+
+
+def test_queued_similar_rejects_legacy_mirror_recipe_and_releases_reservation(recording_runtime, monkeypatch):
+    state = recording_runtime
+    state["source_metadata"] = {}
+    state["anchor"] = {"cutType": "mirror", "recipe": None, "realDerived": False}
+    monkeypatch.setattr(repo, "list_wardrobe_images", AsyncMock(return_value=[]))
+    planner = AsyncMock(side_effect=AssertionError("must reject before planning"))
+    generate = AsyncMock(side_effect=AssertionError("must reject before image generation"))
+    monkeypatch.setattr(worker, "_plan_similar_cut", planner)
+    monkeypatch.setattr(worker.cut_variator, "generate", generate)
+    asyncio.run(worker.run_editor_image_job(state["app"], worker_job({
+        "mode": "vary", "variationMode": "similar", "source": {"src": SRC, "cutType": "styling"},
+        "_similarCut": {"version": 1, "rootAssetId": A, "sourceAssetId": A},
+    }, credits_reserved=8)))
+    assert "success" not in state and state["failure"]["reserved"] == 8
+    assert state["failure"]["metadata"]["error"] == "unknown_cut_type"
+    planner.assert_not_awaited()
+    generate.assert_not_awaited()

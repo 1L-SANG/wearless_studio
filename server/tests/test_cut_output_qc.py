@@ -100,7 +100,7 @@ def test_schema_is_strict_complete_and_names_text_logo_gate():
 
 def test_default_qc_template_and_roles_match_pre_experiment_contract():
     template = Path(qc._PROMPT_FILE).read_text(encoding="utf-8")
-    assert hashlib.sha256(template.encode()).hexdigest() == "18609b7328d56e0cdf79a490b361cfd80803507fc718a6b1c043e486d54131b7"
+    assert hashlib.sha256(template.encode()).hexdigest() == "d0e664292c78629be81e94b973cb3cd594dfa4596390c64219122536d16e332e"
     assert "horizonMaster" not in qc.REFERENCE_ROLES
     assert "horizonMasterReference" not in qc.normalize_plan(_plan(
         recipeFamily="horizon", horizonMasterReference={"shot": "full", "direction": "front"}))
@@ -236,22 +236,12 @@ def test_normalize_plan_rejects_invalid_repeat_index(value):
     assert "invalid_example_repeat_index" in contract["contractErrors"]
 
 
-def test_normalize_plan_accepts_cut_plan_like_object_and_legacy_mirror():
+def test_normalize_plan_accepts_cut_plan_like_object():
     class Plan:
         def to_dict(self):
             return _plan()
 
     assert qc.normalize_plan(Plan())["recipeFamily"] == "styling"
-
-    legacy = {
-        "cutType": "mirror", "shot": "full", "direction": None,
-        "faceExposure": "hide", "pose": "auto", "refScope": "none",
-        "attributeOwners": _plan()["attributeOwners"],
-        "conflictResolution": _plan()["conflictResolution"],
-    }
-    out = qc.normalize_plan(legacy)
-    assert out["recipeFamily"] == "styling"
-    assert out["captureMode"] == "mirrorSelfie"
 
 
 def test_prompt_preserves_reference_order_and_contains_no_source_plan_text():
@@ -528,15 +518,6 @@ def test_model_body_gate_requires_a_selected_model_and_a_worn_recipe():
 
 def test_related_scene_gate_has_narrow_compiled_applicability():
     lifestyle = qc.normalize_plan(_plan())
-    mirror = qc.normalize_plan(_plan(
-        captureMode="mirrorSelfie",
-        recipe={"family": "styling", "captureMode": "mirrorSelfie"},
-        storyboard={
-            **_plan()["storyboard"],
-            "direction": None,
-            "face": "hide",
-        },
-    ))
     bg = qc.normalize_plan(_plan(referenceMode="bg"))
     pose = qc.normalize_plan(_plan(referenceMode="pose"))
     space_set = qc.normalize_plan(_plan(spaceSetContinuity=True))
@@ -560,7 +541,6 @@ def test_related_scene_gate_has_narrow_compiled_applicability():
     ))
 
     assert qc.gate_applicability(lifestyle)["relatedSceneDifferentPlace"] is True
-    assert qc.gate_applicability(mirror)["relatedSceneDifferentPlace"] is True
     for contract in (bg, pose, space_set, horizon, product):
         assert qc.gate_applicability(contract)["relatedSceneDifferentPlace"] is False
 

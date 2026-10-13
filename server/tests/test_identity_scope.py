@@ -41,9 +41,8 @@ def test_studio_space_sets_are_virtual_only():
 
 @pytest.mark.parametrize("spec", [
     _block(cutType="horizon", exampleId=None),           # 공간세트 아닌 스튜디오 컷
-    # 2026-09-25: styling 섹션이 열렸다 — 스타일링·미러 컷(둘 다 styling 섹션)도 both 다.
+    # 2026-09-25: styling 섹션이 열렸다 — 스타일링 컷(styling 섹션)도 both 다.
     _block(cutType="styling", exampleId=None),
-    _block(cutType="mirror", exampleId=None),
     # 2026-09-26: hooking(첫 장면) 섹션도 열렸다.
     _block(cutType="styling", contentRole="hero", exampleId=None),
     _block(cutType="styling", sectionRole="hooking", exampleId=None),

@@ -33,7 +33,7 @@ from ..agents import (
     mannequin_photo_structure,
     mannequin_specialist_qc,
 )
-from ..agents.mannequin_adjust import (
+from ..agents.mannequin_fit_edit import (
     ADJUST_PROMPT_VERSION,
     build_adjust_directives,
     build_adjust_manifest,

@@ -287,7 +287,7 @@ sequenceDiagram
 | `mannequin` | 과금 | AG-04 마네킹컷 생성 + QC 체인 |
 | `detail_page` | 컷당 과금 | PL-4 상세페이지 (AG-06→02→03→M-02) |
 | `editor_image` | 과금 | AG-06/07 에디터 이미지 (`new`/`vary`) |
-| `mannequin_adjust` | — | @deprecated 툼스톤(legacy 드레인 전용, AI 미호출) |
+| `mannequin_adjust` | — | 과거 큐 작업 거부·예약 크레딧 해제 전용. 새 작업 생성과 AI 호출 없음 |
 | `personalization_generation` | — | 개인화 생성 경로 α |
 | `personalization_purge` | — | 개인화 파기 캐스케이드 |
 | `sam_preprocess` | 무과금 | 캐노니컬 컷아웃 전처리 |
@@ -389,7 +389,6 @@ graph TB
 | `MANNEQUIN_PANTS_QC` | **enforce** | 하드게이트 4종(색·종류·통·구조). 2026-09-23부터 매칭만 틀리면 경고(needs_review)로 출고 — 재롤·수정은 셀러가 매칭 핏을 고른 경우(matchingFit·matchCut)만 |
 | `MANNEQUIN_DRAFT_REUSE` | `on` | 실패 잡의 유료 최선본을 24시간 초안으로 남기고 같은 입력의 다음 잡이 편집 경로로 1회 이어 씀 (2026-09-23) |
 | `CUT_OUTPUT_QC_MODE` | `repair` | |
-| `GARMENT_QC_MODE` | `off` | 신규 hard-gate가 커버, 구 best-of 중복비용 제거 |
 
 > 모든 판정기는 **fail-open**: 판정이 죽어도 생성은 안 막는다.
 
@@ -718,7 +717,6 @@ graph LR
 | | `FM_ENROLLMENT_REVIEW` | `simple_auth_only` (mid 경로는 관리자 육안 심사 대상 아님) |
 | | `FM_OACX_SIMPLE_AUTH_CONTRACT` | `disabled` (간편인증 응답 계약 미확정) |
 | **QC** | `IMAGE_QC` / `MANNEQUIN_AXIS_QC` / `MANNEQUIN_BASE_FIDELITY_QC` / `MANNEQUIN_PANTS_QC` | `enforce` |
-| | `GARMENT_QC_MODE` | `off` |
 | | `CUT_OUTPUT_QC_MODE` | `repair` |
 | **편집 패스** | `MANNEQUIN_UNTUCK_PASS` / `_GATE` | `on` |
 | | `MANNEQUIN_FABRIC_PASS` | `on` |

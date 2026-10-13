@@ -20,7 +20,7 @@ import {
 } from '@/lib/storyboardTaxonomy.js';
 import { hasAvailableGenerationRecipe } from '@/lib/generationExamples.js';
 import { BRAND_USE_CATEGORIES } from '@/lib/brandUseCategories.js';
-import { directionSpecFromExample, generationExampleStructuralRecipePatch } from '@/lib/storyboardExampleSelection.js';
+import { directionSpecFromExample } from '@/lib/storyboardExampleSelection.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor } from '@/features/editor/editorLibrary.js';
 import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex, lineColor, lineColorPatch, speechBubblePath } from '@/features/editor/editorAppearance.js';
@@ -253,7 +253,7 @@ function StrokeWidthControl(props) {
 }
 
 /* ---------- AI ---------- */
-const NEW_CUT_DEFAULT_SHOT = { styling: 'full', horizon: 'full', mirror: 'full', product: 'ghost' };
+const NEW_CUT_DEFAULT_SHOT = { styling: 'full', horizon: 'full', product: 'ghost' };
 export function AIPanel({ product, detailRecommendations, frontClosure, catalogs, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, brandUseCategory = null, brandUseCategorySaving = false, onBrandUseCategoryChange, onConfirmPendingGenerate, generateSubmitting = false, pendingGenerateRequest = null, onGenerate, onPickMoodRef }) {
   // 콘티보드와 같은 규칙 — 사용자는 컷 종류(촬영 방식)만 고르고, 사진 목적(contentRole)은 내부 자동 결정.
   const [cutType, setCutType] = useState('styling');
@@ -271,8 +271,6 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
   const [outerClosure, setOuterClosure] = useState('open');
   const [matchIds, setMatchIds] = useState([]);
   const [matchOpen, setMatchOpen] = useState(false);
-  // 컷 탭의 선택은 원래 레시피로 유지한다. 거울 예시는 구조 패치만 파생해 얹으므로
-  // 일반 예시를 다시 고르면 별도 상태 복구 없이 탭이 가리키던 레시피로 돌아간다.
   const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
   const galleryCutType = cutType;
   const galleryIsProduct = galleryCutType === 'product';
@@ -290,13 +288,9 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
     ...directionSpec,
     shot: galleryShotVal,
   };
-  const effectiveRecipe = {
-    ...baseRecipe,
-    ...generationExampleStructuralRecipePatch(baseRecipe, selectedExample),
-  };
+  const effectiveRecipe = baseRecipe;
   const effectiveCutType = effectiveRecipe.cutType;
   const isProduct = effectiveCutType === 'product';
-  const isMirror = effectiveCutType === 'mirror';
   const effectiveShotOptions = isProduct ? catalogs.productShotTypes : catalogs.shotTypes;
   const effectiveShotVal = effectiveShotOptions.some((option) => option.value === effectiveRecipe.shot)
     ? effectiveRecipe.shot : effectiveShotOptions[0].value;
@@ -333,7 +327,6 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
   const hasSelectableExamples = (cut, shotValue) => hasAvailableGenerationRecipe(catalogs.genExamples, {
     cutType: cut, shot: shotValue, clothingType, gender: modelGender,
     appendSetOnly: cut !== 'product',
-    appendMirror: cut === 'styling',
   });
   const cutTypeOptions = ALL_CUT_TYPE_OPTIONS.map((option) => {
     const shots = option.value === 'product' ? catalogs.productShotTypes : catalogs.shotTypes;
@@ -383,7 +376,7 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
     const previous = pendingGenerateRequest;
     const colorLabel = [...colorOpts, ...detailColorOpts].find((option) => option.id === previous.colorId)?.label || '선택한 색상';
     const cutLabel = ALL_CUT_TYPE_OPTIONS.find((option) => option.value === previous.cutType)?.label
-      || (previous.cutType === 'mirror' ? '거울샷' : '이미지');
+      || '이미지';
     const shots = previous.cutType === 'product' ? catalogs.productShotTypes : catalogs.shotTypes;
     const shotLabel = shots.find((option) => option.value === previous.shot)?.label;
     return (
@@ -407,7 +400,7 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
       </div>
 
       {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터 (B+C안, ADR-0004) */}
-      <MoodGuide catalogs={catalogs} cut={galleryCutType} blockCutType={effectiveCutType}
+      <MoodGuide catalogs={catalogs} cut={galleryCutType}
         direction={galleryDirectionVal} sideStyle={directionSpec.sideStyle} shot={galleryShotVal}
         shotOptions={galleryIsProduct ? galleryShotOptions : null}
         onShotChange={(v) => {
@@ -417,7 +410,6 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
             setProductDirection(patch.direction || directionSpec.direction);
           }
         }} clothingType={clothingType} gender={modelGender}
-        includeMirrorExamples={galleryCutType === 'styling'}
         exampleId={exampleId} onExampleChange={selectExample}
         refScope={refScope} onRefScopeChange={setRefScope}
         refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
@@ -492,8 +484,8 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
         contentRole: effectiveRecipe.contentRole,
         colorId: colorVal, cutType: effectiveCutType,
         // 화면 값이 아니라 **컷 스펙**을 보낸다 — 'threeQuarter' 는 서버가 모르는 값이다.
-        direction: isMirror ? null : directionSpec.direction,
-        sideStyle: isMirror ? null : directionSpec.sideStyle,
+        direction: directionSpec.direction,
+        sideStyle: directionSpec.sideStyle,
         shot: effectiveShotVal, modelId: model, exampleId, refScope,
         ...(isDetail ? { detailTargetId, detailTargetOrigin: 'user' } : {}),
         outerClosureState: showOuterClosure ? outerClosure : null,

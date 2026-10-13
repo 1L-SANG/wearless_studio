@@ -14,7 +14,7 @@ import {
 // 셀러가 쓸 수 있는 컷을 못 쓰고, 더 열면 서버에서 409 를 만난다.
 
 test('착용 컷과 룩북 인물 교체는 전부 실제 얼굴', () => {
-  for (const cut of ['horizon', 'styling', 'mirror', 'base_edit']) {
+  for (const cut of ['horizon', 'styling', 'base_edit']) {
     assert.equal(realFaceAllowedCut(cut), true, cut);
   }
 });
@@ -35,9 +35,9 @@ test('모델의 동의 값은 판정에 끼어들지 않는다', () => {
 test('컷 수 = 실제 얼굴이 들어가는 컷', () => {
   const blocks = [
     { cutType: 'horizon' }, { cutType: 'styling' },
-    { cutType: 'mirror' }, { cutType: 'product' },
+    { cutType: 'product' },
   ];
-  assert.equal(realFaceCutCount(blocks), 3);
+  assert.equal(realFaceCutCount(blocks), 2);
   assert.equal(realFaceCutCount([]), 0);
   assert.equal(realFaceCutCount(undefined), 0);
 });
@@ -58,7 +58,7 @@ test('서버와 같은 컷 목록', () => {
   assert.ok(line, 'server REAL_IDENTITY_CUT_TYPES not found');
   for (const cut of REAL_FACE_CUT_TYPES) {
     assert.ok(
-      line.includes(`"${cut}"`) || source.includes(`_STYLING_CUT_TYPES = frozenset({"styling", "mirror"})`),
+      line.includes(`"${cut}"`) || source.includes(`_STYLING_CUT_TYPES = frozenset({"styling"})`),
       cut,
     );
   }

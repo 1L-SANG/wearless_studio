@@ -211,7 +211,7 @@ def test_product_with_pose_is_rejected(tmp_path):
     assert any("제품컷에는 pose·bg" in item for item in caught.value.violations)
 
 
-@pytest.mark.parametrize("cut_type", ("styling", "horizon", "mirror", "product"))
+@pytest.mark.parametrize("cut_type", ("styling", "horizon", "product"))
 @pytest.mark.parametrize("direction", ("front", "back", "side", None))
 def test_direction_is_required_for_worn_cuts_and_optional_for_product(
     tmp_path, cut_type, direction
@@ -256,7 +256,7 @@ def test_direction_is_required_for_worn_cuts_and_optional_for_product(
     assert examples[0]["direction"] == direction
 
 
-@pytest.mark.parametrize("cut_type", ("styling", "horizon", "mirror"))
+@pytest.mark.parametrize("cut_type", ("styling", "horizon"))
 def test_validation_collects_missing_worn_direction_with_other_violations(tmp_path, cut_type):
     manifest_path, root, manifest = _fixture(tmp_path)
     example = manifest["examples"][0]
@@ -291,7 +291,7 @@ def test_repository_worn_examples_all_have_directions():
     for label, examples in (("registry", registry["assets"].values()), ("catalog", catalog)):
         worn_examples = [
             example for example in examples
-            if example.get("cutType") in {"styling", "horizon", "mirror"}
+            if example.get("cutType") in {"styling", "horizon"}
         ]
         assert worn_examples, label
         assert all(example.get("direction") is not None for example in worn_examples), label
@@ -355,7 +355,7 @@ def test_direction_outside_observation_metadata_values_is_rejected(tmp_path):
     assert any("direction이 허용값이 아닙니다: diagonal" in item for item in caught.value.violations)
 
 
-@pytest.mark.parametrize("cut_type", ("styling", "horizon", "mirror"))
+@pytest.mark.parametrize("cut_type", ("styling", "horizon"))
 def test_worn_gender_null_is_rejected(tmp_path, cut_type):
     manifest_path, root, manifest = _fixture(tmp_path)
     example = manifest["examples"][0]
@@ -364,7 +364,7 @@ def test_worn_gender_null_is_rejected(tmp_path, cut_type):
         "cutType": cut_type,
         "gender": None,
         "mood": "daily" if cut_type == "styling" else None,
-        "direction": None if cut_type == "mirror" else "front",
+        "direction": "front",
     })
 
     with pytest.raises(release.ReleaseValidationError) as caught:
@@ -670,7 +670,7 @@ def test_validate_accepts_null_product_direction():
     release._validate_release_documents(catalog, registry, label="테스트")
 
 
-@pytest.mark.parametrize("cut_type", ("styling", "horizon", "mirror"))
+@pytest.mark.parametrize("cut_type", ("styling", "horizon"))
 def test_validate_rejects_null_worn_direction(cut_type):
     catalog = [_catalog_item(cutType=cut_type, direction=None)]
     registry = _valid_registry()

@@ -6,9 +6,9 @@ from app.agents.cut_plan import CutPlanError, compile_cut_plan, render_prompt_co
 def worn_spec(cut_type="styling", **changes):
     spec = {
         "cutType": cut_type,
-        "direction": None if cut_type == "mirror" else "front",
+        "direction": "front",
         "shot": "full",
-        "faceExposure": "hide" if cut_type == "mirror" else "same",
+        "faceExposure": "same",
         "pose": "auto",
         "colorId": "black",
         "matchIds": [],
@@ -56,20 +56,6 @@ def test_styling_without_reference_uses_lifestyle_recipe_and_no_reference_owner(
     assert plan.attribute_owners["direction"] == "storyboard"
     assert plan.attribute_owners["pose"] == "recipe"
     assert plan.attribute_owners["scene"] == "recipe"
-
-
-def test_mirror_maps_to_styling_recipe_with_mirror_capture():
-    plan = compile_cut_plan(
-        worn_spec("mirror", exampleId="ex_mirror", refScope="all"), "dress"
-    )
-
-    assert plan.recipe_family == "styling"
-    assert plan.capture_mode == "mirrorSelfie"
-    assert plan.product_variant is None
-    assert plan.reference_mode == "all"
-    assert plan.attribute_owners["pose"] == "reference"
-    assert plan.attribute_owners["camera"] == "reference"
-    assert plan.attribute_owners["direction"] == "storyboard"
 
 
 def test_horizon_all_reference_ignores_retired_pose_override():
@@ -310,13 +296,6 @@ def test_location_recomposition_applies_only_to_lifestyle_styling_all():
     excluded = (
         compile_cut_plan(worn_spec(exampleId="ex", refScope="bg"), "top"),
         compile_cut_plan(
-            worn_spec(
-                "mirror", direction=None, faceExposure="hide",
-                exampleId="ex", refScope="all",
-            ),
-            "top",
-        ),
-        compile_cut_plan(
             worn_spec("horizon", exampleId="ex", refScope="all"), "top"
         ),
         compile_cut_plan(
@@ -349,7 +328,7 @@ def test_location_recomposition_applies_only_to_lifestyle_styling_all():
     [
         (worn_spec(cutType="unknown"), "unknown_cut_type"),
         (worn_spec(shot="ghost"), "invalid_styling_spec"),
-        (worn_spec("mirror", direction="front"), "invalid_mirror_spec"),
+        (worn_spec("mirror"), "unknown_cut_type"),
         (product_spec(refScope="pose", exampleId="ex"), "product_reference_mode_must_be_all"),
         (worn_spec(_referenceDirectionCompatible="yes"),
          "invalid_reference_direction_compatibility"),

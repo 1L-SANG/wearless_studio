@@ -52,43 +52,23 @@ test('the first AI image in benefit is the only internally assigned hero', () =>
   assert.equal(normalized[2].cutType, 'styling');
 });
 
-test('the inspector hides mirror while saved recipes still allow it in every section', () => {
+test('all sections offer and accept only the three supported cut types', () => {
   const expected = [
-    ['styling', '스타일링컷'],
-    ['horizon', '호리존컷'],
-    ['product', '제품컷'],
+    ['styling', '스타일링컷'], ['horizon', '호리존컷'], ['product', '제품컷'],
   ];
   for (const sectionRole of ['hooking', 'styling', 'studio', 'product', 'unknown']) {
-    assert.deepEqual(
-      cutTypeOptionsForSection(sectionRole).map(({ value, label }) => [value, label]),
-      expected,
-    );
-    assert.deepEqual(
-      allowedCutTypeOptionsForSection(sectionRole).map(({ value, label }) => [value, label]),
-      [
-        ['styling', '스타일링컷'],
-        ['horizon', '호리존컷'],
-        ['mirror', '거울샷'],
-        ['product', '제품컷'],
-      ],
-    );
+    for (const options of [cutTypeOptionsForSection(sectionRole), allowedCutTypeOptionsForSection(sectionRole)]) {
+      assert.deepEqual(options.map(({ value, label }) => [value, label]), expected);
+    }
   }
 });
 
 test('a selected worn cut realigns the hidden role instead of being overwritten by it', () => {
-  const mirror = normalizedRecipePatch({
-    source: 'ai', sectionRole: 'styling', contentRole: 'coordination',
-    cutType: 'mirror', shot: 'medium', faceExposure: 'same',
-  }, CONTENT_ROLES.COORDINATION);
   const styling = normalizedRecipePatch({
     source: 'ai', sectionRole: 'studio', contentRole: 'fit',
     cutType: 'styling', direction: 'side', shot: 'medium',
   }, CONTENT_ROLES.FIT);
 
-  assert.deepEqual(
-    [mirror.contentRole, mirror.cutType, mirror.direction, mirror.shot, mirror.faceExposure],
-    [CONTENT_ROLES.REAL_WEAR, 'mirror', null, 'medium', 'hide'],
-  );
   assert.deepEqual(
     [styling.contentRole, styling.cutType, styling.direction, styling.shot],
     [CONTENT_ROLES.FIT, 'horizon', 'side', 'medium'],
@@ -142,7 +122,6 @@ test('an internally normalized product image drops worn-only settings', () => {
   assert.equal(product.outerClosureState, null);
   assert.equal(product.faceExposure, null);
 });
-
 
 test('section moves retain compatible examples and clear all example metadata only when the recipe must change', () => {
   const compatible = {

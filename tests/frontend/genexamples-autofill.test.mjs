@@ -255,34 +255,6 @@ test('product detail gallery round-robins detailSubject instead of applying mood
   }).map((item) => item.id), ['back-1', 'front-1', 'texture-1', 'back-2', 'front-2']);
 });
 
-test('styling gallery does not append mirror examples outside the public combination table', () => {
-  const catalog = [
-    example('ordinary-street', { mood: 'urban street', rank: 2 }),
-    example('ordinary-cafe', { mood: 'sunny cafe', rank: 4 }),
-    example('set-member', {
-      setOnly: true, spaceSetId: 'released-set', variants: ['all', 'pose'], rank: 1,
-    }),
-    example('mirror-medium', {
-      cutType: 'mirror', shot: 'medium', direction: 'front', mood: 'home', rank: 2,
-    }),
-    example('mirror-full', {
-      cutType: 'mirror', shot: 'full', direction: 'front', mood: 'home', rank: 1,
-    }),
-  ];
-  const selected = selectGenerationExamples(catalog, {
-    cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women',
-    appendSetOnly: true, appendMirror: true,
-  });
-  assert.deepEqual(selected.map((item) => item.id), [
-    'ordinary-cafe', 'ordinary-street', 'set-member',
-  ]);
-  assert.equal(selected.some((item) => item.cutType === 'mirror'), false);
-  assert.equal(selectGenerationExamples(catalog, {
-    cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women',
-    appendSetOnly: true,
-  }).some((item) => item.cutType === 'mirror'), false, 'non-gallery and my-image paths do not opt in');
-});
-
 test('existing auto usage counts, keys stay independent, and one/two-item pools cycle', () => {
   const catalog = [example('full-1'), example('full-2', { rank: 2 }), example('medium-1', { shot: 'medium' })];
   const result = assignGenerationExamples([
@@ -386,16 +358,6 @@ test('stored selections ignore shot/direction drift, while cut/product condition
   const stored = example('stored');
   assert.equal(storedExampleConditionStatus(stored, { cutType: 'styling', shot: 'medium', direction: 'back', clothingType: 'outer', gender: 'women' }), 'valid');
   assert.equal(storedExampleConditionStatus(stored, { cutType: 'horizon', clothingType: 'outer', gender: 'women' }), 'changed');
-  const mirror = example('mirror', { cutType: 'mirror' });
-  assert.equal(storedExampleConditionStatus(mirror, {
-    cutType: 'styling', blockCutType: 'mirror', clothingType: 'outer', gender: 'women',
-  }), 'valid');
-  assert.equal(storedExampleConditionStatus(mirror, {
-    cutType: 'styling', blockCutType: 'styling', clothingType: 'outer', gender: 'women',
-  }), 'changed');
-  assert.equal(storedExampleConditionStatus(mirror, {
-    cutType: 'styling', blockCutType: 'styling', clothingType: 'outer', gender: 'women', includeMirror: true,
-  }), 'valid');
 });
 
 test('auto examples are fingerprint-neutral and auto saves are mock-dirty neutral', () => {
@@ -501,8 +463,6 @@ test('storyboard preserves family-specific group references across shot changes 
   // 2026-08-14: 첫 화면 프레임 슬롯의 복제본은 표식 없이 일반 컷 — stripHookFrameFields 경유.
   assert.match(storyboardSource, /const copy = \{ \.\.\.stripHookFrameFields\(withoutLayoutRow\(bs\[i\]\)\), id: uid\('blk'\) \}/);
   assert.match(storyboardSource, /새 섹션에 맞는 컷 예시를 먼저 골라주세요/);
-  assert.match(storyboardSource, /generationExampleStructuralRecipePatch\(\{ \.\.\.current, \.\.\.baseRecipePatch \}, example\)/);
-  assert.match(storyboardSource, /includeMirrorExamples=\{effectiveSectionRole === SECTION_ROLES\.STYLING \|\| isMirror\}/);
 });
 
 test('storyboard exposes honest retry copy and never labels assignment as an automatic pose', () => {
@@ -523,7 +483,6 @@ test('storyboard keeps released set members available for generation without an 
   assert.match(editorSource, /withStoryboardSpaceSetExamples\(c\)/);
   assert.match(editorSource, /setCatalogs\(hydratedCatalogs\)/);
 });
-
 
 test('horizon groups auto-assign complete-only references while styling groups retain pose scope', () => {
   for (const [cutType, variants, expected] of [['horizon', ['all'], 'all'], ['styling', ['all', 'pose'], 'pose']]) {

@@ -217,3 +217,35 @@ def test_db_resolver_uses_done_page_and_producing_real_model_snapshot(monkeypatc
     page_query = next(query for query, _ in conn.queries if "kind = 'detail_page'" in query)
     assert "status = 'done'" in page_query and "finished_at desc" in page_query and "limit 1" in page_query
     assert all("user_id = %s and project_id = %s" in query for query, _ in conn.queries)
+
+
+@pytest.mark.parametrize("origin", ["generation", "page", "editor_retry", "editor_new", "editor_similar", "editor_reshoot"])
+@pytest.mark.parametrize("has_metadata_type", [False, True])
+@pytest.mark.parametrize("type_field", ["cutType", "cut_type"])
+def test_retired_saved_cut_has_no_generation_recipe_and_preserves_historical_type(origin, has_metadata_type, type_field):
+    retired = storyboard()
+    retired.pop("cutType")
+    retired[type_field] = "mirror"
+    row = asset(metadata={"cut_type": "mirror"} if has_metadata_type else {})
+    kwargs = {}
+    if origin == "generation":
+        row["metadata"]["generation"] = {"version": 1, "origin": "editor_new", "recipe": retired}
+    elif origin == "page":
+        kwargs = {"page_map": {A: "original"}, "storyboard_by_id": {"original": retired}}
+    elif origin == "editor_retry":
+        kwargs = {"producing_job": {"payload": {"mode": "new", "retryBlockId": "original"}},
+                  "storyboard_by_id": {"original": retired}}
+    elif origin == "editor_new":
+        kwargs = {"producing_job": {"payload": {"mode": "new", **retired}}}
+    else:
+        payload = {"mode": "vary"}
+        if origin == "editor_similar":
+            payload["variationMode"] = "similar"
+        kwargs = {"producing_job": {"payload": payload},
+                  "anchor_resolved": {"recipe": retired}}
+    result = module().recipe_for_asset(row, **kwargs)
+    assert result["recipe"] is None
+    assert result["cutType"] == "mirror"
+    assert result["colorId"] == "base"
+    assert result["origin"] == ("editor_new" if origin == "generation" else origin)
+    assert result["upload"] is False

@@ -175,14 +175,6 @@ def test_explicit_detail_role_sets_editor_identity():
     assert block["name"] == "디테일"
 
 
-def test_cut_type_inference_maps_mirror_to_real_wear():
-    storyboard = [{"id": "mirror", "source": "ai", "cutType": "mirror"}]
-    block = assemble(storyboard, [], [], PRODUCT, False)[0]
-    assert block["kind"] == "styling"
-    assert block["contentRole"] == "realWear"
-    assert block["name"] == "실제 착용 느낌"
-
-
 def test_mine_block_preserves_explicit_section_role():
     storyboard = [{
         "id": "mine-product", "source": "mine", "sectionRole": "product",
@@ -254,10 +246,10 @@ def test_ai_notice_with_license_states_verified_real_model():
 def test_ai_notice_partial_license_does_not_claim_whole_page_is_real_model():
     """일부 컷만 라이선스 얼굴이면 페이지 전체를 '가상인물 아님' 으로 주장하면 안 된다.
 
-    얼굴 레퍼런스는 얼굴이 식별되는 컷에만 붙는다(거울샷·뒷모습·하반신 제외 — cut_generator
+    얼굴 레퍼런스는 얼굴이 식별되는 컷에만 붙는다(뒷모습·하반신 제외 — cut_generator
     ._face_fits). 그 제외 컷에도 인물은 렌더되지만 **AI 가 지어낸 가상인물**이라 26.06 표기
     의무 대상이다. 페이지 전체 고지를 뒤집으면 표기 의무 대상 컷에 반대 표기가 붙는다(허위표시).
-    거울샷 얼굴 기본값이 hide 라 이 경로는 **기본 설정으로 도달 가능**하다.
+    뒷모습 컷에서 이 경로는 도달 가능하다.
     """
     notice = {"modelName": "김*연", "licenseId": "lic-123", "faceCuts": 1, "totalCuts": 3}
     el = build_auto_blocks(PRODUCT, license_notice=notice)[2]["elements"][0]
@@ -410,7 +402,7 @@ def test_single_photo_labels_follow_content_role_and_point_sequence():
         {"id": "back", "sectionRole": "product", "contentRole": "productOverview", "source": "ai", "cutType": "product", "direction": "back"},
         {"id": "detail", "sectionRole": "product", "contentRole": "detail", "source": "ai", "cutType": "product"},
         {"id": "coord", "sectionRole": "styling", "contentRole": "coordination", "source": "ai", "cutType": "styling"},
-        {"id": "wear", "sectionRole": "styling", "contentRole": "realWear", "source": "ai", "cutType": "mirror"},
+        {"id": "wear", "sectionRole": "styling", "contentRole": "coordination", "source": "ai", "cutType": "styling"},
     ]
     blocks = assemble(storyboard, [], [], PRODUCT, False)[:len(storyboard)]
 

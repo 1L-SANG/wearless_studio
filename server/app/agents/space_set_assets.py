@@ -34,7 +34,7 @@ _RELEASE_ROOT = "seed/genexamples/space-sets/v1/releases"
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CLOTHING_TYPES = ("top", "bottom", "outer", "dress")
-_CUT_TYPES = ("styling", "horizon", "mirror")
+_CUT_TYPES = ("styling", "horizon")
 _SET_TYPES = ("styling", "horizon-rotation", "horizon-sequence")
 _SHOTS = ("full", "medium")
 _DIRECTIONS = ("front", "side", "back")
@@ -278,10 +278,7 @@ def validate_space_set_registry_document(
             expected_cut_type = "styling" if set_type == "styling" else "horizon"
             if cut_type != expected_cut_type:
                 raise ValueError("space_set_registry_member_recipe_invalid")
-            if cut_type == "mirror":
-                if direction is not None:
-                    raise ValueError("space_set_registry_member_direction_invalid")
-            elif direction not in _DIRECTIONS:
+            if direction not in _DIRECTIONS:
                 raise ValueError("space_set_registry_member_direction_invalid")
             member_gender = raw_member.get("gender", gender)
             member_applicable = raw_member.get(

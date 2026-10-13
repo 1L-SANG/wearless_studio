@@ -316,7 +316,7 @@ test('actual storyboard cards show long captions and remove hidden or product cl
   const source = read('src/features/storyboard/Storyboard.jsx');
   const captionSource = source.slice(source.indexOf('function cardLabels('), source.indexOf('/* 컷 이동 손잡이 아이콘'));
   const { code } = await transformWithEsbuild(captionSource, 'StoryboardCaption.jsx', { jsx: 'transform' });
-  const context = { React, useContext: React.useContext, ...closure, WORN_CUT_TYPES: new Set(['styling', 'horizon', 'mirror']) };
+  const context = { React, useContext: React.useContext, ...closure, WORN_CUT_TYPES: new Set(['styling', 'horizon']) };
   const Caption = new Function(...Object.keys(context), `${code}; return StoryboardCaption;`)(...Object.values(context));
   const render = (value, frontClosure, cutType = 'styling', source = 'ai') => renderToStaticMarkup(React.createElement(Caption, {
     block: { source, cutType, shot: 'full', outerClosureState: value },
@@ -325,7 +325,7 @@ test('actual storyboard cards show long captions and remove hidden or product cl
   assert.match(render('openToChest', front('zipper')), /가슴까지 열림/);
   assert.match(render('openToWaist', front('zipper')), /배까지 열림/);
   assert.match(render('partial', front('button', 'binary')), /전체 닫힘/);
-  assert.match(render('openToWaist', front('belt', null), 'mirror'), /전체 열림/);
+  assert.match(render('openToWaist', front('belt', null), 'horizon'), /전체 열림/);
   assert.doesNotMatch(render('open', front('none', null)), /아우터 열림 정도|전체 열림/);
   assert.doesNotMatch(render('open', front('zipper'), 'product'), /아우터 열림 정도|전체 열림/);
   assert.equal(render('open', front('zipper'), 'styling', 'mine'), '<div class="sb-canvas-caption mine">내 사진</div>');

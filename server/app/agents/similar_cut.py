@@ -86,7 +86,13 @@ def _same_action(plan: dict, history: list[dict]) -> bool:
     )
 
 
+def validate_cut_type(cut_type):
+    if cut_type not in (None, "", "styling", "horizon", "product"):
+        raise ValueError("unknown_cut_type")
+
+
 async def plan_next(settings, source_image, *, context, cut_type, changes, history):
+    validate_cut_type(cut_type)
     prior = _recent_plans(history)
     inputs = {
         "productContext": context, "cutType": cut_type,
@@ -121,6 +127,7 @@ async def plan_next(settings, source_image, *, context, cut_type, changes, histo
 
 
 def generation_prompt(plan, *, context, cut_type, changes):
+    validate_cut_type(cut_type)
     plan = validate_plan(plan)
     template = (_PROMPTS / "similar_cut_generate_v1.txt").read_text(encoding="utf-8")
     return template + "\nEDIT DATA:\n" + json.dumps({

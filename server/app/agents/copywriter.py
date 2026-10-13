@@ -27,7 +27,6 @@ _ROLE_LABELS = {
     "benefit": "핵심 장점",
     "coordination": "코디",
     "fit": "핏",
-    "realWear": "코디",
     "productOverview": "제품 확인",
     "detail": "디테일",
     "custom": "제품 확인",
@@ -35,7 +34,6 @@ _ROLE_LABELS = {
 _CUT_LABELS = {
     "styling": "착용 코디 사진",
     "horizon": "스튜디오 착용 사진",
-    "mirror": "일상 착용 사진",
     "product": "제품 단독 사진",
 }
 _DIRECTION_LABELS = {"front": "앞모습", "side": "옆모습", "back": "뒷모습"}

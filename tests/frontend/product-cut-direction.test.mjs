@@ -7,7 +7,6 @@ import { assignGenerationExamples } from '../../src/lib/generationExamples.js';
 import { directionSpecFromExample, generationExampleSelectionPatch } from '../../src/lib/storyboardExampleSelection.js';
 import { isProductDetail, preserveDetailTargetBinding } from '../../src/lib/detailRecommendations.js';
 import * as taxonomy from '../../src/lib/storyboardTaxonomy.js';
-import { generationExampleStructuralRecipePatch } from '../../src/lib/storyboardExampleSelection.js';
 
 const board = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
 const feedbackBody = board.slice(board.indexOf('function referenceFeedbackPatch('), board.indexOf('\nconst CARD_DRAG_THRESHOLD'));
@@ -58,7 +57,7 @@ test('콘티 샷 전환 확정은 기존 원본 면을 보존하고 착용컷의
   const body = board.slice(board.indexOf('  const commitPendingRecipe ='), board.indexOf('  const generationExamplePatch ='));
   for (const direction of ['front', 'back', 'side']) {
     let changes;
-    const scope = { ...taxonomy, generationExampleStructuralRecipePatch, referenceFeedbackPatch: feedback,
+    const scope = { ...taxonomy, referenceFeedbackPatch: feedback,
       block: { id: 'card', source: 'ai', cutType: 'horizon', contentRole: 'fit', direction, shot: 'full', colorId: 'base' },
       pendingRecipe: { cutType: 'product', shot: 'ghost' }, pendingSaving: false, catalogs,
       effectiveSectionRole: 'product', hasDetailImage: false, colorOpts: [{ id: 'base' }], detailColorOpts: [{ id: 'base' }],

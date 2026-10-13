@@ -72,7 +72,7 @@ def test_every_fit_axis_instruction_includes_material_freeze_tail_once() -> None
 
 
 def test_live_adjust_prompt_preserves_optical_behavior_without_alpha_canvas() -> None:
-    prompt = _prompt("mannequin_adjust_v2.txt").lower()
+    prompt = _prompt("mannequin_fit_edit_v2.txt").lower()
 
     assert "output canvas and background free of alpha" in prompt
     for evidence in ("opaque garment", "sheerness", "mesh", "lace", "crochet", "open knit"):

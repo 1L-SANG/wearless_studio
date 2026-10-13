@@ -1,6 +1,7 @@
 import { detailTargetPresentation } from '../../lib/detailRecommendations.js';
 import { failedCutPresentation } from '../../lib/cutFailureMessages.js';
 import { uniqueGenerationCutCount } from '../../lib/generationCutCount.js';
+import { isSupportedCutType } from '../../lib/storyboardTaxonomy.js';
 
 const RETRY_FIELDS = Object.freeze([
   'contentRole',
@@ -28,7 +29,7 @@ const RETRY_FIELDS = Object.freeze([
 export function buildFailedCutRetry(storyboard, sourceBlockId, modelSelection = null, product = null, { editorBlocks = [], failure = {} } = {}) {
   if (!sourceBlockId || !Array.isArray(storyboard)) return null;
   const block = storyboard.find((item) => item?.id === sourceBlockId);
-  if (!block || block.source !== 'ai' || !block.cutType) return null;
+  if (!block || block.source !== 'ai' || !isSupportedCutType(block.cutType)) return null;
 
   let request = { mode: 'new', retryBlockId: block.id };
   let { retryable, guidance } = failedCutPresentation(failure);

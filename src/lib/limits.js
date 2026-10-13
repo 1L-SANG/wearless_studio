@@ -11,7 +11,6 @@ import { AI_MODELS } from '../features/analysis/aiModels.js';
 /** 단계별 크레딧 단가 — 이 값만 바꾸면 전 화면 예고가 함께 갱신됨 */
 export const CREDIT_COSTS = Object.freeze({
   mannequinGenerate: 45, // 마네킹 단일컷 생성·재생성, 백엔드 credit_cost_mannequin_generate 미러
-  mannequinAdjust: 0, // @deprecated P2: 핏 프로필 재생성으로 대체
   storyboardPerCut: 19, // 콘티에서 상세페이지 생성: 컷 1개당
   storyboardMinCuts: 5, // 백엔드 고정 정책 credit_min_storyboard_cuts 미러
   editorImage: 19, // 에디터 새 이미지·고스트·디테일·빈 칸
@@ -123,5 +122,4 @@ export const LIMITS = Object.freeze({
   sellingPointMax: 5, // 강조 특징 상한 (PRD §6.6)
   aiSuggestedPointMax: 2, // AI 추천 특징 상한 (types.js)
   matchClothingMax: 1, // 매칭 의류 선택 상한 (PRD §6.8)
-  mannequinAdjustMax: undefined, // @deprecated P2: 횟수 제한 없음
 });

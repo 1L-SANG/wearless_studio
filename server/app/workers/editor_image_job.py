@@ -1,7 +1,6 @@
 """AG-06/AG-07 에디터 이미지 워커 (PL-5/6). 에디터 AI 탭 '새 이미지 추가'(mode:'new')는
 cut_generator(AG-06)를, '현재 이미지 수정'(mode:'vary')은 cut_variator(AG-07)를 재사용한다.
-mannequin_adjust_job.py의 reserve→generate→finalize 패턴을 단일 이미지(부분 성공 없음)에
-맞춰 미러한다. lease 펜스·크레딧 정산은 repo.finalize_editor_image_success/failure.
+단일 이미지의 예약, 생성, 종결을 수행한다. 부분 성공은 없다. lease 펜스·크레딧 정산은 repo.finalize_editor_image_success/failure.
 """
 
 import asyncio
@@ -47,7 +46,7 @@ log = logging.getLogger("wearless.editor_image_job")
 
 _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 _ASSET_FILE_RE = re.compile(r"/v1/assets/([^/]+)/file")
-_WORN_CUT_TYPES = ("styling", "horizon", "mirror")
+_WORN_CUT_TYPES = ("styling", "horizon")
 
 
 def _image_dims(data: bytes) -> tuple[int | None, int | None]:
@@ -149,12 +148,18 @@ async def run_editor_image_job(app, job: dict) -> None:
     payload = job.get("payload") or {}
     original_payload = payload
     mode = payload.get("mode")
-    if mode == "new":
+    requested_spec = payload if mode == "new" else payload.get("source") or {}
+    requested_cut_type = (
+        requested_spec.get("cutType") or requested_spec.get("cut_type")
+        if isinstance(requested_spec, dict) else None
+    )
+    unsupported_cut_type = bool(requested_cut_type and requested_cut_type not in cut_generator.CUT_TYPES)
+    if mode == "new" and not unsupported_cut_type:
         payload = content_roles.canonicalize_storyboard_block(payload)
     # holder(opendid)는 scale-to-zero 다. 실존 모델 잡은 verify_license 로 반드시 holder 를
     # 부르므로, 커넥션을 잡기 **전에** 깨우고 콜드스타트(~2분)를 여기서 흡수한다. 못 깨워도
     # 진행은 한다 — 게이트가 fail-closed 로 막고 그 실패가 잡 실패로 남는다.
-    if facemarket.is_real_model_id(
+    if not unsupported_cut_type and facemarket.is_real_model_id(
         (payload.get("_facemarket") or {}).get("modelId")
         if isinstance(payload.get("_facemarket"), dict) else None
     ):
@@ -162,7 +167,6 @@ async def run_editor_image_job(app, job: dict) -> None:
 
     example_warnings: list[dict] = []
     scene_qc_attempts: int | None = None  # bg 장소일치 QC 통과까지의 시도 수(관찰용, new 모드 bg만)
-    garment_qc_metadata: dict | None = None  # new 모드만; vary 경로는 QC·메타 모두 무변경
     cut_qc_metadata: dict | None = None  # new 모드 shadow 관측 결과; 생성 선택에는 영향 없음
     neck_repair_metadata: dict | None = None
     detail_recipe_metadata: dict | None = None
@@ -228,6 +232,9 @@ async def run_editor_image_job(app, job: dict) -> None:
     try:
         written_key: str | None = None
         written_cleanup_intent_id: str | None = None
+        if unsupported_cut_type:
+            await _fail("지원하지 않는 컷 종류예요.", {"error": "unknown_cut_type"}, code="unknown_cut_type")
+            return
         image: bytes
         mime: str
         group: str | None
@@ -295,13 +302,21 @@ async def run_editor_image_job(app, job: dict) -> None:
             # 선택한 원본의 설정은 공용 조회로 찾고, 의류 색 그룹은 원장 값을 그대로 잇는다.
             generation_source_asset_id = (
                 similar_envelope["sourceAssetId"] if similar_envelope else asset_id)
+            recipe_asset_ids = [generation_source_asset_id]
+            if (similar_envelope and similar_envelope["rootAssetId"] != generation_source_asset_id
+                    and not source_metadata.get("cut_type")):
+                recipe_asset_ids.append(similar_envelope["rootAssetId"])
             async with pool.connection() as conn:
                 source_recipes = await asset_recipe.resolve_asset_recipes(
-                    conn, user_id, project_id, [generation_source_asset_id])
+                    conn, user_id, project_id, recipe_asset_ids)
                 if similar_envelope or edit_mode:
                     source_wardrobe = await repo.list_wardrobe_images(conn, user_id, project_id)
                     group = next((row.get("color_id") for row in source_wardrobe
                                   if str(row.get("asset_id")) == generation_source_asset_id), None)
+            if any((record.get("cutType") and record["cutType"] not in cut_generator.CUT_TYPES)
+                   for record in source_recipes.values()):
+                await _fail("지원하지 않는 컷 종류예요.", {"error": "unknown_cut_type"}, code="unknown_cut_type")
+                return
             generation_recipe = asset_recipe.project_recipe(
                 (source_recipes.get(generation_source_asset_id) or {}).get("recipe"))
             target_img = None
@@ -577,7 +592,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                     await _fail("기준 색상 이미지를 찾을 수 없어요. 다시 시도해 주세요.",
                                 {"error": "no_base_color_images"})
                 return
-            # 컷 계약 필드 통과(ADR-0004) — mirror·얼굴·포즈·생성예시까지 서버 정규화에 맡긴다.
+            # 컷 계약 필드 통과(ADR-0004), 얼굴·포즈·생성예시까지 서버 정규화에 맡긴다.
             # 촬영 세트는 콘티보드 전용이며 에디터의 독립 새 이미지에는 그룹을 전달하지 않는다.
             # 매칭 의류는 저장 block payload의 선택을 그대로 승계하되,
             # canonicalize_storyboard_block이 product 컷에서는 구조적으로 비운다.
@@ -1073,8 +1088,8 @@ async def run_editor_image_job(app, job: dict) -> None:
             # 값이 없으면 키 자체를 넣지 않는다 — 기존 프롬프트·기존 목(mock) 시그니처를 깨지 않는다.
             # 얼굴 패스 결과(applied / skipped:<reason> / fallback:<reason>)를 받아 자산 메타와 이벤트에 남긴다.
             face_pass_outcome: dict = {}
-            # 이미지 → 그 이미지를 만든 호출의 face_pass 결과(상세페이지 워커와 같은 규칙). 후보(best_of)가
-            # 있으면 마지막 호출이 앞선 결과를 덮어써 원장의 face_pass 가 채택본의 것이 아니게 된다.
+            # 이미지마다 그 이미지를 만든 호출의 face_pass 결과를 보존한다.
+            # 장소 재시도와 목선 수정 후에도 채택본에 맞는 결과를 원장에 남긴다.
             outcome_by_image: dict[str, dict] = {}
 
             def _remember_outcome(data: bytes) -> None:
@@ -1139,7 +1154,6 @@ async def run_editor_image_job(app, job: dict) -> None:
                 await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
                 return
 
-            scene_plate = None
             # bg 편집 컷 — 장소일치 QC 게이트(2026-07-20): 생성은 샘플링이라 편집 프레이밍을
             # 줘도 확률적으로 다른 장소가 나온다. 플레이트(첫 첨부)와 대조해 불일치면 재생성,
             # 상한 초과면 실패 종결(부분 성공 아님 — 에디터는 단건). QC 판정 불능은 fail-open.
@@ -1178,47 +1192,10 @@ async def run_editor_image_job(app, job: dict) -> None:
                         return
                 scene_qc_attempts = attempt
 
-            async def _generate_candidate():
-                candidate_image, candidate_mime = await cut_generator.generate(
-                    cut_generation_settings, app.state.gemini, cut_spec, product, images,
-                    **generate_kwargs)
-                _remember_outcome(candidate_image)
-                if scene_plate is None:
-                    return InlineImage(candidate_mime, candidate_image)
-
-                candidate_attempt = 1
-                while True:
-                    try:
-                        scene_qc = await image_qc.scene_verdict(
-                            s, scene_plate, InlineImage(candidate_mime, candidate_image))
-                    except VisionError as e:
-                        log.warning(
-                            "AG-06 candidate scene QC unavailable job %s: %r — fail-open",
-                            job_id, e)
-                        example_warnings.append({"code": "scene_qc_unavailable"})
-                        break
-                    if scene_qc["verdict"] == "pass":
-                        break
-                    if candidate_attempt >= max(1, s.bg_scene_qc_attempts):
-                        raise RuntimeError("bg candidate scene mismatch")
-                    candidate_attempt += 1
-                    candidate_image, candidate_mime = await cut_generator.generate(
-                        cut_generation_settings, app.state.gemini, cut_spec, product, images,
-                        **generate_kwargs)
-                    _remember_outcome(candidate_image)
-                return InlineImage(candidate_mime, candidate_image)
-
-            chosen, garment_qc_metadata, garment_warnings = await image_qc.best_of(
-                s,
-                product_images,
-                InlineImage(mime, image),
-                _generate_candidate,
-            )
-            image, mime = chosen.data, chosen.mime
+            chosen = InlineImage(mime, image)
             # 원장·자산 메타의 face_pass = 채택본을 만든 호출의 결과.
             face_pass_outcome.clear()
             face_pass_outcome.update(outcome_by_image.get(hashlib.sha256(image).hexdigest(), {}))
-            example_warnings.extend(garment_warnings)
             # repair는 PL-4 콘티 블록 전용이다. 같은 전역 설정을 쓰는 에디터 단건 경로는
             # 기존 shadow 관측을 유지하되 자동 2차 생성은 하지 않는다.
             if s.cut_output_qc_mode in {"shadow", "repair"}:
@@ -1361,8 +1338,6 @@ async def run_editor_image_job(app, job: dict) -> None:
             success_metadata["signatureBackground"] = signature_decision
         if scene_qc_attempts is not None:
             success_metadata["sceneQc"] = {"attempts": scene_qc_attempts}
-        if garment_qc_metadata is not None:
-            success_metadata["garmentQc"] = garment_qc_metadata
         if cut_qc_metadata is not None:
             success_metadata["cutQc"] = cut_qc_metadata
         if example_warnings:

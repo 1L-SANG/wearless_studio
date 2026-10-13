@@ -111,11 +111,7 @@ def test_run_mannequin_adjust_job_drains_without_ai_and_releases_reserved(monkey
         captured.update(kw)
         return True
 
-    async def fail_if_called(*a, **kw):  # 생성·성공 경로가 호출되면 즉시 실패
-        raise AssertionError("deprecated drain must not call AI/finalize_success")
-
     monkeypatch.setattr(maj.repo, "finalize_mannequin_adjust_failure", fake_finalize_failure)
-    monkeypatch.setattr(maj.repo, "finalize_mannequin_adjust_success", fail_if_called, raising=False)
 
     asyncio.run(maj.run_mannequin_adjust_job(_app(_settings()), _job()))
 
@@ -123,4 +119,4 @@ def test_run_mannequin_adjust_job_drains_without_ai_and_releases_reserved(monkey
     assert captured["reserved"] == 1  # legacy 예약분 그대로 release 대상
     assert captured["job_id"] == "j1"
     # 생성 코드가 모듈에서 제거됐는지(무과금 생성 경로 원천 차단) 방어적으로 확인
-    assert not hasattr(maj, "mannequin_adjuster")
+    assert not hasattr(maj, "mannequin_fit_edit")

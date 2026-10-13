@@ -23,19 +23,16 @@ def _img():
 def test_config_image_qc_defaults_off():
     assert make_settings().image_qc == "off"
 
-def test_config_garment_qc_defaults_and_env(monkeypatch):
-    assert Settings.__dataclass_fields__["garment_qc_mode"].default == "bestof"
-    assert Settings.__dataclass_fields__["garment_qc_extra_candidates"].default == 2
 
-    monkeypatch.setenv("GARMENT_QC_MODE", "shadow")
+def test_retired_candidate_settings_and_picker_are_unavailable(monkeypatch):
+    monkeypatch.setenv("GARMENT_QC_MODE", "bestof")
     monkeypatch.setenv("GARMENT_QC_EXTRA_CANDIDATES", "4")
     settings = load_settings()
-    assert settings.garment_qc_mode == "shadow"
-    assert settings.garment_qc_extra_candidates == 4
-
-    monkeypatch.setenv("GARMENT_QC_MODE", "invalid")
-    assert load_settings().garment_qc_mode == "bestof"
-
+    for name in ("garment_qc_mode", "garment_qc_extra_candidates"):
+        assert name not in Settings.__dataclass_fields__
+        assert not hasattr(settings, name)
+    for name in ("best_of", "pick_best", "pick_schema", "validate_pick"):
+        assert not hasattr(iq, name)
 
 
 def test_qc_schema_shape():
@@ -45,7 +42,7 @@ def test_qc_schema_shape():
 
 
 def test_qc_schema_default_stays_three_fields():
-    """기본 스키마는 3필드 고정 — scene_verdict·best_of 가 공유하기 때문.
+    """기본 스키마는 3필드 고정 — scene_verdict 가 사용하기 때문.
 
     공간세트 scene QC 는 fail-closed(PR#62)라 스키마 오류가 경고 강등이 아니라 셀러 컷
     전멸로 이어진다. 점수 확장이 기본값으로 새면 그 경로가 같이 흔들린다.
@@ -237,7 +234,7 @@ def test_validate_scored_keeps_critical_errors_on_pass():
 
 
 def test_validate_default_shape_unchanged_for_shared_callers():
-    """기본 경로 반환 키는 3개 그대로 — scene/best_of 소비처가 키 추가를 전제하지 않는다."""
+    """기본 경로 반환 키는 3개 그대로 — scene 소비처가 키 추가를 전제하지 않는다."""
     out = iq.validate({"verdict": "retry", "mismatches": ["x"], "correctionPrompt": "y",
                        "product_fidelity": 50})
     assert set(out) == {"verdict", "mismatches", "correctionPrompt"}
@@ -356,7 +353,7 @@ def test_declared_fit_moves_the_judgment_from_photos_to_intent():
     # 선언이 없으면 블록 자체가 없다 — 멀쩡한 상품에 "핏이 달라도 된다"를 흘리면 안 된다.
     assert "DECLARED FIT" not in iq.build_prompt(2, scored=True)
     assert "DECLARED FIT" not in iq.build_prompt(2, scored=True, fit_profile={})
-    # scored 격리 — scene/best_of 가 쓰는 기본 경로는 바이트 단위로 불변이어야 한다.
+    # scored 격리 — scene QC가 쓰는 기본 경로는 바이트 단위로 불변이어야 한다.
     assert "DECLARED FIT" not in iq.build_prompt(2, fit_profile=_FIT_PROFILE)
 
 
@@ -396,42 +393,6 @@ def test_verdict_orchestrates(monkeypatch):
     assert out["verdict"] == "retry" and out["mismatches"] == ["색 다름"]
 
 
-def test_pick_schema_and_validate_are_bounded():
-    schema = iq.pick_schema(3)
-    assert schema["properties"]["chosenIndex"]["maximum"] == 2
-    assert iq.validate_pick({"chosenIndex": 2, "reason": " logo "}, 3) == {
-        "chosenIndex": 2, "reason": "logo",
-    }
-    assert iq.validate_pick({"chosenIndex": 3, "reason": "bad"}, 3)["chosenIndex"] == 0
-    assert iq.validate_pick({"chosenIndex": True, "reason": "bad"}, 3)["chosenIndex"] == 0
-
-
-def test_pick_best_orchestrates_product_then_candidates(monkeypatch):
-    product = InlineImage("image/png", b"PRODUCT")
-    candidates = [
-        InlineImage("image/png", b"C0"),
-        InlineImage("image/jpeg", b"C1"),
-    ]
-
-    async def fake_fallback(settings, prompt, images, schema, *, system_prompt=None, **kwargs):
-        assert kwargs == {"require_complete_envelope": True}
-        assert [image.data for image in images] == [b"PRODUCT", b"C0", b"C1"]
-        assert "FIRST 1 image" in prompt
-        assert "2 image(s) are generated candidates" in prompt
-        assert "${productCount}" not in prompt and "${candidateCount}" not in prompt
-        assert schema["properties"]["chosenIndex"]["maximum"] == 1
-        return {"chosenIndex": 1, "reason": "logo is closest"}, "gemini"
-
-    monkeypatch.setattr(iq, "analyze_with_fallback", fake_fallback)
-    out = run(iq.pick_best(
-        make_settings(gemini_api_key="x"),
-        [product],
-        candidates,
-    ))
-    assert out == {"chosenIndex": 1, "reason": "logo is closest"}
-
-
-
 # ---------- 매칭 하의(코디 바지) 정체성 — 같은 1콜 안 ----------
 
 def test_matching_schema_adds_fields_only_on_scored_and_matching():
@@ -445,7 +406,7 @@ def test_matching_schema_adds_fields_only_on_scored_and_matching():
     scored_only = iq.qc_schema(scored=True)
     assert "matching_fidelity" not in scored_only["properties"]
     assert "matching_critical_errors" not in scored_only["properties"]
-    # matching 만 켜도 scored 아니면 아무 것도 안 붙는다(scene/best_of 보호).
+    # matching 만 켜도 scored 아니면 아무 것도 안 붙는다(scene 보호).
     assert set(iq.qc_schema(matching=True)["properties"]) == {
         "verdict", "mismatches", "correctionPrompt"}
 
@@ -467,7 +428,7 @@ def test_matching_prompt_block_gated_on_matching():
     assert "NEVER critical errors" in p
     # 격리: matching 없는 scored 프롬프트엔 이 블록이 없어야 한다.
     assert "MATCHING BOTTOM" not in iq.build_prompt(2, scored=True)
-    # 미채점 경로(scene/best_of)는 더더욱 불변.
+    # 미채점 경로(scene)는 더더욱 불변.
     assert "MATCHING BOTTOM" not in iq.build_prompt(2)
 
 

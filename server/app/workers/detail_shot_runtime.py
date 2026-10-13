@@ -340,6 +340,6 @@ async def generate(app, job, spec, product, analysis, *, style_reference=None, f
         style_reference=style_reference, framing_source_index=framing_source_index)
     if cache_entry is not None:
         await cache_entry.save_final(result.data, result.mime, {
-            'garmentQc': None, 'cutQc': report, 'warnings': [], 'neckRepair': None, 'facePass': {},
+            'cutQc': report, 'warnings': [], 'neckRepair': None, 'facePass': {},
         })
     return result, report

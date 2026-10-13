@@ -68,7 +68,6 @@ _FINAL_RECIPE_SETTINGS = (
     "face_crop_pad",
     "face_mask_lock",
     "face_skin_negative_prompt",
-    "garment_qc_mode",
     "cut_output_qc_mode",
     "bg_scene_qc_attempts",
     "real_horizon_neck_repair_enabled",

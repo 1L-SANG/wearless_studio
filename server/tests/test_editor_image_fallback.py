@@ -56,7 +56,7 @@ def runtime(monkeypatch):
         "qc_fit": [],
     }
     app = fake_worker_app(make_settings(
-        garment_qc_mode="off", cut_output_qc_mode="shadow", r2_bucket="b"), r2=R2())
+        cut_output_qc_mode="shadow", r2_bucket="b"), r2=R2())
     app.state.pool = Pool()
     state["app"] = app
 
@@ -296,13 +296,14 @@ def test_identical_pose_direction_does_not_record_fallback(runtime, monkeypatch)
     assert "fallback" not in runtime["success"]["image"]["metadata"]
 
 
-def test_mirror_incompatible_pose_still_fails_with_retry_copy(runtime, monkeypatch):
+def test_retired_mirror_fails_before_generation_and_releases_credits(runtime, monkeypatch):
     monkeypatch.setattr(eij.cut_generator, "load_example_asset_registry", lambda: ("", {"example": {
         "cutType": "styling", "direction": "front", "pose": "published.png"}}))
     run(runtime, {"cutType": "mirror", "exampleId": "example", "refScope": "pose"})
     assert runtime["generations"] == []
-    assert runtime["failure"]["metadata"]["error"] == "pose_direction_incompatible"
-    assert runtime["failure"]["message"] == "이 예시로 만들지 못했어요. 잠시 후 다시 시도해 주세요."
+    assert runtime["failure"]["metadata"]["error"] == "unknown_cut_type"
+    assert runtime["failure"]["message"] == "지원하지 않는 컷 종류예요."
+    assert runtime["failure"]["reserved"] == 19
 
 
 @pytest.mark.parametrize("stage", ["normalize", "generate"])

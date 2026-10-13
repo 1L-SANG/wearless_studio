@@ -32,9 +32,20 @@ export const SECTION_TITLES = Object.freeze(Object.fromEntries(
 const CUT_TYPE_OPTIONS = Object.freeze([
   Object.freeze({ value: 'styling', label: '스타일링컷' }),
   Object.freeze({ value: 'horizon', label: '호리존컷' }),
-  Object.freeze({ value: 'mirror', label: '거울샷' }),
   Object.freeze({ value: 'product', label: '제품컷' }),
 ]);
+
+export const isSupportedCutType = (cutType) => CUT_TYPE_OPTIONS.some((option) => option.value === cutType);
+
+export function filterSupportedStoryboardBlocks(blocks) {
+  if (!Array.isArray(blocks)) return blocks;
+  const unsupported = (block) => block && block.source !== 'mine'
+    && block.cutType != null && !isSupportedCutType(block.cutType);
+  const ignored = blocks.filter(unsupported);
+  if (!ignored.length) return blocks;
+  const ignoredIds = new Set(ignored.map((block) => block.id).filter(Boolean));
+  return blocks.filter((block) => !unsupported(block) && !ignoredIds.has(block?.similarSourceBlockId));
+}
 
 const CUT_TYPE_OPTIONS_BY_SECTION = Object.freeze({
   [SECTION_ROLES.HOOKING]: CUT_TYPE_OPTIONS,
@@ -47,9 +58,8 @@ export const allowedCutTypeOptionsForSection = (sectionRole) => (
   CUT_TYPE_OPTIONS_BY_SECTION[sectionRole] || CUT_TYPE_OPTIONS
 );
 
-// 거울은 스타일링 갤러리의 예시로 고른다. 저장·이동·드래그 허용 규칙에는 계속 남긴다.
 export const cutTypeOptionsForSection = (sectionRole) => (
-  allowedCutTypeOptionsForSection(sectionRole).filter((option) => option.value !== 'mirror')
+  allowedCutTypeOptionsForSection(sectionRole)
 );
 
 // 섹션 개념이 없는 화면(에디터 '새 이미지 추가')용 — 섹션별 목록의 중복 없는 합집합.
@@ -63,7 +73,6 @@ export const CONTENT_ROLES = Object.freeze({
   BENEFIT: 'benefit',
   COORDINATION: 'coordination',
   FIT: 'fit',
-  REAL_WEAR: 'realWear',
   PRODUCT_OVERVIEW: 'productOverview',
   DETAIL: 'detail',
   CUSTOM: 'custom',
@@ -97,13 +106,6 @@ export const CONTENT_TEMPLATES = Object.freeze([
     description: '깨끗한 배경에서 옷의 핏과 실루엣을 확인해요.',
     sectionRole: SECTION_ROLES.STUDIO,
     cutType: 'horizon', direction: 'front', shot: 'full', faceExposure: 'same',
-  },
-  {
-    value: CONTENT_ROLES.REAL_WEAR,
-    label: '실제 착용 느낌',
-    description: '거울 앞에서 자연스럽게 입은 느낌을 보여줘요.',
-    sectionRole: SECTION_ROLES.STYLING,
-    cutType: 'mirror', direction: null, shot: 'full', faceExposure: 'hide',
   },
   {
     value: CONTENT_ROLES.PRODUCT_OVERVIEW,
@@ -140,7 +142,6 @@ const PRODUCT_OVERVIEW_SHOTS = new Set(['ghost']);
 const WORN_ROLE_BY_CUT_TYPE = Object.freeze({
   styling: CONTENT_ROLES.COORDINATION,
   horizon: CONTENT_ROLES.FIT,
-  mirror: CONTENT_ROLES.REAL_WEAR,
 });
 
 export const contentTemplate = (role) => TEMPLATE_BY_ROLE.get(role) || TEMPLATE_BY_ROLE.get(CONTENT_ROLES.CUSTOM);
@@ -162,7 +163,7 @@ const sideStyleOf = (source) => (
 /* 예시와 카드가 **같은 그림**(방향 가족)인가 — 정면 / 사선 / 옆모습 / 뒷면.
    side 는 direction 만으로 같은 그림이 아니다 — 사선과 90도 옆모습이 같은 'side' 다.
    갈라 보지 않으면 사선 카드가 완전 옆모습 사진의 포즈를 물려받는다.
-   방향이 없는 예시(direction=null — 제품·거울·옛 항목)는 어느 가족에도 안 속한다. */
+   방향이 없는 예시(direction=null — 제품·옛 항목)는 어느 가족에도 안 속한다. */
 export function exampleDirectionFamilyMatches(example, { direction, sideStyle = null }) {
   if (!example || !direction) return false;
   if (!['front', 'back', 'side'].includes(example.direction)) return false;
@@ -171,10 +172,7 @@ export function exampleDirectionFamilyMatches(example, { direction, sideStyle = 
 }
 
 export function poseExampleDirectionCompatible(example, { cutType, direction, sideStyle = null }) {
-  if (!example || !['styling', 'horizon', 'mirror'].includes(cutType)) return false;
-  if (cutType === 'mirror' || example.cutType === 'mirror') {
-    return cutType === 'mirror' && example.cutType === 'mirror';
-  }
+  if (!example || !['styling', 'horizon'].includes(cutType)) return false;
   if (!['styling', 'horizon'].includes(example.cutType)) return false;
   return exampleDirectionFamilyMatches(example, { direction, sideStyle });
 }
@@ -203,14 +201,13 @@ export function inferSectionRole(block) {
   }
   if (block?.cutType === 'product') return SECTION_ROLES.PRODUCT;
   if (block?.cutType === 'horizon') return SECTION_ROLES.STUDIO;
-  if (['styling', 'mirror'].includes(block?.cutType)) return SECTION_ROLES.STYLING;
+  if (block?.cutType === 'styling') return SECTION_ROLES.STYLING;
   return null;
 }
 
 export function inferContentRole(block) {
   if (isContentRole(block?.contentRole)) return block.contentRole;
   if (block?.source === 'mine') return CONTENT_ROLES.CUSTOM;
-  if (block?.cutType === 'mirror') return CONTENT_ROLES.REAL_WEAR;
   if (block?.cutType === 'product') return block?.shot === 'detail'
     ? CONTENT_ROLES.DETAIL : CONTENT_ROLES.PRODUCT_OVERVIEW;
   if (block?.cutType === 'horizon') return CONTENT_ROLES.FIT;
@@ -226,7 +223,7 @@ export function blockPatchForContentRole(block, role, { clothingType = 'top' } =
       ...(block ? { thumb: block.baseThumb || block.thumb, baseThumb: null } : {}),
     };
   }
-  const worn = template.cutType === 'styling' || template.cutType === 'horizon' || template.cutType === 'mirror';
+  const worn = template.cutType === 'styling' || template.cutType === 'horizon';
   return {
     source: 'ai',
     contentRole: template.value,
@@ -256,10 +253,10 @@ export function normalizedRecipePatch(block, role) {
   const sectionRole = inferSectionRole(block);
   let nextRole = isContentRole(role) ? role : inferContentRole(block);
   if (sectionRole === SECTION_ROLES.STYLING) {
-    nextRole = block?.cutType === 'mirror' ? CONTENT_ROLES.REAL_WEAR : CONTENT_ROLES.COORDINATION;
+    nextRole = CONTENT_ROLES.COORDINATION;
   } else if (sectionRole === SECTION_ROLES.STUDIO) {
     nextRole = CONTENT_ROLES.FIT;
-  } else if ([CONTENT_ROLES.COORDINATION, CONTENT_ROLES.FIT, CONTENT_ROLES.REAL_WEAR].includes(nextRole)
+  } else if ([CONTENT_ROLES.COORDINATION, CONTENT_ROLES.FIT].includes(nextRole)
     && WORN_ROLE_BY_CUT_TYPE[block?.cutType]) {
     nextRole = WORN_ROLE_BY_CUT_TYPE[block.cutType];
   }
@@ -269,12 +266,6 @@ export function normalizedRecipePatch(block, role) {
   }
   const template = contentTemplate(nextRole);
   if (!template.cutType) {
-    if (block?.cutType === 'mirror') {
-      return {
-        contentRole: nextRole, title: template.label, cutType: 'mirror', direction: null,
-        shot: WORN_SHOTS.has(block?.shot) ? block.shot : 'full',
-      };
-    }
     if (block?.cutType === 'styling' || block?.cutType === 'horizon') {
       return {
         contentRole: nextRole, title: template.label, cutType: block.cutType,
@@ -290,10 +281,7 @@ export function normalizedRecipePatch(block, role) {
     ? block.cutType : template.cutType;
   let direction = template.direction;
   let shot = template.shot;
-  if (cutType === 'mirror') {
-    direction = null;
-    if (WORN_SHOTS.has(block?.shot)) shot = block.shot;
-  } else if (cutType === 'product') {
+  if (cutType === 'product') {
     if (PRODUCT_DIRECTIONS.has(block?.direction)) direction = block.direction;
     if (nextRole === CONTENT_ROLES.DETAIL) shot = 'detail';
     else if (block?.shot === 'flatlay') shot = 'ghost';
@@ -309,8 +297,6 @@ export function normalizedRecipePatch(block, role) {
     cutType,
     direction,
     shot,
-    ...(cutType === 'mirror' && !['show', 'hide'].includes(block?.faceExposure)
-      ? { faceExposure: 'hide' } : {}),
     ...(['styling', 'horizon'].includes(cutType)
       && !['same', 'show', 'hide'].includes(block?.faceExposure)
       ? { faceExposure: 'same' } : {}),
@@ -325,9 +311,10 @@ export function normalizedRecipePatch(block, role) {
    조건이 어긋나므로 선택을 해제하고, 예시 적용 전 썸네일이 있으면 복원한다. */
 export function assignInternalContentRoles(blocks) {
   if (!Array.isArray(blocks)) return blocks;
+  const supportedBlocks = filterSupportedStoryboardBlocks(blocks);
   let heroAssigned = false;
-  let changed = false;
-  const next = blocks.map((block) => {
+  let changed = supportedBlocks !== blocks;
+  const next = supportedBlocks.map((block) => {
     if (!block || block.source === 'mine') return block;
 
     const sectionRole = inferSectionRole(block) || SECTION_ROLES.HOOKING;

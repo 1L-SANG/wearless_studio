@@ -1,7 +1,7 @@
-"""편집 기반 마네킹컷 조정 — 프롬프트 조립 (순수 코어, 2026-07-31 설계).
+"""fitProfile 기반 마네킹컷 편집 — 프롬프트 조립 (순수 코어, 2026-07-31 설계).
 
 조정(:regenerate)을 "베이스에서 재생성"이 아니라 "현재 컷 편집"으로 수행하기 위한
-프롬프트 빌더. v1은 폐기된 AG-05 유물이라 v2로 분리. 지시문은 fit_axes 고정 문구만 사용(셀러 텍스트 비주입), 의류 단위
+프롬프트 빌더. 지시문은 fit_axes 고정 문구만 사용(셀러 텍스트 비주입), 의류 단위
 스코프(MAIN PRODUCT, MATCHING TOP, MATCHING BOTTOM)를 명시해 지시 밖 의류 변경을 금지한다.
 모델은 조정 전용 tier(기본 image_mannequin)를 사용한다.
 """
@@ -11,7 +11,7 @@ import os
 from .fit_axes import AXIS_OBSERVABLES, FIT_AXES, _axis_entry
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
-_PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "mannequin_adjust_v2.txt")
+_PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "mannequin_fit_edit_v2.txt")
 
 ADJUST_PROMPT_VERSION = "adjust_v2"
 

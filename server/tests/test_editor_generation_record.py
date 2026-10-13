@@ -64,7 +64,7 @@ def recording_runtime(monkeypatch):
     monkeypatch.setattr(worker, "_emit", AsyncMock())
     if hasattr(worker, "asset_recipe"):
         monkeypatch.setattr(worker.asset_recipe, "resolve_asset_recipes", recipes)
-    state["app"] = fake_worker_app(make_settings(garment_qc_mode="off", cut_output_qc_mode="off"))
+    state["app"] = fake_worker_app(make_settings(cut_output_qc_mode="off"))
     return state
 
 
