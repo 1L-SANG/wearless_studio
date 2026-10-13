@@ -14,11 +14,12 @@
 - Rename the wardrobe tool to 보관함. Do not add explanatory text below its title or other headings. Keep existing upload/group UI.
 - Selecting one canvas photo and clicking a library photo replaces its source while preserving its frame. With no selected photo, use existing insertion. No extra replace/add buttons or selected-library-photo marker.
 - Put original-photo download and crop in the existing left image inspector. No floating photo toolbar. Add a modest inspector shadow and preserve established controls/copy.
-- Double-click opens inline crop. Interior drag moves the retained range; Shift-drag moves the underlying image. All four edges and eight handles work. In-canvas controls follow the approved mock: 자유/1:1/4:5 and a 100–200% zoom slider. Outside click commits; Enter/apply also commits; Esc/cancel discards; one Undo restores a commit.
+- Double-click opens inline crop. Interior drag moves the retained range; Shift-drag moves the underlying image. All four edges and eight handles work. In-canvas controls: 자유/1:1/3:4/4:5/16:9 and a 100–200% zoom slider (two additional ratios approved in the 2026-10-14 follow-up). Outside click commits; Enter/apply also commits; Esc/cancel discards; one Undo restores a commit.
 - Drag alignment shows short numeric gaps and equal spacing; Alt temporarily bypasses snapping. No target-name labels or demo buttons.
 - Only a photo-body move may cross blocks after a deliberate drop well inside another block. Resize/rotate/crop never transfer. No move/Undo floating buttons. Preserve source block, photo appearance, target contents and global history. Do not transfer while detail-page generation is running.
 - During a cross-block photo move, show a thin black destination border, 1.5 screen pixels at all canvas zoom levels. Preserve that marker in the existing 이어보기 mode without adding a card shadow there.
-- Automatic edge scrolling was not agreed and remains excluded pending the owner's answer. Manual scroll displacement compensation remains part of correct photo movement.
+- Automatic edge scrolling is now approved for a single eligible photo-body drag only: near the canvas viewport's top/bottom, continue scrolling while held; stop away from the edge, outside the viewport, at the scroll boundary, or on drop/cancel/blur/unmount. Resize/crop/text/shape paths remain unchanged. Manual scroll displacement compensation remains part of correct photo movement.
+- Remove only the existing normal AI panel title 새 이미지 만들기 beneath the toolbar's AI heading, per explicit follow-up confirmation. Keep generation controls and pending-request confirmation/safety messages.
 - No actual generation, purchase, deployment, push or PR creation in this request.
 
 ## Review focus
@@ -61,3 +62,10 @@
 - Scope regression tests observed RED on the previous implementation, then GREEN after correction. Focused suite: 89/89 passed. Full suite: 3505 tests, 3045 passed, 459 failed, 1 skipped; failure-name set unchanged from the previous final run. New logs: `scope-focused-tests.log`, `scope-full-tests.log`.
 - Actual Editor mock build passed (`scope-qa-build.log`). Chrome checked the three crop choices, zoom via keyboard, photo body transfer preserving size and Undo restoring its original block. Product CSS marker fixture checked 40%, 100%, 160% and 이어보기: black token and 1.5 screen-pixel inset at each scale. The fixture is style evidence, not a held-pointer screenshot of the real editor.
 - Independent 6.1 Sol read-only scope audit and correction re-review found no further important reachable issues or new user-facing features. No deployment or remote writes.
+
+### 2026-10-14 follow-up approval
+
+- Owner approved 3:4/16:9 and photo-body edge scrolling after their behavior was explained, then confirmed removal of the existing 새 이미지 만들기 title. No other user-facing feature changed.
+- RED→GREEN observed for missing ratio choices, scrolling side effects, and duplicate AI panel heading. Related tests: 106/106 passed. Complete frontend run: 3517 tests, 3057 passed, 459 existing failures, 1 skipped; failure-name set unchanged. An initial extra failure was an obsolete title expectation in example-owned-pose-direction.test.mjs; updated that expectation to the remaining cut/generation controls, reproduced, and reran the full suite. Existing Windows-path failures remain untouched.
+- Actual Editor mock build passed, 10.36 seconds. Chrome verified 3:4 and 16:9 frame geometry, normal AI title absence, photo body edge drag scrolling 0→12px with size preserved, stop after release, and Undo restoring the source block. Continuous held scrolling is covered by real-handler frame-loop tests, not a long held-pointer browser performance test. Resize/crop exclusions are checked by separate source paths plus existing photo interaction coverage.
+- Independent 6.1 Sol read-only review found no Critical/Important issues. Evidence: .scratch/editor-photo-ux/approved-additions-*.log and approved-additions-ai.png. No paid generation, push, PR or deployment.

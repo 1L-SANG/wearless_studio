@@ -899,7 +899,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
       {crop && (
         <div className="crop-bar" style={{ left: crop.fx, top: crop.fy + crop.fh }} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
           <label className="crop-ratio">비율<select aria-label="자르기 비율" value={crop.ratio || ''} onChange={e => onCropRatio(Number(e.target.value))}>
-            <option value="">자유</option><option value="1">1:1</option><option value="0.8">4:5</option>
+            <option value="">자유</option><option value="1">1:1</option><option value="0.75">3:4</option><option value="0.8">4:5</option><option value="1.7777777777777777">16:9</option>
           </select></label>
           <label className="crop-ratio crop-zoom">확대
             <input type="range" min="100" max="200" step="5" aria-label="자르기 확대율"
@@ -3109,6 +3109,8 @@ export function Editor() {
     let latest = null;
     let latestTransfer = null;
     let photoGhost = null;
+    let scrollFrame = null;
+    let lastPointer = null;
     const photo = selected.length === 1 && selected[0].type === 'image' && selected[0].src
       && !selected[0].groupId && !selected[0].system && !selected[0].genPending && !genActive ? selected[0] : null;
     const clearTransferHint = () => wrapRef.current?.querySelectorAll('.photo-move-target').forEach(node => node.classList.remove('photo-move-target'));
@@ -3128,6 +3130,7 @@ export function Editor() {
         document.body.style.userSelect = 'none';
       }
       pointerEvent.preventDefault();
+      lastPointer = pointerEvent;
       const currentBlockRect = blockNode?.querySelector('.block-clip')?.getBoundingClientRect() || blockRect;
       // Include scroll displacement, so a held photo remains under the pointer.
       const rawDelta = [(clientDx + blockRect.left - currentBlockRect.left) / zoom,
@@ -3200,6 +3203,19 @@ export function Editor() {
       // 직접 선택 요소를 잡아 끄는 경로는 Moveable 이벤트를 거치지 않는다. DOM 요소만
       // 이동시키면 바깥 그룹 박스가 출발점에 남으므로, 같은 프레임에 함께 갱신한다.
       syncPointerGroupSelectionBounds();
+      if (photo && scrollFrame == null) scrollFrame = window.requestAnimationFrame(autoScroll);
+    };
+    const autoScroll = () => {
+      scrollFrame = null;
+      if (!photo || !active || !lastPointer) return;
+      const wrap = wrapRef.current, bounds = wrap?.getBoundingClientRect();
+      if (!bounds || lastPointer.clientX < bounds.left || lastPointer.clientX > bounds.right
+        || lastPointer.clientY < bounds.top || lastPointer.clientY > bounds.bottom) return;
+      const step = lastPointer.clientY > bounds.bottom - 36 ? 12 : lastPointer.clientY < bounds.top + 36 ? -12 : 0;
+      if (!step) return;
+      const previous = wrap.scrollTop;
+      wrap.scrollTop += step;
+      if (wrap.scrollTop !== previous) move(lastPointer);
     };
     const cleanup = () => {
       window.removeEventListener('pointermove', move);
@@ -3210,6 +3226,8 @@ export function Editor() {
         if (pointerTarget?.hasPointerCapture?.(pointerId)) pointerTarget.releasePointerCapture(pointerId);
       } catch { /* detached pointer target */ }
       document.body.style.userSelect = previousUserSelect;
+      if (scrollFrame != null) window.cancelAnimationFrame(scrollFrame);
+      scrollFrame = null; lastPointer = null;
       photoGhost?.remove(); photoGhost = null; clearTransferHint();
       if (photo) nodes[photo.id].style.opacity = photo.opacity ?? 1;
       gesturing.current = false; setCanvasGesture(false);

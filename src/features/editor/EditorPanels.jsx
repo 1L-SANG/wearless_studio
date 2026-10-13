@@ -394,7 +394,6 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
   }
   return (
     <div>
-      <PanelHead title="새 이미지 만들기" />
       {/* 콘티보드와 같은 첫 선택 — 컷 종류(촬영 방식). 사진 목적은 inferContentRole 로 내부 결정 */}
       <div className="insp-sec"><label className="lbl">컷 종류</label>
         <UnderlineTabs options={cutTypeOptions} value={cutType} onChange={selectCutType} />
