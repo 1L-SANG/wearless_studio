@@ -14,9 +14,11 @@
 - Rename the wardrobe tool to 보관함. Do not add explanatory text below its title or other headings. Keep existing upload/group UI.
 - Selecting one canvas photo and clicking a library photo replaces its source while preserving its frame. With no selected photo, use existing insertion. No extra replace/add buttons or selected-library-photo marker.
 - Put original-photo download and crop in the existing left image inspector. No floating photo toolbar. Add a modest inspector shadow and preserve established controls/copy.
-- Double-click opens inline crop. Interior drag moves the retained range; Shift-drag moves the underlying image. All four edges and eight handles work. Add in-canvas ratio and zoom controls. Outside click commits; Enter/apply also commits; Esc/cancel discards; one Undo restores a commit.
+- Double-click opens inline crop. Interior drag moves the retained range; Shift-drag moves the underlying image. All four edges and eight handles work. In-canvas controls follow the approved mock: 자유/1:1/4:5 and a 100–200% zoom slider. Outside click commits; Enter/apply also commits; Esc/cancel discards; one Undo restores a commit.
 - Drag alignment shows short numeric gaps and equal spacing; Alt temporarily bypasses snapping. No target-name labels or demo buttons.
 - Only a photo-body move may cross blocks after a deliberate drop well inside another block. Resize/rotate/crop never transfer. No move/Undo floating buttons. Preserve source block, photo appearance, target contents and global history. Do not transfer while detail-page generation is running.
+- During a cross-block photo move, show a thin black destination border, 1.5 screen pixels at all canvas zoom levels. Preserve that marker in the existing 이어보기 mode without adding a card shadow there.
+- Automatic edge scrolling was not agreed and remains excluded pending the owner's answer. Manual scroll displacement compensation remains part of correct photo movement.
 - No actual generation, purchase, deployment, push or PR creation in this request.
 
 ## Review focus
@@ -52,3 +54,10 @@
 - Independent review: frame-slot form bindings and crop/history boundaries fixed and re-reviewed. Browser QA found unchanged dimension-field blur could create duplicate history; regression RED→GREEN, live reproduction then passed.
 - Ruling: keep the existing information-block rebuild policy and warning. Updating that form may replace manual added/moved photos; changing this policy is outside this photo-interaction task.
 - Full evidence and named pre-existing failure inventory: `.scratch/editor-photo-ux/verification.md`. Real Editor mock remains at `http://127.0.0.1:5196/`. No real generation, push, merge, PR or deployment.
+
+### 2026-10-14 owner scope correction
+
+- The owner requested a thinner black destination marker and an audit removing unagreed additions. Removed automatic edge scrolling and the extra 3:4/16:9 crop choices; replaced the implementation's +/- zoom buttons with the approved mock's slider. Alt bypass, Shift pan and zoom were present in the approved mock, so they remain.
+- Scope regression tests observed RED on the previous implementation, then GREEN after correction. Focused suite: 89/89 passed. Full suite: 3505 tests, 3045 passed, 459 failed, 1 skipped; failure-name set unchanged from the previous final run. New logs: `scope-focused-tests.log`, `scope-full-tests.log`.
+- Actual Editor mock build passed (`scope-qa-build.log`). Chrome checked the three crop choices, zoom via keyboard, photo body transfer preserving size and Undo restoring its original block. Product CSS marker fixture checked 40%, 100%, 160% and 이어보기: black token and 1.5 screen-pixel inset at each scale. The fixture is style evidence, not a held-pointer screenshot of the real editor.
+- Independent 6.1 Sol read-only scope audit and correction re-review found no further important reachable issues or new user-facing features. No deployment or remote writes.
