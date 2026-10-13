@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateCanvasAiPlacement } from '../../src/features/editor/canvasAiPlacement.js';
+import * as placementRules from '../../src/features/editor/canvasAiPlacement.js';
+const { calculateCanvasAiPlacement } = placementRules;
 import { buildCanvasAiMenu, buildCanvasAiRequest, canvasAiKind, canvasAiRo } from '../../src/features/editor/canvasAiActions.js';
 import { canReplaceCanvasAiResult, createCanvasAiJobController } from '../../src/features/editor/canvasAiJobs.js';
 import { canvasAiHookHarness, editorCanvasAiHandlers } from './helpers/editorCanvasAiHarness.mjs';
@@ -8,14 +9,13 @@ import { canvasAiHookHarness, editorCanvasAiHandlers } from './helpers/editorCan
 const rect = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height });
 const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 0.000001, `${actual} != ${expected}`);
 const triggerWidth = 107; // 3px + 40px orb hit + 4px gap + 44px label + 16px tail.
-const labelWidth = 44;
 
 // These literal screen anchors catch photo-relative positioning and scale-dependent drift.
 for (const row of [
   { width: 1440, scale: 0.4, canvasWidth: 832, blockLeft: 536, orbLeft: 417, orbTop: 156, fixed: false },
   { width: 1440, scale: 0.6, canvasWidth: 832, blockLeft: 436, orbLeft: 336, orbTop: 76, fixed: true },
   { width: 1440, scale: 1, canvasWidth: 832, blockLeft: 236, orbLeft: 336, orbTop: 76, fixed: true },
-  { width: 1280, scale: 0.4, canvasWidth: 752, blockLeft: 496, orbLeft: 438, orbTop: 156, fixed: false },
+  { width: 1280, scale: 0.4, canvasWidth: 752, blockLeft: 496, orbLeft: 377, orbTop: 156, fixed: false },
   { width: 1280, scale: 0.6, canvasWidth: 752, blockLeft: 396, orbLeft: 336, orbTop: 76, fixed: true },
   { width: 1280, scale: 1, canvasWidth: 752, blockLeft: 196, orbLeft: 336, orbTop: 76, fixed: true },
 ]) {
@@ -25,7 +25,7 @@ for (const row of [
     for (const elementRect of [rect(row.blockLeft + 510 * row.scale, 176, 430 * row.scale, 640 * row.scale),
       rect(row.blockLeft + 360 * row.scale, 176, 280 * row.scale, 420 * row.scale),
       rect(row.blockLeft + 510 * row.scale, 422, 430 * row.scale, 640 * row.scale)]) {
-      const placement = calculateCanvasAiPlacement({ blockRect, elementRect, viewportRect, scale: row.scale, triggerWidth, labelWidth, menuHeight: 120, resultHeight: 200 });
+      const placement = calculateCanvasAiPlacement({ blockRect, elementRect, viewportRect, scale: row.scale, triggerWidth, menuHeight: 120, resultHeight: 200 });
       assert.equal(placement.fixed, row.fixed);
       close(blockRect.right - placement.right * row.scale - placement.triggerWidth, row.orbLeft);
       close(blockRect.top + placement.top * row.scale, !row.fixed && elementRect.top === 422 ? 402 : row.orbTop);
@@ -56,77 +56,113 @@ test('orb clamps vertically at the viewport edges while retaining the left block
 });
 
 for (const row of [
-  { margin: 250, showLabel: true, fixed: false, width: 107, center: 154, readWidth: 124 },
-  { margin: 176, showLabel: false, fixed: false, width: 46, center: 141, readWidth: 111 },
-  { margin: 150, showLabel: false, fixed: true, width: 46, center: 39, readWidth: 757 },
-  { margin: 208, showLabel: true, fixed: false, width: 107, center: 112, readWidth: 82 },
-  { margin: 207, showLabel: false, fixed: false, width: 46, center: 172, readWidth: 142 },
-  { margin: 156, showLabel: false, fixed: false, width: 46, center: 121, readWidth: 91 },
-  { margin: 155, showLabel: false, fixed: true, width: 46, center: 39, readWidth: 757 },
+  { margin: 250, fixed: false, left: 451, edge: 558 },
+  { margin: 176, fixed: false, left: 377, edge: 484 },
+  { margin: 150, fixed: true, left: 336, edge: 443 },
+  { margin: 156, fixed: false, left: 357, edge: 464 },
+  { margin: 155, fixed: true, left: 336, edge: 443 },
 ]) {
-  test(`${row.margin}px margin chooses the label and fixed placement independently`, () => {
+  test(`${row.margin}px margin keeps the full capsule and the 156px fixed threshold`, () => {
     const blockRect = rect(320 + row.margin, 140, 400, 568);
     const placement = calculateCanvasAiPlacement({ blockRect, elementRect: rect(780, 166, 172, 258),
-      viewportRect: rect(320, 60, 832, 740), scale: 0.4, triggerWidth, labelWidth, menuHeight: 120, resultHeight: 200 });
+      viewportRect: rect(320, 60, 832, 740), scale: 0.4, triggerWidth, menuHeight: 120, resultHeight: 200 });
     assert.equal(placement.fixed, row.fixed);
-    assert.equal(placement.showLabel, row.showLabel);
-    assert.equal(placement.triggerWidth, row.width);
+    assert.equal(placement.triggerWidth, 107);
     const edge = blockRect.right - placement.right * 0.4;
-    close(edge - row.width + 23, 320 + row.center);
-    close(placement.readWidth, row.readWidth);
-    assert.ok(placement.readWidth >= 0);
+    close(edge, row.edge);
+    close(edge - placement.triggerWidth, row.left);
+    assert.ok(placement.triggerWidth + 12 <= 156);
     if (!row.fixed) {
       close(edge, blockRect.left - 12);
       close(blockRect.right - placement.resultRight * 0.4, edge);
-      close(edge - row.width - 5 - placement.readWidth, 322); // viewport.left + 2px.
     }
   });
 }
 
-test('fixed placement includes capsule padding and keeps the orb height and centered result', () => {
+test('fixed placement uses the whole capsule and keeps the centered result', () => {
   const viewportRect = rect(320, 60, 832, 740);
-  const fixed = calculateCanvasAiPlacement({ blockRect: rect(470, 140, 400, 568), elementRect: rect(780, 650, 172, 258), viewportRect, scale: 0.4, triggerWidth, labelWidth, menuHeight: 120, resultHeight: 200 });
+  const fixed = calculateCanvasAiPlacement({ blockRect: rect(470, 140, 400, 568), elementRect: rect(780, 650, 172, 258), viewportRect, scale: 0.4, triggerWidth, menuHeight: 120, resultHeight: 200 });
   assert.equal(fixed.fixed, true);
-  close(870 - fixed.right * 0.4 - 46, 336);
+  close(870 - fixed.right * 0.4 - 107, 336);
   close(140 + fixed.top * 0.4, 76);
   close(870 - fixed.resultRight * 0.4 - 150, 661);
   close(140 + fixed.resultTop * 0.4, 330);
-  assert.equal(fixed.tooltipSide, 'right');
-  close(fixed.readWidth, 757);
 });
 
-test('the measured capsule including padding, menu and result retain the block edge', () => {
+test('the measured capsule, menu and result retain the block edge at every font width', () => {
   const blockRect = rect(576, 120, 400, 614), viewportRect = rect(320, 60, 832, 840);
   for (const row of [
-    { width: 95, labelWidth: 32, center: 492, readWidth: 142 },
-    { width: 107, labelWidth: 44, center: 480, readWidth: 130 },
-    { width: 123, labelWidth: 60, center: 464, readWidth: 114 },
-    { width: 110, labelWidth: 44, center: 477, readWidth: 127 },
+    { width: 95, left: 469 },
+    { width: 107, left: 457 },
+    { width: 123, left: 441 },
+    { width: 110, left: 454 },
   ]) {
-    const placement = calculateCanvasAiPlacement({ blockRect, viewportRect, elementRect: rect(780, 422, 172, 258), scale: 0.4, triggerWidth: row.width, labelWidth: row.labelWidth, menuHeight: 160, resultHeight: 200 });
+    const placement = calculateCanvasAiPlacement({ blockRect, viewportRect, elementRect: rect(780, 422, 172, 258), scale: 0.4, triggerWidth: row.width, menuHeight: 160, resultHeight: 200 });
     const edge = blockRect.right - placement.right * 0.4;
     close(edge, 564);
     close(blockRect.right - placement.resultRight * 0.4, 564);
-    close(edge - placement.triggerWidth + 23, row.center);
-    close(placement.readWidth, row.readWidth);
+    close(edge - placement.triggerWidth, row.left);
     assert.equal(placement.fixed, false);
-    assert.equal(placement.tooltipSide, 'left');
+    assert.ok(placement.triggerWidth + 12 <= 156);
   }
 });
 
-test('fixed trigger and its description fit narrow canvas viewports without negative reading space', () => {
+test('a narrow canvas never shrinks the labelled fixed capsule to a circle', () => {
   for (const width of [80, 96, 120, 320, 360, 375, 390, 414]) {
     const blockRect = rect(340, 140, 400, 568), viewportRect = rect(320, 60, width, 740);
-    const placement = calculateCanvasAiPlacement({ blockRect, viewportRect, elementRect: rect(350, 166, 352, 528), scale: 0.4, triggerWidth, labelWidth, menuHeight: 120, resultHeight: 200 });
-    const edge = blockRect.right - placement.right * 0.4;
+    const placement = calculateCanvasAiPlacement({ blockRect, viewportRect, elementRect: rect(350, 166, 352, 528), scale: 0.4, triggerWidth, menuHeight: 120, resultHeight: 200 });
     assert.equal(placement.fixed, true);
-    close(edge, 382);
-    assert.equal(placement.showLabel, false);
-    assert.equal(placement.triggerWidth, 46);
-    assert.ok(edge <= viewportRect.right - 16);
-    assert.ok(placement.readWidth >= 0);
-    close(placement.readWidth, Math.max(0, viewportRect.right - 8 - (edge + 5)));
+    assert.equal(placement.triggerWidth, 107);
+    close(blockRect.right - placement.right * 0.4, 443);
   }
+});
+
+for (const row of [
+  { name: 'left of capsule across the canvas boundary', capsule: rect(377, 163, 107, 46), viewportWidth: 1280, expected: { left: 201, top: 186, maxWidth: 168, side: 'left' } },
+  { name: 'clamped at the window left inset', capsule: rect(140, 163, 107, 46), viewportWidth: 1280, expected: { left: 8, top: 186, maxWidth: 124, side: 'left' } },
+  { name: 'right when left text cannot fit two lines', capsule: rect(140, 163, 107, 46), viewportWidth: 1280, preferRight: true, expected: { left: 255, top: 186, maxWidth: 168, side: 'right' } },
+  { name: 'fixed on the right even with left room', capsule: rect(336, 73, 107, 46), viewportWidth: 1280, preferRight: true, expected: { left: 451, top: 96, maxWidth: 168, side: 'right' } },
+  { name: 'right when no left reading space exists', capsule: rect(8, 73, 107, 46), viewportWidth: 1280, expected: { left: 123, top: 96, maxWidth: 168, side: 'right' } },
+  { name: 'narrow window keeps both 8px insets', capsule: rect(16, 73, 107, 46), viewportWidth: 160, preferRight: true, expected: { left: 8, top: 96, maxWidth: 144, side: 'right' } },
+]) {
+  test(`description placement: ${row.name}`, () => {
+    assert.deepEqual(placementRules.calculateCanvasAiReadPlacement({ capsuleRect: row.capsule,
+      viewportWidth: row.viewportWidth, preferRight: row.preferRight }), row.expected);
+  });
+}
+
+test('description follows screen coordinates after zoom, scrolling and resize', () => {
+  for (const row of [
+    { capsule: rect(451, 143, 107, 46), viewportWidth: 1440, left: 275, top: 166 },
+    { capsule: rect(377, 93, 107, 46), viewportWidth: 1280, left: 201, top: 116 },
+    { capsule: rect(421, 193, 107, 46), viewportWidth: 1366, left: 245, top: 216 },
+  ]) {
+    const placement = placementRules.calculateCanvasAiReadPlacement({ capsuleRect: row.capsule, viewportWidth: row.viewportWidth });
+    close(placement.left, row.left);
+    close(placement.top, row.top);
+  }
+});
+
+for (const preferRight of [false, true]) {
+  test(`different description lengths keep the capsule-facing edge aligned (${preferRight ? 'right' : 'left'})`, () => {
+    const capsuleRect = rect(377, 163, 107, 46);
+    for (const viewportWidth of [1280, 1366]) {
+      for (const readWidth of [96, 168]) {
+        const placement = placementRules.calculateCanvasAiReadPlacement({ capsuleRect, viewportWidth, preferRight, readWidth });
+        close(preferRight ? placement.left : placement.left + readWidth,
+          preferRight ? capsuleRect.left + capsuleRect.width + 8 : capsuleRect.left - 8);
+        close(placement.top, 186);
+        assert.equal(placement.maxWidth, 168);
+      }
+    }
+  });
+}
+
+test('short right descriptions use their measured width at the window edge', () => {
+  const placement = placementRules.calculateCanvasAiReadPlacement({ capsuleRect: rect(1100, 163, 107, 46),
+    viewportWidth: 1280, preferRight: true, readWidth: 96 });
+  close(placement.left, 1176);
+  close(placement.left + 96, 1272);
 });
 
 test('menu goes up when below overflows and its complete height fits above', () => {

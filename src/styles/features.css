@@ -3589,34 +3589,33 @@
 .product-source-option.unavailable { cursor: default; }
 
 /* ADR-0020: 오브와 메뉴는 블록 여백의 편집 크롬, 사진별 결과는 별도로 보관한다. */
-.canvas-ai-layer { --canvas-ai-soft: 0 6px 14px -8px color-mix(in srgb, var(--fg-1) 42%, transparent); --canvas-ai-soft-light: 0 6px 14px -8px color-mix(in srgb, var(--fg-1) 22%, transparent);
+.canvas-ai-layer, .canvas-ai-read { --canvas-ai-soft: 0 6px 14px -8px color-mix(in srgb, var(--fg-1) 42%, transparent); --canvas-ai-soft-light: 0 6px 14px -8px color-mix(in srgb, var(--fg-1) 22%, transparent);
   --canvas-ai-glass-bottom: color-mix(in srgb, var(--bg-1) 98%, var(--fg-1));
   --canvas-ai-glass: linear-gradient(180deg, color-mix(in srgb, var(--bg-1) 90%, transparent) 0%, color-mix(in srgb, var(--canvas-ai-glass-bottom) 82%, transparent) 100%);
   --canvas-ai-glass-hover: linear-gradient(180deg, color-mix(in srgb, var(--bg-1) 96%, transparent) 0%, color-mix(in srgb, var(--canvas-ai-glass-bottom) 90%, transparent) 100%);
   --canvas-ai-glass-shadow: 0 1px 2px color-mix(in srgb, var(--fg-1) 5%, transparent), 0 8px 18px -10px color-mix(in srgb, var(--fg-1) 22%, transparent);
   --canvas-ai-light-rim: linear-gradient(180deg, var(--bg-1) 0%, color-mix(in srgb, var(--bg-1) 55%, transparent) 40%, var(--ring-strong) 100%);
-  --canvas-ai-outer-line: color-mix(in srgb, var(--ring-strong) 50%, transparent);
-  position: absolute; right: var(--canvas-ai-right, 100%); top: var(--canvas-ai-top, 0px); width: max-content; max-width: var(--canvas-ai-trigger-max-width, calc(100vw - 32px)); height: 40px;
+  --canvas-ai-outer-line: color-mix(in srgb, var(--ring-strong) 50%, transparent); }
+.canvas-ai-layer { position: absolute; right: var(--canvas-ai-right, 100%); top: var(--canvas-ai-top, 0px); width: max-content; height: 40px;
   transform: scale(var(--inv, 1)); transform-origin: top right; z-index: 9; visibility: hidden; }
 .canvas-ai-layer.is-placed { visibility: visible; }
-.canvas-ai-orb { --d: 30px; appearance: none; box-sizing: border-box; position: relative; display: inline-flex; align-items: center; gap: 4px; width: max-content; max-width: var(--canvas-ai-trigger-max-width, calc(100vw - 32px)); height: 46px; padding: 3px; margin-top: -3px; border: 0; border-radius: var(--r-pill); background: color-mix(in srgb, var(--bg-1) 45%, transparent); color: color-mix(in srgb, var(--fg-1) 55%, transparent); box-shadow: none; cursor: pointer;
+.canvas-ai-orb { --d: 30px; appearance: none; box-sizing: border-box; position: relative; display: inline-flex; align-items: center; gap: 4px; width: max-content; height: 46px; padding: 3px 16px 3px 3px; margin-top: -3px; border: 0; border-radius: var(--r-pill); background: color-mix(in srgb, var(--bg-1) 45%, transparent); color: color-mix(in srgb, var(--fg-1) 55%, transparent); box-shadow: none; cursor: pointer;
   transition: background-color 180ms ease, box-shadow 180ms ease, color 180ms ease; }
-.canvas-ai-orb.is-labelled { padding-right: 16px; }
 .canvas-ai-orb span { display: block; box-sizing: border-box; pointer-events: none; }
 .canvas-ai-orb > .canvas-ai-orb-hit { display: grid; place-items: center; width: 40px; height: 40px; flex: none; }
-.canvas-ai-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; font: 600 13px/1 var(--font-body); letter-spacing: -0.02em; white-space: nowrap; }
-.canvas-ai-orb:is(:hover, :focus-visible, [aria-expanded="true"]), .canvas-ai-branch {
+.canvas-ai-label { flex: none; font: 600 13px/1 var(--font-body); letter-spacing: -0.02em; white-space: nowrap; }
+.canvas-ai-orb:is(:hover, :focus-visible, [aria-expanded="true"]), .canvas-ai-branch, .canvas-ai-read {
   background: var(--canvas-ai-glass); color: var(--fg-1); box-shadow: var(--canvas-ai-glass-shadow);
   -webkit-backdrop-filter: blur(14px) saturate(1.15); backdrop-filter: blur(14px) saturate(1.15); }
 /* 2026-10-13 오너 결정(시안 4차 D): 반투명 면 안쪽에 색이 비치지 않는 고리. */
-.canvas-ai-orb::before, .canvas-ai-branch::before, .canvas-ai-option:not(.is-color)::before, .canvas-ai-color-dot::before {
+.canvas-ai-orb::before, .canvas-ai-branch::before, .canvas-ai-option:not(.is-color)::before, .canvas-ai-color-dot::before, .canvas-ai-read::before {
   content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none;
   -webkit-mask: linear-gradient(var(--fg-1) 0 0) content-box, linear-gradient(var(--fg-1) 0 0); -webkit-mask-composite: xor;
   mask: linear-gradient(var(--fg-1) 0 0) content-box, linear-gradient(var(--fg-1) 0 0); mask-composite: exclude; }
 .canvas-ai-orb::before { opacity: .5; transition: opacity 180ms ease;
   background: linear-gradient(120deg, color-mix(in srgb, var(--glow-sky) 60%, transparent), color-mix(in srgb, var(--glow-mauve) 45%, transparent) 50%, color-mix(in srgb, var(--glow-sage) 50%, transparent)); }
 .canvas-ai-orb:is(:hover, :focus-visible, [aria-expanded="true"])::before { opacity: 1; }
-.canvas-ai-branch::before, .canvas-ai-option:not(.is-color)::before, .canvas-ai-color-dot::before { background: var(--canvas-ai-light-rim); }
+.canvas-ai-branch::before, .canvas-ai-option:not(.is-color)::before, .canvas-ai-color-dot::before, .canvas-ai-read::before { background: var(--canvas-ai-light-rim); }
 .canvas-ai-core { position: relative; isolation: isolate; width: var(--d); height: var(--d); overflow: hidden; border-radius: 50%; background: color-mix(in srgb, var(--bg-1) 98%, var(--fg-1));
   box-shadow: 0 3px 8px -3px color-mix(in srgb, var(--fg-1) 32%, transparent); transition: box-shadow 160ms ease, transform 160ms ease; }
 .canvas-ai-light-a, .canvas-ai-light-b { position: absolute; inset: -20%; border-radius: 50%; filter: blur(calc(var(--d) * .13)); }
@@ -3628,16 +3627,14 @@
 .canvas-ai-orb:is(:hover, :focus-visible) .canvas-ai-highlight { opacity: 1; }
 .canvas-ai-orb:active .canvas-ai-core { transform: translateY(1px); }
 .canvas-ai-orb:focus-visible { outline: none; }
-.canvas-ai-orb:focus-visible .canvas-ai-core { outline: 2px solid var(--fg-1); outline-offset: 2px; }
 @keyframes canvasAiGlassA { to { transform: rotate(1turn); } }
 @keyframes canvasAiGlassB { to { transform: rotate(-1turn); } }
-.canvas-ai-read { box-sizing: border-box; position: absolute; right: calc(100% + 5px); top: 20px; width: max-content; max-width: var(--canvas-ai-read-width, 180px); transform: translateY(-50%);
+.canvas-ai-read { box-sizing: border-box; position: fixed; z-index: 60; left: var(--canvas-ai-read-left); top: var(--canvas-ai-read-top); width: var(--canvas-ai-read-width, max-content); max-width: var(--canvas-ai-read-max-width, 168px); padding: 7px 11px; border-radius: 12px; outline: .5px solid var(--canvas-ai-outer-line); transform: translateY(-50%); visibility: hidden;
   display: flex; flex-direction: column; align-items: flex-end; text-align: right; gap: 1px; pointer-events: none; }
-.canvas-ai-read b { font: 600 13px/17px var(--font-body); color: var(--fg-1); letter-spacing: -.1px; text-wrap: balance; }
-.canvas-ai-read small { font: 500 12px/16px var(--font-body); color: var(--fg-2); }
-.canvas-ai-read.is-orb { padding: 4px 10px; border-radius: var(--r-pill); background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong), var(--canvas-ai-soft-light); }
-.canvas-ai-read.is-orb b { font-weight: 500; font-size: 12px; }
-.canvas-ai-layer.is-fixed .canvas-ai-read { right: auto; left: calc(100% + 5px); align-items: flex-start; text-align: left; }
+.canvas-ai-read.is-placed { visibility: visible; }
+.canvas-ai-read b { max-width: 100%; font: 600 13px/17px var(--font-body); color: var(--fg-1); letter-spacing: -.1px; text-wrap: balance; }
+.canvas-ai-read small { font: 500 12px/16px var(--font-body); color: var(--fg-2); white-space: nowrap; }
+.canvas-ai-read.is-right { align-items: flex-start; text-align: left; }
 .canvas-ai-menu { position: absolute; right: 0; top: var(--canvas-ai-menu-top, 53px); display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
   width: max-content; max-width: min(280px, calc(100vw - 32px)); max-height: var(--canvas-ai-menu-max-height, 500px); overflow: auto; padding: 4px; margin: -4px; scrollbar-width: thin; }
 .canvas-ai-layer.is-fixed .canvas-ai-menu { right: auto; left: 0; align-items: flex-start; }
@@ -3653,7 +3650,6 @@
   transition: background-color 180ms ease, box-shadow 180ms ease, color 180ms ease; }
 .canvas-ai-measure { position: absolute; top: 0; left: 0; display: flex; flex-direction: column; align-items: flex-start; width: max-content; visibility: hidden; pointer-events: none; }
 .canvas-ai-measure .canvas-ai-branch { width: max-content; }
-.canvas-ai-measure .canvas-ai-orb { max-width: none; }
 .canvas-ai-branch .canvas-ai-closure-glyph { width: 20px; height: 20px; }
 .canvas-ai-branch:hover { background: var(--canvas-ai-glass-hover); }
 .canvas-ai-pill.btn-glowring { background: var(--canvas-ai-glass); background-clip: padding-box; color: var(--fg-1); padding: 0 10px 0 9px; border: 2px solid transparent; }
