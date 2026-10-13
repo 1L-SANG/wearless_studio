@@ -12,13 +12,14 @@ before(async () => {
     optimizeDeps: { noDiscovery: true, include: [] }, esbuild: { jsx: 'automatic' },
     plugins: [{ name: 'pricing-hook-state', enforce: 'pre', transform(source, id) {
       if (!id.endsWith('/CanvasAiLayer.jsx') && !id.endsWith('/useEditorCreditCosts.js')) return;
+      if (id.endsWith('/CanvasAiLayer.jsx')) source = 'const document = { body: { nodeType: 1 } };\n' + source;
       source = source.replace(/import \{ api, isMockMode \} from '[^']+';/,
         'const isMockMode = false, api = { getCreditQuote: (...args) => globalThis.__pricingApi(...args) };');
       return source.replace(/import \{[^}]+\} from 'react';/,
         'const useEffect = (...args) => globalThis.__pricingHooks.useEffect(...args), useLayoutEffect = () => {}, useRef = () => ({ current: null }), useState = (...args) => globalThis.__pricingHooks.useState(...args);');
     } }],
   });
-  // Only the React lifecycle is substituted; the actual menu handlers and JSX run.
+  // Substitute lifecycle and the portal container; real menu handlers/JSX/portals run.
   globalThis.__pricingHooks = { useEffect() {}, useLayoutEffect() {}, useRef: () => ({ current: null }),
     useState: (initial) => [initial, () => {}] };
   ({ CanvasAiLayer: Layer } = await vite.ssrLoadModule('/src/features/editor/CanvasAiLayer.jsx'));
@@ -71,7 +72,7 @@ test('fill and blank retries keep the image price even when their internal reque
 function find(tree, predicate) {
   if (!tree || typeof tree !== 'object') return null;
   if (predicate(tree)) return tree;
-  for (const child of [tree.props?.children].flat(Infinity)) {
+  for (const child of [tree.children ?? tree.props?.children].flat(Infinity)) {
     const found = find(child, predicate);
     if (found) return found;
   }

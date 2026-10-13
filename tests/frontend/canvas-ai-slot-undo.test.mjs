@@ -103,7 +103,9 @@ test('fill completion then toolbar Undo restores a clickable empty slot and its 
   const orbUi = components(); const actions = [];
   const props = { block: blocks[0], element: blocks[0].elements[0], scale: 1, wrapRef: { current: null },
     menu, job, visible: true, onAction: (action) => actions.push(action) };
-  const orb = find(orbUi.render('CanvasAiLayer', props), (node) => node.props?.['aria-label'] === 'AI로 새 컷');
+  const orb = find(orbUi.render('CanvasAiLayer', props), (node) => node.type === 'button' && node.props?.['aria-haspopup'] === 'menu'
+    && node.props['aria-label'] === 'AI 생성');
+  assert.ok(orb);
   orb.props.onClick();
   const fill = find(orbUi.render('CanvasAiLayer', props), (node) => node.props?.role === 'menuitem'
     && find(node, (child) => child.type === 'span' && child.props.children === 'AI로 채우기'));

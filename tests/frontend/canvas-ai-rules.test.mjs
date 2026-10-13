@@ -1,19 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateCanvasAiPlacement } from '../../src/features/editor/canvasAiPlacement.js';
+import * as placementRules from '../../src/features/editor/canvasAiPlacement.js';
+const { calculateCanvasAiPlacement } = placementRules;
 import { buildCanvasAiMenu, buildCanvasAiRequest, canvasAiKind, canvasAiRo } from '../../src/features/editor/canvasAiActions.js';
 import { canReplaceCanvasAiResult, createCanvasAiJobController } from '../../src/features/editor/canvasAiJobs.js';
 import { canvasAiHookHarness, editorCanvasAiHandlers } from './helpers/editorCanvasAiHarness.mjs';
 
 const rect = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height });
 const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 0.000001, `${actual} != ${expected}`);
+const triggerWidth = 107; // 3px + 40px orb hit + 4px gap + 44px label + 16px tail.
 
 // These literal screen anchors catch photo-relative positioning and scale-dependent drift.
 for (const row of [
-  { width: 1440, scale: 0.4, canvasWidth: 832, blockLeft: 536, orbLeft: 484, orbTop: 156, fixed: false },
+  { width: 1440, scale: 0.4, canvasWidth: 832, blockLeft: 536, orbLeft: 417, orbTop: 156, fixed: false },
   { width: 1440, scale: 0.6, canvasWidth: 832, blockLeft: 436, orbLeft: 336, orbTop: 76, fixed: true },
   { width: 1440, scale: 1, canvasWidth: 832, blockLeft: 236, orbLeft: 336, orbTop: 76, fixed: true },
-  { width: 1280, scale: 0.4, canvasWidth: 752, blockLeft: 496, orbLeft: 444, orbTop: 156, fixed: false },
+  { width: 1280, scale: 0.4, canvasWidth: 752, blockLeft: 496, orbLeft: 377, orbTop: 156, fixed: false },
   { width: 1280, scale: 0.6, canvasWidth: 752, blockLeft: 396, orbLeft: 336, orbTop: 76, fixed: true },
   { width: 1280, scale: 1, canvasWidth: 752, blockLeft: 196, orbLeft: 336, orbTop: 76, fixed: true },
 ]) {
@@ -23,9 +25,9 @@ for (const row of [
     for (const elementRect of [rect(row.blockLeft + 510 * row.scale, 176, 430 * row.scale, 640 * row.scale),
       rect(row.blockLeft + 360 * row.scale, 176, 280 * row.scale, 420 * row.scale),
       rect(row.blockLeft + 510 * row.scale, 422, 430 * row.scale, 640 * row.scale)]) {
-      const placement = calculateCanvasAiPlacement({ blockRect, elementRect, viewportRect, scale: row.scale, menuHeight: 120, resultHeight: 200 });
+      const placement = calculateCanvasAiPlacement({ blockRect, elementRect, viewportRect, scale: row.scale, triggerWidth, menuHeight: 120, resultHeight: 200 });
       assert.equal(placement.fixed, row.fixed);
-      close(blockRect.right - placement.right * row.scale - 40, row.orbLeft);
+      close(blockRect.right - placement.right * row.scale - placement.triggerWidth, row.orbLeft);
       close(blockRect.top + placement.top * row.scale, !row.fixed && elementRect.top === 422 ? 402 : row.orbTop);
       assert.equal(placement.menuUp, false);
       assert.equal(placement.resultWidth, 150);
@@ -38,7 +40,7 @@ test('2x2 lower-row orb follows the selected top without covering the upper row'
   close(placement.right, 1030);
   close(placement.top, 705);
   close(placement.resultTop, 825);
-  close(placement.menuTop, 830);
+  close(placement.menuTop, 837.5);
 });
 
 test('orb clamps vertically at the viewport edges while retaining the left block margin', () => {
@@ -49,36 +51,133 @@ test('orb clamps vertically at the viewport edges while retaining the left block
   const bottom = calculateCanvasAiPlacement({ ...inputs, elementRect: rect(600, 950, 352, 528) });
   close(bottom.top, 2130); // screen top 852, center 872
   assert.equal(bottom.menuUp, true);
-  close(bottom.menuTop, 1705);
+  close(bottom.menuTop, 1697.5);
   close(bottom.resultTop, 1610);
 });
 
-test('156px margin is still anchored and 155px alone triggers fixed placement', () => {
+for (const row of [
+  { margin: 250, fixed: false, left: 451, edge: 558 },
+  { margin: 176, fixed: false, left: 377, edge: 484 },
+  { margin: 150, fixed: true, left: 336, edge: 443 },
+  { margin: 156, fixed: false, left: 357, edge: 464 },
+  { margin: 155, fixed: true, left: 336, edge: 443 },
+]) {
+  test(`${row.margin}px margin keeps the full capsule and the 156px fixed threshold`, () => {
+    const blockRect = rect(320 + row.margin, 140, 400, 568);
+    const placement = calculateCanvasAiPlacement({ blockRect, elementRect: rect(780, 166, 172, 258),
+      viewportRect: rect(320, 60, 832, 740), scale: 0.4, triggerWidth, menuHeight: 120, resultHeight: 200 });
+    assert.equal(placement.fixed, row.fixed);
+    assert.equal(placement.triggerWidth, 107);
+    const edge = blockRect.right - placement.right * 0.4;
+    close(edge, row.edge);
+    close(edge - placement.triggerWidth, row.left);
+    assert.ok(placement.triggerWidth + 12 <= 156);
+    if (!row.fixed) {
+      close(edge, blockRect.left - 12);
+      close(blockRect.right - placement.resultRight * 0.4, edge);
+    }
+  });
+}
+
+test('fixed placement uses the whole capsule and keeps the centered result', () => {
   const viewportRect = rect(320, 60, 832, 740);
-  const anchored = calculateCanvasAiPlacement({ blockRect: rect(476, 140, 400, 568), elementRect: rect(500, 166, 352, 528), viewportRect, scale: 0.4, menuHeight: 120, resultHeight: 200 });
-  const fixed = calculateCanvasAiPlacement({ blockRect: rect(475, 140, 400, 568), elementRect: rect(780, 650, 172, 258), viewportRect, scale: 0.4, menuHeight: 120, resultHeight: 200 });
-  assert.equal(anchored.fixed, false);
+  const fixed = calculateCanvasAiPlacement({ blockRect: rect(470, 140, 400, 568), elementRect: rect(780, 650, 172, 258), viewportRect, scale: 0.4, triggerWidth, menuHeight: 120, resultHeight: 200 });
   assert.equal(fixed.fixed, true);
-  close(875 - fixed.right * 0.4 - 40, 336);
+  close(870 - fixed.right * 0.4 - 107, 336);
   close(140 + fixed.top * 0.4, 76);
-  close(875 - fixed.resultRight * 0.4 - 150, 661);
+  close(870 - fixed.resultRight * 0.4 - 150, 661);
   close(140 + fixed.resultTop * 0.4, 330);
-  assert.equal(fixed.tooltipSide, 'right');
+});
+
+test('the measured capsule, menu and result retain the block edge at every font width', () => {
+  const blockRect = rect(576, 120, 400, 614), viewportRect = rect(320, 60, 832, 840);
+  for (const row of [
+    { width: 95, left: 469 },
+    { width: 107, left: 457 },
+    { width: 123, left: 441 },
+    { width: 110, left: 454 },
+  ]) {
+    const placement = calculateCanvasAiPlacement({ blockRect, viewportRect, elementRect: rect(780, 422, 172, 258), scale: 0.4, triggerWidth: row.width, menuHeight: 160, resultHeight: 200 });
+    const edge = blockRect.right - placement.right * 0.4;
+    close(edge, 564);
+    close(blockRect.right - placement.resultRight * 0.4, 564);
+    close(edge - placement.triggerWidth, row.left);
+    assert.equal(placement.fixed, false);
+    assert.ok(placement.triggerWidth + 12 <= 156);
+  }
+});
+
+test('a narrow canvas never shrinks the labelled fixed capsule to a circle', () => {
+  for (const width of [80, 96, 120, 320, 360, 375, 390, 414]) {
+    const blockRect = rect(340, 140, 400, 568), viewportRect = rect(320, 60, width, 740);
+    const placement = calculateCanvasAiPlacement({ blockRect, viewportRect, elementRect: rect(350, 166, 352, 528), scale: 0.4, triggerWidth, menuHeight: 120, resultHeight: 200 });
+    assert.equal(placement.fixed, true);
+    assert.equal(placement.triggerWidth, 107);
+    close(blockRect.right - placement.right * 0.4, 443);
+  }
+});
+
+for (const row of [
+  { name: 'left of capsule across the canvas boundary', capsule: rect(377, 163, 107, 46), viewportWidth: 1280, expected: { left: 201, top: 186, maxWidth: 168, side: 'left' } },
+  { name: 'clamped at the window left inset', capsule: rect(140, 163, 107, 46), viewportWidth: 1280, expected: { left: 8, top: 186, maxWidth: 124, side: 'left' } },
+  { name: 'right when left text cannot fit two lines', capsule: rect(140, 163, 107, 46), viewportWidth: 1280, preferRight: true, expected: { left: 255, top: 186, maxWidth: 168, side: 'right' } },
+  { name: 'fixed on the right even with left room', capsule: rect(336, 73, 107, 46), viewportWidth: 1280, preferRight: true, expected: { left: 451, top: 96, maxWidth: 168, side: 'right' } },
+  { name: 'right when no left reading space exists', capsule: rect(8, 73, 107, 46), viewportWidth: 1280, expected: { left: 123, top: 96, maxWidth: 168, side: 'right' } },
+  { name: 'narrow window keeps both 8px insets', capsule: rect(16, 73, 107, 46), viewportWidth: 160, preferRight: true, expected: { left: 8, top: 96, maxWidth: 144, side: 'right' } },
+]) {
+  test(`description placement: ${row.name}`, () => {
+    assert.deepEqual(placementRules.calculateCanvasAiReadPlacement({ capsuleRect: row.capsule,
+      viewportWidth: row.viewportWidth, preferRight: row.preferRight }), row.expected);
+  });
+}
+
+test('description follows screen coordinates after zoom, scrolling and resize', () => {
+  for (const row of [
+    { capsule: rect(451, 143, 107, 46), viewportWidth: 1440, left: 275, top: 166 },
+    { capsule: rect(377, 93, 107, 46), viewportWidth: 1280, left: 201, top: 116 },
+    { capsule: rect(421, 193, 107, 46), viewportWidth: 1366, left: 245, top: 216 },
+  ]) {
+    const placement = placementRules.calculateCanvasAiReadPlacement({ capsuleRect: row.capsule, viewportWidth: row.viewportWidth });
+    close(placement.left, row.left);
+    close(placement.top, row.top);
+  }
+});
+
+for (const preferRight of [false, true]) {
+  test(`different description lengths keep the capsule-facing edge aligned (${preferRight ? 'right' : 'left'})`, () => {
+    const capsuleRect = rect(377, 163, 107, 46);
+    for (const viewportWidth of [1280, 1366]) {
+      for (const readWidth of [96, 168]) {
+        const placement = placementRules.calculateCanvasAiReadPlacement({ capsuleRect, viewportWidth, preferRight, readWidth });
+        close(preferRight ? placement.left : placement.left + readWidth,
+          preferRight ? capsuleRect.left + capsuleRect.width + 8 : capsuleRect.left - 8);
+        close(placement.top, 186);
+        assert.equal(placement.maxWidth, 168);
+      }
+    }
+  });
+}
+
+test('short right descriptions use their measured width at the window edge', () => {
+  const placement = placementRules.calculateCanvasAiReadPlacement({ capsuleRect: rect(1100, 163, 107, 46),
+    viewportWidth: 1280, preferRight: true, readWidth: 96 });
+  close(placement.left, 1176);
+  close(placement.left + 96, 1272);
 });
 
 test('menu goes up when below overflows and its complete height fits above', () => {
   const input = { blockRect: rect(576, 120, 400, 614), elementRect: rect(780, 600, 172, 258), viewportRect: rect(320, 60, 832, 740), scale: 0.4, resultHeight: 200 };
-  assert.equal(calculateCanvasAiPlacement({ ...input, menuHeight: 158 }).menuUp, false);
-  const above = calculateCanvasAiPlacement({ ...input, menuHeight: 159 });
+  assert.equal(calculateCanvasAiPlacement({ ...input, menuHeight: 155 }).menuUp, false);
+  const above = calculateCanvasAiPlacement({ ...input, menuHeight: 156 });
   assert.equal(above.menuUp, true);
   close(above.menuTop, 727.5);
-  assert.equal(above.menuMaxHeight, 498);
+  assert.equal(above.menuMaxHeight, 495);
 });
 
 for (const row of [
-  { name: 'fixed fallback', blockLeft: 451, photoTop: 150, menuHeight: 248, menuUp: false, menuMaxHeight: 222, menuTop: -35 },
-  { name: 'long detail menu near top', blockLeft: 576, photoTop: 150, menuHeight: 500, menuUp: false, menuMaxHeight: 168, menuTop: 100 },
-  { name: 'long detail menu near bottom', blockLeft: 576, photoTop: 280, menuHeight: 500, menuUp: true, menuMaxHeight: 178, menuTop: -170 },
+  { name: 'fixed fallback', blockLeft: 451, photoTop: 150, menuHeight: 248, menuUp: false, menuMaxHeight: 219, menuTop: -27.5 },
+  { name: 'long detail menu near top', blockLeft: 576, photoTop: 150, menuHeight: 500, menuUp: false, menuMaxHeight: 165, menuTop: 107.5 },
+  { name: 'long detail menu near bottom', blockLeft: 576, photoTop: 280, menuHeight: 500, menuUp: true, menuMaxHeight: 175, menuTop: -170 },
 ]) {
   test(`${row.name} uses the larger scrollable side when neither side fits`, () => {
     const placement = calculateCanvasAiPlacement({ blockRect: rect(row.blockLeft, 140, 400, 568), elementRect: rect(600, row.photoTop, 352, 528), viewportRect: rect(320, 60, 832, 300), scale: 0.4, menuHeight: row.menuHeight, resultHeight: 200 });
@@ -123,7 +222,7 @@ test('worn and upload actions include immediate similar and optional outer closu
   const worn = buildCanvasAiMenu(menuInput);
   assert.deepEqual(ids(worn), ['similar', 'color', 'closure']);
   assert.equal(worn.branches[0].direct, true);
-  assert.equal(worn.branches[0].ring, true);
+  assert.equal(worn.branches[0].ring, false);
   assert.equal(worn.branches[0].description, '지금 이미지와 비슷한 컷을 생성해요');
   assert.deepEqual(ids(buildCanvasAiMenu({ ...menuInput, assetRecipe: { upload: true, recipe: null } })), ['similar', 'color', 'closure']);
   assert.deepEqual(ids(buildCanvasAiMenu({ ...menuInput, clothingType: 'top' })), ['similar', 'color']);
@@ -162,7 +261,7 @@ test('detail only offers same-area reshoot and other observed targets', () => {
     assetRecipe: { cutType: 'product', recipe: { cutType: 'product', shot: 'detail', detailTargetId: 'pocket', colorId: 'black', direction: 'front' } } });
   assert.deepEqual(ids(menu), ['reshoot', 'detail']);
   assert.equal(menu.branches[0].description, '같은 부위를 다시 생성해요');
-  assert.equal(menu.branches[0].ring, true);
+  assert.equal(menu.branches[0].ring, false);
   assert.equal(menu.branches[1].label, '다른 부위');
   assert.deepEqual(menu.branches[1].options.map((option) => [option.value, option.current, option.disabled]), [['pocket', true, true], ['cuff', false, false]]);
   const legacy = buildCanvasAiMenu({ ...menuInput, assetRecipe: { cutType: 'product', recipe: null } });
@@ -205,6 +304,25 @@ test('planned and unplanned slots preserve ADR0019 classification and direct act
   assert.equal(fill.kind, 'unplanned');
   assert.equal(fill.branches[0].price, '무료');
   assert.equal(fill.branches[1].description, '빈 칸에 어울리는 컷을 생성해요');
+});
+
+test('only fill gets a rotating ring across filled images and planned or unplanned slots', () => {
+  const empty = { ...image, src: null };
+  const storyboard = [{ id: empty.sourceBlockId, source: 'ai', cutType: 'styling' }];
+  const menus = [
+    buildCanvasAiMenu(menuInput),
+    buildCanvasAiMenu({ ...menuInput, assetRecipe: { upload: true, recipe: null } }),
+    buildCanvasAiMenu({ ...menuInput, assetRecipe: { cutType: 'product', recipe: { shot: 'ghost' } } }),
+    buildCanvasAiMenu({ ...menuInput, assetRecipe: { cutType: 'product', recipe: { shot: 'detail' } } }),
+    buildCanvasAiMenu({ ...menuInput, assetRecipe: { cutType: 'product', recipe: null } }),
+    buildCanvasAiMenu({ ...menuInput, element: empty, storyboard, failedCutRetry: { retryable: true } }),
+    buildCanvasAiMenu({ ...menuInput, element: empty, storyboard, block: { ...block, templateId: 'template' } }),
+  ];
+  const branches = menus.flatMap((menu) => menu.branches);
+  assert.deepEqual(branches.filter((branch) => branch.ring).map((branch) => branch.id), ['fill']);
+  for (const id of ['similar', 'reshoot', 'retry', 'fill']) {
+    assert.equal(branches.find((branch) => branch.id === id).direct, true);
+  }
 });
 
 test('pending, hidden and automatic slots have no actions', () => {

@@ -50,7 +50,7 @@ export function canvasAiRo(label) {
 }
 
 const directBranch = (id, label, description, extra = {}) => ({
-  id, action: id, label, direct: true, ring: ['similar', 'reshoot', 'retry', 'fill'].includes(id), description, options: [], ...extra,
+  id, action: id, label, direct: true, ring: id === 'fill', description, options: [], ...extra,
 });
 const optionBranch = (id, label, options) => ({ id, action: id, label, direct: false, ring: false, description: null, options });
 

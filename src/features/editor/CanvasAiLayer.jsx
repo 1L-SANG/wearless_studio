@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CREDIT_COSTS, editorImageCreditCost } from '../../lib/limits.js';
 import { canvasAiActionCreditCost } from './canvasAiActions.js';
-import { calculateCanvasAiPlacement } from './canvasAiPlacement.js';
+import { calculateCanvasAiPlacement, calculateCanvasAiReadPlacement } from './canvasAiPlacement.js';
 import { canvasAiProgressSize, canvasAiProgressVisible } from './canvasAiApply.js';
 
 export function CanvasAiClosureGlyph({ value = 'open' }) {
@@ -83,6 +84,8 @@ export function CanvasAiLayer({ block, element, scale, wrapRef, menu, loading, a
   const layerRef = useRef(null);
   const menuRef = useRef(null);
   const orbRef = useRef(null);
+  const triggerMeasureRef = useRef(null);
+  const readRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [branchId, setBranchId] = useState(null);
   const [hover, setHover] = useState(null);
@@ -94,7 +97,7 @@ export function CanvasAiLayer({ block, element, scale, wrapRef, menu, loading, a
   const showResult = job && !job.isSlot && !job.dismissed;
   const branch = menu.branches.find((item) => item.id === branchId);
   const close = (focus = false) => {
-    setOpen(false); setBranchId(null); setHover(focus ? { description: '이 사진으로 새 컷을 생성해요', orb: true } : null);
+    setOpen(false); setBranchId(null); setHover(null);
     if (focus) orbRef.current?.focus();
   };
   useEffect(() => { close(); }, [element.id, element.src]);
@@ -115,42 +118,83 @@ export function CanvasAiLayer({ block, element, scale, wrapRef, menu, loading, a
     if (!visible) return;
     const layer = layerRef.current;
     const wrap = wrapRef.current;
+    const triggerNode = triggerMeasureRef.current;
     const blockNode = layer?.closest('.canvas-block');
     const elementNode = [...(blockNode?.querySelectorAll('[data-elid]') || [])]
       .find((node) => node.dataset.elid === element.id);
-    if (!layer || !wrap || !blockNode || !elementNode) return;
+    if (!layer || !wrap || !blockNode || !elementNode || !triggerNode) return;
     let frame;
     let active = true;
     const measure = () => {
-      const branchWidth = Math.max(0, ...[...layer.querySelectorAll('.canvas-ai-measure > span')]
+      const branchWidth = Math.max(0, ...[...layer.querySelectorAll('.canvas-ai-measure > .canvas-ai-branch')]
         .map((node) => node.getBoundingClientRect().width));
       layer.style.setProperty('--canvas-ai-branch-width', `${branchWidth}px`);
       const rect = elementNode.getBoundingClientRect();
       const viewportRect = wrap.getBoundingClientRect();
+      const triggerWidth = triggerNode.getBoundingClientRect().width;
       const menuHeight = menuRef.current?.scrollHeight || 0;
       const ratio = Math.max(.1, Number(job?.sourceHeight || element.h) / Math.max(1, Number(job?.sourceWidth || element.w)));
       const frameHeight = Math.min(150 * ratio, Math.max(60, viewportRect.height - 108));
       const placement = calculateCanvasAiPlacement({ blockRect: blockNode.getBoundingClientRect(),
-        elementRect: rect, viewportRect, scale, menuHeight, resultHeight: frameHeight + 84 });
+        elementRect: rect, viewportRect, scale, triggerWidth, menuHeight, resultHeight: frameHeight + 84 });
+      if (!placement) {
+        setPlaced(false); readRef.current?.classList.toggle('is-placed', false); return;
+      }
       const values = { right: `${placement.right}px`, top: `${placement.top}px`,
         'menu-top': `${(placement.menuTop - placement.top) * scale}px`,
-        'menu-max-height': `${placement.menuMaxHeight}px`, 'read-width': `${placement.readWidth}px`,
+        'menu-max-height': `${placement.menuMaxHeight}px`,
         'result-right': `${(placement.resultRight - placement.right) * scale}px`,
         'result-top': `${(placement.resultTop - placement.top) * scale}px`,
         'result-height': `${frameHeight}px` };
       Object.entries(values).forEach(([name, value]) => layer.style.setProperty(`--canvas-ai-${name}`, value));
       setFixed(placement.fixed); setMenuUp(placement.menuUp); setPlaced(true);
+      const read = readRef.current;
+      if (read && orbRef.current) {
+        const capsuleRect = orbRef.current.getBoundingClientRect();
+        let reading = calculateCanvasAiReadPlacement({ capsuleRect, viewportWidth: window.innerWidth, preferRight: placement.fixed });
+        if (!reading) { read.classList.toggle('is-placed', false); return; }
+        // Balance at the available width before fitting the glass to the rendered lines.
+        // Reset on every update so a previous fit cannot constrain new text or fonts.
+        read.style.setProperty('--canvas-ai-read-width', 'max-content');
+        read.style.setProperty('--canvas-ai-read-max-width', `${reading.maxWidth}px`);
+        const text = read.querySelector('b');
+        const lineHeight = parseFloat(getComputedStyle(text).lineHeight);
+        if (reading.side === 'left' && text.getBoundingClientRect().height > lineHeight * 2 + 1) {
+          reading = calculateCanvasAiReadPlacement({ capsuleRect, viewportWidth: window.innerWidth, preferRight: true });
+          read.style.setProperty('--canvas-ai-read-max-width', `${reading.maxWidth}px`);
+        }
+        const range = document.createRange();
+        let lineWidth = 0;
+        for (const node of read.querySelectorAll('b, small')) {
+          range.selectNodeContents(node);
+          for (const rect of range.getClientRects()) lineWidth = Math.max(lineWidth, rect.width);
+        }
+        const readStyle = getComputedStyle(read);
+        const padding = parseFloat(readStyle.paddingLeft) + parseFloat(readStyle.paddingRight);
+        const fittedWidth = Math.min(reading.maxWidth, Math.ceil(lineWidth + padding));
+        read.style.setProperty('--canvas-ai-read-width', `${fittedWidth}px`);
+        reading = calculateCanvasAiReadPlacement({ capsuleRect, viewportWidth: window.innerWidth,
+          preferRight: reading.side === 'right', readWidth: read.getBoundingClientRect().width });
+        read.style.setProperty('--canvas-ai-read-left', `${reading.left}px`);
+        read.style.setProperty('--canvas-ai-read-top', `${reading.top}px`);
+        read.classList.toggle('is-right', reading.side === 'right');
+        read.classList.toggle('is-placed', true);
+      }
     };
     const queue = () => { if (!active) return; cancelAnimationFrame(frame); frame = requestAnimationFrame(measure); };
     measure();
     document.fonts?.ready.then(queue);
     wrap.addEventListener('scroll', queue, { passive: true });
     window.addEventListener('resize', queue);
+    window.addEventListener('scroll', queue, { passive: true, capture: true });
     const observer = new ResizeObserver(queue);
     observer.observe(wrap); observer.observe(blockNode);
+    observer.observe(triggerNode);
+    if (orbRef.current) observer.observe(orbRef.current);
     if (menuRef.current) observer.observe(menuRef.current);
-    return () => { active = false; cancelAnimationFrame(frame); wrap.removeEventListener('scroll', queue); window.removeEventListener('resize', queue); observer.disconnect(); };
-  }, [visible, element, block, scale, wrapRef, open, branchId, loading, job]);
+    if (readRef.current) observer.observe(readRef.current);
+    return () => { active = false; cancelAnimationFrame(frame); wrap.removeEventListener('scroll', queue); window.removeEventListener('resize', queue); window.removeEventListener('scroll', queue, true); observer.disconnect(); };
+  }, [visible, element, block, scale, wrapRef, open, branchId, loading, job, hover]);
 
   const keyMenu = (e) => {
     e.stopPropagation();
@@ -194,17 +238,20 @@ export function CanvasAiLayer({ block, element, scale, wrapRef, menu, loading, a
     onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
     <div className="canvas-ai-measure" aria-hidden="true">{menu.branches.map((item) => <span key={item.id}
       className={`canvas-ai-pill canvas-ai-branch${item.ring ? ' btn-glowring' : ''}`}>
-      {branchIcon(item)}<span>{item.label}</span>{!item.direct && <Chevron />}</span>)}</div>
-    <button type="button" ref={orbRef} className="canvas-ai-orb" aria-label="AI로 새 컷"
+      {branchIcon(item)}<span>{item.label}</span>{!item.direct && <Chevron />}</span>)}
+      <span ref={triggerMeasureRef} className="canvas-ai-trigger-measure canvas-ai-orb">
+        <span className="canvas-ai-orb-hit" /><span className="canvas-ai-label">AI 생성</span>
+      </span></div>
+    <button type="button" ref={orbRef} className="canvas-ai-orb" aria-label="AI 생성"
       aria-haspopup="menu" aria-expanded={open}
-      onMouseEnter={() => { if (!open) setHover({ description: '이 사진으로 새 컷을 생성해요', orb: true }); }}
-      onMouseLeave={() => setHover(null)} onFocus={() => { if (!open) setHover({ description: '이 사진으로 새 컷을 생성해요', orb: true }); }}
-      onBlur={() => setHover(null)} onClick={() => { setOpen(!open); setBranchId(null); setHover(busy ? { description: '지금 만들고 있어요' } : null); }}
+      onMouseEnter={() => setHover(null)} onFocus={() => setHover(null)}
+      onClick={() => { setOpen(!open); setBranchId(null); setHover(null); }}
       onKeyDown={(e) => {
         if (['ArrowDown', 'ArrowUp'].includes(e.key)) { e.preventDefault(); setOpen(true); focusMenu(); }
         if (e.key === 'Enter' || e.key === ' ') focusMenu();
-      }}><span className="canvas-ai-core"><span className="canvas-ai-light-a" /><span className="canvas-ai-light-b" /><span className="canvas-ai-highlight" /></span></button>
-    {hover && (!hover.orb || !open) && <div className={`canvas-ai-read${hover.orb ? ' is-orb' : ''}`}><b>{hover.description}</b>{hover.price && <small>{hover.price}</small>}</div>}
+      }}><span className="canvas-ai-orb-hit" aria-hidden="true"><span className="canvas-ai-core"><span className="canvas-ai-light-a" /><span className="canvas-ai-light-b" /><span className="canvas-ai-highlight" /></span></span>
+      <span className="canvas-ai-label">AI 생성</span></button>
+    {hover && (open || showResult) && createPortal(<div ref={readRef} className="canvas-ai-read"><b>{hover.description}</b>{hover.price && <small>{hover.price}</small>}</div>, document.body)}
     {open && <div ref={menuRef} className="canvas-ai-menu" role="menu" aria-label="이 사진으로 새 컷" onKeyDown={keyMenu}>
       {loading ? <p className="canvas-ai-menu-message" role="status">불러오는 중</p>
         : assetError ? <p className="canvas-ai-menu-message">{assetError.message || '사진 정보를 불러오지 못했어요.'}</p>

@@ -113,6 +113,8 @@
      GLOW TOKENS — background glow assets ONLY.
      NEVER use these on buttons, pills, text, icons, borders,
      or any UI chrome. They live inside aurora.html / orb.html.
+     Exception: ADR-0020, 2026-10-13 owner decision (v4 D),
+     canvas AI orb core and its faint 1px capsule rim only.
      ============================================================ */
   --glow-sky: #7fd0f0;   /* 밝은 블루 */
   --glow-sage: #b9a5e8;  /* 라벤더 */
