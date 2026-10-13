@@ -3619,8 +3619,8 @@
 .canvas-ai-core { position: relative; isolation: isolate; width: var(--d); height: var(--d); overflow: hidden; border-radius: 50%; background: color-mix(in srgb, var(--bg-1) 98%, var(--fg-1));
   box-shadow: 0 3px 8px -3px color-mix(in srgb, var(--fg-1) 32%, transparent); transition: box-shadow 160ms ease, transform 160ms ease; }
 .canvas-ai-light-a, .canvas-ai-light-b { position: absolute; inset: -20%; border-radius: 50%; filter: blur(calc(var(--d) * .13)); }
-.canvas-ai-light-a { background: conic-gradient(var(--glow-sky), var(--glow-mauve), var(--glow-sage), var(--glow-sky)); animation: canvasAiGlassA 12s linear infinite; }
-.canvas-ai-light-b { opacity: .8; background: conic-gradient(var(--bg-1), var(--glow-sun), transparent, var(--bg-1), transparent); animation: canvasAiGlassB 17s linear infinite; }
+.canvas-ai-light-a { background: conic-gradient(var(--canvas-ai-orb-sky), var(--canvas-ai-orb-mauve), var(--canvas-ai-orb-sage), var(--canvas-ai-orb-sky)); animation: canvasAiGlassA 12s linear infinite; }
+.canvas-ai-light-b { opacity: .8; background: conic-gradient(var(--bg-1), var(--canvas-ai-orb-sun), transparent, var(--bg-1), transparent); animation: canvasAiGlassB 17s linear infinite; }
 .canvas-ai-highlight { position: absolute; inset: 0; opacity: .8; transition: opacity 160ms ease;
   background: radial-gradient(ellipse at 30% 25%, var(--bg-1) 0%, transparent 33%), radial-gradient(circle at 53% 48%, color-mix(in srgb, var(--bg-1) 79%, transparent) 0%, transparent 57%); }
 .canvas-ai-orb:hover .canvas-ai-core { box-shadow: 0 4px 10px -3px color-mix(in srgb, var(--fg-1) 42%, transparent); }
