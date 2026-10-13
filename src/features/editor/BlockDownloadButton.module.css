@@ -1,0 +1,5 @@
+.wrap { position: relative; }
+.wrap summary { list-style: none; cursor: pointer; }
+.wrap summary::-webkit-details-marker { display: none; }
+.menu:global(.sb-addmenu) { top: 0; left: auto; right: calc(100% + var(--sp-8)); width: max-content; max-width: 280px; background: var(--bg-1); }
+.menu button { white-space: nowrap; font-family: var(--font-body); }

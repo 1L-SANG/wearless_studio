@@ -40,7 +40,9 @@ import {
 } from '@/features/analysis/modelSelection.js';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel, FrameMini } from '@/features/editor/EditorPanels.jsx';
 import { isGifImage, gifImageFields, collectGifImages } from '@/lib/gif/gifMedia.js';
-import { downloadGifImage, downloadGifImages } from './editorExport.js';
+import { BlockDownloadButton } from './BlockDownloadButton.jsx';
+import gifStyles from './GifThumbnailPanel.module.css';
+import { downloadGifImage, downloadGifImages, downloadBlockGifs } from './editorExport.js';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, convertGifToStill, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isAutoManagedBlock, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { DEFAULT_TEXT_BODY, buildTextPresetElement, dropUntouchedPlaceholders, textPresetBox, textPresetDropPlacement } from '@/features/editor/presets/textPresets.js';
@@ -909,7 +911,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         {/* presetTypeOf 로 게이트 — 갓 조립된 size/care auto 블록은 info 가 없어도 폼 편집 대상이다 */}
         {onEditInfo && presetTypeOf(block) && <IconButton name="pencil" onClick={() => onEditInfo(block)} title="내용 수정" />}
         <IconButton name="layers" onClick={() => onOpenLayers(block.id)} title="레이어" />
-        <IconButton name="download" onClick={() => onDownload(block, idx)} title="이 블록 다운로드" />
+        <BlockDownloadButton block={block} index={idx} onDownload={onDownload} />
         <IconButton name="trash" onClick={() => onDelete(block.id)} title="블록 삭제" />
       </div>
     </div>
@@ -1176,7 +1178,7 @@ export function Editor() {
   const [pendingSlot, setPendingSlot] = useState(null);
   const [imageImports, setImageImports] = useState([]);
   // 의류 탭에 올리는 중인 장수 — 여러 장을 한 번에 고르면 그만큼 대기 타일을 보여 준다.
-  const [wardrobeUploadLoading, setWardrobeUploadLoading] = useState(0);
+  const [wardrobeUploadLoading, setWardrobeUploadLoading] = useState({});
   const [hoverGray, setHoverGray] = useState(false);
   const [layerFloat, setLayerFloat] = useState(null);
   const [layerPos, setLayerPos] = useState(null);
@@ -2149,7 +2151,7 @@ export function Editor() {
       toast.push(successMsg, { icon: 'download' });
     }
   };
-  const downloadBlock = async (block, idx) => {
+  const downloadBlock = async (block, idx, mode = 'zip') => {
     const accountGeneration = clientEvents.getAccountGeneration();
     if (dlBusy) return;
     if (genActive) { toast.push('생성 중인 페이지는 저장할 수 없어요. 완료 후 받아주세요.', { icon: 'x' }); return; }
@@ -2157,7 +2159,10 @@ export function Editor() {
     if (!node) { toast.push('블록을 찾지 못했어요. 다시 시도해 주세요.', { icon: 'x' }); return; }
     setDlBusy(true);
     try {
-      finishExport('이 블록을 PNG로 저장했어요', await exportBlockPng(node, productName, idx, provenanceOpts()));
+      const images = collectGifImages([block]);
+      if (mode === 'gifs' && images.length) await downloadBlockGifs(images);
+      else finishExport(images.length ? '블록 이미지와 GIF를 저장했어요' : '이 블록을 PNG로 저장했어요',
+        await exportBlockPng(node, productName, idx, { ...provenanceOpts(), gifImages: images }));
     } catch (e) {
       clientEvents.bindGeneration(e, accountGeneration);
       toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'x', variant: 'error', error: e, kind: 'toast_error', actionName: 'download', messageCode: 'action_failed', blocking: true, accountGeneration });
@@ -2395,7 +2400,8 @@ export function Editor() {
   const saveWardrobeGif = async (result, options) => {
     const image = await api.saveWardrobeGif(projectId, result, options);
     if (options?.signal?.aborted) return;
-    setWardrobe((current) => ({ ...current, misc: [image, ...(current?.misc || [])] }));
+    setWardrobe((current) => ({ ...current, misc: [{ ...image, fresh: true }, ...(current?.misc || [])] }));
+    toast.push('보관함에 담았어요', { icon: 'check' });
     return image;
   };
   const patchImageImport = (id, patch) => {
@@ -2408,14 +2414,14 @@ export function Editor() {
   };
   // insert=false: 의류 목록에만 넣는다(여러 장 업로드). quiet: 실패를 토스트 대신 던진다 —
   // 여러 장이면 한 장마다 토스트를 띄우지 않고 끝에 한 번 모아서 알린다.
-  const uploadEditorImage = async (file, placement, importId = null, { insert = true, quiet = false, accountGeneration = clientEvents.getAccountGeneration() } = {}) => {
+  const uploadEditorImage = async (file, placement, importId = null, { insert = true, quiet = false, colorId = 'misc', accountGeneration = clientEvents.getAccountGeneration() } = {}) => {
     if (!looksLikeImageFile(file)) {
       if (quiet) throw clientEvents.bindGeneration(Object.assign(new Error('unsupported_image'), { code: 'unsupported_type' }), accountGeneration);
       toast.push('JPG, PNG, WebP 또는 HEIC 사진을 선택해 주세요.', { icon: 'x' });
       return;
     }
     const isWardrobeUpload = !placement?.blockId && !importId;
-    if (isWardrobeUpload) setWardrobeUploadLoading((n) => n + 1);
+    if (isWardrobeUpload) setWardrobeUploadLoading(current => ({ ...current, [colorId]: (current[colorId] || 0) + 1 }));
     try {
       const prepared = await toUploadableImage(file);
       const validation = getUploadValidationError(prepared);
@@ -2443,11 +2449,11 @@ export function Editor() {
         src: uploaded.url,
         ...dimensions,
         userUploaded: true,
-        wardrobeGroup: 'misc',
+        wardrobeGroup: colorId,
       };
       patchImageImport(importId, { phase: 'placing' });
       await waitForImageSource(uploaded.url);
-      setWardrobe((current) => ({ ...current, misc: [...(current.misc || []), image] }));
+      setWardrobe((current) => ({ ...current, [colorId]: [...(current[colorId] || []), image] }));
       if (placement?.blockId) insertImage(image, placement);
       else if (insert) wardrobeInsert(image, { keepTab: true });
       patchImageImport(importId, { phase: 'done' });
@@ -2459,7 +2465,7 @@ export function Editor() {
       if (quiet) throw error;
       toast.push(error?.message || '사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x', variant: 'error', error: error, kind: 'upload_error', actionName: 'upload', messageCode: 'photo_upload_failed', blocking: true, accountGeneration });
     } finally {
-      if (isWardrobeUpload) setWardrobeUploadLoading((n) => Math.max(0, n - 1));
+      if (isWardrobeUpload) setWardrobeUploadLoading(current => ({ ...current, [colorId]: Math.max(0, (current[colorId] || 0) - 1) }));
     }
   };
   const dropImageFiles = (blockId, files, point, slotId = null) => {
@@ -2490,22 +2496,17 @@ export function Editor() {
     }]);
     void uploadEditorImage(file, { blockId, point, slotId: target.slotId }, importId);
   };
-  // 한 장이면 예전처럼 목록에 넣고 캔버스에도 놓는다. 여러 장이면 캔버스에 한꺼번에 쌓이지
-  // 않게 의류 목록(기타)에만 넣는다 — 셀러가 목록에서 골라 끌어 쓴다.
-  const pickAndInsertImage = async () => {
+  // 점선 타일로 고른 사진은 장수와 관계없이 해당 색상 목록에만 추가한다.
+  const pickAndInsertImage = async (colorId = 'misc') => {
     const accountGeneration = clientEvents.getAccountGeneration();
     const picked = await pickEditorImageFile({ multiple: true });
     if (!picked.length) return;
-    if (picked.length === 1) {
-      await uploadEditorImage(picked[0], undefined, null, { accountGeneration });
-      return;
-    }
     const files = picked.slice(0, MAX_WARDROBE_UPLOADS);
     if (picked.length > files.length) {
       toast.push(`한 번에 ${MAX_WARDROBE_UPLOADS}장까지 올릴 수 있어요. 앞의 ${MAX_WARDROBE_UPLOADS}장만 올릴게요.`, { icon: 'alertTri' });
     }
     const results = await runWithConcurrency(files, WARDROBE_UPLOAD_CONCURRENCY,
-      (file) => uploadEditorImage(file, undefined, null, { insert: false, quiet: true, accountGeneration }));
+      (file) => uploadEditorImage(file, undefined, null, { insert: false, quiet: true, accountGeneration, colorId }));
     const done = results.filter((r) => r.ok).length;
     const failed = results.length - done;
     const failures = results.filter((result) => !result.ok);
@@ -3283,7 +3284,7 @@ export function Editor() {
     if (tab === 'image' && selectedElObj) {
       if (selectedElObj.type === 'shape') return '도형';
       if (selectedElObj.type === 'line') return '선';
-      return isGifImage(selectedElObj) ? 'GIF' : '이미지';
+      return '이미지';
     }
     return TOOLS.find((t) => t.id === tab)?.label;
   })();
@@ -3291,9 +3292,9 @@ export function Editor() {
   const renderPanel = () => {
     switch (tab) {
       case 'ai': return <AIPanel pendingGenerateRequest={pendingGenerateRequest} generateSubmitting={generateSubmitting} product={product} detailRecommendations={analysis?.detailRecommendations} frontClosure={analysis?.frontClosure} catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} brandUseCategory={analysis?.brandUseCategory} brandUseCategorySaving={brandUseCategorySaving} onBrandUseCategoryChange={saveBrandUseCategory} onConfirmPendingGenerate={() => retryFailedCut({ confirmPending: true })} onGenerate={generateImage} onPickMoodRef={() => api.pickRefImage(projectId)} />;
-      case 'wardrobe': return <WardrobePanel onSaveGif={saveWardrobeGif} wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onFreshSeen={freshSeen}
+      case 'wardrobe': return <WardrobePanel onDownloadGif={(image) => receiveGifs([image], true)} onSaveGif={saveWardrobeGif} wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onFreshSeen={freshSeen}
         onImageDragStart={() => setFrameDragging(true)} onImageDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />;
-      case 'image': return <ImagePanel onConvertGif={(image) => setBlocks((current) => current.map((block) => convertGifToStill(block, image.id)))} onDownloadGif={(image) => receiveGifs([image], true)} downloadingGif={dlBusy} el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}
+      case 'image': return <ImagePanel onConvertGif={(image) => setBlocks((current) => current.map((block) => convertGifToStill(block, image.id)))} el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}
         onCrop={(el) => startCrop(blockIdOf(el.id), el)}
         />;
       case 'frame': return (
@@ -3688,7 +3689,7 @@ export function Editor() {
       {/* body */}
       <div className="ed-body" style={{ '--lcol': '320px', '--rcol': rightHidden ? '0px' : '208px' }}>
         <div className="ed-left" role="tabpanel" aria-labelledby={`ed-tab-${tab}`}>
-          <div style={{ marginBottom: 14 }}><span className="panel-h" style={{ marginBottom: 0 }}>{panelTitle}</span></div>
+          <div style={{ marginBottom: 14 }}><span className="panel-h" style={{ marginBottom: 0 }}>{panelTitle}{tab === 'image' && isGifImage(selectedElObj) && <span className={gifStyles.titleBadge}>GIF</span>}</span></div>
           {renderPanel()}
         </div>
 

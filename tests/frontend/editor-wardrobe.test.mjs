@@ -180,26 +180,20 @@ test('direct wardrobe uploads keep the wardrobe tab and expose their loading sta
   assert.match(insertImage, /keepTab = false/);
   assert.match(insertImage, /selectEl\(target, el, false, keepTab\)/);
   assert.match(uploadEditorImage, /const isWardrobeUpload = !placement\?\.blockId && !importId/);
-  // 로딩은 올리는 중인 장수 — 여러 장을 동시에 올리면 그만큼 늘었다 줄어든다.
-  assert.match(uploadEditorImage, /setWardrobeUploadLoading\(\(n\) => n \+ 1\)/);
-  assert.match(uploadEditorImage, /else if \(insert\) wardrobeInsert\(image, \{ keepTab: true \}\)/);
-  assert.match(uploadEditorImage, /finally \{\s*if \(isWardrobeUpload\) setWardrobeUploadLoading\(\(n\) => Math\.max\(0, n - 1\)\)/);
-  assert.match(panelSource, /role="status" aria-live="polite"/);
-  assert.match(panelSource, /의류 이미지 \{uploading\}장을 불러오는 중이에요/);
-  // 0 이 화면에 찍히지 않게 숫자 비교로 가린다.
-  assert.match(panelSource, /\{uploading > 0 && \(/);
+  assert.match(uploadEditorImage, /wardrobeGroup: colorId/);
+  assert.match(uploadEditorImage, /\[colorId\]: \[\.\.\.\(current\[colorId\] \|\| \[\]\), image\]/);
+  assert.match(panelSource, /onUpload\(group\)/);
+  assert.match(panelSource, /length: uploading\[group\] \|\| 0/);
+  assert.doesNotMatch(panelSource, /직접 이미지 업로드하기/);
 });
 
-test('wardrobe upload picks several files; one file keeps the old insert-on-canvas behavior', () => {
-  const pick = editorSource.slice(
-    editorSource.indexOf('const pickAndInsertImage ='),
-    editorSource.indexOf('const freshSeen ='),
-  );
+test('wardrobe upload puts every selected file in its color group without automatic canvas insertion', () => {
+  const pick = editorSource.slice(editorSource.indexOf('const pickAndInsertImage ='), editorSource.indexOf('const freshSeen ='));
   assert.match(editorSource, /input\.multiple = multiple/);
   assert.match(pick, /pickEditorImageFile\(\{ multiple: true \}\)/);
-  assert.match(pick, /picked\.length === 1\) \{\s*await uploadEditorImage\(picked\[0\], undefined, null, \{ accountGeneration \}\)/);
+  assert.doesNotMatch(pick, /picked\.length === 1/);
   assert.match(pick, /runWithConcurrency\(files, WARDROBE_UPLOAD_CONCURRENCY/);
-  assert.match(pick, /\{ insert: false, quiet: true, accountGeneration \}/);
+  assert.match(pick, /\{ insert: false, quiet: true, accountGeneration, colorId \}/);
   assert.match(pick, /MAX_WARDROBE_UPLOADS/);
 });
 

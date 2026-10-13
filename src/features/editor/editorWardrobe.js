@@ -43,8 +43,8 @@ function wardrobeImageFromElement(element, group) {
     cutType: element.cutType || null,
     width: Number(element.gifMeta?.width || element.width || element.w) || undefined,
     height: Number(element.gifMeta?.height || element.height || element.h) || undefined,
-    ...(group === 'misc'
-      ? { userUploaded: true, wardrobeGroup: 'misc' }
+    ...(element.userUploaded || group === 'misc'
+      ? { userUploaded: true, wardrobeGroup: group }
       : { generated: true, wardrobeGroup: group }),
   };
 }
@@ -82,7 +82,7 @@ export function mergeEditorImagesIntoWardrobe({
         || isDirectUploadSource(source?.source);
       if (!directUpload && !element.sourceBlockId) continue;
 
-      const group = directUpload ? 'misc' : (source?.colorId || defaultColorId);
+      const group = directUpload ? (element.wardrobeGroup || 'misc') : (source?.colorId || defaultColorId);
       editorImages.push({ group, image: wardrobeImageFromElement(element, group) });
     }
   }

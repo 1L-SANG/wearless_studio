@@ -13,12 +13,13 @@ export function createFrameEncoder({ width, height, delayMs, colors = 256 }) {
   const gif = GIFEncoder();
   let count = 0;
   return {
-    addFrame(rgba) {
+    addFrame(rgba, frameDelay = delayMs) {
+      if (!Number.isFinite(frameDelay) || frameDelay <= 0) throw new Error('Invalid GIF frame delay');
       if (rgba.length !== width * height * 4) throw new Error('Invalid GIF frame size');
       const palette = quantize(colorBoost(rgba), colors, { format: 'rgb565' });
       const indexed = ditherFrame(rgba, width, height, palette);
       gif.writeFrame(indexed, width, height, {
-        palette, delay: delayMs, repeat: 0, dispose: 1,
+        palette, delay: frameDelay, repeat: 0, dispose: 1,
         colorDepth: Math.max(2, Math.ceil(Math.log2(palette.length))),
       });
       count += 1;
@@ -44,7 +45,7 @@ if (typeof WorkerGlobalScope !== 'undefined' && globalThis instanceof WorkerGlob
       if (data.type === 'start') {
         encoder = createFrameEncoder(data.settings);
       } else if (data.type === 'frame') {
-        encoder.addFrame(new Uint8ClampedArray(data.buffer));
+        encoder.addFrame(new Uint8ClampedArray(data.buffer), data.delayMs);
       } else if (data.type === 'finish') {
         const bytes = encoder.finish();
         encoder = null;

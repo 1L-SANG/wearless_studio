@@ -15,11 +15,6 @@ export function gifStillPatch(image) {
     : {};
 }
 
-export function gifSummary(image) {
-  const meta = image?.gifMeta || image || {};
-  return `${meta.width}×${meta.height} · ${meta.frames}장 · ${((meta.bytes || 0) / 1_000_000).toFixed(1)}MB`;
-}
-
 export function collectGifImages(blocks = []) {
   const seen = new Set();
   return blocks.flatMap((block) => (block.elements || []).filter((image) => {

@@ -10,23 +10,22 @@ export const GIF_PRESETS = [
 ];
 
 export function planLadder(mode) {
+  if (mode === 'attachment') return [
+    { colors: 256, scale: 1, fps: 10 },
+    { colors: 192, scale: 1, fps: 10 },
+    { colors: 256, scale: 1, fps: 8 },
+    { colors: 128, scale: 1, fps: 8 },
+    { colors: 128, scale: 0.8, fps: 8 },
+    { colors: 128, scale: 0.8, fps: 6 },
+    { colors: 128, scale: 0.64, fps: 8, duration: 2 },
+    { colors: 128, scale: 0.64, fps: 6, duration: 2 },
+  ];
   if (mode === 'photo') return [
     { colors: 256, scale: 1 },
     { colors: 192, scale: 1 },
     { colors: 256, scale: 0.8 },
     { colors: 128, scale: 0.8 },
     { colors: 128, scale: 0.64 },
-  ];
-  if (mode === 'video') return [
-    { colors: 256, scale: 1, fps: 10 },
-    { colors: 256, scale: 1, fps: 8 },
-    { colors: 128, scale: 1, fps: 8 },
-    { colors: 128, scale: 1, fps: 6 },
-    { colors: 128, scale: 0.8, fps: 8 },
-    { colors: 128, scale: 1, fps: 8, duration: 2 },
-    { colors: 128, scale: 0.8, fps: 8, duration: 2 },
-    { colors: 128, scale: 0.64, fps: 8, duration: 2 },
-    { colors: 128, scale: 0.64, fps: 6, duration: 2 },
   ];
   throw new Error('Unknown GIF mode');
 }
@@ -37,8 +36,8 @@ export function shouldStopLadder(mode, stepIndex, bytes) {
     throw new Error('Invalid GIF ladder result');
   }
   if (stepIndex === steps.length - 1 || bytes <= GIF_SOFT_BYTES) return true;
-  // Lower resolution (or a shorter video) is only needed for the hard cap.
-  return stepIndex >= (mode === 'photo' ? 2 : 3) && bytes <= GIF_HARD_BYTES;
+  // After the first two soft attempts, reduce quality only for the hard cap.
+  return stepIndex >= 2 && bytes <= GIF_HARD_BYTES;
 }
 
 export function presetSize(id, scale = 1, sourceSize) {
@@ -59,4 +58,9 @@ export function coverCrop(sourceWidth, sourceHeight, width, height, { anchorY = 
   const ratio = Math.max(width / sourceWidth, height / sourceHeight);
   const sw = width / ratio, sh = height / ratio;
   return { sx: (sourceWidth - sw) / 2, sy: (sourceHeight - sh) * Math.max(0, Math.min(1, anchorY)), sw, sh, width, height };
+}
+
+export function cropLossRatio(sourceW, sourceH, width, height) {
+  const { sw, sh } = coverCrop(sourceW, sourceH, width, height);
+  return Math.max(0, Math.min(1, 1 - sw * sh / (sourceW * sourceH)));
 }

@@ -771,7 +771,28 @@ export async function downloadGifImages(images) {
    (softFailed 0 이면 캡처 완전 성공). opts.provenance = { projectId } 를 넘기면 saveBlob
    직전에 공증 왕복(publicationNotarize.js)을 끼운다 — 안 넘기면 공증 생략(verifyUrl null). ---- */
 
-// ① 블록 1개 → PNG 저장
+export async function packageBlockDownload(png, filename, opts = {}, sign = notarize) {
+  let blob = png, verifyUrl = null, notarizeWarning = null;
+  if (opts.provenance?.projectId) {
+    const signed = await sign(png, { projectId: opts.provenance.projectId, kind: 'block_png' });
+    blob = signed.blob; verifyUrl = signed.verifyUrl; notarizeWarning = signed.warning;
+  }
+  if (opts.gifImages?.length) {
+    const zip = new JSZip();
+    zip.file(filename, await blob.arrayBuffer());
+    await appendGifFiles(zip, opts.gifImages);
+    blob = await zip.generateAsync({ type: 'blob' });
+  }
+  return { blob, verifyUrl, notarizeWarning };
+}
+
+export async function downloadBlockGifs(images) {
+  const unique = [...new Map(images.map(image => [image.src, image])).values()];
+  if (unique.length === 1) await downloadGifImage(unique[0]);
+  else if (unique.length) await downloadGifImages(unique);
+}
+
+// A block with GIFs includes the signed first-frame PNG and untouched originals.
 export async function exportBlockPng(blockNode, productName, blockIndex, opts = {}) {
   recordClientAction('download');
   const fontEmbedCSS = await getFontEmbedCSS(blockNode);
@@ -779,16 +800,10 @@ export async function exportBlockPng(blockNode, productName, blockIndex, opts = 
   let out;
   try { out = await canvasToBlob(canvas); }
   finally { releaseExportCanvas(canvas); }
-  let verifyUrl = null;
-  let notarizeWarning = null;
-  if (opts.provenance?.projectId) {
-    const n = await notarize(out, { projectId: opts.provenance.projectId, kind: 'block_png' });
-    out = n.blob;
-    verifyUrl = n.verifyUrl;
-    notarizeWarning = n.warning;
-  }
-  saveBlob(out, exportFileName(productName, `블록${blockIndex + 1}`));
-  return { softFailed, verifyUrl, notarizeWarning };
+  const filename = exportFileName(productName, `블록${blockIndex + 1}`);
+  const result = await packageBlockDownload(out, filename, opts);
+  saveBlob(result.blob, opts.gifImages?.length ? filename.replace(/\.png$/i, '.zip') : filename);
+  return { softFailed, verifyUrl: result.verifyUrl, notarizeWarning: result.notarizeWarning };
 }
 
 // ② 전체 블록 → 세로로 이어붙인 긴 PNG 1장.
