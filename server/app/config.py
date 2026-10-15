@@ -194,6 +194,9 @@ class Settings:
     # 2차가 개선되지 않으면 1차를 보존하며, QC/2차 호출 실패도 1차 출고를 막지 않는다.
     # 기본 off라 명시적으로 켠 환경에서만 추가 호출 비용이 발생한다.
     cut_output_qc_mode: str = "off"  # off | shadow | repair
+    # 지어낸 원단 잔금(crackle) 후처리(agents/garment_desquiggle). gpt-image 착용컷만, 생성 호출 없음.
+    # 기본 off — 운영 컷 QA 뒤 매니페스트에서 켠다(2026-10-02).
+    garment_desquiggle_mode: str = "off"  # off | on
     page_output_qc_mode: str = "off"  # off | shadow
     # P1 축 인지 QC(선언 핏 축 반영 판정 + 실패 시 편집 교정 1회 — fidelity §G·§H).
     # off | shadow(판정·이벤트만) | enforce(편집 재시도 발화). enforce는 코드 레벨 가드
@@ -920,6 +923,7 @@ def load_settings() -> Settings:
             "MANNEQUIN_LOGO_IMAGE_SIZE", "off", {"off", "1k", "2k", "4k"}).upper(),
         cut_output_qc_mode=_flag(
             "CUT_OUTPUT_QC_MODE", "off", {"off", "shadow", "repair"}),
+        garment_desquiggle_mode=_flag("GARMENT_DESQUIGGLE", "off", {"off", "on"}),
         page_output_qc_mode=_flag("PAGE_OUTPUT_QC_MODE", "off", {"off", "shadow"}),
         mannequin_axis_qc=_flag("MANNEQUIN_AXIS_QC", "off", {"off", "shadow", "enforce"}),
         mannequin_base_fidelity_qc=_flag(

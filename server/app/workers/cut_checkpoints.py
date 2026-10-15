@@ -71,6 +71,7 @@ _FINAL_RECIPE_SETTINGS = (
     "cut_output_qc_mode",
     "bg_scene_qc_attempts",
     "real_horizon_neck_repair_enabled",
+    "garment_desquiggle_mode",
 )
 #: 이 사유로 후처리가 실패했으면 **베이스는 멀쩡하다**(인프라 탓) — 다음 시도가 후처리만 다시 한다.
 #: 그 밖의 사유(게이트 탈락·옆얼굴 건너뜀·톤 불일치·사진 방향 불일치 등)는 그림 탓이라 같은
