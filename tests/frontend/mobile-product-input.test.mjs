@@ -1534,6 +1534,36 @@ test('R3 signed-in phone also blocks background uploads while consent is unknown
   assert.equal(h.calls.some((call) => call[0] === 'queue' || call[0] === 'saveAll'), false);
 });
 
+test('R5 signed-in phone keeps local photo bytes across reload while unknown consent blocks slot writes', async (t) => {
+  const storage = draftStoreFixture(t);
+  const urls = ['front', 'back'].map((body) => URL.createObjectURL(new Blob([body], { type: 'image/jpeg' })));
+  const restoredUrls = [];
+  t.after(() => [...urls, ...restoredUrls].forEach((url) => URL.revokeObjectURL(url)));
+  const photos = product(); photos.colors[0].images = [];
+  const h = harness({ sellerConsentReady: false, photos, stagedDraft: false, draftStore: {
+    ...localStore,
+    restoreDraftProduct: (draft) => restoreDraftProduct(draft, { createObjectUrl(blob) {
+      const url = URL.createObjectURL(blob); restoredUrls.push(url); return url;
+    } }),
+  } });
+  t.after(() => h.cleanup());
+  let tree = await h.settle();
+  for (let i = 0; i < 2; i++) node(tree, 'ColorImageGroup').props.onAddFiles(['Front', 'Back'][i], [{ src: urls[i], type: 'image/jpeg' }]);
+  await h.settle(); await localStore.flushProductDraftSave();
+  assert.equal(h.calls.some((call) => call[0] === 'queue' || call[0] === 'saveAll'), false);
+  h.unmount('ProductInput'); await drainDraftTasks();
+  urls.forEach((url) => URL.revokeObjectURL(url));
+  tree = await h.settle();
+  const images = node(tree, 'ColorImageGroup').props.group.images;
+  assert.equal(images.length, 2);
+  assert.deepEqual(await Promise.all(images.map((image) => fetch(image.src).then((r) => r.text()))), ['front', 'back']);
+  assert.equal(storage.saved.photos.length, 2);
+  assert.equal(storage.saved.ownerUserId, 'seller');
+  assert.equal(h.calls.some((call) => call[0] === 'queue' || call[0] === 'saveAll'), false);
+  h.auth.sellerConsentReady = true; await h.settle();
+  assert.equal(h.calls.some((call) => call[0] === 'queue'), true);
+});
+
 for (const blocked of ['sessionStorage', 'both']) {
   test(`R3 blocked storage opens plain guest input (${blocked})`, async (t) => {
     for (const key of blocked === 'both' ? ['sessionStorage', 'localStorage'] : ['sessionStorage']) {

@@ -609,8 +609,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   }, [slotEnabled]);
 
   useEffect(() => {
-    if (!product || mobileReadOnly || (mobile && (entryBusy || slotLock || handoff.gone
-        || (session && sellerConsentReady === false)))) return;
+    if (!product || mobileReadOnly || (mobile && (entryBusy || slotLock || handoff.gone))) return;
     if (isAnalysisFastEntryEnabled() && featureSavedAnalysisRef.current !== null && featureSavedAnalysisRef.current === analysis) {
       featureSavedAnalysisRef.current = null;
       return;
@@ -623,7 +622,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
     const localUpdatedAt = new Date().toISOString();
     latestLocalUpdatedAtRef.current = localUpdatedAt;
     queueProductDraftSave(product, analysis, composeMode, localUpdatedAt);
-    if (slotEnabled) {
+    if (slotEnabled && !(mobile && session && sellerConsentReady === false)) {
       draftSlot.queue({ product, analysis, composeMode, localUpdatedAt });
     }
   }, [analysis, composeMode, product, slotEnabled, mobileReadOnly, mobile, slotLock, handoff.gone, entryBusy, session, sellerConsentReady]);
