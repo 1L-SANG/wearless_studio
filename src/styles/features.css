@@ -2166,9 +2166,10 @@
 @keyframes crop-march { to { stroke-dashoffset: -10; } }
 @media (prefers-reduced-motion: reduce) { .crop-ant.ant-b { animation: none; } }
 /* 크롭 하단 바 — 원본(리셋) + 마우스 확정/취소. --inv 역스케일로 줌 무관 일정 크기. */
-.crop-bar { position: absolute; display: inline-flex; align-items: center; gap: 8px; padding-top: 16px;
+.crop-bar { position: absolute; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px;
   transform: scale(var(--inv, 1)); transform-origin: top left; z-index: 8; white-space: nowrap; pointer-events: none; }
 .crop-bar button { pointer-events: auto; }
+.crop-bar > * { flex-shrink: 0; }
 /* 크롭 진입을 부드럽게 — 딤·프레임이 튀지 않고 페이드로 이어진다 */
 .crop-layer { animation: crop-in .16s ease-out; }
 @keyframes crop-in { from { opacity: 0; } to { opacity: 1; } }

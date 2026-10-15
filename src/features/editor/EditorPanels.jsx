@@ -706,7 +706,7 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, onDownload, download
           <div className="image-property-actions">
             <Button variant="ghost" size="sm" icon="crop" disabled={!el.src || el.locked || !!el.genPending} onClick={() => onCrop && onCrop(el)}>자르기</Button>
             <Button variant="ghost" size="sm" icon={downloadBusy ? 'loader' : 'download'} disabled={!el.src || downloadBusy}
-              onClick={() => onDownload?.(el)}>{downloadBusy ? '받는 중' : '다운로드'}</Button>
+              onClick={() => onDownload?.(el)}>{downloadBusy ? '받는 중' : '원본 다운로드'}</Button>
           </div>
         </PanelSection>
       )}

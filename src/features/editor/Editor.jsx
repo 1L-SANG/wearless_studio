@@ -63,7 +63,7 @@ import {
   writeExportSettings,
 } from '@/features/editor/editorExport.js';
 import { snapEditorDragDelta, snapEditorSpacing } from '@/features/editor/editorSnap.js';
-import { beginEditorCrop, dragEditorCrop, ratioEditorCrop, zoomEditorCrop, applyEditorCrop } from './editorCrop.js';
+import { beginEditorCrop, dragEditorCrop, ratioEditorCrop, zoomEditorCrop, applyEditorCrop, cropToolbarPosition } from './editorCrop.js';
 import { replaceEditorPhoto, photoMoveDestination, transferEditorPhoto } from './editorPhotoEditing.js';
 import { copyEditorBlock, copyEditorElements, pasteEditorBlock, pasteEditorElements } from '@/features/editor/editorClipboard.js';
 import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, textPresetKeyFromDragTypes, objectDescriptorFromDragTypes, objectDropBox, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
@@ -747,6 +747,37 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
   // 오브젝트(도형·선·프리셋)를 끌고 지나가는 동안만 사는 놓일 자리 상자 미리보기.
   const [objGhost, setObjGhost] = useState(null);
 
+  const cropBarRef = useRef(null);
+  useLayoutEffect(() => {
+    const bar = cropBarRef.current;
+    if (!crop || !bar) return;
+    const blockNode = bar.closest('.canvas-block');
+    const viewport = bar.closest('.ed-canvas-wrap');
+    const frame = blockNode?.querySelector('.crop-frame');
+    if (!viewport || !frame) return;
+    const position = () => {
+      const bounds = viewport.getBoundingClientRect();
+      const visible = { left: Math.max(0, bounds.left), top: Math.max(0, bounds.top),
+        right: Math.min(window.innerWidth, bounds.left + viewport.clientWidth),
+        bottom: Math.min(window.innerHeight, bounds.top + viewport.clientHeight) };
+      bar.style.maxWidth = `${Math.max(0, visible.right - visible.left - 16)}px`;
+      const point = cropToolbarPosition(frame.getBoundingClientRect(), visible, bar.getBoundingClientRect());
+      const origin = blockNode.getBoundingClientRect();
+      bar.style.left = `${(point.left - origin.left) / scale}px`;
+      bar.style.top = `${(point.top - origin.top) / scale}px`;
+    };
+    position();
+    const observer = new ResizeObserver(position);
+    observer.observe(viewport); observer.observe(bar);
+    viewport.addEventListener('scroll', position, { passive: true });
+    window.addEventListener('resize', position);
+    return () => {
+      observer.disconnect();
+      viewport.removeEventListener('scroll', position);
+      window.removeEventListener('resize', position);
+    };
+  }, [crop, scale]);
+
   const pickBelowBlankText = (event, currentElement) => {
     const candidateIds = [];
     const glyphHitIds = [];
@@ -901,7 +932,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         )}
       </div>
       {crop && (
-        <div className="crop-bar" style={{ left: crop.fx, top: crop.fy + crop.fh }} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+        <div className="crop-bar" ref={cropBarRef} style={{ left: crop.fx, top: crop.fy + crop.fh }} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
           <label className="crop-ratio">비율<select aria-label="자르기 비율" value={crop.ratio || ''} onChange={e => onCropRatio(Number(e.target.value))}>
             <option value="">자유</option><option value="1">1:1</option><option value="0.75">3:4</option><option value="0.8">4:5</option><option value="1.7777777777777777">16:9</option>
           </select></label>
@@ -3379,7 +3410,7 @@ export function Editor() {
   };
   const cancelCrop = () => setCropping(null);
   // 크롭 리셋 — 프레임을 원본 이미지 전체로 되돌린다(자른 것 원위치, 오프셋 0).
-  const resetCrop = () => setCropping((c) => (c ? { ...c, fx: c.fx - c.ox, fy: c.fy - c.oy, fw: c.iw, fh: c.ih, ox: 0, oy: 0, ratio: null } : c));
+  const resetCrop = () => setCropping((c) => (c ? { ...c, fx: c.fx - c.ox, fy: c.fy - c.oy, fw: c.iw, fh: c.ih, ox: 0, oy: 0, ratio: null, ratioBase: null } : c));
   // 크롭 핸들·내부 이미지 드래그 — 자체 포인터 핸들러 (리사이즈와 동일하게 /scale 환산)
   const cropDrag = (e, mode, dir) => {
     if (e.button != null && e.button !== 0) return;

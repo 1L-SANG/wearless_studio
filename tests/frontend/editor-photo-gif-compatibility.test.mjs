@@ -35,7 +35,7 @@ test('merged image inspector keeps photo crop/download and GIF information/conve
     onDownload: value => calls.push(['download', value]), onConvertGif: value => calls.push(['still', value]) };
   const photoTree = ImagePanel({ ...props, el: photo });
   const crop = nodes(photoTree).find(n => n.props.children === '자르기' && n.props.onClick);
-  const download = nodes(photoTree).find(n => n.props.children === '다운로드' && n.props.onClick);
+  const download = nodes(photoTree).find(n => n.props.children === '원본 다운로드' && n.props.onClick);
   crop.props.onClick(); download.props.onClick();
   assert.deepEqual(calls, [['crop', photo], ['download', photo]]);
   const gifElement = { ...photo, ...gif };

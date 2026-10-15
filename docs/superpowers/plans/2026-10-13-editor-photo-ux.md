@@ -82,3 +82,10 @@
 - Browser verification is unavailable in this turn: both supported automation tools fail before executing code with a kernel-assets path error, including after reset. Do not claim a fresh screenshot or actual merged GUI/PNG download smoke. Initial-head browser evidence remains historical; current JSX rendering, serialization and file-package tests passed.
 - Detailed logs live under `D:/wearless_studio/.scratch/editor-photo-ux/fix-*.log`. Update PR 541 only after verification; do not merge main or deploy production.
 - Post-push CI on 1460ebfa found one additional test-harness failure hidden by the pre-existing Windows CRLF import-stripping error: the old AI-slot Undo harness had not supplied the new crop state/flush boundary. Supplied its explicit no-active-crop dependencies and made only this harness's import stripping accept CRLF. Reproduced the Windows failure then passed all 5 real slot/Undo/ORB tests. No product behavior changed. The other CI failure is the same facemarket-register-v3 temporary-query-recovery case already failing on exact main e5528c63 (run 38404802670); no unrelated registration fix is included.
+
+### 2026-10-15 실제 화면 리뷰 후 승인된 보완
+
+- 오른쪽 사진의 자르기 도구막대가 작업 영역 밖으로 잘리는 문제를 수정한다. 실제 도구막대 너비와 작업 영역을 재서 안쪽에 놓고, 아래 공간이 부족하면 위에 놓는다. 좁은 작업 영역에서는 기존 버튼 묶음을 줄바꿈한다. 스크롤, 캔버스 확대율, 창 크기 변경 때 다시 배치하고 자르기가 끝나면 관찰을 정리한다.
+- 비율을 바꿀 때 직전에 줄어든 영역을 다시 자르지 않고, 비율 선택 전의 기준 크기를 재사용한다. 손잡이로 크기를 직접 바꾸면 그 크기를 새 기준으로 쓴다. 사진 위치와 확대 상태는 유지하고, 원본 복원 시 비교 기준도 초기화한다. 이 기준은 편집 중 임시 상태이며 저장 crop 계약에 추가하지 않는다.
+- 사진 인스펙터의 다운로드 버튼은 실제 동작을 명확히 알리도록 `원본 다운로드`로 표시한다.
+- 재현 검사 8건이 기존 코드에서 실패한 것을 확인한 뒤 수정했다. 관련 검사 107건이 통과했고, 실제 에디터의 오른쪽 사진에서 적용과 취소 버튼 노출 및 3:4와 16:9 반복 선택 후 같은 크기 복원을 확인했다. 독립 코드 검토에서 추가 중요 결함을 발견하지 못했다. 전체 검사와 빌드의 최종 결과는 PR 본문에 기록한다.

@@ -28,7 +28,7 @@ test('each crop edge resizes independently, clamped to the full image and minimu
 test('crop ratio is centered, bounded and photo zoom preserves the frame-center image point', () => {
   assert.equal(typeof crop.ratioEditorCrop, 'function');
   assert.equal(typeof crop.zoomEditorCrop, 'function');
-  assert.deepEqual(crop.ratioEditorCrop(draft, 1), { ...draft, fy: 130, fh: 200, oy: 90, ratio: 1 });
+  assert.deepEqual(crop.ratioEditorCrop(draft, 1), { ...draft, fy: 130, fh: 200, oy: 90, ratio: 1, ratioBase: { fw: 200, fh: 300 } });
   assert.deepEqual(crop.zoomEditorCrop(draft, 2), { ...draft, iw: 800, ih: 1000, ox: 200, oy: 230 });
 });
 
