@@ -269,6 +269,8 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 확인했다(2026-09-10: GET /v1/models/gpt-image-2.5-flare → 200). 마네킹·컬러웨이·매칭·
   # 개인화는 image_high(Gemini) 그대로다.
   MODEL_ROUTING_DETAIL_CUT: gpt-image-2.5-flare
+  # 검증된 동일 입력의 일반 스타일링만 새 사진 질감 정책을 쓴다. 롤백: legacy.
+  STYLING_PHOTO_PROFILE: reference-v2
   # 완성 예시의 포즈·조명·상품 구조를 함께 지키는 호리존만 정밀 편집 모델로 분리한다.
   MODEL_ROUTING_HORIZON_CUT: gpt-image-2.5-sunburst
   MODEL_ROUTING_PRODUCT_DETAIL: gpt-image-2.5-sunburst

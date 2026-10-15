@@ -69,6 +69,75 @@ not overlays: preserve their exact spelling, shape, color, orientation, count an
 ATTACHED IMAGES (in order):
 ${imageManifest}
 
+[[BASE:reference_photo]]
+Make one believable everyday styling photograph of the selected person wearing the verified PRODUCT and selected MATCHING garments. Use the photographic character of the attached complete EXAMPLE, not a glossy fashion campaign, a clean AI product portrait or a generic modern-phone look.
+
+${authorityPlanLine}
+
+PRODUCT AND IDENTITY:
+- PRODUCT and MATCHING are the only garment identity sources. Preserve their supported construction,
+  material, seams, closures, patterns, permanent text/logos and declared fit/length. Do not invent hidden
+  details or turn temporary retail tags into garment features. Complete uncovered outfit areas only
+  with plain neutral unbranded basics, not the example's distinctive clothing, boots or accessories.
+- MANNEQUIN, when attached, remains only a coarse worn-geometry prior for seller-supported fit,
+  length, silhouette and drape. It does not prove unclear seller color, material or construction.
+- The selected identity references own face, hair and body according to their actual manifest roles.
+  Keep their recognizable identity and ordinary asymmetry without transferring their studio lighting.
+  Do not blend them with the example person or borrow the example's hair, glasses or tattoos.
+- Clothes are real three-dimensional materials under the scene light, not patches of studio RGB.
+  Preserve material color identity with coherent folds, contact shadows and reflected light.
+${outerwearInnerLine}
+${detailColorTransferLine}
+
+CURRENT CUT:
+${cutSection}
+FRAMING: ${shotLine}
+${directionLine}
+${faceLine}
+${poseLine}
+${outerClosureLine}
+${identityRefLine}
+${bodyRefLine}
+${faceRefLine}
+
+REFERENCE ATTRIBUTES AND VARIATION:
+${exampleLine}
+${exampleRepeatLine}
+${spaceLine}
+Follow only the reference attributes permitted by the compiled contract above. When reference pose
+and camera are authorized, preserve its action, balance, support contacts, camera-relative gaze,
+expression energy and face visibility, with small natural joint and arm-role variations. Do not
+mirror or symmetrize the person, hide both hands behind the back as a generic substitute, or reveal
+an intentionally obscured/cropped face. Read normalized headroom, subject height, placement and
+foot/floor margin from the reference instead of enlarging the person to showcase the face or garment.
+If a direction or shot override removes those reference attributes, the current cut controls them.
+
+REFERENCE-OWNED CAPTURE:
+Match the reference's actual exposure, white balance, tonal compression, highlight clipping,
+shadow depth, edge softness, local contrast, depth of field and texture scale. Keep modest
+real-camera noise only where visible. Do not upgrade it to a newer phone, studio camera, beauty
+portrait or HDR treatment. Skin, hair, garment and background share one capture treatment.
+Do not make them cleaner, smoother, brighter or more sharply resolved than the reference at the
+same viewing scale. Do not invent crisp microtexture or manufacture portrait bokeh. Diffuse or
+shaded light must not become sun-dappled fashion light; warmth does not require a dramatic sun disc.
+Mood references and generic commerce aesthetics cannot override the active example's capture.
+
+PLACE AND PHYSICAL INTEGRATION:
+Create a natural nearby-feeling alternative within the same place type, principal surface
+orientation, depth layers, palette, environmental light and ordinary density. Do not use a literal
+site replica, add decor to prove difference, copy distinctive third-party shop names or substitute
+conspicuous fake letters. A naturally plain unbranded fascia is preferable. Keep only generic
+support/occlusion props required by the compiled contract; no stray borrowed bag, strap or jewelry.
+Person, garments and venue must share coherent exposure, perspective, contact/cast shadows and
+reflected light. Never paste studio-lit clothing onto the scene or recolor it to match the venue.
+
+OUTPUT: one photorealistic portrait 2:3 image. Adapt background width when needed without stretching
+the person or changing intended vertical framing. No collage, duplicate person, caption, watermark,
+diagram or framing guide.
+
+ATTACHED IMAGES (in exact order):
+${imageManifest}
+
 [[SHOT:horizon_reference]]MATCHED COMPLETE HORIZON EXAMPLE:
 The current shot and direction match the attached complete EXAMPLE REFERENCE. Preserve its
 actual frame boundaries, head/body crop, subject scale, placement and camera relationship.

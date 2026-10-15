@@ -1,0 +1,36 @@
+Make one believable everyday photograph of the selected model wearing the verified sold product. It should have the photographic character of the attached SERVICE EXAMPLE, like another unretouched frame from that kind of ordinary outing, not a fashion campaign or a clean AI product portrait.
+
+INPUT ORDER AND AUTHORITY:
+${input_role_manifest}
+
+PRODUCT EVIDENCE:
+${seller_evidence_map}
+${visible_surface_plan}
+Verified facts:
+${hard_facts}
+Uncertain facts, not permission to invent:
+${uncertainties}
+
+Use the selected resolved mannequin only for the sold garment's worn color family, fit, length, silhouette, volume and drape where visibly judgeable. Seller pixels own construction, seams, closures, pattern placement, material evidence and permanent details. Reproduce permanent product text and logos when naturally visible, without forcing an interior label into view. Do not transfer temporary retail tags. Garment color is the material's color under the environment's light, not a pasted patch of studio RGB values. Never borrow mannequin lighting, body identity, pose, background or global color grade.
+
+SELECTED PERSON AND OUTFIT:
+The face and full-body direction sheets describe one selected person. Keep their own recognizable face, hair length/color/outline and stable proportions; do not blend them with the example person. Their studio lighting, pose and clothing are not identity. Retain ordinary asymmetry and natural skin without glamour retouching, exaggerated pores or a beauty-model substitute. Do not import the example person's glasses, hairstyle, tattoos or worn/carried branding. Eyewear may belong to the selected identity only when the selected identity evidence actually shows it.
+${outfit_lock}
+Only PRODUCT and the selected MATCHING images can authorize product-specific clothing and accessories. No source handbag, strap, hat, jewelry, decorative hair tie or distinctive boots. Keep only a generic unbranded support/occlusion object when the cut lock and pose evidence require it to preserve contact or face hiding. Otherwise use the declared outfit completion, not the example outfit. Never invent an object to fill an empty hand.
+
+CURRENT CUT AND FRAMING:
+${cut_lock}
+Read the reference's normalized frame: top-edge-to-head/hair distance, subject height in the image, horizontal placement, foot/floor margin or intentional crop boundary, perspective and the main background plane's orientation. Preserve those relationships rather than substituting generic portrait headroom. Do not enlarge the person or zoom in merely to showcase the face or garment. Adjust camera distance and placement plausibly for the selected person's proportions; never stretch anatomy. Keep intended head/body cropping and face visibility. If the requested output aspect ratio differs, adapt background width rather than changing the reference's vertical framing or exposing hidden body regions.
+
+POSE AND EXPRESSION:
+${pose_semantics}
+Preserve the action, body-direction family, balance, functional support/contact, camera-relative gaze, expression energy and intended asymmetry. Permit small relaxed variations in joints, fingers, arm roles, head tilt and cloth response when they keep that meaning and remain compatible with verified garment construction. Do not mirror the person or neutralize the pose into a mannequin stance. Do not replace visible relaxed/supporting hands with both hands hidden behind the back as a generic substitute. A bowed, obscured, cropped or turned-away face stays so; never reveal or front-align it just to demonstrate identity. Do not impose an off-camera fashion gaze when the reference looks toward the lens.
+
+REFERENCE-OWNED CAPTURE:
+The photographic reference is the target for capture rendering, not a suggestion to use an ideal camera. Read and match its actual exposure, white balance, tonal compression, highlight clipping, shadow depth, edge softness, local contrast, depth of field and texture scale. Keep modest real-camera noise only where visible. Do not upgrade it to a newer phone, studio camera, commercial fashion photograph, beauty portrait or HDR treatment. Do not make skin or clothes cleaner, smoother, brighter or more sharply resolved than the reference at the same viewing scale. Skin, hair, garment and background share the same capture treatment. Preserve visible garment evidence without inventing crisp microtexture or sharpening the clothing into a different photograph. Do not turn diffuse or shaded light into sun-dappled fashion light, or add a dramatic visible sun disc merely to convey warmth.
+
+PLACE AND PHYSICAL INTEGRATION:
+Create a natural nearby-feeling alternative of the same place type. Preserve principal surface orientation, depth layers, palette, light direction/softness, weather, spatial density and ordinary atmosphere, not a literal site replica. Do not invent or rearrange props to prove difference. Distinctive third-party shop names and signage are not authorized content: use a naturally plain unbranded fascia rather than copying the name, substituting fake letters or adding decor. Ordinary incidental environmental text need not be blanket-erased.
+Treat skin, hair, the sold garment, matching garments and venue as one physical exposure. Keep coherent contact/cast shadows, reflected light, cloth tension, compression folds and drape. Do not paste a studio-lit person or garment onto the scene, recolor the product to match the venue, or apply a global beauty/color treatment as a repair. Natural depth and softness come from this reference camera situation; do not manufacture portrait bokeh.
+
+Output exactly one vertical 2:3 photograph. No collage, duplicate person, diagram, framing guide, coordinates, caption, watermark or invented garment feature.

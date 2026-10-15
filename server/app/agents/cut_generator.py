@@ -27,6 +27,7 @@ from .content_roles import canonicalize_storyboard_block
 from .confirmed_gpt_prompt import (
     ConfirmedGptPromptInput,
     compile_confirmed_gpt_prompt,
+    compile_reference_photo_prompt,
     confirmed_gpt_framing_contract,
 )
 from .cut_plan import compile_cut_plan, render_prompt_contract
@@ -685,6 +686,7 @@ def render_cut_prompt(
     hair_profile: dict | None = None,
     face_shape_profile: dict | None = None,
     face_pass: bool = False,
+    reference_photo: bool = False,
 ) -> str:
     """섹션 선택 + ${토큰} 치환 + PRODUCT CONTEXT(ground truth) 자동 주입.
 
@@ -930,8 +932,12 @@ def render_cut_prompt(
             "keep the waistline, closure, skirt drape and silhouette dominant"
         )
 
+    photo_base = (
+        reference_photo and cut == "styling" and not spec.get("spaceGroupId")
+        and not is_signature_cut(spec) and _EXAMPLE_ALL_LABEL in image_manifest
+    )
     text = (
-        need("BASE")
+        need("BASE:reference_photo" if photo_base else "BASE")
         .replace("${cutLabel}", _CUT_LABELS[cut])
         .replace("${authorityPlanLine}", authority_plan_line or "")
         .replace(
@@ -1479,9 +1485,23 @@ def repair_signature_cut_selections(
     return (repaired if remaps else blocks), remaps
 
 
-def _resolve_generation_model(settings: Settings, spec: dict) -> str:
+def _reference_photo_active(settings: Settings, spec: dict, confirmed_prompt_input) -> bool:
+    return (
+        getattr(settings, "styling_photo_profile", "legacy") == "reference-v2"
+        and (confirmed_prompt_input is not None or spec.get("exampleId") or spec.get("example_id"))
+        and (spec.get("cutType") or spec.get("cut_type")) == "styling"
+        and not (spec.get("spaceGroupId") or spec.get("space_group_id"))
+        and not is_signature_cut(spec)
+    )
+
+
+def _resolve_generation_model(
+    settings: Settings, spec: dict, *, confirmed_prompt_input=None,
+) -> str:
     """일반/시그니처 컷의 Stage-1·Stage-2 모델 선택을 한 계약으로 유지한다."""
 
+    if _reference_photo_active(settings, spec, confirmed_prompt_input):
+        return "gpt-image-2.5-sunburst"
     model = resolve_model(settings, "image_high")
     if is_signature_cut(spec):
         signature_model = resolve_model(settings, "image_signature")
@@ -1557,6 +1577,7 @@ def build_prompt(
     face_shape_profile: dict | None = None,
     qc_corrections: tuple[str, ...] = (),
     face_pass: bool = False,
+    reference_photo: bool = False,
 ) -> str:
     """스펙 정규화(ValueError=unknown_cut_type) + 템플릿 렌더. manifest 미지정 시
     일반 컷은 해당 색상 상품 슬롯을, 디테일 컷은 detail_reference_images 정책의 상품 슬롯을
@@ -1598,7 +1619,7 @@ def build_prompt(
         body_profile=body_profile,
         hair_profile=hair_profile,
         face_shape_profile=face_shape_profile,
-        face_pass=face_pass)
+        face_pass=face_pass, reference_photo=reference_photo)
     if qc_corrections:
         prompt += (
             "\n\nINDEPENDENT QC CORRECTION — regenerate from the original authority "
@@ -1743,7 +1764,7 @@ def _base_request(
     # 시그니처 컷만 별도 모델(기본 gpt-image-2) — 나머지 컷은 기존 image_high 유지.
     # gpt-image 경로는 주 키나 fallback 키가 있어야 한다. 둘 다 없으면 첫 화면이 통째로
     # 빈칸이 되는 대신 기존 모델로 조용히 떨어진다.
-    model = _resolve_generation_model(settings, spec)
+    model = _resolve_generation_model(settings, spec, confirmed_prompt_input=confirmed_prompt_input)
     if confirmed_prompt_input is not None:
         if (
             analysis is not None or manifest is not None or has_face
@@ -1751,7 +1772,12 @@ def _base_request(
             or hair_profile is not None or face_shape_profile is not None
         ):
             raise ValueError("confirmed_gpt_forbids_generic_prompt_inputs")
-        prompt = compile_confirmed_gpt_prompt(
+        compiler = (
+            compile_reference_photo_prompt
+            if _reference_photo_active(settings, spec, confirmed_prompt_input)
+            else compile_confirmed_gpt_prompt
+        )
+        prompt = compiler(
             confirmed_prompt_input, qc_corrections=qc_corrections
         )
     else:
@@ -1766,6 +1792,8 @@ def _base_request(
             hair_profile=hair_profile,
             face_shape_profile=face_shape_profile,
             qc_corrections=qc_corrections,
+            **({"reference_photo": True}
+               if _reference_photo_active(settings, spec, None) else {}),
             # 각도 교체 컷은 얼굴 패스를 안 탄다 — 옆모습을 3/4 로 바꾸지 않고 진짜 옆모습을 주문한다.
             face_pass=(_face_identity_spec(settings, spec, clothing_type, face_identity_spec) is not None
                        and _angle_swap_direction(spec, clothing_type, angle_swap) is None),
@@ -1992,7 +2020,7 @@ async def repair(
     보정을 채택한 컷의 얼굴이 gpt-image 로 되돌아간다(2026-09-11 점검). 인자 세 개는 generate() 와 같은 뜻이고,
     호출자는 값이 있을 때만 넘긴다(face_identity_spec 이 없으면 기존과 바이트 단위로 같다)."""
 
-    model = _resolve_generation_model(settings, cut_spec)
+    model = _resolve_generation_model(settings, cut_spec, confirmed_prompt_input=confirmed_prompt_input)
     prompt = build_qc_repair_prompt(
         cut_spec,
         product,
