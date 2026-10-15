@@ -9,7 +9,7 @@
   --ring-flow-5: var(--wl-peri);
   --ring-flow-6: #B9D9F7;
   --fg-on-glow: #5C5C5C;
-  /* --fg-2: var(--fg-on-glow); */
+  --fg-2: #6E6E6E;
 }
 
 /* 흰 판 밖, 배경 빛 위에 바로 놓인 짧은 설명만 진하게 한다. */

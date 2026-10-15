@@ -190,6 +190,9 @@ html[data-entry="landing"] #seller-boot-bg { display: block; }
   .app-bg[data-glow="list"] { --wl-app-orb-opacity: .62; }
 }
 body:has(.overlay, [aria-modal="true"], .storyboard-transition-overlay) :is(.wl-orb-root, .wl-aurora) { opacity: .22; }
+@media (min-width: 768px) {
+  .app-bg[data-glow="list"] .wl-orb-root { opacity: 0; }
+}
 
 /* 본문은 기존 fxPageIn 한 번만 쓴다. 배경 조상은 transform/opacity로 움직이지 않는다. */
 html[data-entry="landing"] .topnav {
