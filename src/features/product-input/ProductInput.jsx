@@ -950,7 +950,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       }
       draftSlot.resume();
       if (latestSnapshot && isCurrentRun()) draftSlot.queue(latestSnapshot);
-      toast.push(error?.message || '입력 내용을 서버에 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert', variant: 'error', error: error, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
+      toast.push(error?.message || '입력 내용을 서버에 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alertCircle', variant: 'error', error: error, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
     } finally {
       redirectingRef.current = false;
       if (isCurrentRun()) setFlowPromotionLocked(false);
@@ -1064,7 +1064,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       setPendingRelevantPatch(null);
       applyAnalysisPatch(patch);
     } catch (error) {
-      toast.push(error?.message || '마네킹컷 생성을 취소하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+      toast.push(error?.message || '마네킹컷 생성을 취소하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alertCircle' });
     } finally {
       cancellingRelevantPatchRef.current = false;
       setCancellingRelevantPatch(false);
@@ -1113,7 +1113,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
     setPhase(canRestoreAnalysis ? (awaitingCore ? (isAnalysisFastEntryEnabled() ? 'analyzing' : 'input') : 'done') : 'input');
     if (canRestoreAnalysis && isAnalysisFastEntryEnabled()) {
       void resumeFeatureAnalysis(payload).catch((error) => {
-        if (mountedRef.current) { setPhase('input'); toast.push('분석을 이어서 불러오지 못했어요. 다시 시도해 주세요.', { icon: 'alert', error }); }
+        if (mountedRef.current) { setPhase('input'); toast.push('분석을 이어서 불러오지 못했어요. 다시 시도해 주세요.', { icon: 'alertCircle', error }); }
       });
     }
     return true;
@@ -1136,7 +1136,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       setSlotLock(null);
     } catch (error) {
       if (!isCurrent()) return;
-      toast.push(error?.message || '내용을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert', variant: 'error', error: error, kind: 'ui_error', actionName: 'restore', messageCode: 'action_failed', blocking: true });
+      toast.push(error?.message || '내용을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alertCircle', variant: 'error', error: error, kind: 'ui_error', actionName: 'restore', messageCode: 'action_failed', blocking: true });
     }
   };
 
@@ -1160,7 +1160,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       }
     } catch (error) {
       if (!isCurrent()) return;
-      toast.push(error?.message || '이 화면의 내용으로 이어가지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert', variant: 'error', error: error, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
+      toast.push(error?.message || '이 화면의 내용으로 이어가지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alertCircle', variant: 'error', error: error, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
     }
   };
 
@@ -1187,7 +1187,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
         await draftSlot.flush();
       }
     } catch (error) {
-      toast.push(error?.message || '내용을 다시 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert', variant: 'error', error: error, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
+      toast.push(error?.message || '내용을 다시 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alertCircle', variant: 'error', error: error, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
     }
   };
 
@@ -1365,7 +1365,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
           if (!alive) return;
           setAnalysisRunning(editingProjectId, false);
           setPhase('input');
-          toast.push(error?.message || '진행 중인 분석에 다시 연결하지 못했어요. 다시 시도해 주세요.', { icon: 'alert', variant: 'error', error: error, kind: 'analysis_error', actionName: 'analyze', messageCode: 'analysis_failed', blocking: true });
+          toast.push(error?.message || '진행 중인 분석에 다시 연결하지 못했어요. 다시 시도해 주세요.', { icon: 'alertCircle', variant: 'error', error: error, kind: 'analysis_error', actionName: 'analyze', messageCode: 'analysis_failed', blocking: true });
         }
         return;
       }
@@ -1577,7 +1577,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
           || useAppStore.getState().projectGeneration !== analysisGeneration)) return;
       // http 모드에서 분석 실패(네트워크·서버 에러)해도 스피너에 고착되지 않게 — 입력으로 복귀 + 안내.
       setPhase('input');
-      toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'alert', variant: 'error', error: e, kind: 'analysis_error', actionName: 'analyze', messageCode: 'analysis_failed', blocking: true });
+      toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'alertCircle', variant: 'error', error: e, kind: 'analysis_error', actionName: 'analyze', messageCode: 'analysis_failed', blocking: true });
     }
   };
 

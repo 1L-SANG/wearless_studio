@@ -63,6 +63,7 @@ function find(tree, text) {
 }
 
 for (const [path, component] of [
+  ['/library', 'Library'],
   ['/create/storyboard', 'Storyboard'], ['/create/mannequin', 'Mannequin'],
   ['/create/generating', 'Generating'], ['/editor/project-id', 'LazyEditor'],
 ]) {
@@ -100,8 +101,10 @@ for (const [path, component] of [
   });
 }
 for (const [path, component] of [
-  ['/library', 'Library'], ['/pricing', 'Pricing'], ['/credits/history', 'CreditsHistory'],
+  ['/pricing', 'Pricing'], ['/credits/history', 'CreditsHistory'],
   ['/payments/success', 'PaymentSuccess'], ['/payments/fail', 'PaymentFail'],
+  ['/subscription', 'SubscriptionManage'], ['/subscription/success', 'SubscriptionSuccess'],
+  ['/subscription/fail', 'SubscriptionFail'],
 ]) {
   test(`mobile keeps ${path} reachable`, () => {
     assert.ok(harness(true, path).html.includes(component));

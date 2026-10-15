@@ -873,8 +873,12 @@ export default function App() {
           <Route path="pricing" element={<Pricing />} />
           <Route path="price" element={<Navigate to="/pricing" replace />} />
           {/* 보관함은 로그인 필요 */}
+          <Route element={<MobileHandoffGuard />}>
+            <Route element={<RequireAuth />}>
+              <Route path="library" element={<Library />} />
+            </Route>
+          </Route>
           <Route element={<RequireAuth />}>
-            <Route path="library" element={<Library />} />
             <Route path="credits/history" element={<CreditsHistory />} />
             {/* 토스 결제 리다이렉트 착지점(WS3) — 승인은 success 화면이 서버에 위임한다 */}
             <Route path="payments/success" element={<PaymentSuccess />} />

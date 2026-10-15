@@ -24,6 +24,7 @@ import { Button, Icon, Skeleton, ErrorState } from '@/components/ui.jsx';
 import { BANK_TRANSFER_ENABLED, SUBSCRIPTION_TRANSFER_ENABLED, TOSS_BILLING_CLIENT_KEY }
   from '@/lib/tossKeys.js';
 import s from './Subscription.module.css';
+import { paymentResultErrorCopy } from '../payments/paymentResultCopy.js';
 
 // 결제수단 등록/교체는 자동결제 MID 의 클라이언트 키로 해야 한다 — lib/tossKeys.js 참고.
 const num = (n) => Number(n || 0).toLocaleString('ko-KR');
@@ -90,7 +91,8 @@ export function SubscriptionSuccess() {
       })
       .catch((e) => {
         if (mounted.current && currentPath.current === '/subscription/success') {
-          setState({ status: 'error', message: e?.message || '구독을 시작하지 못했어요.' });
+          console.error('구독 시작 오류', e);
+          setState({ status: 'error', ...paymentResultErrorCopy(e, { cardOnly: mode === 'card' }) });
         }
       });
   }, [params, qc, syncCredits]);
@@ -100,7 +102,7 @@ export function SubscriptionSuccess() {
   }
   if (state.status === 'error') {
     return (
-      <Shell icon="alert" title="구독을 시작하지 못했어요" desc={state.message}>
+      <Shell icon="alertCircle" title={state.title || '구독을 시작하지 못했어요'} desc={state.message}>
         <Link to="/pricing"><Button variant="primary">요금제로 돌아가기</Button></Link>
       </Shell>
     );
@@ -129,9 +131,13 @@ export function SubscriptionSuccess() {
 export function SubscriptionFail() {
   const [params] = useSearchParams();
   const code = params.get('code');
-  const message = params.get('message') || '결제수단 등록이 완료되지 않았어요.';
+  const message = params.get('message');
+  const canceled = code === 'PAY_PROCESS_CANCELED' || code === 'USER_CANCEL';
+  useEffect(() => {
+    if (code || message) console.warn('결제수단 등록 미완료', { code, message });
+  }, [code, message]);
   return (
-    <Shell icon="alert" title="결제수단 등록이 취소됐어요" desc={code ? `${message} (${code})` : message}>
+    <Shell icon="alertCircle" title={canceled ? '결제수단 등록이 취소됐어요' : '결제수단을 등록하지 못했어요'} desc="요금제에서 다시 시도해 주세요.">
       <Link to="/pricing"><Button variant="primary">다시 시도하기</Button></Link>
     </Shell>
   );
@@ -238,7 +244,7 @@ export function SubscriptionManage() {
           이 문장이 없으면 사용자는 서비스가 멈춘 줄 알고 이탈한다. */}
       {(data.status === 'past_due' || data.cardNeedsUpdate) && (
         <div className={s.alert} role="alert">
-          <Icon name="alert" size={16} />
+          <Icon name="alertCircle" size={16} />
           <div>
             <strong>결제가 실패했어요.</strong>{' '}
             {data.graceUntil
@@ -342,11 +348,11 @@ export function SubscriptionManage() {
 function Shell({ icon, title, desc, children }) {
   return (
     <div className="wizard">
-      <div className="surface" style={{ textAlign: 'center', padding: '48px 24px' }}>
+      <div className="surface payment-result">
         <Icon name={icon} size={28} />
-        <h1 style={{ margin: '12px 0 6px', fontSize: 22 }}>{title}</h1>
-        <p style={{ color: 'var(--fg-2, #4a4a45)', marginBottom: 20 }}>{desc}</p>
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>{children}</div>
+        <h1>{title}</h1>
+        <p>{desc}</p>
+        <div className="modal-actions">{children}</div>
       </div>
     </div>
   );
