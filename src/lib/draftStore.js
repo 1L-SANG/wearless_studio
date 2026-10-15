@@ -20,6 +20,7 @@ const DB_VERSION = 1;
 const STORE = 'draft';
 const KEY = 'current';
 const PENDING_KEY = 'wl_draftPending'; // sessionStorage(탭 세션 한정) — 미동기화 draft 존재 표시
+const LEGACY_BLOCKED = 'legacy-blocked';
 const DRAFT_DEBOUNCE_MS = 500;
 let pendingSnapshot = null;
 let pendingTimer = null;
@@ -155,14 +156,20 @@ export async function ensureDraftRemotePhotos(draft, fetchBlob = fetchPhotoBlob)
 }
 
 export async function saveProductDraft(product, analysis = null, composeMode = 'basic', updatedAt = new Date().toISOString(), customMatch = null, isCurrent = () => true) {
+  const ownerUserId = draftSlot.getUserId();
+  const identityEpoch = draftSlot.getIdentityEpoch();
+  const current = () => isCurrent() && ownerUserId === draftSlot.getUserId()
+    && identityEpoch === draftSlot.getIdentityEpoch();
   const stored = await loadDraft().catch(() => null);
-  if (!isCurrent()) return null;
+  if (!current()) return null;
   const { photos, cleanProduct, failed, failedIds, failures } = await collectDraftPhotos(product, fetchPhotoBlob, stored?.photos);
-  if (!isCurrent()) return null;
+  if (!current()) return null;
   // 커스텀 매칭(내 옷) blob 도 상품 사진과 같은 등급으로 저장한다. 이게 없으면 비로그인
   // 셀러의 OAuth 리다이렉트(=풀 페이지 리로드)에서 메모리의 blob 이 사라져, 확정 승격이
   // 읽을 게 없어지고 내 옷이 조용히 유실된다(2026-08-15 전수조사).
-  await withStore('readwrite', (s) => isCurrent() ? s.put({
+  await withStore('readwrite', (s) => current() ? s.put({
+    // 옛 소유자 없는 초안은 추정 귀속하지 않는다. 새 guest(null)는 로그인 뒤 이어 쓸 수 있다.
+    ...(!stored || Object.hasOwn(stored, 'ownerUserId') ? { ownerUserId } : {}),
     product: cleanProduct,
     analysis,
     composeMode: composeMode === 'extended' ? 'extended' : 'basic',
@@ -170,7 +177,7 @@ export async function saveProductDraft(product, analysis = null, composeMode = '
     photos,
     customMatch: customMatch && customMatch.uploads?.length ? customMatch : null,
   }, KEY) : null);
-  if (!isCurrent()) return null;
+  if (!current()) return null;
   // 이 탭 세션에 '미동기화 입력 있음' 표시 — 복원은 이 플래그가 있을 때만(=같은 세션) 한다.
   // sessionStorage 라 탭을 닫으면 사라져, 공용 브라우저의 다른 사용자에겐 복원되지 않는다.
   sessionStorage.setItem(PENDING_KEY, '1');
@@ -247,7 +254,13 @@ export function discardPendingDraftSave() {
 
 /** 저장된 draft 반환(없으면 null). photos[].blob 은 Blob 으로 복원된다. */
 export async function loadDraft() {
+  const userId = draftSlot.getUserId();
+  const identityEpoch = draftSlot.getIdentityEpoch();
   const draft = await withStore('readonly', (s) => s.get(KEY));
+  if (userId !== draftSlot.getUserId() || identityEpoch !== draftSlot.getIdentityEpoch()) return null;
+  // 다른 도메인에서 로그인한 뒤 부트스트랩해도, 이 오리진에 남은 이전 계정 입력은 복원하지 않는다.
+  if (draft?.ownerUserId && draft.ownerUserId !== draftSlot.getUserId()) return null;
+  if (draft && !Object.hasOwn(draft, 'ownerUserId') && sessionStorage.getItem(PENDING_KEY) === LEGACY_BLOCKED) return null;
   return draft ? {
     ...draft,
     analysis: normalizeAnalysisFit(draft.analysis),
@@ -256,11 +269,27 @@ export async function loadDraft() {
 }
 
 /** draft 삭제 — sync 성공 후 정리. */
-export async function clearDraft() {
+export async function clearDraft({ ownerUserId } = {}) {
   discardPendingDraftSave();
   await saveChain.catch(() => null);
-  await withStore('readwrite', (s) => s.delete(KEY));
-  sessionStorage.removeItem(PENDING_KEY);
+  let clearPending = false;
+  let blockLegacy = false;
+  await withStore('readwrite', (store) => {
+    if (ownerUserId === undefined) { clearPending = true; return store.delete(KEY); }
+    // 계정 전환 정리는 이전 계정 것만 지운다. 다른 탭의 새 저장과 대조·삭제를 한 트랜잭션에 둔다.
+    const request = store.get(KEY);
+    request.onsuccess = () => {
+      if (!request.result || (ownerUserId && request.result.ownerUserId === ownerUserId)) {
+        store.delete(KEY);
+        clearPending = true;
+      } else if (ownerUserId && !Object.hasOwn(request.result, 'ownerUserId')) {
+        // 계정 전환 때 주인 모를 옛 초안은 보존하되, 이 탭의 복원 권한은 넘기지 않는다.
+        blockLegacy = true;
+      }
+    };
+  });
+  if (blockLegacy) sessionStorage.setItem(PENDING_KEY, LEGACY_BLOCKED);
+  else if (clearPending) sessionStorage.removeItem(PENDING_KEY);
 }
 
 /** 오래 걸린 승격이 끝나는 사이 새 draft가 저장됐으면 그 새 작업은 지우지 않는다. */
@@ -289,14 +318,18 @@ export function hasPendingDraft() {
 
 /** 사진을 다시 읽지 않고 특징 실행 체크포인트만 같은 로컬 저장 큐에 기록한다. */
 export function saveFeatureRunDraft(patch, { isCurrent = () => true, matchesDraft = () => true, product } = {}) {
+  const userId = draftSlot.getUserId();
+  const identityEpoch = draftSlot.getIdentityEpoch();
+  const current = () => isCurrent() && userId === draftSlot.getUserId()
+    && identityEpoch === draftSlot.getIdentityEpoch();
   commitPendingSnapshot();
   saveChain = saveChain.catch(() => null).then(async () => {
-    if (!isCurrent()) return false;
+    if (!current()) return false;
     const draft = await loadDraft();
-    if (!draft || !isCurrent() || !matchesDraft(draft)) return false;
-    await withStore('readwrite', (store) => isCurrent()
+    if (!draft || !current() || !matchesDraft(draft)) return false;
+    await withStore('readwrite', (store) => current()
       ? store.put({ ...draft, ...(product ? { product } : {}), analysis: { ...draft.analysis, ...patch } }, KEY) : null);
-    return isCurrent();
+    return current();
   });
   return saveChain;
 }

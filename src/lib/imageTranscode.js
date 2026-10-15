@@ -12,6 +12,8 @@
    fetch().blob() 으로 되살리는 구조).
    ============================================================= */
 
+import { stripJpegMetadata } from './jpegMetadata.js';
+
 // 긴 변 상한. 마네킹 생성 출력이 2K(≈2500px)라 그 이상 넣어도 결과가 좋아지지 않는다.
 // 서버는 업로드 원본을 리사이즈 없이 그대로 Gemini 로 보내므로(InlineImage=원본 바이트),
 // 큰 사진은 생성 요청마다 비용·지연으로 전가된다. 4000px 는 2K 출력의 1.6배로 여유가 있다.
@@ -168,7 +170,7 @@ export async function toUploadableImage(file, options = {}) {
   const heic = await isHeic(file);
   if (!heic) {
     const shrunk = await downscaleJpeg(file, options);
-    if (shrunk === file) return file;
+    if (shrunk === file) return stripJpegMetadata(file);
     return new File([shrunk], renameExt(file.name, 'jpg'), { type: 'image/jpeg', lastModified: file.lastModified });
   }
   // libheif(wasm)는 무겁다 — HEIC 를 실제로 만났을 때만 동적 로드해 초기 번들에서 뺀다.

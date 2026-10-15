@@ -254,7 +254,7 @@ export const useAppStore = create((set, get) => ({
      '상세페이지 제작'/'새 상세페이지' 클릭만으로 보관함에 빈 프로젝트가 생기던 버그 방지.
      여기선 로컬 플로우만 초기화: 미동기화 draft 폐기(묵은 입력 복원 방지) + projectGeneration
      을 올려 ProductInput 을 remount(폼 초기화)한다. */
-  async beginProject({ isCurrent = () => true, onStarted = () => {} } = {}) {
+  async beginProject({ isCurrent = () => true, onStarted = () => {}, draftOwnerUserId } = {}) {
     if (!isCurrent()) return;
     // 이전 프로젝트의 '편집 시작' 표식은 **지우지 않는다**(2026-08-17 리뷰). 그 표식은
     // "이 프로젝트는 이미 편집했다"는 프로젝트별 사실이라, 새 제작을 시작했다고 사라지면
@@ -272,7 +272,7 @@ export const useAppStore = create((set, get) => ({
     // 기억한 projectId 가 남아, 앞 상품 업로드가 도는 중에 새로 만든 상품이 그 프로젝트에
     // 덮어써진다.
     forgetDraftSyncProject();
-    await clearDraft().catch(() => {});
+    await clearDraft({ ownerUserId: draftOwnerUserId }).catch(() => {});
     if (!isCurrent()) return;
     // 게스트 구간(projectId 없음)의 상품·분석 저장소는 http 모드에서도 mock 어댑터다 —
     // 비우지 않으면 직전 제작의 분석·colors 가 다음 분석 응답에 섞여 나와 새로 올린 사진을
