@@ -16,6 +16,31 @@
   --fg-2: #6E6E6E;
 }
 
+/* 최소 높이만 확보해 콘티의 자체 높이와 크롬 밖 에디터는 그대로 둔다. */
+.app-shell > .app-main {
+  min-height: calc(100vh - 60px);
+  min-height: calc(100svh - 60px);
+}
+
+/* key(pathname)의 수명 동안 고정된다. data-entry의 600ms 해제와 무관하다. */
+.fx-pagefade .app-main.page-enter-initial {
+  animation: sellerPageIn 240ms cubic-bezier(.16, 1, .3, 1) backwards;
+}
+@keyframes sellerPageIn {
+  from { opacity: 0; transform: translateY(4px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fx-pagefade .app-main.page-enter-initial { animation: none; }
+  .fx-pagefade .app-main.page-enter-initial.page-enter-landing { animation: wl-handoff-chrome 100ms ease backwards; }
+}
+
+/* 글래스 바깥 모양과 반응형 사진 격자의 높이만 재사용한다. 반짝임·조작 요소는 없다. */
+.product-input-placeholder-card > * { visibility: hidden; }
+.product-input-placeholder-card .pi-placeholder-line::before { content: ''; display: block; height: 1lh; }
+.product-input-placeholder-card .pi-placeholder-name-help { margin-top: -6px; margin-bottom: 12px; }
+.product-input-placeholder-card .pi-placeholder-photo-help { margin-top: -6px; margin-bottom: 16px; min-height: 2lh; line-height: 1.75; }
+.product-input-placeholder-card .pi-placeholder-add-color { margin-top: 16px; height: var(--cta-height); }
+
 /* 흰 판 밖, 배경 빛 위에 바로 놓인 짧은 설명만 진하게 한다. */
 .app-shell .page-head p,
 .app-shell .lib-heading .sec-sub,

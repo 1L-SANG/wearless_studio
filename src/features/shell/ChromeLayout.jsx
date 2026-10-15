@@ -207,11 +207,13 @@ function DetailPageJobRibbon() {
   );
 }
 
-export function ChromeLayout() {
+export function ChromeLayout({ initialEntry = false }) {
   const { session } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const { pathname } = location;
+  const [landingEntry] = useState(() => document.documentElement.getAttribute('data-entry') === 'landing');
+  const initialEntryClass = landingEntry ? ' page-enter-initial page-enter-landing' : ' page-enter-initial';
   const backgroundRef = useRef(null);
   const listGlow = pathname === '/library' || pathname === '/credits/history'
     || pathname === '/subscription' || pathname.startsWith('/subscription/');
@@ -287,7 +289,7 @@ export function ChromeLayout() {
         <DetailPageJobRibbon />
       </div>
       {/* 콘티는 데이터 준비 후 자체 진입 모션을 재생해 스켈레톤과 이중 애니메이션되지 않게 한다. */}
-      <div className={`app-main${storyboardOwnsEntrance ? '' : ' page-enter'}`} key={pathname}>
+      <div className={`app-main${storyboardOwnsEntrance ? '' : initialEntry ? initialEntryClass : ' page-enter'}`} key={pathname}>
         <Outlet />
       </div>
       <SiteFooter />

@@ -64,7 +64,7 @@ test('보조 링크는 넘겨준 것만 그리고, 서버 렌더에서는 이전
 test('두 앱의 마지막 경로가 이 화면이고 셀러 쪽은 상단바(ChromeLayout) 안에 있다', () => {
   const seller = readFileSync(join(root, 'src/apps/seller/App.jsx'), 'utf8');
   const facemarket = readFileSync(join(root, 'src/apps/facemarket/App.jsx'), 'utf8');
-  assert.match(seller, /<Route element=\{<ChromeLayout \/>\}>\s*<Route path="\*" element=\{<NotFound brand="WEARLESS" \/>\} \/>/);
+  assert.match(seller, /<Route element=\{<ChromeLayout\b[^>]*\/>\}>\s*<Route path="\*" element=\{<NotFound brand="WEARLESS" \/>\} \/>/);
   assert.match(facemarket, /<Route path="\*" element=\{<NotFound brand="FACEMARKET"/);
   assert.doesNotMatch(seller, /path="\*" element=\{<Navigate/);
   assert.doesNotMatch(facemarket, /path="\*" element=\{<Navigate/);

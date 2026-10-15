@@ -192,7 +192,7 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
     promoteDraftToProject: async () => { calls.push('promote'); return { projectId: 'promoted' }; },
     clearDraft: async () => { calls.push('clear'); local = null; }, resetDraftSyncSingleFlight() {},
     DRAFT_SYNC_TIMEOUT_MS: 20000, setTimeout() {},
-    ProductInput: 'ProductInput', Modal: 'Modal', Button: 'Button', Icon: 'Icon',
+    ProductInput: 'ProductInput', ProductInputPlaceholder: 'ProductInputPlaceholder', Modal: 'Modal', Button: 'Button', Icon: 'Icon',
     Stepper: 'Stepper', ProfileMenuIcon: 'ProfileMenuIcon',
     p: new Proxy({}, { get: (_, key) => key }),
     s: new Proxy({}, { get: (_, key) => key }),
@@ -323,7 +323,7 @@ async function openNav(h) {
 
 test('C2 actual confirmed route waits for auth and shows flow plus remote before redirecting', async () => {
   const h = harness({ loading: true });
-  assert.equal(await h.settle('ProductInputRoute'), null);
+  assert.equal((await h.settle('ProductInputRoute')).type, 'ProductInputPlaceholder');
   assert.deepEqual(h.calls, []);
   h.auth.loading = false;
   const tree = await h.settle('ProductInputRoute');
@@ -1207,7 +1207,7 @@ for (const event of ['SIGNED_OUT', 'SIGNED_IN']) {
     h.remount('ProductInputRoute');
     let release;
     h.setEntryFlush(new Promise((resolve) => { release = resolve; }));
-    assert.equal(await h.settleApp(), null);
+    assert.equal((await h.settleApp()).type, 'ProductInputPlaceholder');
     h.emit(event, event === 'SIGNED_OUT' ? null : { user: { id: 'B' } });
     h.setEntryFlush(null);
     release();

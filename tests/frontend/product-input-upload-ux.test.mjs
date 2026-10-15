@@ -43,11 +43,12 @@ test('추가 색상 정면 안내만 CTA modifier로 link 색 토큰을 쓴다',
   assert.equal(reasonRules.find((rule) => rule[1] === '.wizard-cta-reason.is-link')?.[2].trim(), 'color: var(--link);');
 });
 
-test('새 기기 첫 진입 로딩은 빈 카드형 스켈레톤을 노출하지 않는다', () => {
+test('새 기기 첫 진입은 공용 자리 표시를 사용하고 기존 잠금 안내를 유지한다', () => {
   const loadingBranch = productInput.match(/if \(!product \|\| !catalogs\) return \(([\s\S]*?)\n  \);/)?.[1];
   assert.ok(loadingBranch);
-  assert.match(loadingBranch, /aria-busy="true"/);
-  assert.doesNotMatch(loadingBranch, /className="surface"|<Skeleton/);
+  assert.match(loadingBranch, /<ProductInputPlaceholder mobile=\{mobile\}>/);
+  assert.match(loadingBranch, /\{editingRightsLock\}/);
+  assert.match(loadingBranch, /!mobile && doneBlocked && <DoneGuardModal/);
 });
 
 test('특징 삭제 버튼은 시각 아이콘을 유지한 44px 터치 영역이며 편집 mousedown과 분리된다', () => {

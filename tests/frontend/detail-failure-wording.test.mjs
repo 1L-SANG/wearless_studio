@@ -14,7 +14,7 @@ const shell = read('src/features/shell/ChromeLayout.jsx');
 const band = editor.slice(editor.indexOf('      {((genActive && dpJob.status'), editor.indexOf('      {/* FaceMarket 차단'));
 const declarations = editor.slice(editor.indexOf('  const genFailed ='), editor.indexOf('\n  return (', editor.indexOf('  const genFailed =')));
 const { code: bandCode } = await transformWithEsbuild(`function Band(){${declarations} return <>${band}</>}`, 'Band.jsx', { jsx: 'transform' });
-const ribbon = shell.slice(shell.indexOf('function DetailPageJobRibbon()'), shell.indexOf('export function ChromeLayout()'));
+const ribbon = shell.slice(shell.indexOf('function DetailPageJobRibbon()'), shell.indexOf('export function ChromeLayout('));
 const { code: ribbonCode } = await transformWithEsbuild(ribbon, 'Ribbon.jsx', { jsx: 'transform' });
 const incomplete = { requested: 2, completed: ['cut1'], failed: ['cut2'], retained: ['cut1'], expired: false };
 

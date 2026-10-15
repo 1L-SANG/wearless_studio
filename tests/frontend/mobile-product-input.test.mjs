@@ -21,7 +21,7 @@ const clean = (source) => source.replace(/^import [\s\S]*?;\n/gm, '').replace(/^
 const app = read('src/apps/seller/App.jsx');
 const inputRoute = app.slice(app.indexOf('function ProductInputRoute()'), app.indexOf("/* '/' 복귀의 리다이렉트"));
 const { code } = await transformWithEsbuild([
-  'src/features/product-input/ProductInput.jsx', 'src/features/product-input/MobileInputHandoff.jsx',
+  'src/features/product-input/ProductInput.jsx', 'src/features/product-input/ProductInputFrame.jsx', 'src/features/product-input/MobileInputHandoff.jsx',
   'src/features/shell/MobileDraftDialog.jsx', 'src/features/shell/DraftProductRow.jsx', 'src/features/shell/HandoffStatusPage.jsx', 'src/features/shell/HangTag.jsx', 'src/features/shell/AddressCopyChip.jsx',
   'src/features/library/Library.jsx', 'src/lib/useDraftEntryActions.js', 'src/features/shell/DraftEntryDialog.jsx',
 ].map((path) => clean(read(path))).join('\n') + '\n' + inputRoute, 'MobileInput.jsx', { jsx: 'transform' });
@@ -137,7 +137,7 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
   };
   for (const name of ['Button', 'Modal', 'Icon', 'IconButton', 'ErrorState', 'UploadPendingTile', 'PageHead',
     'ResumeChoiceModal', 'WizardCTA', 'DoneGuardModal', 'CreditShortfallModal', 'AnalysisForm', 'AnalysisProgress', 'AnalysisSkeleton']) bindings[name] = name;
-  const components = new Function(...Object.keys(bindings), `${code}; return { ProductInputRoute, HandoffStatusPage, MobileDraftDialog, MobileDraftStatus, DraftProductRow, Library, ProductInput, ColorImageGroup, AddDrop, InputMainAction, MobileSaveModal, MobileSaveStatus, MobileAnalyzedNotice, EditingRightsLock, DraftEntryDialog, HangTag, AddressCopyChip };`)(...Object.values(bindings));
+  const components = new Function(...Object.keys(bindings), `${code}; return { ProductInputRoute, HandoffStatusPage, MobileDraftDialog, MobileDraftStatus, DraftProductRow, Library, ProductInput, ProductInputHeading, ProductInputPlaceholder, ColorImageGroup, AddDrop, InputMainAction, MobileSaveModal, MobileSaveStatus, MobileAnalyzedNotice, EditingRightsLock, DraftEntryDialog, HangTag, AddressCopyChip };`)(...Object.values(bindings));
   function render(name = 'ProductInput', props = {}) {
     if (!frames.has(name)) frames.set(name, []);
     active = frames.get(name); cursor = 0; dirty = false;
@@ -779,7 +779,8 @@ for (const [provider, metadata, expected, sentence] of [
 test('mobile input subtitle explains the PC handoff while desktop copy stays unchanged', async () => {
   for (const mobile of [true, false]) {
     const h = harness({ mobile });
-    const head = node(await h.settle(), 'PageHead');
+    const heading = node(await h.settle(), 'ProductInputHeading');
+    const head = h.render('ProductInputHeading', heading.props);
     assert.equal(text(head.props.sub), mobile ? '사진만 올리면 PC에서 이어서 만들어요.'
       : '사진 몇 장만으로 경험해보세요.부족한 정보는 AI 분석 후 직접 확인하고 보정할 수 있어요.');
     h.cleanup();
@@ -914,7 +915,7 @@ for (const delay of ['debounce', 'photo-debounce', 'photo', 'indexeddb']) {
     h.location.key = 'return-from-library';
     tree = await h.settle('ProductInputRoute');
     if (['photo', 'indexeddb'].includes(delay)) {
-      assert.equal(tree, null, 'entry waits for the in-flight local save');
+      assert.equal(tree.type.name, 'ProductInputPlaceholder', 'entry reserves the input layout while waiting for the in-flight local save');
       assert.equal(slot.paused, true);
       assert.deepEqual(slot.calls, [], 'the older slot is not read before local persistence');
       if (delay === 'photo') finishPhoto();

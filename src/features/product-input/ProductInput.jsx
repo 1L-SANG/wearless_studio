@@ -68,7 +68,8 @@ import {
   formatDraftRelativeTime,
 } from '@/lib/draftSlot.js';
 import { Icon, Button, IconButton, ErrorState, Modal, UploadPendingTile, useToast } from '@/components/ui.jsx';
-import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
+import { useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
+import { ProductInputHeading, ProductInputPlaceholder } from './ProductInputFrame.jsx';
 import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import {
@@ -1441,10 +1442,10 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
     </div>
   );
   if (!product || !catalogs) return (
-    <div className="wizard" aria-busy="true" aria-label="입력 화면 불러오는 중">
+    <ProductInputPlaceholder mobile={mobile}>
       {editingRightsLock}
       {!mobile && doneBlocked && <DoneGuardModal />}
-    </div>
+    </ProductInputPlaceholder>
   );
 
   const mobileEditingLocked = mobile && (mobileReadOnly || handoff.saving || preparingLogin);
@@ -1757,11 +1758,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
           </div>
         </Modal>
       )}
-      <PageHead
-        title="의류 이미지를 올려주세요"
-        sub={mobile ? '사진만 올리면 PC에서 이어서 만들어요.'
-          : <>사진 몇 장만으로 경험해보세요.<br />부족한 정보는 AI 분석 후 직접 확인하고 보정할 수 있어요.</>}
-      />
+      <ProductInputHeading mobile={mobile} />
 
       {mobile && phase === 'done' && !handoff.readOnly && <MobileAnalyzedNotice busy={entryBusy} onNew={nextMobile} />}
       {mobile && handoff.banner && <MobileSaveStatus {...handoff.banner} />}

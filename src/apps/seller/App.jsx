@@ -17,6 +17,7 @@ import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, Routes, Route, Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ChromeLayout } from '@/features/shell/ChromeLayout.jsx';
 import { removeSellerBootBackground } from '@/features/shell/sellerGlow.js';
+import { useDocumentEntry } from '@/features/shell/useDocumentEntry.js';
 import { Library } from '@/features/library/Library.jsx';
 import { Pricing } from '@/features/pricing/Pricing.jsx';
 import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
@@ -27,6 +28,7 @@ import { LegalRedirect } from '@/features/legal/LegalRedirect.jsx';
 import { WEARLESS_LEGAL_URLS } from '@/lib/legalLinks.js';
 import { PublicVerifyPublication } from '@/features/verify/PublicVerifyPublication.jsx';
 import { ProductInput } from '@/features/product-input/ProductInput.jsx';
+import { ProductInputPlaceholder } from '@/features/product-input/ProductInputFrame.jsx';
 import { Mannequin } from '@/features/mannequin/Mannequin.jsx';
 import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
 import { Generating } from '@/features/generating/Generating.jsx';
@@ -659,8 +661,8 @@ function ProductInputRoute() {
       />
     );
   }
-  // ChromeLayout이 이미 상단 헤더와 배경을 렌더한다. 짧은 진입 판정 동안에는
-  // 본문을 비워 두어 별도의 흰 로딩 화면이나 전환 문구가 배경을 가리지 않게 한다.
+  // 판정·자동 열기를 기다리는 동안에도 입력 화면의 제목과 글래스 자리를 유지한다.
+  if (entryDecision === 'checking') return <ProductInputPlaceholder mobile={mobile} />;
   if (entryDecision !== 'continue') return null;
   if (mobile && ['pc', 'gone'].includes(mobileEntry?.state)) return <>
     <MobileDraftStatus meta={mobileEntry.meta} gone={mobileEntry.state === 'gone'} busy={entryBusy}
@@ -804,6 +806,7 @@ function RootRedirect() {
 
 export default function App() {
   const { pathname } = useLocation();
+  const initialEntry = useDocumentEntry(pathname);
   useLayoutEffect(() => {
     // 사본은 ChromeLayout이 마운트되며 지운다. 여기서는 ChromeLayout 밖 경로(에디터, 공개 확인, 콜백)를 위한 안전장치만 둔다.
     // 첫 렌더에서 바로 지우면 ChromeLayout이 그려지기 전 빛이 비는 틈이 생긴다.
@@ -871,7 +874,7 @@ export default function App() {
       <SignupCompletion />
       <LoginQueryGate />
       <Routes>
-        <Route element={<ChromeLayout />}>
+        <Route element={<ChromeLayout initialEntry={initialEntry} />}>
           <Route index element={<RootRedirect />} />
           <Route path="terms" element={<LegalRedirect to={WEARLESS_LEGAL_URLS.terms} />} />
           <Route path="privacy" element={<LegalRedirect to={WEARLESS_LEGAL_URLS.privacy} />} />
@@ -946,7 +949,7 @@ export default function App() {
         {/* 없는 주소는 404 화면으로. 예전에는 /create/input 으로 말없이 보내서 사용자가
             왜 입력 화면에 와 있는지 몰랐다. 상단바를 입히려고 크롬 레이아웃으로 감싸고,
             카카오 콜백 같은 공개 경로보다 뒤에 둔다. */}
-        <Route element={<ChromeLayout />}>
+        <Route element={<ChromeLayout initialEntry={initialEntry} />}>
           <Route path="*" element={<NotFound brand="WEARLESS" />} />
         </Route>
       </Routes>
