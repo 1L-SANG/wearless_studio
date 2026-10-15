@@ -23,10 +23,7 @@ def _unauthorized() -> HTTPException:
 
 def jwks_key_resolver(jwks_url: str):
     """JWKS 엔드포인트에서 토큰 kid에 맞는 공개키를 찾는 기본 resolver."""
-    client = PyJWKClient(
-        jwks_url, cache_keys=False, cache_jwk_set=True, lifespan=300,
-        cooldown_duration=30,
-    )
+    client = PyJWKClient(jwks_url, cache_keys=True)
 
     def resolve(token: str):
         return client.get_signing_key_from_jwt(token).key

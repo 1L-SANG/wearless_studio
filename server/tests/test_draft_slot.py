@@ -393,32 +393,19 @@ def test_stale_reclaimer_uses_seven_days_and_commits_before_deleting_r2(monkeypa
         def delete(self, key):
             events.append(f"delete:{key}")
 
-        def head(self, key):
-            events.append("head")
-            return None
-
-        def purge_public_cache(self, keys):
-            events.append("purge")
-
     async def reclaim(conn, *, older_than_minutes):
         assert older_than_minutes == 7 * 24 * 60
         events.append("select")
         return [{"id": ASSET_A, "r2_key": f"draft/{ASSET_A}.jpg"}]
 
-    async def complete(conn, asset_id, r2_key):
-        events.append("complete")
-
     monkeypatch.setattr(repo, "reclaim_stale_unreferenced_draft_assets", reclaim)
-    monkeypatch.setattr(repo, "complete_draft_asset_cleanup", complete)
     worker = DraftAssetReclaimer(SimpleNamespace(
         state=SimpleNamespace(pool=Pool(), r2=R2())
     ))
 
     asyncio.run(worker._sweep_once())
 
-    assert events == [
-        "select", "commit", f"delete:draft/{ASSET_A}.jpg", "head", "purge", "complete", "commit",
-    ]
+    assert events == ["select", "commit", f"delete:draft/{ASSET_A}.jpg"]
 
 
 def test_draft_slot_get_requires_bearer(client):
@@ -600,7 +587,6 @@ def test_stale_reclaimer_keeps_referenced_asset_and_reclaims_orphan():
                 conn, older_than_minutes=7 * 24 * 60
             )
             assert [asset["id"] for asset in reclaimed] == [orphan_id]
-            await repo.complete_draft_asset_cleanup(conn, orphan_id, f"draft/{orphan_id}.jpg")
             # 슬롯 삭제 직후에는 사진을 남기고, 다음 정리 주기에 회수한다.
             row = await repo.lock_draft_slot(conn, user_id)
             assert await routes._remove_draft_slot(conn, user_id, row) == []

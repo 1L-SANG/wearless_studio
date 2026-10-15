@@ -404,7 +404,7 @@ async def _cleanup_custom_match_r2(r2: R2Client, assets: list[dict]) -> None:
 
 
 async def _cleanup_draft_slot_r2(r2: R2Client, assets: list[dict]) -> None:
-    """Fast cleanup; the persisted pending marker stays for hourly absence/CDN verification."""
+    """Best-effort R2 cleanup after the draft asset rows have been soft-deleted."""
     for asset in assets:
         for attempt in range(3):
             try:
