@@ -88,10 +88,10 @@
 
 .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 1fr; align-items: stretch; gap: var(--sp-24); padding-top: var(--sp-12); }
 .card {
-  --pricing-check: #2F80ED;
-  --pricing-bonus-bg: #eef5ff;
-  --pricing-bonus-fg: #3068b4;
-  --pricing-bonus-border: #dce7f6;
+  --pricing-check: var(--fg-1);
+  --pricing-bonus-bg: var(--bg-2);
+  --pricing-bonus-fg: var(--fg-1);
+  --pricing-bonus-border: var(--ring-strong);
   --pricing-card-radius: 20px;
   position: relative; display: flex; flex-direction: column; min-width: 0;
   padding: clamp(20px, 2.8vw, 40px); background: var(--bg-1);

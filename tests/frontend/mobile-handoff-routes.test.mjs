@@ -16,14 +16,24 @@ const pageSource = ['HangTag.jsx', 'AddressCopyChip.jsx', 'PcOnlyPage.jsx'].map(
     .replace(/^import .*;\n/gm, '').replace(/^export /gm, '')).join('\n');
 const { code } = await transformWithEsbuild(`${pageSource}\n${guardSource}\n${appSource}`, 'MobileRoutes.jsx', { jsx: 'transform' });
 
-function harness(mobile, pathname) {
+function harness(mobile, pathname, entry = null) {
   const calls = [];
   const effects = [];
-  const document = { title: 'Wearless Studio' };
+  const layoutEffects = [];
+  const attributes = new Map(entry ? [['data-entry', entry]] : []);
+  const timers = new Map();
+  const listeners = new Map();
+  let nextTimer = 0;
+  let bootRemoved = false;
+  const document = { title: 'Wearless Studio', documentElement: {
+    getAttribute: (key) => attributes.get(key), removeAttribute: (key) => attributes.delete(key),
+  } };
   const href = `https://preview.wearless.test${pathname}?view=saved#page`;
   const bindings = {
     React, Routes, Route, Outlet, Navigate, useLocation, Suspense: React.Suspense,
     useEffect: (effect) => effects.push(effect), document,
+    useLayoutEffect: (effect) => layoutEffects.push(effect),
+    removeSellerBootBackground: () => { bootRemoved = true; },
     s: new Proxy({}, { get: (_, key) => key }), p: new Proxy({}, { get: (_, key) => key }),
     draftSlot: { remove() { calls.push(['remove']); }, removeForNewFlow() { calls.push(['remove']); } },
     IS_FACEMARKET: false, isSupabaseConfigured: true, domainRouteRedirect: () => null,
@@ -32,7 +42,13 @@ function harness(mobile, pathname) {
     useToast: () => ({ push: (message) => calls.push(['toast', message]) }),
     copyHandoffAddress: async (pushToast) => { pushToast('주소를 복사했어요'); },
     Icon: ({ name, size }) => React.createElement('svg', { 'data-icon': name, width: size }),
-    window: { location: { href, origin: 'https://preview.wearless.test', host: 'preview.wearless.test' } },
+    window: {
+      location: { href, origin: 'https://preview.wearless.test', host: 'preview.wearless.test' },
+      setTimeout: (callback, delay) => { timers.set(++nextTimer, { callback, delay }); return nextTimer; },
+      clearTimeout: (id) => timers.delete(id),
+      addEventListener: (name, callback) => listeners.set(name, callback),
+      removeEventListener: (name, callback) => { if (listeners.get(name) === callback) listeners.delete(name); },
+    },
     Button: ({ children, ...props }) => React.createElement('button', props, children),
     WEARLESS_LEGAL_URLS: {},
   };
@@ -47,7 +63,8 @@ function harness(mobile, pathname) {
   }
   const components = new Function(...Object.keys(bindings), `${code}; return { App, guard: typeof MobileHandoffGuard === 'function' ? MobileHandoffGuard : null };`)(...Object.values(bindings));
   const html = renderToString(React.createElement(StaticRouter, { location: pathname }, React.createElement(components.App)));
-  return { calls, html, href, effects, document, page() {
+  return { calls, html, href, effects, layoutEffects, document, attributes, timers, listeners,
+    get bootRemoved() { return bootRemoved; }, page() {
     const directBindings = { ...bindings, useLocation: () => ({ pathname }) };
     return new Function(...Object.keys(directBindings), `${code}; return PcOnlyPage;`)(...Object.values(directBindings))();
   } };
@@ -119,4 +136,47 @@ test('PC-only page sets and restores the document title on mount and unmount', (
   cleanup();
   assert.equal(h.document.title, 'Wearless Studio');
   assert.equal(harness(false, '/create/storyboard').effects.length, 0);
+});
+
+test('크롬 밖 공개 확인은 2초 안전장치로 부트 배경을 제거한다(첫 렌더에서 바로 지우면 빛이 빈다)', () => {
+  const h = harness(false, '/verify/license');
+  assert.ok(h.html.includes('PublicVerify'));
+  const cleanup = h.layoutEffects[0]();
+  assert.equal(h.bootRemoved, false);
+  const timers = [...h.timers.values()];
+  assert.deepEqual(timers.map((t) => t.delay), [2000]);
+  timers[0].callback();
+  assert.equal(h.bootRemoved, true);
+  cleanup();
+  assert.equal(h.timers.size, 0);
+});
+
+test('랜딩 도착 표식은 600ms에 끝나고, 부트 사본은 ChromeLayout 또는 2초 안전장치가 지운다', () => {
+  const h = harness(false, '/pricing', 'landing');
+  const cleanup = h.layoutEffects[0]();
+  assert.equal(h.bootRemoved, false);
+  assert.equal(h.attributes.get('data-entry'), 'landing');
+  const timers = [...h.timers.values()];
+  assert.deepEqual(timers.map((t) => t.delay).sort((a, b) => a - b), [600, 2000]);
+  timers.find((t) => t.delay === 600).callback();
+  assert.equal(h.attributes.has('data-entry'), false);
+  timers.find((t) => t.delay === 2000).callback();
+  assert.equal(h.bootRemoved, true);
+  cleanup();
+  assert.equal(h.timers.size, 0);
+  assert.equal(h.listeners.size, 0);
+});
+
+test('StrictMode 재설정은 도착을 취소하지 않고 bfcache 복귀는 표식을 끝낸다', () => {
+  const h = harness(false, '/pricing', 'landing');
+  h.layoutEffects[0]()();
+  assert.equal(h.attributes.get('data-entry'), 'landing');
+  assert.equal(h.timers.size, 0);
+  const cleanup = h.layoutEffects[0]();
+  assert.equal(h.timers.size, 2);
+  h.listeners.get('pageshow')({ persisted: false });
+  assert.equal(h.attributes.get('data-entry'), 'landing');
+  h.listeners.get('pageshow')({ persisted: true });
+  assert.equal(h.attributes.has('data-entry'), false);
+  cleanup();
 });

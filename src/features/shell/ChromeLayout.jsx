@@ -3,7 +3,7 @@
    Background orb/aurora (verbatim from prototype app.jsx) + TopNav +
    main outlet, with the dots Stepper on create-flow steps.
    ============================================================= */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Icon, useToast } from '@/components/ui.jsx';
 import { useSmoothProgress } from '@/components/SmoothProgress.jsx';
@@ -19,6 +19,7 @@ import {
   createMannequinCompletionState,
 } from '@/features/mannequin/completionToastCore.js';
 import { onProductPhotoPromotionFailure } from '@/lib/productPhotoPromotion.js';
+import { removeSellerBootBackground, syncSellerGlowPhase } from './sellerGlow.js';
 
 const mannequinCuts = (envelope) => {
   if (Array.isArray(envelope)) return envelope;
@@ -211,6 +212,18 @@ export function ChromeLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const { pathname } = location;
+  const backgroundRef = useRef(null);
+  const listGlow = pathname === '/library' || pathname === '/credits/history'
+    || pathname === '/subscription' || pathname.startsWith('/subscription/');
+  useLayoutEffect(() => {
+    // 페인트 전에 사본을 지워 두 배의 빛이 한 프레임도 겹치지 않게 한다.
+    removeSellerBootBackground();
+    const sync = () => syncSellerGlowPhase(backgroundRef.current);
+    sync();
+    const onPageShow = (event) => { if (event.persisted) sync(); };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, []);
   // 도착 전환은 state 로 한 번만 — 래치에 옮겨 담고 history state 는 즉시 소비한다.
   // 오버레이 마운트를 state 에 직접 걸면 소비 순간 언마운트되고, 소비를 안 하면
   // 뒤로가기 재진입마다 4.7초 오버레이가 재생된다(리뷰 P2).
@@ -235,14 +248,32 @@ export function ChromeLayout() {
     });
   }), [pushToast]);
 
-  // Background glow intensity uses the CSS default. Final orb/edge opacity is defined in app.css.
+  // 셀러 전용 팔레트 C와 자세는 wl-light.css에서 정한다.
   // The wizard stepper now lives centered inside TopNav (see shell.jsx),
   // so the hero content starts directly under the nav.
   return (
     <div className="app-shell fx-sheen fx-lift fx-pagefade">
-      <div className="app-bg">
-        <div className="edge-glow" />
-        <div className="orb-bg"><div className="l1" /><div className="l2" /><div className="l3" /><div className="hi" /></div>
+      <div className="app-bg" ref={backgroundRef} data-glow={listGlow ? 'list' : 'default'} aria-hidden="true">
+        <div className="wl-aurora" data-aurora-root>
+          <div className="wl-aurora__side wl-aurora__side--left">
+            <i className="wl-rb wl-rb--l1"></i>
+            <i className="wl-rb wl-rb--l2"></i>
+            <i className="wl-rb wl-rb--l3"></i>
+          </div>
+          <div className="wl-aurora__side wl-aurora__side--right">
+            <i className="wl-rb wl-rb--r1"></i>
+            <i className="wl-rb wl-rb--r2"></i>
+            <i className="wl-rb wl-rb--r3"></i>
+          </div>
+        </div>
+        <div className="wl-orb-root" data-orb-root>
+          <div className="wl-orb">
+            <i className="wl-orb__l1"></i>
+            <i className="wl-orb__l2"></i>
+            <i className="wl-orb__l3"></i>
+            <i className="wl-orb__hi"></i>
+          </div>
+        </div>
       </div>
       <TopNav />
       <MannequinCompletionToast />

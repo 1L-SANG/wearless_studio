@@ -18,7 +18,7 @@
 
 .eyebrow {
   margin: 0 0 0.75rem;
-  color: var(--fm-muted, var(--fg-2));
+  color: var(--fm-muted, var(--fg-on-glow, var(--fg-2)));
   font: 600 0.7rem/1 var(--font-mono);
   letter-spacing: 0.16em;
 }
@@ -32,7 +32,7 @@
 }
 .desc {
   margin: 0.75rem 0 0;
-  color: var(--fm-muted, var(--fg-2));
+  color: var(--fm-muted, var(--fg-on-glow, var(--fg-2)));
   font: 400 0.92rem/1.7 var(--font-body);
   word-break: keep-all;
   text-wrap: pretty;

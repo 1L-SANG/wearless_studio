@@ -1,0 +1,216 @@
+/* wl-light v1.0.0. 팔레트 C 정본 orb-c.css(2026-10-15), 셀러 진입점 전용. */
+:root {
+  --wl-sky-rgb: 143 198 246;
+  --wl-peri-rgb: 159 182 255;
+  --wl-lav-rgb: 207 184 244;
+  --wl-peach-rgb: 255 205 178;
+  --wl-mint-rgb: 198 236 214;
+  --wl-white-rgb: 255 255 255;
+  --wl-sky: rgb(var(--wl-sky-rgb));
+  --wl-peri: rgb(var(--wl-peri-rgb));
+  --wl-lav: rgb(var(--wl-lav-rgb));
+  --wl-peach: rgb(var(--wl-peach-rgb));
+  --wl-mint: rgb(var(--wl-mint-rgb));
+  --wl-white: rgb(var(--wl-white-rgb));
+  --wl-l1-opacity: .64;
+  --wl-l2-opacity: .40;
+  --wl-l3-opacity: .24;
+  --wl-hi-opacity: .9;
+  --wl-l1-size: 300px;
+  --wl-l2-size: 250px;
+  --wl-l3-size: 200px;
+  --wl-hi-size: 130px;
+  --wl-l1-blur: 48px;
+  --wl-l2-blur: 40px;
+  --wl-l3-blur: 36px;
+  --wl-hi-blur: 28px;
+  --wl-l1-cycle: 16.2s;
+  --wl-l2-cycle: var(--wl-l1-cycle);
+  --wl-l3-cycle: var(--wl-l1-cycle);
+  --wl-l1-angle: -30deg;
+  --wl-l2-angle: -18deg;
+  --wl-l3-angle: -24deg;
+  --wl-orb-stops: var(--wl-sky) 0% 12%, var(--wl-lav) 28% 40%, var(--wl-peach) 56% 72%, var(--wl-mint) 86%, var(--wl-sky) 100%;
+  --wl-inner-stops: var(--wl-white) 0%, var(--wl-lav) 28% 40%, var(--wl-peach) 56% 72%, var(--wl-mint) 86%, var(--wl-white) 100%;
+
+  --wl-app-orb-y: calc(clamp(210px, 28vh, 260px) - 50vh);
+  --wl-app-orb-scale: 1.2;
+  --wl-app-orb-opacity: .82;
+  --wl-app-aurora-opacity: .52;
+  --wl-aurora-reach: clamp(80px, 11vw, 232px);
+  --wl-aurora-side-opacity: .8;
+  --wl-ribbon-opacity: .8;
+  --wl-breathe-low: .6;
+  --wl-breathe-high: 1;
+  --wl-app-mask-pass: .12;
+  --wl-mask-ramp: 10vh;
+  --wl-app-nav-bottom: 61px;
+  --wl-rb-l1-core: .34;
+  --wl-rb-l1-edge: .14;
+  --wl-rb-l2-core: .34;
+  --wl-rb-l2-edge: .14;
+  --wl-rb-l3-core: .42;
+  --wl-rb-l3-edge: .17;
+  --wl-rb-r1-core: .36;
+  --wl-rb-r1-edge: .15;
+  --wl-rb-r2-core: .32;
+  --wl-rb-r2-edge: .13;
+  --wl-rb-r3-core: .46;
+  --wl-rb-r3-edge: .19;
+  --wl-handoff-chrome-enter: 320ms;
+  --wl-handoff-chrome-delay: 40ms;
+  --wl-handoff-ease: cubic-bezier(.22, 1, .36, 1);
+}
+@media (min-width: 768px) {
+  :root {
+    --wl-l1-size: 600px;
+    --wl-l2-size: 500px;
+    --wl-l3-size: 400px;
+    --wl-hi-size: 260px;
+    --wl-l1-blur: 60px;
+    --wl-l2-blur: 50px;
+    --wl-l3-blur: 45px;
+    --wl-hi-blur: 40px;
+    --wl-app-orb-y: calc(clamp(170px, 23vh, 250px) - 50vh);
+    --wl-app-orb-scale: 1.14;
+    --wl-app-orb-opacity: .64;
+  }
+}
+@media (min-width: 1280px) {
+  :root { --wl-aurora-side-opacity: 1; }
+}
+
+/* Vite가 셀러 진입 CSS를 head의 렌더 차단 link로 빌드한다. 부트와 React가 같이 읽는다. */
+#seller-boot-bg { display: none; }
+html[data-entry="landing"] #seller-boot-bg { display: block; }
+.wl-orb-root {
+  position: absolute; inset: 0; z-index: 0; display: flex; align-items: center; justify-content: center;
+  opacity: var(--wl-app-orb-opacity); transition: opacity 200ms;
+}
+.wl-orb {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  transform: translateY(var(--wl-app-orb-y)) scale(var(--wl-app-orb-scale)); transform-origin: center;
+}
+.wl-orb > i { position: absolute; display: block; border-radius: 50%; }
+.wl-orb__l1 {
+  width: var(--wl-l1-size); height: var(--wl-l1-size); filter: blur(var(--wl-l1-blur)); opacity: var(--wl-l1-opacity);
+  background: conic-gradient(from var(--wl-l1-angle), var(--wl-orb-stops));
+}
+.wl-orb__l2 {
+  width: var(--wl-l2-size); height: var(--wl-l2-size); filter: blur(var(--wl-l2-blur)); opacity: var(--wl-l2-opacity);
+  background: conic-gradient(from var(--wl-l2-angle), var(--wl-orb-stops));
+}
+.wl-orb__l3 {
+  width: var(--wl-l3-size); height: var(--wl-l3-size); filter: blur(var(--wl-l3-blur)); opacity: var(--wl-l3-opacity);
+  background: conic-gradient(from var(--wl-l3-angle), var(--wl-inner-stops));
+}
+.wl-orb__hi {
+  width: var(--wl-hi-size); height: var(--wl-hi-size); filter: blur(var(--wl-hi-blur)); opacity: var(--wl-hi-opacity);
+  background: radial-gradient(var(--wl-white) 12%, rgb(var(--wl-white-rgb) / .9) 28%, transparent 72%);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .wl-orb__l1 { animation: wl-spin var(--wl-l1-cycle) linear infinite; }
+  .wl-orb__l2 { animation: wl-spin var(--wl-l2-cycle) linear infinite; }
+  .wl-orb__l3 { animation: wl-spin var(--wl-l3-cycle) linear infinite; }
+  .wl-orb__l1, .wl-orb__l2, .wl-orb__l3 { animation-delay: calc(var(--wl-t, 0) * -1s); }
+}
+@keyframes wl-spin { to { transform: rotate(360deg); } }
+
+@property --wl-mask-pass {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 1;
+}
+.wl-aurora {
+  --wl-mask-pass: var(--wl-app-mask-pass);
+  --wl-nav-bottom: var(--wl-app-nav-bottom);
+  --wl-edge-mask: linear-gradient(to bottom,
+    #000 var(--wl-nav-bottom),
+    rgb(0 0 0 / var(--wl-mask-pass)) var(--wl-nav-bottom),
+    rgb(0 0 0 / calc(var(--wl-mask-pass) + (1 - var(--wl-mask-pass)) * .156)) calc(var(--wl-nav-bottom) + var(--wl-mask-ramp) * .25),
+    rgb(0 0 0 / calc(var(--wl-mask-pass) + (1 - var(--wl-mask-pass)) * .5)) calc(var(--wl-nav-bottom) + var(--wl-mask-ramp) * .5),
+    rgb(0 0 0 / calc(var(--wl-mask-pass) + (1 - var(--wl-mask-pass)) * .844)) calc(var(--wl-nav-bottom) + var(--wl-mask-ramp) * .75),
+    #000 calc(var(--wl-nav-bottom) + var(--wl-mask-ramp)));
+  position: fixed; inset: 0; z-index: 0; display: none; overflow: hidden; pointer-events: none;
+  opacity: var(--wl-app-aurora-opacity); --aurora-reach: var(--wl-aurora-reach);
+  -webkit-mask-image: var(--wl-edge-mask); mask-image: var(--wl-edge-mask);
+  transition: opacity 200ms;
+}
+@media (min-width: 768px) { .wl-aurora { display: block; } }
+.wl-aurora__side { position: absolute; top: 0; bottom: 0; width: 0; opacity: var(--wl-aurora-side-opacity); }
+.wl-aurora__side--left { left: 0; }
+.wl-aurora__side--right { right: 0; scale: -1 1; }
+.wl-rb { position: absolute; display: block; translate: 0 -50%; opacity: var(--wl-ribbon-opacity); }
+@media (prefers-reduced-motion: no-preference) {
+  .wl-rb {
+    animation: wl-flow var(--aurora-flow) ease-in-out infinite alternate, wl-breathe var(--aurora-breathe) ease-in-out infinite alternate;
+    animation-delay: calc(var(--aurora-delay) - var(--wl-t, 0) * 1s);
+  }
+}
+@keyframes wl-flow {
+  0% { transform: translate3d(0, -6vh, 0) scale(.96, .92); }
+  50% { transform: translate3d(2%, 1vh, 0) scale(1.04, 1.06); }
+  100% { transform: translate3d(-1%, 7vh, 0) scale(1, .98); }
+}
+@keyframes wl-breathe { from { opacity: var(--wl-breathe-low); } to { opacity: var(--wl-breathe-high); } }
+/* shared-markup.mjs의 LEFT, RIGHT 자리값. React와 부트 문서에는 인라인 style을 두지 않는다. */
+.wl-rb--l1 {
+  top: 18%; height: 50vh; width: calc(var(--aurora-reach) * 1.8); left: calc(var(--aurora-reach) * -.98); rotate: 9deg;
+  --aurora-flow: 52s; --aurora-breathe: 19s; --aurora-delay: -14s;
+  --wl-rb-color: var(--wl-lav-rgb); --wl-rb-core: var(--wl-rb-l1-core); --wl-rb-edge: var(--wl-rb-l1-edge);
+}
+.wl-rb--l2 {
+  top: 45%; height: 64vh; width: calc(var(--aurora-reach) * 2); left: calc(var(--aurora-reach) * -1); rotate: -6deg;
+  --aurora-flow: 44s; --aurora-breathe: 23s; --aurora-delay: -31s;
+  --wl-rb-color: var(--wl-sky-rgb); --wl-rb-core: var(--wl-rb-l2-core); --wl-rb-edge: var(--wl-rb-l2-edge);
+}
+.wl-rb--l3 {
+  top: 76%; height: 46vh; width: calc(var(--aurora-reach) * 1.7); left: calc(var(--aurora-reach) * -.97); rotate: 11deg;
+  --aurora-flow: 58s; --aurora-breathe: 17s; --aurora-delay: -7s;
+  --wl-rb-color: var(--wl-peach-rgb); --wl-rb-core: var(--wl-rb-l3-core); --wl-rb-edge: var(--wl-rb-l3-edge);
+}
+.wl-rb--r1 {
+  top: 26%; height: 44vh; width: calc(var(--aurora-reach) * 1.7); left: calc(var(--aurora-reach) * -.91); rotate: -10deg;
+  --aurora-flow: 47s; --aurora-breathe: 21s; --aurora-delay: -22s;
+  --wl-rb-color: var(--wl-lav-rgb); --wl-rb-core: var(--wl-rb-r1-core); --wl-rb-edge: var(--wl-rb-r1-edge);
+}
+.wl-rb--r2 {
+  top: 57%; height: 60vh; width: calc(var(--aurora-reach) * 2); left: calc(var(--aurora-reach) * -1); rotate: 7deg;
+  --aurora-flow: 55s; --aurora-breathe: 26s; --aurora-delay: -40s;
+  --wl-rb-color: var(--wl-sky-rgb); --wl-rb-core: var(--wl-rb-r2-core); --wl-rb-edge: var(--wl-rb-r2-edge);
+}
+.wl-rb--r3 {
+  top: 86%; height: 48vh; width: calc(var(--aurora-reach) * 1.8); left: calc(var(--aurora-reach) * -.96); rotate: -8deg;
+  --aurora-flow: 41s; --aurora-breathe: 16s; --aurora-delay: -3s;
+  --wl-rb-color: var(--wl-mint-rgb); --wl-rb-core: var(--wl-rb-r3-core); --wl-rb-edge: var(--wl-rb-r3-edge);
+}
+.wl-rb { background: radial-gradient(closest-side, rgb(var(--wl-rb-color) / var(--wl-rb-core)) 0%, rgb(var(--wl-rb-color) / var(--wl-rb-edge)) 45%, transparent 100%); }
+
+@media (max-width: 767px) {
+  .app-bg[data-glow="list"] { --wl-app-orb-opacity: .62; }
+}
+body:has(.overlay, [aria-modal="true"], .storyboard-transition-overlay) :is(.wl-orb-root, .wl-aurora) { opacity: .22; }
+@media (min-width: 768px) {
+  .app-bg[data-glow="list"] .wl-orb-root { opacity: 0; }
+}
+
+/* 본문은 기존 fxPageIn 한 번만 쓴다. 배경 조상은 transform/opacity로 움직이지 않는다. */
+html[data-entry="landing"] .topnav {
+  animation: wl-handoff-chrome var(--wl-handoff-chrome-enter) var(--wl-handoff-ease) var(--wl-handoff-chrome-delay) backwards;
+}
+html[data-entry="landing"] .app-shell .wl-aurora {
+  animation: wl-handoff-mask var(--wl-handoff-chrome-enter) var(--wl-handoff-ease) var(--wl-handoff-chrome-delay) backwards;
+}
+/* 내비가 없는 부트 그림은 랜딩의 퇴장 끝처럼 마스크 없이 둔다. */
+html[data-entry="landing"] #seller-boot-bg .wl-aurora { --wl-mask-pass: 1; }
+@keyframes wl-handoff-chrome { from { opacity: 0; } to { opacity: 1; } }
+@keyframes wl-handoff-mask { from { --wl-mask-pass: 1; } to { --wl-mask-pass: var(--wl-app-mask-pass); } }
+@media (prefers-reduced-motion: reduce) {
+  :root { --wl-handoff-chrome-enter: 100ms; --wl-handoff-chrome-delay: 0ms; }
+  .wl-orb-root, .wl-aurora { transition: none; }
+  html[data-entry="landing"] .app-shell .wl-aurora { animation: none; }
+  html[data-entry="landing"] .fx-pagefade .app-main.page-enter > * { animation: wl-handoff-chrome 100ms ease backwards; }
+}
+
+/* 본문이 아직 비어 있으면(첫 렌더, 경로 이동 직후) 푸터가 화면 중간에 먼저 뜨지 않게 한다. */
+.app-main:empty ~ .site-footer { visibility: hidden; }

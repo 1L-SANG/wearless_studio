@@ -158,7 +158,7 @@ test('시안의 링과 제목 굵기, CSS 자동 높이를 쓰고 새 인라인 
   assert.match(css, /Cal Sans.*합성/);
   assert.match(css, /\.md-title \.md-latin \{ font-weight: 400/);
   assert.match(css, /var\(--elev-inset\), 0 0 0 1px var\(--ring\)/);
-  assert.match(css, /0 0 0 1\.5px #8fbfee/);
+  assert.match(css, /0 0 0 1\.5px var\(--focus\)/);
   assert.match(css, /resize: none/); assert.match(css, /line-height: 1\.6/);
   assert.match(css, /content: attr\(data-value\)/); assert.match(css, /white-space: pre-wrap/);
   assert.doesNotMatch(css, /word-break:/);

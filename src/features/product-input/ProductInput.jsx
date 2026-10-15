@@ -1227,7 +1227,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
         if (!await retrySellerConsent(userId) || !current()) return;
         return save();
       } catch {
-        if (current()) toast.push('서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+        if (current()) toast.push('서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'alertCircle' });
       } finally {
         loginSaveRef.current = false;
         if (mountedRef.current) setPreparingLogin(false);
@@ -1254,7 +1254,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
         }));
       }
       rememberMobileGuestSave(snapshot.localUpdatedAt, excludedUserId, saveTappedAt, localSaved ? null : loginDraftRef.current);
-      if (!localSaved) toast.push('이 브라우저는 사진을 잠시 보관하지 못해요. 구글이나 카카오로 로그인하면 다시 골라 주세요.', { icon: 'alert' });
+      if (!localSaved) toast.push('이 브라우저는 사진을 잠시 보관하지 못해요. 구글이나 카카오로 로그인하면 다시 골라 주세요.', { icon: 'alertCircle' });
       openLogin('/create/input');
     } finally {
       loginSaveRef.current = false;

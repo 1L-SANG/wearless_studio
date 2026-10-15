@@ -2,6 +2,7 @@
    왜 둘인지는 AppFacemarket.jsx 머리말 참고. */
 import App from './App.jsx';
 import { mountApp } from '../mountApp.jsx';
+import '@/styles/wl-light.css';
 import '@/styles/sellerDesign.css';
 
 mountApp(App);

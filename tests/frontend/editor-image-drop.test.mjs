@@ -312,7 +312,7 @@ test('the insertion guide matches the reference with a zoom-invariant blue drop 
   const lineRule = stylesSource.match(/\.canvas-dropline\s*\{[^}]*\}/s)?.[0] || '';
   assert.match(editorSource, /'--canvas-inv':\s*1\s*\/\s*\(scale\s*\|\|\s*1\)/);
   assert.match(lineRule, /height:\s*calc\(12px\s*\*\s*var\(--canvas-inv,\s*1\)\)/);
-  assert.match(activeLineRule, /background:\s*rgba\(35,\s*131,\s*226,\s*\.1\)/);
+  assert.match(activeLineRule, /background:\s*color-mix\(in srgb, var\(--accent-blue\) 10%, transparent\)/);
   assert.match(activeLineRule, /box-shadow:\s*inset/);
   assert.match(activeLineRule, /animation:\s*none/);
   assert.match(stylesSource, /\.ed-canvas\.frame-dragging \.canvas-droprow\s*\{[^}]*height:\s*128px[^}]*margin:\s*-56px 0[^}]*padding:\s*56px 0/s);

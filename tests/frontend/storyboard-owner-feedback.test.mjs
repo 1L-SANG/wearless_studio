@@ -164,8 +164,11 @@ test('card captions are one-line right aligned without reference popovers', () =
   assert.match(featureStyles, /@container \(max-width: 175px\)/);
 });
 
-test('selected card rings use four persistent high-contrast colors', () => {
-  for (const color of ['#2f83b5', '#7661b5', '#7b6aa8', '#3971a7']) {
+test('selected card ring blues share the seller token and preserve the other ring colors', () => {
+  for (const token of ['sky', 'mauve']) {
+    assert.match(featureStyles, new RegExp(`--sb-ring-${token}: var\\(--accent-blue\\)`));
+  }
+  for (const color of ['#7661b5', '#7b6aa8']) {
     assert.match(featureStyles, new RegExp(color));
   }
   assert.match(featureStyles, /\.sb-selection-ring \{ box-shadow: inset 0 0 0 3px var\(--sb-ring-sky\); \}/);

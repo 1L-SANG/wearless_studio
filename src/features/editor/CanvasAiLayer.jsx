@@ -251,7 +251,7 @@ export function CanvasAiLayer({ block, element, scale, wrapRef, menu, loading, a
         if (e.key === 'Enter' || e.key === ' ') focusMenu();
       }}><span className="canvas-ai-orb-hit" aria-hidden="true"><span className="canvas-ai-core"><span className="canvas-ai-light-a" /><span className="canvas-ai-light-b" /><span className="canvas-ai-highlight" /></span></span>
       <span className="canvas-ai-label">AI 생성</span></button>
-    {hover && (open || showResult) && createPortal(<div ref={readRef} className="canvas-ai-read"><b>{hover.description}</b>{hover.price && <small>{hover.price}</small>}</div>, document.body)}
+    {hover && (open || showResult) && createPortal(<div ref={readRef} className={`canvas-ai-read${!open && showResult ? ' is-result' : ''}`}><b>{hover.description}</b>{hover.price && <small>{hover.price}</small>}</div>, document.body)}
     {open && <div ref={menuRef} className="canvas-ai-menu" role="menu" aria-label="이 사진으로 새 컷" onKeyDown={keyMenu}>
       {loading ? <p className="canvas-ai-menu-message" role="status">불러오는 중</p>
         : assetError ? <p className="canvas-ai-menu-message">{assetError.message || '사진 정보를 불러오지 못했어요.'}</p>
