@@ -19,6 +19,7 @@ from .agents.gemini_image import GeminiImageClient
 from .auth import jwks_key_resolver, require_user
 from .config import Settings, load_settings
 from .db import create_pool
+from .log_privacy import protect_log_handler, redact_payment_paths
 from .request_id import RequestIdMiddleware
 from . import image_usage
 from .openai_key_fallback import has_openai_api_key
@@ -93,10 +94,17 @@ def _configure_logging() -> None:
 
     handler = logging.StreamHandler()
     handler.setFormatter(_ExtraFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    protect_log_handler(handler)
 
     root = logging.getLogger()
     root.handlers[:] = [handler]  # 재호출(테스트·import)에도 핸들러 중복 안 되게 교체
     root.setLevel(level)
+
+    # Uvicorn installs its own handlers before importing this app. Keep their
+    # formatters (including access-log args) and redact only the final output.
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        for server_handler in logging.getLogger(name).handlers:
+            protect_log_handler(server_handler)
 
     # INFO root에서 서드파티 소음 억제 — 우리 로그만 보이게.
     for noisy in ("httpx", "httpcore", "botocore", "boto3", "urllib3", "asyncio"):
@@ -498,7 +506,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             logging.getLogger("wearless.api").exception(
                 "unhandled request error method=%s path=%s request_id=%s",
                 request.method,
-                request.url.path,
+                redact_payment_paths(request.url.path),
                 request.state.request_id,
             )
             request.state.error_code = "internal_error"
@@ -530,7 +538,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = await call_next(request)
         status = response.status_code
         duration_ms = (time.perf_counter() - started) * 1000
-        path = request.url.path
+        path = redact_payment_paths(request.url.path)
         # 에러 봉투가 적어 둔 응답 코드(example_gender_mismatch 등). 없으면 "-".
         code = getattr(request.state, "error_code", None) or "-"
         logger = logging.getLogger("wearless.api")

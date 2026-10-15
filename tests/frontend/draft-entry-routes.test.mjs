@@ -7,9 +7,11 @@ import { flowScreenName, shouldWarnFlowAbandon, notifyFlowKept } from '../../src
 import * as entry from '../../src/lib/draftEntry.js';
 import { checkDraftEntry, canAutoOpenInput } from '../../src/lib/draftEntryCheck.js';
 import * as flow from '../../src/lib/flowSession.js';
-import { createDraftSlotSync, formatDraftRelativeTime, localDraftMeta } from '../../src/lib/draftSlot.js';
+import { loadDraft as readStoredDraft, clearDraft as clearStoredDraft, saveProductDraft, queueProductDraftSave, flushProductDraftSave } from '../../src/lib/draftStore.js';
+import { draftStoreFixture } from './helpers/draft-store-fixture.mjs';
+import { createDraftSlotSync, formatDraftRelativeTime, localDraftMeta, draftSlot as storedDraftSlot } from '../../src/lib/draftSlot.js';
 
-const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
+const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const app = read('src/apps/seller/App.jsx');
 const shell = read('src/features/shell/shell.jsx');
 const hook = read('src/lib/useDraftEntryActions.js').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
@@ -40,7 +42,7 @@ const { code } = await transformWithEsbuild(`${authSource}\n${authGuardSource}\n
 const slot = (meta = {}) => ({ meta: { hasContent: true, deviceLabel: 'Android Chrome', photoCount: 2, updatedAt: 'v1', ...meta }, payload: { product: { name: 'remote' } } });
 
 // 실제 라우트와 훅을 실행하고 브라우저, 저장소 경계만 메모리로 대체한다.
-function harness({ remote = slot(), confirmed = true, local = null, loading = false, withAuth = false, authUser = 'seller', sessionResult = null, storedSession = null, resetGate = null, resetError = null,
+function harness({ remote = slot(), confirmed = true, local = null, localReader = null, loading = false, withAuth = false, authUser = 'seller', sessionResult = null, storedSession = null, resetGate = null, resetError = null,
   syncedAt = null, serverSyncedAt = null, syncedUserId = null, otherTab = false, token = null, savedFlow = {}, takeover = null, slotClient = null, mobile = false, mock = false, facemarket = false, returnIntent = '/create/storyboard' } = {}) {
   const calls = [];
   const windowEvents = new EventTarget();
@@ -85,7 +87,7 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
       flow.clearFlowSession();
       return true;
     },
-    setAccountIdentity(id) { const changed = id !== accountUserId; accountUserId = id; return changed; },
+    setAccountIdentity(id) { const changed = id !== accountUserId; accountUserId = id; state.accountUserId = id; return changed; },
   };
   const storage = new Map();
   globalThis.sessionStorage = { getItem: (k) => storage.get(k), setItem: (k, v) => storage.set(k, v), removeItem: (k) => storage.delete(k) };
@@ -170,7 +172,7 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
     } },
     useNavigate: () => navigate,
     isMockMode: mock, IS_FACEMARKET: facemarket, isMobileDevice: () => mobile,
-    hasPendingDraft: () => Boolean(local), loadDraft: async () => local, flushProductDraftSave: async () => entryFlush,
+    hasPendingDraft: () => Boolean(local), loadDraft: localReader || (async () => local), flushProductDraftSave: async () => entryFlush,
     Navigate: 'Navigate', Outlet: 'Outlet',
     readPostLogin: () => returnIntent, forgetPostLogin: () => calls.push('forget'),
     ensureDraftRemotePhotos: async (draft) => draft,
@@ -1305,4 +1307,78 @@ test('a publication failure after reset cannot close the gate or stop the next a
   await h.settleApp('TopNav');
   assert.equal(h.auth.session, next);
   assert.equal(h.publishedSessions.at(-1), next);
+});
+
+
+test('sibling-domain B bootstrap never offers A newly saved unconfirmed input with no flow owner', async (t) => {
+  const storage = draftStoreFixture(t);
+  queueProductDraftSave({ name: 'Account A private input', colors: [] });
+  await flushProductDraftSave();
+  Object.defineProperty(globalThis, 'sessionStorage', { writable: true });
+  const h = harness({ withAuth: true, authUser: 'B', confirmed: false, remote: null,
+    local: storage.saved, localReader: readStoredDraft, slotClient: storedDraftSlot, savedFlow: { userId: null } });
+  const tree = await h.settleApp();
+  assert.equal(h.auth.session.user.id, 'B');
+  assert.equal(h.state.projectId, null);
+  assert.equal(h.state.userId, null);
+  assert.equal(choice(h, tree), null);
+  assert.equal(tree?.type, 'ProductInput');
+});
+
+for (const next of [null, { user: { id: 'B' } }]) {
+  test(`a live account change to ${next?.user.id || 'guest'} clears unconfirmed input before publication`, async () => {
+    const h = harness({ withAuth: true, authUser: 'A', confirmed: false, remote: null,
+      local: { ownerUserId: 'A', product: { name: 'Account A private input', colors: [] } }, savedFlow: { userId: null } });
+    await h.settleApp();
+    h.emit(next ? 'SIGNED_IN' : 'SIGNED_OUT', next);
+    const tree = await h.settleApp();
+    assert.equal(h.calls.filter((call) => call === 'begin').length, 1);
+    assert.equal(choice(h, tree), null);
+    assert.equal(tree?.type, 'ProductInput');
+  });
+}
+
+for (const initialUser of [null, 'A']) {
+  test(`unconfirmed input survives ${initialUser ? 'same-user refresh' : 'guest login'}`, async () => {
+    const h = harness({ withAuth: true, authUser: initialUser, confirmed: false, remote: null,
+      local: { product: { name: 'Continuing input', colors: [] } }, savedFlow: { userId: null } });
+    await h.settleApp();
+    h.emit(initialUser ? 'TOKEN_REFRESHED' : 'SIGNED_IN', { user: { id: 'A' } });
+    const tree = await h.settleApp();
+    assert.equal(h.calls.includes('begin'), false);
+    assert.equal(choice(h, tree)?.props.sources[0].draft.product.name, 'Continuing input');
+  });
+}
+
+
+test('a delayed A auth transition preserves B input already saved in another tab', async (t) => {
+  const storage = draftStoreFixture(t, { ownerUserId: 'A', product: { name: 'A input', colors: [] }, photos: [], updatedAt: 'A' });
+  Object.defineProperty(globalThis, 'sessionStorage', { writable: true });
+  const h = harness({ withAuth: true, authUser: 'A', confirmed: false, remote: null,
+    local: storage.saved, localReader: readStoredDraft, slotClient: storedDraftSlot, savedFlow: { userId: null } });
+  await h.settleApp();
+  // Another tab has B's identity and writes the same origin's IndexedDB. The old
+  // tab still holds A until its delayed auth event is delivered below.
+  storedDraftSlot.setUserId('B');
+  await saveProductDraft({ name: 'B newer input', colors: [] });
+  storedDraftSlot.setUserId('A');
+  const originalB = storage.saved;
+
+  // Exercise the real store reset as well as the real AuthProvider and route.
+  const storeSource = read('src/store/useAppStore.js');
+  const begin = storeSource.slice(storeSource.indexOf('  async beginProject('), storeSource.indexOf('  async ensureProject()'));
+  const noop = () => {};
+  const dependencies = {
+    clearDraft: clearStoredDraft, clearDetailPageJobMarker: noop, resetAnalysisCache: noop,
+    clearFlowSession: noop, clearDraftPromotionSession: noop, forgetDraftSyncProject: noop,
+    api: { resetInputDraft: async () => {} }, get: () => h.state, set: (patch) => Object.assign(h.state, patch),
+    initialFlow: { projectId: null, projectPersisted: false, userId: null, resumePath: null },
+    initialMannequinJob: () => ({}), initialDetailPageJob: () => ({}), persistFlow: noop,
+  };
+  h.state.beginProject = new Function(...Object.keys(dependencies),
+    `let ensureProjectInflight = null, detailJobSeq = 0, detailJobLoopProjectId = null; return ({ ${begin} }).beginProject;`)(...Object.values(dependencies));
+  h.emit('SIGNED_IN', { user: { id: 'B' } });
+  await h.settleApp();
+  assert.equal(h.auth.session.user.id, 'B');
+  assert.deepEqual(storage.saved, originalB);
 });

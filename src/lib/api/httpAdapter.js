@@ -1,5 +1,6 @@
 import { publicAnalysisForm } from './publicAnalysisRequest.js';
 import { stripFeatureClientFields } from '../featureRun.js';
+import { stripJpegMetadata } from '../jpegMetadata.js';
 /* =============================================================
    httpAdapter — FastAPI 실서버 구현 (plan §8, Phase 1+에서 함수
    단위로 채운다). 여기 구현된 함수만 http 모드에서 mock 을 대체하고,
@@ -321,6 +322,7 @@ export async function uploadPhoto(
   { signal, accountGeneration = clientEvents.getAccountGeneration() } = {},
 ) {
   recordClientAction('upload', accountGeneration);
+  blob = await stripJpegMetadata(blob);
   const { assetId, uploadUrl } = await http('/v1/assets/upload-url', {
     method: 'POST', body: { filename, mime, size: blob.size, projectId, purpose }, signal, accountGeneration,
   });

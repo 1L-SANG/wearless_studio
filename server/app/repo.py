@@ -311,9 +311,13 @@ async def soft_delete_unreferenced_draft_assets(
     async with conn.cursor() as cur:
         await cur.execute(
             """
-            update assets a set deleted_at = now()
+            update assets a
+            set deleted_at = coalesce(a.deleted_at, now()),
+                metadata = coalesce(a.metadata, '{}'::jsonb)
+                           || '{"draft_cleanup_pending":true}'::jsonb
             where a.id = any(%s::uuid[]) and a.user_id = %s
               and a.metadata->>'purpose' = 'draft_slot'
+              and (a.deleted_at is null or a.metadata->>'draft_cleanup_pending' = 'true')
               and not exists (select 1 from matching_items mi
                               where mi.image_asset_id = a.id or mi.thumbnail_asset_id = a.id)
               and not exists (select 1 from mannequin_cuts mc where mc.asset_id = a.id)
@@ -360,21 +364,34 @@ async def soft_delete_unreferenced_draft_assets(
 async def reclaim_stale_unreferenced_draft_assets(
     conn: AsyncConnection, *, older_than_minutes: int = 60, limit: int = 200
 ) -> list[dict]:
-    """Reclaim completed draft uploads that never reached a slot/product payload."""
+    """Mark stale unreferenced uploads and retry only explicitly pending tombstones."""
     async with conn.cursor() as cur:
         await cur.execute(
             """
             with stale as (
               select a.id
               from assets a
-              where a.deleted_at is null
-                and a.metadata->>'purpose' = 'draft_slot'
+              where a.metadata->>'purpose' = 'draft_slot'
                 and a.created_at < now() - (%s * interval '1 minute')
+                and (a.deleted_at is null or (a.deleted_at is not null
+                     and a.metadata->>'draft_cleanup_pending' = 'true'))
+                and not exists (select 1 from matching_items mi
+                                where mi.image_asset_id = a.id or mi.thumbnail_asset_id = a.id)
+                and not exists (select 1 from mannequin_cuts mc where mc.asset_id = a.id)
+                and not exists (select 1 from wardrobe_images wi where wi.asset_id = a.id)
+                and not exists (select 1 from exports e where e.asset_id = a.id)
+                and not exists (select 1 from projects pr where pr.cover_asset_id = a.id)
+                and not exists (select 1 from profiles pf where pf.avatar_asset_id = a.id)
                 and not exists (
                   select 1 from draft_slots ds
                   cross join lateral jsonb_array_elements(
-                    case when jsonb_typeof(ds.payload->'product'->'colors') = 'array'
-                         then ds.payload->'product'->'colors' else '[]'::jsonb end
+                    case when jsonb_typeof(
+                      (case when jsonb_typeof(ds.payload->'product') = 'object'
+                            then ds.payload->'product' else ds.payload end) -> 'colors'
+                    ) = 'array'
+                    then (case when jsonb_typeof(ds.payload->'product') = 'object'
+                               then ds.payload->'product' else ds.payload end) -> 'colors'
+                    else '[]'::jsonb end
                   ) color
                   cross join lateral jsonb_array_elements(
                     case when jsonb_typeof(color->'images') = 'array'
@@ -398,13 +415,32 @@ async def reclaim_stale_unreferenced_draft_assets(
               for update skip locked
               limit %s
             )
-            update assets a set deleted_at = now()
+            update assets a
+            set deleted_at = coalesce(a.deleted_at, now()),
+                metadata = coalesce(a.metadata, '{}'::jsonb)
+                           || '{"draft_cleanup_pending":true}'::jsonb
             from stale where a.id = stale.id
             returning a.id::text as id, a.r2_bucket, a.r2_key
             """,
             (older_than_minutes, limit),
         )
         return await cur.fetchall()
+
+
+async def complete_draft_asset_cleanup(
+    conn: AsyncConnection, asset_id: str, r2_key: str
+) -> None:
+    """Clear retry state only after origin absence and applicable CDN purge succeeded."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            update assets set metadata = metadata - 'draft_cleanup_pending'
+            where id = %s and r2_key = %s and deleted_at is not null
+              and metadata->>'purpose' = 'draft_slot'
+              and metadata->>'draft_cleanup_pending' = 'true'
+            """,
+            (asset_id, r2_key),
+        )
 
 
 async def create_ai_output_cleanup_intent(

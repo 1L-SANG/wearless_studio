@@ -49,11 +49,30 @@ class DraftAssetReclaimer:
             )
             outputs = await repo.claim_unpublished_ai_output_cleanup_intents(conn)
             await conn.commit()
+        absent_assets = []
         for asset in assets:
             try:
                 await asyncio.to_thread(self.app.state.r2.delete, asset["r2_key"])
+                if await asyncio.to_thread(self.app.state.r2.head, asset["r2_key"]) is not None:
+                    raise RuntimeError("R2 object remained after delete")
             except Exception:
                 log.exception("stale draft asset R2 cleanup failed: %s", asset["id"])
+            else:
+                absent_assets.append(asset)
+        if absent_assets:
+            try:
+                # One call lets R2Client batch/rate-limit cache purges; no DB lease is held.
+                await asyncio.to_thread(
+                    self.app.state.r2.purge_public_cache,
+                    [asset["r2_key"] for asset in absent_assets],
+                )
+            except Exception:
+                log.warning("draft asset cache cleanup retry deferred: %d", len(absent_assets))
+            else:
+                async with self.app.state.pool.connection() as conn:
+                    for asset in absent_assets:
+                        await repo.complete_draft_asset_cleanup(conn, asset["id"], asset["r2_key"])
+                    await conn.commit()
         for output in outputs:
             try:
                 await asyncio.to_thread(self.app.state.r2.delete, output["r2_key"])
