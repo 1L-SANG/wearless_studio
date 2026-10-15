@@ -40,13 +40,12 @@ export function transferEditorPhoto(blocks, { elementId, sourceBlockId, targetBl
   const cleared = slot ? applySlotFillToInfo(source, elementId, { src: null, cutType: null }) : source;
   const { frameSlot, imageSizing, imageRowFlowGroup, imageRowFlowRow, imageRowFlowGap,
     imageFlowGroup, imageFlowOffset, imageFlowGap, ...appearance } = el;
-  const moved = { ...appearance, x: Math.round(Math.max(0, Math.min(1000 - el.w, x))), y: Math.round(Math.max(0, y)) };
+  const moved = { ...appearance, frameSlot: false, x: Math.round(Math.max(0, Math.min(1000 - el.w, x))), y: Math.round(Math.max(0, y)) };
   return blocks.map(b => {
     if (b === source) return { ...cleared, elements: cleared.elements.flatMap(e => {
       if (e.id !== elementId) return [e];
       if (!slot) return [];
-      const { sourceBlockId: origin, ...empty } = e;
-      return [{ ...empty, id: emptyId, frameSlot: true, slotCleared: true }];
+      return [{ ...e, id: emptyId, frameSlot: true, slotCleared: true }];
     }) };
     if (b === target) {
       const next = { ...b, elements: [...b.elements, moved] };

@@ -1766,6 +1766,7 @@ export function Editor() {
       const deleteBlockSelection = !deleteElements && blockFocused && Boolean(selBlock);
       if (isEditorDeleteKey(e) && (deleteElements || deleteBlockSelection)) {
         e.preventDefault();
+        if (kb.current.croppingOn) kb.current.cropCancel?.();
         if (deleteElements) {
           // 격자·프레임의 사진 자리는 지워지는 게 아니라 빈 자리로 남는다 — 안내도 그렇게.
           const bs0 = latestBlocks.current || blocks || [];
@@ -3348,7 +3349,7 @@ export function Editor() {
   };
   const cancelCrop = () => setCropping(null);
   // 크롭 리셋 — 프레임을 원본 이미지 전체로 되돌린다(자른 것 원위치, 오프셋 0).
-  const resetCrop = () => setCropping((c) => (c ? { ...c, fx: c.fx - c.ox, fy: c.fy - c.oy, fw: c.iw, fh: c.ih, ox: 0, oy: 0 } : c));
+  const resetCrop = () => setCropping((c) => (c ? { ...c, fx: c.fx - c.ox, fy: c.fy - c.oy, fw: c.iw, fh: c.ih, ox: 0, oy: 0, ratio: null } : c));
   // 크롭 핸들·내부 이미지 드래그 — 자체 포인터 핸들러 (리사이즈와 동일하게 /scale 환산)
   const cropDrag = (e, mode, dir) => {
     if (e.button != null && e.button !== 0) return;

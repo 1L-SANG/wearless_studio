@@ -118,5 +118,9 @@ export function filledSrcSet(blocks) {
 // 컷(생성 착장컷) 블록 판정 — 이미지 요소가 sourceBlockId(콘티 조인키)를 가지면 컷 블록.
 // 정보 블록(사이즈/케어/안내)·업로드 블록은 sourceBlockId 가 없어 false → 안전 교체 시 보존한다.
 export function isGeneratedCutBlock(block) {
+  // A generated photo can be moved into information or a manual composition.
+  // Protect those blocks; existing photo templates keep their replacement rule.
+  if (block?.auto || ['info', 'size', 'care', 'ai-notice'].includes(block?.kind)) return false;
+  if (!block?.templateId && block?.contentRole === 'custom') return false;
   return (block?.elements || []).some((el) => el?.type === 'image' && el.sourceBlockId);
 }

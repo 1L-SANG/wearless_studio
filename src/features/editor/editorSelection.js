@@ -183,6 +183,7 @@ const PHOTO_SLOT_BLOCK_KINDS = new Set(['twocol', 'threecol', 'grid2x2', 'colorc
 
 export function isPhotoSlotElement(block, element) {
   if (element?.type !== 'image') return false;
+  if (element.frameSlot === false) return false; // explicitly loose, including moved generated photos
   if (element.frameSlot) return true;   // 프레임 탭 템플릿의 사진 칸
   // 콘티에서 조립된 사진 행·격자의 '칸'만 — sourceBlockId 가 그 표식이다. 블록 종류만 보면
   // 그 블록에 나중에 얹은 낱장 사진까지 칸으로 오인해, Delete 해도 빈 칸으로만 바뀌며

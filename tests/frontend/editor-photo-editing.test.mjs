@@ -54,7 +54,7 @@ test('photo transfer preserves appearance and target photos, and leaves the sour
   assert.equal(result.length, 2);
   assert.deepEqual(result[0].elements, []);
   assert.equal(result[1].elements[0], target.elements[0]);
-  assert.deepEqual(result[1].elements[1], { ...image, x: 220, y: 80 });
+  assert.deepEqual(result[1].elements[1], { ...image, frameSlot: false, x: 220, y: 80 });
   assert.equal(result[1].h, 630);
   assert.equal(blocks[0].elements[0], image);
 });
@@ -67,7 +67,7 @@ test('moving a photo slot keeps an empty source slot and clears its info binding
   assert.equal(next[0].elements[0].id, 'empty');
   assert.equal(next[0].elements[0].src, null);
   assert.equal(next[0].info.items[0].src, null);
-  assert.equal(next[1].elements[0].frameSlot, undefined);
+  assert.equal(next[1].elements[0].frameSlot, false);
   assert.equal(next[1].elements[0].imageFlowGroup, undefined);
   assert.deepEqual(next[1].elements[0].crop, image.crop);
 });
