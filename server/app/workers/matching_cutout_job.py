@@ -18,7 +18,7 @@ import asyncio
 import logging
 
 from app import repo
-from app.services import garment_grid, matching_cutout, matching_flatlay, sam_client
+from app.services import fal_api, fal_cutout, garment_grid, matching_cutout, matching_flatlay, sam_client
 from app.r2 import derived_key
 
 log = logging.getLogger("wearless.matching_cutout")
@@ -58,6 +58,8 @@ async def run_matching_cutout_job(app, job: dict) -> None:
     # app.state.settings (load_settings() 재호출 아님) — 디스패처가 앱 기동 시 로드한
     # 설정 그대로 써야 테스트·런타임 모두에서 주입된 설정을 실제로 존중한다.
     s = app.state.settings
+    cutout_provider = getattr(s, "matching_cutout_provider", "sam2")
+    flatlay_provider = getattr(s, "matching_flatlay_provider", "gemini")
     payload = job.get("payload") or {}
     matching_item_id = payload.get("matchingItemId")
     source_keys = payload.get("sourceKeys") or []
@@ -81,7 +83,7 @@ async def run_matching_cutout_job(app, job: dict) -> None:
     if getattr(s, "matching_cutout", "off") != "on":
         await skip(SKIP_DISABLED)
         return
-    if not sam_client.configured(s):
+    if not (fal_api.configured(s) if cutout_provider == "fal" else sam_client.configured(s)):
         await skip(SKIP_SAM)
         return
     if not matching_item_id or not source_keys:
@@ -94,15 +96,21 @@ async def run_matching_cutout_job(app, job: dict) -> None:
     try:
         # 1) 각 원본을 누끼 → 회색배경 합성. view 는 Front 로 우회.
         cut_pngs: list[bytes] = []
+        first_rgba = None
         source_hashes: list[str] = []
         for key in source_keys:
-            results = await sam_client.segment_garment(s, {"Front": key})
+            if cutout_provider == "fal":
+                results = await fal_cutout.segment_garment(s, r2, {"Front": key})
+            else:
+                results = await sam_client.segment_garment(s, {"Front": key})
             view = results.get("Front")
             if view is None or not view.ready or not view.cutout_key:
                 raise _CutoutFailed("no_cutout")
             # 신원의 뿌리는 소스다 — SAM 이 준 소스 해시, 없으면 소스 키.
             source_hashes.append(view.source_hash or key)
             cutout_bytes = await asyncio.to_thread(r2.get_bytes, view.cutout_key)
+            if first_rgba is None:
+                first_rgba = cutout_bytes
             flattened = await asyncio.to_thread(
                 matching_cutout.flatten_on_bg, cutout_bytes)
             # 색 일치 게이트 — SAM 이 옷 대신 배경 조각을 딴 케이스(2026-08-15 실측:
@@ -120,9 +128,14 @@ async def run_matching_cutout_job(app, job: dict) -> None:
 
         # 2) 파생 신원은 소스 지문 + 알고리즘 버전으로 결정론적으로 만든다 —
         #    재실행(스테일 리스 회수)이 같은 행·같은 R2 키로 수렴한다.
-        fingerprint = matching_cutout.source_fingerprint(source_hashes)
+        fingerprint = matching_cutout.source_fingerprint(source_hashes, provider=cutout_provider)
+        grid_fingerprint = (
+            matching_flatlay.flatlay_fingerprint(fingerprint, provider=flatlay_provider)
+            if flatlay_provider == "qwen" and matching_flatlay.grid_enabled(s)
+            else fingerprint)
         grid_asset_id = matching_cutout.derived_asset_id(
-            role="grid", matching_item_id=matching_item_id, source_hash=fingerprint)
+            role="grid", matching_item_id=matching_item_id, source_hash=grid_fingerprint,
+            provider=cutout_provider)
         grid_key = derived_key(user_id, project_id, grid_asset_id, "jpg")
         first_source_id = source_asset_ids[0] if source_asset_ids else None
 
@@ -134,26 +147,29 @@ async def run_matching_cutout_job(app, job: dict) -> None:
         flatlay_enabled = matching_flatlay.enabled(s)
         if flatlay_enabled:
             flat = await matching_flatlay.render_thumbnail(
-                getattr(app.state, "gemini", None), settings=s, cutout_png=cut_pngs[0],
-                clothing_type=await _clothing_type(
+                getattr(app.state, "gemini", None), settings=s,
+                cutout_png=first_rgba if flatlay_provider == "qwen" else cut_pngs[0],
+                clothing_type=None if flatlay_provider == "qwen" else await _clothing_type(
                     pool, matching_item_id=matching_item_id, user_id=user_id,
                     project_id=project_id))
         if flat is not None:
             thumb_asset_id = matching_flatlay.derived_asset_id(
-                matching_item_id=matching_item_id, source_hash=fingerprint)
+                matching_item_id=matching_item_id, source_hash=fingerprint,
+                provider=flatlay_provider)
             thumb_bytes = flat.image
             thumb_meta = matching_flatlay.metadata_for(
                 source_hash=fingerprint, source_asset_id=first_source_id,
-                matching_item_id=matching_item_id, model=flat.model)
+                matching_item_id=matching_item_id, model=flat.model, provider=flatlay_provider)
         else:
             thumb_asset_id = matching_cutout.derived_asset_id(
-                role="thumb", matching_item_id=matching_item_id, source_hash=fingerprint)
+                role="thumb", matching_item_id=matching_item_id, source_hash=fingerprint,
+                provider=cutout_provider)
             thumb_bytes = await asyncio.to_thread(
                 matching_cutout.encode_thumbnail, cut_pngs[0])
             thumb_meta = matching_cutout.metadata_for(
                 source_hash=fingerprint, source_asset_id=first_source_id,
                 matching_item_id=matching_item_id,
-                purpose=matching_cutout.CUTOUT_PURPOSE)
+                purpose=matching_cutout.CUTOUT_PURPOSE, provider=cutout_provider)
         thumb_key = derived_key(user_id, project_id, thumb_asset_id, "jpg")
 
         # 4) grid 재합성(마네킹 생성 입력). 기본은 누끼 합성본 그대로 — 배경 오염은
@@ -189,10 +205,11 @@ async def run_matching_cutout_job(app, job: dict) -> None:
             # 남더라도 "내 옷 삭제" 가 회수한다(리뷰 I2).
             for candidate in (
                 matching_flatlay.derived_asset_id(
-                    matching_item_id=matching_item_id, source_hash=fingerprint),
+                    matching_item_id=matching_item_id, source_hash=fingerprint,
+                    provider=flatlay_provider),
                 matching_cutout.derived_asset_id(
                     role="thumb", matching_item_id=matching_item_id,
-                    source_hash=fingerprint),
+                    source_hash=fingerprint, provider=cutout_provider),
             ):
                 if candidate not in cleanup_ids:
                     cleanup_ids.append(candidate)
@@ -205,11 +222,11 @@ async def run_matching_cutout_job(app, job: dict) -> None:
             # metadata.type == "matchingCutout" 이 없으면 상태가 계속 미완료로 보인다.
             # sourceAssetIds 는 삭제 경로가 원본을 회수하는 유일한 통로다.
             grid_meta = matching_cutout.metadata_for(
-                source_hash=fingerprint,
+                source_hash=grid_fingerprint,
                 source_asset_id=origin_grid_asset_id or first_source_id,
                 matching_item_id=matching_item_id,
                 purpose=matching_cutout.GRID_PURPOSE,
-                source_asset_ids=cleanup_ids)
+                source_asset_ids=cleanup_ids, provider=cutout_provider)
             if grid_flatlay:
                 # front 칸이 재렌더본임을 provenance 로 남긴다 — 착장 결과를 조사할 때
                 # "생성이 뭘 보고 그렸나"를 asset 만 보고 답할 수 있어야 한다.
