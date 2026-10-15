@@ -26,7 +26,7 @@ test('replacing a generation example resets per-cut settings but preserves its s
     faceExposure: 'hide', outerClosureState: 'closed',
   };
   const result = generationExampleSelectionPatch(block, { id: 'new', direction: 'front' }, {
-    clothingType: 'outer', defaultColorId: 'base', refScope: 'pose',
+    clothingType: 'outer', defaultColorId: 'base', refScope: 'all',
   });
 
   assert.equal(result.settingsReset, true);
@@ -38,7 +38,7 @@ test('replacing a generation example resets per-cut settings but preserves its s
     ...result.patch,
   }, {
     sectionRole: 'styling', contentRole: 'coordination', cutType: 'styling', shot: 'medium',
-    exampleId: 'new', exampleChoice: null, exampleSelectionOrigin: 'user', refScope: 'pose',
+    exampleId: 'new', exampleChoice: null, exampleSelectionOrigin: 'user', refScope: 'all',
     // 2026-09-23: 착용컷은 고른 예시의 방향이 카드 방향이다. 정면 예시라 sideStyle 은 떨어진다
     // — 남겨 두면 서버가 side 로 읽어 사선/옆모습이 뒤섞인다.
     direction: 'front', sideStyle: null, colorId: 'base', colorIds: [],

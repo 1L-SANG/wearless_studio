@@ -192,6 +192,7 @@ def test_face_pass_signature_direction_keeps_the_face_detectable():
 
 
 def _restore_prior_authority_sentence(prompt):
+    prompt = prompt.replace("complete example or shared series scene", "all-scope example or bg plate")
     current = ("Storyboard color/shot/face/model/matching/closure override the example; "
                "the selected example owns direction and pose.")
     prior = ("Storyboard color/direction/shot/face/model/matching/closure and any explicit pose "
@@ -391,7 +392,7 @@ def test_bottom_signature_pose_scope_is_not_expanded_and_cropped_like_a_generic_
         _bottom_product(),
     )
     assert request.spec["shot"] == "medium"
-    assert request.crop_pose_medium is False
+    assert request.spec["refScope"] == "all"
 
 
 def test_dress_signature_prompt_uses_dress_crop_without_head_or_upper_body_rules():
@@ -466,7 +467,7 @@ def test_dress_signature_keeps_medium_without_generic_post_crop():
         _dress_product(),
     )
     assert request.spec["shot"] == "medium"
-    assert request.crop_pose_medium is False
+    assert request.spec["refScope"] == "all"
 
 
 def test_non_signature_prompt_changes_only_retired_authority_sentence():

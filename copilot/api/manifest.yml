@@ -323,9 +323,6 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 사진 일치 검사는 최대 9.8초라 영향 없음. 화면 분석 폴링 상한은 180초. 늦어도 버리지 않는 구조가
   # 들어가면 다시 낮춘다.
   ANALYSIS_AUX_TIMEOUT_SECONDS: "30"
-  # '배경만' 생성예시는 빈 장소 플레이트 편집 + 장소 일치 QC/재시도 방식으로 검증했다.
-  # 프론트 VITE_GENEXAMPLE_BG_ENABLED와 함께 켜야 하며, 2026-07-21부터 프로덕션 공개.
-  GENEXAMPLE_BG_ENABLED: "true"
   # ---- FaceMarket(해커톤, PR #22) — 얼굴 라이선스·개인화·연령게이트. off면 라우터 자체가 미등록.
   # 이걸 안 켜면 배포는 성공해도 프로드에 FaceMarket 기능이 조용히 없다(에러도 안 남 = 설계).
   FACEMARKET_ENABLED: "true"

@@ -34,8 +34,6 @@ class Settings:
     sam_request_timeout_s: float = 90.0
     # 생성예시 레지스트리의 상대 URL 기준. prod 상대경로는 명시 필수, dev만 dummy 기본값 허용.
     example_asset_base_url: str | None = None
-    # 배경-only 생성예시는 파일럿 실측 성공률이 안정화될 때까지 명시적 opt-in에서만 허용.
-    genexample_bg_enabled: bool = False
     # ---- AI 에이전트 (Phase 4) ----
     # 마지막 블록 + 기본값 — 직접 생성(테스트)·미래 필드 추가에도 안 깨지게.
     # load_settings()는 아래 기본값을 env 값으로 항상 덮어쓴다.
@@ -153,8 +151,8 @@ class Settings:
     # 베이스컷·완성 컷을 24시간 남기고, 다음 시도가 그걸 이어 쓴다. 문제 시 env 로 끈다
     # (DETAIL_CUT_CHECKPOINT=off → 오늘까지와 같이 매번 처음부터 생성).
     detail_cut_checkpoint_enabled: bool = True
-    # bg 편집 컷의 장소일치 QC 재시도 총 시도 상한 — 생성은 샘플링이라 프롬프트만으로는
-    # 결정적이지 않다(2026-07-20 실측). 시도당 생성 1회 + 판정 1회.
+    # 장소 세트의 공통 장면 일치 QC 재시도 총 시도 상한. 시도당 생성 1회 + 판정 1회.
+    # 기존 설정과 체크포인트 호환을 위해 bg_scene 이름은 유지한다(옛 단독 배경 모드 아님).
     bg_scene_qc_attempts: int = 3
     # AG-P2 이미지 동일성 검수(vision LLM "같은 옷인가"). off | shadow(판정 로그만) |
     # enforce(불일치 시 correctionPrompt로 재생성 — 마네킹 재시도 루프 재사용, max_attempts 내).
@@ -809,9 +807,6 @@ def load_settings() -> Settings:
         opendid_autoscale_idle_minutes=_int_env("OPENDID_AUTOSCALE_IDLE_MINUTES", 30),
         sam_request_timeout_s=float(os.getenv("SAM_REQUEST_TIMEOUT_S") or 90.0),
         example_asset_base_url=(os.getenv("EXAMPLE_ASSET_BASE_URL") or "").rstrip("/") or None,
-        genexample_bg_enabled=(
-            os.getenv("GENEXAMPLE_BG_ENABLED", "false").lower() == "true"
-        ),
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         vertex_project=os.getenv("VERTEX_PROJECT") or None,
         vertex_location=os.getenv("VERTEX_LOCATION", "global"),

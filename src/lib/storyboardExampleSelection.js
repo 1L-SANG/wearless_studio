@@ -1,4 +1,5 @@
 import { isSupportedCutType } from './storyboardTaxonomy.js';
+import { referenceScopeForBlock } from './referenceMode.js';
 
 const WORN_CUT_TYPES = new Set(['styling', 'horizon']);
 
@@ -28,13 +29,12 @@ function wornDirectionPatch(cutType, example) {
 export function generationExampleSelectionPatch(block, example, {
   clothingType = 'top',
   defaultColorId = null,
-  refScope = null,
 } = {}) {
   if (example?.cutType != null && !isSupportedCutType(example.cutType)) return { patch: {}, settingsReset: false };
   const exampleId = example?.id || null;
   const effectiveBlock = block;
   const replacing = !!block?.exampleId && !!exampleId && block.exampleId !== exampleId;
-  const scope = block?.spaceGroupId ? (block.cutType === 'horizon' ? 'all' : 'pose') : (refScope || block?.refScope || 'all');
+  const scope = referenceScopeForBlock(block);
   const isDetail = block?.cutType === 'product' && block?.shot === 'detail';
   const cutType = effectiveBlock.cutType;
   const patch = {

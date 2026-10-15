@@ -728,7 +728,6 @@ graph LR
 | **오토스케일** | `SAM_AUTOSCALE` / `OPENDID_AUTOSCALE` | `on` · 유휴 30분 |
 | | `DETAIL_WORKER_AUTOSCALE` | `on` · 유휴 10분 |
 | | `SAM_DIRECT_ENDPOINT` | `on` |
-| **기타** | `GENEXAMPLE_BG_ENABLED` | `true` (프론트 `VITE_GENEXAMPLE_BG_ENABLED` 와 짝) |
 | | `JOB_CONCURRENCY` / `DB_POOL_MAX_SIZE` | `1` / `10` |
 
 `config.py` 에 정의된 설정 필드는 **130개 이상**. 전체 목록은 `server/app/config.py` 가 정본.

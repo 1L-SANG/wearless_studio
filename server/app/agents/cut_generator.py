@@ -37,7 +37,8 @@ from .gemini_image import GeminiImageClient, InlineImage
 from .model_routing import resolve_model
 from .fit_axes import build_fit_profile_block
 from .prompts import _product_block, _sanitize
-from . import face_angle_swap, face_identity, pose_crop, space_set_assets
+from . import face_angle_swap, face_identity, space_set_assets
+from .reference_mode import reference_scope
 from ..facemarket_physique import build_body_profile_block, build_face_shape_block, build_hair_block
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
@@ -161,9 +162,8 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         else "subtle",
         "outerClosureState": closure,
         "modelId": _sanitize(raw.get("modelId") or raw.get("model_id") or "") or None,
-        # 레퍼런스 범위 (ADR-0009) — 'pose'면 예시에서 자세만 따르고, 프레이밍은 현재
-        # cutType/shot이 정한다. 배경은 프롬프트 자체 배경 지시를 따른다. 미지·구버전 값은 'all'로 정규화.
-        "refScope": (raw.get("refScope") or raw.get("ref_scope")) if (raw.get("refScope") or raw.get("ref_scope")) in ("all", "pose", "bg") else "all",
+        # 일반 컷은 완성 예시, 장소 세트만 내부 자세 입력을 사용한다.
+        "refScope": reference_scope(raw),
         # 워커가 실제 첨부 자산을 고른 뒤 붙이는 런타임 전용 정보. 저장 계약에는 포함하지 않는다.
         "_detailColorTransfer": _normalize_detail_color_transfer(raw.get("_detailColorTransfer")),
         # 런타임 공간세트 레지스트리만 주입한다. horizon-sequence 중 plate가 없는 세트는
@@ -188,14 +188,6 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         # 계산하는 런타임 값이며 저장 계약이나 클라이언트 입력의 정본이 아니다.
         "_exampleRepeatIndex": example_repeat_index,
     }
-    # 제품컷은 '배경만/포즈만'이 성립하지 않는다(사람·포즈 없음) — 예시는 통째 참조만 허용.
-    if cut == "product" and spec["refScope"] != "all":
-        spec["refScope"] = "all"
-    # Horizon sets reference the complete photograph; styling keeps plate + pose.
-    if spec["spaceGroupId"] and spec["exampleId"]:
-        spec["refScope"] = "all" if cut == "horizon" else "pose"
-        # 옛 서버가 콘티 저장 때 세트 컷에 돌려 넣은 핏 섹션 자동 포즈는 셀러 선택이 아니다(화면에서
-        # 고를 수 없는 문장). 남기면 USER POSE OVERRIDE 로 완성 예시 포즈를 덮는다(ADR-0013).
     if cut == "horizon" and raw.get("_horizonReferenceShot") in {"full", "medium"}:
         spec["_horizonReferenceShot"] = raw["_horizonReferenceShot"]
     if horizon_background.active({**raw, "cutType": cut}):
@@ -299,7 +291,7 @@ def load_example_asset_registry() -> tuple[str | None, dict[str, dict]]:
         elif isinstance(value, dict):
             entry: dict = {
                 k: v.strip() for k, v in value.items()
-                if k in ("all", "pose", "bg", "thumb") and isinstance(v, str) and v.strip()
+                if k in ("all", "pose", "thumb") and isinstance(v, str) and v.strip()
             }
             if "applicableClothingTypes" in value:
                 applicable = value.get("applicableClothingTypes")
@@ -327,7 +319,7 @@ def load_example_asset_registry() -> tuple[str | None, dict[str, dict]]:
                 entry["gender"] = value.get("gender")
             if value.get("faceVisibility") in ("hidden", "visible"):
                 entry["faceVisibility"] = value["faceVisibility"]
-            if any(variant in entry for variant in ("all", "pose", "bg", "thumb")):
+            if any(variant in entry for variant in ("all", "pose", "thumb")):
                 clean[str(example_id)] = entry
     return base_url, clean
 
@@ -351,7 +343,9 @@ def example_asset_status(
     applicable = entry.get("applicableClothingTypes")
     if applicable is not None and str(clothing_type or "") not in applicable:
         return "not_applicable"
-    variant = scope if scope in ("pose", "bg") else "all"
+    if scope not in ("all", "pose"):
+        return "variant_unpublished"
+    variant = scope
     if not entry.get(variant):
         return "variant_unpublished"
     return "available"
@@ -385,46 +379,27 @@ def direction_family_matches(entry: dict, spec: dict) -> bool:
     return _side_style_of(entry) == _side_style_of(spec)
 
 
-def pose_direction_from_example(spec: dict) -> tuple[dict, dict | None]:
-    """ADR-0015와 ADR-0017 개정, 일반 포즈 예시의 방향을 실행 사본에 적용한다."""
+def example_direction_from_catalog(spec: dict) -> tuple[dict, dict | None]:
+    """Keep example-owned direction and its audit trail for ordinary complete references."""
     resolved = dict(spec)
-    example_id = spec.get("exampleId")
-    if (spec.get("cutType") not in ("styling", "horizon") or spec.get("refScope") != "pose"
-            or spec.get("spaceGroupId") or not example_id or str(example_id).startswith("ss_")):
+    example_id = spec.get('exampleId')
+    if (spec.get('cutType') not in _WORN_CUTS or spec.get('spaceGroupId')
+            or not example_id or str(example_id).startswith(('ss_', 'sig_'))):
         return resolved, None
-    _default_base, assets = load_example_asset_registry()
+    _, assets = load_example_asset_registry()
     entry = assets.get(str(example_id)) or {}
-    if entry.get("cutType") not in ("styling", "horizon") or entry.get("direction") not in _DIRECTIONS:
+    if entry.get('cutType') != spec.get('cutType') or entry.get('direction') not in _DIRECTIONS:
         return resolved, None
-    direction = entry["direction"]
-    side_style = _side_style_of(entry) if direction == "side" else None
+    direction = entry['direction']
+    side = _side_style_of(entry) if direction == 'side' else None
     if direction_family_matches(entry, spec):
         return resolved, None
-    resolved.update(direction=direction, sideStyle=side_style)
+    resolved.update(direction=direction, sideStyle=side)
     return resolved, {
-        "kind": "direction_from_example", "exampleId": example_id,
-        "fromDirection": spec.get("direction"), "fromSideStyle": spec.get("sideStyle"),
-        "toDirection": direction, "toSideStyle": side_style,
+        'kind': 'direction_from_example', 'exampleId': example_id,
+        'fromDirection': spec.get('direction'), 'fromSideStyle': spec.get('sideStyle'),
+        'toDirection': direction, 'toSideStyle': side,
     }
-
-
-def pose_direction_compatible(example_id: str | None, spec: dict) -> bool:
-    """pose 전용 자산과 현재 카드의 방향 계열이 같은지 API 호출 전에 판정한다.
-
-    착용컷은 관찰 메타 direction이
-    카드 레시피 direction과 정확히 같아야 한다. 레거시 레지스트리처럼 메타가 없으면
-    v2 포즈 계약을 증명할 수 없으므로 fail-closed한다.
-    """
-    if not example_id or spec.get("cutType") not in _WORN_CUTS:
-        return False
-    _default_base, assets = load_example_asset_registry()
-    entry = assets.get(str(example_id)) or {}
-    example_cut = entry.get("cutType")
-    return (
-        example_cut in ("styling", "horizon")
-        and entry.get("direction") in _DIRECTIONS
-        and direction_family_matches(entry, spec)
-    )
 
 
 def apply_reference_compatibility(spec: dict) -> dict:
@@ -633,9 +608,7 @@ def resolve_example_asset(
     scope: str = "all", clothing_type: str | None = None,
 ) -> str | None:
     """레지스트리 항목을 절대 http(s) URL로 해석. 미등록/잘못된 URL은 v0 폴백(None).
-    pose/bg는 전용 자산이 있을 때만 해석한다. 일반 사진(all)을 대신 붙이면 범위 계약이
-    깨지므로, 전용 자산이 없을 때는 미첨부(None)로 닫힌다:
-      pose → 누끼(인물만, 배경 제거)   bg → 빈 무대 플레이트(인물 제거, 여백 확보)"""
+    pose는 장소 세트의 내부 자산이다. 해당 자산이 없으면 완성 사진으로 대체하지 않는다."""
     if not example_id:
         return None
     default_base, assets = load_example_asset_registry()
@@ -643,7 +616,9 @@ def resolve_example_asset(
     if clothing_type is not None \
             and example_asset_status(example_id, clothing_type, scope) != "available":
         return None
-    value = entry.get(scope) if scope in ("pose", "bg") else entry.get("all")
+    if scope not in ("all", "pose"):
+        return None
+    value = entry.get(scope)
     if not value:
         return None
     if urlsplit(value).scheme in ("http", "https"):
@@ -815,8 +790,7 @@ def render_cut_prompt(
     # band 규칙: 뉘앙스는 정면 대역(front)에서만 — 사이드/뒷면이면 예시는 분위기만(T1)이라
     # 정면 계열 구도 문구가 방향 지시와 충돌하지 않게 미적용.
     example_line = ""
-    # v0 해시 뉘앙스는 공용(all) 예시에만 남긴다. pose/bg는 전용 이미지가 없으면
-    # 아무 예시도 적용하지 않는 fail-closed 계약이며, 존재하지 않는 첨부물을 언급하지 않는다.
+    # 일반 예시만 해시 뉘앙스를 쓰며, 세트의 내부 자세 입력에는 적용하지 않는다.
     if spec.get("exampleId") and spec.get("refScope") == "all" \
             and cut != "product" and spec.get("direction") in (None, "front"):
         idx = sum(ord(ch) for ch in spec["exampleId"]) % 3
@@ -825,21 +799,17 @@ def render_cut_prompt(
     # 위 v0 결정적 뉘앙스 경로와 완전히 동일하게 남는다.
     has_resolved_example = (
         _EXAMPLE_ALL_LABEL in image_manifest
-        or _EXAMPLE_POSE_LABEL in image_manifest
-        or _EXAMPLE_BG_LABEL in image_manifest)
+        or _EXAMPLE_POSE_LABEL in image_manifest)
     # 실제 이미지가 첨부되면 그 이미지가 구도/포즈의 유일한 예시다. exampleId 해시로 만든
     # 레거시 EXNUANCE까지 함께 두면 서로 다른 팔·다리 자세를 동시에 지시하게 된다.
     if has_resolved_example:
         example_line = ""
         # 실제 all/pose 이미지가 포즈를 제어할 때 POSE:auto까지 남기면 "자연스럽게
-        # 고르기"와 "예시 포즈 유지"가 충돌한다. 명시 포즈와 bg-only는 별도 계약이다.
+        # 고르기"와 "예시 포즈 유지"가 충돌한다. 세트 내부 자세와 일반 완성 예시는 서로 다른 자산이다.
         if spec["refScope"] in ("all", "pose"):
             pose_line = ""
     # 매니페스트 문구는 첨부 여부만 증명한다. 범위는 반드시 정규화된 spec에서 다시 가져와
     # in-space 강제(pose)를 우회하는 불가능한 all 조합을 만들지 않는다.
-    # bg는 '생성하며 참고'가 아니라 '플레이트 편집' 과업으로 전환(2026-07-20 야간 실측:
-    # 참고 방식은 텍스트·순서 개선을 다 해도 성공률 ~40%에서 정체 — 10회 판정).
-    bg_edit_mode = has_resolved_example and spec["refScope"] == "bg"
     # 같은 all 예시를 두 번째 색상부터 다시 쓰는 컷(컬러웨이 반복, ADR-0011). 세트 멤버는 제외.
     repeat_index = spec.get("_exampleRepeatIndex", 0)
     example_repeat_active = (
@@ -851,7 +821,7 @@ def render_cut_prompt(
         and type(repeat_index) is int
         and repeat_index >= 1
     )
-    if has_resolved_example and not bg_edit_mode:
+    if has_resolved_example:
         if (
             spec["refScope"] == "all"
             and cut in _WORN_CUTS
@@ -962,15 +932,11 @@ def render_cut_prompt(
 
     text = (
         need("BASE")
-        # bg 편집 모드는 라벨의 'lifestyle' 뉘앙스도 제거 — 장소 단서는 첨부 캔버스뿐이어야 한다
-        .replace("${cutLabel}",
-                 "worn cut composed into the attached scene" if bg_edit_mode else _CUT_LABELS[cut])
+        .replace("${cutLabel}", _CUT_LABELS[cut])
         .replace("${authorityPlanLine}", authority_plan_line or "")
-        # bg 편집 모드는 컷 종류 섹션을 통째로 교체 — 경쟁할 배경 서술이 존재하지 않게 한다
         .replace(
             "${cutSection}",
-            need("CUT:bg_edit") if bg_edit_mode
-            else need("CUT:horizon_tone") if horizon_tone
+            need("CUT:horizon_tone") if horizon_tone
             else need(f"CUT:{cut}"),
         )
         .replace("${shotLine}", shot_line)
@@ -1193,7 +1159,6 @@ _FACE_LABEL = ("MODEL FACE — the licensed model's face reference: reproduce TH
                "copy their clothing, background, pose or framing)")
 _EXAMPLE_ALL_LABEL = "EXAMPLE REFERENCE (scope: all)"
 _EXAMPLE_POSE_LABEL = "POSE CONTROL"
-_EXAMPLE_BG_LABEL = "EXAMPLE REFERENCE (scope: bg)"
 _SPACE_SET_PLATE_LABEL = "SPACE SET PLATE"
 _EXAMPLE_PERSON_AUTHORITY_DENIAL = (
     "the example has ZERO authority over facial identity or facial features, and ZERO "
@@ -1229,6 +1194,8 @@ def build_manifest(
     ``matching_count`` 미지정 시 기존 ``has_match`` 불리언을 그대로 0/1장으로 해석한다.
     실제 첨부 수를 아는 호출자는 count를 넘겨 여러 MATCHING 위치를 선언할 수 있다.
     """
+    if example_scope not in (None, "all", "pose"):
+        raise ValueError("unsupported_reference_scope")
     # 상호배타는 **같은 자리**를 두 권한이 다툴 때만이다.
     # 세 슬롯은 서로 다른 위치에 온다: MODEL FACE → MODEL SHEET → MODEL FULL BODY.
     #   · VIRTUAL 2장 = FACE + FULL BODY (sheet 없음)
@@ -1328,18 +1295,6 @@ def build_manifest(
                 "CUT SPEC controls camera, crop, placement and background; "
                 f"{_EXAMPLE_PERSON_AUTHORITY_DENIAL}"
             )
-    elif example_scope == "bg":
-        # 스파이크(2026-07-12): 자산은 인물을 지운 '빈 무대 플레이트' — 포즈·의류 유출을 구조적으로 차단
-        # 라벨은 명령형 + 첫 첨부(2026-07-20 파일럿): 서술형 라벨·마지막 첨부는 컷 섹션의 배경
-        # 나열에 밀렸다. 워커가 bg 플레이트를 첫 이미지로 붙이므로 라벨도 맨 앞으로 재번호한다.
-        bg_label = (
-            f"{_EXAMPLE_BG_LABEL} — THE scene canvas (the base image being edited): insert the "
-            "model into this exact scene; outside the person everything stays as in this image; "
-            "it has no person, so choose the pose yourself and never copy garments, shoes or "
-            f"props onto the model; {_EXAMPLE_PERSON_AUTHORITY_DENIAL}"
-        )
-        renumbered = [bg_label] + [line.split(". ", 1)[1] for line in lines]
-        lines = [f"{n}. {label}" for n, label in enumerate(renumbered, start=1)]
     return "\n".join(lines) or "(the seller's product photos — treat as ground truth)"
 
 
@@ -1614,16 +1569,6 @@ def build_prompt(
     fit_profile = analysis.get("fitProfile") if isinstance(analysis, dict) else None
     plan = compile_cut_plan(spec, clothing_type, fit_profile=fit_profile)
     authority_plan_line = render_prompt_contract(plan)
-    # 하의 pose-only medium만 먼저 full 프레이밍으로 생성하고 generate()가 결정적
-    # body-landmark crop을 적용한다. 상의·아우터·원피스는 목적 촬영 medium을 직접 만든다.
-    if (
-        spec["refScope"] == "pose"
-        and spec["shot"] == "medium"
-        and not spec.get("spaceGroupId")
-        and _is_bottom(clothing_type)
-        and not is_signature_cut(spec)
-    ):
-        spec = {**spec, "shot": "full"}
     if manifest is None:
         if spec["cutType"] == "product" and spec["shot"] == "detail":
             selected_images, transfer = detail_reference_images(
@@ -1770,7 +1715,6 @@ class _BaseRequest:
     prompt: str
     image_size: str
     provider_kwargs: dict
-    crop_pose_medium: bool
 
 
 def _base_request(
@@ -1800,13 +1744,6 @@ def _base_request(
     # gpt-image 경로는 주 키나 fallback 키가 있어야 한다. 둘 다 없으면 첫 화면이 통째로
     # 빈칸이 되는 대신 기존 모델로 조용히 떨어진다.
     model = _resolve_generation_model(settings, spec)
-    crop_pose_medium = (
-        spec["refScope"] == "pose"
-        and spec["shot"] == "medium"
-        and not spec.get("spaceGroupId")
-        and _is_bottom(clothing_type)
-        and not is_signature_cut(spec)
-    )
     if confirmed_prompt_input is not None:
         if (
             analysis is not None or manifest is not None or has_face
@@ -1839,7 +1776,7 @@ def _base_request(
         # 봉인했다. 일반 OpenAI 호환용 PNG 정규화를 이 exact 경로에 적용하지 않는다.
         provider_kwargs["openai_preserve_input_bytes"] = True
     return _BaseRequest(spec, clothing_type, model, prompt, _detail_image_size(settings),
-                        provider_kwargs, crop_pose_medium)
+                        provider_kwargs)
 
 
 #: 체크포인트 지문 규칙의 버전. 지문에 넣는 값이나 베이스의 뜻(후처리 앞 원본)이 바뀌면 올린다 —
@@ -1956,10 +1893,6 @@ async def generate(
             image, mime = await face_identity.apply_face_pass(
                 settings, image, mime, identity, outcome=face_pass_outcome,
                 url_provider=face_pass_url_provider)
-    if request.crop_pose_medium:
-        return await pose_crop.crop_pose_medium(
-            settings, image, mime, clothing_type
-        )
     return image, mime
 
 

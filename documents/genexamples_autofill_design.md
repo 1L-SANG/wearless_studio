@@ -56,7 +56,7 @@ eligible(block, product, gender):
 
 - **샷(full↔medium)**: `{shot 변경, exampleId 유지, origin='user'}` 단일 패치. 현행 코드의 exampleId:null 두 경로(onShotChange의 초기화 + 후보 밖 ID를 지우는 effect)는 **제거**. 서버도 착용컷 예시 shot과 카드 shot 불일치를 거부하지 않음(프레이밍은 카드가 정본 — ADR-0009).
 - **컷(탭) / 제품 고스트↔디테일**: 2단계 — ①pendingCutType만 로컬로 들고 새 조건 최대 6장 제시(블록 불변) ②선택 시 `{cutType, shot, 파생 contentRole, exampleId, refScope, origin='user', thumb}` 단일 블록 패치 → blocks 전체 1회 PUT(현행 저장이 원자적 — 신규 엔드포인트 불필요). 실패 시 기존 카드·선택창 유지 + 오류·재시도.
-- **참고 범위**: '포즈만' 전환 시에만 방향 호환 게이트(#34) 적용(기존 구현). 자동 배정은 all이므로 무관(같은 공간 제외 — §3 자격에서 처리).
+- **내부 입력 구분**: 일반 예시는 완성 사진을 참고한다. 스타일링 장소 세트의 자세 자산·방향 호환은 서버 세트 바인딩에서 검증한다. 사용자 참고 범위 전환은 제공하지 않는다.
 - **섹션 이동**: 이동 후에도 cutType이 대상 섹션에서 허용되면 예시 유지, 컷이 바뀌어야 하면 컷 전환 흐름으로.
 - **삭제 취소**: 삭제 전 스냅샷의 exampleId·origin 그대로 복원.
 

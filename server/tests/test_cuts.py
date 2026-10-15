@@ -546,9 +546,9 @@ def test_normalize_ref_scope_defaults_and_clamps():
     # 미지정·구버전 저장분 → 'all' (콘티 refScope, 2026-07 섹션 개편)
     assert cut.normalize_spec({"cutType": "styling"})["refScope"] == "all"
     assert cut.normalize_spec({"cutType": "styling", "refScope": "weird"})["refScope"] == "all"  # 미지 값
-    assert cut.normalize_spec({"cutType": "styling", "refScope": "pose"})["refScope"] == "pose"
+    assert cut.normalize_spec({"cutType": "styling", "refScope": "pose"})["refScope"] == "all"
     # 'bg'(배경만) 출시 — 스파이크 2026-07-12 로 성립 확인
-    assert cut.normalize_spec({"cutType": "styling", "refScope": "bg"})["refScope"] == "bg"
+    assert cut.normalize_spec({"cutType": "styling", "refScope": "bg"})["refScope"] == "all"
 
 
 def test_normalize_ref_scope_product_downgrades_to_all():
@@ -558,35 +558,6 @@ def test_normalize_ref_scope_product_downgrades_to_all():
         assert spec["refScope"] == "all"
 
 
-def test_render_ref_scope_bg_uses_plate_and_blocks_pose_garment_transfer(dev_example_registry):
-    template = cut.load_cut_template()
-    spec = cut.normalize_spec({
-        "cutType": "styling", "direction": "front", "shot": "full",
-        "exampleId": "ex_styling_top_full_1", "refScope": "bg",
-    })
-    manifest = cut.build_manifest(
-        [{"slot": "Front"}], has_mannequin=False, has_match=False, mood_count=0, example_scope="bg")
-    p = cut.render_cut_prompt(template, spec, product={}, analysis={}, clothing_type="top",
-                              image_manifest=manifest)
-    assert "EXAMPLE REFERENCE (scope: bg)" in manifest and "THE scene canvas" in manifest
-    # bg 플레이트는 첫 첨부·첫 라벨(프라이머시) — 워커의 insert(0)와 매니페스트 재번호가 짝
-    assert manifest.splitlines()[0].startswith("1. EXAMPLE REFERENCE (scope: bg)")
-    assert manifest.splitlines()[1].startswith("2. PRODUCT")
-    # 2026-07-20 야간 실측: '생성하며 플레이트 참고'는 텍스트·순서 개선을 다 해도 ~40%에서 정체
-    # (10회 판정) → '플레이트 편집' 과업으로 전환. 테스트는 편집 모드 의미를 고정한다.
-    assert "EDIT TASK" in p                                   # 편집 과업 프레이밍
-    assert "Insert ONE model wearing the PRODUCT garment" in p
-    assert "the scene must stay the SAME" in p                # 인물 밖 장면 불변
-    assert "street, cafe, cozy interior" not in p             # 경쟁 배경 나열이 아예 없음(섹션 교체)
-    assert "lifestyle setting" not in p
-    assert "choose a natural pose" in p                        # 포즈 유출 차단(플레이트는 포즈 미제어)
-    assert "COMPLETE outfit" in p                              # 하의·신발 누락 방지(2026-07-20 실측: 맨다리 컷)
-    assert "garments, shoes or props" in p                         # 의류·신발 유출 차단(실험서 관찰된 실패)
-    assert "FRAMING OVERRIDE" in p                             # 캔버스 크롭보다 요청 샷이 우선
-    assert "Pose: natural and unforced" in p                   # 빈 배경은 포즈를 제어하지 않음
-    # bg 자산 = 빈 무대 플레이트(전용 variant) 우선
-    base = "https://assets.example.test/generated-examples"
-    assert cut.resolve_example_asset("ex_styling_top_full_1", base, scope="bg").endswith("plate+1")
 
 
 def test_normalize_ref_scope_in_space_forces_pose():
@@ -609,7 +580,7 @@ def test_normalize_ref_scope_in_space_forces_pose():
         "cutType": "styling",
         "spaceGroupId": _SPACE_GROUP_ID,
     })
-    assert no_example["refScope"] == "all"
+    assert no_example["refScope"] == "pose"  # 자산 누락은 세트 바인딩에서 거부한다.
 
 
 def test_render_named_pose_overrides_pose_scope_example():
@@ -631,18 +602,6 @@ def test_render_named_pose_overrides_pose_scope_example():
     assert "Composition nuance" not in resolved and "REFERENCE SCOPE" not in resolved
 
 
-def test_unresolved_pose_and_bg_examples_fail_closed_without_fake_reference():
-    template = cut.load_cut_template()
-    base = {"cutType": "styling", "direction": "front", "exampleId": "ex_1"}
-    kw = dict(product={}, analysis={}, clothing_type="top", image_manifest="(no images)")
-    pose_prompt = cut.render_cut_prompt(template, cut.normalize_spec({**base, "refScope": "pose"}), **kw)
-    bg_prompt = cut.render_cut_prompt(template, cut.normalize_spec({**base, "refScope": "bg"}), **kw)
-    all_prompt = cut.render_cut_prompt(template, cut.normalize_spec(base), **kw)
-    assert "REFERENCE SCOPE" not in pose_prompt
-    assert "REFERENCE SCOPE" not in bg_prompt
-    assert "Composition nuance" not in pose_prompt
-    assert "Composition nuance" not in bg_prompt
-    assert "Composition nuance" in all_prompt        # v0 공용 예시만 결정적 뉘앙스 유지
 
 
 def test_example_asset_pose_scope_prefers_cutout_variant(dev_example_registry):
@@ -706,28 +665,6 @@ def test_example_asset_registry_v2_preserves_metadata_and_legacy_shapes(tmp_path
         cut.load_example_asset_registry.cache_clear()
 
 
-def test_pose_direction_preflight_matches_worn_rules(tmp_path, monkeypatch):
-    registry = {
-        "_meta": {"defaultBaseUrl": "https://images.example.test"},
-        "assets": {
-            "front": {"pose": "front.png", "cutType": "styling", "direction": "front"},
-            "back": {"pose": "back.png", "cutType": "horizon", "direction": "back"},
-            "legacy": {"pose": "legacy.png"},
-        },
-    }
-    path = tmp_path / "example_assets.json"
-    path.write_text(json.dumps(registry), encoding="utf-8")
-    monkeypatch.setattr(cut, "_DEFAULT_EXAMPLE_ASSETS", str(path))
-    cut.load_example_asset_registry.cache_clear()
-    try:
-        assert cut.pose_direction_compatible(
-            "front", cut.normalize_spec({"cutType": "styling", "direction": "front"}))
-        assert not cut.pose_direction_compatible(
-            "back", cut.normalize_spec({"cutType": "styling", "direction": "front"}))
-        assert not cut.pose_direction_compatible(
-            "legacy", cut.normalize_spec({"cutType": "styling", "direction": "front"}))
-    finally:
-        cut.load_example_asset_registry.cache_clear()
 
 
 def test_side_example_must_match_the_side_sub_kind_not_just_the_direction(
@@ -780,13 +717,6 @@ def test_side_example_must_match_the_side_sub_kind_not_just_the_direction(
         assert compat("legacySide", "profile") is True
         assert compat("legacySide", "threeQuarter") is False
 
-        # pose 전용 자산의 사전 게이트도 같은 규칙을 쓴다.
-        assert not cut.pose_direction_compatible("profile", cut.normalize_spec({
-            "cutType": "horizon", "direction": "side", "sideStyle": "threeQuarter",
-        }))
-        assert cut.pose_direction_compatible("threeQuarter", cut.normalize_spec({
-            "cutType": "horizon", "direction": "side", "sideStyle": "threeQuarter",
-        }))
     finally:
         cut.load_example_asset_registry.cache_clear()
 
@@ -884,13 +814,13 @@ def test_resolved_example_manifest_and_prompt_apply_pose_only_scope():
         mood_count=0, example_scope="pose")
     p = _render(
         {"cutType": "styling", "shot": "full", "exampleId": "ex_styling_top_full_1",
-         "refScope": "pose"},
+         "refScope": "pose", "spaceGroupId": _SPACE_GROUP_ID},
         manifest=manifest,
     )
     assert "POSE CONTROL" in manifest
     assert "used ONLY as a kinematic control" in manifest
     assert "CUT SPEC controls" in manifest
-    assert "POSE-ONLY RETARGETING CONTRACT" in p
+    assert "STYLING SERIES INTERNAL POSE INPUT" in p
     assert "screen-left versus screen-right limb placement" in p
     assert "Do not mirror the pose, swap left and right" in p
     assert "The requested direction is already compatible with this pose" in p

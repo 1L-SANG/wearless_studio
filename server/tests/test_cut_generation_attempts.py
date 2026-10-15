@@ -158,43 +158,10 @@ def test_new_cut_generates_once_when_current_qc_does_not_request_repair(monkeypa
         assert run["finalize"]["charge"] == 1
 
 
-@pytest.mark.parametrize("worker", ["detail", "editor"])
-def test_scene_mismatch_remains_the_only_extra_generation_before_current_cut_qc(monkeypatch, worker):
-    run = (_run_detail if worker == "detail" else _run_editor)(
-        monkeypatch, qc_mode="shadow", scene_verdicts=["retry", "pass"],
-    )
-    assert run["inputs"] == [[b"PLATE", b"PRODUCT"]] * 2
-    assert run["events"] == ["generate", "scene", "generate", "scene", "cut-qc"]
-    assert run["qcInputs"] == [b"IMG2"]
-    assert run["r2"].saved == [b"IMG2"]
 
 
-@pytest.mark.parametrize("worker", ["detail", "editor"])
-def test_scene_retries_stop_at_current_limit_without_saving_a_rejected_cut(monkeypatch, worker):
-    run = (_run_detail if worker == "detail" else _run_editor)(
-        monkeypatch, scene_verdicts=["retry", "retry", "retry"],
-    )
-    assert len(run["inputs"]) == 3
-    assert run["qcInputs"] == []
-    assert run["r2"].saved == []
-    if worker == "detail":
-        assert run["result"][:2] == ([], [])
-    else:
-        assert "finalize" not in run
-        assert run["failure"]["reserved"] == 1
 
 
-@pytest.mark.parametrize("worker", ["detail", "editor"])
-def test_unavailable_optional_scene_judge_keeps_initial_output_and_current_qc(monkeypatch, worker):
-    run = (_run_detail if worker == "detail" else _run_editor)(
-        monkeypatch, qc_mode="shadow", scene_verdicts=[VisionError("judge unavailable")],
-    )
-    assert run["inputs"] == [[b"PLATE", b"PRODUCT"]]
-    assert run["events"] == ["generate", "scene", "cut-qc"]
-    assert run["qcInputs"] == [b"IMG1"]
-    assert run["r2"].saved == [b"IMG1"]
-    if worker == "editor":
-        assert run["finalize"]["metadata"]["warnings"] == [{"code": "scene_qc_unavailable"}]
 
 
 def test_legacy_final_checkpoint_metadata_does_not_restore_candidate_generation(monkeypatch):
@@ -213,3 +180,12 @@ def test_mannequin_only_input_does_not_start_retired_self_comparison(monkeypatch
     assert run["inputs"] == [[b"MANNEQUIN"]]
     assert run["r2"].saved == [b"IMG1"]
     assert run["result"][3:] == ([], None, [])
+
+
+@pytest.mark.parametrize("verdicts", [["retry", "retry"], [VisionError("unavailable")]])
+def test_old_editor_background_mode_does_not_start_scene_regeneration(monkeypatch, verdicts):
+    run = _run_editor(monkeypatch, qc_mode="shadow", scene_verdicts=verdicts)
+    assert run["events"] == ["generate", "cut-qc"]
+    assert len(run["inputs"]) == 1
+    assert run["qcInputs"] == [b"IMG1"]
+    assert run["r2"].saved == [b"IMG1"]

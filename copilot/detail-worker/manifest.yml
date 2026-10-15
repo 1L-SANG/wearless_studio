@@ -95,7 +95,6 @@ variables:
   FACE_ANGLE_SWAP_ENABLED: "true"
   # 서버리스 엔드포인트 id — api 와 **같은 값**이어야 한다. 갈리면 워커가 다른 곳으로 컷을 보낸다.
   FACE_ANGLE_ENDPOINT_ID: "jiw5v9ow8462al"
-  GENEXAMPLE_BG_ENABLED: "true"
   FACEMARKET_ENABLED: "true"
   FACEMARKET_VC_REQUIRED: "true"
   OPENDID_HOLDER_URL: http://opendid:8100

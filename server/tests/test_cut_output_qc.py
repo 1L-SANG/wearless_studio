@@ -136,17 +136,16 @@ def test_references_from_manifest_maps_roles_in_order_and_omits_mood():
         "8. MOOD — lighting only",
         "9. POSE CONTROL — kinematic control",
         "10. EXAMPLE REFERENCE (scope: all) — complete example",
-        "11. EXAMPLE REFERENCE (scope: bg) — exact canvas",
-        "12. SPACE SET PLATE — shared location",
+        "11. SPACE SET PLATE — shared location",
     ])
-    images = [_img(str(index).encode()) for index in range(1, 13)]
+    images = [_img(str(index).encode()) for index in range(1, 12)]
     references = qc.references_from_manifest(manifest, images)
     assert [reference.role for reference in references] == [
         "product", "modelFace", "modelFace", "product", "matching", "modelFace", "modelBody",
-        "example", "example", "plate", "plate",
+        "example", "example", "plate",
     ]
     assert [reference.image.data for reference in references] == [
-        b"1", b"2", b"3", b"4", b"5", b"6", b"7", b"9", b"10", b"11", b"12",
+        b"1", b"2", b"3", b"4", b"5", b"6", b"7", b"9", b"10", b"11",
     ]
 
 

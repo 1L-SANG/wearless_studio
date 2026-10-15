@@ -120,7 +120,7 @@ def test_example_repeat_indexes_are_section_local_and_ignore_client_runtime_valu
     ]
 
     assert dpj._example_repeat_indexes(blocks, "top") == [
-        0, 0, 1, 2, 1, 0, 0, 0, None, None,
+        0, 0, 1, 2, 1, 0, 0, 0, 0, None,
     ]
 
 
@@ -331,7 +331,7 @@ def test_detail_non_base_color_prunes_base_color_mannequin(monkeypatch):
     assert "mannequin" not in prepared["other"][2].lower()
 
 
-def test_detail_prunes_mood_for_all_and_bg_but_keeps_pose_order(monkeypatch):
+def test_detail_old_scopes_load_complete_examples_without_competing_mood(monkeypatch):
     captured = {}
     monkeypatch.setattr(dpj.confirmed_gpt_runtime, "profile_requested", lambda _spec: False)
     blocks = [
@@ -365,25 +365,24 @@ def test_detail_prunes_mood_for_all_and_bg_but_keeps_pose_order(monkeypatch):
     monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
     monkeypatch.setattr(dpj.cut_generator, "example_asset_status", lambda *_args: "available")
-    monkeypatch.setattr(dpj.cut_generator, "pose_direction_compatible", lambda *_args: True)
     monkeypatch.setattr(dpj.cut_generator, "load_example_image", fake_example)
     _patch_detail_terminal(monkeypatch, captured)
 
     app = fake_worker_app(
-        make_settings(gemini_api_key="x", r2_bucket="b", genexample_bg_enabled=True),
+        make_settings(gemini_api_key="x", r2_bucket="b"),
         r2=_TrackingR2(),
     )
     asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=3)))
 
     prepared = _prepared_by_id(captured)
     assert [image.data for image in prepared["all"][1]] == [b"k/product", b"example:all"]
-    assert [image.data for image in prepared["bg"][1]] == [b"example:bg", b"k/product"]
+    assert [image.data for image in prepared["bg"][1]] == [b"k/product", b"example:all"]
     assert [image.data for image in prepared["pose"][1]] == [
-        b"k/product", b"k/mood", b"example:pose",
+        b"k/product", b"example:all",
     ]
     assert "MOOD —" not in prepared["all"][2]
     assert "MOOD —" not in prepared["bg"][2]
-    assert prepared["pose"][2].count("MOOD —") == 1
+    assert "MOOD —" not in prepared["pose"][2]
 
 
 def test_detail_space_binding_prunes_mood_with_or_without_plate(monkeypatch):
@@ -684,7 +683,7 @@ def test_editor_selected_mannequin_r2_failure_does_not_fall_back(monkeypatch):
     assert "selected mannequin unavailable" in captured["failure"]["metadata"]["error"]
 
 
-def test_editor_prunes_mood_for_all_and_bg_but_keeps_pose_order(monkeypatch):
+def test_editor_old_scopes_load_complete_examples_without_competing_mood(monkeypatch):
     captured = {}
     _patch_editor_common(monkeypatch, captured)
 
@@ -692,7 +691,6 @@ def test_editor_prunes_mood_for_all_and_bg_but_keeps_pose_order(monkeypatch):
         return eij.InlineImage("image/png", f"example:{scope}".encode())
 
     monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_args: "available")
-    monkeypatch.setattr(eij.cut_generator, "pose_direction_compatible", lambda *_args: True)
     monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example)
 
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"), r2=_TrackingR2())
@@ -708,11 +706,11 @@ def test_editor_prunes_mood_for_all_and_bg_but_keeps_pose_order(monkeypatch):
 
     all_cut, bg_cut, pose_cut = captured["generations"]
     assert all_cut["images"] == [b"k/product", b"example:all"]
-    assert bg_cut["images"] == [b"example:bg", b"k/product"]
-    assert pose_cut["images"] == [b"k/product", b"k/mood", b"example:pose"]
+    assert bg_cut["images"] == [b"k/product", b"example:all"]
+    assert pose_cut["images"] == [b"k/product", b"example:all"]
     assert "MOOD —" not in all_cut["manifest"]
     assert "MOOD —" not in bg_cut["manifest"]
-    assert pose_cut["manifest"].count("MOOD —") == 1
+    assert "MOOD —" not in pose_cut["manifest"]
 
 
 def test_editor_real_product_prunes_identity_and_never_sets_settlement_flag(monkeypatch):

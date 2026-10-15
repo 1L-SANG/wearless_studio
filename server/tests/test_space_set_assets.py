@@ -265,10 +265,6 @@ def test_rotation_set_and_standalone_members_are_universal_for_supported_clothin
     assert len(sets.bind_storyboard_space_sets(
         blocks, clothing_type="outer", gender="women"
     )) == 3
-    pose = sets.resolve_published_example_reference(
-        blocks[0], clothing_type="dress", gender="women", scope="pose"
-    )
-    assert pose["scope"] == "pose"
     all_reference = sets.resolve_published_example_reference(
         blocks[0], clothing_type="dress", gender="women", scope="all"
     )
@@ -320,7 +316,7 @@ def test_exact_space_set_binding_and_key_resolution(space_registry):
     )
 
 
-@pytest.mark.parametrize("scope", ["all", "pose"])
+@pytest.mark.parametrize("scope", ["all"])
 def test_resolve_set_member_as_standalone_generation_example(
     space_registry, scope
 ):
@@ -357,21 +353,12 @@ def test_standalone_all_keeps_the_current_block_direction(space_registry):
     assert reference["scope"] == "all"
 
 
-def test_standalone_pose_uses_the_current_block_framing(space_registry):
-    reference = sets.resolve_published_example_reference(
-        {
-            "exampleId": "ss_cafe_01_01",
-            "cutType": "styling",
-            "shot": "medium",
-            "direction": "front",
-        },
-        clothing_type="top",
-        gender="women",
-        scope="pose",
-    )
-
-    assert reference["exampleId"] == "ss_cafe_01_01"
-    assert reference["scope"] == "pose"
+def test_standalone_pose_input_is_retired(space_registry):
+    with pytest.raises(sets.SpaceSetBindingError, match="space_set_example_scope_invalid"):
+        sets.resolve_published_example_reference(
+            {"exampleId": "ss_cafe_01_01", "cutType": "styling", "shot": "medium", "direction": "front"},
+            clothing_type="top", gender="women", scope="pose",
+        )
 
 
 @pytest.mark.parametrize(
@@ -390,7 +377,7 @@ def test_standalone_pose_uses_the_current_block_framing(space_registry):
             "top",
             "women",
             "pose",
-            "space_set_example_incompatible",
+            "space_set_example_scope_invalid",
         ),
         ({}, "bottom", "women", "all", "space_set_example_incompatible"),
         ({}, "top", "men", "all", "space_set_example_incompatible"),
@@ -502,8 +489,8 @@ def test_space_set_binding_allows_pose_swap_add_and_drag_out(
         blocks, clothing_type="top", gender="women"
     )
     assert set(singleton) == {id(blocks[0])}
-    dragged_pose = sets.resolve_published_pose_reference(
-        blocks[1], clothing_type="top", gender="women"
+    dragged_pose = sets.resolve_published_example_reference(
+        blocks[1], clothing_type="top", gender="women", scope="all"
     )
     assert dragged_pose["source"] == "space-set"
     assert dragged_pose["exampleId"] == "ss_cafe_01_01"
