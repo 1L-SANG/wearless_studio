@@ -18,7 +18,7 @@ import logging
 from app import repo
 from app.agents import mannequin
 from app.config import load_settings
-from app.services import canonical_reference, sam_client
+from app.services import canonical_reference, fal_api, fal_cutout, sam_client
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +42,8 @@ async def run_sam_preprocess_job(app, job: dict) -> None:
             await conn.commit()
         log.info("sam_preprocess job=%s project=%s %s %s", job_id, project_id, status, detail)
 
-    if not sam_client.configured(s):
+    use_fal = getattr(s, "sam_preprocess_provider", "sam2") == "fal"
+    if not (fal_api.configured(s) if use_fal else sam_client.configured(s)):
         # Not an error: an environment without SAM configured simply has no canonical path.
         await finish("done", {"state": "skipped", "reason": "sam_not_configured"})
         return
@@ -61,8 +62,11 @@ async def run_sam_preprocess_job(app, job: dict) -> None:
         return
 
     try:
-        results = await sam_client.segment_garment(
-            s, {slot: a["key"] for slot, a in assets.items()})
+        views = {slot: a["key"] for slot, a in assets.items()}
+        if use_fal:
+            results = await fal_cutout.segment_garment(s, app.state.r2, views)
+        else:
+            results = await sam_client.segment_garment(s, views)
     except sam_client.SamUnavailable as exc:
         # done + unavailable — error 가 아니다. 예전 주석은 "디스패처 재시도가 일시 장애를
         # 처리한다"고 적혀 있었지만 그 재시도 코드는 존재하지 않는다(2026-08-18 톤 마스크가
@@ -89,8 +93,12 @@ async def run_sam_preprocess_job(app, job: dict) -> None:
 
     # Front and Back are independent all the way through: a failed Back never discards a
     # recorded Front.
-    state = ("ready" if recorded and not failed
+    # fal은 뷰별 장애를 반환한다. 성공분은 위에서 커밋하고, 나머지는 기존 푸셔가
+    # 재시도하도록 unavailable을 유지한다. SAM2의 기존 partial/failed 판정은 그대로다.
+    unavailable = use_fal and "unavailable" in failed.values()
+    state = ("unavailable" if unavailable
+             else "ready" if recorded and not failed
              else "partial" if recorded
              else "failed")
-    await finish("done" if recorded else "error",
+    await finish("done" if recorded or unavailable else "error",
                  {"state": state, "recorded": recorded, "failed": failed})

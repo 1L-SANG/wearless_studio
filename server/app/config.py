@@ -30,6 +30,11 @@ class Settings:
     # 없다고 업로드·분석·생성이 막히면 안 되는 보조 인프라다.
     sam_service_url: str | None = None
     sam_internal_token: str | None = None
+    # fal 경로는 명시적으로 켤 때만 사용한다. 시크릿 배포는 별도 작업이다.
+    fal_key: str | None = None
+    matching_cutout_provider: str = "sam2"  # sam2 | fal
+    matching_flatlay_provider: str = "gemini"  # gemini | qwen
+    sam_preprocess_provider: str = "sam2"  # sam2 | fal
     # Front+Back 실측 ~49s(warm, x86_64 Fargate). 90s 는 그 위의 여유다.
     sam_request_timeout_s: float = 90.0
     # 생성예시 레지스트리의 상대 URL 기준. prod 상대경로는 명시 필수, dev만 dummy 기본값 허용.
@@ -614,6 +619,11 @@ class Settings:
     kakao_extra_redirect_uris: tuple[str, ...] = ()
 
     def __post_init__(self):
+        if (self.matching_cutout_provider == "fal"
+                or self.sam_preprocess_provider == "fal"
+                or self.matching_flatlay_provider == "qwen"):
+            if not (self.fal_key or "").strip():
+                raise ValueError("fal 또는 Qwen을 쓰려면 FAL_KEY가 필요해요.")
         if self.detail_qc_claude_effort not in {"low", "medium", "high", "xhigh", "max"}:
             raise ValueError("DETAIL_QC_CLAUDE_EFFORT 설정이 잘못됐어요.")
         if any(isinstance(model, str) and model.startswith("claude-")
@@ -796,6 +806,10 @@ def load_settings() -> Settings:
         cloudflare_cache_purge_token=os.getenv("CLOUDFLARE_CACHE_PURGE_TOKEN") or None,
         sam_service_url=(os.getenv("SAM_SERVICE_URL") or "").rstrip("/") or None,
         sam_internal_token=os.getenv("SAM_INTERNAL_TOKEN") or None,
+        fal_key=(os.getenv("FAL_KEY") or "").strip() or None,
+        matching_cutout_provider=_flag("MATCHING_CUTOUT_PROVIDER", "sam2", {"sam2", "fal"}),
+        matching_flatlay_provider=_flag("MATCHING_FLATLAY_PROVIDER", "gemini", {"gemini", "qwen"}),
+        sam_preprocess_provider=_flag("SAM_PREPROCESS_PROVIDER", "sam2", {"sam2", "fal"}),
         sam_autoscale=_flag("SAM_AUTOSCALE", "off", {"off", "on"}),
         sam_direct_endpoint=_flag("SAM_DIRECT_ENDPOINT", "off", {"off", "on"}),
         sam_autoscale_idle_minutes=_int_env("SAM_AUTOSCALE_IDLE_MINUTES", 30),

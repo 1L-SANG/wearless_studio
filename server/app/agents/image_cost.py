@@ -228,6 +228,16 @@ def estimate_cost(
     model: str, image_size: str, usage: dict | None, *, has_image: bool = True,
 ) -> ImageCost:
     """이 호출 1회의 실비. 실패해도 예외를 던지지 않는다 — 계측이 생성을 막으면 안 된다."""
+    if model in {"fal-ai/sam-3/image", "fal-ai/qwen-image-edit-2511"}:
+        if not has_image:
+            return ImageCost(0, 0, 0, None, "unavailable_no_image")
+        if model == "fal-ai/sam-3/image":
+            return ImageCost(0, 0, 0, 0.005, "table")
+        megapixels = usage.get("megapixels") if isinstance(usage, dict) else None
+        if (not isinstance(megapixels, (int, float)) or isinstance(megapixels, bool)
+                or not 0 < megapixels < float("inf")):
+            return ImageCost(0, 0, 0, None, "invalid_usage")
+        return ImageCost(0, 0, 0, round(megapixels * 0.03, 6), "table")
     if _is_gpt_image_2(model) or model in _GPT_IMAGE_25_MODELS:
         return _estimate_gpt_image_2(usage, has_image=has_image)
 

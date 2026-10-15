@@ -100,13 +100,16 @@ def encode_thumbnail(image_bytes: bytes, *, max_px: int = THUMBNAIL_MAX_PX) -> b
     return out.getvalue()
 
 
-def source_fingerprint(values: Sequence[str | None]) -> str:
+def source_fingerprint(values: Sequence[str | None], *, provider: str = "sam2") -> str:
     """소스들의 안정 지문. SAM 이 준 source_hash(없으면 소스 키)를 순서 그대로 묶는다."""
     joined = "|".join(value or "" for value in values)
+    if provider == "fal":
+        joined = f"{joined}|fal|{algorithm_version(provider)}"
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
-def derived_asset_id(*, role: str, matching_item_id: str, source_hash: str) -> str:
+def derived_asset_id(*, role: str, matching_item_id: str, source_hash: str,
+                     provider: str = "sam2") -> str:
     """파생 asset 의 결정론적 신원(소스 지문 + 알고리즘 버전).
 
     stale lease 복구가 잡을 되돌려 재실행해도 같은 asset id → 같은 derived R2 키로
@@ -116,7 +119,7 @@ def derived_asset_id(*, role: str, matching_item_id: str, source_hash: str) -> s
     return str(uuid.uuid5(
         uuid.NAMESPACE_URL,
         f"wearless:matching-cutout:{role}:{matching_item_id}:{source_hash}"
-        f":{ALGORITHM_VERSION}",
+        f":{algorithm_version(provider)}",
     ))
 
 
@@ -147,7 +150,8 @@ def cutout_status_for(*, is_custom: bool, image_meta: dict | None,
 
 def metadata_for(*, source_hash: str | None, source_asset_id: str | None,
                  matching_item_id: str, purpose: str = GRID_PURPOSE,
-                 source_asset_ids: Sequence[str] | None = None) -> dict:
+                 source_asset_ids: Sequence[str] | None = None,
+                 provider: str = "sam2") -> dict:
     """누끼 파생 asset 의 provenance + 정리 정보.
 
     `purpose` 와 `sourceAssetIds` 는 장식이 아니다 — "내 옷 삭제" 는 현재 image asset 의
@@ -157,8 +161,8 @@ def metadata_for(*, source_hash: str | None, source_asset_id: str | None,
     """
     meta = {
         "type": CUTOUT_KIND,
-        "producer": PRODUCER,
-        "algorithmVersion": ALGORITHM_VERSION,
+        "producer": "fal-sam3" if provider == "fal" else PRODUCER,
+        "algorithmVersion": algorithm_version(provider),
         "sourceHash": source_hash,
         "sourceAssetId": source_asset_id,
         "matchingItemId": matching_item_id,
@@ -167,3 +171,7 @@ def metadata_for(*, source_hash: str | None, source_asset_id: str | None,
     if source_asset_ids is not None:
         meta["sourceAssetIds"] = list(source_asset_ids)
     return meta
+
+
+def algorithm_version(provider: str) -> str:
+    return "fal-sam3-v1" if provider == "fal" else ALGORITHM_VERSION

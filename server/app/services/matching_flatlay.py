@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import time
 from dataclasses import dataclass
 
 from .. import image_usage
@@ -123,24 +124,26 @@ def build_prompt(clothing_type: str | None) -> str:
     return _PROMPT.format(short=short, silhouette=silhouette, r=r, g=g, b=b)
 
 
-def flatlay_fingerprint(source_hash: str) -> str:
+def flatlay_fingerprint(source_hash: str, *, provider: str = "gemini") -> str:
     """누끼 소스 지문 + 플랫레이 알고리즘 버전.
 
     같은 소스에서 나온 누끼 썸네일과 신원이 겹치면 R2 키가 충돌해 서로를 덮어쓴다.
     """
-    return hashlib.sha256(
-        f"{source_hash}|{ALGORITHM_VERSION}".encode("utf-8")).hexdigest()
+    identity = (f"{source_hash}|qwen|matching-flatlay-v3-qwen" if provider == "qwen"
+                else f"{source_hash}|{ALGORITHM_VERSION}")
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
-def derived_asset_id(*, matching_item_id: str, source_hash: str) -> str:
+def derived_asset_id(*, matching_item_id: str, source_hash: str,
+                     provider: str = "gemini") -> str:
     """재렌더 썸네일의 결정론적 신원. 재실행이 같은 asset 행·같은 R2 키로 수렴한다."""
     return matching_cutout.derived_asset_id(
         role="flatlay", matching_item_id=matching_item_id,
-        source_hash=flatlay_fingerprint(source_hash))
+        source_hash=flatlay_fingerprint(source_hash, provider=provider))
 
 
 def metadata_for(*, source_hash: str | None, source_asset_id: str | None,
-                 matching_item_id: str, model: str) -> dict:
+                 matching_item_id: str, model: str, provider: str = "gemini") -> dict:
     """재렌더 썸네일의 provenance.
 
     `purpose` 는 누끼 썸네일과 같은 `custom_match_cutout` 을 유지한다 — "내 옷 삭제" 가
@@ -150,8 +153,8 @@ def metadata_for(*, source_hash: str | None, source_asset_id: str | None,
     meta = matching_cutout.metadata_for(
         source_hash=source_hash, source_asset_id=source_asset_id,
         matching_item_id=matching_item_id, purpose=matching_cutout.CUTOUT_PURPOSE)
-    meta["producer"] = PRODUCER
-    meta["algorithmVersion"] = ALGORITHM_VERSION
+    meta["producer"] = "fal-qwen-matching-flatlay" if provider == "qwen" else PRODUCER
+    meta["algorithmVersion"] = "matching-flatlay-v3-qwen" if provider == "qwen" else ALGORITHM_VERSION
     meta["model"] = model
     return meta
 
@@ -163,6 +166,18 @@ async def render_thumbnail(gemini, *, settings, cutout_png: bytes,
     호출자(무과금 워커)는 이 결과에 아무것도 걸지 않는다 — 키 미설정·GeminiError·
     타임아웃·빈 응답·깨진 바이트 어느 쪽이든 누끼 썸네일이 그대로 남아야 한다.
     """
+    if getattr(settings, "matching_flatlay_provider", "gemini") == "qwen":
+        from . import fal_api, qwen_flatlay
+        try:
+            started = time.monotonic()
+            with image_usage.job_scope(stage=STAGE):
+                raw = await qwen_flatlay.render(settings, cutout_png)
+            image = await asyncio.to_thread(encode_thumbnail, raw)
+            return FlatlayThumbnail(image=image, raw=raw, model=fal_api.QWEN_MODEL,
+                                    latency_ms=int((time.monotonic() - started) * 1000))
+        except Exception:  # Qwen 실패도 성공한 누끼를 버리지 않는다. 비밀값은 기록하지 않는다.
+            log.warning("matching_flatlay qwen render failed; keeping cutout thumbnail")
+            return None
     if gemini is None:  # GEMINI_API_KEY 미설정 → main 이 클라이언트를 아예 안 만든다
         log.info("matching_flatlay skipped: no gemini client")
         return None
