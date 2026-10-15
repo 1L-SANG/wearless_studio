@@ -7,9 +7,12 @@ import { flowScreenName, shouldWarnFlowAbandon, notifyFlowKept } from '../../src
 import * as entry from '../../src/lib/draftEntry.js';
 import { checkDraftEntry, canAutoOpenInput } from '../../src/lib/draftEntryCheck.js';
 import * as flow from '../../src/lib/flowSession.js';
-import { createDraftSlotSync, formatDraftRelativeTime, localDraftMeta } from '../../src/lib/draftSlot.js';
+import { loadDraft as readStoredDraft, clearDraft as clearStoredDraft, hasPendingDraft as hasStoredPendingDraft, saveProductDraft, queueProductDraftSave, flushProductDraftSave } from '../../src/lib/draftStore.js';
+import { draftStoreFixture } from './helpers/draft-store-fixture.mjs';
+import { createDraftSlotSync, formatDraftRelativeTime, localDraftMeta, draftSlot as storedDraftSlot } from '../../src/lib/draftSlot.js';
+import { restoreDraftProduct } from '../../src/features/product-input/draftProductRestore.js';
 
-const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
+const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const app = read('src/apps/seller/App.jsx');
 const shell = read('src/features/shell/shell.jsx');
 const hook = read('src/lib/useDraftEntryActions.js').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
@@ -40,7 +43,7 @@ const { code } = await transformWithEsbuild(`${authSource}\n${authGuardSource}\n
 const slot = (meta = {}) => ({ meta: { hasContent: true, deviceLabel: 'Android Chrome', photoCount: 2, updatedAt: 'v1', ...meta }, payload: { product: { name: 'remote' } } });
 
 // 실제 라우트와 훅을 실행하고 브라우저, 저장소 경계만 메모리로 대체한다.
-function harness({ remote = slot(), confirmed = true, local = null, loading = false, withAuth = false, authUser = 'seller', sessionResult = null, storedSession = null, resetGate = null, resetError = null,
+function harness({ remote = slot(), confirmed = true, local = null, localReader = null, localPendingReader = null, loading = false, withAuth = false, authUser = 'seller', sessionResult = null, storedSession = null, resetGate = null, resetError = null,
   syncedAt = null, serverSyncedAt = null, syncedUserId = null, otherTab = false, token = null, savedFlow = {}, takeover = null, slotClient = null, mobile = false, mock = false, facemarket = false, returnIntent = '/create/storyboard' } = {}) {
   const calls = [];
   const windowEvents = new EventTarget();
@@ -85,7 +88,7 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
       flow.clearFlowSession();
       return true;
     },
-    setAccountIdentity(id) { const changed = id !== accountUserId; accountUserId = id; return changed; },
+    setAccountIdentity(id) { const changed = id !== accountUserId; accountUserId = id; state.accountUserId = id; return changed; },
   };
   const storage = new Map();
   globalThis.sessionStorage = { getItem: (k) => storage.get(k), setItem: (k, v) => storage.set(k, v), removeItem: (k) => storage.delete(k) };
@@ -170,7 +173,7 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
     } },
     useNavigate: () => navigate,
     isMockMode: mock, IS_FACEMARKET: facemarket, isMobileDevice: () => mobile,
-    hasPendingDraft: () => Boolean(local), loadDraft: async () => local, flushProductDraftSave: async () => entryFlush,
+    hasPendingDraft: localPendingReader || (() => Boolean(local)), loadDraft: localReader || (async () => local), flushProductDraftSave: async () => entryFlush,
     Navigate: 'Navigate', Outlet: 'Outlet',
     readPostLogin: () => returnIntent, forgetPostLogin: () => calls.push('forget'),
     ensureDraftRemotePhotos: async (draft) => draft,
@@ -187,7 +190,7 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
       async getCatalogs() { return {}; }, async getAnalysis(id) { calls.push(`analysis:${id}`); return { projectId: id }; },
     },
     mobile, setLoadError: (value) => { loadError = value; }, setLoadOriginalError() {}, setCatalogs() {},
-    applyDraftPayload: () => false, persistedColorsRef: {}, isAnalysisRunning: () => false,
+    applyDraftPayload: () => false, persistedColorsRef: {}, isAnalysisRunning: () => false, restoreDraftProduct,
     setProduct: (value) => products.push(value), loadAttempt: 0,
   };
   windowEvents.location = { search: '', pathname: '/create/input' };
@@ -252,6 +255,47 @@ function find(tree, predicate) {
   }
   return null;
 }
+
+function storedDraftHarness(t, draft, options) {
+  const storage = draftStoreFixture(t, draft);
+  Object.defineProperty(globalThis, 'sessionStorage', { writable: true });
+  const h = harness({ withAuth: true, remote: null, local: draft, localReader: readStoredDraft,
+    localPendingReader: hasStoredPendingDraft, slotClient: storedDraftSlot, ...options });
+  if (draft) sessionStorage.setItem('wl_draftPending', '1');
+  const storeSource = read('src/store/useAppStore.js');
+  const begin = storeSource.slice(storeSource.indexOf('  async beginProject('), storeSource.indexOf('  async ensureProject()'));
+  const noop = () => {};
+  const dependencies = {
+    clearDraft: clearStoredDraft, clearDetailPageJobMarker: noop, resetAnalysisCache: noop,
+    clearFlowSession: noop, clearDraftPromotionSession: noop, forgetDraftSyncProject: noop,
+    api: { resetInputDraft: async () => {} }, get: () => h.state, set: (patch) => Object.assign(h.state, patch),
+    initialFlow: { projectId: null, projectPersisted: false, productInfoConfirmed: false, userId: null, resumePath: null },
+    initialMannequinJob: () => ({}), initialDetailPageJob: () => ({}), persistFlow: noop,
+  };
+  h.state.beginProject = new Function(...Object.keys(dependencies),
+    `let ensureProjectInflight = null, detailJobSeq = 0, detailJobLoopProjectId = null; return ({ ${begin} }).beginProject;`)(...Object.values(dependencies));
+  return { h, storage };
+}
+
+const legacyPhotoDraft = () => ({
+  product: { name: 'A private input', colors: [{ id: 'base', isBase: true,
+    images: [{ id: 'photo', slot: 'Front', src: 'blob:old-front', type: 'image/jpeg' },
+      { id: 'back', slot: 'Back', src: 'blob:old-back', type: 'image/jpeg' }] }] },
+  photos: [{ imageId: 'photo', colorId: 'base', slot: 'Front', mime: 'image/jpeg',
+    blob: new Blob(['A synthetic private photo'], { type: 'image/jpeg' }) },
+  { imageId: 'back', colorId: 'base', slot: 'Back', mime: 'image/jpeg',
+    blob: new Blob(['A synthetic back photo'], { type: 'image/jpeg' }) }],
+  updatedAt: 'legacy-A',
+});
+
+async function readRestoredPhoto(draft) {
+  const photos = restoreDraftProduct(draft)?.colors[0]?.images || [];
+  const photo = photos[0];
+  if (!photo?.src?.startsWith('blob:')) return null;
+  try { return await (await fetch(photo.src)).text(); }
+  finally { photos.forEach((image) => URL.revokeObjectURL(image.src)); }
+}
+
 const choice = (h, tree) => find(tree, (node) => node.type === h.components.ResumeChoiceModal);
 const dialog = (h, tree) => find(tree, (node) => node.type === h.components.DraftEntryDialog);
 async function openNav(h) {
@@ -1306,3 +1350,143 @@ test('a publication failure after reset cannot close the gate or stop the next a
   assert.equal(h.auth.session, next);
   assert.equal(h.publishedSessions.at(-1), next);
 });
+
+
+test('sibling-domain B bootstrap never offers A newly saved unconfirmed input with no flow owner', async (t) => {
+  const storage = draftStoreFixture(t);
+  queueProductDraftSave({ name: 'Account A private input', colors: [] });
+  await flushProductDraftSave();
+  Object.defineProperty(globalThis, 'sessionStorage', { writable: true });
+  const h = harness({ withAuth: true, authUser: 'B', confirmed: false, remote: null,
+    local: storage.saved, localReader: readStoredDraft, slotClient: storedDraftSlot, savedFlow: { userId: null } });
+  const tree = await h.settleApp();
+  assert.equal(h.auth.session.user.id, 'B');
+  assert.equal(h.state.projectId, null);
+  assert.equal(h.state.userId, null);
+  assert.equal(choice(h, tree), null);
+  assert.equal(tree?.type, 'ProductInput');
+});
+
+for (const next of [null, { user: { id: 'B' } }]) {
+  test(`a live account change to ${next?.user.id || 'guest'} clears unconfirmed input before publication`, async () => {
+    const h = harness({ withAuth: true, authUser: 'A', confirmed: false, remote: null,
+      local: { ownerUserId: 'A', product: { name: 'Account A private input', colors: [] } }, savedFlow: { userId: null } });
+    await h.settleApp();
+    h.emit(next ? 'SIGNED_IN' : 'SIGNED_OUT', next);
+    const tree = await h.settleApp();
+    assert.equal(h.calls.filter((call) => call === 'begin').length, 1);
+    assert.equal(choice(h, tree), null);
+    assert.equal(tree?.type, 'ProductInput');
+  });
+}
+
+for (const initialUser of [null, 'A']) {
+  test(`unconfirmed input survives ${initialUser ? 'same-user refresh' : 'guest login'}`, async () => {
+    const h = harness({ withAuth: true, authUser: initialUser, confirmed: false, remote: null,
+      local: { product: { name: 'Continuing input', colors: [] } }, savedFlow: { userId: null } });
+    await h.settleApp();
+    h.emit(initialUser ? 'TOKEN_REFRESHED' : 'SIGNED_IN', { user: { id: 'A' } });
+    const tree = await h.settleApp();
+    assert.equal(h.calls.includes('begin'), false);
+    assert.equal(choice(h, tree)?.props.sources[0].draft.product.name, 'Continuing input');
+  });
+}
+
+
+test('a delayed A auth transition preserves B input already saved in another tab', async (t) => {
+  const { h, storage } = storedDraftHarness(t,
+    { ownerUserId: 'A', product: { name: 'A input', colors: [] }, photos: [], updatedAt: 'A' },
+    { authUser: 'A', confirmed: false, savedFlow: { userId: null } });
+  await h.settleApp();
+  // Another tab has B's identity and writes the same origin's IndexedDB. The old
+  // tab still holds A until its delayed auth event is delivered below.
+  storedDraftSlot.setUserId('B');
+  await saveProductDraft({ name: 'B newer input', colors: [] });
+  storedDraftSlot.setUserId('A');
+  const originalB = storage.saved;
+
+  h.emit('SIGNED_IN', { user: { id: 'B' } });
+  const tree = await h.settleApp();
+  assert.equal(h.auth.session.user.id, 'B');
+  assert.deepEqual(storage.saved, originalB);
+  assert.equal(hasStoredPendingDraft(), true);
+  assert.equal(choice(h, tree)?.props.sources.find((source) => source.id === 'local')?.draft.product.name, 'B newer input');
+});
+
+for (const transition of ['bootstrap', 'live']) {
+  test(`known A to B ${transition} cannot restore legacy A photo bytes`, async (t) => {
+    const draft = legacyPhotoDraft();
+    if (transition === 'live') {
+      draft.analysis = { featureRun: { runId: 'A-in-progress', stage: 'requested', coreReceived: false } };
+    }
+    const { h, storage } = storedDraftHarness(t, draft, {
+      authUser: transition === 'bootstrap' ? 'B' : 'A',
+      confirmed: transition === 'bootstrap',
+      savedFlow: transition === 'bootstrap'
+        ? { projectId: 'A-project', projectPersisted: true, userId: 'A', productInfoConfirmed: true }
+        : { userId: null },
+    });
+    let tree = await h.settleApp();
+    if (transition === 'live') {
+      h.emit('SIGNED_IN', { user: { id: 'B' } });
+      tree = await h.settleApp();
+    }
+    const modal = choice(h, tree);
+    let recoveredBytes = null;
+    if (modal) {
+      await modal.props.onChoose('local');
+      await h.settleApp();
+      recoveredBytes = await readRestoredPhoto(storedDraftSlot.consumeStaged()?.payload);
+    }
+    assert.equal(recoveredBytes, null, 'B must not recover A photo bytes through the local continuation action');
+    assert.equal(modal, null);
+    assert.equal(h.auth.session.user.id, 'B');
+    assert.equal(h.state.projectId, null);
+    assert.equal(hasStoredPendingDraft(), false);
+    assert.equal(await readStoredDraft(), null, 'Direct promotion/feature recovery readers cannot bypass the entry gate');
+    assert.deepEqual(storage.saved, draft, 'Unattributed bytes remain available to the other tab that saved them');
+    h.remount('ProductInputRoute');
+    assert.equal((await h.settleApp()).type, 'ProductInput');
+    await h.settle('ProductLoad');
+    assert.equal(h.loadError, '');
+    assert.equal(h.products.at(-1).name, '');
+    assert.deepEqual(h.products.at(-1).colors[0].images, []);
+
+    // A full document reload keeps sessionStorage, while auth/route state starts afresh.
+    const tabStorage = sessionStorage;
+    const reloaded = harness({ withAuth: true, authUser: 'B', confirmed: false, remote: null,
+      local: storage.saved, localReader: readStoredDraft, localPendingReader: hasStoredPendingDraft,
+      slotClient: storedDraftSlot, savedFlow: { userId: null } });
+    globalThis.sessionStorage = tabStorage;
+    assert.equal(await readStoredDraft(), null, 'The same tab keeps the legacy read restriction after a document reload');
+    assert.equal((await reloaded.settleApp()).type, 'ProductInput');
+    await reloaded.settle('ProductLoad');
+    assert.equal(reloaded.loadError, '');
+    assert.equal(reloaded.products.at(-1).name, '');
+    assert.deepEqual(reloaded.products.at(-1).colors[0].images, []);
+    await reloaded.settleApp('RootRedirect');
+    assert.equal(reloaded.calls.includes('promote'), false, 'OAuth/root recovery cannot promote the preserved legacy draft');
+  });
+}
+
+for (const continuation of ['same-user reload', 'same-user token refresh', 'guest login']) {
+  test(`real stored photo bytes survive ${continuation}`, async (t) => {
+    const draft = legacyPhotoDraft();
+    if (continuation === 'guest login') draft.ownerUserId = null;
+    const { h, storage } = storedDraftHarness(t, draft, {
+      authUser: continuation === 'guest login' ? null : 'A', confirmed: false, savedFlow: { userId: null },
+    });
+    let tree = await h.settleApp();
+    if (continuation !== 'same-user reload') {
+      h.emit(continuation === 'guest login' ? 'SIGNED_IN' : 'TOKEN_REFRESHED', { user: { id: 'A' } });
+      tree = await h.settleApp();
+    }
+    const local = choice(h, tree)?.props.sources.find((source) => source.id === 'local');
+    assert.ok(local, 'Continuation remains available without another confirmation step');
+    await choice(h, tree).props.onChoose('local');
+    await h.settleApp();
+    assert.equal(await readRestoredPhoto(storedDraftSlot.consumeStaged()?.payload), 'A synthetic private photo');
+    assert.equal(hasStoredPendingDraft(), true);
+    assert.deepEqual(storage.saved, draft);
+  });
+}

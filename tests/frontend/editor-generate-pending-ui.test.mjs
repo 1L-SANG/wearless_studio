@@ -55,7 +55,7 @@ test('다른 실패 슬롯을 선택해도 새 슬롯 대신 이전 요청의 �
 test('미확인 요청이 없으면 원래 AI 패널로 돌아온다', () => {
   const html = render();
   assert.doesNotMatch(html, /이전 요청 확인하기/);
-  assert.match(html, /새 이미지 만들기/);
+  assert.doesNotMatch(html, /새 이미지 만들기/);
   assert.match(html, /컷 종류/);
   assert.match(html, /새 이미지 생성/);
   assert.doesNotMatch(html, /현재 이미지 수정|새 이미지 추가|기준 사진을 골라주세요/);
@@ -63,7 +63,7 @@ test('미확인 요청이 없으면 원래 AI 패널로 돌아온다', () => {
 
 test('최초 접수 대기 중에는 생성 버튼을 잠그고 편집 탭 전환 없이 새 요청 폼을 유지한다', () => {
   const html = render({ generateSubmitting: true });
-  assert.match(html, /새 이미지 만들기/);
+  assert.doesNotMatch(html, /새 이미지 만들기/);
   assert.match(html, /<button[^>]*disabled[^>]*>.*?접수 중/s);
   assert.doesNotMatch(html, /현재 이미지 수정|새 이미지 추가/);
 });
@@ -76,7 +76,7 @@ test('접수 중 AI 패널을 다시 열어도 현재 이미지 수정 화면에
 
 test('실패한 칸을 선택해도 AI 패널은 새 요청 폼을 제공한다', () => {
   const html = render({ failedCutRetry: { signature: true, request: { colorId: 'black' }, thumb: '/retry.jpg' } });
-  assert.match(html, /새 이미지 만들기/);
+  assert.doesNotMatch(html, /새 이미지 만들기/);
   assert.match(html, /새 이미지 생성/);
   assert.doesNotMatch(html, /원래 콘티로 다시 만들기|시그니처 컷 다시 만들기|retry.jpg/);
 });

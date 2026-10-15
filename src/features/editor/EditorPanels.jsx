@@ -8,6 +8,7 @@ import gifStyles from './GifThumbnailPanel.module.css';
    ============================================================= */
 import { DetailTargetPicker } from '../storyboard/DetailTargetPicker.jsx';
 import OuterClosureField from '@/components/OuterClosureField.jsx';
+import { resizedPhotoPatch } from './editorCrop.js';
 import { ProductSourcePicker } from '../storyboard/ProductSourcePicker.jsx';
 import { productSourceColorPatch } from '../../lib/productSourcePhotos.js';
 import { detailTargetById } from '../../lib/detailRecommendations.js';
@@ -394,7 +395,6 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
   }
   return (
     <div>
-      <PanelHead title="새 이미지 만들기" />
       {/* 콘티보드와 같은 첫 선택 — 컷 종류(촬영 방식). 사진 목적은 inferContentRole 로 내부 결정 */}
       <div className="insp-sec"><label className="lbl">컷 종류</label>
         <UnderlineTabs options={cutTypeOptions} value={cutType} onChange={selectCutType} />
@@ -611,21 +611,21 @@ const LINE_DASH = [
 function LabeledField({ label, children }) {
   return <div className="ff"><span className="ff-lbl">{label}</span>{children}</div>;
 }
-export function ImagePanel({ el, onChange, onLayer, onCrop, lock = true, onLock, onConvertGif }) {
+export function ImagePanel({ el, onChange, onLayer, onCrop, onDownload, downloadBusy = false, lock = true, onLock, onConvertGif }) {
   // 비율 잠금은 에디터가 소유 — moveable keepRatio와 연동 (자물쇠 = keepRatio)
   const setLock = onLock || (() => {});
   if (!el || !['image', 'shape', 'line'].includes(el.type)) return <EmptyState icon="image" title="요소를 선택하세요" desc="캔버스에서 이미지·오브젝트를 클릭하면 속성이 여기에 나와요." />;
   const isImg = el.type === 'image', isLine = el.type === 'line', isShape = el.type === 'shape';
   const gif = isGifImage(el);
   const ratio = el.w / el.h || 1;
-  const setW = (w) => onChange(lock ? { w, h: Math.max(20, Math.round(w / ratio)) } : { w });
-  const setH = (h) => onChange(lock ? { h, w: Math.max(20, Math.round(h * ratio)) } : { h });
+  const setW = (w) => onChange(isImg ? resizedPhotoPatch(el, w, lock ? Math.max(20, Math.round(w / ratio)) : el.h) : lock ? { w, h: Math.max(20, Math.round(w / ratio)) } : { w });
+  const setH = (h) => onChange(isImg ? resizedPhotoPatch(el, lock ? Math.max(20, Math.round(h * ratio)) : el.w, h) : lock ? { h, w: Math.max(20, Math.round(h * ratio)) } : { h });
   const hasStroke = isShape && el.stroke && el.stroke !== 'none';
   const op = Math.round((el.opacity ?? 1) * 100);
   const curDash = el.dash || 'solid';
   const ShapeContainer = gif ? 'details' : Fragment;
   return (
-    <div className="fig-panel">
+    <div className="fig-panel image-properties">
       {gif && <p className={gifStyles.hint}>{el.gifMeta.frames}장 · {(el.gifMeta.bytes / 1_000_000).toFixed(1)}MB</p>}
       {/* '프레임 이미지' 액션 묶음(교체·자르기·초기화·빼내기) 제거(오너 8/16).
           같은 일을 하는 수단이 화면에 이미 있다: 교체는 의류 탭에서 그 칸 위로 드래그,
@@ -700,7 +700,11 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, lock = true, onLock,
 
       {isImg && (
         <PanelSection title="자르기">
-          <Button variant="ghost" size="sm" block icon="crop" onClick={() => onCrop && onCrop(el)}>크롭</Button>
+          <div className="image-property-actions">
+            <Button variant="ghost" size="sm" icon="crop" disabled={!el.src || el.locked || !!el.genPending} onClick={() => onCrop && onCrop(el)}>자르기</Button>
+            <Button variant="ghost" size="sm" icon={downloadBusy ? 'loader' : 'download'} disabled={!el.src || downloadBusy}
+              onClick={() => onDownload?.(el)}>{downloadBusy ? '받는 중' : '원본 다운로드'}</Button>
+          </div>
         </PanelSection>
       )}
       </ShapeContainer>

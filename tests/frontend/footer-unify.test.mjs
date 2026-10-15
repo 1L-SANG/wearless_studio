@@ -57,9 +57,10 @@ const render = (Component, props) => renderToStaticMarkup(
 const textContent = (html) => html.replace(/<[^>]+>/g, '');
 const legalNav = (html) => html.match(/<nav\b[^>]*aria-label="법적 고지"[^>]*>([\s\S]*?)<\/nav>/)[1];
 
-test('두 푸터와 법무 화면은 같은 회사 정보 7행과 연락처 링크를 순서대로 표시한다', () => {
+test('두 푸터와 법무 화면은 상호명을 포함한 같은 회사 정보 8행을 순서대로 표시한다', () => {
   const expected = [
     `Copyright © ${new Date().getFullYear()} 데일리모먼트. All rights reserved.`,
+    '상호명: 데일리모먼트',
     '사업자등록번호: 371-02-03688',
     '통신판매업번호: 면제 대상(직전연도 거래 50회 미만)',
     '대표자: 정일상',
@@ -77,8 +78,8 @@ test('두 푸터와 법무 화면은 같은 회사 정보 7행과 연락처 링�
     assert.ok(company, `${name}에 회사 정보 영역이 있어야 해요`);
     const rows = [...company.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/g)].map((match) => match[1]);
     assert.deepEqual(rows.map(textContent), expected, name);
-    assert.match(rows[4], /^연락처: <a\b[^>]*href="tel:010-9592-0333"[^>]*>010-9592-0333<\/a>$/);
-    assert.match(rows[5], /^이메일: <a\b[^>]*href="mailto:contact@wearless.kr"[^>]*>contact@wearless.kr<\/a>$/);
+    assert.match(rows[5], /^연락처: <a\b[^>]*href="tel:010-9592-0333"[^>]*>010-9592-0333<\/a>$/);
+    assert.match(rows[6], /^이메일: <a\b[^>]*href="mailto:contact@wearless.kr"[^>]*>contact@wearless.kr<\/a>$/);
     assert.doesNotMatch(company, /개인정보 보호책임자|Amazon Web Services|AWS|\|/);
     assert.doesNotMatch(html, /호스팅 Amazon Web Services/);
   }
