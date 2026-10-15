@@ -1,3 +1,4 @@
+import { isGifImage } from '../../lib/gif/gifMedia.js';
 import { editorSlotKind } from '../../lib/editorSlotKind.js';
 import { classifyEditorAssetInfo } from '../../lib/editorAssetInfo.js';
 import { OUTER_CLOSURE_VALUES, outerClosureRange, outerClosureDisplayValue, outerClosureCaption } from '../../lib/outerClosure.js';
@@ -37,6 +38,7 @@ function availableDetails(info, product, recommendations) {
 
 /** Filled images use server asset facts. Only empty slots use storyboard linkage. */
 export function canvasAiKind({ block, element, storyboard = [], assetRecipe = null } = {}) {
+  if (isGifImage(element)) return 'unsupported';
   const slotKind = editorSlotKind(block, element, storyboard);
   if (slotKind !== 'filled') return slotKind;
   return classifyEditorAssetInfo(assetRecipe);

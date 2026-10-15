@@ -9,7 +9,7 @@ import { ratioEditorCrop } from '../../src/features/editor/editorCrop.js';
 const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
 const start = editor.indexOf('<div className="crop-bar"');
 const end = editor.indexOf('</div>', start) + 6;
-const compiled = await transformWithEsbuild(`function Toolbar({crop,onCropRatio,onCropZoom,onCropReset,onCropCommit,onCropCancel}) { return (${editor.slice(start,end)}); }`, 'crop-toolbar.jsx', { jsx: 'transform' });
+const compiled = await transformWithEsbuild(`function Toolbar({crop,onCropRatio,onCropZoom,onCropReset,onCropCommit,onCropCancel}) { const cropBarRef = { current: null }; return (${editor.slice(start,end)}); }`, 'crop-toolbar.jsx', { jsx: 'transform' });
 const Toolbar = new Function('React', 'Icon', `${compiled.code}; return Toolbar;`)(React, () => null);
 function nodes(root) {
   if (!React.isValidElement(root)) return [];

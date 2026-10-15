@@ -39,8 +39,12 @@ import {
   isRealModelSelection,
 } from '@/features/analysis/modelSelection.js';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel, FrameMini } from '@/features/editor/EditorPanels.jsx';
+import { isGifImage, gifImageFields, collectGifImages } from '@/lib/gif/gifMedia.js';
+import { BlockDownloadButton } from './BlockDownloadButton.jsx';
+import gifStyles from './GifThumbnailPanel.module.css';
+import { downloadGifImage, downloadGifImages, downloadBlockGifs } from './editorExport.js';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
-import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isAutoManagedBlock, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
+import { applyInfoTemplate, applySlotFillToInfo, convertGifToStill, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isAutoManagedBlock, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { DEFAULT_TEXT_BODY, buildTextPresetElement, dropUntouchedPlaceholders, textPresetBox, textPresetDropPlacement } from '@/features/editor/presets/textPresets.js';
 import { buildColorOpts, visibleColorOpts } from '@/lib/colorOpts.js';
 import { retryRead } from '@/lib/retryRead.js';
@@ -59,7 +63,7 @@ import {
   writeExportSettings,
 } from '@/features/editor/editorExport.js';
 import { snapEditorDragDelta, snapEditorSpacing } from '@/features/editor/editorSnap.js';
-import { beginEditorCrop, dragEditorCrop, ratioEditorCrop, zoomEditorCrop, applyEditorCrop } from './editorCrop.js';
+import { beginEditorCrop, dragEditorCrop, ratioEditorCrop, zoomEditorCrop, applyEditorCrop, cropToolbarPosition } from './editorCrop.js';
 import { replaceEditorPhoto, photoMoveDestination, transferEditorPhoto } from './editorPhotoEditing.js';
 import { copyEditorBlock, copyEditorElements, pasteEditorBlock, pasteEditorElements } from '@/features/editor/editorClipboard.js';
 import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, textPresetKeyFromDragTypes, objectDescriptorFromDragTypes, objectDropBox, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
@@ -520,17 +524,17 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       );
     }
     // 140px 미리보기에 원본(수천 px)을 그리면 스크롤이 무거워지고 탭 메모리가 커진다.
-    const imgSrc = imageWidth ? thumbUrl(el.src, imageWidth) : el.src;
+    const imgSrc = imageWidth && !isGifImage(el) ? thumbUrl(el.src, imageWidth) : el.src;
     return (
       <div {...common} {...imageDropProps} className={cls(imageDropOver ? 'image-drop-over' : '')} style={{ ...base, borderRadius: el.radius, ...imageFrameStyle }}
         onDoubleClick={preview ? undefined : (e) => { e.stopPropagation(); onCropStart && onCropStart(el); }}>
         {el.crop ? (
           /* 커밋된 인라인 크롭: 프레임(overflow hidden) 안에 원본을 -ox,-oy 오프셋으로 */
           <div className="el-cropped" style={{ borderRadius: el.radius }}>
-            <img src={imgSrc} alt="" draggable={false} style={{ left: -el.crop.ox, top: -el.crop.oy, width: el.crop.iw, height: el.crop.ih }} />
+            <img src={imgSrc} data-gif-poster={isGifImage(el) ? el.posterSrc : undefined} alt="" draggable={false} style={{ left: -el.crop.ox, top: -el.crop.oy, width: el.crop.iw, height: el.crop.ih }} />
           </div>
         ) : (
-          <img src={imgSrc} alt="" style={{ borderRadius: el.radius, objectFit: el.fit || 'cover' }} draggable={false} />
+          <img src={imgSrc} data-gif-poster={isGifImage(el) ? el.posterSrc : undefined} alt="" style={{ borderRadius: el.radius, objectFit: el.fit || 'cover' }} draggable={false} />
         )}
         {canvasAiSlotArrivalVisible(el, canvasAiJob) && <span className="canvas-ai-slot-arrived">새 컷</span>}
         {imageDropOver && <ImageDropGuide scale={scale} width={el.w} height={el.h} rotate={el.rotate} />}
@@ -743,6 +747,37 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
   // 오브젝트(도형·선·프리셋)를 끌고 지나가는 동안만 사는 놓일 자리 상자 미리보기.
   const [objGhost, setObjGhost] = useState(null);
 
+  const cropBarRef = useRef(null);
+  useLayoutEffect(() => {
+    const bar = cropBarRef.current;
+    if (!crop || !bar) return;
+    const blockNode = bar.closest('.canvas-block');
+    const viewport = bar.closest('.ed-canvas-wrap');
+    const frame = blockNode?.querySelector('.crop-frame');
+    if (!viewport || !frame) return;
+    const position = () => {
+      const bounds = viewport.getBoundingClientRect();
+      const visible = { left: Math.max(0, bounds.left), top: Math.max(0, bounds.top),
+        right: Math.min(window.innerWidth, bounds.left + viewport.clientWidth),
+        bottom: Math.min(window.innerHeight, bounds.top + viewport.clientHeight) };
+      bar.style.maxWidth = `${Math.max(0, visible.right - visible.left - 16)}px`;
+      const point = cropToolbarPosition(frame.getBoundingClientRect(), visible, bar.getBoundingClientRect());
+      const origin = blockNode.getBoundingClientRect();
+      bar.style.left = `${(point.left - origin.left) / scale}px`;
+      bar.style.top = `${(point.top - origin.top) / scale}px`;
+    };
+    position();
+    const observer = new ResizeObserver(position);
+    observer.observe(viewport); observer.observe(bar);
+    viewport.addEventListener('scroll', position, { passive: true });
+    window.addEventListener('resize', position);
+    return () => {
+      observer.disconnect();
+      viewport.removeEventListener('scroll', position);
+      window.removeEventListener('resize', position);
+    };
+  }, [crop, scale]);
+
   const pickBelowBlankText = (event, currentElement) => {
     const candidateIds = [];
     const glyphHitIds = [];
@@ -897,7 +932,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         )}
       </div>
       {crop && (
-        <div className="crop-bar" style={{ left: crop.fx, top: crop.fy + crop.fh }} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+        <div className="crop-bar" ref={cropBarRef} style={{ left: crop.fx, top: crop.fy + crop.fh }} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
           <label className="crop-ratio">비율<select aria-label="자르기 비율" value={crop.ratio || ''} onChange={e => onCropRatio(Number(e.target.value))}>
             <option value="">자유</option><option value="1">1:1</option><option value="0.75">3:4</option><option value="0.8">4:5</option><option value="1.7777777777777777">16:9</option>
           </select></label>
@@ -924,7 +959,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         {/* presetTypeOf 로 게이트 — 갓 조립된 size/care auto 블록은 info 가 없어도 폼 편집 대상이다 */}
         {onEditInfo && presetTypeOf(block) && <IconButton name="pencil" onClick={() => onEditInfo(block)} title="내용 수정" />}
         <IconButton name="layers" onClick={() => onOpenLayers(block.id)} title="레이어" />
-        <IconButton name="download" onClick={() => onDownload(block, idx)} title="이 블록 다운로드" />
+        <BlockDownloadButton block={block} index={idx} onDownload={onDownload} />
         <IconButton name="trash" onClick={() => onDelete(block.id)} title="블록 삭제" />
       </div>
     </div>
@@ -1192,7 +1227,7 @@ export function Editor() {
   const [pendingSlot, setPendingSlot] = useState(null);
   const [imageImports, setImageImports] = useState([]);
   // 의류 탭에 올리는 중인 장수 — 여러 장을 한 번에 고르면 그만큼 대기 타일을 보여 준다.
-  const [wardrobeUploadLoading, setWardrobeUploadLoading] = useState(0);
+  const [wardrobeUploadLoading, setWardrobeUploadLoading] = useState({});
   const [hoverGray, setHoverGray] = useState(false);
   const [layerFloat, setLayerFloat] = useState(null);
   const [layerPos, setLayerPos] = useState(null);
@@ -1766,6 +1801,7 @@ export function Editor() {
       const deleteBlockSelection = !deleteElements && blockFocused && Boolean(selBlock);
       if (isEditorDeleteKey(e) && (deleteElements || deleteBlockSelection)) {
         e.preventDefault();
+        if (kb.current.croppingOn) kb.current.cropCancel?.();
         if (deleteElements) {
           // 격자·프레임의 사진 자리는 지워지는 게 아니라 빈 자리로 남는다 — 안내도 그렇게.
           const bs0 = latestBlocks.current || blocks || [];
@@ -2192,7 +2228,7 @@ export function Editor() {
       toast.push(successMsg, { icon: 'download' });
     }
   };
-  const downloadBlock = async (block, idx) => {
+  const downloadBlock = async (block, idx, mode = 'zip') => {
     const accountGeneration = clientEvents.getAccountGeneration();
     if (dlBusy) return;
     if (genActive) { toast.push('생성 중인 페이지는 저장할 수 없어요. 완료 후 받아주세요.', { icon: 'x' }); return; }
@@ -2200,13 +2236,27 @@ export function Editor() {
     if (!node) { toast.push('블록을 찾지 못했어요. 다시 시도해 주세요.', { icon: 'x' }); return; }
     setDlBusy(true);
     try {
-      finishExport('이 블록을 PNG로 저장했어요', await exportBlockPng(node, productName, idx, provenanceOpts()));
+      const images = collectGifImages([block]);
+      if (mode === 'gifs' && images.length) await downloadBlockGifs(images);
+      else finishExport(images.length ? '블록 이미지와 GIF를 저장했어요' : '이 블록을 PNG로 저장했어요',
+        await exportBlockPng(node, productName, idx, { ...provenanceOpts(), gifImages: images }));
     } catch (e) {
       clientEvents.bindGeneration(e, accountGeneration);
       toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'x', variant: 'error', error: e, kind: 'toast_error', actionName: 'download', messageCode: 'action_failed', blocking: true, accountGeneration });
     } finally {
       setDlBusy(false);
     }
+  };
+  const gifImages = collectGifImages(blocks || []);
+  const receiveGifs = async (images = gifImages, single = false) => {
+    if (dlBusy || !images.length) return;
+    setDlBusy(true);
+    try {
+      if (single) await downloadGifImage(images[0]);
+      else await downloadGifImages(images);
+    } catch (error) {
+      toast.push(error.message || 'GIF를 받지 못했어요. 다시 시도해 주세요', { icon: 'x' });
+    } finally { setDlBusy(false); }
   };
   const runDownload = async () => {
     const accountGeneration = clientEvents.getAccountGeneration();
@@ -2220,7 +2270,7 @@ export function Editor() {
     const onProgress = (done, total, stage = 'capture') => setDlProg({ done: done + 1, total, stage });
     try {
       const result = await exportStorefrontDownload(
-        nodes, productName, onProgress, dlSettings, provenanceOpts(),
+        nodes, productName, onProgress, dlSettings, { ...provenanceOpts(), gifImages },
       );
       setDownload(false);
       finishExport(result.delivery === 'split'
@@ -2363,6 +2413,9 @@ export function Editor() {
       const filled = {
         ...slot,
         src: im.src,
+        ...gifImageFields(im),
+        width: im.width,
+        height: im.height,
         cutType: im.cutType || null,
         ...(im.userUploaded ? { userUploaded: true } : {}),
         ...(im.wardrobeGroup ? { wardrobeGroup: im.wardrobeGroup } : {}),
@@ -2381,6 +2434,7 @@ export function Editor() {
     });
     const el = {
       id: uid('el'), type: 'image', ...geometry, src: im.src, radius: 12,
+      ...(isGifImage(im) ? gifImageFields(im) : {}),
       ...(im.cutType ? { cutType: im.cutType } : {}),
       ...(im.userUploaded ? { userUploaded: true } : {}),
       ...(im.wardrobeGroup ? { wardrobeGroup: im.wardrobeGroup } : {}),
@@ -2409,6 +2463,7 @@ export function Editor() {
       // 정보 블록 슬롯이면 info(폼 정본)에도 동기화 — 재생성 때 사진-포인트 연결 유지
       setSlotImage(pendingSlot.blockId, pendingSlot.elId, {
         src: im.src,
+        ...gifImageFields(im),
         cutType: im.cutType || null,
         width: im.width,
         height: im.height,
@@ -2426,6 +2481,13 @@ export function Editor() {
       } else insertImage(im, { keepTab: true });
     }
   };
+  const saveWardrobeGif = async (result, options) => {
+    const image = await api.saveWardrobeGif(projectId, result, options);
+    if (options?.signal?.aborted) return;
+    setWardrobe((current) => ({ ...current, misc: [{ ...image, fresh: true }, ...(current?.misc || [])] }));
+    toast.push('보관함에 담았어요', { icon: 'check' });
+    return image;
+  };
   const patchImageImport = (id, patch) => {
     if (!id) return;
     setImageImports((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
@@ -2436,14 +2498,14 @@ export function Editor() {
   };
   // insert=false: 의류 목록에만 넣는다(여러 장 업로드). quiet: 실패를 토스트 대신 던진다 —
   // 여러 장이면 한 장마다 토스트를 띄우지 않고 끝에 한 번 모아서 알린다.
-  const uploadEditorImage = async (file, placement, importId = null, { insert = true, quiet = false, accountGeneration = clientEvents.getAccountGeneration() } = {}) => {
+  const uploadEditorImage = async (file, placement, importId = null, { insert = true, quiet = false, colorId = 'misc', accountGeneration = clientEvents.getAccountGeneration() } = {}) => {
     if (!looksLikeImageFile(file)) {
       if (quiet) throw clientEvents.bindGeneration(Object.assign(new Error('unsupported_image'), { code: 'unsupported_type' }), accountGeneration);
       toast.push('JPG, PNG, WebP 또는 HEIC 사진을 선택해 주세요.', { icon: 'x' });
       return;
     }
     const isWardrobeUpload = !placement?.blockId && !importId;
-    if (isWardrobeUpload) setWardrobeUploadLoading((n) => n + 1);
+    if (isWardrobeUpload) setWardrobeUploadLoading(current => ({ ...current, [colorId]: (current[colorId] || 0) + 1 }));
     try {
       const prepared = await toUploadableImage(file);
       const validation = getUploadValidationError(prepared);
@@ -2471,11 +2533,11 @@ export function Editor() {
         src: uploaded.url,
         ...dimensions,
         userUploaded: true,
-        wardrobeGroup: 'misc',
+        wardrobeGroup: colorId,
       };
       patchImageImport(importId, { phase: 'placing' });
       await waitForImageSource(uploaded.url);
-      setWardrobe((current) => ({ ...current, misc: [...(current.misc || []), image] }));
+      setWardrobe((current) => ({ ...current, [colorId]: [...(current[colorId] || []), image] }));
       if (placement?.blockId) insertImage(image, placement);
       else if (insert) wardrobeInsert(image, { keepTab: true });
       patchImageImport(importId, { phase: 'done' });
@@ -2487,7 +2549,7 @@ export function Editor() {
       if (quiet) throw error;
       toast.push(error?.message || '사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x', variant: 'error', error: error, kind: 'upload_error', actionName: 'upload', messageCode: 'photo_upload_failed', blocking: true, accountGeneration });
     } finally {
-      if (isWardrobeUpload) setWardrobeUploadLoading((n) => Math.max(0, n - 1));
+      if (isWardrobeUpload) setWardrobeUploadLoading(current => ({ ...current, [colorId]: Math.max(0, (current[colorId] || 0) - 1) }));
     }
   };
   const dropImageFiles = (blockId, files, point, slotId = null) => {
@@ -2518,22 +2580,17 @@ export function Editor() {
     }]);
     void uploadEditorImage(file, { blockId, point, slotId: target.slotId }, importId);
   };
-  // 한 장이면 예전처럼 목록에 넣고 캔버스에도 놓는다. 여러 장이면 캔버스에 한꺼번에 쌓이지
-  // 않게 의류 목록(기타)에만 넣는다 — 셀러가 목록에서 골라 끌어 쓴다.
-  const pickAndInsertImage = async () => {
+  // 점선 타일로 고른 사진은 장수와 관계없이 해당 색상 목록에만 추가한다.
+  const pickAndInsertImage = async (colorId = 'misc') => {
     const accountGeneration = clientEvents.getAccountGeneration();
     const picked = await pickEditorImageFile({ multiple: true });
     if (!picked.length) return;
-    if (picked.length === 1) {
-      await uploadEditorImage(picked[0], undefined, null, { accountGeneration });
-      return;
-    }
     const files = picked.slice(0, MAX_WARDROBE_UPLOADS);
     if (picked.length > files.length) {
       toast.push(`한 번에 ${MAX_WARDROBE_UPLOADS}장까지 올릴 수 있어요. 앞의 ${MAX_WARDROBE_UPLOADS}장만 올릴게요.`, { icon: 'alertTri' });
     }
     const results = await runWithConcurrency(files, WARDROBE_UPLOAD_CONCURRENCY,
-      (file) => uploadEditorImage(file, undefined, null, { insert: false, quiet: true, accountGeneration }));
+      (file) => uploadEditorImage(file, undefined, null, { insert: false, quiet: true, accountGeneration, colorId }));
     const done = results.filter((r) => r.ok).length;
     const failed = results.length - done;
     const failures = results.filter((result) => !result.ok);
@@ -2549,10 +2606,14 @@ export function Editor() {
   const wardrobeImageInUse = (image) => (
     isWardrobeImageUsed(latestBlocks.current || blocks, image)
   );
-  const deleteWardrobeImage = (image) => {
+  const deleteWardrobeImage = async (image) => {
     if (wardrobeImageInUse(image)) {
       toast.push('현재 에디팅에 사용 중인 사진은 삭제할 수 없어요', { icon: 'alertTri' });
       return;
+    }
+    if (isGifImage(image)) {
+      try { await api.deleteWardrobeGif(projectId, image.id); }
+      catch (error) { toast.push(error.message || 'GIF를 삭제하지 못했어요', { icon: 'x' }); return; }
     }
     setWardrobe((current) => {
       const next = {};
@@ -2896,10 +2957,11 @@ export function Editor() {
   };
   const submitInfo = (info) => {
     const m = infoModal; if (!m) return;
-    const built = buildInfoBlock(m.type, info, infoCtx);
+    const wardrobeImages = Object.values(wardrobe || {}).flat();
+    const built = carrySlotImages([], buildInfoBlock(m.type, info, infoCtx), wardrobeImages);
     if (m.blockId) {
       // 슬롯에 채워 둔 사진(실측도·특징 포인트)은 재생성 후에도 이월한다
-      setBlocks((bs) => bs.map((b) => (b.id === m.blockId ? { ...carrySlotImages(b.elements, built), id: b.id } : b)));
+      setBlocks((bs) => bs.map((b) => (b.id === m.blockId ? { ...carrySlotImages(b.elements, built, wardrobeImages), id: b.id } : b)));
       setSelBlock(m.blockId);
       toast.push('내용을 업데이트했어요', { icon: 'check' });
     } else {
@@ -3348,7 +3410,7 @@ export function Editor() {
   };
   const cancelCrop = () => setCropping(null);
   // 크롭 리셋 — 프레임을 원본 이미지 전체로 되돌린다(자른 것 원위치, 오프셋 0).
-  const resetCrop = () => setCropping((c) => (c ? { ...c, fx: c.fx - c.ox, fy: c.fy - c.oy, fw: c.iw, fh: c.ih, ox: 0, oy: 0 } : c));
+  const resetCrop = () => setCropping((c) => (c ? { ...c, fx: c.fx - c.ox, fy: c.fy - c.oy, fw: c.iw, fh: c.ih, ox: 0, oy: 0, ratio: null, ratioBase: null } : c));
   // 크롭 핸들·내부 이미지 드래그 — 자체 포인터 핸들러 (리사이즈와 동일하게 /scale 환산)
   const cropDrag = (e, mode, dir) => {
     if (e.button != null && e.button !== 0) return;
@@ -3401,9 +3463,9 @@ export function Editor() {
   const renderPanel = () => {
     switch (tab) {
       case 'ai': return <AIPanel pendingGenerateRequest={pendingGenerateRequest} generateSubmitting={generateSubmitting} product={product} detailRecommendations={analysis?.detailRecommendations} frontClosure={analysis?.frontClosure} catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} brandUseCategory={analysis?.brandUseCategory} brandUseCategorySaving={brandUseCategorySaving} onBrandUseCategoryChange={saveBrandUseCategory} onConfirmPendingGenerate={() => retryFailedCut({ confirmPending: true })} onGenerate={generateImage} onPickMoodRef={() => api.pickRefImage(projectId)} />;
-      case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onFreshSeen={freshSeen}
+      case 'wardrobe': return <WardrobePanel onDownloadGif={(image) => receiveGifs([image], true)} onSaveGif={saveWardrobeGif} wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onFreshSeen={freshSeen}
         onImageDragStart={() => setFrameDragging(true)} onImageDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />;
-      case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}
+      case 'image': return <ImagePanel onConvertGif={(image) => setBlocks((current) => current.map((block) => convertGifToStill(block, image.id)))} el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}
         onCrop={(el) => startCrop(blockIdOf(el.id), el)}
         onDownload={downloadPhoto} downloadBusy={photoDownloadBusy}
         />;
@@ -3799,7 +3861,7 @@ export function Editor() {
       {/* body */}
       <div className="ed-body" style={{ '--lcol': '320px', '--rcol': rightHidden ? '0px' : '208px' }}>
         <div className="ed-left" role="tabpanel" aria-labelledby={`ed-tab-${tab}`}>
-          <div style={{ marginBottom: 14 }}><span className="panel-h" style={{ marginBottom: 0 }}>{panelTitle}</span></div>
+          <div style={{ marginBottom: 14 }}><span className="panel-h" style={{ marginBottom: 0 }}>{panelTitle}{tab === 'image' && isGifImage(selectedElObj) && <span className={gifStyles.titleBadge}>GIF</span>}</span></div>
           {renderPanel()}
         </div>
 
@@ -3862,7 +3924,7 @@ export function Editor() {
                 <CanvasBlock block={b} scale={scale} idx={i} imageImports={imageImports.filter((item) => item.blockId === b.id)}
                   canvasAiJobs={canvasAi.jobs} onCanvasAiCancel={(id) => canvasAi.controller.cancel(id)} onCanvasAiDismiss={(id) => canvasAi.controller.dismiss(id)}
                   canvasAi={canvasAi.block?.id === b.id && canvasAi.element?.type === 'image' && selEls.length === 1
-                    && !canvasAi.element.hidden && !['pending', 'unsupported'].includes(canvasAi.menu.kind) ? (
+                    && !isGifImage(canvasAi.element) && !canvasAi.element.hidden && !['pending', 'unsupported'].includes(canvasAi.menu.kind) ? (
                     <CanvasAiLayer block={b} element={canvasAi.element} scale={scale} wrapRef={wrapRef}
                       menu={canvasAi.menu} loading={canvasAi.loading} assetError={canvasAi.assetError}
                       job={canvasAi.jobs.get(canvasAi.element.id)}
@@ -3993,6 +4055,8 @@ export function Editor() {
             active={Boolean(dlError && dlOriginalError)} error={dlOriginalError} projectId={projectId} />
           <EditorDownloadModal
             settings={dlSettings}
+            gifCount={gifImages.length}
+            onDownloadGifs={() => receiveGifs()}
             summary={dlSummary}
             notice={dlNotice}
             busy={dlBusy}

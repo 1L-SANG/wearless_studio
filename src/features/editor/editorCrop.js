@@ -49,14 +49,29 @@ export function dragEditorCrop(c, mode, dir, dx, dy) {
       ox = c.ox + fx - c.fx; oy = c.oy + fy - c.fy;
     }
   }
-  return { ...c, fx, fy, fw, fh, ox, oy };
+  // A deliberate handle resize establishes a new basis; preset changes do not.
+  return { ...c, fx, fy, fw, fh, ox, oy,
+    ...(c.ratioBase && mode === 'frame' && (fw !== c.fw || fh !== c.fh) ? { ratioBase: { fw, fh } } : {}) };
 }
 
 export function ratioEditorCrop(c, ratio) {
   if (!(ratio > 0)) return { ...c, ratio: null };
-  const fw = Math.min(c.fw, c.fh * ratio), fh = fw / ratio;
-  const dx = (c.fw - fw) / 2, dy = (c.fh - fh) / 2;
-  return { ...c, fx: c.fx + dx, fy: c.fy + dy, fw, fh, ox: c.ox + dx, oy: c.oy + dy, ratio };
+  const ratioBase = c.ratioBase || { fw: c.fw, fh: c.fh };
+  const fw = Math.min(ratioBase.fw, ratioBase.fh * ratio, c.iw, c.ih * ratio), fh = fw / ratio;
+  const ox = clamp(c.ox + (c.fw - fw) / 2, 0, c.iw - fw);
+  const oy = clamp(c.oy + (c.fh - fh) / 2, 0, c.ih - fh);
+  return { ...c, fx: c.fx + ox - c.ox, fy: c.fy + oy - c.oy, fw, fh, ox, oy, ratio, ratioBase };
+}
+
+// Screen coordinates: keep every control reachable, including after scrolling.
+export function cropToolbarPosition(frame, viewport, size) {
+  const margin = 8, gap = 16;
+  const left = clamp(frame.left, viewport.left + margin, Math.max(viewport.left + margin, viewport.right - size.width - margin));
+  const below = frame.bottom + gap, above = frame.top - size.height - gap;
+  const preferred = below + size.height <= viewport.bottom - margin ? below
+    : above >= viewport.top + margin ? above : below;
+  const top = clamp(preferred, viewport.top + margin, Math.max(viewport.top + margin, viewport.bottom - size.height - margin));
+  return { left, top };
 }
 
 export function zoomEditorCrop(c, factor) {

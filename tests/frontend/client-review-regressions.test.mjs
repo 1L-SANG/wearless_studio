@@ -165,7 +165,7 @@ test('40 rounds of both job status and job event polling retain actions and sepa
 
 function editorHarness({ picked = [], upload = async () => ({ assetId: REQUEST, url: 'blob:photo' }), transform = toUploadableImage } = {}) {
   const f = fixture(); f.collector.setSession(session(A));
-  const toasts = []; const reports = []; let wardrobe = {}; let pending = 0;
+  const toasts = []; const reports = []; let wardrobe = {}; let pending = {};
   const source = read('src/features/editor/Editor.jsx');
   const handlers = source.slice(source.indexOf('  const uploadEditorImage ='), source.indexOf('  // fresh ='));
   const bindings = { clientEvents: f.collector, looksLikeImageFile, toUploadableImage: transform, getUploadValidationError,
@@ -193,7 +193,7 @@ test('unsupported editor photos pass through the real conversion and validation 
   const file = new File(['not HEIC'], 'private.svg', { type: 'image/svg+xml' });
   await h.uploadEditorImage(file);
   assert.equal(h.toasts[0].opts.error.code, 'unsupported_type');
-  assert.equal(uploads, 0); assert.equal(h.reports.length, 0); assert.equal(h.pending(), 0);
+  assert.equal(uploads, 0); assert.equal(h.reports.length, 0); assert.equal(Object.values(h.pending()).reduce((a, b) => a + b, 0), 0);
 });
 
 test('conversion which still exceeds 25MB yields file_too_large and does not report an outage', async (t) => {

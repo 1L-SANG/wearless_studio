@@ -1,3 +1,4 @@
+import { isGifImage } from '../../../src/lib/gif/gifMedia.js';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { extractEditorAssetId } from '../../../src/lib/editorAssetInfo.js';
@@ -8,7 +9,7 @@ import { resolveCanvasAiSubmission } from '../../../src/features/editor/canvasAi
 import { canFillCanvasAiSlot, canvasAiSourceDimensions } from '../../../src/features/editor/canvasAiApply.js';
 
 const source = readFileSync(new URL('../../../src/features/editor/useCanvasAi.js', import.meta.url), 'utf8')
-  .replace(/^import .*;\n/gm, '').replace('export function useCanvasAi', 'function useCanvasAi');
+  .replace(/^import .*;\r?\n/gm, '').replace('export function useCanvasAi', 'function useCanvasAi');
 
 // Run the real hook's request and result boundaries without a browser or paid API.
 // React state is a fixed selected-photo snapshot; the real controller owns each job.
@@ -30,7 +31,7 @@ export function canvasAiHookHarness({ blocks, selectedId, wardrobe = {}, storybo
     useState: (initial) => [initial && 'loading' in initial
       ? { id: assetId, loading: false, info: assetRecipe } : initial, () => {}],
     api: { getEditorAssetInfo: async () => ({ items: {} }), ...api }, isMockMode: true,
-    extractEditorAssetId, buildFailedCutRetry, buildCanvasAiMenu, buildCanvasAiRequest, canvasAiSourceDimensions, resolveCanvasAiSubmission,
+    isGifImage, extractEditorAssetId, buildFailedCutRetry, buildCanvasAiMenu, buildCanvasAiRequest, canvasAiSourceDimensions, resolveCanvasAiSubmission,
     createCanvasAiJobController: (options) => createCanvasAiJobController({ ...options,
       createKey: randomUUID,
       schedule: (callback) => { const id = ++timerId; scheduled.set(id, callback); return id; },
