@@ -98,7 +98,7 @@ export function TopNav() {
       // (ai 도메인 값은 그대로 '/create/input' — 기존 삼항이 두 갈래 모두 같은 값이었다.)
       openLogin(IS_FACEMARKET ? '/model/register' : '/create/input');
     } catch (error) {
-      toast.push(error?.message || '입력한 내용을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+      toast.push(error?.message || '입력한 내용을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alertCircle' });
     }
   };
 
@@ -313,9 +313,10 @@ export function WizardCTA({ children, className = '' }) {
    완료된 프로젝트는 입력·마네킹·콘티로 되돌아가 생성 전 상태를 바꿀 수 없다.
    초안 화면(input/mannequin/storyboard)이 mount 시 호출 — 완료 상태면 모달로
    안내하고 에디터로 보낸다. 새 제작은 TopNav·보관함의 startProject 경로만. */
-export function useDoneGuard() {
+export function useDoneGuard(enabled = true) {
   const [blocked, setBlocked] = useState(false);
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     (async () => {
       try {
@@ -335,7 +336,7 @@ export function useDoneGuard() {
       } catch { /* 보호 가드 조회 실패는 공개 입력 화면을 막지 않는다. */ }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [enabled]);
   return blocked;
 }
 

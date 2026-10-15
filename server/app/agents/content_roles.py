@@ -132,6 +132,10 @@ def inherit_similar_cut_recipes(blocks: list) -> list:
 
 def _canonicalize_example_selection(out: dict) -> dict:
     """Normalize the persisted example selection without leaving orphan metadata."""
+    from .reference_mode import reference_scope
+    if 'refScope' in out or 'ref_scope' in out or out.get('spaceGroupId') or out.get('space_group_id'):
+        out['refScope'] = reference_scope(out)
+    out.pop('ref_scope', None)
     example_id = out.get("exampleId") or out.get("example_id")
     origin = out.get("exampleSelectionOrigin")
     if origin is not None and origin not in ("auto", "user"):

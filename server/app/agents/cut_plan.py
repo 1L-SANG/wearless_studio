@@ -17,7 +17,7 @@ from .outer_closure import STATES as _CLOSURES
 RecipeFamily = Literal["styling", "horizon", "product"]
 CaptureMode = Literal["lifestyle", "studio"]
 ProductVariant = Literal["ghost", "detail"]
-ReferenceMode = Literal["none", "all", "pose", "bg"]
+ReferenceMode = Literal["none", "all", "pose"]
 SignatureFraming = Literal["bottom", "dress"]
 AttributeOwner = Literal[
     "productTruth",
@@ -64,7 +64,6 @@ _REFERENCE_ATTRIBUTES: dict[ReferenceMode, tuple[str, ...]] = {
     "none": (),
     "all": ("pose", "camera", "scene", "light", "captureTone"),
     "pose": ("pose",),
-    "bg": ("scene", "light", "captureTone"),
 }
 _REFERENCE_CAPABLE_ATTRIBUTES = ("pose", "camera", "scene", "light", "captureTone")
 
@@ -241,19 +240,12 @@ def _declared_fit_axes(profile: Mapping[str, Any] | None) -> tuple[str, ...]:
 
 
 def _reference_mode(spec: Mapping[str, Any], recipe_family: RecipeFamily) -> ReferenceMode:
+    from .reference_mode import reference_scope
     example_id = spec.get("exampleId")
     space_group_id = spec.get("spaceGroupId")
-    raw_scope = spec.get("refScope", "all")
-    if raw_scope not in {"none", "all", "pose", "bg"}:
-        raise CutPlanError("unknown_reference_mode")
     if not example_id and not space_group_id:
         return "none"
-    mode: ReferenceMode = ("all" if recipe_family == "horizon" else "pose") if space_group_id else raw_scope
-    if mode == "none":
-        raise CutPlanError("reference_mode_none_with_reference")
-    if recipe_family == "product" and mode != "all":
-        raise CutPlanError("product_reference_mode_must_be_all")
-    return mode
+    return reference_scope(spec)
 
 
 def _signature_framing(

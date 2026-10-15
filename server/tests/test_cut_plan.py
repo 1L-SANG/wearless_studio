@@ -194,20 +194,6 @@ def test_product_recipe_uses_product_variant_and_never_reference_pose(variant):
     assert plan.attribute_owners["camera"] == "reference"
 
 
-def test_reference_scope_owns_only_its_compatible_attributes():
-    pose_plan = compile_cut_plan(
-        worn_spec(exampleId="ex_pose", refScope="pose"), "top"
-    )
-    bg_plan = compile_cut_plan(
-        worn_spec(exampleId="ex_bg", refScope="bg"), "top"
-    )
-
-    assert pose_plan.reference_attributes == ("pose",)
-    assert pose_plan.attribute_owners["camera"] == "recipe"
-    assert pose_plan.attribute_owners["scene"] == "recipe"
-    assert bg_plan.reference_attributes == ("scene", "light", "captureTone")
-    assert bg_plan.attribute_owners["pose"] == "recipe"
-    assert bg_plan.attribute_owners["camera"] == "recipe"
 
 
 def test_space_set_forces_pose_reference_and_owns_only_continuity():
@@ -294,7 +280,6 @@ def test_location_recomposition_applies_only_to_lifestyle_styling_all():
         worn_spec(exampleId="ex", refScope="all"), "top"
     )
     excluded = (
-        compile_cut_plan(worn_spec(exampleId="ex", refScope="bg"), "top"),
         compile_cut_plan(
             worn_spec("horizon", exampleId="ex", refScope="all"), "top"
         ),
@@ -329,7 +314,6 @@ def test_location_recomposition_applies_only_to_lifestyle_styling_all():
         (worn_spec(cutType="unknown"), "unknown_cut_type"),
         (worn_spec(shot="ghost"), "invalid_styling_spec"),
         (worn_spec("mirror"), "unknown_cut_type"),
-        (product_spec(refScope="pose", exampleId="ex"), "product_reference_mode_must_be_all"),
         (worn_spec(_referenceDirectionCompatible="yes"),
          "invalid_reference_direction_compatibility"),
         (worn_spec(_referenceFaceVisibility="unknown"),

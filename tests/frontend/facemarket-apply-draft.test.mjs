@@ -77,10 +77,11 @@ for (const mock of [false, true]) test(`${mock ? '모의' : '실제'} 로그아�
   let signedOut = 0;
   const states = [{ user: { id: 'A' } }, false, false, false];
   const bindings = {
+    getMobileGuestSave: () => null, clearMobileGuestSave() {},
     clientEvents: { setSession() {} },
     React: { createElement: (type, props) => ({ type, props }) },
     createContext: () => ({ Provider: 'Provider' }),
-    useState: () => [states.shift(), () => {}], useCallback: value => value, useEffect() {},
+    useState: () => [states.shift(), () => {}], useRef: (current) => ({ current }), useCallback: value => value, useEffect() {},
     useQueryClient: () => ({ clear() {} }), IS_FACEMARKET: true,
     isMockMode: mock,
     supabase: { auth: { signOut: async () => { signedOut += 1; } } },

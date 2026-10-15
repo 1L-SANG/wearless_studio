@@ -6,8 +6,11 @@
 .sub { margin-top: 8px; font-size: 16px; line-height: 1.5; color: var(--fg-on-glow); }
 .sub strong { color: var(--fg-1); font-weight: 700; }
 
-/* 좁은 폭 + 중앙 정렬 (사용자 요청) */
+/* 휴대폰은 기존 중앙 정렬을 유지하고 PC는 제목 왼쪽에 맞춘다. */
 .list { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; background: var(--bg-1); border-radius: var(--r-5); overflow: hidden; box-shadow: 0 0 0 1px var(--ring); }
+@media (min-width: 769px) {
+  .list { margin-inline: 0; }
+}
 
 .row {
   display: flex; align-items: center; justify-content: space-between; gap: 14px;

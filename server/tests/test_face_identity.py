@@ -789,24 +789,14 @@ def test_generate_runs_face_pass_only_with_a_lora_spec(monkeypatch):
     assert seen == []
 
 
-def test_generate_bottom_medium_skips_face_pass_but_still_crops(monkeypatch):
-    # 하의 medium 프레이밍은 머리가 프레임에 없다(_face_fits) → 얼굴 패스 생략, 포즈 크롭은 그대로.
+def test_generate_bottom_medium_skips_face_pass_and_retired_extra_crop(monkeypatch):
     _forbid_face_pass(monkeypatch)
-    crops = []
-
-    async def fake_crop(settings, image, mime, clothing_type):
-        crops.append(image)
-        return b"CROPPED", mime
-
-    monkeypatch.setattr(cg.pose_crop, "crop_pose_medium", fake_crop)
     settings = make_settings(gemini_api_key="x", face_identity_enabled=True)
-    manifest = cg.build_manifest([], has_mannequin=False, has_match=False, mood_count=0, example_scope="pose")
     res = asyncio.run(cg.generate(
-        settings, _FakeGemini(),
-        {**_SPEC, "refScope": "pose"}, {**_PRODUCT, "clothingType": "bottom"}, [], manifest=manifest,
-        face_identity_spec=_LORA_SPEC,
+        settings, _FakeGemini(), {**_SPEC, "refScope": "pose"},
+        {**_PRODUCT, "clothingType": "bottom"}, [], face_identity_spec=_LORA_SPEC,
     ))
-    assert res == (b"CROPPED", "image/png") and crops == [b"FULL"]
+    assert res == (b"FULL", "image/png")
 
 
 def test_generate_bottom_full_shot_gets_face_pass(monkeypatch):

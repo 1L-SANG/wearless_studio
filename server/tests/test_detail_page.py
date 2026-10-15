@@ -539,52 +539,6 @@ def test_detail_reservation_uses_minimum_only_for_positive_ai_count(
         assert seen["reserved"] == expected_cost
 
 
-def test_detail_rejects_saved_bg_example_before_job_or_credit(
-    client, make_token, monkeypatch,
-):
-    calls = {"create_job": 0, "reserve": 0}
-
-    async def fake_gp(conn, uid, pid):
-        return {"id": pid}
-
-    async def fake_eb(conn, pid):
-        return []
-
-    async def fake_sb(conn, pid):
-        return [{
-            "id": "b1",
-            "source": "ai",
-            "exampleId": "ex-bg-1",
-            "refScope": "bg",
-        }]
-
-    async def fake_create_job(conn, **kw):
-        calls["create_job"] += 1
-        return {"id": "job-dp-bg"}, True
-
-    async def fake_reserve(conn, uid, amount):
-        calls["reserve"] += 1
-        return 100
-
-    async def fake_analysis(conn, pid):
-        return {}
-
-    monkeypatch.setattr(routes.repo, "get_project", fake_gp)
-    monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_eb)
-    monkeypatch.setattr(routes.repo, "get_storyboard", fake_sb)
-    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
-    monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
-    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
-    patch_route_db(monkeypatch, routes)
-
-    res = client.post(
-        "/v1/projects/p1/detail-page:generate",
-        headers=auth_headers(make_token),
-    )
-
-    assert res.status_code == 400
-    assert res.json()["error"]["code"] == "genexample_bg_disabled"
-    assert calls == {"create_job": 0, "reserve": 0}
 
 
 def test_detail_completed_recall(client, make_token, monkeypatch):
@@ -1226,33 +1180,6 @@ def _settings(**overrides):
     return make_settings(gemini_api_key="x", r2_bucket="b", **overrides)
 
 
-def test_run_detail_page_job_rejects_bg_example_when_pilot_disabled(monkeypatch):
-    captured = {}
-
-    async def fake_gp(conn, uid, pid):
-        return {"copywriting": False}
-
-    async def fake_sb(conn, pid):
-        return [{
-            "id": "bg",
-            "source": "ai",
-            "exampleId": "ex-bg-1",
-            "refScope": "bg",
-        }]
-
-    async def fake_failure(conn, **kw):
-        captured.update(kw)
-        return {"ok": True}
-
-    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
-    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
-    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_failure)
-
-    asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job(reserved=1)))
-
-    assert captured["metadata"] == {"error": "genexample_bg_disabled"}
-    assert captured["code"] == "genexample_bg_disabled"
-    assert captured["reserved"] == 1
 
 
 def test_run_detail_page_job_cancellation_finalizes_refund_then_reraises(monkeypatch):
@@ -2180,7 +2107,6 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
     monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
     monkeypatch.setattr(dpj.cut_generator, "example_asset_status", fake_example_status)
-    monkeypatch.setattr(dpj.cut_generator, "pose_direction_compatible", fake_pose_compatible)
     monkeypatch.setattr(dpj.cut_generator, "load_example_image", fake_example)
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
@@ -2189,35 +2115,33 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     asyncio.run(dpj.run_detail_page_job(
-        _app(_settings(genexample_bg_enabled=True)), _job(reserved=5)))
+        _app(_settings()), _job(reserved=5)))
 
-    for block_id, scope in (("all", "all"), ("pose", "pose")):
+    for block_id, scope in (("all", "all"), ("pose", "all")):
         item = captured[block_id]
         assert len(item["images"]) == 2  # PRODUCT 다음에 resolved EXAMPLE 실제 첨부
         assert item["images"][-1].data.startswith(b"EXAMPLE:")
         assert item["images"][-1].data.endswith(f":{scope}".encode())  # scope별 자산(누끼 variant) 선택 검증
     assert "EXAMPLE REFERENCE (scope: all)" in captured["all"]["manifest"]
-    assert "POSE CONTROL" in captured["pose"]["manifest"]
+    assert "EXAMPLE REFERENCE (scope: all)" in captured["pose"]["manifest"]
     assert "EXAMPLE REFERENCE as art direction" in captured["all"]["prompt"]
-    assert "Do not transfer any background, lighting, color grade" in captured["pose"]["prompt"]
+    assert "POSE-ONLY RETARGETING" not in captured["pose"]["prompt"]
     assert "EXAMPLE REFERENCE as art direction" not in captured["pose"]["prompt"]
-    assert len(captured["named"]["images"]) == 2
-    assert "POSE CONTROL" in captured["named"]["manifest"]
-    assert "Pose: walk" not in captured["named"]["prompt"]
+    assert "named" not in captured  # 동일한 완성 예시 컷은 중복 과금 없이 재사용한다.
     for block_id in ("mismatch", "unpublished"):
         assert len(captured[block_id]["images"]) == 1
         assert captured[block_id]["cut_spec"]["exampleId"] is None
         assert "EXAMPLE REFERENCE" not in captured[block_id]["manifest"]
         assert "Composition nuance" not in captured[block_id]["prompt"]
     assert "failure" not in captured
-    assert captured["success"]["metadata"]["partial"]["failedCuts"] == [
-        {"blockId": "direction-mismatch", "reason": "pose_direction_incompatible", "retryable": True}]
+    assert "partial" not in captured["success"]["metadata"]
     assert captured["success"]["charge"] == 5
-    assert "direction-mismatch" not in captured  # preflight에서 빈 슬롯, 생성 호출 0회
+    assert captured["direction-mismatch"]["images"][-1].data.endswith(b":all")
 
 
 def test_run_detail_page_job_attaches_set_plate_and_set_or_flat_pose(monkeypatch):
     captured = {"loads": [], "flatLoads": [], "cuts": {}}
+    monkeypatch.setattr(dpj.confirmed_gpt_runtime, "profile_requested", lambda _spec: False)
     group_id = "ssg1__set-cafe-01__instance-01"
     storyboard = [
         {
@@ -2362,9 +2286,7 @@ def test_run_detail_page_job_attaches_set_plate_and_set_or_flat_pose(monkeypatch
     def fake_resolve_example(block, *, clothing_type, gender, scope):
         assert block["exampleId"] in ("ss_drag_pose", "ss_all_example")
         assert clothing_type == "top" and gender == "women"
-        expected_scope = (
-            "pose" if block["exampleId"] == "ss_drag_pose" else "all"
-        )
+        expected_scope = "all"
         assert scope == expected_scope
         return {
             "source": "space-set",
@@ -2442,7 +2364,7 @@ def test_run_detail_page_job_attaches_set_plate_and_set_or_flat_pose(monkeypatch
     assert captured["loads"] == [
         ("plate", "대표 배경"),
         ("pose-1", "포즈"),
-        ("pose-drag", "포즈"),
+        ("all-example", "전체 예시"),
         ("all-example", "전체 예시"),
     ]
     assert captured["flatLoads"] == [
@@ -2457,14 +2379,14 @@ def test_run_detail_page_job_attaches_set_plate_and_set_or_flat_pose(monkeypatch
     ]
     assert captured["cuts"]["set-1"]["images"][-2:] == [b"plate", b"pose-1"]
     assert captured["cuts"]["set-2"]["images"][-2:] == [b"plate", b"flat-pose"]
-    assert captured["cuts"]["dragged-out"]["images"][-1:] == [b"pose-drag"]
+    assert captured["cuts"]["dragged-out"]["images"][-1:] == [b"all-example"]
     assert captured["cuts"]["standalone-all"]["images"][-1:] == [
         b"all-example"
     ]
     for block_id, item in captured["cuts"].items():
         assert "EXAMPLE REFERENCE (scope: bg)" not in item["manifest"]
         assert "pose" not in item["cutSpec"]
-        expected_scope = "all" if block_id == "standalone-all" else "pose"
+        expected_scope = "all" if block_id in ("standalone-all", "dragged-out") else "pose"
         assert item["cutSpec"]["refScope"] == expected_scope
         if expected_scope == "pose":
             assert "POSE CONTROL" in item["manifest"]

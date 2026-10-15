@@ -277,11 +277,11 @@ def test_pose_medium_prompt_keeps_requested_crop_authoritative():
     ]}]}
     pose_manifest = cg.build_manifest(
         [{"slot": "Front"}], has_mannequin=False, has_match=False,
-        mood_count=0, example_scope="pose",
+        mood_count=0, example_scope="pose", has_space_set_plate=True,
     )
 
     pose_prompt = cg.build_prompt(
-        {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "pose"},
+        {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "pose", "spaceGroupId": "ssg1__set__instance", "exampleId": "ss_member"},
         product, manifest=pose_manifest,
     )
     all_prompt = cg.build_prompt(
@@ -295,59 +295,6 @@ def test_pose_medium_prompt_keeps_requested_crop_authoritative():
     assert "medium framing:" in all_prompt
 
 
-def test_generate_applies_medium_crop_only_to_bottom_pose_scope(monkeypatch):
-    calls = []
-
-    class FakeGemini:
-        async def generate_content_image(self, model, prompt, images, image_size, aspect_ratio):
-            return SimpleNamespace(image=b"FULL", mime="image/png")
-
-    async def fake_crop(settings, image, mime, clothing_type):
-        calls.append((image, mime, clothing_type))
-        return b"CROPPED", mime
-
-    monkeypatch.setattr(cg.pose_crop, "crop_pose_medium", fake_crop)
-    settings = make_settings(gemini_api_key="x")
-    product = {"name": "바지", "clothingType": "bottom", "colors": []}
-    pose_manifest = cg.build_manifest(
-        [], has_mannequin=False, has_match=False, mood_count=0, example_scope="pose"
-    )
-
-    pose_result = asyncio.run(cg.generate(
-        settings, FakeGemini(),
-        {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "pose"},
-        product, [], manifest=pose_manifest,
-    ))
-    top_pose_result = asyncio.run(cg.generate(
-        settings, FakeGemini(),
-        {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "pose"},
-        {**product, "clothingType": "top"}, [], manifest=pose_manifest,
-    ))
-    all_result = asyncio.run(cg.generate(
-        settings, FakeGemini(),
-        {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "all"},
-        product, [],
-    ))
-    bg_manifest = cg.build_manifest(
-        [], has_mannequin=False, has_match=False, mood_count=0, example_scope="bg"
-    )
-    bg_result = asyncio.run(cg.generate(
-        settings, FakeGemini(),
-        {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "bg"},
-        product, [], manifest=bg_manifest,
-    ))
-    pose_full_result = asyncio.run(cg.generate(
-        settings, FakeGemini(),
-        {"cutType": "styling", "direction": "front", "shot": "full", "refScope": "pose"},
-        product, [], manifest=pose_manifest,
-    ))
-
-    assert pose_result == (b"CROPPED", "image/png")
-    assert top_pose_result == (b"FULL", "image/png")
-    assert all_result == (b"FULL", "image/png")
-    assert bg_result == (b"FULL", "image/png")
-    assert pose_full_result == (b"FULL", "image/png")
-    assert calls == [(b"FULL", "image/png", "bottom")]
 
 
 def test_all_scope_ignores_retired_pose_and_uses_resolved_direction():
@@ -435,7 +382,7 @@ def test_repeated_horizon_all_example_second_color_adds_micro_pose():
         ({
             "cutType": "horizon", "direction": "front", "shot": "full",
             "pose": "auto", "refScope": "pose", "exampleId": "same-example",
-            "_exampleRepeatIndex": 1,
+            "spaceGroupId": "ssg1__set__instance", "_exampleRepeatIndex": 1,
         }, {"example_scope": "pose"}),
         ({
             "cutType": "product", "direction": "front", "shot": "ghost",
@@ -623,7 +570,6 @@ def test_space_set_medium_is_independent_camera_result_not_full_crop(monkeypatch
         calls.append((image, mime))
         return b"CROPPED", mime
 
-    monkeypatch.setattr(cg.pose_crop, "crop_pose_medium", fake_crop)
     settings = make_settings(gemini_api_key="x")
     manifest = cg.build_manifest(
         [],
@@ -828,7 +774,6 @@ def test_confirmed_gpt_direction_sheet_resolution_rejects_unsealed_assets(
         {"example_scope": "all", "example_is_product": True},
         {"example_scope": "pose"},
         {"example_scope": "pose", "has_space_set_plate": True},
-        {"example_scope": "bg"},
     ],
 )
 def test_generation_examples_have_zero_face_and_body_authority(manifest_kwargs):

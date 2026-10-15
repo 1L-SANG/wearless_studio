@@ -78,7 +78,7 @@
 - **서버 레지스트리** `server/app/data/example_assets.json` v2: `assets[id] = { all, pose?, bg?, applicableClothingTypes, cutType, shot, gender, direction }` (URL = baseUrl+key). 기존 `load_example_asset_registry()` 스키마의 상위 호환 확장 — 서버는 §5 규칙(적용 의류 검증, 미발행 범위 첨부 생략, spaceGroup은 pose 강제)을 정본으로 검증하고, pose 범위는 예시의 관찰 `direction`과 카드 레시피 방향의 사전 호환 게이트를 통과해야 한다.
 - **프론트 카탈로그** `catalogs.genExamples`: `{ id, thumb, cutType, gender, direction, clothingType(=source), applicableClothingTypes, shot, mood, rank, variants: ["all","pose","bg"] }` — 제품의 `gender=null`은 성별 공용으로 필터링하고, 갤러리는 현재 상품·조건으로 필터링, rank 순 최대 6장, 범위 버튼은 발행 variant와 pose 방향 호환 여부에 따라 활성화한다.
 - **공개 조합표** `data/genexamples_public_combinations.json`: 오너가 직접 확장하는 서비스 공개 범위. 릴리스 커버리지, CI, 프론트 옵션 게이트가 같은 파일을 소비한다.
-- 파일럿 범위: **pose·bg는 발행된 항목에만 variants가 존재** → UI는 해당 항목에서만 포즈만·배경만 버튼을 활성화한다. `variants`는 항목별 사용 가능 여부이고, 전역 공개·긴급 롤백은 별도 운영 게이트가 담당한다. 2026-07-21 production 공개부터 프론트 `VITE_GENEXAMPLE_BG_ENABLED`와 서버 `GENEXAMPLE_BG_ENABLED`를 함께 사용하며, 이는 ADR-0009가 과거의 “별도 플래그 불필요” 결정을 대체한 것이다.
+- 일반 선택 화면에는 완성 생성예시만 제공한다. `pose`는 스타일링 장소 세트 전용 내부 자산이며 필요한 세트에만 발행한다. 과거 배경 전용 자산은 실행에 사용하지 않고 기존 파일은 보존한다. 참고 범위 공개 플래그는 사용하지 않는다.
 
 ## 4. 확인된 현황 (0단계 조사, 2026-07-19)
 

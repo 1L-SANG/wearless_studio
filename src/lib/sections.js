@@ -1,4 +1,5 @@
 import { inheritSimilarCutRecipes } from './storyboardSimilarCuts.js';
+import { referenceScopeForBlock } from './referenceMode.js';
 /* =============================================================
    lib/sections — 콘티보드 섹션 파생 유틸 (2026-07 역할 중심 개편)
    섹션은 별도 엔티티가 아니라 블록 필드(sectionId/Title/Layout)의
@@ -67,6 +68,8 @@ export function ensureSections(blocks, { hasDetailImage = null } = {}) {
       b.baseThumb = null;
     }
     b.taxonomyVersion = STORYBOARD_TAXONOMY_VERSION;
+    if (Object.hasOwn(b, 'refScope') || Object.hasOwn(b, 'ref_scope') || b.spaceGroupId) b.refScope = referenceScopeForBlock(b);
+    delete b.ref_scope;
     b.title = b.source === 'mine' ? '내 이미지' : contentTitle(b.contentRole);
     // EditorBlock의 kind=sectionRole 동치 외의 kind 토큰은 v3에 속하지 않는다.
     if (!isSectionRole(b.kind)) delete b.kind;
@@ -320,7 +323,14 @@ export function normalizeSectionLayouts(blocks) {
 }
 
 /* normalizeBoard — 구조 변경 후 공통 위생 절차 (행 위생 + 레이아웃 배타 규칙) */
-export const normalizeBoard = (blocks) => normalizeSectionLayouts(normalizeRows(assignInternalContentRoles(blocks)));
+export const normalizeBoard = (blocks) => normalizeSectionLayouts(normalizeRows(assignInternalContentRoles(blocks).map((block) => {
+  if (!block || block.source === 'mine') return block;
+  if (!Object.hasOwn(block, 'refScope') && !Object.hasOwn(block, 'ref_scope') && !block.spaceGroupId) return block;
+  const scope = referenceScopeForBlock(block);
+  if (block.refScope === scope && !Object.hasOwn(block, 'ref_scope')) return block;
+  const { ref_scope: _retired, ...rest } = block;
+  return { ...rest, refScope: scope };
+})));
 
 /* ---- 섹션 레이아웃 행 크기 — 보드 행 모델과 mock 조립기가 공유하는 단일 소스 ---- */
 /* 한 묶음(=에디터에서 블록 하나)에 들어가는 컷 수. grid2x2 는 2열×2행이라 4컷이 한 묶음이다 —

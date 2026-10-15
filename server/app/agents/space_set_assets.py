@@ -433,33 +433,6 @@ def _resolve_pose_reference(
     )
 
 
-def resolve_published_pose_reference(
-    block: dict, *, clothing_type: str, gender: str
-) -> dict:
-    """Resolve one pose without granting a location plate.
-
-    This is used when a seller drags a member out of a production set: the
-    published pose may remain selected, while the block no longer inherits the
-    set's representative background.
-    """
-
-    try:
-        _base_url, registry = load_space_set_registry()
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
-        raise SpaceSetBindingError(
-            "space_set_registry_unavailable",
-            "공간 세트 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
-        ) from exc
-    reference, _flat_assets = _resolve_pose_reference(
-        block,
-        clothing_type=clothing_type,
-        gender=gender,
-        registry=registry,
-        flat_assets=None,
-    )
-    return reference
-
-
 def _resolve_horizon_reference(block, *, clothing_type, gender, registry, flat_assets):
     example_id = block.get("exampleId") or block.get("example_id")
     if not _is_safe_id(example_id):
@@ -498,15 +471,14 @@ def resolve_published_example_reference(
 ) -> dict:
     """Resolve one released set member as an ordinary generation example.
 
-    A member selected outside a production ``spaceGroupId`` may contribute its
-    complete image (``all``) or transparent pose (``pose``).  It never grants
-    the set's representative plate, and ``bg`` is deliberately unavailable.
+    A member selected outside a production ``spaceGroupId`` contributes its
+    complete photograph only. The shared scene and pose inputs belong to series binding.
     """
 
-    if scope not in ("all", "pose"):
+    if scope != "all":
         raise SpaceSetBindingError(
             "space_set_example_scope_invalid",
-            "공간 세트의 개별 사진은 전부 참고 또는 포즈만 참고할 수 있어요.",
+            "개별 생성예시는 완성 사진으로 참고해요.",
         )
     example_id = block.get("exampleId") or block.get("example_id")
     if not _is_safe_id(example_id, prefix="ss_"):
@@ -538,19 +510,8 @@ def resolve_published_example_reference(
         )
     compatible = (
         member.get("cutType") == block.get("cutType")
-        and (
-            scope == "all"
-            or member.get("direction") == block.get("direction")
-        )
         and member.get("gender") == gender
-        and clothing_type in (
-            (
-                parent_set.get("setApplicableClothingTypes")
-                if scope == "pose"
-                else member.get("applicableClothingTypes")
-            )
-            or []
-        )
+        and clothing_type in (member.get("applicableClothingTypes") or [])
     )
     if not compatible:
         raise SpaceSetBindingError(

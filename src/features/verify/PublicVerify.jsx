@@ -44,7 +44,7 @@ export function PublicVerify() {
       setData(await verifyLicensePublic(licenseId));
       setPhase('ok');
     } catch (e) {
-      setMessage(e.message);
+      setMessage(e.status ? e.message : '인터넷 연결을 확인하고 다시 시도해 주세요.');
       setPhase(e.status === 404 ? 'notfound' : 'error');
     }
   }, [licenseId]);

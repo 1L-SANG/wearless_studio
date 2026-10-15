@@ -37,7 +37,7 @@ export function PublicVerifyPublication() {
       setData(await verifyPublicationPublic(publicationId));
       setPhase('ok');
     } catch (e) {
-      setMessage(e.message);
+      setMessage(e.status ? e.message : '인터넷 연결을 확인하고 다시 시도해 주세요.');
       setPhase(e.status === 404 ? 'notfound' : 'error');
     }
   }, [publicationId]);

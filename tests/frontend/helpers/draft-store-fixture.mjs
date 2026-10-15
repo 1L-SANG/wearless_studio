@@ -5,6 +5,7 @@ import { draftSlot } from '../../../src/lib/draftSlot.js';
 export function draftStoreFixture(t, initialDraft = null) {
   let saved = initialDraft;
   let writesPaused = false;
+  let writeError = null;
   const waitingWrites = [];
   const writes = [];
   const cleanup = [];
@@ -30,13 +31,14 @@ export function draftStoreFixture(t, initialDraft = null) {
                 return result;
               },
               put(value) {
+                if (writeError) throw writeError;
                 finishWrite = () => { saved = value; writes.push(value); tx.oncomplete(); };
                 return {};
               },
               delete() { finishWrite = () => { saved = null; tx.oncomplete(); }; return {}; },
             }) };
             queueMicrotask(() => queueMicrotask(() => {
-              if (!finishWrite) tx.oncomplete();
+              if (!finishWrite) tx.oncomplete?.();
               else if (writesPaused) waitingWrites.push(finishWrite);
               else finishWrite();
             }));
@@ -62,7 +64,7 @@ export function draftStoreFixture(t, initialDraft = null) {
     }
   });
   return { writes, onCleanup(run) { cleanup.push(run); }, get saved() { return saved; }, get waitingWrites() { return waitingWrites.length; },
-    pauseWrites() { writesPaused = true; }, releaseWrites };
+    failWrites(error) { writeError = error; }, pauseWrites() { writesPaused = true; }, releaseWrites };
 }
 
 export const drainDraftTasks = async () => { for (let i = 0; i < 12; i += 1) await new Promise(setImmediate); };

@@ -271,7 +271,6 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
   const [model, setModel] = useState(initialModel?.id || 'mA');
   const [refImages, setRefImages] = useState([]);       // 내 레퍼런스 — NewCutRequest.refImages (계약 §6)
   const [exampleId, setExampleId] = useState(null);     // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
-  const [refScope, setRefScope] = useState('all');
   const [outerClosure, setOuterClosure] = useState('open');
   const [matchIds, setMatchIds] = useState([]);
   const [matchOpen, setMatchOpen] = useState(false);
@@ -355,13 +354,12 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
       const patch = productSourceColorPatch({ cutType: value, shot: nextShot, direction: 'front' }, product, nextColorId);
       setProductDirection(patch.direction || 'front');
     }
-    setExampleId(null); setRefScope('all');
+    setExampleId(null);
     resetRecipeSettings();
   };
   const selectExample = (value) => {
     const replacing = !!exampleId && !!value && exampleId !== value;
     setExampleId(value);
-    if (!value) setRefScope('all');
     if (replacing) resetRecipeSettings();
   };
   // 브랜드 유형은 실제 모델을 쓰는 모든 컷에서 필요하다(컷 종류 무관, 2026-09-11 사용자 결정).
@@ -407,14 +405,13 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
         direction={galleryDirectionVal} sideStyle={directionSpec.sideStyle} shot={galleryShotVal}
         shotOptions={galleryIsProduct ? galleryShotOptions : null}
         onShotChange={(v) => {
-          setShot(v); setExampleId(null); setRefScope('all'); setDetailTargetId(null);
+          setShot(v); setExampleId(null); setDetailTargetId(null);
           if (galleryIsProduct) {
             const patch = productSourceColorPatch({ cutType: galleryCutType, shot: v, direction: directionSpec.direction }, product, colorVal);
             setProductDirection(patch.direction || directionSpec.direction);
           }
         }} clothingType={clothingType} gender={modelGender}
         exampleId={exampleId} onExampleChange={selectExample}
-        refScope={refScope} onRefScopeChange={setRefScope}
         refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
       {isProduct && !isDetail && <ProductSourcePicker block={{ ...effectiveRecipe, colorId: colorVal }} product={product}
         catalogs={catalogs} onChange={({ direction }) => setProductDirection(direction)} />}
@@ -473,7 +470,7 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
             /* 이름을 사진 위에 얹는다(분석 화면과 동일) — 2026-08-17 가상모델이 5→14명이
                되면서 라벨 없는 썸네일만으로는 특정 모델을 고를 수 없게 됐다. */
             <div key={m.id} className={`model-card ai-model img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }}
-              title={m.name} onClick={() => { setModel(m.id); setExampleId(null); setRefScope('all'); }}>
+              title={m.name} onClick={() => { setModel(m.id); setExampleId(null); }}>
               <img src={m.thumb} alt={m.name} style={{ height: 104 }} />
               <span className="ai-name">{m.name}</span>
             </div>
@@ -489,7 +486,7 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
         // 화면 값이 아니라 **컷 스펙**을 보낸다 — 'threeQuarter' 는 서버가 모르는 값이다.
         direction: directionSpec.direction,
         sideStyle: directionSpec.sideStyle,
-        shot: effectiveShotVal, modelId: model, exampleId, refScope,
+        shot: effectiveShotVal, modelId: model, exampleId, refScope: 'all',
         ...(isDetail ? { detailTargetId, detailTargetOrigin: 'user' } : {}),
         outerClosureState: showOuterClosure ? outerClosure : null,
         matchIds: isProduct ? [] : matchIds,

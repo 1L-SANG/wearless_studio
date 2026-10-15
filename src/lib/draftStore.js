@@ -14,6 +14,7 @@ import { normalizeAnalysisFit } from './fitAxes.js';
 import { isUploadablePhotoMime } from './imageTranscode.js';
 import { fetchPhotoBytes, isRemoteAssetPhoto } from './photoBytes.js';
 import { draftSlot } from './draftSlot.js';
+import { clearMobileGuestSave, getMobileGuestDraftOwner, clearMobileGuestDraftOwner } from './mobileGuestSave.js';
 
 const DB_NAME = 'wearless-draft';
 const DB_VERSION = 1;
@@ -180,7 +181,7 @@ export async function saveProductDraft(product, analysis = null, composeMode = '
   if (!current()) return null;
   // 이 탭 세션에 '미동기화 입력 있음' 표시 — 복원은 이 플래그가 있을 때만(=같은 세션) 한다.
   // sessionStorage 라 탭을 닫으면 사라져, 공용 브라우저의 다른 사용자에겐 복원되지 않는다.
-  sessionStorage.setItem(PENDING_KEY, '1');
+  try { sessionStorage.setItem(PENDING_KEY, '1'); } catch { /* 저장소 차단 */ }
   return { saved: photos.length, failed, failedIds, ...(failures ? { failures } : {}) }; // 호출측이 일부 누락을 사용자에게 알릴 수 있게.
 }
 
@@ -226,7 +227,7 @@ export function queueProductDraftSave(
   pendingSnapshot = { product, analysis, composeMode, updatedAt,
     userId: draftSlot.getUserId(), identityEpoch: draftSlot.getIdentityEpoch() };
   clearTimeout(pendingTimer);
-  pendingTimer = setTimeout(commitPendingSnapshot, DRAFT_DEBOUNCE_MS);
+  pendingTimer = setTimeout(() => { void commitPendingSnapshot().catch(() => null); }, DRAFT_DEBOUNCE_MS);
 }
 
 /** OAuth 이동처럼 페이지가 사라지기 전, 예약·진행 중 저장을 모두 기다린다. */
@@ -259,10 +260,25 @@ export async function loadDraft() {
   const draft = await withStore('readonly', (s) => s.get(KEY));
   if (userId !== draftSlot.getUserId() || identityEpoch !== draftSlot.getIdentityEpoch()) return null;
   // 다른 도메인에서 로그인한 뒤 부트스트랩해도, 이 오리진에 남은 이전 계정 입력은 복원하지 않는다.
-  if (draft?.ownerUserId && draft.ownerUserId !== draftSlot.getUserId()) return null;
   if (draft && !Object.hasOwn(draft, 'ownerUserId') && sessionStorage.getItem(PENDING_KEY) === LEGACY_BLOCKED) return null;
+  const ownerUserId = draft?.ownerUserId || (draft?.ownerUserId === null ? getMobileGuestDraftOwner(draft.updatedAt) : null);
+  if (ownerUserId && ownerUserId !== userId) return null;
+  if (draft?.ownerUserId === null && ownerUserId) {
+    // Blob 재저장이 막혀도 별도 첫 귀속 기록으로 다른 계정의 복원을 막는다.
+    saveChain = saveChain.catch(() => null).then(() => withStore('readwrite', (store) => {
+      const request = store.get(KEY);
+      request.onsuccess = () => {
+        const current = request.result;
+        if (current?.updatedAt === draft.updatedAt && current.ownerUserId === null) {
+          try { store.put({ ...current, ownerUserId }, KEY); } catch { /* 별도 귀속 기록 유지 */ }
+        }
+      };
+    }));
+    void saveChain.catch(() => null);
+  }
   return draft ? {
     ...draft,
+    ...(ownerUserId ? { ownerUserId } : {}),
     analysis: normalizeAnalysisFit(draft.analysis),
     composeMode: draft.composeMode === 'extended' ? 'extended' : 'basic',
   } : null;
@@ -271,6 +287,7 @@ export async function loadDraft() {
 /** draft 삭제 — sync 성공 후 정리. */
 export async function clearDraft({ ownerUserId } = {}) {
   discardPendingDraftSave();
+  clearMobileGuestSave();
   await saveChain.catch(() => null);
   let clearPending = false;
   let blockLegacy = false;
@@ -279,7 +296,9 @@ export async function clearDraft({ ownerUserId } = {}) {
     // 계정 전환 정리는 이전 계정 것만 지운다. 다른 탭의 새 저장과 대조·삭제를 한 트랜잭션에 둔다.
     const request = store.get(KEY);
     request.onsuccess = () => {
-      if (!request.result || (ownerUserId && request.result.ownerUserId === ownerUserId)) {
+      const draft = request.result;
+      const storedOwner = draft?.ownerUserId || (draft?.ownerUserId === null ? getMobileGuestDraftOwner(draft.updatedAt) : null);
+      if (!draft || (ownerUserId && storedOwner === ownerUserId)) {
         store.delete(KEY);
         clearPending = true;
       } else if (ownerUserId && !Object.hasOwn(request.result, 'ownerUserId')) {
@@ -288,8 +307,11 @@ export async function clearDraft({ ownerUserId } = {}) {
       }
     };
   });
-  if (blockLegacy) sessionStorage.setItem(PENDING_KEY, LEGACY_BLOCKED);
-  else if (clearPending) sessionStorage.removeItem(PENDING_KEY);
+  if (clearPending) clearMobileGuestDraftOwner();
+  try {
+    if (blockLegacy) sessionStorage.setItem(PENDING_KEY, LEGACY_BLOCKED);
+    else if (clearPending) sessionStorage.removeItem(PENDING_KEY);
+  } catch { /* 저장소 차단 */ }
 }
 
 /** 오래 걸린 승격이 끝나는 사이 새 draft가 저장됐으면 그 새 작업은 지우지 않는다. */
@@ -313,7 +335,7 @@ export async function clearDraftIfCurrent(expectedUpdatedAt, {
 
 /** 이 탭 세션에 미동기화 draft 가 있는지 — 복원 게이팅용. */
 export function hasPendingDraft() {
-  return sessionStorage.getItem(PENDING_KEY) === '1';
+  try { return sessionStorage.getItem(PENDING_KEY) === '1'; } catch { return false; }
 }
 
 /** 사진을 다시 읽지 않고 특징 실행 체크포인트만 같은 로컬 저장 큐에 기록한다. */

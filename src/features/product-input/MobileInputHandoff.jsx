@@ -33,11 +33,11 @@ export function useMobileInputSave(product, initialSavedMeta) {
       clearTimeout(attempt.timer);
     }
   };
-  const save = (snapshot) => {
+  const save = (snapshot, { autoRetry = true } = {}) => {
     recordClientAction('save');
     if (active.current?.status === 'saving') return;
     clearTimeout(active.current?.timer);
-    const attempt = { snapshot, status: 'saving', inFlight: false };
+    const attempt = { snapshot, status: 'saving', inFlight: false, autoRetry };
     active.current = attempt;
     setResult({ status: 'saving' });
     // 안내만 실패로 바꾼다. 사진 재시도와 늦은 최종 저장 응답은 계속 기다린다.
@@ -47,13 +47,14 @@ export function useMobileInputSave(product, initialSavedMeta) {
   useEffect(() => {
     const unsubscribe = draftSlot.onPhotosPending((pending) => {
       const attempt = active.current;
-      if (pending || attempt?.status !== 'failed' || attempt.inFlight) return;
+      if (pending || attempt?.status !== 'failed' || attempt.inFlight || !attempt.autoRetry) return;
       // 사진 완료 신호만으로 성공을 알리지 않고 최신 스냅샷의 PUT 성공을 확인한다.
       void sync(attempt);
     });
     const onVisible = () => {
       const attempt = active.current;
       if (document.visibilityState !== 'visible' || !['saving', 'failed'].includes(attempt?.status)) return;
+      if (attempt.status === 'failed' && !attempt.autoRetry) return;
       void draftSlot.checkOwnership().catch(() => {});
       draftSlot.retryFailedUploads();
       if (attempt.status === 'failed') void sync(attempt);
