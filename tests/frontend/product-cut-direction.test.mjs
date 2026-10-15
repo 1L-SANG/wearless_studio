@@ -7,11 +7,12 @@ import { assignGenerationExamples } from '../../src/lib/generationExamples.js';
 import { directionSpecFromExample, generationExampleSelectionPatch } from '../../src/lib/storyboardExampleSelection.js';
 import { isProductDetail, preserveDetailTargetBinding } from '../../src/lib/detailRecommendations.js';
 import * as taxonomy from '../../src/lib/storyboardTaxonomy.js';
+import { referenceScopeForBlock } from '../../src/lib/referenceMode.js';
 
 const board = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
 const feedbackBody = board.slice(board.indexOf('function referenceFeedbackPatch('), board.indexOf('\nconst CARD_DRAG_THRESHOLD'));
-const feedback = new Function('preserveDetailTargetBinding', 'isProductDetail', 'directionSpecFromExample', 'exampleThumbFor',
-  `${feedbackBody}; return referenceFeedbackPatch;`)(preserveDetailTargetBinding, isProductDetail, directionSpecFromExample, (_catalog, id) => `thumb:${id}`);
+const feedback = new Function('preserveDetailTargetBinding', 'isProductDetail', 'directionSpecFromExample', 'exampleThumbFor', 'referenceScopeForBlock',
+  `${feedbackBody}; return referenceFeedbackPatch;`)(preserveDetailTargetBinding, isProductDetail, directionSpecFromExample, (_catalog, id) => `thumb:${id}`, referenceScopeForBlock);
 const example = (shot = 'ghost') => ({ id: `example-${shot}`, cutType: 'product', shot, direction: 'front',
   thumb: '/example.jpg', variants: ['all'], applicableClothingTypes: ['top'], gender: null, rank: 1 });
 const catalogs = { genExamples: [example(), example('detail')] };

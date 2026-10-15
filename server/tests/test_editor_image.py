@@ -877,20 +877,10 @@ def test_run_editor_image_job_new_uses_standalone_set_member(
     )
     asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
-    assert captured["loads"] == [
-        (
-            f"{scope}-asset",
-            "전체 예시" if scope == "all" else "포즈",
-        )
-    ]
-    assert captured["images"][-1] == f"{scope}-asset".encode()
-    if scope == "all":
-        assert "EXAMPLE REFERENCE (scope: all)" in captured["manifest"]
-        assert "source ONLY of scene, lighting, capture tone" in captured["manifest"]
-        assert captured["cut_spec"]["_referenceDirectionCompatible"] is False
-    else:
-        assert "POSE CONTROL" in captured["manifest"]
-    assert captured["cut_spec"]["refScope"] == scope
+    assert captured["loads"] == [("all-asset", "전체 예시")]
+    assert captured["images"][-1] == b"all-asset"
+    assert "EXAMPLE REFERENCE (scope: all)" in captured["manifest"]
+    assert captured["cut_spec"]["refScope"] == "all"
 
 
 @pytest.mark.parametrize(
@@ -956,64 +946,10 @@ def test_run_editor_image_job_skips_unusable_example_with_metadata_warning(
         "code": warning_code,
         "exampleId": "ex_unusable",
         "clothingType": "bottom",
-        "refScope": scope,
+        "refScope": "all",
     }]
 
 
-def test_run_editor_image_job_rejects_pose_direction_before_generation(monkeypatch):
-    calls = {"load": 0, "generate": 0}
-    failed = {}
-
-    async def fake_get_product(conn, pid):
-        return {"clothingType": "top", "colors": [{
-            "id": "col1", "isBase": True,
-            "images": [{"slot": "Front", "id": "a1"}],
-        }]}
-
-    async def fake_get_analysis(conn, pid):
-        return {}
-
-    async def fake_get_asset(conn, uid, aid):
-        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
-
-    async def fake_example(*_args, **_kwargs):
-        calls["load"] += 1
-        return eij.InlineImage("image/png", b"POSE")
-
-    async def fake_generate(*_args, **_kwargs):
-        calls["generate"] += 1
-        return b"IMG", "image/png"
-
-    async def fake_finalize_failure(conn, **kw):
-        failed.update(kw)
-        return True
-
-    async def fake_emit(*_args, **_kwargs):
-        return None
-
-    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
-    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
-    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
-    monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_args: "available")
-    monkeypatch.setattr(eij.cut_generator, "pose_direction_compatible", lambda *_args: False)
-    monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example)
-    monkeypatch.setattr(eij.cut_generator, "generate", fake_generate)
-    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_finalize_failure)
-    monkeypatch.setattr(eij, "_emit", fake_emit)
-
-    payload = {
-        "mode": "new", "colorId": "col1", "contentRole": "fit",
-        "direction": "front", "exampleId": "ex_back_pose", "refScope": "pose",
-    }
-    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
-    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
-
-    assert calls == {"load": 0, "generate": 0}
-    assert failed["metadata"] == {
-        "error": "pose_direction_incompatible",
-        "exampleId": "ex_back_pose",
-        "direction": "front",
-    }
 
 def test_run_editor_image_job_new_uses_selected_color_detail_assets(monkeypatch):
     captured = {"asset_ids": []}
@@ -1883,41 +1819,10 @@ def _bg_payload():
             "exampleId": "ex_bg", "refScope": "bg"}
 
 
-def test_bg_scene_qc_retries_then_passes(monkeypatch):
-    gen_calls, ok, fail = [], {}, {}
-    _bg_qc_setup(monkeypatch, gen_calls=gen_calls, finalize_ok=ok, finalize_fail=fail,
-                 verdicts=[{"verdict": "retry", "mismatches": ["cafe"], "correctionPrompt": None},
-                           {"verdict": "pass", "mismatches": [], "correctionPrompt": None}])
-    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
-    asyncio.run(eij.run_editor_image_job(app, worker_job(_bg_payload())))
-    assert len(gen_calls) == 2                      # 불일치 1회 → 재생성 1회
-    assert ok["metadata"]["sceneQc"] == {"attempts": 2}
-    assert not fail
 
 
-def test_bg_scene_qc_fails_closed_after_max_attempts(monkeypatch):
-    gen_calls, ok, fail = [], {}, {}
-    retry = {"verdict": "retry", "mismatches": ["different place"], "correctionPrompt": None}
-    _bg_qc_setup(monkeypatch, gen_calls=gen_calls, finalize_ok=ok, finalize_fail=fail,
-                 verdicts=[dict(retry), dict(retry), dict(retry)])
-    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
-    asyncio.run(eij.run_editor_image_job(app, worker_job(_bg_payload())))
-    assert len(gen_calls) == 3                      # 기본 상한 3회 시도
-    assert not ok
-    assert fail["metadata"]["error"] == "bg_scene_mismatch"
-    assert fail["metadata"]["attempts"] == 3
 
 
-def test_bg_scene_qc_unavailable_fails_open_with_warning(monkeypatch):
-    from app.agents.vision_llm import VisionError
-    gen_calls, ok, fail = [], {}, {}
-    _bg_qc_setup(monkeypatch, gen_calls=gen_calls, finalize_ok=ok, finalize_fail=fail,
-                 verdicts=[VisionError("judge down")])
-    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
-    asyncio.run(eij.run_editor_image_job(app, worker_job(_bg_payload())))
-    assert len(gen_calls) == 1                      # 판정 불능 = 통과(가용성 우선) + 경고
-    assert {"code": "scene_qc_unavailable"} in ok["metadata"]["warnings"]
-    assert not fail
 
 
 @pytest.mark.parametrize("scope", ["all", "pose", "bg"])
@@ -1930,14 +1835,13 @@ def test_selected_example_load_failure_fails_closed(monkeypatch, scope):
         return None
 
     monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example_none)
-    monkeypatch.setattr(eij.cut_generator, "pose_direction_compatible", lambda *_args: True)
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
     payload = {**_bg_payload(), "exampleId": f"ex_{scope}", "refScope": scope}
     asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
     assert not gen_calls                              # 생성 호출 자체가 없어야 한다
     assert not ok
     assert fail["metadata"]["error"] == "example_asset_unavailable"
-    assert fail["metadata"]["refScope"] == scope
+    assert fail["metadata"]["refScope"] == "all"
 
 
 def test_cut_variator_rejects_retired_cut_type_before_generation():

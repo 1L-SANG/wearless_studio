@@ -855,15 +855,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     if s.detail_cut_retry_delay_seconds > 0:
                         await asyncio.sleep(s.detail_cut_retry_delay_seconds)
             plate = space_set_plate
-            # bg 편집 컷은 첫 첨부, 공간 세트는 별도 전달된 대표 plate를 같은 장소 QC 기준으로 쓴다.
-            if (
-                plate is None
-                and b.get("refScope") == "bg"
-                and manifest.startswith("1. EXAMPLE REFERENCE (scope: bg)")
-            ):
-                plate = qc_images[0]
             # 장소일치 QC 게이트. 불일치면 재생성, 상한 초과면 해당 컷을 비운다(ADR-0017).
-            # 일반 bg 편집은 기존 fail-open, 발행 공간세트는 QC 불능도 fail-closed다.
+            # 발행 장소 세트는 QC 불능도 fail-closed다.
             if plate is not None:
                 attempt = 1
                 while True:
@@ -1570,22 +1563,11 @@ async def run_detail_page_job(app, job: dict) -> None:
         async with pool.connection() as conn:
             project = await repo.get_project(conn, user_id, project_id) or {}
             storyboard = await repo.get_storyboard(conn, project_id)
-            saved_directions = {str(block.get("id")): {
-                "direction": block.get("direction"),
-                "sideStyle": block.get("sideStyle") or block.get("side_style"),
+            saved_directions = {str(block.get('id')): {
+                'direction': block.get('direction'),
+                'sideStyle': block.get('sideStyle') or block.get('side_style'),
             } for block in storyboard if isinstance(block, dict)}
             loaded_storyboard_digest = _storyboard_digest(storyboard)
-            if not getattr(s, "genexample_bg_enabled", False) and any(
-                isinstance(block, dict)
-                and (block.get("refScope") or block.get("ref_scope")) == "bg"
-                and bool(block.get("exampleId") or block.get("example_id"))
-                and space_set_assets.parse_space_set_group_id(
-                    block.get("spaceGroupId") or block.get("space_group_id")
-                )
-                is None
-                for block in storyboard
-            ):
-                raise ValueError("genexample_bg_disabled")
             product = await repo.get_product(conn, project_id) or {}
             analysis = await repo.get_analysis(conn, project_id) or {}
             selected_mannequin_id = (
@@ -2135,18 +2117,12 @@ async def run_detail_page_job(app, job: dict) -> None:
                 cut_spec["modelId"] = eff_model_id
             try:
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
-                # Canonicalization already follows examples, so compare the saved card for the audit record.
-                direction_input = normalized
-                saved_direction = saved_directions.get(str(b.get("id")))
-                if (saved_direction is not None and normalized.get("cutType") in ("styling", "horizon")
-                        and normalized.get("refScope") == "pose" and not normalized.get("spaceGroupId")
-                        and not str(normalized.get("exampleId") or "").startswith("ss_")):
-                    direction_input = {**normalized, **saved_direction}
-                resolved_direction, direction_fallback = cut_generator.pose_direction_from_example(direction_input)
-                if direction_fallback is not None:
-                    normalized = resolved_direction
-                    cut_spec.update(direction=normalized["direction"], sideStyle=normalized["sideStyle"])
-                    cut_spec["_fallback"] = [direction_fallback]
+                direction_input = {**normalized, **saved_directions.get(str(b.get('id')), {})}
+                resolved, direction_fallback = cut_generator.example_direction_from_catalog(direction_input)
+                if direction_fallback:
+                    normalized = resolved
+                    cut_spec.update(direction=resolved['direction'], sideStyle=resolved['sideStyle'])
+                    cut_spec['_fallback'] = [direction_fallback]
             except ValueError:
                 normalized = None  # generate()가 블록 단위 실패로 처리하는 기존 경로 유지
             # 이 모델로 만들 수 없는 컷(콘티보드 범위 밖)은 **생성 전에** 건너뛴다.
@@ -2302,7 +2278,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 cut_spec = horizon_background.apply_runtime(cut_spec, horizon_palettes)
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
             imgs.extend(matching_images)
-            # 무드는 장면 자산보다 앞에 와야 하지만, all/bg/대표 plate가 장면·조명을 소유하면
+            # 무드는 장면 자산보다 앞에 와야 하지만, 완성 예시/대표 plate가 장면·조명을 소유하면
             # 아예 첨부하지 않는다. 예시를 해석한 뒤 이 위치에 필요한 경우에만 삽입한다.
             scene_suffix_start = len(imgs)
             example_scope = None
@@ -2419,19 +2395,6 @@ async def run_detail_page_job(app, job: dict) -> None:
                             # 이미지 미첨부만으로는 all 범위의 레거시 EXNUANCE 해시가 남는다.
                             # 부적합/미발행 예시가 텍스트로도 영향을 주지 않게 런타임 사본에서 해제한다.
                             cut_spec["exampleId"] = None
-                        elif scope == "pose" and not cut_generator.pose_direction_compatible(
-                            example_id, normalized
-                        ):
-                            # v2 preflight: 호환되지 않는 포즈는 이미지 모델 호출 전에 이 컷만
-                            # 빈 슬롯으로 닫는다. 배치의 다른 컷은 계속 생성한다.
-                            example_warnings.append({
-                                "code": "pose_direction_incompatible",
-                                "blockId": b.get("id"),
-                                "exampleId": example_id,
-                                "direction": normalized.get("direction"),
-                            })
-                            prepared.append(_skipped_cut(cut_spec, "pose_direction_incompatible"))
-                            continue
                         else:
                             # 캐시 키에 scope 포함 — pose는 누끼 variant, all은 원본이라 자산이 다르다
                             cache_key = f"{example_id}:{scope}"
@@ -2439,7 +2402,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                                 _example_cache[cache_key] = await cut_generator.load_example_image(
                                     s, example_id, scope=scope, clothing_type=clothing_type)
                             example_img = _example_cache[cache_key]
-                            if example_img is None and scope in ("all", "pose", "bg"):
+                            if example_img is None and scope in ("all", "pose"):
                                 # 사용자가 고른 예시 자산 로드 실패 — 무음 강등 대신 이 컷만 빈 슬롯
                                 # (ADR-0009 §2). all도 계속 생성하면 예시를 참고한 것처럼 보이면서
                                 # 무드 사진으로 장면이 바뀔 수 있으므로 pose/bg와 똑같이 닫는다.
@@ -2448,19 +2411,14 @@ async def run_detail_page_job(app, job: dict) -> None:
                                 prepared.append(_skipped_cut(cut_spec, "example_asset_unavailable"))
                                 continue
                             if example_img is not None:
-                                # bg 플레이트는 첫 첨부(에디터 경로와 동일) — 마지막 첨부는 컷 섹션의
-                                # 배경 나열에 밀려 무시된다(2026-07-20 파일럿 실측).
-                                if scope == "bg":
-                                    imgs.insert(0, example_img)
-                                else:
-                                    imgs.append(example_img)
+                                imgs.append(example_img)
                                 example_scope = scope
                                 service_example_image = example_img
             # 정식 공간 세트는 대표 plate가 없는 회전/호리존 세트도 자체 장면 계약을 가진다.
             # 저장 payload에 남은 수동 무드가 세트 컷 사이로 새지 않게 binding 자체를 장면
             # 소유권으로 본다. 대표 plate 유무는 배경 이미지 첨부 여부일 뿐 권한이 아니다.
             authoritative_scene = (
-                example_scope in ("all", "bg") or space_binding is not None
+                example_scope == "all" or space_binding is not None
             )
             attached_mood_count = 0
             if not authoritative_scene:
@@ -2836,8 +2794,6 @@ async def run_detail_page_job(app, job: dict) -> None:
                 if fm_message
                 else e.message
                 if is_space_set_error
-                else "배경만 생성예시는 현재 사용할 수 없어요. 콘티에서 해당 예시를 제거해 주세요."
-                if error == "genexample_bg_disabled"
                 else "상세페이지 생성에 실패했어요. 다시 시도해 주세요."
             ),
             {"error": error},
@@ -2846,8 +2802,6 @@ async def run_detail_page_job(app, job: dict) -> None:
                 if fm_code
                 else e.code
                 if is_space_set_error
-                else "genexample_bg_disabled"
-                if error == "genexample_bg_disabled"
                 else "generation_failed"
             ),
         )

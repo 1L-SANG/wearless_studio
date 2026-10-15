@@ -498,40 +498,6 @@ async def _remove_draft_slot(
     )
 
 
-def _require_bg_examples_enabled(request: Request, value) -> None:
-    """Fail before persistence/reservation while the bg-reference pilot is opt-in only."""
-    if getattr(request.app.state.settings, "genexample_bg_enabled", False):
-        return
-    items = value if isinstance(value, list) else [value]
-    is_storyboard = isinstance(value, list)
-    requested = False
-    for item in items:
-        if (
-            not isinstance(item, dict)
-            or (item.get("refScope") or item.get("ref_scope")) != "bg"
-            or not bool(item.get("exampleId") or item.get("example_id"))
-        ):
-            continue
-        if is_storyboard:
-            try:
-                if (
-                    space_set_assets.parse_space_set_group_id(
-                        item.get("spaceGroupId") or item.get("space_group_id")
-                    )
-                    is not None
-                ):
-                    continue
-            except space_set_assets.SpaceSetBindingError as exc:
-                raise _bad_request(exc.code, exc.message) from exc
-        requested = True
-        break
-    if requested:
-        raise _bad_request(
-            "genexample_bg_disabled",
-            "배경만 생성예시는 파일럿 검증 중이라 현재 사용할 수 없어요.",
-        )
-
-
 def _credit_error(e: "repo.CreditError") -> HTTPException:
     return HTTPException(status_code=e.status, detail={"code": e.code, "message": e.message})
 
@@ -3057,7 +3023,6 @@ async def get_storyboard(request: Request, project_id: str, user_id: str = Depen
 async def save_storyboard(request: Request, project_id: str, blocks: list = Body(...),
                           user_id: str = Depends(require_user),
                           base_revision: int | None = Query(None, alias="baseRevision", ge=0)):
-    _require_bg_examples_enabled(request, blocks)
     try:
         canonical = content_roles.canonicalize_storyboard(blocks, for_storage=True)
     except ValueError as exc:
@@ -3404,7 +3369,6 @@ async def generate_editor_image(
                        for key in ("blockId", "elementId"))):
             raise _bad_request("fill_slot_invalid", "이 칸을 찾지 못했어요.")
         body = {"mode": "fill", "slot": {key: slot[key] for key in ("blockId", "elementId")}}
-    _require_bg_examples_enabled(request, body)
     if (body or {}).get("mode") == "new" and (
         (body or {}).get("spaceGroupId") or (body or {}).get("space_group_id")
     ) and not ((body or {}).get("cutType") == "horizon" and (body or {}).get("spaceGroupId") and (body or {}).get("retryBlockId")):
@@ -3623,6 +3587,12 @@ async def generate_editor_image(
                     "licenseId": str(license_row["id"]),
                 }
         if payload.get("mode") == "new":
+            # Eligibility must see the same effective reference as the worker.
+            # Retired scope values cannot bypass complete-example model restrictions.
+            if "refScope" in payload or "ref_scope" in payload:
+                from .agents.reference_mode import reference_scope
+                payload["refScope"] = reference_scope(payload)
+                payload.pop("ref_scope", None)
             analysis = await repo.get_analysis(conn, project_id) or {}
             selected_model_id = payload.get("modelId") or payload.pop("model_id", None)
             payload.pop("model_id", None)
@@ -3841,7 +3811,6 @@ async def generate_detail_page(
             await facemarket.set_project_license(conn, project_id, license_row["id"])
         if storyboard is None:
             storyboard = await repo.get_storyboard(conn, project_id)
-        _require_bg_examples_enabled(request, storyboard)
         # 크레딧 견적은 실제 생성 수 기준 — 생성 계약이 완전히 같은 복제 컷은 1장만
         # 생성해 복사하므로(ADR-0011, _duplicate_source_indexes) 예약에서도 접는다.
         # 그대로 두면 복제가 많은 보드가 사전검사(402)에서 과도하게 거절된다(Codex 2차 #3).

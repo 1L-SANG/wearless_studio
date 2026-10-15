@@ -1,3 +1,4 @@
+import { referenceScopeForBlock } from '../../lib/referenceMode.js';
 import { createLateDetailCatalog } from './storyboardLateDetails.js';
 import { isAnalysisFastEntryEnabled } from '@/lib/analysisFastEntry.js';
 import { getActiveFeatureRun, isFeatureRunPending } from '@/lib/featureRun.js';
@@ -238,11 +239,8 @@ export function exampleGenderFromAnalysis(analysis, catalogs, clothingType) {
 function referenceFeedbackPatch(block, changes, catalogs) {
   if (!block) return changes;
   const exampleId = Object.prototype.hasOwnProperty.call(changes, 'exampleId') ? changes.exampleId : block.exampleId;
-  const refScope = Object.prototype.hasOwnProperty.call(changes, 'refScope') ? changes.refScope : (block.refScope || 'all');
-  // 호리존 묶음은 완성 예시, 스타일링 묶음은 포즈 전용 참조를 쓴다.
-  const spaceGroupId = Object.prototype.hasOwnProperty.call(changes, 'spaceGroupId') ? changes.spaceGroupId : block.spaceGroupId;
-  const effScope = spaceGroupId ? ((changes.cutType ?? block.cutType) === 'horizon' ? 'all' : 'pose') : refScope;
-  const next = { ...preserveDetailTargetBinding(block, changes) };
+  const effScope = referenceScopeForBlock({ ...block, ...changes });
+  const next = { ...preserveDetailTargetBinding(block, changes), refScope: effScope };
   if (isProductDetail({ ...block, ...changes })) return next;
   const example = (catalogs.genExamples || []).find((item) => item.id === exampleId);
   if ((changes.cutType ?? block.cutType) !== 'product' && example?.direction) {
@@ -1247,7 +1245,6 @@ export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, on
   ), [catalogs.genExamples, cut, galleryCut, shotVal, clothingType, gender, direction, sideStyle,
     identityKind, refScope]);
   const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
-  const moodOnly = (cut === 'styling' || cut === 'horizon') && !!direction && direction !== 'front';
   const conditionStatus = !exampleId ? null : storedExampleConditionStatus(selectedExample, {
     cutType: galleryCut, clothingType, gender,
   });
@@ -1336,17 +1333,13 @@ export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, on
       sideStyle,
     });
     const poseRequired = refScope === 'pose';
-    // 어떤 칸도 잠그지 않는다 — 포즈 자산이 없거나 방향이 달라도 '분위기(all)'로 고를 수 있다.
-    // (2026-09-22 오너: 회색으로 막아 두면 왜 못 고르는지 알 수 없고, 실제로는 눌리기도 했다.)
+    // pose는 장소 세트 내부 입력이다. 일반 선택은 완성 예시만 쓴다.
     const pick = (scope) => {
       if (!onExampleChange || !variants.includes(scope)) return;
       if (scope === 'pose' && !poseCompatible) return;
       onExampleChange(example.id, scope);
     };
-    const defaultScope = cut === 'product' || (moodOnly && !poseRequired) ? 'all'
-      : variants.includes(refScope || 'all')
-        && ((refScope || 'all') !== 'pose' || poseCompatible)
-        ? (refScope || 'all') : 'all';
+    const defaultScope = poseRequired && variants.includes('pose') && poseCompatible ? 'pose' : 'all';
     return (
       <button key={example.id} type="button"
         tabIndex={pageIndex === galleryPage ? 0 : -1}
@@ -1362,7 +1355,6 @@ export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, on
         onClick={() => pick(defaultScope)}>
         <ExampleThumb example={example} />
         {on && <span className="ck"><Icon name="check" size={11} /></span>}
-        {/* MVP 이후 재도입 — 포즈 탭 형태 검토. refScope 필드와 선택 기본값 로직은 유지한다. */}
       </button>
     );
   };

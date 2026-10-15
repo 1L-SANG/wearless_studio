@@ -87,9 +87,9 @@ def test_editor_worker_uses_cut_specific_settings_for_generation_calls():
         and node.func.value.id in {"cut_generator", "cut_variator"}
         and node.func.attr in {"generate", "vary"}
     ]
-    # 기존 이미지 변형, 새 컷 생성, 장소 재시도의 세 호출만 남는다.
+    # 기존 이미지 변형과 새 컷 생성 두 호출만 남는다.
     # 별도 모델을 쓰는 목선 후처리는 일반 생성 노브의 검사 대상이 아니다.
-    assert len(calls) == 3
+    assert len(calls) == 2
     for call in calls:
         assert isinstance(call.args[0], ast.Name)
         expected_settings = (

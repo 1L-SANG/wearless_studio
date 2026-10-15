@@ -500,7 +500,7 @@ def test_matching_checkpoint_uses_runtime_ids_fit_and_keeps_fallback_on_final_re
 @pytest.mark.parametrize("saved_direction", ["front", "back"])
 def test_checkpoint_restores_saved_pose_fallback_without_duplicate_current_records(monkeypatch, stage, saved_direction):
     monkeypatch.setattr(dpj.cut_generator, "load_example_asset_registry", lambda: (None, {
-        "pose": {"cutType": "horizon", "direction": "back", "pose": "pose.png"}}))
+        "pose": {"cutType": "horizon", "direction": "back", "all": "pose.png"}}))
     async def example(*args, **kwargs): return dpj.InlineImage("image/png", b"POSE")
     monkeypatch.setattr(dpj.cut_generator, "load_example_image", example)
     db, r2 = _IntentDB(), _R2()
@@ -525,7 +525,7 @@ def test_checkpoint_restores_saved_pose_fallback_without_duplicate_current_recor
 
 def test_example_back_direction_keeps_virtual_pair_without_face_exposure_prompt(monkeypatch):
     monkeypatch.setattr(dpj.cut_generator, "load_example_asset_registry", lambda: (None, {
-        "pose": {"cutType": "horizon", "direction": "back", "pose": "pose.png"}}))
+        "pose": {"cutType": "horizon", "direction": "back", "all": "pose.png"}}))
     monkeypatch.setattr(dpj.cut_generator, "load_virtual_model_registry", lambda: {"m-test": {"views": {
         "face_front": {"key": "k/model-face", "mime": "image/png"},
         "body_front": {"key": "k/model-body", "mime": "image/png"}}}})
@@ -557,7 +557,7 @@ def test_example_back_direction_keeps_virtual_pair_without_face_exposure_prompt(
 def test_pose_example_direction_precedes_profile_face_manifest_and_qc(monkeypatch, direction,
         side_style, example_direction, example_side, changed):
     registry = {"pose": {"cutType": "horizon", "direction": example_direction,
-                         "sideStyle": example_side, "pose": "pose.png", "all": "all.png"}}
+                         "sideStyle": example_side, "all": "all.png"}}
     monkeypatch.setattr(dpj.cut_generator, "load_example_asset_registry", lambda: (None, registry))
     async def example(*args, **kwargs): return dpj.InlineImage("image/png", b"POSE")
     monkeypatch.setattr(dpj.cut_generator, "load_example_image", example)
@@ -597,7 +597,7 @@ def test_pose_example_direction_precedes_profile_face_manifest_and_qc(monkeypatc
 
 def test_retired_mirror_stops_job_before_generation_and_releases_credits(monkeypatch):
     monkeypatch.setattr(dpj.cut_generator, "load_example_asset_registry", lambda: (None, {
-        "pose": {"cutType": "styling", "direction": "back", "pose": "pose.png"}}))
+        "pose": {"cutType": "styling", "direction": "back", "all": "pose.png"}}))
     result = _run(monkeypatch, [_block(cutType="mirror", exampleId="pose", refScope="pose")])
     assert result["generated"] == {}
     assert result["failure"]["metadata"]["error"] == "unknown_cut_type"

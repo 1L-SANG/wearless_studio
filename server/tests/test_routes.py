@@ -516,21 +516,6 @@ def test_save_storyboard_rejects_pre_release_space_group_ids(
     assert res.json()["error"]["code"] == "invalid_space_set_group_id"
 
 
-def test_save_storyboard_rejects_bg_example_when_pilot_disabled(client, make_token):
-    res = client.put(
-        "/v1/projects/p1/storyboard",
-        headers=_auth(make_token),
-        json=[{
-            "id": "b1",
-            "source": "ai",
-            "contentRole": "hero",
-            "exampleId": "ex-bg-1",
-            "refScope": "bg",
-        }],
-    )
-
-    assert res.status_code == 400
-    assert res.json()["error"]["code"] == "genexample_bg_disabled"
 
 
 def test_save_storyboard_validates_production_set_without_flat_registry(
@@ -626,22 +611,6 @@ def test_save_storyboard_validates_production_set_without_flat_registry(
     )
 
 
-def test_generate_editor_image_rejects_bg_example_before_credit_reservation(
-    client, make_token,
-):
-    res = client.post(
-        "/v1/projects/p1/editor:generate-image",
-        headers=_auth(make_token),
-        json={
-            "mode": "new",
-            "contentRole": "hero",
-            "exampleId": "ex-bg-1",
-            "refScope": "bg",
-        },
-    )
-
-    assert res.status_code == 400
-    assert res.json()["error"]["code"] == "genexample_bg_disabled"
 
 
 def test_generate_editor_image_rejects_space_groups_before_credit_reservation(

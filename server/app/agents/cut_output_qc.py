@@ -159,7 +159,7 @@ _RECIPES = frozenset({"styling", "horizon", "product"})
 _CLOTHING_TYPES = frozenset({"top", "bottom", "outer", "dress"})
 _CAPTURE_MODES = frozenset({"lifestyle", "studio"})
 _PRODUCT_VARIANTS = frozenset({"ghost", "detail"})
-_REFERENCE_MODES = frozenset({"none", "all", "pose", "bg"})
+_REFERENCE_MODES = frozenset({"none", "all", "pose"})
 _SHOTS = frozenset({"full", "medium", "ghost", "detail"})
 _DIRECTIONS = frozenset({"front", "side", "back"})
 _FACES = frozenset({"same", "show", "hide"})
@@ -387,8 +387,6 @@ def references_from_manifest(
             role = "matching"
         elif label.startswith("POSE CONTROL"):
             role = "example"
-        elif label.startswith(("EXAMPLE REFERENCE (scope: bg)", "EXAMPLE (scope: bg)")):
-            role = "plate"
         elif label.startswith(("EXAMPLE REFERENCE (scope: all)", "EXAMPLE (scope: all)")):
             role = "example"
         elif label.startswith("SPACE SET PLATE"):
@@ -1054,7 +1052,7 @@ def _forced_preflight(
                 "status": "UNJUDGEABLE",
                 "evidence": "Example-controlled pose or camera evidence is unavailable.",
             }
-    plate_required = reference_mode == "bg" or contract.get("spaceSetContinuity") is True
+    plate_required = contract.get("spaceSetContinuity") is True
     if plate_required and "plate" not in roles:
         forced["referenceScopeCaptureClass"] = {
             "status": "UNJUDGEABLE",

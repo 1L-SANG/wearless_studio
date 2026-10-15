@@ -2,6 +2,7 @@ import { detailTargetPresentation } from '../../lib/detailRecommendations.js';
 import { failedCutPresentation } from '../../lib/cutFailureMessages.js';
 import { uniqueGenerationCutCount } from '../../lib/generationCutCount.js';
 import { isSupportedCutType } from '../../lib/storyboardTaxonomy.js';
+import { referenceScopeForBlock } from '../../lib/referenceMode.js';
 
 const RETRY_FIELDS = Object.freeze([
   'contentRole',
@@ -42,6 +43,7 @@ export function buildFailedCutRetry(storyboard, sourceBlockId, modelSelection = 
       if (block[field] !== undefined) request[field] = block[field];
     }
   }
+  request.refScope = referenceScopeForBlock(request);
   if (modelSelection) {
     const selectedModelId = modelSelection.selectedModelId
       || modelSelection.selected_model_id

@@ -49,7 +49,7 @@ MOOD REFERENCES (images labeled MOOD in the manifest, if any):
 - Use them ONLY for lighting, color grading, and overall ambience.
 - NEVER copy their garment, their model's identity/face/body, or their camera framing.
 - If a mood reference conflicts with the cut rules above, ignore the conflicting part.
-- When an all-scope example or bg plate is attached, that active scope owns scene lighting, color,
+- When an complete example or shared series scene is attached, that active scope owns scene lighting, color,
   and ambience; MOOD references must not restyle or override the reference-controlled scene.
 
 KOREAN COMMERCE AESTHETIC:
@@ -60,7 +60,7 @@ KOREAN COMMERCE AESTHETIC:
 - Clean composition in the tone of Korean fashion platforms (Musinsa / Ably) — slightly cool,
   airy, uncluttered.
 - Treat that generic tone only as a fallback. Never cool, brighten, airify, or otherwise restyle
-  lighting and color that the active all-scope example or bg plate explicitly controls.
+  lighting and color that the active complete example or shared series scene explicitly controls.
 
 OUTPUT: exactly one photorealistic image, portrait 2:3. Add no caption, overlay, watermark or
 collage. Text and logos physically printed, embroidered or attached to the PRODUCT garment are
@@ -412,7 +412,7 @@ lighting, mood, framing and composition. Swap in the exact garment from PRODUCT 
 is still a PRODUCT CUT: do NOT copy the example's garments, shoes, accessories, model or pose, and
 do not add a person or visible body parts.
 
-[[REFSCOPE:pose]]POSE-ONLY RETARGETING CONTRACT — HARD REQUIREMENTS
+[[REFSCOPE:pose]]STYLING SERIES INTERNAL POSE INPUT — HARD REQUIREMENTS
 
 The attached image labeled POSE CONTROL is a transparent neutral mannequin used only as a kinematic control. It is not a person, styling, scene, camera, body-shape, or garment reference.
 
@@ -430,29 +430,6 @@ including bottoms for a top/outer target and footwear. Never leave the lower bod
 Do not copy the mannequin's body shape, height, proportions, gender presentation, featureless face, white material, hands, feet, or anatomy styling. Do not transfer any background, lighting, color grade, clothing, footwear, accessory, or prop from it.
 
 PRODUCT and MATCHING remain the only clothing evidence. If a hand position depended on a pocket or removed prop, preserve the broad arm direction and hand height without inventing that pocket or prop and without pushing a hand through fabric. If exact retargeting conflicts with verified garment construction, make only the smallest local hand adjustment; preserve the torso, balance, limbs, and overall pose.
-
-[[CUT:bg_edit]]EDIT TASK — INSERT A MODEL INTO THE ATTACHED SCENE:
-- The FIRST attached image is the finished, real location of this photo. Treat it as the base
-  canvas being edited — it is not a loose reference.
-- Insert ONE model wearing the PRODUCT garment (and MATCHING garment if attached) into this exact
-  scene, then re-frame the camera as requested under FRAMING below.
-- Outside the inserted person and their contact shadow/reflection, the scene must stay the SAME
-  place: same architecture, wall and floor materials, furniture and fixtures, plants, weather,
-  light direction and color temperature as the first image.
-- Match the person's perspective, scale, ground contact and shadow softness to the scene's camera
-  and light so the insertion looks like a single real photograph, not a paste.
-- Match exposure, white balance and depth of field between the person and the scene — one shared
-  focus plane and one shared exposure. Relight the person's edges only as needed (subtle wrap of
-  the scene's light color) so they blend into the environment instead of reading as a cutout.
-- The scene contains no person, so choose a natural pose that suits the place; never place
-  garments, shoes or props from the scene plate, EXAMPLE REFERENCE or MOOD onto the model.
-- Dress a COMPLETE outfit: PRODUCT (and MATCHING when attached) plus simple neutral basics for
-  the rest (plain bottoms and footwear that suit the scene). Never leave the model without
-  bottoms or shoes; basics stay visually plain so the PRODUCT garment remains the hero.
-- This exact plate owns the location, lighting, color and ambience. MOOD references and the generic
-  Korean-commerce aesthetic must not restyle, relight or recolor it.
-- FRAMING OVERRIDE: the FRAMING and DIRECTION requested below win over the first image's crop —
-  extend or re-crop the scene consistently if needed, keeping the same location.
 
 [[SPACE]]SPACE CONTINUITY: this cut belongs to a set shot in ONE location. Keep the lighting,
 background elements and color temperature consistent with a single coherent space

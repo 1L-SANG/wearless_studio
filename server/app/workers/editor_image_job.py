@@ -166,7 +166,6 @@ async def run_editor_image_job(app, job: dict) -> None:
         await facemarket.wait_for_holder(app)
 
     example_warnings: list[dict] = []
-    scene_qc_attempts: int | None = None  # bg 장소일치 QC 통과까지의 시도 수(관찰용, new 모드 bg만)
     cut_qc_metadata: dict | None = None  # new 모드 shadow 관측 결과; 생성 선택에는 영향 없음
     neck_repair_metadata: dict | None = None
     detail_recipe_metadata: dict | None = None
@@ -646,21 +645,16 @@ async def run_editor_image_job(app, job: dict) -> None:
                 _log_contract_error(exc)
                 await _fail("컷 설정이 올바르지 않아요. 다시 시도해 주세요.", {"error": "invalid_spec"})
                 return
-            # canonicalize가 같은 계열 예시의 방향을 이미 적용해도 저장된 요청과의 차이는 기록한다.
-            requested_direction = original_payload.get("direction")
-            requested_direction = requested_direction if requested_direction in ("front", "side", "back") else "front"
-            requested_side_style = original_payload.get("sideStyle") or original_payload.get("side_style")
-            requested_side_style = (requested_side_style
-                                    if requested_direction == "side" and requested_side_style in cut_generator.SIDE_STYLES
-                                    else None)
-            prepared, direction_fallback = cut_generator.pose_direction_from_example({
-                **normalized, "direction": requested_direction, "sideStyle": requested_side_style,
+            requested_direction = original_payload.get('direction') or 'front'
+            requested_side = original_payload.get('sideStyle') or original_payload.get('side_style')
+            prepared, direction_fallback = cut_generator.example_direction_from_catalog({
+                **normalized, 'direction': requested_direction, 'sideStyle': requested_side,
             })
             if direction_fallback:
                 normalized = prepared
-                cut_spec.update(direction=prepared["direction"], sideStyle=prepared["sideStyle"])
+                cut_spec.update(direction=prepared['direction'], sideStyle=prepared['sideStyle'])
                 fallback_metadata.append(direction_fallback)
-                cut_spec["_fallback"] = fallback_metadata
+                cut_spec['_fallback'] = fallback_metadata
             cut_generation_settings = replace(
                 s,
                 model_image_high=resolve_editor_cut_model(s, normalized["cutType"]),
@@ -949,7 +943,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             ]
             # 순서 = 매니페스트: 기준색 MANNEQUIN? → MODEL 2장? → 상품 슬롯들
             # → 선택 MATCHING 최대 2장 → 무드? → 예시.
-            # 무드는 resolved all/bg 장면이 없을 때만 아래 고정 위치에 삽입한다.
+            # 무드는 resolved 완성 예시 장면이 없을 때만 아래 고정 위치에 삽입한다.
             scene_suffix_start = len(images)
             example_scope = None
             example_id = normalized.get("exampleId")
@@ -1016,40 +1010,21 @@ async def run_editor_image_job(app, job: dict) -> None:
                         # 미첨부 all 예시의 레거시 EXNUANCE까지 제거해 예시가 완전히 무효가 되게 한다.
                         cut_spec["exampleId"] = None
                         example_image = None
-                    elif scope == "pose" and not cut_generator.pose_direction_compatible(
-                        example_id, normalized
-                    ):
-                        # 단건 에디터는 배치의 빈 슬롯 대신 명시적 실패로 닫는다. 이 지점은
-                        # 이미지 로드와 Gemini 호출보다 앞이라 불일치 조합의 생성 호출은 0회다.
-                        await _fail(
-                            "이 예시로 만들지 못했어요. 잠시 후 다시 시도해 주세요.",
-                            {
-                                "error": "pose_direction_incompatible",
-                                "exampleId": example_id,
-                                "direction": normalized.get("direction"),
-                            },
-                        )
-                        return
                     else:
                         example_image = await cut_generator.load_example_image(
                             s, example_id, scope=scope, clothing_type=clothing_type)
-                        if example_image is None and scope in ("all", "pose", "bg"):
+                        if example_image is None and scope == "all":
                             # 사용자가 고른 예시 없이 생성하면 "참고한 척"이 된다 — 무음 강등 금지.
-                            # all도 무드 사진으로 조용히 대체될 수 있으므로 pose/bg와 동일하게 닫는다.
+                            # all도 무드 사진으로 조용히 대체될 수 있으므로 장소 세트와 동일하게 닫는다.
                             # (2026-07-20 실측: 이 강등이 bg 실패의 실제 원인 일부였다. ADR-0009 §2)
                             await _fail("예시 자산을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
                                         {"error": "example_asset_unavailable",
                                          "exampleId": example_id, "refScope": scope})
                             return
                 if example_image is not None:
-                    # bg 플레이트는 시각 앵커가 약해 마지막 첨부로는 무시된다(2026-07-20
-                    # 파일럿 실측: 텍스트 강화만으로 2/7) — 첫 첨부로 올려 프라이머시를 준다.
-                    if scope == "bg":
-                        images.insert(0, example_image)
-                    else:
-                        images.append(example_image)
+                    images.append(example_image)
                     example_scope = scope
-            authoritative_scene = example_scope in ("all", "bg")
+            authoritative_scene = example_scope == "all"
             attached_mood_count = 0
             if not authoritative_scene:
                 mood_images = [
@@ -1153,44 +1128,6 @@ async def run_editor_image_job(app, job: dict) -> None:
             except GeminiError as e:
                 await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
                 return
-
-            # bg 편집 컷 — 장소일치 QC 게이트(2026-07-20): 생성은 샘플링이라 편집 프레이밍을
-            # 줘도 확률적으로 다른 장소가 나온다. 플레이트(첫 첨부)와 대조해 불일치면 재생성,
-            # 상한 초과면 실패 종결(부분 성공 아님 — 에디터는 단건). QC 판정 불능은 fail-open.
-            if example_scope == "bg" and example_image is not None:
-                attempts_max = max(1, s.bg_scene_qc_attempts)
-                scene_plate = example_image
-                attempt = 1
-                while True:
-                    try:
-                        scene_qc = await image_qc.scene_verdict(
-                            s, scene_plate, InlineImage(mime, image))
-                    except VisionError as e:
-                        log.warning("AG-06 scene QC unavailable job %s: %r — fail-open", job_id, e)
-                        example_warnings.append({"code": "scene_qc_unavailable"})
-                        break
-                    if scene_qc["verdict"] == "pass":
-                        break
-                    if attempt >= attempts_max:
-                        await _fail("배경 예시의 장소를 재현하지 못했어요. 다시 시도해 주세요.",
-                                    {"error": "bg_scene_mismatch",
-                                     "attempts": attempt,
-                                     "mismatches": scene_qc["mismatches"][:5]})
-                        return
-                    attempt += 1
-                    try:
-                        image, mime = await cut_generator.generate(
-                            cut_generation_settings, app.state.gemini, cut_spec, product, images,
-                            **generate_kwargs)
-                        _remember_outcome(image)
-                    except (GeminiError, ValueError) as e:
-                        if isinstance(e, ValueError):
-                            _log_contract_error(e)
-                            await _fail("컷 설정이 올바르지 않아요. 다시 시도해 주세요.", {"error": "invalid_spec"})
-                            return
-                        await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
-                        return
-                scene_qc_attempts = attempt
 
             chosen = InlineImage(mime, image)
             # 원장·자산 메타의 face_pass = 채택본을 만든 호출의 결과.
@@ -1336,8 +1273,6 @@ async def run_editor_image_job(app, job: dict) -> None:
             success_metadata["horizonBackground"] = horizon_decision
         if signature_decision:
             success_metadata["signatureBackground"] = signature_decision
-        if scene_qc_attempts is not None:
-            success_metadata["sceneQc"] = {"attempts": scene_qc_attempts}
         if cut_qc_metadata is not None:
             success_metadata["cutQc"] = cut_qc_metadata
         if example_warnings:

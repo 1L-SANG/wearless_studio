@@ -95,7 +95,6 @@ def test_detail_worker_is_x86_spot_zero_without_load_balancer(manifest_vars):
     assert worker["variables"]["DETAIL_CUT_CONCURRENCY"] == "5"
     assert worker["variables"]["DETAIL_CUT_STAGGER_MS"] == "1000"
     assert worker["variables"]["DETAIL_CUT_IMAGE_SIZE"] == "2K"
-    assert worker["variables"]["GENEXAMPLE_BG_ENABLED"] == "true"
     assert manifest_vars["JOB_KINDS"] == "-detail_page"
     assert manifest_vars["DETAIL_WORKER_AUTOSCALE"] == "on"
     # SIGTERM 후 잡 error 종결 + 크레딧 환불이 끝날 시간. 기본 30s 는 dispatcher.stop()

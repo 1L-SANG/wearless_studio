@@ -246,7 +246,7 @@ def test_pose_direction_is_prepared_before_generation_manifest_and_qc(
     runtime, monkeypatch, retry, from_direction, from_side, to_direction, to_side,
 ):
     entry = {"cutType": "styling", "direction": to_direction, "sideStyle": to_side,
-             "pose": "published.png", "applicableClothingTypes": ["top"]}
+             "all": "published.png", "applicableClothingTypes": ["top"]}
     monkeypatch.setattr(eij.cut_generator, "load_example_asset_registry", lambda: ("", {"example": entry}))
     resolved_model_specs = []
 
@@ -291,14 +291,14 @@ def test_pose_direction_is_prepared_before_generation_manifest_and_qc(
 
 def test_identical_pose_direction_does_not_record_fallback(runtime, monkeypatch):
     monkeypatch.setattr(eij.cut_generator, "load_example_asset_registry", lambda: ("", {"example": {
-        "cutType": "styling", "direction": "front", "pose": "published.png"}}))
+        "cutType": "styling", "direction": "front", "all": "published.png"}}))
     run(runtime, {"exampleId": "example", "refScope": "pose"})
     assert "fallback" not in runtime["success"]["image"]["metadata"]
 
 
 def test_retired_mirror_fails_before_generation_and_releases_credits(runtime, monkeypatch):
     monkeypatch.setattr(eij.cut_generator, "load_example_asset_registry", lambda: ("", {"example": {
-        "cutType": "styling", "direction": "front", "pose": "published.png"}}))
+        "cutType": "styling", "direction": "front", "all": "published.png"}}))
     run(runtime, {"cutType": "mirror", "exampleId": "example", "refScope": "pose"})
     assert runtime["generations"] == []
     assert runtime["failure"]["metadata"]["error"] == "unknown_cut_type"
