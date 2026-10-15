@@ -67,7 +67,8 @@ test('editor renders without manual direction controls for worn and product imag
   const rendered = renderToStaticMarkup(createElement(AIPanel, {
     catalogs: DB.catalogs, onGenerate() {},
   }));
-  assert.ok(rendered.includes('새 이미지 만들기'));
+  assert.ok(rendered.includes('컷 종류'));
+  assert.ok(!rendered.includes('새 이미지 만들기'));
   assert.ok(rendered.includes('새 이미지 생성'));
   for (const retiredControl of ['보는 방향', 'direction-chips', '같은 장소 이미지 생성',
     '포즈 고르기', '표정 고르기', 'vary-tabs', '기준 사진']) assert.ok(!rendered.includes(retiredControl));

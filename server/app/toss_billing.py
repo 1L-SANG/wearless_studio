@@ -13,6 +13,7 @@ import logging
 
 import httpx
 
+from .log_privacy import redact_payment_paths
 from .toss_codes import card_issuer_name
 
 log = logging.getLogger("wearless.toss_billing")
@@ -60,7 +61,7 @@ async def _post(settings, path: str, payload: dict, *,
                 auth=httpx.BasicAuth(billing_secret(settings), ""),  # Basic base64("{key}:")
             )
     except httpx.HTTPError as e:
-        log.warning("toss billing unreachable path=%s: %s", path, type(e).__name__)
+        log.warning("toss billing unreachable path=%s: %s", redact_payment_paths(path), type(e).__name__)
         raise TossBillingError("payment_gateway_unreachable",
                                "결제 확인이 지연되고 있어요. 잠시 후 다시 시도해 주세요.",
                                retryable=True) from None
@@ -72,7 +73,7 @@ async def _post(settings, path: str, payload: dict, *,
         code = str(body.get("code") or "billing_request_failed")
         message = str(body.get("message") or "결제 요청에 실패했어요.")
         log.warning("toss billing rejected path=%s status=%s code=%s",
-                    path, res.status_code, code)
+                    redact_payment_paths(path), res.status_code, code)
         # 5xx = 결과 미상 → 재시도 가능. 4xx = 확정 거절.
         raise TossBillingError(code, message, retryable=res.status_code >= 500)
     return res.json()

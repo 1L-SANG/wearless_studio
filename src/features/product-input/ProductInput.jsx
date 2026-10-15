@@ -1251,7 +1251,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       if (!localSaved) {
         // Blob을 IndexedDB에 못 쓰는 브라우저도 이메일 로그인 동안에는 사진을 유지한다.
         loginDraftRef.current = collectDraftPhotos(product).then(({ photos, cleanProduct }) => ({
-          product: cleanProduct, photos, analysis, composeMode, updatedAt: snapshot.localUpdatedAt,
+          ownerUserId: null, product: cleanProduct, photos, analysis, composeMode, updatedAt: snapshot.localUpdatedAt,
         }));
       }
       rememberMobileGuestSave(snapshot.localUpdatedAt, excludedUserId, saveTappedAt, localSaved ? null : loginDraftRef.current);
@@ -1376,9 +1376,8 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       // (사진 blob→objectURL 재생성, imageId 매칭). 단 '이 탭 세션'에 저장한 경우만
       // (hasPendingDraft=sessionStorage) — 같은 탭은 복원되고, 공용 브라우저의 다른 사용자
       // (다른 탭/세션)에겐 복원되지 않아 입력이 누출되지 않는다. draft 는 새 제작·로그아웃 때 정리.
-      let draft = hasPendingDraft() ? await loadDraft().catch(() => null) : null;
+      const draft = hasPendingDraft() ? await loadDraft().catch(() => null) : null;
       if (!alive) return;
-      if (mobile && draft?.userId && draft.userId !== session?.user?.id) draft = null;
       if (draft?.product) {
         if (mobile && autoSaveIntent) latestLocalUpdatedAtRef.current = draft.updatedAt || autoSaveIntent.draftUpdatedAt;
         const restored = restoreDraftProduct(draft);

@@ -112,7 +112,8 @@ def normalize_png(data: bytes, max_edge: int = DEFAULT_MAX_EDGE) -> tuple[bytes,
     from PIL import Image, ImageOps
 
     try:
-        with Image.open(io.BytesIO(data)) as opened:
+        # Declared MIME can be wrong; never let unrelated decoders inspect uploads.
+        with Image.open(io.BytesIO(data), formats=("JPEG", "PNG", "WEBP", "HEIF")) as opened:
             image = ImageOps.exif_transpose(opened).convert("RGB")
             target = _fit(image.size, max_edge)
             if target != image.size:

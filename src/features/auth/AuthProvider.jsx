@@ -142,14 +142,18 @@ export function AuthProvider({ children }) {
       setSellerConsentUserId(null);
     }
     const guestSave = !IS_FACEMARKET && nextUserId && getMobileGuestSave(next);
-    const dropFlow = (signedOut && isMobileDevice()) || (!guestSave && !isMockMode && flow.projectPersisted && flow.projectId
-      && (nextUserId ? flow.userId && flow.userId !== nextUserId : !readStoredAuthSession()));
+    // 이미 확인한 계정이 바뀌면 아직 확정하지 않은 입력과 늦게 끝나는 저장도 초기화한다.
+    const accountChanged = flow.accountUserId && (nextUserId
+      ? flow.accountUserId !== nextUserId : !readStoredAuthSession());
+    const dropFlow = (signedOut && isMobileDevice()) || (!isMockMode && (accountChanged
+      || (!guestSave && flow.projectPersisted && flow.projectId
+        && (nextUserId ? flow.userId && flow.userId !== nextUserId : !readStoredAuthSession()))));
     try {
       draftSlot.setUserId?.(nextUserId);
       if (dropFlow) {
         // 인증 대기는 기존 화면을 유지하고, 실제 플로우 초기화 동안에만 진입을 막는다.
         setResettingFlow(true);
-        try { await flow.beginProject({ isCurrent }); }
+        try { await flow.beginProject({ isCurrent, draftOwnerUserId: flow.accountUserId || flow.userId || null }); }
         catch (error) { console.error('[auth] flow reset failed', error); }
         finally {
           if (isCurrent()) setFlowResetRevision((value) => value + 1);

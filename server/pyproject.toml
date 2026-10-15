@@ -6,13 +6,13 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
-    "pyjwt[crypto]>=2.10",
+    "pyjwt[crypto]>=2.15.1",
     "cryptography>=48",
     "psycopg[binary]>=3.2",
     "psycopg-pool>=3.2",
     "boto3>=1.35",
     "httpx>=0.28",
-    "pillow>=10",
+    "pillow>=12.3.0",
     "python-multipart>=0.0.9",
     "web3>=7.16.0",
     # 실존 모델 얼굴 대조 QC — SFace(임베딩)+YuNet(검출), Apache-2.0. headless=libGL 불필요.

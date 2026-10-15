@@ -1181,7 +1181,7 @@ for (const provider of ['email', 'google', 'kakao']) {
 
 for (const reenter of [false, true]) {
   test(`R4 email return with an invisible locked slot opens the reclaim chooser without saving again (reenter=${reenter})`, async (t) => {
-    const draft = { product: product(), photos: [], updatedAt: '2026-10-15T12:26:00.000Z', userId: 'seller' };
+    const draft = { product: product(), photos: [], updatedAt: '2026-10-15T12:26:00.000Z', ownerUserId: 'seller' };
     draftStoreFixture(t, draft);
     const stored = new Map();
     const client = createDraftSlotSync({ setTimer: setImmediate, clearTimer: clearImmediate, storage: {
@@ -1305,7 +1305,7 @@ test('G2 guest reload restores real IndexedDB photo bytes without any server wor
   for (let i = 0; i < 2; i++) node(tree, 'ColorImageGroup').props.onAddFiles(['Front', 'Back'][i], [{ src: urls[i], type: 'image/jpeg' }]);
   tree = await h.settle(); await localStore.flushProductDraftSave();
   assert.equal(storage.saved.photos.length, 2);
-  assert.equal(storage.saved.userId, null);
+  assert.equal(storage.saved.ownerUserId, null);
   assert.deepEqual(await Promise.all(storage.saved.photos.map((p) => p.blob.text())), ['front', 'back']);
   h.unmount('ProductInput'); await drainDraftTasks();
   urls.forEach((url) => URL.revokeObjectURL(url));
@@ -1326,7 +1326,7 @@ for (const sameTab of [true, false]) {
     const storage = draftStoreFixture(t, { product: savedProduct, photos: ['front', 'back'].map((id) => ({
       imageId: id, colorId: 'base', slot: id === 'front' ? 'Front' : 'Back',
       blob: new Blob([id], { type: 'image/jpeg' }), mime: 'image/jpeg', filename: id,
-    })), updatedAt: 'guest', userId: null });
+    })), updatedAt: 'guest', ownerUserId: null });
     const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
     const shared = new Map();
     Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
@@ -1374,7 +1374,7 @@ for (const sameTab of [true, false]) {
 }
 
 test('G2 a guest never restores or reads a signed-in account draft after session expiry', async (t) => {
-  draftStoreFixture(t, { product: product(), photos: [], userId: 'old-account', updatedAt: 'old' });
+  draftStoreFixture(t, { product: product(), photos: [], ownerUserId: 'old-account', updatedAt: 'old' });
   localIdentity.setUserId(null);
   const h = harness({ session: null, stagedDraft: false, photos: product(), draftStore: localStore });
   t.after(() => h.cleanup());
@@ -1553,7 +1553,7 @@ for (const blocked of ['sessionStorage', 'both']) {
 
 for (const failBinding of [false, true]) {
   test(`R3 D1 keep for A never offers the phone draft to B (binding write fails=${failBinding})`, async (t) => {
-    const fixture = draftStoreFixture(t, { updatedAt: 'guest-version', userId: null, product: product(), photos: [] });
+    const fixture = draftStoreFixture(t, { updatedAt: 'guest-version', ownerUserId: null, product: product(), photos: [] });
     localIdentity.setUserId('A');
     if (failBinding) fixture.failWrites(new DOMException('read only', 'QuotaExceededError'));
     const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');

@@ -337,8 +337,7 @@ function ProductInputRoute() {
         memoryDraft || (hasPendingDraft() || guestSave ? loadDraft().catch(() => null) : Promise.resolve(null)),
       ]);
       if (!current()) return;
-      if (mobile && localDraft?.userId && localDraft.userId !== userId) localDraft = null;
-      if (guestSave && localDraft?.product && (localDraft.updatedAt === guestSave.draftUpdatedAt || localDraft.userId === userId)) {
+      if (guestSave && localDraft?.product && (localDraft.updatedAt === guestSave.draftUpdatedAt || localDraft.ownerUserId === userId)) {
         setEntryDecision('ask');
         await entryActions.resumeMobileSave({ draft: localDraft, meta: localDraftMeta(localDraft), onReady: () => {
           setAutoSaveIntent(guestSave);

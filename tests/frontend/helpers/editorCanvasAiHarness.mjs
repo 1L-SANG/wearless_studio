@@ -9,7 +9,7 @@ import { resolveCanvasAiSubmission } from '../../../src/features/editor/canvasAi
 import { canFillCanvasAiSlot, canvasAiSourceDimensions } from '../../../src/features/editor/canvasAiApply.js';
 
 const source = readFileSync(new URL('../../../src/features/editor/useCanvasAi.js', import.meta.url), 'utf8')
-  .replace(/^import .*;\n/gm, '').replace('export function useCanvasAi', 'function useCanvasAi');
+  .replace(/^import .*;\r?\n/gm, '').replace('export function useCanvasAi', 'function useCanvasAi');
 
 // Run the real hook's request and result boundaries without a browser or paid API.
 // React state is a fixed selected-photo snapshot; the real controller owns each job.

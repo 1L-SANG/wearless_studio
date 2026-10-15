@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { getMobileGuestSave, getMobileGuestDraft, rememberMobileGuestSave, clearMobileGuestSave } from '../../src/lib/mobileGuestSave.js';
 import * as guestSave from '../../src/lib/mobileGuestSave.js';
 import { clearDraft, loadDraft, hasPendingDraft } from '../../src/lib/draftStore.js';
+import { draftSlot } from '../../src/lib/draftSlot.js';
 import { draftStoreFixture } from './helpers/draft-store-fixture.mjs';
 
 const key = 'wl_mobileGuestSave';
@@ -26,7 +27,7 @@ test('G6 same-browser marker contains no photos and works in a fresh tab for 30 
   const intent = rememberMobileGuestSave('local-version');
   const user = session('seller', intent.createdAt + 1000);
   s.tab.clear();
-  assert.deepEqual(Object.keys(JSON.parse(s.shared.get(key))).sort(), ['createdAt', 'draftUpdatedAt', 'excludedUserId', 'id', 'userId']);
+  assert.deepEqual(Object.keys(JSON.parse(s.shared.get(key))).sort(), ['createdAt', 'draftUpdatedAt', 'excludedUserId', 'id', 'ownerUserId']);
   assert.equal(read(user, intent.createdAt + 30 * 60 * 1000 - 1).id, intent.id);
   assert.equal(read(user, intent.createdAt + 30 * 60 * 1000), null);
   assert.equal(s.shared.has(key), false);
@@ -44,7 +45,7 @@ test('R2 timing rejection beyond five minutes preserves same-tab pending', (t) =
   s.tab.set('wl_draftPending', '1');
   assert.equal(read(session('earlier-account', intent.createdAt - 5 * 60 * 1000 - 1), intent.createdAt + 1000), null);
   assert.equal(s.tab.has('wl_draftPending'), true);
-  assert.equal(read(session('new-account', intent.createdAt + 1000), intent.createdAt + 2000).userId, 'new-account');
+  assert.equal(read(session('new-account', intent.createdAt + 1000), intent.createdAt + 2000).ownerUserId, 'new-account');
 });
 
 test('G6 stored account before the tap and account changes after binding cannot adopt input', (t) => {
@@ -54,11 +55,11 @@ test('G6 stored account before the tap and account changes after binding cannot 
   const when = intent.createdAt + 1000;
   assert.equal(read(session('already-signed-in', when), when), null);
   assert.equal(s.tab.has('wl_draftPending'), false);
-  assert.equal(read(session('first', when), when).userId, 'first');
+  assert.equal(read(session('first', when), when).ownerUserId, 'first');
   s.tab.set('wl_draftPending', '1');
   assert.equal(read(session('second', when), when), null);
   assert.equal(s.tab.has('wl_draftPending'), false);
-  assert.equal(read(session('first', when), when).userId, 'first');
+  assert.equal(read(session('first', when), when).ownerUserId, 'first');
 });
 
 test('G6 success clears only its own marker and logout clears every pending marker', (t) => {
@@ -106,6 +107,14 @@ test('G6 clearing the local draft also drops an obsolete mobile save intent', as
   assert.equal(s.shared.has(key), false);
 });
 
+test('draft cleanup still succeeds when session storage is blocked', async (t) => {
+  const fixture = draftStoreFixture(t, { ownerUserId: 'seller', product: {}, photos: [] });
+  storageFixture(t);
+  Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, get() { throw new DOMException('blocked', 'SecurityError'); } });
+  await assert.doesNotReject(clearDraft({ ownerUserId: 'seller' }));
+  assert.equal(fixture.saved, null);
+});
+
 for (const skew of [1, 3000, 5 * 60 * 1000]) {
   test(`R2 phone clock ahead by ${skew}ms restores the same-tab draft`, (t) => {
     const s = storageFixture(t);
@@ -128,7 +137,7 @@ test('G3 phone save intent also works when crypto.randomUUID is unavailable', (t
 
 test('R2 memory photos are never stored in the browser marker and do not survive redirect', async (t) => {
   const s = storageFixture(t);
-  const payload = { product: { name: 'phone' }, photos: [{ blob: new Blob(['photo'], { type: 'image/jpeg' }) }] };
+  const payload = { ownerUserId: null, product: { name: 'phone' }, photos: [{ blob: new Blob(['photo'], { type: 'image/jpeg' }) }] };
   const intent = rememberMobileGuestSave('version', null, Date.now(), Promise.resolve(payload));
   assert.equal(await getMobileGuestDraft(intent), payload);
   const stored = JSON.parse(s.shared.get(key));
@@ -148,7 +157,7 @@ test('R2 failed browser marker storage still permits same-document memory restor
   storageFixture(t);
   const original = localStorage.setItem;
   localStorage.setItem = () => { throw new DOMException('unavailable', 'QuotaExceededError'); };
-  const payload = { product: { name: 'phone' }, photos: [] };
+  const payload = { ownerUserId: null, product: { name: 'phone' }, photos: [] };
   const intent = rememberMobileGuestSave('version', null, Date.now(), Promise.resolve(payload));
   const claimed = read(session('seller', intent.createdAt), intent.createdAt);
   assert.equal(claimed.id, intent.id); assert.equal(await getMobileGuestDraft(claimed), payload);
@@ -168,22 +177,26 @@ test('R2 another-tab success cannot resurrect a removed save marker from memory'
 
 for (const failBinding of [false, true]) {
   test(`R3 first account stays attached to the local draft after the intent clears (write fails=${failBinding})`, async (t) => {
-    const fixture = draftStoreFixture(t, { updatedAt: 'guest-version', userId: null, product: { name: 'phone', colors: [] }, photos: [] });
+    const fixture = draftStoreFixture(t, { updatedAt: 'guest-version', ownerUserId: null, product: { name: 'phone', colors: [] }, photos: [] });
     storageFixture(t);
+    draftSlot.setUserId('A');
     if (failBinding) fixture.failWrites(new DOMException('read only', 'QuotaExceededError'));
     const intent = rememberMobileGuestSave('guest-version');
-    assert.equal(read(session('A', intent.createdAt), intent.createdAt).userId, 'A');
+    assert.equal(read(session('A', intent.createdAt), intent.createdAt).ownerUserId, 'A');
     clearMobileGuestSave(intent.id);
-    assert.equal((await loadDraft()).userId, 'A');
+    assert.equal((await loadDraft()).ownerUserId, 'A');
     await new Promise(setImmediate);
-    if (!failBinding) assert.equal(fixture.saved.userId, 'A');
+    if (!failBinding) assert.equal(fixture.saved.ownerUserId, 'A');
     const other = rememberMobileGuestSave('guest-version');
     assert.equal(read(session('B', other.createdAt), other.createdAt), null);
-    assert.equal((await loadDraft()).userId, 'A');
+    draftSlot.setUserId('B');
+    assert.equal(await loadDraft(), null);
     const next = rememberMobileGuestSave('next-version');
-    assert.equal(read(session('B', next.createdAt), next.createdAt).userId, 'B');
+    assert.equal(read(session('B', next.createdAt), next.createdAt).ownerUserId, 'B');
     clearMobileGuestSave(next.id);
-    assert.equal((await loadDraft()).userId, 'A');
+    assert.equal(await loadDraft(), null);
+    draftSlot.setUserId('A');
+    assert.equal((await loadDraft()).ownerUserId, 'A');
   });
 }
 
@@ -195,9 +208,66 @@ test('R3 first account binds even an unresolved memory snapshot before clearing 
   const claimed = read(session('A', intent.createdAt), intent.createdAt);
   const owned = getMobileGuestDraft(claimed);
   clearMobileGuestSave(intent.id);
-  resolveDraft({ updatedAt: 'memory-version', userId: null, product: { name: 'phone' }, photos: [] });
-  assert.equal((await owned).userId, 'A');
+  resolveDraft({ updatedAt: 'memory-version', ownerUserId: null, product: { name: 'phone' }, photos: [] });
+  assert.equal((await owned).ownerUserId, 'A');
+  const other = rememberMobileGuestSave('memory-version');
+  assert.equal(read(session('B', other.createdAt), other.createdAt), null);
+  assert.equal(read(session('A', other.createdAt), other.createdAt).ownerUserId, 'A');
 });
+
+test('first-claim binding survives another account cleanup and a fresh document', async (t) => {
+  const fixture = draftStoreFixture(t, { ownerUserId: null, updatedAt: 'claimed-guest', product: { name: 'A photos' }, photos: [] });
+  storageFixture(t);
+  draftSlot.setUserId('A');
+  const intent = rememberMobileGuestSave('claimed-guest');
+  assert.equal(read(session('A', intent.createdAt), intent.createdAt).ownerUserId, 'A');
+  assert.equal((await loadDraft()).ownerUserId, 'A');
+  await new Promise(setImmediate);
+  assert.equal(fixture.saved.ownerUserId, 'A');
+  assert.equal(Object.hasOwn(fixture.saved, 'userId'), false);
+  draftSlot.setUserId('B');
+  await clearDraft({ ownerUserId: 'B' });
+  assert.equal(await loadDraft(), null);
+  const fresh = await import(`../../src/lib/mobileGuestSave.js?claimed=${intent.id}`);
+  assert.equal(fresh.getMobileGuestDraftOwner('claimed-guest'), 'A');
+  draftSlot.setUserId('A');
+  assert.equal((await loadDraft()).product.name, 'A photos');
+});
+
+test('a save intent cannot rebind legacy ownerless input or bypass LEGACY_BLOCKED', async (t) => {
+  const legacy = { updatedAt: 'legacy-guest', product: { name: 'legacy photos' }, photos: [] };
+  const fixture = draftStoreFixture(t, legacy);
+  storageFixture(t);
+  const intent = rememberMobileGuestSave('legacy-guest');
+  read(session('A', intent.createdAt), intent.createdAt);
+  draftSlot.setUserId('A');
+  assert.equal(Object.hasOwn(await loadDraft(), 'ownerUserId'), false);
+  await clearDraft({ ownerUserId: 'A' });
+  assert.equal(sessionStorage.getItem('wl_draftPending'), 'legacy-blocked');
+  assert.equal(await loadDraft(), null);
+  draftSlot.setUserId('B');
+  assert.equal(await loadDraft(), null);
+  assert.deepEqual(fixture.saved, legacy);
+});
+
+for (const rejection of ['other account', 'lost memory']) {
+  test(`rejecting a guest save for ${rejection} preserves the tab legacy block`, async (t) => {
+    draftStoreFixture(t, { updatedAt: 'blocked-legacy', product: { name: 'legacy photos' }, photos: [] });
+    const storage = storageFixture(t);
+    const intent = rememberMobileGuestSave('blocked-legacy', null, Date.now(), rejection === 'lost memory'
+      ? Promise.resolve({ ownerUserId: null, product: {} }) : null);
+    read(session('A', intent.createdAt), intent.createdAt);
+    storage.tab.set('wl_draftPending', 'legacy-blocked');
+    if (rejection === 'other account') {
+      assert.equal(read(session('B', intent.createdAt), intent.createdAt), null);
+    } else {
+      const returnedPage = await import(`../../src/lib/mobileGuestSave.js?blocked=${intent.id}`);
+      assert.equal(returnedPage.getMobileGuestSave(session('A', intent.createdAt), { mobile: true }), null);
+    }
+    assert.equal(storage.tab.get('wl_draftPending'), 'legacy-blocked');
+    assert.equal(await loadDraft(), null);
+  });
+}
 
 test('R3 blocked session storage means no pending draft', (t) => {
   storageFixture(t);

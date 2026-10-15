@@ -4,6 +4,7 @@ export const COMPANY_INFO = Object.freeze(companyInfo);
 
 export const COMPANY_INFO_ROWS = Object.freeze([
   { key: 'copyright', text: `Copyright © ${new Date().getFullYear()} ${COMPANY_INFO.name}. All rights reserved.` },
+  { key: 'name', label: '상호명', text: COMPANY_INFO.name },
   { key: 'brn', label: '사업자등록번호', text: COMPANY_INFO.businessRegistrationNumber },
   { key: 'mail-order', label: '통신판매업번호', text: COMPANY_INFO.mailOrderRegistration },
   { key: 'rep', label: '대표자', text: COMPANY_INFO.representative },
