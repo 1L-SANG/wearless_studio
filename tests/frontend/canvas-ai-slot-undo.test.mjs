@@ -14,7 +14,7 @@ import { canvasAiHookHarness, editorCanvasAiHandlers } from './helpers/editorCan
 const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
 const layer = readFileSync(new URL('../../src/features/editor/CanvasAiLayer.jsx', import.meta.url), 'utf8');
 const elementSource = editor.slice(editor.indexOf('function CanvasElement('), editor.indexOf('const IMAGE_IMPORT_COPY'));
-const { code } = await transformWithEsbuild(`${layer.replace(/^import .*;\n/gm, '').replace(/export function /g, 'function ')}\n${elementSource}`,
+const { code } = await transformWithEsbuild(`${layer.replace(/^import .*;\r?\n/gm, '').replace(/export function /g, 'function ')}\n${elementSource}`,
   'canvas-ai-test.jsx', { jsx: 'transform', jsxFactory: 'React.createElement', jsxFragment: 'React.Fragment' });
 
 // Execute the real components and event handlers. Only DOM effects and React's
@@ -84,8 +84,10 @@ test('fill completion then toolbar Undo restores a clickable empty slot and its 
   assert.equal(hist.current.past.length, 1);
 
   const undoSource = editor.slice(editor.indexOf('  const undo ='), editor.indexOf('  const redo ='));
-  const undo = new Function('hist', 'prevBlocks', 'fromHistory', 'clearSel', 'setBlocks', 'toast', `${undoSource}; return undo;`)
-    (hist, prevBlocks, fromHistory, () => {}, setBlocks, { push() {} });
+  const undo = new Function('hist', 'prevBlocks', 'fromHistory', 'clearSel', 'setBlocks', 'toast',
+    'croppingRef', 'flushSync', 'kb', `${undoSource}; return undo;`)
+    (hist, prevBlocks, fromHistory, () => {}, setBlocks, { push() {} },
+      { current: null }, (callback) => callback(), { current: { cropCommit: () => assert.fail('no active crop to commit') } });
   undo();
   assert.equal(blocks[0].elements[0].src, null);
   assert.equal(wardrobe[0].src, '/generated.jpg', 'Undo keeps the generated image in the wardrobe');
