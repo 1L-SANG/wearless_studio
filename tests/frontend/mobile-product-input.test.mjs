@@ -7,7 +7,10 @@ import { draftSavedTime, createDraftEntryActions } from '../../src/lib/draftEntr
 import * as entry from '../../src/lib/draftEntry.js';
 import * as flow from '../../src/lib/flowSession.js';
 import * as localStore from '../../src/lib/draftStore.js';
-import { draftSlot as localIdentity, localDraftMeta } from '../../src/lib/draftSlot.js';
+import * as mobileGuestSave from '../../src/lib/mobileGuestSave.js';
+import { restoreDraftProduct } from '../../src/features/product-input/draftProductRestore.js';
+import { isRemoteAssetPhoto } from '../../src/lib/photoBytes.js';
+import { draftSlot as localIdentity, localDraftMeta, createDraftSlotSync } from '../../src/lib/draftSlot.js';
 import { checkDraftEntry, canAutoOpenInput } from '../../src/lib/draftEntryCheck.js';
 import { draftStoreFixture, drainDraftTasks } from './helpers/draft-store-fixture.mjs';
 import { createProductPhotoPreviewRegistry } from '../../src/features/product-input/productPhotoPreviewRegistry.js';
@@ -39,16 +42,18 @@ const actionLabels = (tree) => !tree || typeof tree !== 'object' ? [] : [
   ...(tree.props?.children || []).flat(Infinity).flatMap(actionLabels),
 ];
 
-function harness({ mobile = true, analysis = null, fastEntry = false, analyze = null, prepare = null, featureFactory = null, restoreFeature = null, saveAll, transcode, photos = product(), doneBlocked = false, persisted = false, stagedDraft = true, initialSavedMeta = null, session = { user: { id: 'seller' } }, authLoading = false, draftStore = null, slotClient = null, previewRegistry = null } = {}) {
+function harness({ mobile = true, analysis = null, fastEntry = false, analyze = null, prepare = null, featureFactory = null, restoreFeature = null, saveAll, transcode, photos = product(), doneBlocked = false, persisted = false, stagedDraft = true, initialSavedMeta = null, session = { user: { id: 'seller' } }, authLoading = false, draftStore = null, slotClient = null, previewRegistry = null, autoSaveIntent = null, sellerConsentReady, slotApi } = {}) {
   const calls = [];
+  const auth = { session, sellerConsentReady, loading: authLoading, openLogin: (path) => calls.push(['login', path]) };
   const content = [];
+  const doneGuardChecks = [];
   const onContentChange = (value) => content.push(value);
   const documentEvents = new EventTarget();
   documentEvents.visibilityState = 'visible';
-  let pendingHandler, conflictHandler, featureController;
+  let pendingHandler, conflictHandler, featureController, nextImageId = 0;
   const frames = new Map();
   let active, cursor, effects = [], dirty = false;
-  let staged = stagedDraft ? { payload: { product: photos, analysis, composeMode: 'basic' } } : null;
+  let staged = stagedDraft ? { payload: typeof stagedDraft === 'object' ? stagedDraft : { product: photos, analysis, composeMode: 'basic' } } : null;
   const state = { projectId: persisted ? 'desktop' : null, projectPersisted: persisted, composeMode: 'basic', mannequinJob: {}, projectGeneration: 0,
     markFlowUsed() {}, resumePath: '/create/input', restoreComposeMode() {}, adoptProject(id) { calls.push(['adopt', id]); }, async beginProject() { calls.push('begin'); }, setInputPromotionLocked() {} };
   const useAppStore = (select) => select(state);
@@ -59,7 +64,8 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
     retryFailedUploads() { calls.push('retryUploads'); },
     async checkOwnership() { calls.push('ownership'); },
     configure() {}, onConflict: (handler) => { conflictHandler = handler; return () => {}; },
-    getIdentityEpoch: () => 0,
+    getIdentityEpoch: () => 0, getToken: () => null, hasStaged: () => Boolean(staged),
+    stage(value) { staged = value; }, pauseEntryWrites() {}, resumeEntryWrites() {},
     resetIdentity() { calls.push('reset'); }, activate() {}, queue(snapshot) { calls.push(['queue', snapshot]); },
     consumeStaged() { const next = staged; staged = null; return next; },
     get: async () => ({ meta: { photoCount: 2, updatedAt: 'v1' } }),
@@ -81,6 +87,8 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
     },
     restoreDraftFeatureRun: (draft, options) => { calls.push(['restoreFeature', draft.analysis.featureRun.stage]); return restoreFeature?.(draft, options); },
     useClientErrorCapture() {}, ClientErrorCapture: () => null, recordClientAction() {},
+    getMobileGuestDraft: () => null, collectDraftPhotos: async (product) => ({ cleanProduct: product, photos: [] }),
+    getMobileGuestSave: () => null, rememberMobileGuestSave: () => calls.push('intent'), clearMobileGuestSave() {}, readStoredAuthSession: () => null,
     ...entry, ...flow, checkDraftEntry, canAutoOpenInput, localDraftMeta,
     flowRouteSeenThisSession: false, flowDocumentEntryId: 'document',
     flowScreenName: () => '입력 화면', shouldWarnFlowAbandon: () => false,
@@ -99,23 +107,23 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
       }
     },
     useNavigate: () => (path) => calls.push(['navigate', path]), useLocation: () => location,
-    useAuth: () => ({ session, loading: authLoading }),
-    useDoneGuard: () => doneBlocked, useToast: () => ({ push: (...args) => calls.push(['toast', ...args]) }),
+    useAuth: () => auth,
+    useDoneGuard: (enabled) => { doneGuardChecks.push(enabled); return doneBlocked; }, useToast: () => ({ push: (...args) => calls.push(['toast', ...args]) }),
     useQuery: ({ queryKey }) => ({ data: queryKey.length === 1 ? [{ id: 'finished', title: '완성본' }] : [], isLoading: false }),
     useAppStore, isMobileDevice: () => mobile, isMockMode: false, draftSlot: slot, createDraftEntryActions, isMobileDraftWriter, draftSavedTime,
     api: { getProduct: async (id) => { calls.push(['getProduct', id]); return photos; },
       getAnalysis: async () => ({ projectId: 'desktop', fit: 'regular' }), getCatalogs: async () => ({ angleSlots: ['Front', 'Back'], swatchColors: [] }),
-      analyzeProduct: async (...args) => { calls.push('analyze'); return analyze ? analyze(...args) : { suggestedName: '니트' }; } },
+      analyzeProduct: async (...args) => { calls.push('analyze'); return analyze ? analyze(...args) : { suggestedName: '니트' }; }, ...(slotApi || {}) },
     createProductPhotoPreviewRegistry: previewRegistry || (() => ({ sync() {}, dispose() {}, release() {}, displayUrl: (_id, src) => src })),
     createTrailingPatchScheduler: () => ({ flush() {}, schedule() {} }),
     generationWorkWarningKind: () => 'none', restoreDraftProduct: (draft) => draft.product,
-    normalizeAnalysisFit: (value) => value, isAnalysisRunning: () => false,
+    isRemoteAssetPhoto, normalizeAnalysisFit: (value) => value, isAnalysisRunning: () => false,
     queueProductDraftSave: () => {}, flushProductDraftSave: async () => {}, hasPendingDraft: () => false,
     ...(draftStore || {}),
     formatDraftRelativeTime: () => '1분 전', getBaseSlotUploadRoom, getPendingTileCount, PENDING_TILE_DELAY_MS,
     invalidateStoryboardForProductPhotoEdit() {}, invalidateStoryboardEntryPrefetch() {},
     analysisResponseProductPatch: () => ({}), autofillColorGroups: (colors) => colors,
-    mergeProductOwnedAnalysisFields: (value) => value, photoCaption: () => '사진', uid: () => 'new-photo',
+    mergeProductOwnedAnalysisFields: (value) => value, photoCaption: () => '사진', uid: () => ++nextImageId === 1 ? 'new-photo' : `new-photo-${nextImageId}`,
     looksLikeImageFile: () => true,
     toUploadableImages: transcode || (async () => ({ files: [], failed: [] })),
     getUploadValidationError: () => null, MAX_UPLOAD_BYTES: 25000000,
@@ -126,24 +134,24 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
     s: new Proxy({}, { get: (_, key) => key }),
   };
   for (const name of ['Button', 'Modal', 'Icon', 'IconButton', 'ErrorState', 'UploadPendingTile', 'PageHead',
-    'ResumeChoiceModal', 'PhoneUploadIntro', 'WizardCTA', 'DoneGuardModal', 'CreditShortfallModal', 'AnalysisForm', 'AnalysisProgress', 'AnalysisSkeleton']) bindings[name] = name;
+    'ResumeChoiceModal', 'WizardCTA', 'DoneGuardModal', 'CreditShortfallModal', 'AnalysisForm', 'AnalysisProgress', 'AnalysisSkeleton']) bindings[name] = name;
   const components = new Function(...Object.keys(bindings), `${code}; return { ProductInputRoute, HandoffStatusPage, MobileDraftDialog, MobileDraftStatus, DraftProductRow, Library, ProductInput, ColorImageGroup, AddDrop, InputMainAction, MobileSaveModal, MobileSaveStatus, MobileAnalyzedNotice, EditingRightsLock, DraftEntryDialog, HangTag, AddressCopyChip };`)(...Object.values(bindings));
   function render(name = 'ProductInput', props = {}) {
     if (!frames.has(name)) frames.set(name, []);
     active = frames.get(name); cursor = 0; dirty = false;
-    return components[name](name === 'ProductInput' ? { onContentChange, initialSavedMeta, ...props } : props);
+    return components[name](name === 'ProductInput' ? { onContentChange, initialSavedMeta, autoSaveIntent, ...props } : props);
   }
-  async function settle(name = 'ProductInput') {
-    let tree = render(name);
+  async function settle(name = 'ProductInput', props = {}) {
+    let tree = render(name, props);
     for (let i = 0; i < 30; i++) {
       const batch = effects; effects = []; batch.forEach((effect) => effect());
       await new Promise(setImmediate);
       if (!dirty && !effects.length) return tree;
-      tree = render(name);
+      tree = render(name, props);
     }
     throw new Error('did not settle');
   }
-  return { calls, content, location, render, settle, components, documentEvents, slot,
+  return { calls, auth, content, doneGuardChecks, location, render, settle, components, documentEvents, slot,
     emitConflict: (meta) => conflictHandler(meta),
     emitPending: (value) => pendingHandler?.(value),
     unmount(name) { frames.get(name)?.forEach((record) => record?.cleanup?.()); frames.delete(name); },
@@ -1127,3 +1135,277 @@ for (const stagedDraft of [true, false]) for (const coreReceived of [false, true
     assert.equal(h.calls.some((call) => call[0] === 'restoreFeature'), false);
   });
 }
+
+
+test('G2/G3 guest phone keeps edits local and flushes before opening input login', async () => {
+  let release;
+  const h = harness({ session: null, draftStore: {
+    queueProductDraftSave: () => h.calls.push('local'),
+    flushProductDraftSave: () => new Promise((resolve) => { release = resolve; }),
+  } });
+  let tree = await h.settle();
+  assert.equal(node(tree, 'ColorImageGroup').props.group.images.length, 2);
+  assert.equal(h.calls.filter((call) => call[0] === 'queue').length, 0);
+  const saving = button(h.expand(tree, 'InputMainAction'), '저장하고 PC에서 이어하기').props.onClick();
+  await new Promise(setImmediate);
+  assert.equal(h.calls.some((call) => call[0] === 'login'), false);
+  assert.equal(typeof release, 'function', 'save tap must flush the local draft before login');
+  release({ saved: 2, failed: 0 }); await saving;
+  assert.deepEqual(h.calls.slice(-2), ['intent', ['login', '/create/input']]);
+  assert.equal(h.calls.some((call) => call[0] === 'saveAll' || call === 'analyze'), false);
+  tree = await h.settle();
+  assert.equal(node(tree, 'ColorImageGroup').props.group.images.length, 2);
+  const again = button(h.expand(tree, 'InputMainAction'), '저장하고 PC에서 이어하기').props.onClick();
+  await new Promise(setImmediate); release({ saved: 2, failed: 0 }); await again;
+  assert.equal(h.calls.filter((call) => call[0] === 'login').length, 2);
+  h.cleanup();
+});
+
+for (const provider of ['email', 'google', 'kakao']) {
+  test(`G4 ${provider} restored input automatically saves once and reaches D3/D4`, async () => {
+    const h = harness({ autoSaveIntent: { id: 'pending' }, session: { user: {
+      id: 'seller', email: 'seller@example.test', app_metadata: { provider }, user_metadata: { name: '셀러' },
+    } } });
+    let tree = await h.settle();
+    assert.equal(h.calls.filter((call) => call[0] === 'saveAll').length, 1);
+    assert.equal(node(tree, 'ColorImageGroup').props.group.images.length, 2);
+    const modal = h.expand(tree, 'MobileSaveModal');
+    assert.equal(text(node(modal, 'h3')), '사진 2장을 저장했어요');
+    assert.ok(text(modal).includes(provider === 'kakao' ? '셀러' : 'seller@example.test'));
+    button(modal, '확인').props.onClick(); tree = await h.settle();
+    assert.equal(node(tree, 'ColorImageGroup').props.readOnly, true);
+    assert.equal(h.calls.filter((call) => call[0] === 'saveAll').length, 1);
+    h.cleanup();
+  });
+}
+
+
+test('G4 signup waits for consent before guest photos reach the slot', async () => {
+  const h = harness({ autoSaveIntent: { id: 'signup' }, sellerConsentReady: false });
+  let tree = await h.settle();
+  assert.equal(h.calls.filter((call) => call[0] === 'saveAll' || call[0] === 'queue').length, 0);
+  h.auth.sellerConsentReady = true; tree = await h.settle();
+  assert.equal(h.calls.filter((call) => call[0] === 'saveAll').length, 1);
+  assert.equal(h.expand(tree, 'MobileSaveModal').props.children[0].props.role, 'status');
+  h.cleanup();
+});
+
+
+test('G2 guest reload restores real IndexedDB photo bytes without any server work', async (t) => {
+  const storage = draftStoreFixture(t);
+  localIdentity.setUserId(null);
+  const urls = ['front', 'back'].map((body) => URL.createObjectURL(new Blob([body], { type: 'image/jpeg' })));
+  t.after(() => urls.forEach((url) => URL.revokeObjectURL(url)));
+  const photos = product(); photos.colors[0].images = [];
+  const restoredUrls = [];
+  const draftStore = { ...localStore,
+    restoreDraftProduct: (draft) => restoreDraftProduct(draft, { createObjectUrl(blob) {
+      const url = URL.createObjectURL(blob); restoredUrls.push(url); return url;
+    } }),
+  };
+  t.after(() => restoredUrls.forEach((url) => URL.revokeObjectURL(url)));
+  const h = harness({ session: null, photos, stagedDraft: false, draftStore });
+  t.after(() => h.cleanup());
+  let tree = await h.settle();
+  for (let i = 0; i < 2; i++) node(tree, 'ColorImageGroup').props.onAddFiles(['Front', 'Back'][i], [{ src: urls[i], type: 'image/jpeg' }]);
+  tree = await h.settle(); await localStore.flushProductDraftSave();
+  assert.equal(storage.saved.photos.length, 2);
+  assert.equal(storage.saved.userId, null);
+  assert.deepEqual(await Promise.all(storage.saved.photos.map((p) => p.blob.text())), ['front', 'back']);
+  h.unmount('ProductInput'); await drainDraftTasks();
+  urls.forEach((url) => URL.revokeObjectURL(url));
+  tree = await h.settle();
+  const images = node(tree, 'ColorImageGroup').props.group.images;
+  assert.equal(images.length, 2);
+  assert.deepEqual(await Promise.all(images.map((image) => fetch(image.src).then((r) => r.text()))), ['front', 'back']);
+  assert.ok(h.doneGuardChecks.every((enabled) => enabled === false));
+  assert.equal(h.calls.some((call) => call[0] === 'queue' || call[0] === 'saveAll' || call === 'analyze'), false);
+  assert.ok(h.calls.filter((call) => call[0] === 'getProduct').every((call) => call[1] === null));
+});
+
+
+for (const sameTab of [true, false]) {
+  test(`G4/G6 fresh login mount restores IDB bytes and completes real saveAll once (sameTab=${sameTab})`, async (t) => {
+    const savedProduct = product();
+    savedProduct.colors[0].images.forEach((image) => { image.src = `blob:expired-${image.id}`; image.type = 'image/jpeg'; });
+    const storage = draftStoreFixture(t, { product: savedProduct, photos: ['front', 'back'].map((id) => ({
+      imageId: id, colorId: 'base', slot: id === 'front' ? 'Front' : 'Back',
+      blob: new Blob([id], { type: 'image/jpeg' }), mime: 'image/jpeg', filename: id,
+    })), updatedAt: 'guest', userId: null });
+    const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    const shared = new Map();
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+      getItem: (key) => shared.get(key) ?? null, setItem: (key, value) => shared.set(key, value), removeItem: (key) => shared.delete(key),
+    } });
+    t.after(() => { if (originalStorage) Object.defineProperty(globalThis, 'localStorage', originalStorage); else delete globalThis.localStorage; });
+    const intent = mobileGuestSave.rememberMobileGuestSave('guest');
+    if (!sameTab) sessionStorage.removeItem('wl_draftPending');
+    const client = createDraftSlotSync({ setTimer: setImmediate, clearTimer: clearImmediate });
+    client.setUserId('seller');
+    t.after(() => client.dispose());
+    const puts = [], uploads = [], urls = [];
+    let saves = 0;
+    const realSaveAll = client.saveAll.bind(client);
+    client.saveAll = (snapshot) => { saves++; return realSaveAll(snapshot); };
+    const h = harness({ session: { user: { id: 'seller', last_sign_in_at: new Date(intent.createdAt + (sameTab ? -3000 : 1000)).toISOString() } },
+      stagedDraft: false, autoSaveIntent: intent, slotClient: client,
+      slotApi: {
+        getDraftSlot: async () => null,
+        uploadDraftSlotPhoto: async ({ blob }) => { uploads.push(await blob.text()); return { assetId: `asset-${uploads.length}`, url: `https://photos.test/${uploads.length}.jpg` }; },
+        putDraftSlot: async (body) => { puts.push(body); return { token: 'owned', meta: { updatedAt: 'saved' } }; },
+      },
+      draftStore: { ...localStore,
+        getMobileGuestSave: (session) => mobileGuestSave.getMobileGuestSave(session, { mobile: true }),
+        clearMobileGuestSave: mobileGuestSave.clearMobileGuestSave,
+        restoreDraftProduct: (draft) => restoreDraftProduct(draft, { createObjectUrl(blob) { const url = URL.createObjectURL(blob); urls.push(url); return url; } }),
+      },
+    });
+    t.after(() => { h.cleanup(); urls.forEach((url) => URL.revokeObjectURL(url)); });
+    const route = await h.settle('ProductInputRoute');
+    assert.equal(route.props.autoSaveIntent.id, intent.id);
+    let tree = await h.settle(); await drainDraftTasks(); tree = await h.settle();
+    assert.equal(saves, 1);
+    assert.deepEqual(uploads.sort(), ['back', 'front']);
+    assert.equal(puts.at(-1).photosPending, false);
+    assert.equal(puts.at(-1).payload.product.colors[0].images.length, 2);
+    const modal = h.expand(tree, 'MobileSaveModal');
+    assert.equal(text(node(modal, 'h3')), '사진 2장을 저장했어요');
+    assert.equal(shared.has('wl_mobileGuestSave'), false);
+    button(modal, '확인').props.onClick(); tree = await h.settle();
+    assert.equal(node(tree, 'ColorImageGroup').props.readOnly, true);
+    assert.equal(storage.saved.photos.length, 2);
+    assert.equal(saves, 1);
+  });
+}
+
+test('G2 a guest never restores or reads a signed-in account draft after session expiry', async (t) => {
+  draftStoreFixture(t, { product: product(), photos: [], userId: 'old-account', updatedAt: 'old' });
+  localIdentity.setUserId(null);
+  const h = harness({ session: null, stagedDraft: false, photos: product(), draftStore: localStore });
+  t.after(() => h.cleanup());
+  const tree = await h.settle();
+  assert.equal(node(tree, 'ColorImageGroup').props.group.images.length, 0);
+  assert.equal(h.calls.some((call) => call[0] === 'queue' || call[0] === 'saveAll'), false);
+});
+
+test('R2 G3 a local save timeout keeps phone photos and opens login with the storage warning', async () => {
+  const h = harness({ session: null, draftStore: { flushProductDraftSave: async () => { throw new Error('draft_save_timeout'); } } });
+  let tree = await h.settle();
+  await button(h.expand(tree, 'InputMainAction'), '저장하고 PC에서 이어하기').props.onClick();
+  assert.equal(h.calls.find((call) => call[0] === 'toast')[1], '이 브라우저는 사진을 잠시 보관하지 못해요. 로그인 후 다시 골라 주세요.');
+  assert.equal(h.calls.filter((call) => call[0] === 'login').length, 1);
+  assert.equal(h.calls.some((call) => call[0] === 'saveAll'), false);
+  tree = await h.settle(); assert.equal(node(tree, 'ColorImageGroup').props.group.images.length, 2);
+  h.cleanup();
+});
+
+
+for (const reason of ['DataCloneError', 'draft_save_timeout', 'partial']) {
+  test(`R2 failed local save still opens login and warns before redirect choices: ${reason}`, async (t) => {
+    const h = harness({ session: null, draftStore: { flushProductDraftSave: async () => {
+      if (reason === 'partial') return { saved: 1, failed: 1 };
+      throw new Error(reason);
+    } } });
+    t.after(() => h.cleanup());
+    const tree = await h.settle();
+    await button(h.expand(tree, 'InputMainAction'), '저장하고 PC에서 이어하기').props.onClick();
+    const warning = h.calls.findIndex((call) => call[0] === 'toast');
+    const login = h.calls.findIndex((call) => call[0] === 'login');
+    assert.ok(warning >= 0 && login > warning);
+    assert.equal(h.calls[warning][1], '이 브라우저는 사진을 잠시 보관하지 못해요. 로그인 후 다시 골라 주세요.');
+    assert.equal(h.calls[login][1], '/create/input');
+    assert.equal(h.calls.filter((call) => call[0] === 'toast').length, 1);
+    assert.equal(h.calls.some((call) => call[0] === 'queue' || call[0] === 'saveAll'), false);
+  });
+}
+
+for (const [reason, signup, conflict = false] of [['DataCloneError', false], ['DataCloneError', true], ['timeout', false], ['DataCloneError', false, true]]) {
+  test(`R2 IndexedDB ${reason} survives the guest remount and saves from memory (signup=${signup}, conflict=${conflict})`, async (t) => {
+    if (reason === 'timeout') t.mock.timers.enable({ apis: ['setTimeout'] });
+    const fixture = draftStoreFixture(t); localIdentity.setUserId(null);
+    if (reason === 'timeout') fixture.pauseWrites();
+    else fixture.failWrites(new DOMException('Blob storage unavailable', 'DataCloneError'));
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    const values = new Map();
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+      getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: (key) => values.delete(key),
+    } });
+    t.after(() => { mobileGuestSave.clearMobileGuestSave(); if (original) Object.defineProperty(globalThis, 'localStorage', original); else delete globalThis.localStorage; });
+    const p = product();
+    const photos = ['front', 'back'].map((id) => ({ imageId: id, colorId: 'base', slot: id === 'front' ? 'Front' : 'Back', mime: 'image/jpeg', blob: new Blob([id], { type: 'image/jpeg' }) }));
+    const urls = [];
+    const uploadedBytes = [];
+    let resolveSaved; const saved = new Promise((resolve) => { resolveSaved = resolve; });
+    const h = harness({ session: null, sellerConsentReady: false, stagedDraft: { product: p, photos },
+      previewRegistry: (options) => createProductPhotoPreviewRegistry({ ...options, createThumbnail: async () => { throw new Error('no canvas'); } }),
+      saveAll: async (snapshot) => {
+        for (const image of snapshot.product.colors[0].images) uploadedBytes.push(await fetch(image.src).then((res) => res.text()));
+        resolveSaved();
+        return { status: 'saved', photoCount: 2 };
+      },
+      draftStore: { ...localStore, ...mobileGuestSave,
+        getMobileGuestSave: (session) => mobileGuestSave.getMobileGuestSave(session, { mobile: true }),
+        getMobileGuestDraft: (intent) => mobileGuestSave.getMobileGuestDraft?.(intent),
+        restoreDraftProduct: (draft) => restoreDraftProduct(draft, { createObjectUrl(blob) { const url = URL.createObjectURL(blob); urls.push(url); return url; } }),
+      },
+    });
+    t.after(() => { h.cleanup(); urls.forEach((url) => URL.revokeObjectURL(url)); });
+    h.slot.get = async () => conflict ? { meta: { hasContent: true, deviceLabel: 'Windows Chrome', updatedAt: 'v1', photoCount: 1 } } : null;
+    h.slot.takeover = async () => ({ token: 'owned' });
+    let tree = await h.settle();
+    const saving = button(h.expand(tree, 'InputMainAction'), '저장하고 PC에서 이어하기').props.onClick();
+    if (reason === 'timeout') {
+      await drainDraftTasks(); assert.equal(fixture.waitingWrites, 1);
+      t.mock.timers.tick(8000);
+    }
+    await saving;
+    assert.equal(h.calls.filter((call) => call[0] === 'login').length, 1);
+    assert.equal(fixture.saved, null);
+    h.unmount('ProductInput');
+    const intent = mobileGuestSave.getMobileGuestSave(null, { mobile: true });
+    const memory = await mobileGuestSave.getMobileGuestDraft(intent);
+    assert.deepEqual(await Promise.all(memory.photos.map((photo) => photo.blob.text())), ['front', 'back']);
+    localIdentity.setUserId('seller');
+    h.auth.session = { user: { id: 'seller', email: 'seller@test.example', last_sign_in_at: new Date().toISOString(), app_metadata: { provider: 'email' } } };
+    h.auth.sellerConsentReady = !signup;
+    let route = await h.settle('ProductInputRoute');
+    if (conflict) {
+      assert.equal(route.props.dialog.kind, 'mobile');
+      assert.equal(h.calls.filter((call) => call[0] === 'saveAll').length, 0);
+      assert.equal((await mobileGuestSave.getMobileGuestDraft(intent)).photos.length, 2);
+      await route.props.actions.confirm(); route = await h.settle('ProductInputRoute');
+    }
+    assert.equal(route.type, h.components.ProductInput);
+    assert.ok(route.props.autoSaveIntent);
+    tree = await h.settle('ProductInput', route.props);
+    assert.equal(node(tree, 'ColorImageGroup').props.group.images.length, 2);
+    if (signup) {
+      assert.equal(h.calls.filter((call) => call[0] === 'saveAll').length, 0);
+      h.auth.sellerConsentReady = true;
+      tree = await h.settle('ProductInput', route.props);
+    }
+    assert.equal(h.calls.filter((call) => call[0] === 'saveAll').length, 1);
+    await saved; tree = await h.settle('ProductInput', route.props);
+    assert.deepEqual(uploadedBytes, ['front', 'back']);
+    assert.equal(text(node(h.expand(tree, 'MobileSaveModal'), 'h3')), '사진 2장을 저장했어요');
+  });
+}
+
+for (const mobile of [true, false]) {
+  test(`R2 signed-in input keeps the existing completed-project guard (mobile=${mobile})`, async (t) => {
+    const h = harness({ mobile }); t.after(() => h.cleanup());
+    await h.settle(); assert.ok(h.doneGuardChecks.every((enabled) => enabled === true));
+  });
+}
+
+test('R2 an automatic IndexedDB Blob rejection stays retryable without an unhandled rejection', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fixture = draftStoreFixture(t); localIdentity.setUserId(null);
+  fixture.failWrites(new DOMException('Blob storage unavailable', 'DataCloneError'));
+  const photos = product(); photos.colors[0].images = [];
+  const h = harness({ session: null, photos, draftStore: localStore });
+  t.after(() => h.cleanup());
+  await h.settle();
+  t.mock.timers.tick(500); await drainDraftTasks();
+  await assert.rejects(localStore.flushProductDraftSave(), { name: 'DataCloneError' });
+});

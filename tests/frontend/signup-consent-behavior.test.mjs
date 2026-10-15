@@ -781,3 +781,27 @@ test('manual consent version conflict still requires a fresh unchecked confirmat
     { method: 'GET', expectedUserId: 'new-B' },
   ]);
 });
+
+for (const reason of ['revised', 'offline']) {
+  test(`G4 automatic guest save stays blocked until current consent is verified (${reason})`, async (t) => {
+    const h = await harness(t, { user: 'A' });
+    h.runtime.get = async () => {
+      if (reason === 'offline') throw new Error('offline');
+      return { ...missing, accepted: accepted.accepted };
+    };
+    h.completion(); await h.flush();
+    assert.equal(h.runtime.auth.sellerConsentReady, false);
+    if (reason === 'revised') assert.ok(checkbox(h.completion()));
+  });
+}
+
+test('G4 same-account relogin waits for the new consent lookup', async (t) => {
+  const h = await harness(t, { user: 'existing-A' });
+  h.completion(); await h.flush();
+  assert.equal(h.runtime.auth.sellerConsentReady, true);
+  const lookup = deferred(); h.runtime.get = () => lookup.promise;
+  await h.user(null); await h.user('existing-A');
+  assert.equal(h.runtime.auth.sellerConsentReady, false);
+  lookup.resolve(accepted); await h.flush();
+  assert.equal(h.runtime.auth.sellerConsentReady, true);
+});

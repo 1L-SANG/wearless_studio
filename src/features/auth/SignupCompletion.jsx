@@ -25,16 +25,18 @@ import { isMockMode } from '@/lib/api/index.js';
 import { acceptSellerConsent, getSellerConsent } from '@/lib/api/consents.js';
 import { claimSignupConsent, clearSignupConsent, hasFreshSignupConsent, readSignupConsent } from '@/lib/signupConsent.js';
 import { WEARLESS_LEGAL_URLS } from '@/lib/legalLinks.js';
+import { getMobileGuestSave } from '@/lib/mobileGuestSave.js';
 import styles from './SignupCompletion.module.css';
 
 export function SignupCompletion() {
-  const { session, loading, signOut } = useAuth();
+  const { session, loading, signOut, sellerConsentReady, markSellerConsentReady } = useAuth();
   const { push } = useToast();
   const loadAccount = useAppStore((a) => a.loadAccount);
   const [state, setState] = useState(null); // 서버 응답 | null(미조회·불필요)
   const [checked, setChecked] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
+  const [lookupAttempt, setLookupAttempt] = useState(0);
   const userId = session?.user?.id ?? null;
   const request = useRef(null);
 
@@ -45,10 +47,11 @@ export function SignupCompletion() {
     });
     if (signal.aborted) return;
     clearSignupConsent(marker);
+    if (!res.needsConsent) markSellerConsentReady(userId);
     setState({ ...res, userId });
     if (res.signupCredits > 0) push(`가입 크레딧 ${res.signupCredits}을 드렸어요`);
     void loadAccount({ force: true }).catch(() => {});
-  }, [userId, push, loadAccount]);
+  }, [userId, push, loadAccount, markSellerConsentReady]);
 
   useEffect(() => {
     setState(null); setChecked(false); setPending(false); setError('');
@@ -61,16 +64,31 @@ export function SignupCompletion() {
       .then(async (res) => {
         if (ctrl.signal.aborted) return;
         // 기존 계정으로 돌아온 가입 시도도 여기서 끝난다. 다음 계정에 넘기지 않는다.
-        if (res.accepted || !res.needsConsent) clearSignupConsent(marker);
+        if (res.accepted || !res.needsConsent) {
+          clearSignupConsent(marker);
+          if (!res.needsConsent) markSellerConsentReady(userId);
+        }
         // 회원가입 탭에서 이미 동의한 사람 — 화면을 띄우지 않고 기록만 남긴다.
         if (res.needsConsent && !res.accepted && marker === readSignupConsent() && hasFreshSignupConsent()) {
           try { await record(res.required, ctrl.signal, marker); return; } catch { /* 아래에서 화면으로 받는다 */ }
         }
         if (!ctrl.signal.aborted) setState({ ...res, userId });
       })
-      .catch(() => { /* 조회 실패 — 막지 않는다(위 주석) */ });
+      .catch(() => { /* 앱은 유지하되 자동 저장은 동의를 확인한 뒤 재개한다. */ });
     return () => ctrl.abort();
-  }, [loading, userId, record]);
+  }, [loading, userId, record, markSellerConsentReady, lookupAttempt]);
+
+  useEffect(() => {
+    if (!userId || sellerConsentReady || !getMobileGuestSave(session)) return;
+    const retry = () => setLookupAttempt((value) => value + 1);
+    const visible = () => { if (document.visibilityState === 'visible') retry(); };
+    window.addEventListener('online', retry);
+    document.addEventListener('visibilitychange', visible);
+    return () => {
+      window.removeEventListener('online', retry);
+      document.removeEventListener('visibilitychange', visible);
+    };
+  }, [userId, sellerConsentReady]);
 
   if (state?.userId !== userId || !state?.needsConsent) return null;
   const { required } = state;

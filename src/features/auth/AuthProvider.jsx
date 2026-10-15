@@ -15,7 +15,7 @@
      닫는 쪽이 알려준다(closeLogin({ cancelled: false })).
    토큰을 컴포넌트로 흘리지 않는다 — API 호출은 httpAdapter 가 supabase 에서 직접 읽는다.
    ============================================================= */
-import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { clientEvents } from '@/lib/clientEvents.js';
 import { useQueryClient } from '@tanstack/react-query';
 import { IS_FACEMARKET } from '@/lib/host.js';
@@ -27,6 +27,8 @@ import { stampAppOrigin } from '@/lib/appOrigin.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { clearApplyDraft } from '@/lib/applyDraft.js';
 import { clearSignupConsent } from '@/lib/signupConsent.js';
+import { getMobileGuestSave, clearMobileGuestSave } from '@/lib/mobileGuestSave.js';
+import { isMobileDevice } from '@/lib/deviceClass.js';
 import { KAKAO_OIDC_ENABLED, isKakaoCallbackPath as isKakaoCallback, startKakaoLogin } from '@/lib/kakaoOidc.js';
 
 const MOCK_FACEMARKET = import.meta.env.DEV && import.meta.env.VITE_API_MODE === 'mock' && IS_FACEMARKET;
@@ -120,13 +122,21 @@ export function AuthProvider({ children }) {
   const [signingOut, setSigningOut] = useState(false);
   const [flowResetRevision, setFlowResetRevision] = useState(0);
   const [resettingFlow, setResettingFlow] = useState(false);
+  const [sellerConsentUserId, setSellerConsentUserId] = useState(null);
+  const markSellerConsentReady = useCallback((id) => setSellerConsentUserId(id), []);
+  const consentIdentity = useRef(null);
 
-  const publishSession = useCallback(async (next, { isCurrent = () => true } = {}) => {
+  const publishSession = useCallback(async (next, { isCurrent = () => true, signedOut = false } = {}) => {
     if (!isCurrent()) return;
     const flow = useAppStore.getState();
     const nextUserId = next?.user?.id ?? null;
-    const dropFlow = !isMockMode && flow.projectPersisted && flow.projectId
-      && (nextUserId ? flow.userId && flow.userId !== nextUserId : !readStoredAuthSession());
+    if (consentIdentity.current !== nextUserId || signedOut) {
+      consentIdentity.current = nextUserId;
+      setSellerConsentUserId(null);
+    }
+    const guestSave = !IS_FACEMARKET && nextUserId && getMobileGuestSave(next);
+    const dropFlow = (signedOut && isMobileDevice()) || (!guestSave && !isMockMode && flow.projectPersisted && flow.projectId
+      && (nextUserId ? flow.userId && flow.userId !== nextUserId : !readStoredAuthSession()));
     try {
       draftSlot.setUserId?.(nextUserId);
       if (dropFlow) {
@@ -155,8 +165,8 @@ export function AuthProvider({ children }) {
     let alive = true; // StrictMode 이중 마운트: cleanup 이후 state 갱신 방지
     let subscription = null;
     let publication = Promise.resolve();
-    const acceptSession = (next) => {
-      publication = publication.then(() => publishSession(next, { isCurrent: () => alive }))
+    const acceptSession = (next, options = {}) => {
+      publication = publication.then(() => publishSession(next, { ...options, isCurrent: () => alive }))
         .catch((error) => { console.error('[auth] session publish failed', error); });
       return publication;
     };
@@ -204,7 +214,8 @@ export function AuthProvider({ children }) {
       if (!alive) return;
       const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
         if (!alive) return;
-        void acceptSession(next);
+        if (_event === 'SIGNED_OUT') clearMobileGuestSave();
+        void acceptSession(next, { signedOut: _event === 'SIGNED_OUT' });
       });
       subscription = sub.subscription;
     })();
@@ -253,6 +264,7 @@ export function AuthProvider({ children }) {
 
   // 로그아웃 시 미동기화 draft 도 정리 — 공용 브라우저에서 다음 사용자에게 입력이 복원되지 않게.
   const signOut = async () => {
+    clearMobileGuestSave();
     clientEvents.setSession(null);
     clearApplyDraft(userId);
     if (MOCK_FACEMARKET) { publishSession(null); return; }
@@ -307,7 +319,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthCtx.Provider key={flowResetRevision} value={{ session, user: session?.user ?? null, loading, signingOut, signIn, signInWithPassword, signInWithKakaoIdToken, signOut, openLogin, closeLogin }}>
+    <AuthCtx.Provider key={flowResetRevision} value={{ session, user: session?.user ?? null, loading, signingOut, signIn, signInWithPassword, signInWithKakaoIdToken, signOut, openLogin, closeLogin,
+      sellerConsentReady: isMockMode || !userId || sellerConsentUserId === userId, markSellerConsentReady }}>
       {!resettingFlow && children}
       {loginOpen && <LoginGate />}
     </AuthCtx.Provider>

@@ -14,6 +14,7 @@ import { normalizeAnalysisFit } from './fitAxes.js';
 import { isUploadablePhotoMime } from './imageTranscode.js';
 import { fetchPhotoBytes, isRemoteAssetPhoto } from './photoBytes.js';
 import { draftSlot } from './draftSlot.js';
+import { clearMobileGuestSave } from './mobileGuestSave.js';
 
 const DB_NAME = 'wearless-draft';
 const DB_VERSION = 1;
@@ -167,6 +168,7 @@ export async function saveProductDraft(product, analysis = null, composeMode = '
     analysis,
     composeMode: composeMode === 'extended' ? 'extended' : 'basic',
     updatedAt,
+    userId: draftSlot.getUserId(),
     photos,
     customMatch: customMatch && customMatch.uploads?.length ? customMatch : null,
   }, KEY) : null);
@@ -219,7 +221,7 @@ export function queueProductDraftSave(
   pendingSnapshot = { product, analysis, composeMode, updatedAt,
     userId: draftSlot.getUserId(), identityEpoch: draftSlot.getIdentityEpoch() };
   clearTimeout(pendingTimer);
-  pendingTimer = setTimeout(commitPendingSnapshot, DRAFT_DEBOUNCE_MS);
+  pendingTimer = setTimeout(() => { void commitPendingSnapshot().catch(() => null); }, DRAFT_DEBOUNCE_MS);
 }
 
 /** OAuth 이동처럼 페이지가 사라지기 전, 예약·진행 중 저장을 모두 기다린다. */
@@ -258,6 +260,7 @@ export async function loadDraft() {
 /** draft 삭제 — sync 성공 후 정리. */
 export async function clearDraft() {
   discardPendingDraftSave();
+  clearMobileGuestSave();
   await saveChain.catch(() => null);
   await withStore('readwrite', (s) => s.delete(KEY));
   sessionStorage.removeItem(PENDING_KEY);
