@@ -646,7 +646,9 @@ export function applySlotFillToInfo(block, elId, image) {
   });
   const type = presetTypeOf(block);
   if (!type || !block.info) return { ...block, elements };
-  const ord = block.elements.filter((e) => e.type === 'image').findIndex((e) => e.id === elId);
+  // Only the builder's photo slots belong to this form. A loose photo moved or
+  // added to the same block must not overwrite the size diagram/model/feature.
+  const ord = block.elements.filter((e) => e.type === 'image' && e.frameSlot).findIndex((e) => e.id === elId);
   if (ord < 0) return { ...block, elements };
   let info = block.info;
   if (type === 'feature_icons') info = { ...info, items: (info.items || []).map((it, i) => (i === ord ? { ...it, src } : it)) };
