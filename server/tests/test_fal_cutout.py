@@ -226,6 +226,6 @@ def test_empty_candidates_fail_per_view_and_http_failure_remains_retryable(monke
                                                   {"Front": "source"}))["Front"]
     assert not result.ready and result.code == "no_garment_mask"
     wire_fal(monkeypatch, fail=True)
-    with pytest.raises(SamUnavailable):
-        asyncio.run(fal_cutout.segment_garment(SimpleNamespace(fal_key="test"), r2,
-                                              {"Front": "source"}))
+    result = asyncio.run(fal_cutout.segment_garment(SimpleNamespace(fal_key="test"), r2,
+                                                  {"Front": "source"}))["Front"]
+    assert not result.ready and result.code == "unavailable"

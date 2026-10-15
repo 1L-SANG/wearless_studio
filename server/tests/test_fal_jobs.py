@@ -6,6 +6,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from app.services import fal_api, matching_cutout, matching_flatlay
+from app.services import canonical_reference, fal_cutout, sam_retry
 from app.services.sam_client import SamUnavailable
 from app.workers import sam_preprocess_job
 from test_canonical_pipeline import _async, _job, _job_app
@@ -84,8 +85,8 @@ def test_product_job_uses_fal_and_existing_canonical_recorder(monkeypatch, failu
         assert all(r["result"].algorithm_version == "fal-sam3-v1" for r in recorded)
 
 
-@pytest.mark.parametrize("qwen_fails", [False, True])
-def test_qwen_full_job_uses_raw_alpha_and_keeps_cutout_on_failure(monkeypatch, qwen_fails):
+@pytest.mark.parametrize("qwen_failure", [None, "generation", "mask", "small_mask"])
+def test_qwen_full_job_uses_raw_alpha_and_keeps_cutout_on_failure(monkeypatch, qwen_failure):
     from app.services import fal_cutout
     from test_qwen_flatlay import cutout
 
@@ -97,7 +98,7 @@ def test_qwen_full_job_uses_raw_alpha_and_keeps_cutout_on_failure(monkeypatch, q
     real_prepare = fal_api.prepare_image
 
     async def run(settings, model, payload):
-        if qwen_fails:
+        if qwen_failure == "generation":
             raise SamUnavailable("down")
         return {"images": [{"url": "https://fake/qwen.png"}]}
 
@@ -106,6 +107,12 @@ def test_qwen_full_job_uses_raw_alpha_and_keeps_cutout_on_failure(monkeypatch, q
         return real_prepare(data)
 
     async def segment(*args):
+        if qwen_failure == "mask":
+            raise SamUnavailable("mask unavailable")
+        if qwen_failure == "small_mask":
+            tiny = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
+            ImageDraw.Draw(tiny).rectangle((45, 45, 54, 54), fill=(65, 80, 110, 255))
+            return png(tiny)
         return cutout()
 
     async def fetch(*args):
@@ -117,14 +124,19 @@ def test_qwen_full_job_uses_raw_alpha_and_keeps_cutout_on_failure(monkeypatch, q
     monkeypatch.setattr(fal_cutout, "cutout_png", segment)
     _run(app, _job_dict())
     assert calls["finalize"][1]["state"] == "ready"
-    assert calls["finalize"][1]["flatlay"] is (not qwen_fails)
-    assert calls["finalize"][1]["flatlayGrid"] is (not qwen_fails)
+    assert calls["finalize"][1]["flatlay"] is (qwen_failure is None)
+    assert calls["finalize"][1]["flatlayGrid"] is (qwen_failure is None)
     metadata = {a["asset_id"]: a["metadata"] for a in calls["assets"]}
-    if not qwen_fails:
+    if qwen_failure is None:
         thumb = metadata[calls["swap"][1]]
         assert thumb["producer"] == "fal-qwen-matching-flatlay"
         assert thumb["algorithmVersion"] == "matching-flatlay-v3-qwen"
         assert metadata[calls["swap"][2]]["flatlayModel"] == "fal-ai/qwen-image-edit-2511"
+    else:
+        from app.services import garment_grid
+        original_cutout = matching_cutout.flatten_on_bg(cutout())
+        assert r2.puts[0][1] == matching_cutout.encode_thumbnail(original_cutout)
+        assert r2.puts[1][1] == garment_grid.compose_garment_grid([original_cutout] * 2)
     # White canvas corners prove the RGBA cutout, rather than the grey composite, was supplied.
     canvas = Image.open(io.BytesIO(captured["canvas"]))
     assert canvas.getpixel((0, 0)) == (255, 255, 255)
@@ -132,3 +144,65 @@ def test_qwen_full_job_uses_raw_alpha_and_keeps_cutout_on_failure(monkeypatch, q
     qwen_id = matching_flatlay.derived_asset_id(matching_item_id="custom_x", source_hash=fp,
                                                provider="qwen")
     assert qwen_id in metadata[calls["swap"][2]]["sourceAssetIds"]
+
+
+@pytest.mark.parametrize("failed_views", [("Back",), ("Front",), ("Front", "Back")])
+def test_product_partial_outage_records_success_and_retries_without_duplicates(monkeypatch, failed_views):
+    app, finished = _job_app(monkeypatch, configured=False)
+    r2 = MemoryR2(png(Image.new("RGB", (40, 40), (10, 80, 150))))
+    r2.objects["back"] = png(Image.new("RGB", (40, 40), (100, 80, 50)))
+    app.state.r2 = r2
+    monkeypatch.setattr(sam_preprocess_job, "load_settings", lambda: SimpleNamespace(
+        sam_preprocess_provider="fal", fal_key="test"))
+    monkeypatch.setattr(sam_preprocess_job.mannequin, "base_color_images",
+                        lambda _p: [("Front", "source"), ("Back", "back")])
+    monkeypatch.setattr(sam_preprocess_job.repo, "get_asset_for_user",
+                        lambda conn, user, aid: _async({"r2_key": aid}))
+    calls = []
+    failing = set(failed_views)
+
+    async def cutout(settings, source):
+        view = "Front" if source == r2.objects["source"] else "Back"
+        calls.append(view)
+        if view in failing:
+            raise SamUnavailable("temporary failure")
+        return png(Image.new("RGBA", (40, 40), (10, 80, 150, 255)))
+
+    monkeypatch.setattr(fal_cutout, "cutout_png", cutout)
+    # 캐시와 record()는 실제 코드를 쓴다. DB 조회와 저장 경계만 메모리로 대체한다.
+    rows = {}
+    async def find(conn, *, user_id, r2_key):
+        return rows.get(r2_key)
+
+    async def insert(conn, **kw):
+        assert kw["key"] not in rows, "재시도에서 같은 자산 행을 다시 만들면 안 된다"
+        row = {"id": kw["asset_id"], "metadata": {}}
+        rows[kw["key"]] = row
+        return row
+
+    async def metadata(conn, *, asset_id, metadata):
+        next(row for row in rows.values() if row["id"] == asset_id)["metadata"] = metadata
+
+    monkeypatch.setattr(canonical_reference, "find_by_key", find)
+    monkeypatch.setattr(canonical_reference.repo, "create_asset", insert)
+    monkeypatch.setattr(canonical_reference, "set_metadata", metadata)
+    asyncio.run(sam_preprocess_job.run_sam_preprocess_job(app, _job()))
+    assert finished["status"] == "done"
+    assert finished["result"]["state"] == "unavailable"
+    assert finished["result"]["failed"] == {view: "unavailable" for view in failed_views}
+    succeeded = {"Front", "Back"} - set(failed_views)
+    assert set(finished["result"]["recorded"]) == succeeded
+    assert len(rows) == len(succeeded)
+    assert sam_retry.job_is_retryable(finished)
+    original_ids = {view: row["assetId"] for view, row in finished["result"]["recorded"].items()}
+
+    failing.clear()
+    asyncio.run(sam_preprocess_job.run_sam_preprocess_job(app, _job()))
+    assert finished["status"] == "done" and finished["result"]["state"] == "ready"
+    assert not sam_retry.job_is_retryable(finished)
+    assert len(rows) == 2
+    for view in ("Front", "Back"):
+        assert calls.count(view) == (2 if view in failed_views else 1)
+        assert finished["result"]["recorded"][view]["cached"] is (view in succeeded)
+        if view in succeeded:
+            assert finished["result"]["recorded"][view]["assetId"] == original_ids[view]

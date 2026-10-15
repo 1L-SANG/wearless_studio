@@ -104,6 +104,8 @@ async def run_matching_cutout_job(app, job: dict) -> None:
             else:
                 results = await sam_client.segment_garment(s, {"Front": key})
             view = results.get("Front")
+            if cutout_provider == "fal" and view is not None and view.code == "unavailable":
+                raise sam_client.SamUnavailable("fal cutout unavailable")
             if view is None or not view.ready or not view.cutout_key:
                 raise _CutoutFailed("no_cutout")
             # 신원의 뿌리는 소스다 — SAM 이 준 소스 해시, 없으면 소스 키.

@@ -148,7 +148,8 @@ async def segment_garment(settings, r2, views: dict[str, str]) -> dict[str, SamV
             await asyncio.to_thread(r2.put_bytes, key, data, "image/png")
             results[view] = await asyncio.to_thread(_result, view, data, source_hash, key)
         except SamUnavailable:
-            raise
+            # 한 뷰의 통신 장애가 다른 뷰의 성공을 버리거나 실행을 막지 않게 한다.
+            results[view] = SamViewResult(view=view, ready=False, code="unavailable")
         except NoGarmentMask:
             results[view] = SamViewResult(view=view, ready=False, code="no_garment_mask")
         except Exception:  # 디코드·저장 실패도 한 뷰의 기존 실패 계약을 따른다.

@@ -93,8 +93,12 @@ async def run_sam_preprocess_job(app, job: dict) -> None:
 
     # Front and Back are independent all the way through: a failed Back never discards a
     # recorded Front.
-    state = ("ready" if recorded and not failed
+    # fal은 뷰별 장애를 반환한다. 성공분은 위에서 커밋하고, 나머지는 기존 푸셔가
+    # 재시도하도록 unavailable을 유지한다. SAM2의 기존 partial/failed 판정은 그대로다.
+    unavailable = use_fal and "unavailable" in failed.values()
+    state = ("unavailable" if unavailable
+             else "ready" if recorded and not failed
              else "partial" if recorded
              else "failed")
-    await finish("done" if recorded else "error",
+    await finish("done" if recorded or unavailable else "error",
                  {"state": state, "recorded": recorded, "failed": failed})

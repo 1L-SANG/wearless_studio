@@ -27,7 +27,7 @@ def cutout(color=(40, 80, 120)):
 
 
 def test_canvas_centers_visible_garment_at_88_percent():
-    canvas = qwen_flatlay.prepare_canvas(cutout())
+    canvas, area_fraction = qwen_flatlay.prepare_canvas(cutout())
     a = np.array(Image.open(io.BytesIO(canvas)))
     assert a.shape == (1024, 768, 3)
     ys, xs = np.where(np.any(a < 240, axis=2))
@@ -35,6 +35,7 @@ def test_canvas_centers_visible_garment_at_88_percent():
     assert abs((xs.min() + xs.max()) / 2 - 383.5) <= 1
     assert 898 <= ys.max() - ys.min() + 1 <= 902
     assert tuple(a[0, 0]) == (255, 255, 255)
+    assert area_fraction == pytest.approx(563 * 901 / (768 * 1024))
 
 
 def test_soft_lab_translation_moves_only_garment_and_lightness_by_70_percent():
@@ -52,21 +53,13 @@ def test_soft_lab_translation_moves_only_garment_and_lightness_by_70_percent():
     assert np.array_equal(corrected[~mask], result[~mask])
 
 
-def test_white_fallback_removes_only_border_connected_nearly_white_pixels():
-    a = np.full((100, 100, 3), 250, np.uint8)
-    a[20:80, 20:80] = (20, 40, 60)
-    a[40:60, 40:60] = 255
-    a[0, 0] = (244, 255, 255)
-    mask = qwen_flatlay.white_background_mask(a)
-    assert mask[50, 50] and mask[25, 25] and mask[0, 0]
-    assert not mask[5, 5]
-
-
 @pytest.mark.parametrize("mask_fails", [False, True])
-def test_qwen_exact_payload_mask_fallback_grey_composite_and_stage(monkeypatch, mask_fails):
+def test_qwen_exact_payload_safe_fallback_grey_composite_and_stage(monkeypatch, mask_fails):
     calls = []
     generated = np.full((1024, 768, 3), 255, np.uint8)
-    generated[100:924, 200:568] = (65, 90, 125)
+    generated[100:924, 200:568] = (250, 250, 250) if mask_fails else (65, 90, 125)
+    if mask_fails:
+        generated[300:330, 300:400] = 30  # 흰 옷 몸통이 아닌 로고만 남으면 안 된다.
 
     async def run(settings, model, payload):
         calls.append((model, payload, image_usage._ctx.get().stage))
@@ -90,8 +83,12 @@ def test_qwen_exact_payload_mask_fallback_grey_composite_and_stage(monkeypatch, 
     settings = SimpleNamespace(matching_flatlay_provider="qwen", fal_key="test")
     with image_usage.job_scope(job_id="j", stage="matching_cutout"):
         result = asyncio.run(matching_flatlay.render_thumbnail(None, settings=settings,
-                             cutout_png=cutout(), clothing_type="bottom"))
+                             cutout_png=cutout((250, 250, 250)) if mask_fails else cutout(),
+                             clothing_type="bottom"))
         assert image_usage._ctx.get().stage == "matching_cutout"
+    if mask_fails:
+        assert result is None, "누끼 실패는 기존 누끼를 유지해야 한다"
+        return
     assert result is not None and result.model == "fal-ai/qwen-image-edit-2511"
     model, payload, stage = calls[0]
     assert stage == "matching_flatlay"
@@ -122,3 +119,39 @@ def test_qwen_failure_is_absorbed_and_provider_identities_are_separate(monkeypat
         matching_item_id="i", model="fal-ai/qwen-image-edit-2511", provider="qwen")
     assert meta["producer"] == "fal-qwen-matching-flatlay"
     assert meta["algorithmVersion"] == "matching-flatlay-v3-qwen"
+
+
+@pytest.mark.parametrize("output_size,mask_width,accepted", [
+    ((768, 1024), 30, False),  # 로고만 남음
+    ((768, 1024), 337, False),  # 입력 옷 면적의 50% 바로 아래
+    ((768, 1024), 338, True),   # 정확히 50%는 허용
+    ((384, 512), 169, True),   # 해상도가 작아도 같은 비율이면 허용
+])
+@pytest.mark.parametrize("input_size", [(100, 100), (2000, 2000)])
+def test_result_area_is_compared_in_prepared_canvas_coordinates(
+        monkeypatch, output_size, mask_width, accepted, input_size):
+    reference = png(Image.new("RGBA", input_size, (60, 80, 100, 255)))
+    width, height = output_size
+    rgb = Image.new("RGB", output_size, (65, 90, 125))
+    # 정사각형 입력은 768x1024 캔버스에서 676x676 크기로 배치된다.
+    alpha = np.zeros((height, width), np.uint8)
+    alpha[:676 * height // 1024, :mask_width] = 255
+    segmented = rgb.convert("RGBA")
+    segmented.putalpha(Image.fromarray(alpha))
+
+    async def run(*args):
+        return {"images": [{"url": "https://fake/generated.png"}]}
+
+    async def fetch(*args):
+        return png(rgb)
+
+    async def segment(*args):
+        return png(segmented)
+
+    monkeypatch.setattr(fal_api, "run_model", run)
+    monkeypatch.setattr(fal_api, "fetch_image", fetch)
+    monkeypatch.setattr(fal_cutout, "cutout_png", segment)
+    result = asyncio.run(matching_flatlay.render_thumbnail(None,
+        settings=SimpleNamespace(matching_flatlay_provider="qwen", fal_key="test"),
+        cutout_png=reference, clothing_type=None))
+    assert (result is not None) is accepted

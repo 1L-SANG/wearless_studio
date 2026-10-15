@@ -20,7 +20,7 @@ NEGATIVE_PROMPT = (
 )
 
 
-def prepare_canvas(cutout_png: bytes) -> bytes:
+def prepare_canvas(cutout_png: bytes) -> tuple[bytes, float]:
     with Image.open(io.BytesIO(cutout_png)) as image:
         cut = image.convert("RGBA")
         bbox = cut.getchannel("A").getbbox()
@@ -31,18 +31,12 @@ def prepare_canvas(cutout_png: bytes) -> bytes:
     cut = cut.resize((max(1, round(cut.width * scale)), max(1, round(cut.height * scale))),
                      Image.Resampling.LANCZOS)
     canvas = Image.new("RGB", (768, 1024), "white")
+    # 촬영 해상도와 빈 여백이 아니라 실제 모델 입력에서 옷이 차지하는 비율이다.
+    area_fraction = float((np.array(cut.getchannel("A")) > 127).sum()) / (768 * 1024)
     canvas.paste(cut, ((768 - cut.width) // 2, (1024 - cut.height) // 2), cut)
     out = io.BytesIO()
     canvas.save(out, "PNG")
-    return out.getvalue()
-
-
-def white_background_mask(rgb: np.ndarray) -> np.ndarray:
-    white = np.all(rgb >= 245, axis=2).astype(np.uint8)
-    # 흰색 패딩으로 네 테두리에 닿는 배경을 한 번의 flood fill 로 모두 연결한다.
-    padded = np.pad(white, 1, constant_values=1)
-    cv2.floodFill(padded, None, (0, 0), 2)
-    return padded[1:-1, 1:-1] != 2
+    return out.getvalue(), area_fraction
 
 
 def soft_color_correct(reference_png: bytes, rgb: np.ndarray,
@@ -86,7 +80,7 @@ def _composite(reference: bytes, rgb: np.ndarray, alpha: np.ndarray) -> bytes:
 
 
 async def render(settings, cutout_png: bytes) -> bytes:
-    canvas = await asyncio.to_thread(prepare_canvas, cutout_png)
+    canvas, source_area_fraction = await asyncio.to_thread(prepare_canvas, cutout_png)
     prepared = await asyncio.to_thread(fal_api.prepare_image, canvas)
     # 지시서 3.4의 로컬 실험(run_stage5.py)과 같은 복수 필드. SAM3만 image_url을 쓴다.
     body = await fal_api.run_model(settings, fal_api.QWEN_MODEL, {
@@ -97,12 +91,10 @@ async def render(settings, cutout_png: bytes) -> bytes:
     generated = await fal_api.fetch_image(body["images"][0]["url"])
     rgb = await asyncio.to_thread(_decode_rgb, generated)
     height, width = rgb.shape[:2]
-    try:
-        segmented = await fal_cutout.cutout_png(settings, generated)
-        alpha = await asyncio.to_thread(_alpha, segmented, (width, height))
-        if not (alpha > 127).any():
-            raise ValueError("empty generated mask")
-    except Exception:  # SAM 실패는 테두리에 연결된 거의 흰 배경만 제거하는 방식으로 대체.
-        mask = await asyncio.to_thread(white_background_mask, rgb)
-        alpha = mask.astype(np.uint8) * 255
+    # 실패는 render_thumbnail이 None으로 바꾼다. 색으로 배경을 추측하면 흰 옷도 지워진다.
+    segmented = await fal_cutout.cutout_png(settings, generated)
+    alpha = await asyncio.to_thread(_alpha, segmented, (width, height))
+    result_area_fraction = float((alpha > 127).mean())
+    if source_area_fraction <= 0 or result_area_fraction < source_area_fraction * .5:
+        raise ValueError("generated garment mask is too small")
     return await asyncio.to_thread(_composite, cutout_png, rgb, alpha)
