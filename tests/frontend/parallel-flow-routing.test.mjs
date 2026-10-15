@@ -193,7 +193,7 @@ test('the storyboard loads immediately but waits for custom-match material befor
 const chromeSource = read('../../src/features/shell/ChromeLayout.jsx');
 const mannequinRibbonStart = chromeSource.indexOf('function MannequinJobRibbon()');
 const detailPageRibbonStart = chromeSource.indexOf('function DetailPageJobRibbon()');
-const chromeLayoutStart = chromeSource.indexOf('export function ChromeLayout()');
+const chromeLayoutStart = chromeSource.indexOf('export function ChromeLayout(');
 assert.ok(
   mannequinRibbonStart >= 0
     && detailPageRibbonStart > mannequinRibbonStart

@@ -6,6 +6,7 @@ import { renderToString } from 'react-dom/server';
 import { StaticRouter } from 'react-router-dom/server.js';
 import { Routes, Route, Outlet, Navigate, useLocation } from 'react-router-dom';
 import { transformWithEsbuild } from 'vite';
+import { useDocumentEntry } from '../../src/features/shell/useDocumentEntry.js';
 
 const source = readFileSync(new URL('../../src/apps/seller/App.jsx', import.meta.url), 'utf8');
 const guardStart = source.indexOf('function MobileHandoffGuard()');
@@ -30,7 +31,7 @@ function harness(mobile, pathname, entry = null) {
   } };
   const href = `https://preview.wearless.test${pathname}?view=saved#page`;
   const bindings = {
-    React, Routes, Route, Outlet, Navigate, useLocation, Suspense: React.Suspense,
+    React, Routes, Route, Outlet, Navigate, useLocation, useDocumentEntry, Suspense: React.Suspense,
     useEffect: (effect) => effects.push(effect), document,
     useLayoutEffect: (effect) => layoutEffects.push(effect),
     removeSellerBootBackground: () => { bootRemoved = true; },
