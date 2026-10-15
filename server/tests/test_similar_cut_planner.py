@@ -9,6 +9,7 @@ from app.agents import similar_cut, cut_variator
 from app.agents.gemini_image import InlineImage, GeminiImageResult
 from app.agents.vision_llm import VisionError
 from conftest import make_settings
+from test_similar_cut_conditions import model_plan, new_plan
 
 
 def plan(action="hand_near_chin"):
@@ -43,12 +44,12 @@ def test_planner_sees_original_and_prior_pending_actions(monkeypatch):
 
     async def analyze(settings, prompt, images, schema, **kwargs):
         captured.update(prompt=prompt, images=images, kwargs=kwargs)
-        return plan(), "gemini"
+        return model_plan(), "gemini"
 
     monkeypatch.setattr(similar_cut.vision_llm, "analyze_with_fallback", analyze)
     out = asyncio.run(similar_cut.plan_next(make_settings(), source, context={"clothingType": "dress"},
         cut_type="styling", changes=[], history=history))
-    assert out["actionKey"] == "hand_near_chin"
+    assert out["actionKey"] == "hand_on_hip"
     assert captured["images"] == [source]
     assert "touch_glasses" in captured["prompt"]
     assert captured["kwargs"]["require_complete_envelope"] is True
@@ -60,12 +61,12 @@ def test_duplicate_action_replanned_once_then_fails_without_basic_fallback(monke
 
     async def analyze(*args, **kwargs):
         calls.append(1)
-        return plan(), "gemini"
+        return model_plan(), "gemini"
 
     monkeypatch.setattr(similar_cut.vision_llm, "analyze_with_fallback", analyze)
     with pytest.raises(VisionError, match="different"):
         asyncio.run(similar_cut.plan_next(make_settings(), InlineImage("image/jpeg", b"source"),
-            context={}, cut_type="styling", changes=[], history=[{"plan": plan()}]))
+            context={}, cut_type="styling", changes=[], history=[{"plan": new_plan()}]))
     assert len(calls) == 2
 
 
@@ -87,15 +88,16 @@ def test_planned_generation_uses_plan_and_does_not_force_global_ratio(monkeypatc
     assert "natural, minor variation)" not in captured["prompt"]
 
 
-def test_planning_preserves_face_covering_and_respects_expression_request(monkeypatch):
+def test_planning_preserves_hidden_face_and_selfie_phone(monkeypatch):
     seen = []
     async def analyze(settings, prompt, images, schema, **kwargs):
         seen.append(prompt)
-        return plan(), "gemini"
+        return model_plan(), "gemini"
     monkeypatch.setattr(similar_cut.vision_llm, "analyze_with_fallback", analyze)
     asyncio.run(similar_cut.plan_next(make_settings(), InlineImage("image/jpeg", b"source"),
-        context={}, cut_type="styling", changes=[{"type": "face", "value": "smile"}], history=[]))
-    assert "face-covering prop" in seen[0] and "hidden" in seen[0] and "smile" in seen[0]
+        context={}, cut_type="styling", changes=[], history=[]))
+    assert "cropped_or_hidden" in seen[0] and "does not move" in seen[0]
+    assert "soft_smile" in seen[0]
 
 
 @pytest.mark.parametrize("dimensions", [(900, 900), (1200, 800), (640, 768), (3000, 1000), (1000, 3000)])

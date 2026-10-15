@@ -227,6 +227,16 @@ def _parse_json(text: str, provider: str) -> dict:
     return parsed
 
 
+def _without_schema_extensions(node):
+    """Planner-only annotations must never reach OpenAI Structured Outputs."""
+    if isinstance(node, dict):
+        return {key: _without_schema_extensions(value) for key, value in node.items()
+                if not key.startswith("x-")}
+    if isinstance(node, list):
+        return [_without_schema_extensions(value) for value in node]
+    return node
+
+
 def _gpt_body(model: str, prompt: str, images: list[InlineImage], schema: dict,
               reasoning_effort=None, image_detail=None, max_completion_tokens=None,
               system_prompt: str | None = None) -> dict:
@@ -241,7 +251,8 @@ def _gpt_body(model: str, prompt: str, images: list[InlineImage], schema: dict,
         "messages": [{"role": "user", "content": content}],
         "response_format": {
             "type": "json_schema",
-            "json_schema": {"name": "product_analysis", "strict": True, "schema": schema},
+            "json_schema": {"name": "product_analysis", "strict": True,
+                            "schema": _without_schema_extensions(schema)},
         },
     }
     if system_prompt is not None:
@@ -445,6 +456,8 @@ def _to_gemini_schema(node: dict) -> dict:
         out["properties"] = {k: _to_gemini_schema(v) for k, v in props.items()}
         if node.get("required"):
             out["required"] = node["required"]
+        if node.get("x-propertyOrdering") is True:
+            out["propertyOrdering"] = list(props)
     elif t == "array" and node.get("items"):
         out["items"] = _to_gemini_schema(node["items"])
     return out

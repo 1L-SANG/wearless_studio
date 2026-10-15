@@ -811,21 +811,21 @@ def test_edit_provider_failure_never_charges_or_publishes(recording_runtime, mon
 @pytest.mark.parametrize("success", [False, True])
 @pytest.mark.parametrize("reserved", [8, 19])
 def test_upload_similar_settles_saved_reservation(recording_runtime, monkeypatch, success, reserved):
+    from test_similar_cut_conditions import model_plan, new_plan
     state = recording_runtime
     monkeypatch.setattr(repo, "get_project_asset_for_user", AsyncMock(return_value={
         "id": A, "source": "upload", "metadata": {}, "r2_key": "upload", "mime_type": "image/png"}))
     monkeypatch.setattr(repo, "list_wardrobe_images", AsyncMock(return_value=[]))
     monkeypatch.setattr(repo, "get_similar_cut_plan_for_job", AsyncMock(return_value=None))
     monkeypatch.setattr(repo, "list_similar_cut_plans", AsyncMock(return_value=[]))
-    plan = {"actionKey": "hands_low", "actionSummary": "손 내리기", "instructions": "Lower the hands.",
-            "preserve": ["garment"], "avoid": ["relocation"]}
+    plan = new_plan()
     envelope = {"version": 1, "rootAssetId": A, "sourceAssetId": A}
     monkeypatch.setattr(repo, "reserve_similar_cut_plan", AsyncMock(return_value={
         "status": "reserved", "similar_cut": {**envelope, "plan": plan}}))
     async def analyze(*args, **kw):
         if not success:
             raise worker.VisionError("No person in the source photograph")
-        return plan, "fake"
+        return model_plan(), "fake"
     monkeypatch.setattr(similar_cut.vision_llm, "analyze_with_fallback", analyze)
     async def generate(settings, gemini, image, changes, cut_type, **kw):
         assert success and cut_type == "styling"

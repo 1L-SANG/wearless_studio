@@ -139,3 +139,16 @@ def test_reclaimed_worker_resumes_saved_plan_before_comparing_history():
 def test_lookup_does_not_resume_malformed_metadata(invalid):
     conn = Connection({"similar_cut": invalid})
     assert asyncio.run(repo.get_similar_cut_plan_for_job(conn, "user", "project", "job")) is None
+
+
+def test_reservation_and_lookup_preserve_condition_plan_fields():
+    from test_similar_cut_conditions import new_plan
+    saved = {**record(), "plan": new_plan()}
+    conn = Connection({"locked": True}, {"similar_cut": None}, [], {"id": "job"})
+    result = asyncio.run(repo.reserve_similar_cut_plan(
+        conn, user_id="user", project_id="project", job_id="job", lease_token="lease",
+        metadata=saved, expected_history=[]))
+    assert result["similar_cut"] == saved
+    assert conn.calls[-1][1][0].obj == {"similar_cut": saved}
+    conn = Connection({"similar_cut": saved})
+    assert asyncio.run(repo.get_similar_cut_plan_for_job(conn, "user", "project", "job")) == saved

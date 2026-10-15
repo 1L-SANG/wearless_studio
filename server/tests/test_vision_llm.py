@@ -415,3 +415,53 @@ def test_gemini_schema_conversion():
     assert g["properties"]["a"]["nullable"] is True
     assert g["properties"]["b"]["type"] == "ARRAY"
     assert g["properties"]["b"]["items"]["enum"] == ["x"]
+
+
+def test_property_ordering_is_opt_in_per_object_and_unmarked_schema_bytes_are_unchanged():
+    import copy
+    import json
+    schema = {"type": "object", "additionalProperties": False, "properties": {
+        "state": {"type": "object", "properties": {"posture": {"type": "string"}}, "required": ["posture"]},
+        "choice": {"type": ["string", "null"], "enum": ["none"], "description": "choice"},
+        "items": {"type": "array", "items": {"type": "string"}},
+    }, "required": ["state", "choice", "items"]}
+    expected = {"type": "OBJECT", "properties": {
+        "state": {"type": "OBJECT", "properties": {"posture": {"type": "STRING"}}, "required": ["posture"]},
+        "choice": {"type": "STRING", "nullable": True, "enum": ["none"], "description": "choice"},
+        "items": {"type": "ARRAY", "items": {"type": "STRING"}},
+    }, "required": ["state", "choice", "items"]}
+    original = copy.deepcopy(schema)
+    assert json.dumps(vision_llm._to_gemini_schema(schema)) == json.dumps(expected)
+    schema["x-propertyOrdering"] = True
+    schema["properties"]["state"]["x-propertyOrdering"] = True
+    converted = vision_llm._to_gemini_schema(schema)
+    assert converted["propertyOrdering"] == ["state", "choice", "items"]
+    assert converted["properties"]["state"]["propertyOrdering"] == ["posture"]
+    assert "propertyOrdering" not in converted["properties"]["items"]
+    schema["x-propertyOrdering"] = False
+    assert "propertyOrdering" not in vision_llm._to_gemini_schema(schema)
+    assert original["properties"] == {k: {key: value for key, value in node.items() if not key.startswith("x-")}
+                                        for k, node in schema["properties"].items()}
+
+
+def test_gpt_strips_schema_extensions_recursively_without_mutating_source():
+    import copy
+    import json
+    from app.agents import similar_cut
+    schema = {"type": "object", "x-propertyOrdering": True, "properties": {
+        "plans": {"type": "array", "items": similar_cut._SCHEMA},
+        "optional": {"anyOf": [{"type": "string", "x-note": "private"}, {"type": "null"}]},
+    }, "required": ["plans", "optional"], "additionalProperties": False}
+    original = copy.deepcopy(schema)
+    body = vision_llm._gpt_body("gpt-test", "prompt", [], schema)
+    assert '"x-' not in json.dumps(body)
+    sent = body["response_format"]["json_schema"]
+    assert sent["strict"] is True
+    assert sent["schema"]["properties"]["plans"]["items"]["properties"]["sourceState"]["type"] == "object"
+    assert schema == original
+
+
+def test_similar_schema_emits_state_before_choice_for_gemini():
+    from app.agents import similar_cut
+    converted = vision_llm._gemini_body("prompt", [], similar_cut._SCHEMA, "low")["generationConfig"]["responseSchema"]
+    assert converted["propertyOrdering"][:2] == ["sourceState", "choice"]
