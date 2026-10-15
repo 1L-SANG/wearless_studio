@@ -4,6 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { transformWithEsbuild } from 'vite';
+import { paymentResultErrorCopy } from '../../src/features/payments/paymentResultCopy.js';
 
 const root = new URL('../../', import.meta.url);
 const read = (path) => readFileSync(new URL(path, root), 'utf8');
@@ -24,7 +25,7 @@ async function screen(path, name, { states = [], query = '', failure, queries = 
   const effects = [], logs = [];
   const store = (select) => select({ syncCredits() {} });
   const bindings = {
-    Icon, Button, EmptyState, Skeleton, HangTag, tagStyles: styles,
+    Icon, Button, EmptyState, Skeleton, HangTag, tagStyles: styles, paymentResultErrorCopy,
     useState(initial) {
       const index = cursor++;
       if (!(index in states)) states[index] = initial;
@@ -44,6 +45,7 @@ async function screen(path, name, { states = [], query = '', failure, queries = 
     api: {
       confirmTossPayment: async () => { throw failure; },
       startSubscription: async () => { throw failure; },
+      replaceSubscriptionCard: async () => { throw failure; },
     },
     BANK_TRANSFER_ENABLED: false, SUBSCRIPTION_TRANSFER_ENABLED: false,
     TOSS_BILLING_CLIENT_KEY: '',
@@ -161,3 +163,65 @@ test('크레딧 목록은 PC에서 제목 왼쪽에 맞추고 휴대폰 기본 �
   assert.match(css, /\.list\s*\{[^}]*max-width: 560px; margin: 0 auto;/);
   assert.match(css, /@media \(min-width: 769px\)\s*\{\s*\.list\s*\{\s*margin-inline: 0;/);
 });
+
+test('카드 교체 확인 지연은 결제 승인 지연으로 안내하지 않는다', async () => {
+  const h = await screen('src/features/subscription/Subscription.jsx', 'SubscriptionSuccess', {
+    pathname: '/subscription/success', query: 'authKey=k&customerKey=c&mode=card',
+    failure: Object.assign(new Error('PRIVATE provider detail'), { code: 'payment_gateway_unreachable', status: 503 }),
+  });
+  h.paint(); h.effects.forEach(effect => effect());
+  await new Promise(resolve => setImmediate(resolve));
+  const html = h.paint();
+  assert.match(html, /결제수단 변경을 확인하지 못했어요/);
+  assert.match(html, /구독 관리에서 등록된 결제수단을 확인해 주세요/);
+  assert.doesNotMatch(html, /결제 확인이 지연|다시 결제하기|PRIVATE|payment_gateway_unreachable/);
+});
+
+for (const { code, title, detail } of [
+  { code: 'subscription_exists', title: '이미 구독 중이에요', detail: '구독 관리에서 이용 중인 요금제를 확인해 주세요.' },
+  { code: 'manual_plan_active', title: '계좌이체 이용권을 사용 중이에요', detail: '이용권이 끝난 뒤 정기결제를 시작할 수 있어요.' },
+]) {
+  test(`구독 상태 ${code}는 무작정 재시도를 권하지 않고 필요한 안내를 보여준다`, async () => {
+    const h = await screen('src/features/subscription/Subscription.jsx', 'SubscriptionSuccess', {
+      pathname: '/subscription/success', query: 'authKey=k&customerKey=c&plan=seller',
+      failure: Object.assign(new Error('PRIVATE provider detail'), { code, status: 409 }),
+    });
+    h.paint(); h.effects.forEach(effect => effect());
+    await new Promise(resolve => setImmediate(resolve));
+    const html = h.paint();
+    assert.ok(html.includes(`<h1>${title}</h1>`));
+    assert.ok(html.includes(detail));
+    assert.doesNotMatch(html, /PRIVATE|잠시 후 다시 시도/);
+    assert.ok(!html.includes(code));
+  });
+}
+
+for (const [path, name, pathname, query] of [
+  ['src/features/payments/PaymentResult.jsx', 'PaymentSuccess', '/payments/success', 'paymentKey=k&orderId=o&amount=100'],
+  ['src/features/subscription/Subscription.jsx', 'SubscriptionSuccess', '/subscription/success', 'authKey=k&customerKey=c&plan=seller'],
+]) {
+  for (const code of ['payment_gateway_unreachable', 'PROVIDER_UNAVAILABLE']) {
+    test(`${name}의 ${code}는 승인 미확정을 확정 실패로 표시하지 않는다`, async () => {
+      const h = await screen(path, name, { pathname, query,
+        failure: Object.assign(new Error('PRIVATE provider detail'), { code, status: 503 }),
+      });
+      h.paint(); h.effects.forEach(effect => effect());
+      await new Promise(resolve => setImmediate(resolve));
+      const html = h.paint();
+      assert.match(html, /<h1>결제 확인이 지연되고 있어요<\/h1>/);
+      assert.match(html, /다시 결제하기 전에 결제 내역을 확인해 주세요/);
+      assert.doesNotMatch(html, /승인에 실패|구독을 시작하지 못|PRIVATE/);
+      assert.ok(!html.includes(code));
+    });
+  }
+  test(`${name}의 결제 미설정은 승인 확인 중인 상태로 오인하지 않는다`, async () => {
+    const h = await screen(path, name, { pathname, query,
+      failure: Object.assign(new Error('PRIVATE configuration'), { code: 'payment_not_configured', status: 503 }),
+    });
+    h.paint(); h.effects.forEach(effect => effect());
+    await new Promise(resolve => setImmediate(resolve));
+    const html = h.paint();
+    assert.match(html, /잠시 후 다시 시도해 주세요/);
+    assert.doesNotMatch(html, /확인이 지연|PRIVATE|payment_not_configured/);
+  });
+}

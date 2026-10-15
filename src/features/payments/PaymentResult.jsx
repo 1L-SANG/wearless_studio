@@ -12,6 +12,7 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { Button, Icon } from '@/components/ui.jsx';
 import { clearCreditReturn, readCreditReturn } from '@/lib/creditReturn.js';
 import { authorizeFlowContinuation } from '@/lib/flowSession.js';
+import { paymentResultErrorCopy } from './paymentResultCopy.js';
 
 export function PaymentSuccess() {
   const [params] = useSearchParams();
@@ -62,7 +63,7 @@ export function PaymentSuccess() {
       .catch((e) => {
         if (mounted.current && currentPath.current === '/payments/success') {
           console.error('결제 승인 오류', e);
-          setState({ status: 'error', message: '잠시 후 다시 시도해 주세요.' });
+          setState({ status: 'error', ...paymentResultErrorCopy(e) });
         }
       });
   }, [navigate, params, qc, syncCredits]);
@@ -72,7 +73,7 @@ export function PaymentSuccess() {
   }
   if (state.status === 'error') {
     return (
-      <Shell icon="alertCircle" title="결제 승인에 실패했어요" desc={state.message}>
+      <Shell icon="alertCircle" title={state.title || '결제 승인에 실패했어요'} desc={state.message}>
         <Link to="/pricing"><Button variant="primary">요금제로 돌아가기</Button></Link>
       </Shell>
     );

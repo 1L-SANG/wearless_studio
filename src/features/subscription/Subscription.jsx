@@ -24,6 +24,7 @@ import { Button, Icon, Skeleton, ErrorState } from '@/components/ui.jsx';
 import { BANK_TRANSFER_ENABLED, SUBSCRIPTION_TRANSFER_ENABLED, TOSS_BILLING_CLIENT_KEY }
   from '@/lib/tossKeys.js';
 import s from './Subscription.module.css';
+import { paymentResultErrorCopy } from '../payments/paymentResultCopy.js';
 
 // 결제수단 등록/교체는 자동결제 MID 의 클라이언트 키로 해야 한다 — lib/tossKeys.js 참고.
 const num = (n) => Number(n || 0).toLocaleString('ko-KR');
@@ -91,7 +92,7 @@ export function SubscriptionSuccess() {
       .catch((e) => {
         if (mounted.current && currentPath.current === '/subscription/success') {
           console.error('구독 시작 오류', e);
-          setState({ status: 'error', message: '잠시 후 다시 시도해 주세요.' });
+          setState({ status: 'error', ...paymentResultErrorCopy(e, { cardOnly: mode === 'card' }) });
         }
       });
   }, [params, qc, syncCredits]);
@@ -101,7 +102,7 @@ export function SubscriptionSuccess() {
   }
   if (state.status === 'error') {
     return (
-      <Shell icon="alertCircle" title="구독을 시작하지 못했어요" desc={state.message}>
+      <Shell icon="alertCircle" title={state.title || '구독을 시작하지 못했어요'} desc={state.message}>
         <Link to="/pricing"><Button variant="primary">요금제로 돌아가기</Button></Link>
       </Shell>
     );
