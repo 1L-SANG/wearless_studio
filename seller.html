@@ -1,6 +1,21 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
+  <script>
+    (function () {
+      var root = document.documentElement;
+      var origin = performance.timeOrigin || (Date.now() - performance.now());
+      root.style.setProperty('--wl-t', ((origin - Date.UTC(2026, 0, 1)) / 1000).toFixed(3));
+      if (new URLSearchParams(window.location.search).get('from') === 'landing') {
+        root.setAttribute('data-entry', 'landing');
+        // 다른 쿼리의 인코딩과 OAuth 해시, 라우터 history state를 그대로 보존한다.
+        var query = window.location.search.slice(1).split('&').filter(function (part) {
+          return !new URLSearchParams(part).has('from');
+        }).join('&');
+        history.replaceState(history.state, '', window.location.pathname + (query ? '?' + query : '') + window.location.hash);
+      }
+    })();
+  </script>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/brand/favicon-32.png" />
@@ -66,6 +81,40 @@
   <link href="https://fonts.googleapis.com/css2?family=Cal+Sans&family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,500;0,600;1,500;1,600&family=Roboto+Mono:wght@500;600&display=swap" rel="stylesheet" />
 </head>
 <body>
+  <div class="app-bg" id="seller-boot-bg" aria-hidden="true">
+    <div class="wl-aurora" data-aurora-root>
+      <div class="wl-aurora__side wl-aurora__side--left">
+        <i class="wl-rb wl-rb--l1"></i>
+        <i class="wl-rb wl-rb--l2"></i>
+        <i class="wl-rb wl-rb--l3"></i>
+      </div>
+      <div class="wl-aurora__side wl-aurora__side--right">
+        <i class="wl-rb wl-rb--r1"></i>
+        <i class="wl-rb wl-rb--r2"></i>
+        <i class="wl-rb wl-rb--r3"></i>
+      </div>
+    </div>
+    <div class="wl-orb-root" data-orb-root>
+      <div class="wl-orb">
+        <i class="wl-orb__l1"></i>
+        <i class="wl-orb__l2"></i>
+        <i class="wl-orb__l3"></i>
+        <i class="wl-orb__hi"></i>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      if (document.documentElement.getAttribute('data-entry') !== 'landing') return;
+      var origin = performance.timeOrigin || (Date.now() - performance.now());
+      var elapsed = Date.now() - origin;
+      // CSS 응답이 늦어져도 첫 부트 그림과 React의 그림이 같은 벽시계를 쓴다.
+      document.getElementById('seller-boot-bg').querySelectorAll('.wl-orb > i, .wl-rb').forEach(function (layer) {
+        if (!layer.getAnimations) return;
+        layer.getAnimations().forEach(function (animation) { animation.currentTime = elapsed; });
+      });
+    })();
+  </script>
   <div id="root"></div>
   <script type="module" src="/src/apps/seller/main.jsx"></script>
 </body>

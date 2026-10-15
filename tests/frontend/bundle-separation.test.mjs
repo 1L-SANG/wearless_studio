@@ -11,9 +11,42 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 
 const root = new URL('../../', import.meta.url);
 const read = (name) => readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
+
+// 정적 import를 재귀로 따라 CSS까지 확인한다. 간접 공용 import로 새는 경우도 막는다.
+function sourceGraph(entry, seen = new Set()) {
+  if (seen.has(entry)) return seen;
+  seen.add(entry);
+  if (!/\.(?:jsx?|css)$/.test(entry)) return seen;
+  const source = read(entry);
+  const paths = [...source.matchAll(/^(?:import\s+(?:[^;]*?\s+from\s+)?|export\s+[^;]*?\s+from\s+)['"]([^'"]+)['"]/gm)].map((match) => match[1]);
+  paths.push(...[...source.matchAll(/(?:import\(\s*|@import\s+(?:url\(\s*)?)['"]([^'"]+)['"]/g)].map((match) => match[1]));
+  for (const path of paths) {
+    const target = path.startsWith('@/') ? `src/${path.slice(2)}`
+      : path.startsWith('.') ? resolve(fileURLToPath(root), dirname(entry), path).slice(fileURLToPath(root).length) : null;
+    if (target) sourceGraph(target, seen);
+  }
+  return seen;
+}
+
+test('팔레트 C와 셀러 토큰 덮어쓰기는 FaceMarket 진입 그래프에 들어가지 않는다', () => {
+  const seller = sourceGraph('src/apps/seller/main.jsx');
+  const facemarket = sourceGraph('src/apps/facemarket/main.jsx');
+  for (const file of ['src/styles/sellerDesign.css', 'src/styles/wl-light.css']) {
+    assert.ok(seller.has(file), `셀러가 자기 팔레트를 읽는다: ${file}`);
+    assert.ok(!facemarket.has(file), `셀러 팔레트가 FaceMarket으로 새었다: ${file}`);
+  }
+  const overrides = read('src/styles/sellerDesign.css');
+  assert.match(overrides, /--link:\s*#3182F6/i);
+  assert.match(overrides, /--ring-flow-1:\s*(?:#8FC6F6|var\(--wl-sky\))/i);
+  assert.match(read('src/styles/tokens.css'), /--link:\s*#0099ff/i);
+  assert.match(read('src/styles/app.css'), /\.orb-bg \.l1[^\n]*animation: orbA 12s/);
+  assert.match(read('src/styles/app.css'), /\.orb-bg \.l2[^\n]*animation: orbB 17s/);
+  assert.match(read('src/features/facemarket-landing/sections/HeroSection.jsx'), /className="orb-bg"/);
+});
 
 /* import 문에 등장하는 경로만 뽑는다 — 주석에 파일명을 적는 건 자유여야 한다
    (이 레포는 주석에 경로를 자주 남긴다). */

@@ -135,7 +135,7 @@
 .fit-hotspot { position: absolute; width: 44px; height: 44px; transform: translate(-50%, -50%); border: 0; padding: 0; background: transparent; color: #fff; cursor: pointer; pointer-events: auto; touch-action: manipulation; }
 .fit-hotspot::before { content: ''; position: absolute; left: 50%; top: 50%; width: 16px; height: 16px; transform: translate(-50%, -50%); border: 2px solid rgba(255, 255, 255, .96); border-radius: 50%; background: rgba(12, 18, 28, .18); box-shadow: 0 1px 4px rgba(0, 0, 0, .6), inset 0 0 0 1px rgba(0, 0, 0, .18); transition: transform .12s ease; }
 .fit-hotspot:hover:not(:disabled)::before, .fit-hotspot:focus-visible::before { transform: translate(-50%, -50%) scale(1.14); background: rgba(12, 18, 28, .32); }
-.fit-hotspot.is-open::before, .fit-hotspot.is-picked::before { border-color: #6bb6ff; background: rgba(29, 124, 220, .42); }
+.fit-hotspot.is-open::before, .fit-hotspot.is-picked::before { border-color: var(--link); background: rgba(29, 124, 220, .42); }
 .fit-hotspot:focus-visible { outline: 2px solid #fff; outline-offset: -6px; border-radius: 50%; }
 .fit-hotspot span { position: absolute; left: 50%; top: calc(50% + 16px); transform: translateX(-50%); width: max-content; max-width: 140px; border-radius: var(--r-pill); padding: 4px 8px; background: rgba(18, 24, 38, .86); color: #fff; font-size: 10.5px; font-weight: 700; line-height: 1.25; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .12s ease; }
 .fit-hotspot:hover:not(:disabled) span, .fit-hotspot:focus-visible span { opacity: 1; }

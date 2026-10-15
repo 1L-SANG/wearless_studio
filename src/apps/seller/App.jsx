@@ -13,9 +13,10 @@
    그 replaceState 가 AuthProvider 보다 먼저 돌아 `?code=` 를 지워 로그인이 완성되지 않는다.
    Editor 는 app chrome 밖의 전체화면 surface (stub in phase 1).
    ============================================================= */
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, Routes, Route, Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ChromeLayout } from '@/features/shell/ChromeLayout.jsx';
+import { removeSellerBootBackground } from '@/features/shell/sellerGlow.js';
 import { Library } from '@/features/library/Library.jsx';
 import { Pricing } from '@/features/pricing/Pricing.jsx';
 import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
@@ -782,6 +783,22 @@ function RootRedirect() {
 
 export default function App() {
   const { pathname } = useLocation();
+  useLayoutEffect(() => {
+    // 사본은 ChromeLayout이 마운트되며 지운다. 여기서는 ChromeLayout 밖 경로(에디터, 공개 확인, 콜백)를 위한 안전장치만 둔다.
+    // 첫 렌더에서 바로 지우면 ChromeLayout이 그려지기 전 빛이 비는 틈이 생긴다.
+    const bootTimer = window.setTimeout(removeSellerBootBackground, 2000);
+    const root = document.documentElement;
+    if (root.getAttribute('data-entry') !== 'landing') return () => window.clearTimeout(bootTimer);
+    const finishEntry = () => root.removeAttribute('data-entry');
+    const timer = window.setTimeout(finishEntry, 600);
+    const onPageShow = (event) => { if (event.persisted) finishEntry(); };
+    window.addEventListener('pageshow', onPageShow);
+    return () => {
+      window.clearTimeout(bootTimer);
+      window.clearTimeout(timer);
+      window.removeEventListener('pageshow', onPageShow);
+    };
+  }, []);
 
   /* 문서↔오버라이드 불일치 가드(로컬·프리뷰). 탭이 ?facemarket=1 을 sessionStorage 에
      기억한 채 쿼리 없이 새로고침하면 서버는 셀러 문서(이 번들)를 주는데 IS_FACEMARKET 은

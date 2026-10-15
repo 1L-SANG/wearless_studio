@@ -1,5 +1,26 @@
 /* Supplemental controls only. Preserve the existing orb, glass, typography,
    upload tile geometry, and mobile-to-PC handoff. See DESIGN.md. */
+:root {
+  --link: #3182F6;
+  --ring-flow-1: var(--wl-sky);
+  --ring-flow-2: var(--wl-lav);
+  --ring-flow-3: var(--wl-peach);
+  --ring-flow-4: var(--wl-mint);
+  --ring-flow-5: var(--wl-peri);
+  --ring-flow-6: #B9D9F7;
+  --fg-on-glow: #5C5C5C;
+  /* --fg-2: var(--fg-on-glow); */
+}
+
+/* 흰 판 밖, 배경 빛 위에 바로 놓인 짧은 설명만 진하게 한다. */
+.app-shell .page-head p,
+.app-shell .lib-heading .sec-sub,
+.app-shell .library > .sec-head .sec-sub,
+.app-shell .library > section > .sec-sub,
+.app-shell .empty p,
+.app-shell .error-state p,
+.app-shell .route-loading { color: var(--fg-on-glow); }
+
 .ds-optional { margin-left: 6px; color: var(--fg-2); font: 400 12px/1.4 var(--font-body); }
 .ds-field-status { margin-left: auto; color: var(--fg-2); font: 400 11px/1.4 var(--font-body); }
 .ds-field-status.required { color: var(--fg-1); font-weight: 600; }
