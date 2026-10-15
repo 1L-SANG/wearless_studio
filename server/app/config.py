@@ -93,6 +93,8 @@ class Settings:
     model_text_gemini_features: str = "gemini-3.7-flash"
     # AG-01과 AG-08 문구의 같은 특징 여부만 판정하는 텍스트 전용 모델.
     model_text_gemini_merge: str = "gemini-3.8-flash"
+    # 비슷한 컷 계획 전용. 공용 텍스트 모델을 쓰는 검수와 분리한다.
+    model_text_gemini_similar: str = "gemini-3.8-flash"
     # AG-01 상품 분석만 별도 분기 (2026-08-14 사용자 결정). model_text_gemini 는 게이팅 QC
     # (IMAGE_QC·MANNEQUIN_AXIS_QC·BASE_FIDELITY_QC = enforce)까지 같이 쓰는 값이라, 분석만
     # 내리려면 축이 따로 있어야 한다 — AG-08 분기와 같은 패턴. 미설정이면 model_text_gemini 폴백.
@@ -850,6 +852,8 @@ def load_settings() -> Settings:
         model_text_gemini_features=os.getenv(
             "MODEL_ROUTING_TEXT_GEMINI_FEATURES", "gemini-3.7-flash"),
         model_text_gemini_merge=os.getenv("MODEL_ROUTING_TEXT_GEMINI_MERGE", "gemini-3.8-flash"),
+        model_text_gemini_similar=(
+            os.getenv("MODEL_ROUTING_TEXT_GEMINI_SIMILAR") or "gemini-3.8-flash"),
         # 기본값 없음(빈 문자열=정본 폴백) — env 를 지우는 것이 진짜 롤백이 되게 한다.
         model_text_gemini_analysis=os.getenv("MODEL_ROUTING_TEXT_GEMINI_ANALYSIS", ""),
         analysis_model_order=os.getenv("ANALYSIS_MODEL_ORDER", "gemini,gpt"),

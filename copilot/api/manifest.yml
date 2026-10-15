@@ -306,6 +306,9 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # (IMAGE_QC·MANNEQUIN_AXIS_QC·MANNEQUIN_BASE_FIDELITY_QC = enforce, 즉 출고를 막는 판정).
   # 판정이 무뎌지면 다른 옷 컷이 그대로 상세페이지로 나간다 — 오너 결정 2026-08-14 "pro 유지".
   MODEL_ROUTING_TEXT_GEMINI: gemini-3.1-pro-preview
+  # 공용 Pro는 검수용으로 유지하고 비슷한 컷 계획만 Flash low로 분리한다.
+  # 2026-10-15 실측(사진 7장×2회): Flash low 14/14 유효 계획, 최대 13.1초. 같은 날 3.1 Pro 미리보기는 무응답.
+  MODEL_ROUTING_TEXT_GEMINI_SIMILAR: gemini-3.8-flash
   # AG-01 상품 분석만 flash 로 분리 (오너 결정 2026-08-14). 실측 26벌×5조합 근거:
   # documents/research/analysis_model_ab_20260814.md — 비용 0.47배·지연 -1.3s(배포 프롬프트 기준),
   # 옷 종류 정확도 동률(73%, 오답 7벌은 5조합 전부 동일 = 프롬프트 이슈지 모델 이슈 아님),

@@ -107,6 +107,7 @@ async def plan_next(settings, source_image, *, context, cut_type, changes, histo
             raw, _provider = await asyncio.wait_for(
                 vision_llm.analyze_with_fallback(
                     bounded_settings, prompt, [source_image], _SCHEMA,
+                    models={"gemini": getattr(settings, "model_text_gemini_similar", "gemini-3.8-flash")},
                     thinking_level="low", require_complete_envelope=True,
                 ), timeout=30,
             )
