@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { draftSlot } from '../../src/lib/draftSlot.js';
 import {
-  clearDraft, clearDraftIfCurrent, flushProductDraftSave, loadDraft, queueProductDraftSave,
+  clearDraft, clearDraftIfCurrent, flushProductDraftSave, hasPendingDraft, loadDraft, queueProductDraftSave,
   saveFeatureRunDraft, saveProductDraft,
 } from '../../src/lib/draftStore.js';
 import { draftStoreFixture, drainDraftTasks } from './helpers/draft-store-fixture.mjs';
@@ -140,9 +140,22 @@ for (const owner of ['bob', null, undefined]) {
     const storage = draftStoreFixture(t, draft);
     await clearDraft({ ownerUserId: 'seller' });
     assert.deepEqual(storage.saved, draft);
-    assert.equal(sessionStorage.getItem('wl_draftPending'), '1');
+    assert.equal(hasPendingDraft(), owner !== undefined);
+    if (owner === undefined) assert.equal(await loadDraft(), null, 'Direct recovery readers must also reject the legacy input');
   });
 }
+
+test('fresh B input replaces a revoked legacy draft with B ownership', async (t) => {
+  const legacy = { product: product('A legacy input'), photos: [], updatedAt: 'legacy' };
+  const storage = draftStoreFixture(t, legacy);
+  draftSlot.setUserId('bob');
+  await clearDraft({ ownerUserId: 'seller' });
+  assert.deepEqual(storage.saved, legacy);
+  await saveProductDraft(product('B new input'));
+  assert.equal(storage.saved.ownerUserId, 'bob');
+  assert.equal((await loadDraft()).product.name, 'B new input');
+  assert.equal(hasPendingDraft(), true);
+});
 
 test('scoped account cleanup removes its own draft while explicit new-project cleanup stays unchanged', async (t) => {
   const storage = draftStoreFixture(t, ownedDraft());

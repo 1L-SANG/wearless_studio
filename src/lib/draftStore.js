@@ -20,6 +20,7 @@ const DB_VERSION = 1;
 const STORE = 'draft';
 const KEY = 'current';
 const PENDING_KEY = 'wl_draftPending'; // sessionStorage(탭 세션 한정) — 미동기화 draft 존재 표시
+const LEGACY_BLOCKED = 'legacy-blocked';
 const DRAFT_DEBOUNCE_MS = 500;
 let pendingSnapshot = null;
 let pendingTimer = null;
@@ -259,6 +260,7 @@ export async function loadDraft() {
   if (userId !== draftSlot.getUserId() || identityEpoch !== draftSlot.getIdentityEpoch()) return null;
   // 다른 도메인에서 로그인한 뒤 부트스트랩해도, 이 오리진에 남은 이전 계정 입력은 복원하지 않는다.
   if (draft?.ownerUserId && draft.ownerUserId !== draftSlot.getUserId()) return null;
+  if (draft && !Object.hasOwn(draft, 'ownerUserId') && sessionStorage.getItem(PENDING_KEY) === LEGACY_BLOCKED) return null;
   return draft ? {
     ...draft,
     analysis: normalizeAnalysisFit(draft.analysis),
@@ -270,19 +272,24 @@ export async function loadDraft() {
 export async function clearDraft({ ownerUserId } = {}) {
   discardPendingDraftSave();
   await saveChain.catch(() => null);
-  let cleared = false;
+  let clearPending = false;
+  let blockLegacy = false;
   await withStore('readwrite', (store) => {
-    if (ownerUserId === undefined) { cleared = true; return store.delete(KEY); }
+    if (ownerUserId === undefined) { clearPending = true; return store.delete(KEY); }
     // 계정 전환 정리는 이전 계정 것만 지운다. 다른 탭의 새 저장과 대조·삭제를 한 트랜잭션에 둔다.
     const request = store.get(KEY);
     request.onsuccess = () => {
       if (!request.result || (ownerUserId && request.result.ownerUserId === ownerUserId)) {
         store.delete(KEY);
-        cleared = true;
+        clearPending = true;
+      } else if (ownerUserId && !Object.hasOwn(request.result, 'ownerUserId')) {
+        // 계정 전환 때 주인 모를 옛 초안은 보존하되, 이 탭의 복원 권한은 넘기지 않는다.
+        blockLegacy = true;
       }
     };
   });
-  if (cleared) sessionStorage.removeItem(PENDING_KEY);
+  if (blockLegacy) sessionStorage.setItem(PENDING_KEY, LEGACY_BLOCKED);
+  else if (clearPending) sessionStorage.removeItem(PENDING_KEY);
 }
 
 /** 오래 걸린 승격이 끝나는 사이 새 draft가 저장됐으면 그 새 작업은 지우지 않는다. */
