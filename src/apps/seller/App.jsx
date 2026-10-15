@@ -13,7 +13,7 @@
    그 replaceState 가 AuthProvider 보다 먼저 돌아 `?code=` 를 지워 로그인이 완성되지 않는다.
    Editor 는 app chrome 밖의 전체화면 surface (stub in phase 1).
    ============================================================= */
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, Routes, Route, Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ChromeLayout } from '@/features/shell/ChromeLayout.jsx';
 import { Library } from '@/features/library/Library.jsx';
@@ -248,6 +248,16 @@ function ProductInputRoute() {
   const userId = session?.user?.id || null;
   const [entryUserId, setEntryUserId] = useState(userId);
   const userChanged = entryUserId !== userId;
+  const scrollUserId = useRef(userId);
+  useLayoutEffect(() => {
+    if (authLoading || signingOut) return;
+    const changed = scrollUserId.current !== userId;
+    scrollUserId.current = userId;
+    if (!changed || !userId) return;
+    // 새 계정의 입력 화면이 보이기 전에 이전 스크롤 위치를 비운다.
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    document.querySelector('.app-main')?.scrollTo({ top: 0, behavior: 'instant' });
+  }, [userId, authLoading, signingOut]);
   const { push: pushToast } = useToast();
   const generation = useAppStore((s) => s.projectGeneration);
   const beginProject = useAppStore((s) => s.beginProject);

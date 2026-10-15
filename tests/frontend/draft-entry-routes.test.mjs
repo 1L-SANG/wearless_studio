@@ -56,6 +56,7 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
   let active;
   let cursor;
   let effects = [];
+  let layoutEffects = [];
   let dirty = false;
   let staged = null;
   let currentRemote = remote;
@@ -154,6 +155,13 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
         effects.push(() => { record.cleanup = effect(); });
       }
     },
+    useLayoutEffect(effect, deps) {
+      const index = cursor++, prior = active[index];
+      if (!prior || !deps.every((value, i) => Object.is(value, prior.deps[i]))) {
+        const record = { deps }; active[index] = record;
+        layoutEffects.push(() => { prior?.cleanup?.(); record.cleanup = effect(); });
+      }
+    },
     useAuth: () => auth, useToast: () => ({ push }), useLocation: () => location,
     AuthCtx: { Provider: 'Provider' },
     useQueryClient: () => queryClient,
@@ -198,6 +206,8 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
     setProduct: (value) => products.push(value), loadAttempt: 0,
   };
   windowEvents.location = { search: '', pathname: '/create/input' };
+  windowEvents.scrollTo = () => {};
+  documentEvents.querySelector = () => null;
   const queryClient = { clear() {} };
   function navigate(path, options) { calls.push(`navigate:${path}`); if (options?.state) { location.state = options.state; location.key = `nav-${calls.length}`; } }
   const components = new Function(...Object.keys(bindings), `${code}; return { AuthProvider, RequireAuth, ResumeTracker, ProductLoad, HandoffStatusPage, RequireProject, MobileDraftDialog, MobileDraftStatus, DraftProductRow, ProductInputRoute, TopNav, ResumeChoiceModal, DraftEntryDialog, RootRedirect, ProfileMenu, HangTag };`)(...Object.values(bindings));
@@ -212,6 +222,7 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
   async function settle(name, props) {
     let tree = render(name, props);
     for (let i = 0; i < 20; i += 1) {
+      layoutEffects.splice(0).forEach((effect) => effect());
       const pending = effects;
       effects = [];
       pending.forEach((effect) => effect());
@@ -235,12 +246,14 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
         tree = guard && guard.type !== 'Outlet' ? guard : render(name);
       }
       else { frames.get(name)?.forEach((record) => record?.cleanup?.()); frames.delete(name); tree = null; }
+      layoutEffects.splice(0).forEach((effect) => effect());
       const pending = effects; effects = []; pending.forEach((effect) => effect());
       await new Promise(setImmediate);
     }
     return tree;
   }
   return { calls, resetOwners, toasts, toastOptions, auth, state, flowReads, products, publishedSessions, get localDraft() { return local; }, get loadError() { return loadError; }, windowEvents, documentEvents, draftSlot, location, components, render, settle, settleApp,
+    flushLayout: () => layoutEffects.splice(0).forEach((effect) => effect()),
     emit(event, next) { listener(event, next); },
     get hasListener() { return Boolean(listener); }, setStoredSession(value) { storedSession = value; },
     setEntryFlush(value) { entryFlush = value; },
@@ -492,6 +505,47 @@ for (const confirmed of [false, true]) {
     assert.equal(tree.type, 'ProductInput');
     assert.deepEqual(h.calls, []);
   });
+}
+
+for (const mobile of [true, false]) {
+  for (const hasContainer of [true, false]) {
+    test(`input login and account change reset scroll before paint once, same-user refresh preserves it (mobile=${mobile}, container=${hasContainer})`, async () => {
+      const h = harness({ mobile, confirmed: false, remote: null });
+      h.location.pathname = '/create/input';
+      h.auth.session = null;
+      const windowScrolls = [], containerScrolls = [];
+      const container = { scrollTop: 0, scrollTo(options) { containerScrolls.push(options); this.scrollTop = options.top; } };
+      h.windowEvents.scrollY = 0;
+      h.windowEvents.scrollTo = (options) => { windowScrolls.push(options); h.windowEvents.scrollY = options.top; };
+      h.documentEvents.querySelector = (selector) => selector === '.app-main' && hasContainer ? container : null;
+      await h.settle('ProductInputRoute');
+      assert.equal(windowScrolls.length, 0);
+      for (const userId of ['seller', 'another-seller']) {
+        h.windowEvents.scrollY = 1200; container.scrollTop = 800;
+        h.auth.loading = true;
+        h.auth.session = { user: { id: userId } };
+        await h.settle('ProductInputRoute');
+        assert.equal(h.windowEvents.scrollY, 1200);
+        h.auth.loading = false;
+        h.render('ProductInputRoute');
+        h.flushLayout();
+        assert.equal(h.windowEvents.scrollY, 0);
+        if (hasContainer) assert.equal(container.scrollTop, 0);
+        const expectedCount = userId === 'seller' ? 1 : 2;
+        assert.equal(windowScrolls.length, expectedCount);
+        assert.equal(containerScrolls.length, hasContainer ? expectedCount : 0);
+        assert.equal(windowScrolls.at(-1).behavior, 'instant');
+        await h.settle('ProductInputRoute');
+        h.windowEvents.scrollY = 640; container.scrollTop = 320;
+        h.auth.session = { user: { id: userId }, access_token: 'refreshed' };
+        await h.settle('ProductInputRoute');
+        assert.equal(h.windowEvents.scrollY, 640);
+        assert.equal(container.scrollTop, 320);
+        assert.equal(windowScrolls.length, expectedCount);
+        assert.equal(containerScrolls.length, hasContainer ? expectedCount : 0);
+      }
+    });
+  }
 }
 
 test('M1 email login offers guest local and server cards without automatically overwriting either', async () => {

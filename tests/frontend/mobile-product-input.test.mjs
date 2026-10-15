@@ -50,6 +50,7 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
   const onContentChange = (value) => content.push(value);
   const documentEvents = new EventTarget();
   documentEvents.visibilityState = 'visible';
+  documentEvents.querySelector = () => null;
   let pendingHandler, conflictHandler, featureController, nextImageId = 0;
   const frames = new Map();
   let active, cursor, effects = [], dirty = false;
@@ -106,6 +107,7 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
         effects.push(() => { prior?.cleanup?.(); record.cleanup = effect(); });
       }
     },
+    useLayoutEffect: (effect, deps) => bindings.useEffect(effect, deps),
     useNavigate: () => (path) => calls.push(['navigate', path]), useLocation: () => location,
     useAuth: () => auth,
     useDoneGuard: (enabled) => { doneGuardChecks.push(enabled); return doneBlocked; }, useToast: () => ({ push: (...args) => calls.push(['toast', ...args]) }),
