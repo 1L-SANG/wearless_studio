@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getMobileGuestSave, getMobileGuestDraft, rememberMobileGuestSave, clearMobileGuestSave } from '../../src/lib/mobileGuestSave.js';
-import { clearDraft } from '../../src/lib/draftStore.js';
+import * as guestSave from '../../src/lib/mobileGuestSave.js';
+import { clearDraft, loadDraft, hasPendingDraft } from '../../src/lib/draftStore.js';
 import { draftStoreFixture } from './helpers/draft-store-fixture.mjs';
 
 const key = 'wl_mobileGuestSave';
 function storageFixture(t) {
-  t.after(() => clearMobileGuestSave());
+  t.after(() => { clearMobileGuestSave(); guestSave.clearMobileGuestDraftOwner?.(); });
   const shared = new Map(), tab = new Map();
   for (const [name, values] of [['localStorage', shared], ['sessionStorage', tab]]) {
     const original = Object.getOwnPropertyDescriptor(globalThis, name);
@@ -81,6 +82,23 @@ test('G7 failed or cancelled login leaves the local intent retryable', (t) => {
   assert.equal(read(null, retry.createdAt + 1000).id, retry.id);
 });
 
+test('R4 a claimed save attempt stays consumed across fresh intent reads and storage failure', (t) => {
+  const s = storageFixture(t);
+  const intent = rememberMobileGuestSave('photos');
+  const user = session('seller', intent.createdAt + 1000);
+  const claimed = read(user, intent.createdAt + 1000);
+  assert.equal(guestSave.claimMobileGuestSave(claimed), true);
+  assert.equal(guestSave.claimMobileGuestSave(read(user, intent.createdAt + 2000)), false);
+  assert.equal(JSON.parse(s.shared.get(key)).saveStarted, true);
+  const fresh = rememberMobileGuestSave('new-photos');
+  assert.equal(guestSave.claimMobileGuestSave(fresh), true);
+  assert.equal(guestSave.claimMobileGuestSave(fresh), false);
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new DOMException('blocked', 'SecurityError'); } });
+  const memory = rememberMobileGuestSave('memory-photos');
+  assert.equal(guestSave.claimMobileGuestSave(memory), true);
+  assert.equal(guestSave.claimMobileGuestSave(read(user, memory.createdAt + 1000)), false);
+});
+
 test('G6 clearing the local draft also drops an obsolete mobile save intent', async (t) => {
   draftStoreFixture(t); const s = storageFixture(t);
   rememberMobileGuestSave('old');
@@ -145,4 +163,44 @@ test('R2 another-tab success cannot resurrect a removed save marker from memory'
   s.shared.delete(key);
   assert.equal(read(session('seller', intent.createdAt), intent.createdAt), null);
   assert.equal(getMobileGuestDraft(intent), null);
+});
+
+
+for (const failBinding of [false, true]) {
+  test(`R3 first account stays attached to the local draft after the intent clears (write fails=${failBinding})`, async (t) => {
+    const fixture = draftStoreFixture(t, { updatedAt: 'guest-version', userId: null, product: { name: 'phone', colors: [] }, photos: [] });
+    storageFixture(t);
+    if (failBinding) fixture.failWrites(new DOMException('read only', 'QuotaExceededError'));
+    const intent = rememberMobileGuestSave('guest-version');
+    assert.equal(read(session('A', intent.createdAt), intent.createdAt).userId, 'A');
+    clearMobileGuestSave(intent.id);
+    assert.equal((await loadDraft()).userId, 'A');
+    await new Promise(setImmediate);
+    if (!failBinding) assert.equal(fixture.saved.userId, 'A');
+    const other = rememberMobileGuestSave('guest-version');
+    assert.equal(read(session('B', other.createdAt), other.createdAt), null);
+    assert.equal((await loadDraft()).userId, 'A');
+    const next = rememberMobileGuestSave('next-version');
+    assert.equal(read(session('B', next.createdAt), next.createdAt).userId, 'B');
+    clearMobileGuestSave(next.id);
+    assert.equal((await loadDraft()).userId, 'A');
+  });
+}
+
+test('R3 first account binds even an unresolved memory snapshot before clearing the intent', async (t) => {
+  storageFixture(t);
+  let resolveDraft;
+  const draft = new Promise((resolve) => { resolveDraft = resolve; });
+  const intent = rememberMobileGuestSave('memory-version', null, Date.now(), draft);
+  const claimed = read(session('A', intent.createdAt), intent.createdAt);
+  const owned = getMobileGuestDraft(claimed);
+  clearMobileGuestSave(intent.id);
+  resolveDraft({ updatedAt: 'memory-version', userId: null, product: { name: 'phone' }, photos: [] });
+  assert.equal((await owned).userId, 'A');
+});
+
+test('R3 blocked session storage means no pending draft', (t) => {
+  storageFixture(t);
+  Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, get() { throw new DOMException('blocked', 'SecurityError'); } });
+  assert.equal(hasPendingDraft(), false);
 });

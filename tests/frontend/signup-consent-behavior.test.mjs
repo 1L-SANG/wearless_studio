@@ -805,3 +805,38 @@ test('G4 same-account relogin waits for the new consent lookup', async (t) => {
   lookup.resolve(accepted); await h.flush();
   assert.equal(h.runtime.auth.sellerConsentReady, true);
 });
+
+
+for (const fails of [false, true]) {
+  test(`R3 save tap can recheck a failed consent lookup (fails=${fails})`, async (t) => {
+    const h = await harness(t, { user: 'A' });
+    h.runtime.get = async () => { throw new Error('offline'); };
+    h.completion(); await h.flush();
+    assert.equal(h.runtime.auth.sellerConsentReady, false);
+    assert.equal(typeof h.runtime.auth.retrySellerConsent, 'function');
+    const before = h.runtime.requests.length;
+    h.runtime.get = async () => { if (fails) throw new Error('offline'); return accepted; };
+    const retry = h.runtime.auth.retrySellerConsent('A');
+    if (fails) await assert.rejects(retry, /offline/); else assert.equal(await retry, true);
+    await h.flush();
+    assert.equal(h.runtime.requests.length, before + 1);
+    assert.equal(h.runtime.auth.sellerConsentReady, !fails);
+  });
+}
+
+
+test('R3 delayed consent retry cannot authorize a different account', async (t) => {
+  const h = await harness(t, { user: 'A' });
+  h.runtime.get = async () => { throw new Error('offline'); };
+  h.completion(); await h.flush();
+  const lookup = deferred(); h.runtime.get = () => lookup.promise;
+  const retry = h.runtime.auth.retrySellerConsent('A');
+  h.runtime.get = async () => missing;
+  await h.user('B');
+  lookup.resolve(accepted);
+  assert.equal(await retry, false);
+  await h.flush();
+  assert.equal(h.runtime.auth.session.user.id, 'B');
+  assert.equal(h.runtime.auth.sellerConsentReady, false);
+  assert.ok(checkbox(h.completion()));
+});

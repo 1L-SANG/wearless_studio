@@ -35,7 +35,7 @@ import {
   collectDraftPhotos,
 } from '@/lib/draftStore.js';
 import { isMobileDevice } from '@/lib/deviceClass.js';
-import { rememberMobileGuestSave, clearMobileGuestSave } from '@/lib/mobileGuestSave.js';
+import { rememberMobileGuestSave, clearMobileGuestSave, claimMobileGuestSave } from '@/lib/mobileGuestSave.js';
 import { readStoredAuthSession } from '@/lib/supabase.js';
 import { isMobileDraftWriter } from '@/lib/draftDeviceNoun.js';
 import { MobileDraftStatus } from '@/features/shell/MobileDraftDialog.jsx';
@@ -553,11 +553,10 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   const [slotLock, setSlotLock] = useState(null);
   const [reclaimChoiceOpen, setReclaimChoiceOpen] = useState(false);
   const [promotionLocked, setPromotionLocked] = useState(false);
-  const { session, loading: authLoading, openLogin, sellerConsentReady } = useAuth();
+  const { session, loading: authLoading, openLogin, sellerConsentReady, retrySellerConsent } = useAuth();
   const [preparingLogin, setPreparingLogin] = useState(false);
   const loginSaveRef = useRef(false);
   const loginDraftRef = useRef(null);
-  const autoSavedIntentRef = useRef(null);
   const slotEnabled = Boolean(session) || isMockMode;
   const doneBlocked = useDoneGuard(!mobile || slotEnabled);   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const toast = useToast();
@@ -611,7 +610,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
 
   useEffect(() => {
     if (!product || mobileReadOnly || (mobile && (entryBusy || slotLock || handoff.gone
-        || (autoSaveIntent && sellerConsentReady === false)))) return;
+        || (session && sellerConsentReady === false)))) return;
     if (isAnalysisFastEntryEnabled() && featureSavedAnalysisRef.current !== null && featureSavedAnalysisRef.current === analysis) {
       featureSavedAnalysisRef.current = null;
       return;
@@ -627,7 +626,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
     if (slotEnabled) {
       draftSlot.queue({ product, analysis, composeMode, localUpdatedAt });
     }
-  }, [analysis, composeMode, product, slotEnabled, mobileReadOnly, mobile, slotLock, handoff.gone, entryBusy, autoSaveIntent, sellerConsentReady]);
+  }, [analysis, composeMode, product, slotEnabled, mobileReadOnly, mobile, slotLock, handoff.gone, entryBusy, session, sellerConsentReady]);
 
   useEffect(() => {
     if (!slotEnabled) return;
@@ -1101,6 +1100,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
 
   const applyDraftPayload = (payload) => {
     if (!payload?.product) return false;
+    if (mobile && autoSaveIntent) latestLocalUpdatedAtRef.current = payload.updatedAt || autoSaveIntent.draftUpdatedAt;
     const restored = restoreDraftProduct(payload);
     persistedColorsRef.current = restored.colors || [];
     latestProductRef.current = restored;
@@ -1206,11 +1206,35 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   const canDone = hasFront && hasBack && !additionalColorsMissingFront.length
     && phase === 'input' && !authLoading && !slotLock;
   const canSaveForPC = canDone && !hasPendingConversions && !mobileReadOnly;
-  const saveForPC = async () => {
-    if (!canSaveForPC || loginSaveRef.current || (autoSaveIntent && sellerConsentReady === false)) return;
+  const saveForPC = async ({ automatic = false } = {}) => {
+    if (!canSaveForPC || loginSaveRef.current) return;
     const snapshot = { product, analysis, composeMode,
       localUpdatedAt: latestLocalUpdatedAtRef.current || new Date().toISOString() };
-    if (slotEnabled) return handoff.save(snapshot);
+    if (slotEnabled) {
+      const save = () => {
+        if (autoSaveIntent) {
+          const claimed = claimMobileGuestSave(autoSaveIntent);
+          if (automatic && !claimed) return;
+        }
+        return handoff.save(snapshot, { autoRetry: !automatic });
+      };
+      if (sellerConsentReady !== false) return save();
+      loginSaveRef.current = true;
+      setPreparingLogin(true);
+      const userId = entryUserRef.current;
+      const epoch = draftSlot.getIdentityEpoch();
+      const current = () => mountedRef.current && userId === entryUserRef.current && epoch === draftSlot.getIdentityEpoch();
+      try {
+        if (!await retrySellerConsent(userId) || !current()) return;
+        return save();
+      } catch {
+        if (current()) toast.push('서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+      } finally {
+        loginSaveRef.current = false;
+        if (mountedRef.current) setPreparingLogin(false);
+      }
+      return;
+    }
     loginSaveRef.current = true;
     setPreparingLogin(true);
     const epoch = draftSlot.getIdentityEpoch();
@@ -1231,7 +1255,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
         }));
       }
       rememberMobileGuestSave(snapshot.localUpdatedAt, excludedUserId, saveTappedAt, localSaved ? null : loginDraftRef.current);
-      if (!localSaved) toast.push('이 브라우저는 사진을 잠시 보관하지 못해요. 로그인 후 다시 골라 주세요.', { icon: 'alert' });
+      if (!localSaved) toast.push('이 브라우저는 사진을 잠시 보관하지 못해요. 구글이나 카카오로 로그인하면 다시 골라 주세요.', { icon: 'alert' });
       openLogin('/create/input');
     } finally {
       loginSaveRef.current = false;
@@ -1240,11 +1264,10 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   };
 
   useEffect(() => {
-    if (!mobile || !session || sellerConsentReady === false || !autoSaveIntent || !canSaveForPC
-        || autoSavedIntentRef.current === autoSaveIntent.id) return;
-    autoSavedIntentRef.current = autoSaveIntent.id;
-    void saveForPC();
-  }, [mobile, session, sellerConsentReady, autoSaveIntent, canSaveForPC]);
+    if (!mobile || !session || preparingLogin || sellerConsentReady === false || !autoSaveIntent || !canSaveForPC
+        || reclaimChoiceOpen || handoff.result || autoSaveIntent.saveStarted) return;
+    void saveForPC({ automatic: true });
+  }, [mobile, session, preparingLogin, sellerConsentReady, autoSaveIntent, canSaveForPC, reclaimChoiceOpen, handoff.result]);
 
   useEffect(() => {
     if (mobile && autoSaveIntent && handoff.result?.status === 'saved') clearMobileGuestSave(autoSaveIntent.id);
@@ -1357,6 +1380,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       if (!alive) return;
       if (mobile && draft?.userId && draft.userId !== session?.user?.id) draft = null;
       if (draft?.product) {
+        if (mobile && autoSaveIntent) latestLocalUpdatedAtRef.current = draft.updatedAt || autoSaveIntent.draftUpdatedAt;
         const restored = restoreDraftProduct(draft);
         persistedColorsRef.current = restored.colors || [];
         setProduct(restored);

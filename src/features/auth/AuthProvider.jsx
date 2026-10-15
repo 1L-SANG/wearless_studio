@@ -125,6 +125,13 @@ export function AuthProvider({ children }) {
   const [sellerConsentUserId, setSellerConsentUserId] = useState(null);
   const markSellerConsentReady = useCallback((id) => setSellerConsentUserId(id), []);
   const consentIdentity = useRef(null);
+  const consentRetry = useRef(null);
+  const registerSellerConsentRetry = useCallback((retry) => {
+    consentRetry.current = retry;
+    return () => { if (consentRetry.current === retry) consentRetry.current = null; };
+  }, []);
+  const retrySellerConsent = useCallback((userId) => consentRetry.current
+    ? consentRetry.current(userId) : Promise.reject(new Error('consent_unavailable')), []);
 
   const publishSession = useCallback(async (next, { isCurrent = () => true, signedOut = false } = {}) => {
     if (!isCurrent()) return;
@@ -320,7 +327,8 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthCtx.Provider key={flowResetRevision} value={{ session, user: session?.user ?? null, loading, signingOut, signIn, signInWithPassword, signInWithKakaoIdToken, signOut, openLogin, closeLogin,
-      sellerConsentReady: isMockMode || !userId || sellerConsentUserId === userId, markSellerConsentReady }}>
+      sellerConsentReady: isMockMode || !userId || sellerConsentUserId === userId, markSellerConsentReady,
+      registerSellerConsentRetry, retrySellerConsent }}>
       {!resettingFlow && children}
       {loginOpen && <LoginGate />}
     </AuthCtx.Provider>

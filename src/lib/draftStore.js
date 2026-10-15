@@ -14,7 +14,7 @@ import { normalizeAnalysisFit } from './fitAxes.js';
 import { isUploadablePhotoMime } from './imageTranscode.js';
 import { fetchPhotoBytes, isRemoteAssetPhoto } from './photoBytes.js';
 import { draftSlot } from './draftSlot.js';
-import { clearMobileGuestSave } from './mobileGuestSave.js';
+import { clearMobileGuestSave, getMobileGuestDraftOwner, clearMobileGuestDraftOwner } from './mobileGuestSave.js';
 
 const DB_NAME = 'wearless-draft';
 const DB_VERSION = 1;
@@ -175,7 +175,7 @@ export async function saveProductDraft(product, analysis = null, composeMode = '
   if (!isCurrent()) return null;
   // 이 탭 세션에 '미동기화 입력 있음' 표시 — 복원은 이 플래그가 있을 때만(=같은 세션) 한다.
   // sessionStorage 라 탭을 닫으면 사라져, 공용 브라우저의 다른 사용자에겐 복원되지 않는다.
-  sessionStorage.setItem(PENDING_KEY, '1');
+  try { sessionStorage.setItem(PENDING_KEY, '1'); } catch { /* 저장소 차단 */ }
   return { saved: photos.length, failed, failedIds, ...(failures ? { failures } : {}) }; // 호출측이 일부 누락을 사용자에게 알릴 수 있게.
 }
 
@@ -250,8 +250,23 @@ export function discardPendingDraftSave() {
 /** 저장된 draft 반환(없으면 null). photos[].blob 은 Blob 으로 복원된다. */
 export async function loadDraft() {
   const draft = await withStore('readonly', (s) => s.get(KEY));
+  const userId = draft?.userId || getMobileGuestDraftOwner(draft?.updatedAt);
+  if (draft && !draft.userId && userId) {
+    // Blob 재저장이 막혀도 위의 별도 귀속 기록으로 다른 계정의 복원을 막는다.
+    saveChain = saveChain.catch(() => null).then(() => withStore('readwrite', (store) => {
+      const request = store.get(KEY);
+      request.onsuccess = () => {
+        const current = request.result;
+        if (current?.updatedAt === draft.updatedAt && !current.userId) {
+          try { store.put({ ...current, userId }, KEY); } catch { /* 별도 귀속 기록 유지 */ }
+        }
+      };
+    }));
+    void saveChain.catch(() => null);
+  }
   return draft ? {
     ...draft,
+    ...(userId ? { userId } : {}),
     analysis: normalizeAnalysisFit(draft.analysis),
     composeMode: draft.composeMode === 'extended' ? 'extended' : 'basic',
   } : null;
@@ -263,7 +278,8 @@ export async function clearDraft() {
   clearMobileGuestSave();
   await saveChain.catch(() => null);
   await withStore('readwrite', (s) => s.delete(KEY));
-  sessionStorage.removeItem(PENDING_KEY);
+  clearMobileGuestDraftOwner();
+  try { sessionStorage.removeItem(PENDING_KEY); } catch { /* 저장소 차단 */ }
 }
 
 /** 오래 걸린 승격이 끝나는 사이 새 draft가 저장됐으면 그 새 작업은 지우지 않는다. */
@@ -287,7 +303,7 @@ export async function clearDraftIfCurrent(expectedUpdatedAt, {
 
 /** 이 탭 세션에 미동기화 draft 가 있는지 — 복원 게이팅용. */
 export function hasPendingDraft() {
-  return sessionStorage.getItem(PENDING_KEY) === '1';
+  try { return sessionStorage.getItem(PENDING_KEY) === '1'; } catch { return false; }
 }
 
 /** 사진을 다시 읽지 않고 특징 실행 체크포인트만 같은 로컬 저장 큐에 기록한다. */

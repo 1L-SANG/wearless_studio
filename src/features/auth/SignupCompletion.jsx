@@ -29,7 +29,7 @@ import { getMobileGuestSave } from '@/lib/mobileGuestSave.js';
 import styles from './SignupCompletion.module.css';
 
 export function SignupCompletion() {
-  const { session, loading, signOut, sellerConsentReady, markSellerConsentReady } = useAuth();
+  const { session, loading, signOut, sellerConsentReady, markSellerConsentReady, registerSellerConsentRetry } = useAuth();
   const { push } = useToast();
   const loadAccount = useAppStore((a) => a.loadAccount);
   const [state, setState] = useState(null); // 서버 응답 | null(미조회·불필요)
@@ -51,32 +51,50 @@ export function SignupCompletion() {
     setState({ ...res, userId });
     if (res.signupCredits > 0) push(`가입 크레딧 ${res.signupCredits}을 드렸어요`);
     void loadAccount({ force: true }).catch(() => {});
+    return res;
   }, [userId, push, loadAccount, markSellerConsentReady]);
+
+  const checkConsent = useCallback(async (ctrl) => {
+    // 조회가 늦거나 실패해도 이 가입 동의는 처음 돌아온 계정의 것이다.
+    const marker = claimSignupConsent(userId);
+    const res = await getSellerConsent({ signal: ctrl.signal, expectedUserId: userId });
+    if (ctrl.signal.aborted) return false;
+    // 기존 계정으로 돌아온 가입 시도도 여기서 끝난다. 다음 계정에 넘기지 않는다.
+    if (res.accepted || !res.needsConsent) {
+      clearSignupConsent(marker);
+      if (!res.needsConsent) markSellerConsentReady(userId);
+    }
+    // 회원가입 탭에서 이미 동의한 사람은 기록까지 끝낸 뒤 저장을 재개한다.
+    if (res.needsConsent && !res.accepted && marker === readSignupConsent() && hasFreshSignupConsent()) {
+      try { const saved = await record(res.required, ctrl.signal, marker); return saved?.needsConsent === false; }
+      catch { /* 아래에서 화면으로 받는다 */ }
+    }
+    if (!ctrl.signal.aborted) setState({ ...res, userId });
+    return !ctrl.signal.aborted && !res.needsConsent;
+  }, [userId, record, markSellerConsentReady]);
 
   useEffect(() => {
     setState(null); setChecked(false); setPending(false); setError('');
     if (loading || !userId || isMockMode) return undefined;
+    request.current?.abort();
     const ctrl = new AbortController();
     request.current = ctrl;
-    // 조회가 늦거나 실패해도 이 가입 동의는 처음 돌아온 계정의 것이다.
-    const marker = claimSignupConsent(userId);
-    getSellerConsent({ signal: ctrl.signal, expectedUserId: userId })
-      .then(async (res) => {
-        if (ctrl.signal.aborted) return;
-        // 기존 계정으로 돌아온 가입 시도도 여기서 끝난다. 다음 계정에 넘기지 않는다.
-        if (res.accepted || !res.needsConsent) {
-          clearSignupConsent(marker);
-          if (!res.needsConsent) markSellerConsentReady(userId);
-        }
-        // 회원가입 탭에서 이미 동의한 사람 — 화면을 띄우지 않고 기록만 남긴다.
-        if (res.needsConsent && !res.accepted && marker === readSignupConsent() && hasFreshSignupConsent()) {
-          try { await record(res.required, ctrl.signal, marker); return; } catch { /* 아래에서 화면으로 받는다 */ }
-        }
-        if (!ctrl.signal.aborted) setState({ ...res, userId });
-      })
-      .catch(() => { /* 앱은 유지하되 자동 저장은 동의를 확인한 뒤 재개한다. */ });
+    void checkConsent(ctrl).catch(() => { /* 앱은 유지하되 확인 전 자동 저장은 막는다. */ });
     return () => ctrl.abort();
-  }, [loading, userId, record, markSellerConsentReady, lookupAttempt]);
+  }, [loading, userId, checkConsent, lookupAttempt]);
+
+  useEffect(() => {
+    let retryRequest;
+    const unregister = registerSellerConsentRetry(async (expectedUserId) => {
+      if (loading || !userId || expectedUserId !== userId) return false;
+      if (isMockMode) return true;
+      request.current?.abort();
+      retryRequest = new AbortController();
+      request.current = retryRequest;
+      return checkConsent(retryRequest);
+    });
+    return () => { unregister(); retryRequest?.abort(); };
+  }, [loading, userId, checkConsent, registerSellerConsentRetry]);
 
   useEffect(() => {
     if (!userId || sellerConsentReady || !getMobileGuestSave(session)) return;
