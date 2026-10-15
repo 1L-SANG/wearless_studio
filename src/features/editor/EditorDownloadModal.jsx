@@ -57,6 +57,8 @@ export function EditorDownloadModal({
   onChange,
   onCancel,
   onDownload,
+  gifCount = 0,
+  onDownloadGifs,
 }) {
   const settings = normalizeExportSettings(rawSettings);
   const original = settings.preset === 'original';
@@ -129,6 +131,14 @@ export function EditorDownloadModal({
         </fieldset>
       </div>
 
+      {gifCount > 0 && <div className={styles.guidance}>
+        <p>{settings.delivery === 'split'
+          ? `움직이는 GIF ${gifCount}개는 별도 파일로 같이 담아요`
+          : `상세페이지에는 첫 컷이 들어가요 · GIF ${gifCount}개는 따로 받아 주세요`}</p>
+        {settings.delivery === 'single' && <div className="modal-actions">
+          <Button variant="ghost" onClick={onDownloadGifs} disabled={busy}>GIF 따로 받기</Button>
+        </div>}
+      </div>}
       {notice && <p className={styles.notice} role="status">{notice}</p>}
 
       <section className={styles.summary} aria-live="polite" aria-label="다운로드 요약">

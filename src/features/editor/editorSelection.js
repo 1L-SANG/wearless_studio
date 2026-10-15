@@ -220,7 +220,7 @@ export function removeSelectedElements(blocks, selectedIds, { allowRemoveContiSl
       // (canSafelyMergeServerBlocks)가 "배치가 서버와 다르다"고 판단해 대기 중 편집분을
       // 통째로 서버본으로 갈아끼운다. 대신 slotCleared 로 "셀러가 일부러 비웠다"를 남겨
       // 병합·자동 채움이 이 자리를 되살리지 않게 한다(2026-08-17 검증).
-      const { crop: _crop, genFailed: _genFailed, genPending: _genPending, ...rest } = element;
+      const { crop: _crop, genFailed: _genFailed, genPending: _genPending, kind: _kind, posterSrc: _poster, gifMeta: _gifMeta, ...rest } = element;
       kept.push({ ...rest, src: null, cutType: null, frameSlot: true, slotCleared: true });
       return kept;
     }, []),

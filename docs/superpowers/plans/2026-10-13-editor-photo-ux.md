@@ -9,7 +9,7 @@
 
 ## Global constraints / approved design
 
-- Baseline: origin/main `30806694` (PR 539), branch `codex/editor-photo-ux`, canonical checkout `D:/wearless_studio`.
+- Initial baseline: `30806694` (PR 539), branch `codex/editor-photo-ux`. On 2026-10-15 integrate main `e5528c63` in `D:/wearless_studio/.worktrees/editor-photo-ux-pr541`; the primary D-drive checkout is in use by another task and is not modified.
 - Keep CanvasAiLayer/useCanvasAi and production MiniPreview unchanged.
 - Rename the wardrobe tool to 보관함. Do not add explanatory text below its title or other headings. Keep existing upload/group UI.
 - Selecting one canvas photo and clicking a library photo replaces its source while preserving its frame. With no selected photo, use existing insertion. No extra replace/add buttons or selected-library-photo marker.
@@ -20,7 +20,7 @@
 - During a cross-block photo move, show a thin black destination border, 1.5 screen pixels at all canvas zoom levels. Preserve that marker in the existing 이어보기 mode without adding a card shadow there.
 - Automatic edge scrolling is now approved for a single eligible photo-body drag only: near the canvas viewport's top/bottom, continue scrolling while held; stop away from the edge, outside the viewport, at the scroll boundary, or on drop/cancel/blur/unmount. Resize/crop/text/shape paths remain unchanged. Manual scroll displacement compensation remains part of correct photo movement.
 - Remove only the existing normal AI panel title 새 이미지 만들기 beneath the toolbar's AI heading, per explicit follow-up confirmation. Keep generation controls and pending-request confirmation/safety messages.
-- No actual generation, purchase, deployment, push or PR creation in this request.
+- No paid generation, purchase, main-branch merge or production deployment. PR creation/update was subsequently requested explicitly by the owner (PR 541).
 
 ## Review focus
 
@@ -69,3 +69,15 @@
 - RED→GREEN observed for missing ratio choices, scrolling side effects, and duplicate AI panel heading. Related tests: 106/106 passed. Complete frontend run: 3517 tests, 3057 passed, 459 existing failures, 1 skipped; failure-name set unchanged. An initial extra failure was an obsolete title expectation in example-owned-pose-direction.test.mjs; updated that expectation to the remaining cut/generation controls, reproduced, and reran the full suite. Existing Windows-path failures remain untouched.
 - Actual Editor mock build passed, 10.36 seconds. Chrome verified 3:4 and 16:9 frame geometry, normal AI title absence, photo body edge drag scrolling 0→12px with size preserved, stop after release, and Undo restoring the source block. Continuous held scrolling is covered by real-handler frame-loop tests, not a long held-pointer browser performance test. Resize/crop exclusions are checked by separate source paths plus existing photo interaction coverage.
 - Independent 6.1 Sol read-only review found no Critical/Important issues. Evidence: .scratch/editor-photo-ux/approved-additions-*.log and approved-additions-ai.png. No paid generation, push, PR or deployment.
+
+### 2026-10-15 approved review fixes and GIF integration
+
+- Owner approved all five reviewed corrections, with template work restricted to a minimal information/manual-block preservation guard. Existing text-only template duplication and automatic empty-block removal remain out of scope; no template redesign or new data fields.
+- Preserve both sides of the GIF merge: ImagePanel photo download/crop and GIF information/conversion, plus ordinary photo and original GIF/PNG/ZIP export functions.
+- Two guards in the existing template predicate protect information/automatic blocks and non-template custom blocks. The old rule for existing templates remains unchanged. Moved photos explicitly use the existing `frameSlot:false` contract, while legacy undefined/true slots retain their meaning; cleared source slots keep provenance and `slotCleared`.
+- Valid Delete/Backspace cancels an unconfirmed crop before the original element/slot deletion. Input-field keys remain unaffected. Original crop reset also clears the selected ratio.
+- New real-handler regression cases observed 14 failures before the fix and 15/15 passes afterward. Final focused suite including merged GIF compatibility: 126/126 passed. GIF signing-input tests also assert that only the raster/PNG ZIP, not original GIFs, enters the signing boundary.
+- Matched Windows full-suite comparison using `--test-force-exit` and concurrency 4: main e5528c63 has 3533 tests / 3062 pass / 469 fail / 1 skip; merged source has 3595 / 3124 pass / the same 469 failure names / 1 skip. The force-exit option is needed because old Windows-path SSR failures can leave Vite sockets open before harness cleanup; it does not make failed cases pass. Earlier baseline/full attempts without it were interrupted and are not successful checks.
+- Original three-entry `pnpm build` passed (1m 4s); actual Editor mock build passed (6.97s). Astra xhigh correction re-review found no new Critical/Important regression or scope expansion. The crop keyboard harness uses a simplified React-history publication boundary, not a browser-history integration claim.
+- Browser verification is unavailable in this turn: both supported automation tools fail before executing code with a kernel-assets path error, including after reset. Do not claim a fresh screenshot or actual merged GUI/PNG download smoke. Initial-head browser evidence remains historical; current JSX rendering, serialization and file-package tests passed.
+- Detailed logs live under `D:/wearless_studio/.scratch/editor-photo-ux/fix-*.log`. Update PR 541 only after verification; do not merge main or deploy production.

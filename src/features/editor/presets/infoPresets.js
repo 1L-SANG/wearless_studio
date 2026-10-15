@@ -1,3 +1,4 @@
+import { gifImageFields, isGifImage, gifStillPatch } from '../../../lib/gif/gifMedia.js';
 /* =============================================================
    features/editor/presets/infoPresets.js — 정보 블록 빌더 (PRD §10.14 `내용 추가`)
    상세페이지 실물 분석(documents/research/2026-07-29-detail-page-analysis.md)에서
@@ -599,9 +600,10 @@ export function buildInfoBlock(type, info, ctx = {}, idFn = uid) {
    src 가 있는 슬롯(info 정본에서 채워진 것)은 건드리지 않는다. crop 은 지오메트리가
    달라져 무효라 이월하지 않는다. 정본 동기화는 applySlotFillToInfo 가 담당하고,
    이 함수는 info 동기화 이전에 채워진 레거시 블록의 안전망이다. */
-export function carrySlotImages(prevElements, block) {
+export function carrySlotImages(prevElements, block, wardrobeImages = []) {
   const prevImgs = (prevElements || []).filter((e) => e.type === 'image');
-  if (!prevImgs.some((e) => e.src)) return block;
+  const gifsBySrc = new Map([...prevImgs, ...wardrobeImages].filter(isGifImage).map((image) => [image.src, image]));
+  if (!prevImgs.some((e) => e.src) && !gifsBySrc.size) return block;
   let ord = -1;
   return {
     ...block,
@@ -609,9 +611,14 @@ export function carrySlotImages(prevElements, block) {
       if (el.type !== 'image') return el;
       ord += 1;
       const prev = prevImgs[ord];
-      return !el.src && prev && prev.src ? {
+      // Form-selected and reordered photos already have src. GIF facts follow the
+      // source, while empty legacy slots still inherit only from the same ordinal.
+      const gif = gifsBySrc.get(el.src);
+      if (gif) return { ...el, ...gifImageFields(gif), userUploaded: true, wardrobeGroup: 'misc' };
+      return !el.src && prev?.src ? {
         ...el,
         src: prev.src,
+        ...(isGifImage(prev) ? gifImageFields(prev) : {}),
         ...(prev.cutType ? { cutType: prev.cutType } : {}),
         ...(prev.userUploaded ? { userUploaded: true } : {}),
         ...(prev.wardrobeGroup ? { wardrobeGroup: prev.wardrobeGroup } : {}),
@@ -623,10 +630,13 @@ export function carrySlotImages(prevElements, block) {
 /* 슬롯 채움을 elements 와 info(폼 정본)에 **동시에** 기록한다 — 요소에만 쓰면
    재생성(재편집·템플릿 재적용) 때 사진-포인트 연결이 끊긴다(리뷰 확정 결함).
    이미지 요소의 서수 = info 배열 인덱스 (빌더가 같은 순서로 방출). */
-export function applySlotFillToInfo(block, elId, { src, cutType, userUploaded = false, wardrobeGroup = null }) {
+export function applySlotFillToInfo(block, elId, image) {
+  const { src, cutType, userUploaded = false, wardrobeGroup = null } = image;
   const elements = block.elements.map((e) => {
     if (e.id !== elId) return e;
     const next = { ...e, src: src || null, cutType: cutType || null };
+    if (isGifImage(image)) Object.assign(next, gifImageFields(image));
+    else { delete next.kind; delete next.posterSrc; delete next.gifMeta; }
     if (userUploaded) next.userUploaded = true;
     else delete next.userUploaded;
     if (wardrobeGroup) next.wardrobeGroup = wardrobeGroup;
@@ -645,6 +655,14 @@ export function applySlotFillToInfo(block, elId, { src, cutType, userUploaded = 
   else if (type === 'model_info') info = { ...info, models: (info.models || []).map((m, i) => (i === ord ? { ...m, src } : m)) };
   else if (type === 'size_table') info = { ...info, diagramSrc: src };
   return { ...block, info, elements };
+}
+
+export function convertGifToStill(block, elementId) {
+  const element = block.elements.find((item) => item.id === elementId);
+  if (!isGifImage(element)) return block;
+  const next = applySlotFillToInfo(block, elementId, { ...element, ...gifStillPatch(element) });
+  return { ...next, elements: next.elements.map((item) => item.id === elementId && element.crop
+    ? { ...item, crop: element.crop } : item) };
 }
 
 /* 블록 → 프리셋 타입 역매핑 (재편집 진입용). size/care 는 kind 로, 나머지는 infoType 로. */

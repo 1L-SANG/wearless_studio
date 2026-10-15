@@ -373,6 +373,7 @@ async function prepareClone(blockNode, imageCache = new Map()) {
     n.classList.remove('on');
     n.style.outline = 'none';
   });
+  replaceGifPosters(clone);
   // 이미지: /file → /bytes 로 바꿔 CORS 가 보장된 경로에서 픽셀을 읽는다.
   clone.querySelectorAll('img').forEach((img) => {
     const next = toBytesUrl(img.getAttribute('src'));
@@ -720,11 +721,94 @@ export async function downloadEditorPhoto(image, productName, { fetchImage = cli
   save(blob, `${name}.${ext}`);
 }
 
+// Export clones use a fixed first frame, while the live canvas keeps playing.
+export function replaceGifPosters(clone) {
+  clone.querySelectorAll('img[data-gif-poster]').forEach((img) => {
+    const poster = img.getAttribute('data-gif-poster');
+    if (!poster) return;
+    img.removeAttribute('srcset');
+    img.setAttribute('src', poster);
+  });
+}
+
+async function readGifBlob(src) {
+  const response = await clientApiFetch(toBytesUrl(src));
+  if (!response.ok) throw attachResponseError(new Error('GIF를 읽지 못했어요. 다시 시도해 주세요'), response);
+  const blob = await readClientResponse(response, 'blob');
+  const header = await blob.slice(0, 6).text();
+  if (!['GIF87a', 'GIF89a'].includes(header)) throw new Error('GIF 파일을 확인하지 못했어요. 다시 시도해 주세요');
+  return blob;
+}
+
+export async function appendGifFiles(zip, images = []) {
+  const sources = [...new Set(images.map((image) => image.src).filter(Boolean))];
+  for (let index = 0; index < sources.length; index += 1) {
+    const blob = await readGifBlob(sources[index]);
+    zip.file(`gif_${String(index + 1).padStart(2, '0')}.gif`, await blob.arrayBuffer());
+  }
+  return sources.length;
+}
+
+export async function packageStorefrontZip(files, format, opts = {}, sign = notarize) {
+  const zip = new JSZip();
+  // ArrayBuffer also works with JSZip outside browsers, without a FileReader shim.
+  for (let index = 0; index < files.length; index += 1) {
+    zip.file(detailFileName(index, files.length, format), await files[index].arrayBuffer());
+  }
+  let blob = await zip.generateAsync({ type: 'blob' });
+  let verifyUrl = null;
+  let notarizeWarning = null;
+  if (opts.provenance?.projectId) {
+    const result = await sign(blob, { projectId: opts.provenance.projectId, kind: 'zip' });
+    blob = result.blob;
+    verifyUrl = result.verifyUrl;
+    notarizeWarning = result.warning;
+  }
+  // GIFs never enter the notarization request. Signed raster bytes stay untouched.
+  if (opts.gifImages?.length) {
+    const deliveredZip = await JSZip.loadAsync(await blob.arrayBuffer());
+    await appendGifFiles(deliveredZip, opts.gifImages);
+    blob = await deliveredZip.generateAsync({ type: 'blob' });
+  }
+  return { blob, verifyUrl, notarizeWarning };
+}
+
+export async function downloadGifImage(image) {
+  saveBlob(await readGifBlob(image.src), 'thumbnail.gif');
+}
+
+export async function downloadGifImages(images) {
+  const zip = new JSZip();
+  await appendGifFiles(zip, images);
+  saveBlob(await zip.generateAsync({ type: 'blob' }), 'gifs.zip');
+}
+
 /* ---- 공개 API — 각 함수는 { softFailed, verifyUrl, notarizeWarning } 를 돌려준다
    (softFailed 0 이면 캡처 완전 성공). opts.provenance = { projectId } 를 넘기면 saveBlob
    직전에 공증 왕복(publicationNotarize.js)을 끼운다 — 안 넘기면 공증 생략(verifyUrl null). ---- */
 
-// ① 블록 1개 → PNG 저장
+export async function packageBlockDownload(png, filename, opts = {}, sign = notarize) {
+  let blob = png, verifyUrl = null, notarizeWarning = null;
+  if (opts.provenance?.projectId) {
+    const signed = await sign(png, { projectId: opts.provenance.projectId, kind: 'block_png' });
+    blob = signed.blob; verifyUrl = signed.verifyUrl; notarizeWarning = signed.warning;
+  }
+  if (opts.gifImages?.length) {
+    const zip = new JSZip();
+    zip.file(filename, await blob.arrayBuffer());
+    await appendGifFiles(zip, opts.gifImages);
+    blob = await zip.generateAsync({ type: 'blob' });
+  }
+  return { blob, verifyUrl, notarizeWarning };
+}
+
+export async function downloadBlockGifs(images) {
+  const unique = [...new Map(images.map(image => [image.src, image])).values()];
+  if (unique.length === 1) await downloadGifImage(unique[0]);
+  else if (unique.length) await downloadGifImages(unique);
+}
+
+// A block with GIFs includes the signed first-frame PNG and untouched originals.
 export async function exportBlockPng(blockNode, productName, blockIndex, opts = {}) {
   recordClientAction('download');
   const fontEmbedCSS = await getFontEmbedCSS(blockNode);
@@ -732,16 +816,10 @@ export async function exportBlockPng(blockNode, productName, blockIndex, opts = 
   let out;
   try { out = await canvasToBlob(canvas); }
   finally { releaseExportCanvas(canvas); }
-  let verifyUrl = null;
-  let notarizeWarning = null;
-  if (opts.provenance?.projectId) {
-    const n = await notarize(out, { projectId: opts.provenance.projectId, kind: 'block_png' });
-    out = n.blob;
-    verifyUrl = n.verifyUrl;
-    notarizeWarning = n.warning;
-  }
-  saveBlob(out, exportFileName(productName, `블록${blockIndex + 1}`));
-  return { softFailed, verifyUrl, notarizeWarning };
+  const filename = exportFileName(productName, `블록${blockIndex + 1}`);
+  const result = await packageBlockDownload(out, filename, opts);
+  saveBlob(result.blob, opts.gifImages?.length ? filename.replace(/\.png$/i, '.zip') : filename);
+  return { softFailed, verifyUrl: result.verifyUrl, notarizeWarning: result.notarizeWarning };
 }
 
 // ② 전체 블록 → 세로로 이어붙인 긴 PNG 1장.
@@ -845,18 +923,8 @@ export async function exportStorefrontDownload(
   let notarizeWarning = null;
 
   if (effective.delivery === 'split') {
-    const zip = new JSZip();
-    rendered.files.forEach((file, index) => {
-      zip.file(detailFileName(index, rendered.files.length, effective.format), file);
-    });
     onProgress?.(blockNodes.length - 1, blockNodes.length, 'zip');
-    blob = await zip.generateAsync({ type: 'blob' });
-    if (opts.provenance?.projectId) {
-      const result = await notarize(blob, { projectId: opts.provenance.projectId, kind: 'zip' });
-      blob = result.blob;
-      verifyUrl = result.verifyUrl;
-      notarizeWarning = result.warning;
-    }
+    ({ blob, verifyUrl, notarizeWarning } = await packageStorefrontZip(rendered.files, effective.format, opts));
     saveBlob(blob, exportFileName(productName).replace(/\.png$/, '.zip'));
   } else {
     [blob] = rendered.files;
@@ -879,7 +947,7 @@ export async function exportStorefrontDownload(
     notarizeWarning,
     autoSwitchReason,
     delivery: effective.delivery,
-    fileCount: rendered.files.length,
+    fileCount: rendered.files.length + (effective.delivery === 'split' ? new Set((opts.gifImages || []).map((image) => image.src)).size : 0),
     byteSize: blob.size,
     sizeWarning: effective.delivery === 'single' ? singlePageSizeWarning(blob.size) : null,
   };

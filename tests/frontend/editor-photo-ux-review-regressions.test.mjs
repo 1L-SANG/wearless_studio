@@ -8,6 +8,10 @@ import { autofillBlocks, filledSrcSet, buildRoledCutPool, isGeneratedCutBlock } 
 import { buildDetailPageTemplateSet, DETAIL_PAGE_TEMPLATE_SETS, buildImageBlock } from '../../src/features/editor/editorLibrary.js';
 import { mergeEditorImagesIntoWardrobe } from '../../src/features/editor/editorWardrobe.js';
 import { beginEditorCrop, ratioEditorCrop, dragEditorCrop } from '../../src/features/editor/editorCrop.js';
+import { dropUntouchedPlaceholders } from '../../src/features/editor/presets/textPresets.js';
+import { relativizeAssetUrls, rebaseAssetUrls } from '../../src/lib/assetUrl.js';
+import { normalizeEditorBlockRole } from '../../src/lib/storyboardTaxonomy.js';
+import { expandBlockHeights } from '../../src/features/editor/editorGeometry.js';
 
 const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
 const image = { id: 'photo', type: 'image', src: '/original.jpg', sourceBlockId: 'cut',
@@ -81,7 +85,8 @@ test('the source slot keeps its cleared provenance and the moved photo remains i
   assert.equal(empty.src, null);
   assert.equal(empty.sourceBlockId, 'cut');
   assert.equal(empty.slotCleared, true);
-  const restored = JSON.parse(JSON.stringify(moved));
+  const saved = relativizeAssetUrls(dropUntouchedPlaceholders(moved, new Set()));
+  const restored = expandBlockHeights(rebaseAssetUrls(JSON.parse(JSON.stringify(saved))).map(normalizeEditorBlockRole));
   assert.equal(isPhotoSlotElement(restored[1], restored[1].elements[0]), false);
   const wardrobe = mergeEditorImagesIntoWardrobe({ blocks: restored, storyboard: board, colorIds: ['navy'] });
   assert.equal(Object.values(wardrobe).flat().length, 1);

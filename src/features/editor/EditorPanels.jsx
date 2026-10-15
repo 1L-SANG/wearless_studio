@@ -1,3 +1,6 @@
+import { GifThumbnailPanel } from './GifThumbnailPanel.jsx';
+import { isGifImage, gifStillPatch } from '../../lib/gif/gifMedia.js';
+import gifStyles from './GifThumbnailPanel.module.css';
 /* =============================================================
    features/editor/EditorPanels.jsx — left-panel content per toolbar tab.
    Ported verbatim from reference/prototype/features/editor-panels.jsx.
@@ -9,7 +12,7 @@ import { resizedPhotoPatch } from './editorCrop.js';
 import { ProductSourcePicker } from '../storyboard/ProductSourcePicker.jsx';
 import { productSourceColorPatch } from '../../lib/productSourcePhotos.js';
 import { detailTargetById } from '../../lib/detailRecommendations.js';
-import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Icon, Button, IconButton, Chips, EmptyState, UploadPendingTile } from '@/components/ui.jsx';
 import { UnderlineTabs, ColorDots, MoodGuide } from '@/features/storyboard/Storyboard.jsx';
 import { isRealModelSelection } from '@/features/analysis/modelSelection.js';
@@ -498,13 +501,27 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
 }
 
 /* ---------- 의류 (wardrobe library) ---------- */
-export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading = 0, onInsert, onUpload, onDeleteImage, isImageUsed, onFreshSeen, onImageDragStart, onImageDragEnd }) {
+const WARDROBE_TABS = [{ value: 'image', label: '이미지' }, { value: 'gif', label: 'GIF' }];
+export function WardrobePanel(props) {
+  const [tab, setTab] = useState('image');
+  const photos = useMemo(() => Object.fromEntries(Object.entries(props.wardrobe || {})
+    .map(([group, images]) => [group, images.filter((image) => image.kind !== 'gif')])
+    .filter(([, images]) => images.length)), [props.wardrobe]);
+  return <div className={gifStyles.panel}>
+    <UnderlineTabs options={WARDROBE_TABS} value={tab} onChange={setTab} />
+    {tab === 'image' ? <WardrobeImagePanel {...props} wardrobe={photos} />
+      : <GifThumbnailPanel wardrobe={props.wardrobe} detailColorOpts={props.colorOpts}
+        onFreshSeen={props.onFreshSeen} onDownloadGif={props.onDownloadGif} onSaveGif={props.onSaveGif} onInsert={props.onInsert} onDeleteImage={props.onDeleteImage} isImageUsed={props.isImageUsed} />}
+  </div>;
+}
+
+function WardrobeImagePanel({ wardrobe, colorOpts = [], pendingSlot, uploading = {}, onInsert, onUpload, onDeleteImage, isImageUsed, onFreshSeen, onImageDragStart, onImageDragEnd }) {
   // wardrobe 그룹 키 = colorId | 'misc' — 표시명은 colorOpts 에서 파생 (계약 §3.6)
   const colorFor = (group) => {
-    if (group === 'misc') return { hex: '#d4d4d8', name: '기타', neutral: true };
+    if (group === 'misc') return { name: '기타', neutral: true };
     const c = colorOpts.find((x) => x.id === group);
     if (c) return { hex: c.hex, name: c.label };
-    return { hex: '#d4d4d8', name: group, neutral: true };
+    return { name: group, neutral: true };
   };
   const [collapsed, setCollapsed] = useState({});
   const toggle = (group) => setCollapsed((c) => ({ ...c, [group]: !c[group] }));
@@ -519,23 +536,15 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading
           </span>
         </div>
       )}
-      <Button variant="ghost" block icon="upload" onClick={onUpload} disabled={Boolean(uploading)} style={{ marginBottom: uploading ? 8 : 16 }}>직접 이미지 업로드하기</Button>
-      {/* 업로드 중에는 사진이 들어올 자리를 로고 타일로 먼저 보여준다 — 입력 페이지와 같은
-          얼굴(오너 8/15). uploading = 올리는 중인 장수 — 그만큼 타일을 그린다. */}
-      {uploading > 0 && (
-        <div className="wardrobe-grid" style={{ marginBottom: 16 }} role="status" aria-live="polite">
-          {Array.from({ length: uploading }, (_, i) => <UploadPendingTile key={i} className="ward-cell" />)}
-          <span className="sr-only">의류 이미지 {uploading}장을 불러오는 중이에요</span>
-        </div>
-      )}
-      {Object.entries(wardrobe).map(([group, imgs]) => {
+      {[...new Set([...colorOpts.map(color => color.id), ...Object.keys(wardrobe), ...Object.keys(uploading), ...(colorOpts.length ? [] : ['misc'])])].map(group => {
+        const imgs = wardrobe[group] || [];
         const c = colorFor(group);
         const open = !collapsed[group];
         return (
           <div className={`wardrobe-group${open ? '' : ' collapsed'}`} key={group}>
             <button type="button" className="wg-head" onClick={() => toggle(group)} aria-expanded={open}>
               <span className="wg-color">
-                <span className={`wg-dot${c.neutral ? ' neutral' : ''}`} style={{ background: c.hex }} />
+                <svg className={`wg-dot${c.neutral ? ' neutral' : ''}`} viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="8" fill={c.hex || 'currentColor'} /></svg>
                 <span className="wg-name">{c.name}</span>
                 <span className="wg-count">{imgs.length}</span>
               </span>
@@ -543,6 +552,8 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading
             </button>
             {open && (
               <div className="wardrobe-grid">
+                <button type="button" className={`sb-addslot ${gifStyles.addTile}`} onClick={() => onUpload(group)} disabled={Boolean(uploading[group])}>＋ 사진 추가</button>
+                {Array.from({ length: uploading[group] || 0 }, (_, index) => <UploadPendingTile key={`upload-${index}`} className="ward-cell" />)}
                 {imgs.map((im) => {
                   // slow = 화면 대기(3분)를 넘겨 백그라운드 추적 중 — 실패가 아니라 진행 중이다.
                   if (im.loading) return (
@@ -603,19 +614,22 @@ const LINE_DASH = [
 function LabeledField({ label, children }) {
   return <div className="ff"><span className="ff-lbl">{label}</span>{children}</div>;
 }
-export function ImagePanel({ el, onChange, onLayer, onCrop, onDownload, downloadBusy = false, lock = true, onLock }) {
+export function ImagePanel({ el, onChange, onLayer, onCrop, onDownload, downloadBusy = false, lock = true, onLock, onConvertGif }) {
   // 비율 잠금은 에디터가 소유 — moveable keepRatio와 연동 (자물쇠 = keepRatio)
   const setLock = onLock || (() => {});
   if (!el || !['image', 'shape', 'line'].includes(el.type)) return <EmptyState icon="image" title="요소를 선택하세요" desc="캔버스에서 이미지·오브젝트를 클릭하면 속성이 여기에 나와요." />;
   const isImg = el.type === 'image', isLine = el.type === 'line', isShape = el.type === 'shape';
+  const gif = isGifImage(el);
   const ratio = el.w / el.h || 1;
   const setW = (w) => onChange(isImg ? resizedPhotoPatch(el, w, lock ? Math.max(20, Math.round(w / ratio)) : el.h) : lock ? { w, h: Math.max(20, Math.round(w / ratio)) } : { w });
   const setH = (h) => onChange(isImg ? resizedPhotoPatch(el, lock ? Math.max(20, Math.round(h * ratio)) : el.w, h) : lock ? { h, w: Math.max(20, Math.round(h * ratio)) } : { h });
   const hasStroke = isShape && el.stroke && el.stroke !== 'none';
   const op = Math.round((el.opacity ?? 1) * 100);
   const curDash = el.dash || 'solid';
+  const ShapeContainer = gif ? 'details' : Fragment;
   return (
     <div className="fig-panel image-properties">
+      {gif && <p className={gifStyles.hint}>{el.gifMeta.frames}장 · {(el.gifMeta.bytes / 1_000_000).toFixed(1)}MB</p>}
       {/* '프레임 이미지' 액션 묶음(교체·자르기·초기화·빼내기) 제거(오너 8/16).
           같은 일을 하는 수단이 화면에 이미 있다: 교체는 의류 탭에서 그 칸 위로 드래그,
           빼내기는 Delete(격자·프레임의 사진 자리는 지워지지 않고 '＋ 여기에 사진 넣기'
@@ -629,6 +643,9 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, onDownload, download
         </div>
       </PanelSection>
 
+      {gif && <LayerRow onLayer={onLayer} />}
+      <ShapeContainer {...(gif ? { className: gifStyles.shapeDetails } : {})}>
+        {gif && <><summary>캔버스 모양</summary><p className={gifStyles.hint}>모양을 바꿔도 GIF 원본은 그대로예요</p></>}
       <PanelSection title="모양">
         <div className="field-2up labeled">
           <LabeledField label="회전"><NumField icon="rotate" value={el.rotate || 0} min={-180} max={180} suffix="°" onChange={(v) => onChange({ rotate: v })} /></LabeledField>
@@ -693,6 +710,8 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, onDownload, download
           </div>
         </PanelSection>
       )}
+      </ShapeContainer>
+      {gif && <button type="button" className={gifStyles.textButton} onClick={() => onConvertGif ? onConvertGif(el) : onChange(gifStillPatch(el))}>첫 장을 정지 이미지로 사용</button>}
     </div>
   );
 }

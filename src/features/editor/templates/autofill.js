@@ -115,8 +115,7 @@ export function filledSrcSet(blocks) {
   return set;
 }
 
-// 컷(생성 착장컷) 블록 판정 — 이미지 요소가 sourceBlockId(콘티 조인키)를 가지면 컷 블록.
-// 정보 블록(사이즈/케어/안내)·업로드 블록은 sourceBlockId 가 없어 false → 안전 교체 시 보존한다.
+// 템플릿 교체 대상 판정. 사진 출처만으로 정보·수동 블록 전체를 교체하지 않는다.
 export function isGeneratedCutBlock(block) {
   // A generated photo can be moved into information or a manual composition.
   // Protect those blocks; existing photo templates keep their replacement rule.
