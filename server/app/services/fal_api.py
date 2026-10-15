@@ -60,6 +60,8 @@ def configured(settings) -> bool:
 async def run_model(settings, model: str, payload: dict) -> dict:
     if not configured(settings):
         raise SamUnavailable("fal is not configured (FAL_KEY)")
+    # 두 모델의 결과를 fal CDN에 저장하지 않고 data URI로 직접 받는다.
+    payload = {**payload, "sync_mode": True}
     size = payload.get("image_size") or {}
     width, height = size.get("width", 0), size.get("height", 0)
     megapixels = width * height / 1_000_000
@@ -101,6 +103,14 @@ async def run_model(settings, model: str, payload: dict) -> dict:
 
 
 async def fetch_image(url: str) -> bytes:
+    if url.startswith("data:"):
+        try:
+            header, encoded = url.split(",", 1)
+            if not header.endswith(";base64") or not encoded:
+                raise ValueError
+            return base64.b64decode(encoded, validate=True)
+        except ValueError:
+            raise SamUnavailable("fal returned invalid image data URI") from None
     # 출력 호스트에 fal 키를 전달하지 않는다. URL도 로그에 남기지 않는다.
     async with httpx.AsyncClient(timeout=TIMEOUT_S, follow_redirects=True) as client:
         for attempt in range(2):

@@ -58,6 +58,22 @@ def test_qc_flags_are_declared(manifest_vars):
     assert not missing, f"매니페스트에 QC 플래그 미선언: {missing}"
 
 
+def test_fal_step1_deployment_loads_matching_providers_and_keeps_product_sam2(monkeypatch):
+    doc = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+    assert doc["secrets"].get("FAL_KEY") == (
+        "/copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FAL_KEY")
+    for name in ("MATCHING_CUTOUT_PROVIDER", "MATCHING_FLATLAY_PROVIDER",
+                 "SAM_PREPROCESS_PROVIDER"):
+        monkeypatch.delenv(name, raising=False)
+        if name in doc["variables"]:
+            monkeypatch.setenv(name, str(doc["variables"][name]))
+    monkeypatch.setenv("FAL_KEY", "test-only")
+    settings = load_settings()
+    assert settings.matching_cutout_provider == "fal"
+    assert settings.matching_flatlay_provider == "qwen"
+    assert settings.sam_preprocess_provider == "sam2"
+
+
 def test_production_db_pool_leaves_room_during_rolling_deploy(manifest_vars):
     """구·신 API 태스크와 Supabase REST가 동시에 DB에 붙을 여유를 남긴다.
 
