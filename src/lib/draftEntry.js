@@ -160,11 +160,24 @@ export function createDraftEntryActions({
     clear();
     onStarted();
   };
-  const showMobile = (meta, entry) => {
-    confirmation = { action: startMobile, updatedAt: meta.updatedAt, mobile: true, entry };
+  const showMobile = (meta, entry, action = startMobile) => {
+    confirmation = { action, updatedAt: meta.updatedAt, mobile: true, entry };
     show({ kind: 'mobile', meta: { ...meta }, entry });
   };
   return {
+    resumeMobileSave(source, slot) {
+      return run(async (context) => {
+        const saveLocal = async (current, existing) => {
+          if (existing || slotClient.getToken()) await current.wait(slotClient.takeover({ isCurrent: current.isCurrent }));
+          current.checkCurrent();
+          slotClient.stage({ payload: source.draft, meta: source.meta });
+          clear();
+          source.onReady();
+        };
+        if (isVisibleDraftSlot(slot, slotClient)) showMobile(slot.meta, true, saveLocal);
+        else await saveLocal(context, null);
+      });
+    },
     showMobile(meta, { entry = false } = {}) { showMobile(meta, entry); },
     keepMobile() {
       if (dialog?.kind !== 'mobile') return;
@@ -236,8 +249,8 @@ export function createDraftEntryActions({
         const { action, partial, mobilePhotoCount, updatedAt, mobile: mobileDialog, entry } = confirmed;
         const slot = await readVisible(context);
         if (mobileDialog) {
-          if (slot && slot.meta?.updatedAt !== updatedAt) { showMobile(slot.meta, entry); return; }
-          if (slot) await action(context, slot);
+          if (slot && slot.meta?.updatedAt !== updatedAt) { showMobile(slot.meta, entry, action); return; }
+          if (slot || action !== startMobile) await action(context, slot);
           else await startEmpty(context);
           return;
         }

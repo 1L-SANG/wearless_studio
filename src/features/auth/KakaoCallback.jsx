@@ -32,6 +32,7 @@ import { http } from '@/lib/api/httpAdapter.js';
 import { IS_FACEMARKET } from '@/lib/host.js';
 import { readKakaoCallbackParams, safeInternalPath } from '@/lib/kakaoOidc.js';
 import { runKakaoCallbackFlow } from '@/lib/kakaoCallbackFlow.js';
+import { getMobileGuestSave } from '@/lib/mobileGuestSave.js';
 
 /* 로그인 뒤 목적지. 상수를 그대로 navigate 하지 않고 같은 검사기를 한 번 지나게 둔다 —
    나중에 누가 여기에 URL 을 흘려 넣으면 그때 막힌다(오픈 리다이렉트 방어의 마지막 문). */
@@ -69,6 +70,10 @@ export function KakaoCallback() {
         // 세션이 **만들어진 뒤에** 이동한다(머리말). replace 라 뒤로가기가 콜백으로
         // 되돌아오지 않는다 — 인가코드는 이미 소비돼 두 번째는 반드시 실패한다.
         navigate(safeInternalPath(POST_LOGIN_DESTINATION) || '/', { replace: true });
+        return;
+      }
+      if (!IS_FACEMARKET && getMobileGuestSave(null)) {
+        navigate(POST_LOGIN_DESTINATION, { replace: true });
         return;
       }
       setFailed(result);

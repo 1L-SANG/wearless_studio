@@ -5,6 +5,7 @@ import { transformWithEsbuild } from 'vite';
 import { getDraftDeviceNoun, isMobileDraftWriter } from '../../src/lib/draftDeviceNoun.js';
 import { flowScreenName, shouldWarnFlowAbandon, notifyFlowKept } from '../../src/lib/flowAbandon.js';
 import * as entry from '../../src/lib/draftEntry.js';
+import * as mobileGuestSave from '../../src/lib/mobileGuestSave.js';
 import { checkDraftEntry, canAutoOpenInput } from '../../src/lib/draftEntryCheck.js';
 import * as flow from '../../src/lib/flowSession.js';
 import { loadDraft as readStoredDraft, clearDraft as clearStoredDraft, hasPendingDraft as hasStoredPendingDraft, saveProductDraft, queueProductDraftSave, flushProductDraftSave } from '../../src/lib/draftStore.js';
@@ -22,7 +23,7 @@ const navSource = shell.slice(shell.indexOf('export function TopNav()'), shell.i
 const dialogSource = read('src/features/shell/DraftEntryDialog.jsx').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
 const profileSource = shell.slice(shell.indexOf('function ProfileMenu()'), shell.indexOf('export function Stepper'));
 const rootSource = app.slice(app.indexOf('function RootRedirect()'), app.indexOf('/* 모델 섹션')).replace("import.meta.env.VITE_API_MODE", "'http'");
-const introSource = ['HangTag.jsx', 'PhoneUploadIntro.jsx'].map((file) =>
+const tagSource = ['HangTag.jsx'].map((file) =>
   read(`src/features/shell/${file}`).replace(/^import .*;\n/gm, '').replace(/^export /gm, '')).join('\n');
 const mobileDialogSource = read('src/features/shell/MobileDraftDialog.jsx').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
 const guardSource = app.slice(app.indexOf('function RequireProject()'), app.indexOf('/* editor 는'));
@@ -37,15 +38,16 @@ const authGuardSource = read('src/apps/guards.jsx').slice(read('src/apps/guards.
 const trackerSource = app.slice(app.indexOf('function ResumeTracker()'), app.indexOf("/* '새 제작'"));
 const productSource = read('src/features/product-input/ProductInput.jsx');
 const productLoad = productSource.slice(productSource.indexOf('  useEffect(() => {\n    let alive = true;\n    (async () => {\n      setLoadError'), productSource.indexOf('  const nextMobile ='));
-const { code } = await transformWithEsbuild(`${authSource}\n${authGuardSource}\n${trackerSource}\n${statusSource}\n${mobileDialogSource}\n${guardSource}\n${hook}\n${inputSource}\n${navSource}\n${dialogSource}\n${rootSource}\n${profileSource}\n${introSource}\nfunction ProductLoad() { ${productLoad} }`, 'DraftEntryRoutes.jsx', {
+const { code } = await transformWithEsbuild(`${authSource}\n${authGuardSource}\n${trackerSource}\n${statusSource}\n${mobileDialogSource}\n${guardSource}\n${hook}\n${inputSource}\n${navSource}\n${dialogSource}\n${rootSource}\n${profileSource}\n${tagSource}\nfunction ProductLoad() { ${productLoad} }`, 'DraftEntryRoutes.jsx', {
   jsx: 'transform', define: { 'import.meta.env.DEV': 'false', 'import.meta.env.VITE_API_MODE': "'http'" },
 });
 const slot = (meta = {}) => ({ meta: { hasContent: true, deviceLabel: 'Android Chrome', photoCount: 2, updatedAt: 'v1', ...meta }, payload: { product: { name: 'remote' } } });
 
 // 실제 라우트와 훅을 실행하고 브라우저, 저장소 경계만 메모리로 대체한다.
 function harness({ remote = slot(), confirmed = true, local = null, localReader = null, localPendingReader = null, loading = false, withAuth = false, authUser = 'seller', sessionResult = null, storedSession = null, resetGate = null, resetError = null,
-  syncedAt = null, serverSyncedAt = null, syncedUserId = null, otherTab = false, token = null, savedFlow = {}, takeover = null, slotClient = null, mobile = false, mock = false, facemarket = false, returnIntent = '/create/storyboard' } = {}) {
+  syncedAt = null, serverSyncedAt = null, syncedUserId = null, otherTab = false, token = null, savedFlow = {}, takeover = null, slotClient = null, mobile = false, mock = false, facemarket = false, guestSave = null, pendingLocal, returnIntent = '/create/storyboard' } = {}) {
   const calls = [];
+  const resetOwners = [];
   const windowEvents = new EventTarget();
   const documentEvents = new EventTarget();
   documentEvents.visibilityState = 'visible';
@@ -54,6 +56,7 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
   let active;
   let cursor;
   let effects = [];
+  let layoutEffects = [];
   let dirty = false;
   let staged = null;
   let currentRemote = remote;
@@ -73,9 +76,10 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
   const state = {
     projectId: confirmed ? 'project' : null, projectPersisted: confirmed,
     productInfoConfirmed: confirmed, projectGeneration: 0, resumePath: '/create/storyboard', ...savedFlow,
-    async beginProject({ isCurrent = () => true, onStarted = () => {} } = {}) {
+    async beginProject({ isCurrent = () => true, onStarted = () => {}, draftOwnerUserId } = {}) {
       if (!isCurrent()) return;
       calls.push('begin');
+      resetOwners.push(draftOwnerUserId);
       if (resetError) throw resetError;
       if (resetGate) await resetGate;
       if (!isCurrent()) return;
@@ -96,7 +100,7 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
     async get() { calls.push('get'); if (currentRemote instanceof Error) throw currentRemote; return currentRemote; },
     async takeover() { calls.push('takeover'); if (takeover) return takeover(); if (currentRemote instanceof Error) throw currentRemote; return currentRemote; },
     resetIdentity() { calls.push('reset'); },
-    async removeForNewFlow() { calls.push('remove'); },
+    async removeForNewFlow() { calls.push('remove'); return true; },
     async remove() { calls.push('remove'); },
     stage(value) { calls.push('stage'); staged = value; },
     hasStaged: () => Boolean(staged?.payload),
@@ -118,7 +122,7 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
   state.adoptProject = (id) => { calls.push(`adopt:${id}`); };
   state.confirmProductInfo = () => { calls.push('confirm'); };
   const bindings = {
-    useClientErrorCapture() {},
+    useClientErrorCapture() {}, getMobileGuestDraft: () => null, getMobileGuestSave: (session) => typeof guestSave === 'function' ? guestSave(session) : guestSave, clearMobileGuestSave() { guestSave = null; calls.push('clearGuest'); },
     ...entry, ...flow, canAutoOpenInput, checkDraftEntry: (client, options) => checkDraftEntry(client, { ...options, setTimer: (fn, ms) => ms === 8000 ? setTimeout(fn, ms) : setImmediate(fn), clearTimer: clearTimeout }), getDraftDeviceNoun, isMobileDraftWriter, flowScreenName, shouldWarnFlowAbandon, notifyFlowKept, draftSlot, useAppStore, formatDraftRelativeTime, localDraftMeta,
     flowRouteSeenThisSession: false, flowDocumentEntryId: 'document',
     React: { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }), Fragment: 'fragment' },
@@ -151,6 +155,13 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
         effects.push(() => { record.cleanup = effect(); });
       }
     },
+    useLayoutEffect(effect, deps) {
+      const index = cursor++, prior = active[index];
+      if (!prior || !deps.every((value, i) => Object.is(value, prior.deps[i]))) {
+        const record = { deps }; active[index] = record;
+        layoutEffects.push(() => { prior?.cleanup?.(); record.cleanup = effect(); });
+      }
+    },
     useAuth: () => auth, useToast: () => ({ push }), useLocation: () => location,
     AuthCtx: { Provider: 'Provider' },
     useQueryClient: () => queryClient,
@@ -165,6 +176,7 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
     readStoredAuthSession: () => storedSession,
     readAuthFlow: () => withAuth ? { ...state } : state,
     supabase: { auth: {
+      signOut: async () => {},
       getSession: async () => {
         if (sessionResult instanceof Error) throw sessionResult;
         return sessionResult || { data: { session: authUser ? { user: { id: authUser } } : null }, error: null };
@@ -173,12 +185,12 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
     } },
     useNavigate: () => navigate,
     isMockMode: mock, IS_FACEMARKET: facemarket, isMobileDevice: () => mobile,
-    hasPendingDraft: localPendingReader || (() => Boolean(local)), loadDraft: localReader || (async () => local), flushProductDraftSave: async () => entryFlush,
+    hasPendingDraft: localPendingReader || (() => pendingLocal === undefined ? Boolean(local) : typeof pendingLocal === 'function' ? pendingLocal() : pendingLocal), loadDraft: localReader || (async () => local), flushProductDraftSave: async () => entryFlush,
     Navigate: 'Navigate', Outlet: 'Outlet',
     readPostLogin: () => returnIntent, forgetPostLogin: () => calls.push('forget'),
     ensureDraftRemotePhotos: async (draft) => draft,
     promoteDraftToProject: async () => { calls.push('promote'); return { projectId: 'promoted' }; },
-    clearDraft: async () => { calls.push('clear'); }, resetDraftSyncSingleFlight() {},
+    clearDraft: async () => { calls.push('clear'); local = null; }, resetDraftSyncSingleFlight() {},
     DRAFT_SYNC_TIMEOUT_MS: 20000, setTimeout() {},
     ProductInput: 'ProductInput', Modal: 'Modal', Button: 'Button', Icon: 'Icon',
     Stepper: 'Stepper', ProfileMenuIcon: 'ProfileMenuIcon',
@@ -194,9 +206,11 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
     setProduct: (value) => products.push(value), loadAttempt: 0,
   };
   windowEvents.location = { search: '', pathname: '/create/input' };
+  windowEvents.scrollTo = () => {};
+  documentEvents.querySelector = () => null;
   const queryClient = { clear() {} };
   function navigate(path, options) { calls.push(`navigate:${path}`); if (options?.state) { location.state = options.state; location.key = `nav-${calls.length}`; } }
-  const components = new Function(...Object.keys(bindings), `${code}; return { AuthProvider, RequireAuth, ResumeTracker, ProductLoad, HandoffStatusPage, RequireProject, MobileDraftDialog, MobileDraftStatus, DraftProductRow, ProductInputRoute, TopNav, ResumeChoiceModal, DraftEntryDialog, RootRedirect, ProfileMenu, PhoneUploadIntro, HangTag };`)(...Object.values(bindings));
+  const components = new Function(...Object.keys(bindings), `${code}; return { AuthProvider, RequireAuth, ResumeTracker, ProductLoad, HandoffStatusPage, RequireProject, MobileDraftDialog, MobileDraftStatus, DraftProductRow, ProductInputRoute, TopNav, ResumeChoiceModal, DraftEntryDialog, RootRedirect, ProfileMenu, HangTag };`)(...Object.values(bindings));
   function render(name, props) {
     if (!frames.has(name)) frames.set(name, []);
     active = frames.get(name);
@@ -208,6 +222,7 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
   async function settle(name, props) {
     let tree = render(name, props);
     for (let i = 0; i < 20; i += 1) {
+      layoutEffects.splice(0).forEach((effect) => effect());
       const pending = effects;
       effects = [];
       pending.forEach((effect) => effect());
@@ -231,12 +246,14 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
         tree = guard && guard.type !== 'Outlet' ? guard : render(name);
       }
       else { frames.get(name)?.forEach((record) => record?.cleanup?.()); frames.delete(name); tree = null; }
+      layoutEffects.splice(0).forEach((effect) => effect());
       const pending = effects; effects = []; pending.forEach((effect) => effect());
       await new Promise(setImmediate);
     }
     return tree;
   }
-  return { calls, toasts, toastOptions, auth, state, flowReads, products, publishedSessions, get loadError() { return loadError; }, windowEvents, documentEvents, draftSlot, location, components, render, settle, settleApp,
+  return { calls, resetOwners, toasts, toastOptions, auth, state, flowReads, products, publishedSessions, get localDraft() { return local; }, get loadError() { return loadError; }, windowEvents, documentEvents, draftSlot, location, components, render, settle, settleApp,
+    flushLayout: () => layoutEffects.splice(0).forEach((effect) => effect()),
     emit(event, next) { listener(event, next); },
     get hasListener() { return Boolean(listener); }, setStoredSession(value) { storedSession = value; },
     setEntryFlush(value) { entryFlush = value; },
@@ -481,33 +498,54 @@ for (const component of ['ProductInputRoute', 'TopNav']) {
 }
 
 for (const confirmed of [false, true]) {
-  test(`M1 mobile guest waits for login without input or slot work (confirmed=${confirmed})`, async () => {
+  test(`G1 mobile guest opens real input without slot work (confirmed=${confirmed})`, async () => {
     const h = harness({ mobile: true, confirmed });
     h.auth.session = null;
     const tree = await h.settle('ProductInputRoute');
-    assert.equal(find(tree, (node) => node.type === 'ProductInput'), null);
-    assert.equal(tree.type, h.components.PhoneUploadIntro);
-    const intro = h.components.PhoneUploadIntro(tree.props);
-    assert.equal(intro.props.className, 'page');
-    assert.equal(intro.props['aria-labelledby'], 'phone-upload-title');
-    const login = find(intro, (node) => node.type === 'button' && node.props.children.includes('로그인하고 사진 업로드'));
-    assert.ok(login);
-    assert.equal(login.props.className, 'btn btn-primary btn-block');
-    assert.ok(find(intro, (node) => node.props.className === 'eyebrow' && node.props.children.includes('PHONE UPLOAD')));
-    assert.ok(find(intro, (node) => node.type === 'h1' && node.props.id === 'phone-upload-title' && node.props.children.includes('휴대폰으로 사진부터 업로드해요')));
-    assert.ok(find(intro, (node) => node.props.className === 'desc' && node.props.children.includes('로그인하고 사진을 업로드하면 PC에서 바로 이어서 만들어요.')));
-    const tagNode = find(intro, (node) => node.type === h.components.HangTag);
-    const tag = h.components.HangTag(tagNode.props);
-    assert.equal(tag.props['aria-label'], 'UPLOAD ON PHONE 이라고 적힌 옷 태그');
-    assert.equal(tag.props.viewBox, '0 0 280 230');
-    assert.ok(find(tag, (node) => node.type === 'rect' && node.props.width === '22' && node.props.height === '38'));
-    assert.ok(find(tag, (node) => node.props.className === 'mono accentFill' && node.props.children.includes('UPLOAD ON PHONE')));
-    assert.ok(find(tag, (node) => node.props.className === 'mono mutedFill' && node.props.children.includes('FINISH ON PC')));
-    assert.equal(find(tag, (node) => node.props.className === 'stroke care'), null);
+    assert.equal(tree.type, 'ProductInput');
     assert.deepEqual(h.calls, []);
-    login.props.onClick();
-    assert.deepEqual(h.calls, ['login:/create/input']);
   });
+}
+
+for (const mobile of [true, false]) {
+  for (const hasContainer of [true, false]) {
+    test(`input login and account change reset scroll before paint once, same-user refresh preserves it (mobile=${mobile}, container=${hasContainer})`, async () => {
+      const h = harness({ mobile, confirmed: false, remote: null });
+      h.location.pathname = '/create/input';
+      h.auth.session = null;
+      const windowScrolls = [], containerScrolls = [];
+      const container = { scrollTop: 0, scrollTo(options) { containerScrolls.push(options); this.scrollTop = options.top; } };
+      h.windowEvents.scrollY = 0;
+      h.windowEvents.scrollTo = (options) => { windowScrolls.push(options); h.windowEvents.scrollY = options.top; };
+      h.documentEvents.querySelector = (selector) => selector === '.app-main' && hasContainer ? container : null;
+      await h.settle('ProductInputRoute');
+      assert.equal(windowScrolls.length, 0);
+      for (const userId of ['seller', 'another-seller']) {
+        h.windowEvents.scrollY = 1200; container.scrollTop = 800;
+        h.auth.loading = true;
+        h.auth.session = { user: { id: userId } };
+        await h.settle('ProductInputRoute');
+        assert.equal(h.windowEvents.scrollY, 1200);
+        h.auth.loading = false;
+        h.render('ProductInputRoute');
+        h.flushLayout();
+        assert.equal(h.windowEvents.scrollY, 0);
+        if (hasContainer) assert.equal(container.scrollTop, 0);
+        const expectedCount = userId === 'seller' ? 1 : 2;
+        assert.equal(windowScrolls.length, expectedCount);
+        assert.equal(containerScrolls.length, hasContainer ? expectedCount : 0);
+        assert.equal(windowScrolls.at(-1).behavior, 'instant');
+        await h.settle('ProductInputRoute');
+        h.windowEvents.scrollY = 640; container.scrollTop = 320;
+        h.auth.session = { user: { id: userId }, access_token: 'refreshed' };
+        await h.settle('ProductInputRoute');
+        assert.equal(h.windowEvents.scrollY, 640);
+        assert.equal(container.scrollTop, 320);
+        assert.equal(windowScrolls.length, expectedCount);
+        assert.equal(containerScrolls.length, hasContainer ? expectedCount : 0);
+      }
+    });
+  }
 }
 
 test('M1 email login offers guest local and server cards without automatically overwriting either', async () => {
@@ -1351,6 +1389,140 @@ test('a publication failure after reset cannot close the gate or stop the next a
   assert.equal(h.publishedSessions.at(-1), next);
 });
 
+
+for (const login of ['email', 'redirect', 'other-tab']) {
+  test(`G4/G6 ${login} login stages guest photos directly without a resume card`, async () => {
+    const local = { updatedAt: 'guest', product: { name: 'phone photos', colors: [] } };
+    const h = harness({ mobile: true, confirmed: false, local, remote: null,
+      guestSave: { id: 'intent', draftUpdatedAt: 'guest' } });
+    if (login === 'email') {
+      h.auth.session = null; await h.settle('ProductInputRoute');
+      h.auth.session = { user: { id: 'seller' } };
+    }
+    const tree = await h.settle('ProductInputRoute');
+    assert.equal(tree.type, 'ProductInput');
+    assert.equal(tree.props.autoSaveIntent.id, 'intent');
+    assert.deepEqual(h.calls, ['get', 'stage']);
+  });
+}
+
+for (const writer of ['Android Chrome', 'Windows Chrome']) {
+  for (const choice of ['keep', 'replace']) {
+    test(`G5 guest return asks D1 before ${choice} of ${writer} slot`, async () => {
+      const local = { updatedAt: 'guest', product: { name: 'phone photos', colors: [] } };
+      const h = harness({ mobile: true, confirmed: false, local, remote: slot({ deviceLabel: writer }),
+        guestSave: { id: 'intent', draftUpdatedAt: 'guest' } });
+      let tree = await h.settle('ProductInputRoute');
+      const modal = dialog(h, tree);
+      assert.equal(modal.props.dialog.kind, 'mobile');
+      assert.deepEqual(h.calls, ['get']);
+      if (choice === 'replace') {
+        h.setRemote(slot({ deviceLabel: writer, updatedAt: 'v2' }));
+        await modal.props.actions.confirm();
+        tree = await h.settle('ProductInputRoute');
+        assert.equal(dialog(h, tree).props.dialog.meta.updatedAt, 'v2');
+        assert.deepEqual(h.calls, ['get', 'get']);
+        await dialog(h, tree).props.actions.confirm();
+        tree = await h.settle('ProductInputRoute');
+        assert.equal(tree.type, 'ProductInput');
+        assert.equal(tree.props.autoSaveIntent.id, 'intent');
+        assert.deepEqual(h.calls, ['get', 'get', 'get', 'takeover', 'stage']);
+      } else {
+        await modal.props.actions.keepMobile();
+        tree = await h.settle('ProductInputRoute');
+        assert.ok(!tree.props.autoSaveIntent);
+        assert.ok(!h.calls.includes('remove'));
+        assert.ok(h.calls.includes('clearGuest'));
+      }
+    });
+  }
+}
+
+test('G6 explicit logout clears the same-browser guest save marker', async () => {
+  const h = harness({ withAuth: true, mobile: true, confirmed: false, remote: null });
+  await h.settleApp();
+  await h.auth.signOut();
+  assert.ok(h.calls.includes('clearGuest'));
+});
+
+test('G6 another-tab SIGNED_OUT clears the guest save marker', async () => {
+  const h = harness({ withAuth: true, mobile: true, confirmed: false, remote: null });
+  await h.settleApp();
+  h.emit('SIGNED_OUT', null); await h.settleApp();
+  assert.ok(h.calls.includes('clearGuest'));
+});
+
+
+for (const age of [30 * 60 * 1000 - 1, 30 * 60 * 1000]) {
+  test(`G6 real marker restores other-tab input only inside the 30-minute window (${age})`, async (t) => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    const shared = new Map();
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+      getItem: (key) => shared.get(key) ?? null, setItem: (key, value) => shared.set(key, value), removeItem: (key) => shared.delete(key),
+    } });
+    t.after(() => { if (original) Object.defineProperty(globalThis, 'localStorage', original); else delete globalThis.localStorage; });
+    const marker = mobileGuestSave.rememberMobileGuestSave('guest');
+    const h = harness({ mobile: true, confirmed: false, remote: null, pendingLocal: false,
+      local: { updatedAt: 'guest', product: { name: 'phone photos', colors: [] } },
+      guestSave: (session) => mobileGuestSave.getMobileGuestSave(session, { mobile: true, now: marker.createdAt + age }),
+    });
+    h.auth.session = { user: { id: 'new-login', last_sign_in_at: new Date(marker.createdAt + 1000).toISOString() } };
+    const tree = await h.settle('ProductInputRoute');
+    assert.equal(tree.type, 'ProductInput');
+    assert.equal(Boolean(tree.props.autoSaveIntent), age < 30 * 60 * 1000);
+    assert.equal(h.calls.includes('stage'), age < 30 * 60 * 1000);
+    if (age === 30 * 60 * 1000) assert.equal(shared.has('wl_mobileGuestSave'), false);
+  });
+}
+
+
+test('G6 external mobile logout clears unpersisted account photos before publishing guest input', async () => {
+  const h = harness({ withAuth: true, authUser: 'A', mobile: true, confirmed: false, remote: null,
+    local: { updatedAt: 'saved', ownerUserId: 'A', product: { name: 'A photos' } },
+  });
+  await h.settleApp();
+  assert.ok(h.localDraft);
+  h.emit('SIGNED_OUT', null); await h.settleApp();
+  assert.equal(h.auth.session, null);
+  assert.equal(h.localDraft, null);
+});
+
+test('G6 mobile external logout holds input until the existing flow reset finishes', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const h = harness({ withAuth: true, authUser: 'A', mobile: true, confirmed: false, remote: null, resetGate: gate,
+    local: { updatedAt: 'saved', ownerUserId: 'A', product: { name: 'A photos' } },
+  });
+  await h.settleApp();
+  h.emit('SIGNED_OUT', null); const during = await h.settleApp();
+  assert.equal(during, null);
+  assert.equal(h.auth.session?.user?.id, 'A');
+  release(); await h.settleApp();
+  assert.equal(h.auth.session, null); assert.equal(h.localDraft, null);
+});
+
+test('a guest save intent cannot exempt an already confirmed account change', async () => {
+  const h = harness({ withAuth: true, authUser: 'A', mobile: true, confirmed: false, remote: null,
+    local: { updatedAt: 'guest', ownerUserId: 'A', product: { name: 'A photos', colors: [] } },
+    guestSave: { id: 'intent', draftUpdatedAt: 'guest', ownerUserId: 'A' } });
+  await h.settleApp();
+  h.emit('SIGNED_IN', { user: { id: 'B' } });
+  await h.settleApp();
+  assert.equal(h.localDraft, null);
+  assert.deepEqual(h.resetOwners, ['A']);
+  assert.equal(h.auth.session.user.id, 'B');
+  assert.equal(h.auth.sellerConsentReady, false);
+});
+
+test('guest save still exempts a persisted flow before the first account is confirmed', async () => {
+  const h = harness({ withAuth: true, authUser: 'B', mobile: true, remote: null,
+    savedFlow: { userId: 'A' },
+    guestSave: { id: 'intent', draftUpdatedAt: 'guest', ownerUserId: 'B' } });
+  await h.settleApp();
+  assert.equal(h.calls.includes('begin'), false);
+  assert.equal(h.state.projectId, 'project');
+  assert.equal(h.auth.session.user.id, 'B');
+});
 
 test('sibling-domain B bootstrap never offers A newly saved unconfirmed input with no flow owner', async (t) => {
   const storage = draftStoreFixture(t);

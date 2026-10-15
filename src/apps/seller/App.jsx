@@ -13,7 +13,7 @@
    그 replaceState 가 AuthProvider 보다 먼저 돌아 `?code=` 를 지워 로그인이 완성되지 않는다.
    Editor 는 app chrome 밖의 전체화면 surface (stub in phase 1).
    ============================================================= */
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, Routes, Route, Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ChromeLayout } from '@/features/shell/ChromeLayout.jsx';
 import { Library } from '@/features/library/Library.jsx';
@@ -66,7 +66,7 @@ import { HandoffStatusPage } from '@/features/shell/HandoffStatusPage.jsx';
 import { useDraftEntryActions } from '@/lib/useDraftEntryActions.js';
 import { isMobileDevice } from '@/lib/deviceClass.js';
 import { PcOnlyPage } from '@/features/shell/PcOnlyPage.jsx';
-import { PhoneUploadIntro } from '@/features/shell/PhoneUploadIntro.jsx';
+import { getMobileGuestSave, getMobileGuestDraft, clearMobileGuestSave } from '@/lib/mobileGuestSave.js';
 import { NotFound } from '@/components/NotFound.jsx';
 import {
   draftSlot,
@@ -243,17 +243,26 @@ function ResumeTracker() {
 function ProductInputRoute() {
   const navigate = useNavigate();
   const { key: locationKey, state: locationState } = useLocation();
-  const { session, loading: authLoading, signingOut, openLogin } = useAuth();
+  const { session, loading: authLoading, signingOut } = useAuth();
   const mobile = isMobileDevice();
-  const loginRequired = mobile && !session && !isMockMode;
   const userId = session?.user?.id || null;
   const [entryUserId, setEntryUserId] = useState(userId);
   const userChanged = entryUserId !== userId;
+  const scrollUserId = useRef(userId);
+  useLayoutEffect(() => {
+    if (authLoading || signingOut) return;
+    const changed = scrollUserId.current !== userId;
+    scrollUserId.current = userId;
+    if (!changed || !userId) return;
+    // 새 계정의 입력 화면이 보이기 전에 이전 스크롤 위치를 비운다.
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    document.querySelector('.app-main')?.scrollTo({ top: 0, behavior: 'instant' });
+  }, [userId, authLoading, signingOut]);
   const { push: pushToast } = useToast();
   const generation = useAppStore((s) => s.projectGeneration);
   const beginProject = useAppStore((s) => s.beginProject);
   const [entryDecision, setEntryDecision] = useState(() => {
-    if (loginRequired || (!isMockMode && authLoading)) return 'checking';
+    if (!isMockMode && authLoading) return 'checking';
     const { projectId, projectPersisted } = useAppStore.getState();
     return getInputEntryDecision({
       slotClient: draftSlot,
@@ -265,6 +274,7 @@ function ProductInputRoute() {
   const [entryError, setEntryError] = useState(null);
   const [localSaveBlocked, setLocalSaveBlocked] = useState(false);
   const [mobileEntry, setMobileEntry] = useState(null);
+  const [autoSaveIntent, setAutoSaveIntent] = useState(null);
   const autoOpening = useRef(false);
   const newRequestHandled = useRef(null);
   const inputHasContent = useRef(true);
@@ -279,11 +289,12 @@ function ProductInputRoute() {
   const { actions: entryActions, dialog: entryDialog, busy: entryBusy } = useDraftEntryActions({
     beginProject, mobile,
     onOpened: (meta) => {
+      if (mobile && getMobileGuestSave(session)) clearMobileGuestSave();
       setMobileEntry(meta ? { state: 'saved', meta, generation: useAppStore.getState().projectGeneration } : null);
       finishEntry();
       if (autoOpening.current) { autoOpening.current = false; showResumeToast(); }
     },
-    onKept: (meta) => { setMobileEntry({ state: 'pc', meta }); finishEntry(); },
+    onKept: (meta) => { if (mobile && getMobileGuestSave(session)) clearMobileGuestSave(); setMobileEntry({ state: 'pc', meta }); finishEntry(); },
     onStarted: () => { setMobileEntry(null); finishEntry(); }, onError: pushToast,
   });
 
@@ -294,10 +305,13 @@ function ProductInputRoute() {
   }, [signingOut]);
 
   useEffect(() => {
-    if (signingOut || loginRequired || userChanged) return;
+    if (signingOut || userChanged) return;
     if (entryDecision !== 'checking') return;
     if (!isMockMode && authLoading) return;
-    if (draftSlot.getToken()) draftSlot.pauseEntryWrites();
+    const pendingGuestSave = mobile ? getMobileGuestSave(session) : null;
+    const guestSave = session ? pendingGuestSave : null;
+    const memoryDraft = guestSave ? getMobileGuestDraft(guestSave) : null;
+    if (draftSlot.getToken() || guestSave) draftSlot.pauseEntryWrites();
     let alive = true;
     const epoch = draftSlot.getIdentityEpoch();
     const project = useAppStore.getState();
@@ -305,8 +319,9 @@ function ProductInputRoute() {
       && project.projectGeneration === useAppStore.getState().projectGeneration
       && project.projectId === useAppStore.getState().projectId;
     (async () => {
+      if (mobile && !slotEnabled) { setEntryDecision('continue'); return; }
       // 이탈 직전 입력은 슬롯 쓰기를 멈춘 동안 로컬에 먼저 저장하고 비교한다.
-      try { await flushProductDraftSave({ userId, identityEpoch: epoch, timeoutMs: 8000 }); }
+      try { if (!memoryDraft) await flushProductDraftSave({ userId, identityEpoch: epoch, timeoutMs: 8000 }); }
       catch (error) {
         if (current()) { setEntryError(error); setLocalSaveBlocked(true); setEntryDecision('error'); }
         return;
@@ -329,9 +344,17 @@ function ProductInputRoute() {
       // 지연 삭제도 진입 조회가 성공한 뒤에만 재개한다. 그사이 바뀐 슬롯은 다시 카드로 권한다.
       let [slot, localDraft] = await Promise.all([
         checkDraftEntry(draftSlot, { isCurrent: current }),
-        hasPendingDraft() ? loadDraft().catch(() => null) : Promise.resolve(null),
+        memoryDraft || (hasPendingDraft() || guestSave ? loadDraft().catch(() => null) : Promise.resolve(null)),
       ]);
       if (!current()) return;
+      if (guestSave && localDraft?.product && (localDraft.updatedAt === guestSave.draftUpdatedAt || localDraft.ownerUserId === userId)) {
+        setEntryDecision('ask');
+        await entryActions.resumeMobileSave({ draft: localDraft, meta: localDraftMeta(localDraft), onReady: () => {
+          setAutoSaveIntent(guestSave);
+          finishEntry();
+        } }, slot);
+        return;
+      }
       if (draftSlot.hasPendingRemoval()) {
         await draftSlot.retryPendingRemoval();
         if (!current()) return;
@@ -419,10 +442,10 @@ function ProductInputRoute() {
       else setEntryDecision(slotEnabled ? 'error' : 'continue');
     });
     return () => { alive = false; };
-  }, [mobile, authLoading, entryDecision, signingOut, slotEnabled, loginRequired, userChanged, userId]);
+  }, [mobile, authLoading, entryDecision, signingOut, slotEnabled, userChanged, userId]);
 
   useEffect(() => {
-    if (signingOut || loginRequired || userChanged) return;
+    if (signingOut || userChanged) return;
     if (entryDecision === 'confirmed') {
       if (!isMockMode && authLoading) return;
       if (draftSlot.getToken()) draftSlot.pauseEntryWrites();
@@ -509,16 +532,16 @@ function ProductInputRoute() {
       navigate('/create/input', { replace: true });
     });
     return () => { alive = false; };
-  }, [authLoading, beginProject, entryDecision, locationKey, navigate, pushToast, session, signingOut, slotEnabled, loginRequired, userChanged]);
+  }, [authLoading, beginProject, entryDecision, locationKey, navigate, pushToast, session, signingOut, slotEnabled, userChanged]);
 
   useEffect(() => {
-    if (loginRequired || userChanged || entryDecision !== 'continue') return;
+    if (userChanged || entryDecision !== 'continue') return;
     consumeFlowContinuation(useAppStore.getState().projectId);
     flowRouteSeenThisSession = true;
     const { projectId } = useAppStore.getState();
     markFlowSession(projectId, '/create/input');
     useAppStore.getState().markFlowUsed(userId);
-  }, [entryDecision, loginRequired, userChanged]);
+  }, [entryDecision, userChanged]);
 
   useEffect(() => {
     if (entryDecision !== 'error') return;
@@ -611,6 +634,7 @@ function ProductInputRoute() {
   if (userChanged) {
     setEntryUserId(userId);
     setMobileEntry(null);
+    setAutoSaveIntent(null);
     autoOpening.current = false;
     entryActions.cancel();
     setEntrySources([]);
@@ -618,9 +642,6 @@ function ProductInputRoute() {
     return null;
   }
   if (signingOut) return <div className="route-loading">로그아웃하고 있어요…</div>;
-  if (loginRequired) {
-    return <PhoneUploadIntro onLogin={() => openLogin('/create/input')} />;
-  }
   if (entryDecision === 'error') {
     return <HandoffStatusPage variant="error" error={entryError} onRetry={() => setEntryDecision('checking')}
       onUpload={!localSaveBlocked && !draftSlot.getToken() ? () => { if (draftSlot.continueWithoutSlotCheck()) finishEntry(); } : undefined} />;
@@ -651,7 +672,7 @@ function ProductInputRoute() {
     <DraftEntryDialog dialog={entryDialog} actions={entryActions} busy={entryBusy} />
   </>;
   if (entryDialog) return <DraftEntryDialog dialog={entryDialog} actions={entryActions} busy={entryBusy} />;
-  return <ProductInput onFreshStart={(meta) => setMobileEntry(meta ? { state: 'saved', meta, generation: useAppStore.getState().projectGeneration } : null)} initialSavedMeta={mobileEntry?.state === 'saved' && mobileEntry.generation === generation ? mobileEntry.meta : null} key={`${generation}:${session?.user?.id || 'guest'}`} onContentChange={onContentChange} />;
+  return <ProductInput autoSaveIntent={autoSaveIntent} onFreshStart={(meta) => setMobileEntry(meta ? { state: 'saved', meta, generation: useAppStore.getState().projectGeneration } : null)} initialSavedMeta={mobileEntry?.state === 'saved' && mobileEntry.generation === generation ? mobileEntry.meta : null} key={`${generation}:${session?.user?.id || 'guest'}`} onContentChange={onContentChange} />;
 }
 
 /* '/' 복귀의 리다이렉트. (Option B 재활성) 익명 입력+분석 draft(사진 blob 포함)를 로그인 후

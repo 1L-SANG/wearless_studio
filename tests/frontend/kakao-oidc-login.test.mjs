@@ -449,3 +449,27 @@ test('buildKakaoAuthorizeUrl 은 nonce 가 없으면 파라미터를 아예 안 
   assert.equal(url.searchParams.get('nonce'), null);
   assert.equal(url.searchParams.get('state'), 's');
 });
+
+for (const guest of [true, false]) {
+  test(`G7 Kakao cancellation returns only pending phone guests to input routing (guest=${guest})`, async () => {
+    const { transformWithEsbuild } = await import('vite');
+    const source = read('src/features/auth/KakaoCallback.jsx').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
+    const compiled = await transformWithEsbuild(source, 'KakaoCancel.jsx', { jsx: 'transform' });
+    const effects = [], navigations = [], failures = [];
+    const bindings = {
+      React: { createElement: (type, props) => ({ type, props }) },
+      useNavigate: () => (path) => navigations.push(path),
+      useAuth: () => ({ signInWithKakaoIdToken() {} }),
+      useState: () => [null, (value) => failures.push(value)], useRef: (current) => ({ current }),
+      useEffect: (effect) => effects.push(effect),
+      getMobileGuestSave: () => guest ? { id: 'pending-save' } : null,
+      readKakaoCallbackParams, safeInternalPath, IS_FACEMARKET: false,
+      window: { location: { search: '?error=access_denied' } }, http() {},
+      runKakaoCallbackFlow: async () => ({ ok: false, message: '로그인이 취소됐어요.' }),
+    };
+    const Callback = new Function(...Object.keys(bindings), `${compiled.code}; return KakaoCallback;`)(...Object.values(bindings));
+    Callback(); effects.forEach((effect) => effect()); await new Promise(setImmediate);
+    assert.deepEqual(navigations, guest ? ['/'] : []);
+    assert.equal(failures.length, guest ? 0 : 1);
+  });
+}

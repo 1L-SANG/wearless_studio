@@ -32,8 +32,11 @@ import {
   loadDraft,
   clearDraftIfCurrent,
   queueProductDraftSave,
+  collectDraftPhotos,
 } from '@/lib/draftStore.js';
 import { isMobileDevice } from '@/lib/deviceClass.js';
+import { rememberMobileGuestSave, clearMobileGuestSave, claimMobileGuestSave } from '@/lib/mobileGuestSave.js';
+import { readStoredAuthSession } from '@/lib/supabase.js';
 import { isMobileDraftWriter } from '@/lib/draftDeviceNoun.js';
 import { MobileDraftStatus } from '@/features/shell/MobileDraftDialog.jsx';
 import { useDraftEntryActions } from '@/lib/useDraftEntryActions.js';
@@ -502,7 +505,7 @@ function EditingRightsLock({ meta, onReclaim, onRestartLocal, onDiscard, mobile 
   );
 }
 
-export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart } = {}) {
+export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, autoSaveIntent } = {}) {
   const navigate = useNavigate();
   const mobile = isMobileDevice();
   const location = useLocation();
@@ -550,9 +553,12 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
   const [slotLock, setSlotLock] = useState(null);
   const [reclaimChoiceOpen, setReclaimChoiceOpen] = useState(false);
   const [promotionLocked, setPromotionLocked] = useState(false);
-  const { session, loading: authLoading, openLogin } = useAuth();
+  const { session, loading: authLoading, openLogin, sellerConsentReady, retrySellerConsent } = useAuth();
+  const [preparingLogin, setPreparingLogin] = useState(false);
+  const loginSaveRef = useRef(false);
+  const loginDraftRef = useRef(null);
   const slotEnabled = Boolean(session) || isMockMode;
-  const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
+  const doneBlocked = useDoneGuard(!mobile || slotEnabled);   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const toast = useToast();
   const pushToast = toast.push;
   const { actions: entryActions, dialog: entryDialog, busy: entryBusy } = useDraftEntryActions({
@@ -616,10 +622,10 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
     const localUpdatedAt = new Date().toISOString();
     latestLocalUpdatedAtRef.current = localUpdatedAt;
     queueProductDraftSave(product, analysis, composeMode, localUpdatedAt);
-    if (slotEnabled) {
+    if (slotEnabled && !(mobile && session && sellerConsentReady === false)) {
       draftSlot.queue({ product, analysis, composeMode, localUpdatedAt });
     }
-  }, [analysis, composeMode, product, slotEnabled, mobileReadOnly, mobile, slotLock, handoff.gone, entryBusy]);
+  }, [analysis, composeMode, product, slotEnabled, mobileReadOnly, mobile, slotLock, handoff.gone, entryBusy, session, sellerConsentReady]);
 
   useEffect(() => {
     if (!slotEnabled) return;
@@ -666,7 +672,8 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
     const identityEpoch = draftSlot.getIdentityEpoch();
     // 입력 화면을 떠나도 저장 중인 사진 원본은 로컬 저장이 끝날 때까지 유지한다.
     return () => {
-      void flushProductDraftSave({ userId, identityEpoch }).catch(() => null).finally(() => registry.dispose());
+      void Promise.allSettled([flushProductDraftSave({ userId, identityEpoch }), loginDraftRef.current])
+        .finally(() => registry.dispose());
     };
   }, []);
   useEffect(() => {
@@ -1092,6 +1099,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
 
   const applyDraftPayload = (payload) => {
     if (!payload?.product) return false;
+    if (mobile && autoSaveIntent) latestLocalUpdatedAtRef.current = payload.updatedAt || autoSaveIntent.draftUpdatedAt;
     const restored = restoreDraftProduct(payload);
     persistedColorsRef.current = restored.colors || [];
     latestProductRef.current = restored;
@@ -1187,6 +1195,82 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
     setConsistencyOpen(false);
     await entryActions.startNew({ enabled: slotEnabled });
   };
+
+  // 기준 색상 앞면과 뒷면, 추가 색상 정면을 필수로 받는다(ADR-0017).
+  const baseColor = product?.colors.find((c) => c.isBase) || product?.colors[0];
+  const hasFront = !!baseColor?.images.some((im) => im.slot === 'Front');
+  const hasBack = !!baseColor?.images.some((im) => im.slot === 'Back');
+  const additionalColorsMissingFront = (product?.colors || []).filter((color) => color !== baseColor
+    && !color.isBase && !color.images.some((image) => image.slot === 'Front'));
+  const canDone = hasFront && hasBack && !additionalColorsMissingFront.length
+    && phase === 'input' && !authLoading && !slotLock;
+  const canSaveForPC = canDone && !hasPendingConversions && !mobileReadOnly;
+  const saveForPC = async ({ automatic = false } = {}) => {
+    if (!canSaveForPC || loginSaveRef.current) return;
+    const snapshot = { product, analysis, composeMode,
+      localUpdatedAt: latestLocalUpdatedAtRef.current || new Date().toISOString() };
+    if (slotEnabled) {
+      const save = () => {
+        if (autoSaveIntent) {
+          const claimed = claimMobileGuestSave(autoSaveIntent);
+          if (automatic && !claimed) return;
+        }
+        return handoff.save(snapshot, { autoRetry: !automatic });
+      };
+      if (sellerConsentReady !== false) return save();
+      loginSaveRef.current = true;
+      setPreparingLogin(true);
+      const userId = entryUserRef.current;
+      const epoch = draftSlot.getIdentityEpoch();
+      const current = () => mountedRef.current && userId === entryUserRef.current && epoch === draftSlot.getIdentityEpoch();
+      try {
+        if (!await retrySellerConsent(userId) || !current()) return;
+        return save();
+      } catch {
+        if (current()) toast.push('서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+      } finally {
+        loginSaveRef.current = false;
+        if (mountedRef.current) setPreparingLogin(false);
+      }
+      return;
+    }
+    loginSaveRef.current = true;
+    setPreparingLogin(true);
+    const epoch = draftSlot.getIdentityEpoch();
+    const saveTappedAt = Date.now();
+    const excludedUserId = readStoredAuthSession()?.user?.id || null;
+    let localSaved = false;
+    try {
+      try {
+        queueProductDraftSave(product, analysis, composeMode, snapshot.localUpdatedAt);
+        const stored = await flushProductDraftSave({ timeoutMs: 8000 });
+        localSaved = !stored?.failed;
+      } catch { /* 로컬 보관 실패가 로그인을 막지 않게 한다. */ }
+      if (!mountedRef.current || epoch !== draftSlot.getIdentityEpoch()) return;
+      if (!localSaved) {
+        // Blob을 IndexedDB에 못 쓰는 브라우저도 이메일 로그인 동안에는 사진을 유지한다.
+        loginDraftRef.current = collectDraftPhotos(product).then(({ photos, cleanProduct }) => ({
+          ownerUserId: null, product: cleanProduct, photos, analysis, composeMode, updatedAt: snapshot.localUpdatedAt,
+        }));
+      }
+      rememberMobileGuestSave(snapshot.localUpdatedAt, excludedUserId, saveTappedAt, localSaved ? null : loginDraftRef.current);
+      if (!localSaved) toast.push('이 브라우저는 사진을 잠시 보관하지 못해요. 구글이나 카카오로 로그인하면 다시 골라 주세요.', { icon: 'alert' });
+      openLogin('/create/input');
+    } finally {
+      loginSaveRef.current = false;
+      if (mountedRef.current) setPreparingLogin(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!mobile || !session || preparingLogin || sellerConsentReady === false || !autoSaveIntent || !canSaveForPC
+        || reclaimChoiceOpen || handoff.result || autoSaveIntent.saveStarted) return;
+    void saveForPC({ automatic: true });
+  }, [mobile, session, preparingLogin, sellerConsentReady, autoSaveIntent, canSaveForPC, reclaimChoiceOpen, handoff.result]);
+
+  useEffect(() => {
+    if (mobile && autoSaveIntent && handoff.result?.status === 'saved') clearMobileGuestSave(autoSaveIntent.id);
+  }, [mobile, autoSaveIntent, handoff.result?.status]);
 
   const editingRightsLock = slotLock && (
     <EditingRightsLock
@@ -1294,6 +1378,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
       const draft = hasPendingDraft() ? await loadDraft().catch(() => null) : null;
       if (!alive) return;
       if (draft?.product) {
+        if (mobile && autoSaveIntent) latestLocalUpdatedAtRef.current = draft.updatedAt || autoSaveIntent.draftUpdatedAt;
         const restored = restoreDraftProduct(draft);
         persistedColorsRef.current = restored.colors || [];
         setProduct(restored);
@@ -1362,12 +1447,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
     </div>
   );
 
-  const mobileEditingLocked = mobile && (mobileReadOnly || handoff.saving);
-  const saveForPC = () => {
-    if (!canDone || hasPendingConversions || mobileReadOnly) return;
-    return handoff.save({ product, analysis, composeMode,
-      localUpdatedAt: latestLocalUpdatedAtRef.current || new Date().toISOString() });
-  };
+  const mobileEditingLocked = mobile && (mobileReadOnly || handoff.saving || preparingLogin);
   const set = (patch) => { if (!mobileEditingLocked) setProduct((p) => ({ ...p, ...patch })); };
   // add real uploaded files (drag-drop / picker) with name/size/type meta (PRD §5.5)
   const addImageFiles = (colorId, slot, metas) => {
@@ -1414,17 +1494,9 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
     return colors.filter((c) => c.id !== colorId);
   });
 
-  // 기준 색상 앞면과 뒷면, 추가 색상 정면을 필수로 받는다(ADR-0017).
-  const baseColor = product.colors.find((c) => c.isBase) || product.colors[0];
-  const hasFront = !!baseColor?.images.some((im) => im.slot === 'Front');
-  const hasBack = !!baseColor?.images.some((im) => im.slot === 'Back');
-  const additionalColorsMissingFront = product.colors.filter((color) => color !== baseColor
-    && !color.isBase && !color.images.some((image) => image.slot === 'Front'));
   const hasPendingAdditionalFront = additionalColorsMissingFront.some((color) =>
     pendingConversions[`${color.id}:Front`]);
   const hasName = !!(product.name && product.name.trim());
-  const canDone = hasFront && hasBack && !additionalColorsMissingFront.length
-    && phase === 'input' && !authLoading && !slotLock;
   // 추가 색상 정면 안내만 CTA 사진 요구 문구의 예외다(ADR-0017 2026-10-11).
   const disabledReasonIsLink = !authLoading && additionalColorsMissingFront.length > 0
     && !hasPendingAdditionalFront;
@@ -1717,7 +1789,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
       {(phase === 'input' || (mobile && handoff.readOnly)) && (
         <InputMainAction mobile={mobile} canDone={canDone} pending={hasPendingConversions}
           saved={handoff.readOnly} onEdit={() => { handoff.edit(); setPhase('input'); }} onNext={nextMobile} busy={entryBusy}
-          saving={handoff.saving} disabledReason={disabledReason}
+          saving={handoff.saving || preparingLogin} disabledReason={disabledReason}
           disabledReasonIsLink={disabledReasonIsLink} onSave={saveForPC} onAnalyze={submit} />
       )}
 
