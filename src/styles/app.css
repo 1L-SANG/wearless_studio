@@ -127,7 +127,7 @@ input, textarea, select { font-family: inherit; }
 .profile { position: relative; display: inline-flex; }
 .profile-btn { padding: 0; border: 0; background: none; line-height: 0; border-radius: var(--r-pill); cursor: pointer; }
 .profile-menu { position: absolute; right: 0; top: calc(100% + 10px); z-index: 50; min-width: 248px;
-  --profile-icon-blue: #82b6f1;
+  --profile-icon-blue: var(--accent-blue-line, #82b6f1);
   --profile-icon-amber: #edb55d; --profile-icon-slate: #a4b2c7;
   background: var(--bg-1); border-radius: var(--r-6); box-shadow: var(--elev-card), 0 0 0 1px var(--ring);
   padding: 6px; }
@@ -191,13 +191,13 @@ input, textarea, select { font-family: inherit; }
 .step-dot { width: 28px; height: 28px; border-radius: var(--r-pill); display: grid; place-items: center;
   font-size: 12px; font-weight: 600; font-family: var(--font-display); background: #fff; color: var(--fg-3);
   box-shadow: 0 0 0 1px var(--ring); transition: all .2s; }
-.step.done .step-dot { background: var(--glow-sky); color: var(--fg-1); box-shadow: none; }
+.step.done .step-dot { background: var(--accent-blue-soft, var(--glow-sky)); color: var(--fg-1); box-shadow: none; }
 .step.active .step-dot { background: var(--glow-sage); color: var(--fg-1); box-shadow: 0 0 0 4px rgba(216,232,198,.45); }
 /* dots-only stepper: O—O—O—O—O, active = black with vibrating 4-color glow */
 .stepper.dots .step-dot { width: 14px; height: 14px; }
 .stepper.dots .step.done .step-dot { background: #0e0d14; box-shadow: none; }
 .stepper.dots .step:not(.done):not(.active) .step-dot { background: #fff; box-shadow: 0 0 0 1px var(--ring-strong); }
-.stepper.dots .step.active .step-dot { background: #4f88c9; box-shadow: 0 0 0 4px rgba(79,136,201,.18); }
+.stepper.dots .step.active .step-dot { background: var(--accent-blue, #4f88c9); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-blue, #4f88c9) 18%, transparent); }
 @property --ang { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
 .step-label { font-size: 13px; font-weight: 500; color: var(--fg-3); white-space: nowrap; }
 .step.done .step-label, .step.active .step-label { color: var(--fg-1); }
@@ -297,15 +297,15 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 .chip { font-size: 14px; font-weight: 500; color: var(--fg-2); background: #f8f8fa; border: 0; cursor: pointer;
   padding: 9px 15px; border-radius: var(--r-pill); box-shadow: 0 0 0 1px var(--ring); transition: all .14s; display: inline-flex; align-items: center; gap: 7px; }
 .chip:hover { color: var(--fg-1); box-shadow: 0 0 0 1px var(--ring-strong); }
-.chip.on { color: var(--fg-1); background: #fff; box-shadow: var(--elev-card), 0 0 0 1.5px #8fbfee; font-weight: 600; }
-.chip.on:hover { box-shadow: var(--elev-lift), 0 0 0 1.5px #6ba8e6; }
+.chip.on { color: var(--fg-1); background: #fff; box-shadow: var(--elev-card), 0 0 0 1.5px var(--accent-blue-line, #8fbfee); font-weight: 600; }
+.chip.on:hover { box-shadow: var(--elev-lift), 0 0 0 1.5px var(--accent-blue, #6ba8e6); }
 .chip.on .chip-x { opacity: .6; }
 .chip-x { display: inline-flex; cursor: pointer; }
 /* 칩 줄 안의 '직접 입력' pill — 버튼 칩과 같은 외형의 input (분석 폼 세부 카테고리).
    기본 폭은 다른 칩과 동급(placeholder 길이), 내용이 길어지면 인라인 width(em 계산)로 유동 확장. */
 .chip-input { cursor: text; min-width: 0; max-width: 220px; outline: none; }
 .chip-input::placeholder { color: var(--fg-3); font-weight: 500; }
-.chip-input:focus { color: var(--fg-1); background: #fff; box-shadow: var(--elev-card), 0 0 0 1.5px #8fbfee; }
+.chip-input:focus { color: var(--fg-1); background: #fff; box-shadow: var(--elev-card), 0 0 0 1.5px var(--accent-blue, #8fbfee); }
 .chip-input-wrap { position: relative; display: inline-flex; align-items: center; }
 .chip-input-pending { position: absolute; top: 100%; left: 8px; margin-top: 3px; color: var(--fg-3); font-size: 10px; white-space: nowrap; }
 .chip-star { color: var(--fg-1); }

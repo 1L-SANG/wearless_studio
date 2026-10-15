@@ -1,7 +1,11 @@
 /* Supplemental controls only. Preserve the existing orb, glass, typography,
    upload tile geometry, and mobile-to-PC handoff. See DESIGN.md. */
 :root {
-  --link: #3182F6;
+  --accent-blue: #3182F6;
+  --accent-blue-soft: color-mix(in srgb, var(--accent-blue) 7%, var(--bg-1));
+  --accent-blue-line: color-mix(in srgb, var(--accent-blue) 50%, var(--bg-1));
+  --link: var(--accent-blue);
+  --focus: var(--accent-blue);
   --ring-flow-1: var(--wl-sky);
   --ring-flow-2: var(--wl-lav);
   --ring-flow-3: var(--wl-peach);

@@ -40,7 +40,8 @@ test('팔레트 C와 셀러 토큰 덮어쓰기는 FaceMarket 진입 그래프�
     assert.ok(!facemarket.has(file), `셀러 팔레트가 FaceMarket으로 새었다: ${file}`);
   }
   const overrides = read('src/styles/sellerDesign.css');
-  assert.match(overrides, /--link:\s*#3182F6/i);
+  assert.match(overrides, /--accent-blue:\s*#3182F6/i);
+  assert.match(overrides, /--link:\s*var\(--accent-blue\)/);
   assert.match(overrides, /--ring-flow-1:\s*(?:#8FC6F6|var\(--wl-sky\))/i);
   assert.match(read('src/styles/tokens.css'), /--link:\s*#0099ff/i);
   assert.match(read('src/styles/app.css'), /\.orb-bg \.l1[^\n]*animation: orbA 12s/);

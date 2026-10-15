@@ -1,7 +1,7 @@
 # 셀러 빛을 팔레트 C로 통일하고 랜딩의 마지막 그림을 앱 첫 그림에 잇는다
 
 상태: Accepted
-결정일: 2026-10-15, 오너 결정. 같은 날 밤 A2 후속 지시 반영
+결정일: 2026-10-15, 오너 결정. 같은 날 밤 A2와 A3 후속 지시 반영
 정본: `.scratch/palette-c-20261015/OWNER_DECISIONS_1015.md`, 승인 시안 `mockups/landing_palette_c_20261015/orb-c.css`, 같은 폴더의 `orb-runtime.js`, `handoff.css`, `handoff.js`, `app.html`, `app-phone.html`
 
 ## 배경과 근거
@@ -45,13 +45,13 @@ head 스크립트는 `from=landing`을 읽어 `html[data-entry="landing"]`을 �
 
 ### 4. 오너가 고른 액센트를 셀러에만 적용한다
 
-`sellerDesign.css`의 `:root`에서 `--link`를 토스 메인 파랑 `#3182F6`으로 덮어쓴다. 셀러의 기존 `#0099ff`, `rgba(0,153,255,a)`, `#6bb6ff` 사본은 `--link`와 `color-mix`로 바꾼다. 진행 파랑, 선택 하늘선, 성공과 오류, 포커스, 구글 로고, 셀러가 고르는 콘텐츠 색은 유지한다.
+`sellerDesign.css`의 `:root`에서 `--link`를 토스 메인 파랑 `#3182F6`으로 덮어쓴다. 셀러의 기존 `#0099ff`, `rgba(0,153,255,a)`, `#6bb6ff` 사본은 `--link`와 `color-mix`로 바꾼다. A3에서 진행 파랑, 선택선과 초점도 같은 계열로 정리한다. `--accent-blue #3182F6`, `--accent-blue-soft` 7% 흰색 혼합, `--accent-blue-line` 50% 흰색 혼합을 셀러에만 정의하고 `--link`와 불투명 `--focus`가 원색을 읽는다. 초점은 흰 바탕 대비 약 3.7:1이다. 콘텐츠 색 견본과 프리셋, 상품 색, 색상각 슬라이더와 구글 로고는 예외이며 성공과 오류도 유지한다. 공용 CSS의 기존 색 대체값은 FaceMarket 보존용이다. `seller.html` theme-color는 흰색으로 바꾼다.
 
 `--ring-flow-1`부터 `6`까지는 `#8FC6F6`, `#CFB8F4`, `#FFCDB2`, `#C6ECD6`, `#9FB6FF`, `#B9D9F7`이다. 검정 버튼과 흰 알림, AI 칩, 새 결과 등 셀러의 모든 기존 소비처가 같은 파스텔 테두리를 쓴다. 요금제 체크는 검정 원과 흰 체크, 증정 칩은 `--bg-2` 면, `--fg-1` 글자, `--ring-strong` 테두리다.
 
 오브 위 맨 부제, 404와 빈 화면 설명, 눈썹 글자는 `--fg-on-glow #5C5C5C`다. A2에서 결정 4의 디자이너 판단을 확정해 셀러 앱 전체 `--fg-2`를 `#6E6E6E`(흰 바탕 약 5.1:1)로 적용한다. 빛 주변의 보조 글자 가독성을 높이기 위한 셀러 전용 덮어쓰기이며 공용 `tokens.css`는 바꾸지 않는다.
 
-에디터 구슬 안은 하늘 `#B5DDFF`, 연보라 `#DBCAFE`, 살구 `#FEDCC3`, 민트 `#D7EEDC`의 새 `--canvas-ai-*` 토큰을 쓴다. 구조, 12초와 17초 역회전, 캡슐과 고리 마스크는 유지한다. A2에서 캡슐과 메뉴 갈래, 선택지, 색 원, 설명 고리를 `--bead-rim`으로 통일한다. 하늘 `--bead-rim-sky #7DB8F2` 75%, 가운데 50% 지점의 연보라 `--bead-rim-lilac #B49BEA` 65%, 살구 `--bead-rim-peach #F2A985` 65%를 투명색과 섞은 120도 선형 그라데이션이다. 흰 바탕에서 보이도록 구슬보다 한 단계 진하게 한다. 평소 고리 불투명도는 .6, 올림과 열림과 초점, 열린 설명은 1이며 값은 토큰으로 둔다. 구슬 빛과 고리 토큰은 `features.css`의 `.canvas-ai-layer, .canvas-ai-read`에 함께 둔다. AI로 채우기의 회전 고리는 유지한다. 동작 줄이기에서 구슬과 고리 전환도 멈춘다.
+에디터 구슬 안은 하늘 `#B5DDFF`, 연보라 `#DBCAFE`, 살구 `#FEDCC3`, 민트 `#D7EEDC`의 새 `--canvas-ai-*` 토큰을 쓴다. 구조, 12초와 17초 역회전, 캡슐과 고리 마스크는 유지한다. A2에서 캡슐과 메뉴 갈래, 선택지, 색 원, 설명 고리를 `--bead-rim`으로 통일한다. 하늘 `--bead-rim-sky #7DB8F2` 75%, 가운데 50% 지점의 연보라 `--bead-rim-lilac #B49BEA` 65%, 살구 `--bead-rim-peach #F2A985` 65%를 투명색과 섞은 120도 선형 그라데이션이다. 흰 바탕에서 보이도록 구슬보다 한 단계 진하게 한다. 평소 고리 불투명도는 .6, 올림과 열림과 초점, 열린 설명은 1이며 값은 토큰으로 둔다. 구슬 빛과 고리 토큰은 `features.css`의 `.canvas-ai-layer, .canvas-ai-read`에 함께 둔다. A3에서 메뉴 갈래, 선택지, 색 원과 메뉴 설명은 무채색 1px 선으로 분리한다. `--canvas-ai-menu-line`은 `--fg-1` 22%, 올림·열림·초점의 `--canvas-ai-menu-line-active`는 70%이고 전환은 180ms다. 메뉴 안 AI로 채우기의 회전과 2px 보정은 없애 같은 알약으로 맞춘다. 캡슐과 `.canvas-ai-read.is-result`의 결과 액자 설명은 기존 구슬색 고리를 보존한다. 동작 줄이기에서 구슬과 고리 전환도 멈춘다.
 
 보관함 단계 알약은 `--bg-1` 흰 면, 1px `--ring-strong` 테두리, `--elev-soft` 그림자, `--fg-1` 글자로 한다. 선택은 검정 `--fg-1` 면과 흰 글자로 반전한다. 기존 단계 색의 점은 지름 8px와 흰 테두리 2px다. 진행 중과 완료 탭은 바깥 틀에 `--ring-strong`, 선택 탭에 흰 면과 검정 글자 600을 쓴다. 나란한 알약은 같은 모양과 높이 44px를 유지한다.
 
@@ -71,7 +71,7 @@ head 스크립트는 `from=landing`을 읽어 `html[data-entry="landing"]`을 �
 
 ## 검증과 한계
 
-`tests/frontend/palette-c-handoff.test.mjs`는 head 스크립트를 실행해 표식, 쿼리와 해시 보존, 위상을 확인하고 부트와 React 배경 구조를 비교한다. `tests/frontend/palette-c-owner-round2.test.mjs`는 A2의 고리 토큰과 상호작용 상태, 셀러 전용 회색, 보관함 알약과 탭, 768px 목록 빛 경계를 검사한다. 기존 bundle-separation과 host-document-split 검사로 셀러와 FaceMarket 경계를 함께 지킨다. `pnpm test:frontend`와 `pnpm build`를 실행한다.
+`tests/frontend/palette-c-handoff.test.mjs`는 head 스크립트를 실행해 표식, 쿼리와 해시 보존, 위상을 확인하고 부트와 React 배경 구조를 비교한다. `tests/frontend/palette-c-owner-round2.test.mjs`는 A2의 고리 토큰과 상호작용 상태, 셀러 전용 회색, 보관함 알약과 탭, 768px 목록 빛 경계를 검사한다. `tests/frontend/palette-c-owner-round3.test.mjs`는 A3 메뉴 선과 캡슐·결과 설명 분리, 초점 대비, 셀러 UI CSS의 색상각 190~250도 파랑 및 콘텐츠 예외를 검사한다. 기존 bundle-separation과 host-document-split 검사로 셀러와 FaceMarket 경계를 함께 지킨다. `pnpm test:frontend`와 `pnpm build`를 실행한다.
 
 작업지시서에 따라 Codex는 브라우저를 실행하지 않는다. Claude가 실제 두 앱 사이 전환, 부트와 React 교대 프레임, Chromium과 WebKit, 휴대폰 320·360·375·390·414px의 어절과 가로 넘침, 모달 감쇠와 에디터 동작 줄이기를 확인한다.
 

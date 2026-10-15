@@ -252,7 +252,7 @@ test('N4 general add is manual-empty, dropped examples are not, and the inspecto
   // 2026-08-15 오너: 빈 컷 안내는 짧게 — "분위기 예시를 골라주세요."
   assert.match(storyboardSource, /분위기 예시를 골라주세요\./);
   assert.match(storyboardSource, /이 조합의 예시를 준비하지 못했어요 — 컷 설정을 바꾸거나 직접 예시를 골라주세요/);
-  assert.match(featureStyles, /\.sb-cutcard\.manual-empty, \.sb-frame-half\.manual-empty \{[^}]*border-style: dashed;[^}]*background: #f7fafc/);
+  assert.match(featureStyles, /\.sb-cutcard\.manual-empty, \.sb-frame-half\.manual-empty \{[^}]*border-style: dashed;[^}]*background: color-mix\(in srgb, var\(--accent-blue\) 4%, var\(--bg-1\)\)/);
 });
 
 test('N5 generation-example dataTransfer reaches an addzone and inserts after the exact card index', () => {

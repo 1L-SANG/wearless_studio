@@ -125,7 +125,7 @@ export function ContentPanel({ recommendGender, onPick, onDragStart, onDragEnd, 
                     </div>
                     <div className="fl" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                       {p.label}
-                      {rec && <i style={{ fontStyle: 'normal', fontSize: 10, fontWeight: 600, color: '#4f88c9', background: '#eef4fb', borderRadius: 5, padding: '1px 5px' }}>추천</i>}
+                      {rec && <i className="frame-rec content-rec">추천</i>}
                     </div>
                   </div>
                 );

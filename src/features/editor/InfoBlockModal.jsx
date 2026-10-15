@@ -274,7 +274,7 @@ function FaqForm({ info, setInfo }) {
                   }} />
               </div>
               <div style={{ ...rowGap, alignItems: 'flex-start' }}>
-                <span style={{ width: 20, flexShrink: 0, paddingTop: 7, fontSize: 12, fontWeight: 700, color: '#4f88c9' }}>A</span>
+                <span className="info-faq-answer-label">A</span>
                 <textarea style={{ ...inpSm, minHeight: 66, resize: 'vertical', lineHeight: 1.55 }} maxLength={240}
                   value={item.answer} placeholder="답변을 입력하세요"
                   onChange={(e) => setItem(i, { answer: e.target.value })} />

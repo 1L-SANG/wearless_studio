@@ -22,7 +22,7 @@ function rule(css, selector) {
     })));
 }
 
-test('캡슐과 메뉴 고리는 구슬과 같은 범위의 하늘, 연보라, 살구 토큰을 쓴다', () => {
+test('캡슐 고리는 구슬과 같은 범위의 하늘, 연보라, 살구 토큰을 쓴다', () => {
   const palette = rule(features, '.canvas-ai-layer');
   assert.equal(palette['--canvas-ai-sky'], '#B5DDFF');
   assert.equal(palette['--bead-rim-sky'], '#7DB8F2');
@@ -30,31 +30,18 @@ test('캡슐과 메뉴 고리는 구슬과 같은 범위의 하늘, 연보라, �
   assert.equal(palette['--bead-rim-peach'], '#F2A985');
   assert.equal(palette['--bead-rim'], 'linear-gradient(120deg, color-mix(in srgb, var(--bead-rim-sky) 75%, transparent), color-mix(in srgb, var(--bead-rim-lilac) 65%, transparent) 50%, color-mix(in srgb, var(--bead-rim-peach) 65%, transparent))');
   assert.equal(rule(features, '.canvas-ai-read')['--bead-rim'], palette['--bead-rim']);
-  for (const selector of ['.canvas-ai-orb::before', '.canvas-ai-branch::before',
-    '.canvas-ai-option:not(.is-color)::before', '.canvas-ai-color-dot::before', '.canvas-ai-read::before']) {
+  for (const selector of ['.canvas-ai-orb::before']) {
     assert.equal(rule(features, selector).background, 'var(--bead-rim)', selector);
     assert.equal(rule(features, selector)['mask-composite'], 'exclude', selector);
   }
 });
 
-test('고리는 평소 .6, 올림과 열림과 초점에서 1이며 회전 생성 고리는 유지한다', () => {
+test('캡슐 고리는 평소 .6, 올림과 열림과 초점에서 1이다', () => {
   const palette = rule(features, '.canvas-ai-layer');
   assert.equal(palette['--bead-rim-opacity'], '.6');
   assert.equal(palette['--bead-rim-active-opacity'], '1');
-  for (const selector of ['.canvas-ai-orb::before', '.canvas-ai-branch::before',
-    '.canvas-ai-option:not(.is-color)::before', '.canvas-ai-color-dot::before']) {
-    assert.equal(rule(features, selector).opacity, 'var(--bead-rim-opacity)', selector);
-  }
-  for (const selector of ['.canvas-ai-orb:is(:hover, :focus-visible, [aria-expanded="true"])::before',
-    '.canvas-ai-branch:is(:hover, :focus-visible, .is-open)::before',
-    '.canvas-ai-option:not(.is-color):is(:hover, :focus-visible)::before',
-    '.canvas-ai-option.is-color:is(:hover, :focus-visible) .canvas-ai-color-dot::before',
-    '.canvas-ai-read::before']) {
-    assert.equal(rule(features, selector).opacity, 'var(--bead-rim-active-opacity)', selector);
-  }
-  const fill = rule(features, '.canvas-ai-pill.btn-glowring::before');
-  assert.match(fill.background, /conic-gradient.*var\(--ring-flow-stops\)/);
-  assert.equal(fill.opacity, '1');
+  assert.equal(rule(features, '.canvas-ai-orb::before').opacity, 'var(--bead-rim-opacity)');
+  assert.equal(rule(features, '.canvas-ai-orb:is(:hover, :focus-visible, [aria-expanded="true"])::before').opacity, 'var(--bead-rim-active-opacity)');
 });
 
 test('셀러 보조 글자는 흰 바탕 5:1 이상이며 공용 회색과 빛 위 글자는 보존한다', () => {
