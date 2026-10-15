@@ -97,7 +97,7 @@ export function createDraftEntryActions({
     currentAction = isCurrent;
     onBusy(true);
     try { await action(context); }
-    catch (error) { if (error !== stale && isCurrent()) onError(error?.message || fallback, { icon: error?.icon || 'alert' }); }
+    catch (error) { if (error !== stale && isCurrent()) onError(error?.message || fallback, { icon: error?.icon || 'alertCircle' }); }
     finally { if (epoch === actionEpoch) { currentAction = null; busy = false; onBusy(false); } }
   };
   const readVisible = async (context) => {

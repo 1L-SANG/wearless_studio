@@ -8,7 +8,9 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
-import { Button, Skeleton, EmptyState, ErrorState, useToast } from '@/components/ui.jsx';
+import { Button, Skeleton, ErrorState, useToast } from '@/components/ui.jsx';
+import { HangTag } from '@/features/shell/HangTag.jsx';
+import tagStyles from '@/components/NotFound.module.css';
 
 import { isMobileDevice } from '@/lib/deviceClass.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
@@ -188,8 +190,17 @@ export function Library() {
         <p className="sec-sub">완성된 상세페이지가 여기에 모여요.</p>
       )}
       {phase === 'ready' && items.length === 0 && inProgress.length === 0 && !progressLoading && (
-        <div className="surface"><EmptyState icon="library" title="아직 만든 상세페이지가 없어요"
-          desc="상품 사진 몇 장이면 첫 상세페이지를 만들 수 있어요." action={<Button variant="primary" icon="plus" onClick={onNew}>첫 상세페이지 만들기</Button>} /></div>
+        <div className={tagStyles.page}>
+          <HangTag label="첫 상세페이지를 기다리는 옷 태그">
+            <text className={`${tagStyles.display} ${tagStyles.inkFill}`} x="140" y="146" textAnchor="middle" fontSize="46">0</text>
+            <text className={`${tagStyles.mono} ${tagStyles.mutedFill}`} x="140" y="164" textAnchor="middle" fontSize="7.6" letterSpacing="1.6">YOUR COLLECTION</text>
+          </HangTag>
+          <h2 className={tagStyles.title}>아직 비어 있어요</h2>
+          <p className={tagStyles.desc}>상품 사진으로 시작해 보세요.</p>
+          <div className={tagStyles.actions}>
+            <Button variant="primary" icon="plus" onClick={onNew}>첫 상세페이지 만들기</Button>
+          </div>
+        </div>
       )}
       {phase === 'ready' && items.length > 0 && (
         <div className="lib-grid field-row">

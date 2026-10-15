@@ -426,6 +426,10 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 .modal h3 { font-family: var(--font-display); font-size: 20px; letter-spacing: .2px; color: var(--fg-1); }
 .modal p { font-size: 14.5px; color: var(--fg-2); margin-top: 10px; line-height: 1.55; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
+.payment-result { text-align: center; padding: 48px var(--sp-24); }
+.payment-result h1 { margin: var(--sp-12) 0 var(--sp-6); font-size: 22px; text-wrap: balance; }
+.payment-result p { color: var(--fg-2); margin-bottom: var(--sp-20); text-wrap: balance; }
+.payment-result .modal-actions { justify-content: center; flex-wrap: wrap; gap: var(--sp-8); margin-top: 0; }
 
 /* ====================== TOAST ====================== */
 .toast-host { position: fixed; right: 22px; top: 72px; z-index: 130;  /* 전환 오버레이(120) 위 — 유실 경고가 가려지면 안 된다 */ display: flex; flex-direction: column; gap: 10px; }
@@ -524,3 +528,11 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 
 .toast-action { border: 0; background: none; color: var(--fg-1); font: inherit; text-decoration: underline; cursor: pointer; white-space: nowrap; }
 .toast-host:has(.toast-action) { top: auto; bottom: var(--sp-24); }
+/* 콘티의 본문 안쪽 폭은 1132px, 인스펙터는 360px, 열 간격은 22px이다. */
+@media (min-width: 901px) {
+  body:has(.sb-page) .toast-host:has(.mannequin-completion) {
+    top: auto;
+    bottom: var(--sp-24);
+    right: calc(max(24px, (100vw - 1132px) / 2) + 360px + 22px);
+  }
+}

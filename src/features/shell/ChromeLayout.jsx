@@ -231,7 +231,7 @@ export function ChromeLayout() {
   useEffect(() => { if (session) loadAccount(); }, [session, loadAccount]);
   useEffect(() => onProductPhotoPromotionFailure(() => {
     pushToast('상품 사진 업로드를 끝내지 못했어요. 네트워크를 확인한 뒤 다시 시도해 주세요.', {
-      icon: 'alert',
+      icon: 'alertCircle',
     });
   }), [pushToast]);
 

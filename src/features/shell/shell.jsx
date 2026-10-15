@@ -98,7 +98,7 @@ export function TopNav() {
       // (ai 도메인 값은 그대로 '/create/input' — 기존 삼항이 두 갈래 모두 같은 값이었다.)
       openLogin(IS_FACEMARKET ? '/model/register' : '/create/input');
     } catch (error) {
-      toast.push(error?.message || '입력한 내용을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+      toast.push(error?.message || '입력한 내용을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alertCircle' });
     }
   };
 
