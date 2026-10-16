@@ -1,9 +1,15 @@
 """Reconciler — 60초마다 want 를 계산해 ECS 와 맞춘다(양방향). 훅은 지름길일 뿐이다."""
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
+import pytest
+
+from app import repo as repo_mod
 from app.services.sam_autoscale import DemandSnapshot, EcsTarget, ServiceState
+from app.services.sam_autoscale import want_count
 from app.workers import sam_autoscaler as mod
 from app.workers.sam_autoscaler import SamAutoscaler
 from conftest import make_settings
@@ -73,6 +79,87 @@ def _scaler(adapter, **over):
 
 def _run(sc, repo):
     return asyncio.run(sc.reconcile_once(repo, None))
+
+
+class _DemandCursor:
+    def __init__(self):
+        self.queries = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def execute(self, sql, params):
+        self.queries.append((sql, params))
+
+    async def fetchone(self):
+        return {"active_sam_jobs": 0, "last_sam_finished_at": None,
+                "last_upload_at": NOW}
+
+
+def _all_fal_settings():
+    return make_settings(sam_preprocess_provider="fal", matching_cutout_provider="fal",
+                         tone_mask_provider="fal", fal_key="test")
+
+
+def test_all_fal_demand_skips_the_database_even_with_a_recent_upload():
+    def forbidden_cursor():
+        pytest.fail("all-fal demand must not open a DB cursor")
+
+    conn = SimpleNamespace(cursor=forbidden_cursor)
+    snap = asyncio.run(mod._sam_demand(repo_mod, conn, _all_fal_settings()))
+    assert snap == DemandSnapshot(0, None, None)
+    assert want_count(snap, idle_minutes=30, now=NOW) == 0
+
+
+@pytest.mark.parametrize("provider_attr,kind", [
+    ("sam_preprocess_provider", "sam_preprocess"),
+    ("matching_cutout_provider", "matching_cutout"),
+    ("tone_mask_provider", "editor_garment_mask"),
+])
+def test_each_sam2_switch_restores_upload_demand_immediately(provider_attr, kind):
+    sc = _scaler(_Adapter(ServiceState(0, 0, 0, None)))
+    sc.app.state.settings = _all_fal_settings()
+    cursor = _DemandCursor()
+    conn = SimpleNamespace(cursor=lambda: cursor)
+
+    async def run():
+        for _ in range(2):
+            sc.app.state.settings = replace(sc.app.state.settings, **{provider_attr: "sam2"})
+            snap = await sc._demand_fn(repo_mod, conn)
+            assert snap == DemandSnapshot(0, None, NOW)
+            assert want_count(snap, idle_minutes=30, now=NOW) == 1
+            sc.app.state.settings = replace(sc.app.state.settings, **{provider_attr: "fal"})
+            assert await sc._demand_fn(repo_mod, conn) == DemandSnapshot(0, None, None)
+
+    asyncio.run(run())
+    assert len(cursor.queries) == 2
+    for sql, params in cursor.queries:
+        assert "source = 'upload'" in sql
+        assert params == ([kind], [kind])
+
+
+@pytest.mark.parametrize("name", ["opendid", "detail-worker"])
+def test_all_fal_keeps_custom_service_demand(name, monkeypatch):
+    async def forbidden(*args):
+        pytest.fail("custom demand must not use the SAM demand function")
+
+    monkeypatch.setattr(mod, "_sam_demand", forbidden)
+    calls = []
+
+    async def demand(repo, conn):
+        calls.append((repo, conn))
+        return _busy()
+
+    adapter = _Adapter(ServiceState(0, 0, 0, None))
+    app = SimpleNamespace(state=SimpleNamespace(settings=_all_fal_settings()))
+    sc = SamAutoscaler(app, adapter, demand_fn=demand, name=name, lock_key=name)
+    repo = _Repo(_quiet())
+    assert _run(sc, repo) == "up"
+    assert calls == [(repo, None)]
+    assert adapter.set_calls == [1]
 
 
 # ── 기본 방향 ──

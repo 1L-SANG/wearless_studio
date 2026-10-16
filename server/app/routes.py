@@ -41,7 +41,7 @@ from .agents.vision_llm import VisionError
 from .services import (canonical_reference, editor_garment_mask, garment_color_measure, garment_grid,
                        input_qc, mannequin_display,
                        mannequin_tone_render, matching, matching_cutout, product_photos,
-                       retrieval, sam_retry)
+                       retrieval, sam_autoscale, sam_retry)
 from .auth import require_user
 from .db import get_conn
 from .models import (
@@ -2173,7 +2173,8 @@ async def create_upload_url(
     scaler = getattr(request.app.state, "sam_autoscaler", None)
     if scaler is not None:
         with contextlib.suppress(Exception):   # 훅은 발급 응답을 절대 막지 않는다
-            scaler.prewarm_soon()
+            if sam_autoscale.sam_kinds(request.app.state.settings):
+                scaler.prewarm_soon()
 
     asset_id = str(uuid.uuid4())
     storage_scope = DRAFT_SLOT_STORAGE_KEY if body.purpose == "draft_slot" else body.project_id

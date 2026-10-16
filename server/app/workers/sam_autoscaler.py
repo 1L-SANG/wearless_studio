@@ -33,7 +33,11 @@ ALERT_DEBOUNCE_SECONDS = 600.0
 
 
 async def _sam_demand(repo, conn, settings=None):
-    return await repo.sam_demand_snapshot(conn, sam_autoscale.sam_kinds(settings))
+    kinds = sam_autoscale.sam_kinds(settings)
+    if not kinds:
+        return sam_autoscale.DemandSnapshot(
+            active_sam_jobs=0, last_sam_finished_at=None, last_upload_at=None)
+    return await repo.sam_demand_snapshot(conn, kinds)
 
 
 class SamAutoscaler:
