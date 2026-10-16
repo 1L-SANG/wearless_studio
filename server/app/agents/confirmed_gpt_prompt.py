@@ -17,6 +17,7 @@ import re
 
 _TEMPLATE = Path(__file__).resolve().parents[2] / "prompts" / "cut_generate_confirmed_gpt_v1.txt"
 _TEMPLATE_SHA256 = "d06ff48fa1185efadbda85d2f543b2340577716e72be9b105d6e3b8e407134fd"
+_PHOTO_TEMPLATE = _TEMPLATE.with_name("cut_generate_reference_photo_v2.txt")
 _TOKEN_RE = re.compile(r"\$\{([a-z_]+)\}")
 _CODE_RE = re.compile(r"[a-z0-9_]+")
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -407,17 +408,7 @@ def _render(template: str, values: dict[str, str]) -> str:
     return rendered
 
 
-def compile_confirmed_gpt_prompt(
-    request: ConfirmedGptPromptInput,
-    *,
-    qc_corrections: tuple[str, ...] = (),
-) -> str:
-    """Compile one exact confirmed-profile prompt or reject the request.
-
-    No fallback or normalization is intentional: callers must first bind the exact
-    ordered image packet and product-specific evidence contract.
-    """
-
+def _validated_prompt_values(request: ConfirmedGptPromptInput) -> dict[str, str]:
     if not isinstance(request, ConfirmedGptPromptInput):
         raise ConfirmedGptPromptError("confirmed_gpt_prompt_input_required")
     _validate_scope(request.scope)
@@ -435,7 +426,7 @@ def compile_confirmed_gpt_prompt(
         request.seller_evidence, direction=request.cut_lock.user_direction
     )
     hard_facts, uncertainties = _facts(request.hard_facts, request.uncertainties)
-    values = {
+    return {
         "input_role_manifest": manifest,
         "seller_evidence_map": evidence,
         "cut_lock": cut_lock,
@@ -447,7 +438,9 @@ def compile_confirmed_gpt_prompt(
         "outfit_lock": outfit_lock,
         "pose_semantics": _pose_semantics(request.pose_semantics),
     }
-    rendered = _render(load_confirmed_gpt_template(), values)
+
+
+def _append_qc_corrections(rendered: str, qc_corrections: tuple[str, ...]) -> str:
     if not qc_corrections:
         return rendered
     if (
@@ -466,6 +459,41 @@ def compile_confirmed_gpt_prompt(
         + "\nChange only those failed axes. Preserve every other passed input authority, "
         "pose meaning, camera relationship, scene decision and capture characteristic."
     )
+
+
+def compile_confirmed_gpt_prompt(
+    request: ConfirmedGptPromptInput,
+    *,
+    qc_corrections: tuple[str, ...] = (),
+) -> str:
+    """Replay the immutable legacy prompt with the same fail-closed validation."""
+    rendered = _render(load_confirmed_gpt_template(), _validated_prompt_values(request))
+    return _append_qc_corrections(rendered, qc_corrections)
+
+
+def compile_reference_photo_prompt(
+    request: ConfirmedGptPromptInput,
+    *,
+    qc_corrections: tuple[str, ...] = (),
+) -> str:
+    """Same verified image packet and authorities, reference-owned capture rendering."""
+    values = _validated_prompt_values(request)
+    # The legacy manifest delegates rendering to a fixed capture arm. V2 gives it
+    # to the photographic reference while retaining all non-reference ownership.
+    photo_authority = (
+        "owns camera geometry, compatible pose meaning, headroom, subject scale, "
+        "scene, environmental light and actual capture texture; it owns no person, "
+        "hair, body, garment or accessory identity"
+    )
+    values["input_role_manifest"] = "\n".join(
+        f"{index}. {role.value}: " + (
+            photo_authority if role == InputRole.SERVICE_EXAMPLE_REFERENCE
+            else _ROLE_AUTHORITY[role]
+        )
+        for index, role in enumerate((InputRole(value) for value in request.ordered_roles), 1)
+    )
+    rendered = _render(_PHOTO_TEMPLATE.read_text(encoding="utf-8").removesuffix("\n"), values)
+    return _append_qc_corrections(rendered, qc_corrections)
 
 
 def confirmed_gpt_framing_contract(request: ConfirmedGptPromptInput) -> dict[str, str]:

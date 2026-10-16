@@ -62,6 +62,9 @@ class Settings:
     # AG-06 상세컷 전용 모델. 빈 값이면 image_high로 폴백해 기존 환경을 보존한다.
     # 마네킹·매칭·AG-07까지 공유하는 image_high를 바꾸지 않고 콘티 1·2차만 분리한다.
     model_detail_cut: str = ""
+    # Same verified ordinary-styling packet, new capture rendering and image model.
+    # Keep legacy as the library default; deployments select the reviewed profile explicitly.
+    styling_photo_profile: str = "legacy"
     # 호리존 착장컷 전용. 빈 값이면 호출 경로의 상세컷/에디터 모델을 그대로 쓴다.
     # 스타일링은 model_detail_cut/model_editor_cut에 남겨 배경·포즈 정밀 경로만 분리한다.
     model_horizon_cut: str = ""
@@ -838,6 +841,7 @@ def load_settings() -> Settings:
         mannequin_specialist_repair_model=(os.getenv("MANNEQUIN_SPECIALIST_REPAIR_MODEL") or "gpt-image-2.5-sunburst").strip() or "gpt-image-2.5-sunburst",
         model_image_signature=os.getenv("MODEL_ROUTING_IMAGE_SIGNATURE", "gpt-image-2"),
         model_detail_cut=os.getenv("MODEL_ROUTING_DETAIL_CUT", ""),
+        styling_photo_profile=_flag("STYLING_PHOTO_PROFILE", "legacy", {"legacy", "reference-v2"}),
         model_horizon_cut=os.getenv("MODEL_ROUTING_HORIZON_CUT", ""),
         model_product_detail=(os.getenv("MODEL_ROUTING_PRODUCT_DETAIL") or "").strip() or "gpt-image-2.5-sunburst",
         product_detail_image_quality=_flag("PRODUCT_DETAIL_IMAGE_QUALITY", "medium", {"medium", "high"}),
