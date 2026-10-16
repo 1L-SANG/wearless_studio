@@ -109,7 +109,10 @@ def test_neutral_light_preserves_pink_reference(caplog):
 def test_yellow_light_recovers_pink_chroma(caplog):
     neutral = _linear_scene()
     yellow = _linear_scene(illuminant=(1.15, 1, .8))
-    target, _ = _reference_target(yellow, caplog)
+    target, event = _reference_target(yellow, caplog)
+    assert event["edge_energy"] >= .05
+    assert event["agreement_cos"] >= .7
+    assert event["weight"] == 1
     ideal = _garment_lab(neutral)[1:]
     old_distance = np.linalg.norm(_garment_lab(yellow)[1:] - ideal)
     assert old_distance > 5
@@ -121,12 +124,14 @@ def test_red_wall_limits_channel_gain_and_chroma_shift(caplog):
     target, event = _reference_target(ref, caplog)
     assert all(.75 <= value <= 1.3 for value in event["illumination_gain"])
     assert np.linalg.norm(target[1:] - _garment_lab(ref)[1:]) <= 10 + 1e-5
+    assert event["illumination_gain"] == [1, 1, 1]
+    assert event["exposure_gain"] == 1
 
 
 def test_chroma_shift_cap_applies_at_full_strength(monkeypatch, caplog):
-    # 기본 세기(70%)에서는 빨간 벽도 10 안쪽이라, 상한 자체는 세기 100%로 확인한다.
+    # 단색 벽은 보정하지 않으므로, 경계가 있는 강한 색조명에서 상한을 확인한다.
     monkeypatch.setattr(qwen_flatlay, "CHROMA_SHIFT_STRENGTH", 1.)
-    ref = _linear_scene(background=(.8, .08, .04))
+    ref = _linear_scene(illuminant=(1.6, 1, .6))
     target, event = _reference_target(ref, caplog)
     assert np.linalg.norm(target[1:] - _garment_lab(ref)[1:]) == pytest.approx(10, abs=1e-5)
     assert event["chroma_capped"] is True
@@ -134,7 +139,8 @@ def test_chroma_shift_cap_applies_at_full_strength(monkeypatch, caplog):
 
 @pytest.mark.parametrize("stripes,expected", [(False, 1.3), (True, .95 / .9)])
 def test_exposure_restores_dark_scene_without_blowing_white_stripes(caplog, stripes, expected):
-    ref = _linear_scene(background=(.45, .45, .45))
+    # 밝고 무채색인 배경이 있어야 노출을 올린다.
+    ref = _linear_scene(background=(.67, .67, .67))
     if stripes:
         ref[80:86, 72:120, :3] = 244  # sRGB 244의 선형 휘도는 약 0.905다.
     target, event = _reference_target(ref, caplog)
@@ -143,17 +149,119 @@ def test_exposure_restores_dark_scene_without_blowing_white_stripes(caplog, stri
 
 
 def test_exposure_never_darkens_bright_garment(caplog):
-    ref = _linear_scene(background=(.45, .45, .45), garment=(.99, .99, .99))
+    ref = _linear_scene(background=(.67, .67, .67), garment=(.99, .99, .99))
     _, event = _reference_target(ref, caplog)
     assert event["exposure_gain"] == 1
 
 
-def test_zero_rgb_outside_alpha_falls_back_to_valid_garment_pixels(caplog):
+def test_zero_rgb_outside_alpha_keeps_original_target(caplog):
     ref = _linear_scene()
     ref[ref[:, :, 3] == 0, :3] = 0
     target, event = _reference_target(ref, caplog)
     assert np.isfinite(target).all()
-    assert event["background_pixels"] == 48 * 48
+    assert event["background_pixels"] == 0
+    assert event["reason"] == "too few background pixels"
+    assert event["illumination_gain"] == [1, 1, 1]
+    assert event["exposure_gain"] == 1
+    assert np.array_equal(target, _garment_lab(ref))
+
+
+@pytest.mark.parametrize("stripes", [False, True])
+def test_plain_grey_wall_preserves_pink_and_white_stripes(caplog, stripes):
+    ref = _linear_scene()
+    ref[ref[:, :, 3] == 0, :3] = 150
+    ref[ref[:, :, 3] > 127, :3] = (230, 140, 170)
+    if stripes:
+        ref[80:86, 72:120, :3] = 245
+    target, event = _reference_target(ref, caplog)
+    assert event["illumination_gain"] == [1, 1, 1]
+    assert event["exposure_gain"] == 1
+    assert event["edge_energy"] < .05
+    assert np.max(np.abs(target[1:] - _garment_lab(ref)[1:])) < .3
+    assert abs(target[0] - _garment_lab(ref)[0]) < 1
+    corrected = qwen_flatlay.soft_color_correct(
+        png(Image.fromarray(ref)), ref[:, :, :3], ref[:, :, 3] > 127)
+    assert np.max(np.abs(corrected.astype(int) - ref[:, :, :3].astype(int))) <= 1
+
+
+def test_plain_beige_wall_does_not_estimate_colored_light(caplog):
+    ref = _linear_scene()
+    ref[ref[:, :, 3] == 0, :3] = (220, 200, 170)
+    _, event = _reference_target(ref, caplog)
+    assert event["illumination_gain"] == [1, 1, 1]
+    assert event["exposure_gain"] == 1
+
+
+def test_clipped_warm_white_wall_does_not_use_garment_for_estimation(caplog):
+    white = qwen_flatlay._srgb_to_linear(np.array([240, 240, 240]))
+    ref = _linear_scene(background=white, illuminant=(1.15, 1, .8))
+    target, event = _reference_target(ref, caplog)
+    assert event["reason"] == "too few background pixels"
+    assert event["illumination_gain"] == [1, 1, 1]
+    assert event["exposure_gain"] == 1
+    assert np.array_equal(target, _garment_lab(ref))
+
+
+@pytest.mark.parametrize("size,patch_height", [(192, 8), (640, 15)])
+def test_insufficient_background_count_or_fraction_keeps_original(caplog, size, patch_height):
+    ref = np.zeros((size, size, 4), np.uint8)
+    ref[size // 2:size // 2 + 40, size // 2:size // 2 + 40] = (230, 140, 170, 255)
+    ref[:patch_height, :50, :3] = 150
+    target, event = _reference_target(ref, caplog)
+    assert event["reason"] == "too few background pixels"
+    assert event["background_pixels"] == patch_height * 50
+    assert event["illumination_gain"] == [1, 1, 1]
+    assert np.array_equal(target, _garment_lab(ref))
+
+
+def test_opposing_background_estimates_disable_color_shift(caplog):
+    # 배경의 평균은 따뜻하지만 무늬의 변화량은 파란 채널이 가장 크다.
+    yy, xx = np.indices((192, 192))
+    texture = np.where((xx // 8 + yy // 8) % 2, 1, -1)
+    background = np.array([.65, .4, .3]) + texture[:, :, None] * [.01, .1, .2]
+    ref = _linear_scene(background=background)
+    target, event = _reference_target(ref, caplog)
+    assert event["edge_energy"] >= .05
+    assert event["agreement_cos"] < 0
+    assert event["weight"] == 0
+    assert event["illumination_gain"] == [1, 1, 1]
+    assert np.max(np.abs(target - _garment_lab(ref))) < .3
+
+
+def test_five_percent_bright_neutral_background_allows_exposure(caplog):
+    ref = _linear_scene()
+    ref[ref[:, :, 3] == 0, :3] = 150
+    ref[:9, :, :3] = 215
+    _, event = _reference_target(ref, caplog)
+    assert event["exposure_ref_frac"] == pytest.approx(.05, abs=.005)
+    assert event["exposure_gain"] == pytest.approx(1.3, abs=.005)
+
+
+def test_small_edge_background_disables_grey_edge(caplog):
+    ref = _linear_scene(illuminant=(1.15, 1, .8))[48:144, 48:144].copy()
+    _, event = _reference_target(ref, caplog)
+    assert event["background_pixels"] >= 500
+    assert event["edge_energy"] is None
+    assert event["weight"] == 0
+    assert event["illumination_gain"] == [1, 1, 1]
+
+
+@pytest.mark.parametrize("size,patch_height,patch_width", [(64, 3, 64), (640, 10, 50)])
+def test_too_few_exposure_references_by_count_or_fraction(caplog, size, patch_height, patch_width):
+    ref = np.full((size, size, 4), (150, 150, 150, 0), np.uint8)
+    ref[size // 2:size // 2 + 16, size // 2:size // 2 + 16] = (230, 140, 170, 255)
+    ref[:patch_height, :patch_width, :3] = 215
+    _, event = _reference_target(ref, caplog)
+    assert event["exposure_ref_frac"] > 0
+    assert event["exposure_gain"] == 1
+
+
+def test_bright_colored_wall_is_not_an_exposure_reference(caplog):
+    ref = _linear_scene()
+    ref[ref[:, :, 3] == 0, :3] = (250, 220, 180)
+    _, event = _reference_target(ref, caplog)
+    assert event["exposure_ref_frac"] == 0
+    assert event["exposure_gain"] == 1
 
 
 @pytest.mark.parametrize("invalid", [0, np.nan, np.inf, -1])
@@ -270,7 +378,8 @@ def test_qwen_exact_payload_safe_fallback_grey_composite_and_stage(monkeypatch, 
     assert tuple(a[500, 300]) != (65, 90, 125), "garment was color corrected"
     events = [json.loads(r.message) for r in caplog.records if r.name == "wearless.qwen_flatlay"]
     assert len(events) == 2 and events[0]["mask_source"] == "sam3"
-    assert set(events[1]) == {"illumination_gain", "exposure_gain", "background_pixels", "chroma_capped"}
+    assert set(events[1]) == {"illumination_gain", "exposure_gain", "background_pixels", "chroma_capped",
+                              "edge_energy", "agreement_cos", "weight", "exposure_ref_frac", "reason"}
     thumb = Image.open(io.BytesIO(result.image))
     assert thumb.format == "JPEG" and max(thumb.size) == 512
 

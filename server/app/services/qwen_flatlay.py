@@ -19,6 +19,12 @@ ILLUM_MIN_LUMINANCE = .02
 ILLUM_MAX_CHANNEL = .97
 ILLUM_BACKGROUND_DILATION = 5
 ILLUM_MIN_BACKGROUND_PIXELS = 500
+ILLUM_MIN_BACKGROUND_FRAC = .01
+ILLUM_EDGE_BAND = 20
+ILLUM_MIN_EDGE_PIXELS = 2000
+ILLUM_MIN_EDGE_ENERGY = .05
+ILLUM_AGREE_FULL = .7
+ILLUM_NEUTRAL_NORM = .03
 ILLUM_MOMENT = 6
 ILLUM_GAUSSIAN_SIGMA = 2
 ILLUM_MIN_GAIN = .75
@@ -26,6 +32,10 @@ ILLUM_MAX_GAIN = 1.3
 EXPOSURE_BACKGROUND_TARGET = .9
 EXPOSURE_GARMENT_LIMIT = .95
 EXPOSURE_MAX_GAIN = 1.3
+EXPOSURE_REF_MIN_LUMINANCE = .6
+EXPOSURE_REF_MAX_CHROMA = 12
+EXPOSURE_REF_MIN_FRAC = .01
+EXPOSURE_REF_MIN_PIXELS = 300
 MAX_CHROMA_SHIFT = 10.
 # 조명 추정이 갈색 나무 배경 등에 끌려 과하게 고치는 일을 줄이려고 색 이동은 70%만 쓴다(10/16 실사진 비교).
 CHROMA_SHIFT_STRENGTH = .7
@@ -74,6 +84,11 @@ def _color_target(ref: np.ndarray, reference_mask: np.ndarray) -> np.ndarray:
     exposure = 1.
     background_pixels = 0
     capped = False
+    edge_energy = None
+    agreement_cos = None
+    weight = 0.
+    exposure_ref_frac = 0.
+    reason = ""
     try:
         scale = min(1., ILLUM_MAX_SIDE / max(ref.shape[:2]))
         small = ref
@@ -87,16 +102,18 @@ def _color_target(ref: np.ndarray, reference_mask: np.ndarray) -> np.ndarray:
                  & (linear < ILLUM_MAX_CHANNEL).all(axis=2))
         garment = (small[:, :, 3] > 127).astype(np.uint8)
         # scipy 기본 binary_dilation과 같은 십자 커널을 5회 적용한다.
-        dilated = cv2.dilate(garment, cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3)),
-                             iterations=ILLUM_BACKGROUND_DILATION)
+        cross = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+        dilated = cv2.dilate(garment, cross, iterations=ILLUM_BACKGROUND_DILATION)
         background = valid & (dilated == 0)
-        if np.count_nonzero(background) < ILLUM_MIN_BACKGROUND_PIXELS:
-            background = valid
         background_pixels = int(np.count_nonzero(background))
-        if not background_pixels or not valid.any():
-            raise ValueError("no valid illumination pixels")
+        if (background_pixels < ILLUM_MIN_BACKGROUND_PIXELS
+                or background_pixels < ILLUM_MIN_BACKGROUND_FRAC * background.size):
+            raise ValueError("too few background pixels")
         with np.errstate(divide="raise", invalid="raise", over="raise"):
             sog = np.mean(linear[background] ** ILLUM_MOMENT, axis=0) ** (1 / ILLUM_MOMENT)
+            if not np.isfinite(sog).all() or (sog <= 0).any():
+                raise ValueError("invalid illumination estimate")
+            sog /= sog[1]
             smooth = cv2.GaussianBlur(linear, (0, 0), ILLUM_GAUSSIAN_SIGMA,
                                       borderType=cv2.BORDER_REFLECT)
             if not np.isfinite(smooth).all() or (smooth < 0).any():
@@ -104,20 +121,52 @@ def _color_target(ref: np.ndarray, reference_mask: np.ndarray) -> np.ndarray:
             gx = cv2.Sobel(smooth, cv2.CV_64F, 1, 0, borderType=cv2.BORDER_REFLECT)
             gy = cv2.Sobel(smooth, cv2.CV_64F, 0, 1, borderType=cv2.BORDER_REFLECT)
             magnitude = np.hypot(gx, gy)
-            edge = np.mean(magnitude[valid] ** ILLUM_MOMENT, axis=0) ** (1 / ILLUM_MOMENT)
+            # 옷 윤곽과 무늬가 추정에 섞이지 않게 넓은 띠를 제외한다.
+            band = cv2.dilate(garment, cross, iterations=ILLUM_EDGE_BAND)
+            bg_ge = valid & (band == 0)
+            ge = None
+            if np.count_nonzero(bg_ge) >= ILLUM_MIN_EDGE_PIXELS:
+                mag_lum = magnitude @ LUMINANCE_WEIGHTS
+                edge_energy = float(np.mean(mag_lum[bg_ge] ** ILLUM_MOMENT)
+                                    ** (1 / ILLUM_MOMENT))
+                if edge_energy >= ILLUM_MIN_EDGE_ENERGY:
+                    edge = np.mean(magnitude[bg_ge] ** ILLUM_MOMENT, axis=0) ** (1 / ILLUM_MOMENT)
+                    if np.isfinite(edge).all() and (edge > 0).all():
+                        ge = edge / edge[1]
+            if ge is not None:
+                u = np.log(sog)
+                u -= u.mean()
+                v = np.log(ge)
+                v -= v.mean()
+                nu, nv = float(np.linalg.norm(u)), float(np.linalg.norm(v))
+                agreement_cos = (1. if min(nu, nv) < ILLUM_NEUTRAL_NORM
+                                 else float(np.dot(u, v) / (nu * nv)))
+                weight = float(np.clip(agreement_cos / ILLUM_AGREE_FULL, 0, 1))
+                illumination = np.clip(np.exp(weight * (np.log(sog) + np.log(ge)) / 2),
+                                       ILLUM_MIN_GAIN, ILLUM_MAX_GAIN)
+                reason = "both"
+            else:
+                # 단색 배경만으로는 벽 색과 조명 색을 구분할 수 없다.
+                reason = "sog_only"
             garment_linear = _srgb_to_linear(ref[:, :, :3][ref[:, :, 3] > 127])
-            q = float(np.percentile(luminance[background], 90))
             g99 = float(np.percentile(garment_linear @ LUMINANCE_WEIGHTS, 99))
-            estimates = np.array([sog, edge])
-            if (not np.isfinite(estimates).all() or (estimates <= 0).any()
-                    or not np.isfinite([q, g99]).all() or min(q, g99) <= 0):
+            if not np.isfinite(g99) or g99 <= 0:
                 raise ValueError("invalid illumination estimate")
-            estimates /= estimates[:, 1:2]
-            illumination = np.clip(np.exp(np.log(estimates).mean(axis=0)),
-                                   ILLUM_MIN_GAIN, ILLUM_MAX_GAIN)
-            # 밝은 옷의 상한이 1보다 작아져도 사진을 어둡게 만들지는 않는다.
-            exposure = max(1., min(EXPOSURE_MAX_GAIN, EXPOSURE_GARMENT_LIMIT / max(g99, 1e-3),
-                                   max(1., EXPOSURE_BACKGROUND_TARGET / q)))
+            # 보정 전 배경에서 밝고 무채색인 부분만 노출 기준으로 쓴다.
+            lum_bg = luminance[background]
+            bright = lum_bg >= EXPOSURE_REF_MIN_LUMINANCE
+            if bright.any():
+                bg_rgb = small[:, :, :3][background][bright].astype(np.float32) / 255
+                bg_lab = cv2.cvtColor(bg_rgb.reshape(-1, 1, 3), cv2.COLOR_RGB2Lab)[:, 0]
+                refpix = bright.copy()
+                refpix[bright] = np.hypot(bg_lab[:, 1], bg_lab[:, 2]) <= EXPOSURE_REF_MAX_CHROMA
+                exposure_ref_frac = float(refpix.mean())
+                if (exposure_ref_frac >= EXPOSURE_REF_MIN_FRAC
+                        and np.count_nonzero(refpix) >= EXPOSURE_REF_MIN_PIXELS):
+                    q = float(np.percentile(lum_bg[refpix], 90))
+                    # 밝은 옷을 보호하되 사진을 어둡게 만들지는 않는다.
+                    exposure = max(1., min(EXPOSURE_MAX_GAIN, EXPOSURE_GARMENT_LIMIT / g99,
+                                           EXPOSURE_BACKGROUND_TARGET / q))
             corrected = np.clip(_srgb_to_linear(ref[:, :, :3][reference_mask])
                                 / illumination * exposure, 0, 1)
             srgb = np.where(corrected <= .0031308, corrected * 12.92,
@@ -132,14 +181,19 @@ def _color_target(ref: np.ndarray, reference_mask: np.ndarray) -> np.ndarray:
             if capped:
                 shift *= MAX_CHROMA_SHIFT / distance
             target[1:] = original[1:] + shift
-    except Exception:
+    except Exception as exc:
         target = original.copy()
         illumination = np.ones(3)
         exposure = 1.
         capped = False
+        reason = str(exc)
     log.info(json.dumps({"illumination_gain": np.round(illumination, 3).tolist(),
                          "exposure_gain": round(exposure, 3),
-                         "background_pixels": background_pixels, "chroma_capped": capped}))
+                         "background_pixels": background_pixels, "chroma_capped": capped,
+                         "edge_energy": round(edge_energy, 4) if edge_energy is not None else None,
+                         "agreement_cos": round(agreement_cos, 3) if agreement_cos is not None else None,
+                         "weight": round(weight, 3),
+                         "exposure_ref_frac": round(exposure_ref_frac, 4), "reason": reason}))
     return target
 
 
