@@ -27,6 +27,7 @@ import uuid
 from psycopg import errors
 
 from app import repo
+from app.config import load_settings
 from app.services import sam_retry
 
 log = logging.getLogger(__name__)
@@ -38,6 +39,14 @@ PRODUCER = "sam2-worn-garment"
 # 생성 직후 큐와 기존 컷 lazy backfill 큐가 공유하는 알고리즘 신원. torch 없는 API
 # 모듈에 둬서 두 경로가 같은 멱등키 버전을 사용하게 한다.
 ALGORITHM_VERSION = "editor-worn-garment-sam2-v3"
+FAL_ALGORITHM_VERSION = "editor-worn-garment-fal-sam3-v1"
+FAL_PRODUCER = "fal-sam3-worn-garment"
+
+
+def algorithm_version(provider: str | None = None) -> str:
+    if provider is None:
+        provider = getattr(load_settings(), "tone_mask_provider", "sam2")
+    return FAL_ALGORITHM_VERSION if provider == "fal" else ALGORITHM_VERSION
 
 STATUS_READY = "ready"
 STATUS_PROCESSING = "processing"
@@ -87,7 +96,7 @@ TONE_MASK_RETRYABLE_CODES = (
 
 
 def mask_job_key(project_id: str, cut_id: str, *, product_key: str | None = None,
-                 retry: int = 0) -> str:
+                 retry: int = 0, provider: str | None = None) -> str:
     """마스크 잡의 신원. 생성 직후 큐·lazy backfill·업그레이드·재시도가 모두 이 함수를 지난다.
 
     레퍼런스를 물린 키는 **업그레이드 전용**이다. 기본 키(레퍼런스 없음)와 달라야 재생성이
@@ -96,7 +105,7 @@ def mask_job_key(project_id: str, cut_id: str, *, product_key: str | None = None
     `retry` 도 같은 이유로 키에 들어간다. 일시 장애로 끝난 잡이 키를 물고 있는 한 재시도는
     그 시체에 합류만 한다 — 세대마다 새 신원을 줘야 실제로 다시 돈다(2026-08-18 사고 2호).
     """
-    base = f"{project_id}:editor_garment_mask:{cut_id}:{ALGORITHM_VERSION}"
+    base = f"{project_id}:editor_garment_mask:{cut_id}:{algorithm_version(provider)}"
     if product_key:
         base = f"{base}:{hashlib.sha256(product_key.encode('utf-8')).hexdigest()[:12]}"
     return base if retry <= 0 else f"{base}:r{int(retry)}"
@@ -115,7 +124,7 @@ def mask_upgrade_reason(meta: dict, *, product_key: str | None) -> str | None:
     """
     if not isinstance(meta, dict):
         return None
-    if str(meta.get("algorithmVersion") or "") != ALGORITHM_VERSION:
+    if str(meta.get("algorithmVersion") or "") != algorithm_version():
         return "algorithm"
     if product_key and str(meta.get("productKey") or "") != str(product_key):
         return "reference"
@@ -222,7 +231,7 @@ def metadata_for(result, *, cut_id: str, source_asset_id: str, category: str | N
         "sourceCutId": cut_id,
         "sourceAssetId": source_asset_id,
         "sourceHash": result.source_hash,
-        "producer": PRODUCER,
+        "producer": FAL_PRODUCER if result.algorithm_version == FAL_ALGORITHM_VERSION else PRODUCER,
         "modelVersion": result.model_version,
         "algorithmVersion": result.algorithm_version,
         "selectorVersion": result.selector_version,

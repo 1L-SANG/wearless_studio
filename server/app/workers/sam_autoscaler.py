@@ -32,8 +32,8 @@ PREWARM_DEBOUNCE_SECONDS = 60.0
 ALERT_DEBOUNCE_SECONDS = 600.0
 
 
-async def _sam_demand(repo, conn):
-    return await repo.sam_demand_snapshot(conn, sam_autoscale.SAM_KINDS)
+async def _sam_demand(repo, conn, settings=None):
+    return await repo.sam_demand_snapshot(conn, sam_autoscale.sam_kinds(settings))
 
 
 class SamAutoscaler:
@@ -42,7 +42,8 @@ class SamAutoscaler:
                  capacity_attr=None, max_tasks_attr=None, start_grace_attr=None):
         self.app = app
         self.adapter = adapter
-        self._demand_fn = demand_fn or _sam_demand
+        self._demand_fn = demand_fn or (
+            lambda repo, conn: _sam_demand(repo, conn, self.app.state.settings))
         self._idle_attr = idle_attr
         self._name = name
         self._lock_key = lock_key or LOCK_KEY

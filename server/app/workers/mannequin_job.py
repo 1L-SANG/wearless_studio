@@ -2568,7 +2568,8 @@ async def _enqueue_editor_garment_mask(pool, s, *, user_id, project_id, cuts,
                     conn, user_id=user_id, project_id=project_id,
                     kind="editor_garment_mask",
                     payload={"cutId": cut_id, "cutMetadata": cut_metadata},
-                    idempotency_key=editor_garment_mask.mask_job_key(project_id, cut_id),
+                    idempotency_key=editor_garment_mask.mask_job_key(
+                        project_id, cut_id, provider=getattr(s, "tone_mask_provider", "sam2")),
                     credits_reserved=0, metadata={})
                 await conn.commit()
         except Exception:  # noqa: BLE001 - 마스크 큐잉 실패가 마네킹 생성을 되돌리지 않는다
