@@ -228,10 +228,11 @@ def estimate_cost(
     model: str, image_size: str, usage: dict | None, *, has_image: bool = True,
 ) -> ImageCost:
     """이 호출 1회의 실비. 실패해도 예외를 던지지 않는다 — 계측이 생성을 막으면 안 된다."""
-    if model in {"fal-ai/sam-3/image", "fal-ai/qwen-image-edit-2511"}:
+    if model in {"fal-ai/sam-3/image", "fal-ai/qwen-image-edit-2511", "fal-ai/birefnet/v2"}:
         if not has_image:
             return ImageCost(0, 0, 0, None, "unavailable_no_image")
-        if model == "fal-ai/sam-3/image":
+        if model in {"fal-ai/sam-3/image", "fal-ai/birefnet/v2"}:
+            # BiRefNet은 단가 미확인, 보수값.
             return ImageCost(0, 0, 0, 0.005, "table")
         megapixels = usage.get("megapixels") if isinstance(usage, dict) else None
         if (not isinstance(megapixels, (int, float)) or isinstance(megapixels, bool)

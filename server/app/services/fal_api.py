@@ -18,6 +18,7 @@ from app.services.sam_client import SamUnavailable
 log = logging.getLogger("wearless.fal")
 SAM_MODEL = "fal-ai/sam-3/image"
 QWEN_MODEL = "fal-ai/qwen-image-edit-2511"
+BIREFNET_MODEL = "fal-ai/birefnet/v2"
 TIMEOUT_S = 60.0
 MAX_PX = 2048
 

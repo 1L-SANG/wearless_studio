@@ -74,6 +74,17 @@ def _alpha(data: bytes, size: tuple[int, int]) -> np.ndarray:
         return np.array(image.getchannel("A").resize(size, Image.Resampling.NEAREST))
 
 
+def _birefnet_alpha(data: bytes, size: tuple[int, int]) -> np.ndarray:
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            mask = np.array(image.convert("L").resize(size, Image.Resampling.NEAREST)) > 127
+    except (OSError, ValueError):
+        raise fal_cutout.NoGarmentMask("invalid birefnet mask image") from None
+    if not mask.any():
+        raise fal_cutout.NoGarmentMask("empty birefnet mask")
+    return mask.astype(np.uint8) * 255
+
+
 def _composite(reference: bytes, rgb: np.ndarray, alpha: np.ndarray) -> bytes:
     corrected = soft_color_correct(reference, rgb, alpha > 127)
     image = Image.fromarray(corrected).convert("RGBA")
@@ -86,7 +97,7 @@ def _composite(reference: bytes, rgb: np.ndarray, alpha: np.ndarray) -> bytes:
 async def render(settings, cutout_png: bytes) -> bytes:
     canvas, source_area_fraction = await asyncio.to_thread(prepare_canvas, cutout_png)
     prepared = await asyncio.to_thread(fal_api.prepare_image, canvas)
-    # 지시서 3.4의 로컬 실험(run_stage5.py)과 같은 복수 필드. SAM3만 image_url을 쓴다.
+    # 지시서 3.4의 로컬 실험(run_stage5.py)과 같은 복수 image_urls 필드.
     body = await fal_api.run_model(settings, fal_api.QWEN_MODEL, {
         "image_urls": [prepared.url], "prompt": PROMPT, "negative_prompt": NEGATIVE_PROMPT,
         "guidance_scale": 4.5, "num_inference_steps": 28, "acceleration": "regular",
@@ -95,14 +106,32 @@ async def render(settings, cutout_png: bytes) -> bytes:
     generated = await fal_api.fetch_image(body["images"][0]["url"])
     rgb = await asyncio.to_thread(_decode_rgb, generated)
     height, width = rgb.shape[:2]
-    # 마스크가 없으면 render_thumbnail이 기존 누끼를 유지한다.
+    # SAM 3가 옷을 못 찾을 때만 BiRefNet으로 한 번 더 찾는다.
     # 흰 배경과 이어진 흰 소매도 사라질 수 있어 색으로 마스크를 추측하지 않는다.
-    segmented = await fal_cutout.cutout_png(settings, generated)
-    alpha = await asyncio.to_thread(_alpha, segmented, (width, height))
+    mask_source = "sam3"
+    try:
+        segmented = await fal_cutout.cutout_png(settings, generated)
+    except fal_cutout.NoGarmentMask:
+        mask_source = "birefnet"
+        prepared = await asyncio.to_thread(fal_api.prepare_image, generated)
+        body = await fal_api.run_model(settings, fal_api.BIREFNET_MODEL, {
+            "image_url": prepared.url, "model": "General Use (Heavy)",
+            "operating_resolution": "1024x1024", "output_format": "png",
+            "mask_only": True, "refine_foreground": False})
+        image = body.get("image")
+        url = image.get("url") if isinstance(image, dict) else None
+        if not isinstance(url, str) or not url.strip():
+            raise fal_cutout.NoGarmentMask("invalid birefnet mask response")
+        mask = await fal_api.fetch_image(url)
+        alpha = await asyncio.to_thread(_birefnet_alpha, mask, (width, height))
+    else:
+        alpha = await asyncio.to_thread(_alpha, segmented, (width, height))
     result_area_fraction = float((alpha > 127).mean())
     log.info(json.dumps({"provider": "fal", "model": fal_api.QWEN_MODEL,
-        "mask_source": "sam3", "source_area_fraction": source_area_fraction,
+        "mask_source": mask_source, "source_area_fraction": source_area_fraction,
         "result_area_fraction": result_area_fraction}))
     if source_area_fraction <= 0 or result_area_fraction < source_area_fraction * .5:
         raise ValueError("generated garment mask is too small")
+    if mask_source == "birefnet" and result_area_fraction > min(source_area_fraction * 1.6, .85):
+        raise ValueError("generated garment mask is too large")
     return await asyncio.to_thread(_composite, cutout_png, rgb, alpha)
