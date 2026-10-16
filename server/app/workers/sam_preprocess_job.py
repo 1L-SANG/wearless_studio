@@ -18,7 +18,7 @@ import logging
 from app import repo
 from app.agents import mannequin
 from app.config import load_settings
-from app.services import canonical_reference, fal_api, fal_cutout, sam_client
+from app.services import canonical_reference, fal_api, fal_cutout, product_tidy, sam_client
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +43,9 @@ async def run_sam_preprocess_job(app, job: dict) -> None:
         log.info("sam_preprocess job=%s project=%s %s %s", job_id, project_id, status, detail)
 
     use_fal = getattr(s, "sam_preprocess_provider", "sam2") == "fal"
-    if not (fal_api.configured(s) if use_fal else sam_client.configured(s)):
+    tidy_enabled = getattr(s, "product_tidy", "off") == "on"
+    configured = fal_api.configured(s) if use_fal else sam_client.configured(s)
+    if not configured and not tidy_enabled:
         # Not an error: an environment without SAM configured simply has no canonical path.
         await finish("done", {"state": "skipped", "reason": "sam_not_configured"})
         return
@@ -61,23 +63,34 @@ async def run_sam_preprocess_job(app, job: dict) -> None:
         await finish("done", {"state": "skipped", "reason": "no_eligible_source_assets"})
         return
 
-    try:
-        views = {slot: a["key"] for slot, a in assets.items()}
-        if use_fal:
-            results = await fal_cutout.segment_garment(s, app.state.r2, views)
-        else:
-            results = await sam_client.segment_garment(s, views)
-    except sam_client.SamUnavailable as exc:
-        # done + unavailable — error 가 아니다. 예전 주석은 "디스패처 재시도가 일시 장애를
-        # 처리한다"고 적혀 있었지만 그 재시도 코드는 존재하지 않는다(2026-08-18 톤 마스크가
-        # 같은 착각으로 사고). error 로 적으면 이 잡이 멱등키를 문 채 종착하고, 같은 상품을
-        # 다시 저장해도 그 시체에 합류만 한다 — 캐노니컬 컷아웃이 영영 안 생긴다(2026-08-21).
-        # 다음 세대는 sam_retry_pusher 가 건다. 재시도가 싼 이유는 그대로다: 컷아웃 키가
-        # 결정론적이라 이미 성공한 뷰는 R2 에서 재추론 없이 돌아온다.
-        await finish("done", {"state": "unavailable", "reason": str(exc)})
-        return
-
     recorded, failed = {}, {}
+    front_source, front_cutout = None, None
+    if tidy_enabled:
+        async with pool.connection() as conn:
+            front_source, front_cutout = await product_tidy.load_front(
+                conn, user_id=user_id, product=product)
+        if front_cutout:
+            recorded["Front"] = {"assetId": front_cutout["id"],
+                                 "cutoutKey": front_cutout["r2_key"], "cached": True}
+
+    views = {slot: a["key"] for slot, a in assets.items() if slot not in recorded}
+    results = {}
+    if views and not configured:
+        if not front_cutout:
+            await finish("done", {"state": "skipped", "reason": "sam_not_configured"})
+            return
+    elif views:
+        try:
+            if use_fal:
+                results = await fal_cutout.segment_garment(s, app.state.r2, views)
+            else:
+                results = await sam_client.segment_garment(s, views)
+        except sam_client.SamUnavailable as exc:
+            if not front_cutout:
+                await finish("done", {"state": "unavailable", "reason": str(exc)})
+                return
+            failed.update({slot: "unavailable" for slot in views})
+
     async with pool.connection() as conn:
         for slot, result in results.items():
             if not result.ready:
@@ -89,16 +102,35 @@ async def run_sam_preprocess_job(app, job: dict) -> None:
             if row:
                 recorded[slot] = {"assetId": row["id"], "cutoutKey": result.cutout_key,
                                   "cached": result.cached}
+                if tidy_enabled and slot == "Front":
+                    front_source = {"id": assets[slot]["id"], "hash": result.source_hash}
+                    front_cutout = {**row, "r2_key": result.cutout_key}
         await conn.commit()
+
+    tidy = None
+    if tidy_enabled and front_cutout and front_source:
+        previous = (job.get("payload") or {}).get("_productTidy") or {}
+        if (previous.get("state") == "failed"
+                and previous.get("sourceHash") == front_source["hash"]
+                and previous.get("algorithmVersion") == product_tidy.ALGORITHM_VERSION):
+            tidy = previous
+        else:
+            tidy = await product_tidy.produce(app, job, source=front_source, cutout=front_cutout)
 
     # Front and Back are independent all the way through: a failed Back never discards a
     # recorded Front.
+    # PRODUCT_TIDY=off keeps the original provider-specific unavailable contract.
     # fal은 뷰별 장애를 반환한다. 성공분은 위에서 커밋하고, 나머지는 기존 푸셔가
     # 재시도하도록 unavailable을 유지한다. SAM2의 기존 partial/failed 판정은 그대로다.
-    unavailable = use_fal and "unavailable" in failed.values()
+    unavailable = (use_fal and "unavailable" in failed.values())
+    if tidy_enabled:
+        unavailable = (unavailable or "unavailable" in failed.values()
+                       or bool(tidy and tidy["state"] == "unavailable"))
     state = ("unavailable" if unavailable
              else "ready" if recorded and not failed
              else "partial" if recorded
              else "failed")
-    await finish("done" if recorded or unavailable else "error",
-                 {"state": state, "recorded": recorded, "failed": failed})
+    detail = {"state": state, "recorded": recorded, "failed": failed}
+    if tidy is not None:
+        detail["productTidy"] = tidy
+    await finish("done" if recorded or unavailable else "error", detail)

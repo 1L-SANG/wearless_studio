@@ -111,6 +111,9 @@ class SamRetryPusher:
         if not sam_retry.within_revive_window(job):
             return False
         if not sam_retry.backoff_elapsed(job):
+            # 정돈은 fal 작업이다. sam2가 살아 있어도 Qwen 재시도를 앞당기지 않는다.
+            if ((job.get("result") or {}).get("productTidy") or {}).get("state") == "unavailable":
+                return False
             # fal 잡은 sam2 준비 상태와 무관하므로 정해진 백오프를 지킨다.
             settings = getattr(getattr(self.app, "state", None), "settings", None)
             provider_attr = ("matching_cutout_provider" if job["kind"] == "matching_cutout"
@@ -138,6 +141,10 @@ class SamRetryPusher:
             return False
         payload = {k: v for k, v in (job.get("payload") or {}).items() if k != "retry"}
         payload["retry"] = retry
+        tidy = (job.get("result") or {}).get("productTidy") or {}
+        if tidy.get("state") == "failed":
+            # Back may still need SAM; a terminal Front tidy verdict must not cost Qwen again.
+            payload["_productTidy"] = tidy
         await repo.create_job(
             conn, user_id=job["user_id"], project_id=job["project_id"],
             kind=job["kind"], payload=payload,

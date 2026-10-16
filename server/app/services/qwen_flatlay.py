@@ -239,16 +239,17 @@ def _birefnet_alpha(data: bytes, size: tuple[int, int]) -> np.ndarray:
     return mask.astype(np.uint8) * 255
 
 
-def _composite(reference: bytes, rgb: np.ndarray, alpha: np.ndarray) -> bytes:
+def _composite(reference: bytes, rgb: np.ndarray, alpha: np.ndarray,
+               transparent: bool = False) -> bytes:
     corrected = soft_color_correct(reference, rgb, alpha > 127)
     image = Image.fromarray(corrected).convert("RGBA")
     image.putalpha(Image.fromarray(alpha))
     out = io.BytesIO()
     image.save(out, "PNG")
-    return matching_cutout.flatten_on_bg(out.getvalue())
+    return out.getvalue() if transparent else matching_cutout.flatten_on_bg(out.getvalue())
 
 
-async def render(settings, cutout_png: bytes) -> bytes:
+async def render(settings, cutout_png: bytes, *, transparent: bool = False) -> bytes:
     canvas, source_area_fraction = await asyncio.to_thread(prepare_canvas, cutout_png)
     prepared = await asyncio.to_thread(fal_api.prepare_image, canvas)
     # 지시서 3.4의 로컬 실험(run_stage5.py)과 같은 복수 image_urls 필드.
@@ -288,4 +289,4 @@ async def render(settings, cutout_png: bytes) -> bytes:
         raise ValueError("generated garment mask is too small")
     if mask_source == "birefnet" and result_area_fraction > min(source_area_fraction * 1.6, .85):
         raise ValueError("generated garment mask is too large")
-    return await asyncio.to_thread(_composite, cutout_png, rgb, alpha)
+    return await asyncio.to_thread(_composite, cutout_png, rgb, alpha, transparent)

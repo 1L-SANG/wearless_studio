@@ -1,4 +1,5 @@
 import { api as base } from '@/mock/api.js';
+import { Placeholder } from '@/mock/placeholders.js';
 import { DB } from '@/mock/db.js';
 import { uid } from '@/lib/ids.js';
 import { CREDIT_COSTS, editorImageCreditCost } from '@/lib/limits.js';
@@ -173,6 +174,11 @@ function editPlan(projectId, body) {
 
 export const mockAdapter = {
   ...base,
+  async getProductVisuals(_projectId) {
+    const image = Placeholder.product('product-tidy-front', 768, 1024);
+    return { front: { tidyStatus: 'ready', tidyUrl: image, cutoutStatus: 'ready',
+      cutoutUrl: image, width: 768, height: 1024 } };
+  },
   async analyzeProduct(projectId, options = {}) {
     const result = await base.analyzeProduct(projectId, options);
     if (options.parts !== 'core') return result;
