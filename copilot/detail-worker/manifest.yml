@@ -70,6 +70,9 @@ variables:
   MODEL_DETAIL_SPECIALIST: claude-sonnet-5-5
   DETAIL_SPECIALIST_TIMEOUT_SECONDS: 90
   MODEL_ROUTING_TEXT_GEMINI: gemini-3.1-pro-preview
+  # 공용 Pro는 검수용으로 유지하고 비슷한 컷 계획만 Flash low로 분리한다.
+  # 2026-10-15 실측(사진 7장×2회): Flash low 14/14 유효 계획, 최대 13.1초. 같은 날 3.1 Pro 미리보기는 무응답.
+  MODEL_ROUTING_TEXT_GEMINI_SIMILAR: gemini-3.8-flash
   # 생성 직전 옷 색 백스톱 측정도 api 와 같은 flash 로 돌린다(비우면 위 pro 로 넘어간다).
   MODEL_ROUTING_TEXT_GEMINI_ANALYSIS: gemini-3.8-flash
   DETAIL_CUT_IMAGE_SIZE: "2K"
