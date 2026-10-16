@@ -2140,6 +2140,8 @@ async def sam_demand_snapshot(conn: AsyncConnection, kinds: tuple[str, ...]):
     """sam2 가 켜져 있어야 하는지 판단할 세 값을 한 왕복으로(2026-08-21, sam_autoscaler 전용).
 
     업로드는 `source='upload'` 만 센다 — 파생 asset(누끼·마스크·생성물)은 SAM 수요가 아니다.
+    정돈 필수 pending 잡은 OFF 롤백 뒤에도 남는다. 실행을 맡기 전까지 수요에서 빼되,
+    running 은 모든 프로세스에서 센다. 로컬 플래그로 다른 ON 워커의 SAM을 끄면 안 된다.
     `jobs_sam_retry_idx`(kind, finished_at) 와 `assets_upload_created_idx` 가 받친다.
     """
     from app.services.sam_autoscale import DemandSnapshot
@@ -2147,7 +2149,9 @@ async def sam_demand_snapshot(conn: AsyncConnection, kinds: tuple[str, ...]):
         await cur.execute(
             "select "
             "  (select count(*) from jobs where kind = any(%s) "
-            "     and status in ('pending', 'running')) as active_sam_jobs, "
+            "     and status in ('pending', 'running') "
+            "     and not (status = 'pending' and kind = 'sam_preprocess' "
+            "       and coalesce(payload->'productTidyRequired', 'false'::jsonb) = 'true'::jsonb)) as active_sam_jobs, "
             "  (select max(finished_at) from jobs where kind = any(%s) "
             "     and finished_at is not null) as last_sam_finished_at, "
             "  (select max(created_at) from assets where source = 'upload') as last_upload_at",
@@ -2548,6 +2552,39 @@ async def create_job(
         raise RuntimeError("create_job: 활성 합류 대상이 반복적으로 사라짐 (드문 레이스)")
 
 
+async def require_product_tidy_job(
+    conn: AsyncConnection, *, job_id: str, user_id: str, project_id: str,
+    compatible_keys: tuple[str, ...], idempotency_key: str,
+) -> bool | None:
+    """Upgrade this photo's active canonical job under the finalizer's row lock.
+
+    True = upgraded, False = another active photo/mode, None = already finished
+    (the producer must retry enqueue). Keep retry budgets and the current lease.
+    """
+    from app.services import sam_retry
+
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select status, payload, idempotency_key from jobs "
+            "where id = %s and user_id = %s and project_id = %s and kind = 'sam_preprocess' for update",
+            (job_id, user_id, project_id),
+        )
+        job = await cur.fetchone()
+        if job is None or job["status"] not in ("pending", "running"):
+            return None
+        if ((job.get("payload") or {}).get("mode") != "canonical_cutout"
+                or sam_retry.base_key(job.get("idempotency_key")) not in compatible_keys):
+            return False
+        await cur.execute(
+            "update jobs set payload = coalesce(payload, '{}'::jsonb) || "
+            "'{\"productTidyRequired\":true}'::jsonb, idempotency_key = %s "
+            "where id = %s and user_id = %s and project_id = %s and kind = 'sam_preprocess' "
+            "and status in ('pending', 'running') and idempotency_key = %s",
+            (idempotency_key, job_id, user_id, project_id, job["idempotency_key"]),
+        )
+    return True
+
+
 async def find_context_fill_job(
     conn: AsyncConnection, user_id: str, project_id: str, idempotency_key: str, slot_key: str,
 ) -> dict | None:
@@ -2619,7 +2656,9 @@ async def set_pending_job_pricing(
             raise RuntimeError("set_pending_job_pricing: pending job missing")
 
 
-async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_id: str) -> dict | None:
+async def claim_next_job(
+    conn: AsyncConnection, kinds: tuple[str, ...], worker_id: str, *, product_tidy_capable: bool = False,
+) -> dict | None:
     """pending job 1건을 FOR UPDATE SKIP LOCKED로 점유 → running + lease (§5).
 
     locked_by에 **클레임마다 고유한 lease 토큰**(worker_id:uuid)을 넣는다 — 단순 worker_id면
@@ -2633,6 +2672,8 @@ async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_i
             with next_job as (
               select id as nid from jobs
               where status = 'pending' and kind = any(%s)
+                and (%s or kind <> 'sam_preprocess'
+                     or coalesce(payload->'productTidyRequired', 'false'::jsonb) <> 'true'::jsonb)
                 and (
                   metadata->>'retryNotBefore' is null
                   or (metadata->>'retryNotBefore')::timestamptz <= now()
@@ -2694,6 +2735,7 @@ async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_i
             """,
             (
                 list(kinds),
+                product_tidy_capable,
                 list(FACEMARKET_CUTOVER_JOB_KINDS),
                 list(FACEMARKET_CLOSED_BATCH_STATUSES),
                 list(FACEMARKET_CUTOVER_JOB_KINDS),
@@ -3481,6 +3523,7 @@ async def finalize_uncharged_job(
     lease_token: str,
     status: str,
     result: dict,
+    product_tidy_capable: bool = False,
 ) -> bool:
     """무과금 잡의 종결(원자·lease 펜스). False = lease 상실 → 아무것도 쓰지 않는다.
 
@@ -3492,11 +3535,24 @@ async def finalize_uncharged_job(
     event = "done" if status == "done" else "error"
     async with conn.cursor() as cur:
         await cur.execute(
-            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            "select id, kind, payload from jobs "
+            "where id = %s and locked_by = %s and status = 'running' for update",
             (job_id, lease_token),
         )
-        if await cur.fetchone() is None:
+        job = await cur.fetchone()
+        if job is None:
             return False  # lease 빼앗김 — 부수효과 0
+        if (job["kind"] == "sam_preprocess" and not product_tidy_capable
+                and (job.get("payload") or {}).get("productTidyRequired") is True):
+            # An ON request may have upgraded the row after this OFF worker
+            # claimed it. Persist canonical progress, but leave tidy pending on
+            # the same generation, without spending retries or emitting done.
+            await cur.execute(
+                "update jobs set status = 'pending', result = %s, progress = 0, "
+                "locked_by = null, locked_at = null, finished_at = null, error_message = null where id = %s",
+                (Json(result), job_id),
+            )
+            return True
         await cur.execute(
             "update jobs set status = %s, result = %s, progress = 100, "
             "locked_by = null, locked_at = null, finished_at = now() where id = %s",

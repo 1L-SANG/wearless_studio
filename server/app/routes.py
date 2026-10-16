@@ -1045,11 +1045,25 @@ async def _enqueue_canonical_cutout(conn, *, user_id: str, project_id: str,
     key = product_tidy.preprocess_key(project_id, product or {}, enabled=tidy_enabled)
     if not key:
         return False
-    await repo.create_job(
-        conn, user_id=user_id, project_id=project_id, kind="sam_preprocess",
-        payload={"mode": "canonical_cutout"}, idempotency_key=key,
-        credits_reserved=0, metadata={})
-    return True
+    payload = {"mode": "canonical_cutout"}
+    if tidy_enabled:
+        payload["productTidyRequired"] = True
+    for _ in range(3):
+        job, created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="sam_preprocess",
+            payload=payload, idempotency_key=key, credits_reserved=0, metadata={})
+        if not tidy_enabled or created or (job.get("payload") or {}).get("productTidyRequired") is True:
+            return True
+        source_key = canonical_reference.preprocess_idempotency_key(project_id, product or {})
+        upgraded = await repo.require_product_tidy_job(
+            conn, job_id=job["id"], user_id=user_id, project_id=project_id,
+            compatible_keys=(source_key, f"{source_key}:{product_tidy.ALGORITHM_VERSION}", key),
+            idempotency_key=key)
+        if upgraded is not None:
+            return True  # An incompatible active photo keeps its original work and key.
+        # The ordinary job finished before our row lock. Enqueue the required job
+        # again instead of renaming a completed row that never produced tidy.
+    raise RuntimeError("canonical cutout job repeatedly finished before tidy upgrade")
 
 
 @router.patch(

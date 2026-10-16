@@ -34,16 +34,20 @@ async def run_sam_preprocess_job(app, job: dict) -> None:
     job_id, project_id = job["id"], job["project_id"]
     user_id, lease_token = job["user_id"], job["lease_token"]
     s = load_settings()
+    tidy_enabled = getattr(s, "product_tidy", "off") == "on"
 
     async def finish(status: str, detail: dict) -> None:
         async with pool.connection() as conn:
             await repo.finalize_uncharged_job(
-                conn, job_id=job_id, lease_token=lease_token, status=status, result=detail)
+                conn, job_id=job_id, lease_token=lease_token, status=status, result=detail,
+                product_tidy_capable=tidy_enabled)
             await conn.commit()
         log.info("sam_preprocess job=%s project=%s %s %s", job_id, project_id, status, detail)
 
     use_fal = getattr(s, "sam_preprocess_provider", "sam2") == "fal"
-    tidy_enabled = getattr(s, "product_tidy", "off") == "on"
+    if not tidy_enabled and (job.get("payload") or {}).get("productTidyRequired") is True:
+        await finish("done", {"state": "pending", "reason": "product_tidy_worker_required"})
+        return
     configured = fal_api.configured(s) if use_fal else sam_client.configured(s)
     if not configured and not tidy_enabled:
         # Not an error: an environment without SAM configured simply has no canonical path.

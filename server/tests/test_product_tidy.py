@@ -211,10 +211,12 @@ def test_off_does_not_render_and_visuals_reports_off(env, monkeypatch):
 
 def test_success_is_one_transparent_asset_and_retries_reuse_it(env, monkeypatch):
     renderer(monkeypatch, env)
+    env.job["payload"] = {"mode": "canonical_cutout", "productTidyRequired": True}
     run(env)
     run(env)
     tidy = [a for a in env.store.assets.values() if a["metadata"].get("canonicalType") == "product_tidy"]
     assert len(tidy) == 1 and env.store.render_calls == 1
+    assert env.store.finalized["product_tidy_capable"] is True
     row = tidy[0]
     assert row["source"] == "derived"
     assert row["r2_key"] == f"users/u/projects/p/derived/{row['id']}.png"
@@ -421,9 +423,110 @@ def test_on_enqueue_has_a_new_identity_and_visuals_reads_the_same_generation(env
     asyncio.run(routes._enqueue_canonical_cutout(env.conn, user_id="u", project_id="p",
                                                 product=env.store.product, tidy_enabled=True))
     old_key = canonical_reference.preprocess_idempotency_key("p", env.store.product)
-    assert seen["idempotency_key"] == old_key + ":product-tidy-v1-qwen"
+    assert seen["idempotency_key"] == old_key + ":product-tidy-v1-qwen:required-v2"
+    assert seen["payload"] == {"mode": "canonical_cutout", "productTidyRequired": True}
     assert seen["credits_reserved"] == 0 and seen["kind"] == "sam_preprocess"
     assert visuals(env)["tidyStatus"] == "processing"
+
+
+def test_off_enqueue_keeps_ordinary_payload_and_identity(env, monkeypatch):
+    import app.routes as routes
+    seen = {}
+
+    async def create(_conn, **kw):
+        seen.update(kw)
+        return {}, True
+
+    monkeypatch.setattr(repo, "create_job", create)
+    assert asyncio.run(routes._enqueue_canonical_cutout(
+        env.conn, user_id="u", project_id="p", product=env.store.product))
+    assert seen["payload"] == {"mode": "canonical_cutout"}
+    assert seen["idempotency_key"] == canonical_reference.preprocess_idempotency_key("p", env.store.product)
+
+
+def test_required_job_on_off_worker_waits_without_provider_or_source_reads(env, monkeypatch):
+    env.settings.product_tidy = "off"
+    env.job["payload"] = {"mode": "canonical_cutout", "productTidyRequired": True, "retry": 3}
+    renderer(monkeypatch, env)
+
+    async def forbidden(*_a, **_kw):
+        pytest.fail("an incapable worker must release the job before source or provider work")
+
+    monkeypatch.setattr(repo, "get_product", forbidden)
+    monkeypatch.setattr(worker.sam_client, "segment_garment", forbidden)
+    run(env)
+    assert env.store.render_calls == 0
+    assert env.store.finalized["product_tidy_capable"] is False
+    assert env.store.finalized["result"] == {"state": "pending", "reason": "product_tidy_worker_required"}
+    assert env.job["payload"]["retry"] == 3
+
+
+@pytest.mark.parametrize("status", ["pending", "running"])
+def test_on_enqueue_upgrades_same_photo_active_ordinary_job(env, monkeypatch, status):
+    import app.routes as routes
+    old_key = canonical_reference.preprocess_idempotency_key("p", env.store.product)
+    active = dict(id="active", user_id="u", project_id="p", status=status,
+                  idempotency_key=old_key, payload={"mode": "canonical_cutout", "retry": 2})
+
+    async def create(_conn, **kw):
+        return active.copy(), False
+
+    async def upgrade(_conn, **kw):
+        assert kw["job_id"] == "active"
+        assert kw["user_id"] == "u" and kw["project_id"] == "p"
+        assert old_key in kw["compatible_keys"]
+        active["payload"]["productTidyRequired"] = True
+        active["idempotency_key"] = kw["idempotency_key"]
+        return True
+
+    monkeypatch.setattr(repo, "create_job", create)
+    monkeypatch.setattr(repo, "require_product_tidy_job", upgrade, raising=False)
+    assert asyncio.run(routes._enqueue_canonical_cutout(
+        env.conn, user_id="u", project_id="p", product=env.store.product, tidy_enabled=True))
+    assert active["payload"] == {"mode": "canonical_cutout", "retry": 2, "productTidyRequired": True}
+    assert active["idempotency_key"] == old_key + ":product-tidy-v1-qwen:required-v2"
+
+
+def test_on_enqueue_retries_if_ordinary_job_finishes_before_upgrade(env, monkeypatch):
+    import app.routes as routes
+    old_key = canonical_reference.preprocess_idempotency_key("p", env.store.product)
+    created = []
+
+    async def create(_conn, **kw):
+        created.append(kw)
+        if len(created) == 1:
+            return dict(id="old", status="running", idempotency_key=old_key,
+                        payload={"mode": "canonical_cutout"}), False
+        return dict(id="new", **kw), True
+
+    async def finished(*_a, **_kw):
+        return None
+
+    monkeypatch.setattr(repo, "create_job", create)
+    monkeypatch.setattr(repo, "require_product_tidy_job", finished, raising=False)
+    assert asyncio.run(routes._enqueue_canonical_cutout(
+        env.conn, user_id="u", project_id="p", product=env.store.product, tidy_enabled=True))
+    assert len(created) == 2
+    assert created[1]["payload"]["productTidyRequired"] is True
+
+
+def test_on_enqueue_does_not_rename_another_photo_active_job(env, monkeypatch):
+    import app.routes as routes
+    active = dict(id="other-photo", status="running", idempotency_key="p:sam_preprocess:another-digest",
+                  payload={"mode": "canonical_cutout"})
+    before = copy.deepcopy(active)
+
+    async def create(_conn, **kw):
+        return active, False
+
+    async def incompatible(*_a, **_kw):
+        return False
+
+    monkeypatch.setattr(repo, "create_job", create)
+    monkeypatch.setattr(repo, "require_product_tidy_job", incompatible, raising=False)
+    asyncio.run(routes._enqueue_canonical_cutout(
+        env.conn, user_id="u", project_id="p", product=env.store.product, tidy_enabled=True))
+    assert active == before
 
 
 def test_tidy_asset_identity_is_deterministic_and_scoped():
@@ -483,6 +586,8 @@ def test_visuals_never_downloads_images_and_off_never_queries_tidy(env, monkeypa
     def forbidden(*_):
         pytest.fail("GET visuals must not download original, canonical, or tidy bytes")
     env.r2.get_bytes = forbidden
+    monkeypatch.setattr(repo, "create_job", forbidden)
+    monkeypatch.setattr(repo, "require_product_tidy_job", forbidden)
     if not enabled:
         from app.services import product_tidy
         monkeypatch.setattr(product_tidy, "asset_id", forbidden)
