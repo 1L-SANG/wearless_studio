@@ -61,10 +61,11 @@ def test_judge_gate_sends_single_image_and_model_override(monkeypatch):
                             **kwargs):
         sent.update(prompt=prompt, images=images, schema=schema, models=models)
         assert kwargs["require_complete_envelope"] is True
+        assert kwargs["timeout_seconds"] == 120
         return {"verdict": "untucked", "confidence": 0.9}, "gemini"
 
     monkeypatch.setattr(mannequin_untuck, "analyze_with_fallback", fake_fallback)
-    s = types.SimpleNamespace(mannequin_untuck_gate_model="gemini-3.5-flash-lite")
+    s = make_settings(mannequin_untuck_gate_model="gemini-3.5-flash-lite")
     cut = mj.InlineImage("image/png", b"cut")
     out = asyncio.run(mannequin_untuck.judge_gate(s, cut))
     assert out == {"verdict": "untucked", "confidence": 0.9}
@@ -73,7 +74,7 @@ def test_judge_gate_sends_single_image_and_model_override(monkeypatch):
     assert "untucked" in sent["prompt"] and "tucked" in sent["prompt"]
 
     sent.clear()
-    s = types.SimpleNamespace(mannequin_untuck_gate_model="")
+    s = make_settings(mannequin_untuck_gate_model="")
     asyncio.run(mannequin_untuck.judge_gate(s, cut))
     assert sent["models"] is None, "전용 모델 미설정이면 정본 텍스트 모델 그대로"
 

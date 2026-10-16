@@ -1412,7 +1412,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
 
 
 async def _gen_copy(app, job, ai_blocks, product, analysis):
-    """페이지 단위 AG-02 생성과 AG-03 검수를 전체 30초 상한 안에서 수행한다."""
+    """페이지 단위 AG-02 생성과 AG-03 검수를 카피 단계 상한 안에서 수행한다."""
     s = app.state.settings
 
     async def _within_budget():
@@ -1470,11 +1470,11 @@ async def _gen_copy(app, job, ai_blocks, product, analysis):
         return copy_results, None
 
     try:
-        return await asyncio.wait_for(_within_budget(), timeout=s.analysis_timeout_seconds)
+        return await asyncio.wait_for(_within_budget(), timeout=s.page_copy_timeout_seconds)
     except TimeoutError:
         log.warning(
             "page copy exceeded %.1fs for job %s; continuing without copy",
-            s.analysis_timeout_seconds, job["id"],
+            s.page_copy_timeout_seconds, job["id"],
         )
         return [], None
 

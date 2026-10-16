@@ -157,6 +157,7 @@ async def verdict(
     ctx = fit_context(product, analysis)
     raw, _provider = await analyze_with_fallback(
         settings, build_prompt(ctx), [base_image, generated_image], qc_schema(),
+        timeout_seconds=settings.background_ai_timeout_seconds,
         require_complete_envelope=True)
     if not isinstance(raw, dict):
         raise VisionError("base_fidelity_qc: 응답이 객체가 아님")

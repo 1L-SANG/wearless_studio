@@ -149,7 +149,8 @@ def test_build_prompt_lists_only_the_points_it_is_given():
 def test_generate_sends_only_dictionary_misses_to_the_model(monkeypatch):
     seen = []
 
-    async def spy(_settings, prompt, _schema):
+    async def spy(_settings, prompt, _schema, *, timeout_seconds=None):
+        assert timeout_seconds == 120
         seen.append(prompt)
         return ({"items": [{"point": "빈티지한 워싱감", "desc": "물 빠진 듯한 색이 자연스럽게 번집니다."}]}, "spy")
 

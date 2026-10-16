@@ -69,7 +69,8 @@ def test_validate_revise_without_text_falls_back_to_pass():
 def test_review_orchestrates(monkeypatch):
     items = [{"textId": "b1:headline", "blockId": "b1", "text": "완벽 방수"}]
 
-    async def fake_complete(_settings, prompt, _schema):
+    async def fake_complete(_settings, prompt, _schema, *, timeout_seconds=None):
+        assert timeout_seconds == 120
         assert "CONFIRMED FACTS" in prompt
         return ({"results": [
             {"textId": "b1:headline", "verdict": "revise",

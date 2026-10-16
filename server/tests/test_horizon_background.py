@@ -287,7 +287,8 @@ def test_ordinary_plate_scene_judge_keeps_original_prompt(monkeypatch):
     from pathlib import Path
     seen = {}
     async def judge(settings, prompt, images, schema, *, system_prompt=None,
-                    require_complete_envelope=False):
+                    require_complete_envelope=False, timeout_seconds=None):
+        assert timeout_seconds == 120
         seen.update(prompt=prompt, policy=system_prompt, complete=require_complete_envelope)
         return {"verdict": "pass"}, "test"
     monkeypatch.setattr(image_qc, "analyze_with_fallback", judge)

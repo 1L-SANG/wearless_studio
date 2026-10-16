@@ -243,7 +243,8 @@ async def generate(settings: Settings, points: list, product: dict, analysis: di
         # 않도록 로그를 남긴다.
         try:
             raw, _provider = await complete_json(
-                settings, build_prompt(misses, product, analysis), copy_schema())
+                settings, build_prompt(misses, product, analysis), copy_schema(),
+                timeout_seconds=settings.background_ai_timeout_seconds)
             hits.update(validate(raw, misses))
         except Exception as e:  # VisionError 포함 — 카피는 게이트 아님
             log.warning("feature copy generation failed: %r", e)

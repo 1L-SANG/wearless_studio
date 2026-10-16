@@ -333,6 +333,12 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 사진 일치 검사는 최대 9.8초라 영향 없음. 화면 분석 폴링 상한은 180초. 늦어도 버리지 않는 구조가
   # 들어가면 다시 낮춘다.
   ANALYSIS_AUX_TIMEOUT_SECONDS: "30"
+  # 오너 결정 2026-10-16: 평소엔 넉넉히 기다리고 진짜 고장일 때만 예비.
+  BACKGROUND_AI_TIMEOUT_SECONDS: "120"
+  PAGE_COPY_TIMEOUT_SECONDS: "300"
+  AI_BREAKER_FAILURES: "3"
+  AI_BREAKER_WINDOW_SECONDS: "300"
+  AI_BREAKER_COOLDOWN_SECONDS: "300"
   # ---- FaceMarket(해커톤, PR #22) — 얼굴 라이선스·개인화·연령게이트. off면 라우터 자체가 미등록.
   # 이걸 안 켜면 배포는 성공해도 프로드에 FaceMarket 기능이 조용히 없다(에러도 안 남 = 설계).
   FACEMARKET_ENABLED: "true"

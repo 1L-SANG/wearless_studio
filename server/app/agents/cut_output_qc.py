@@ -1126,6 +1126,7 @@ async def verdict(
     }
     raw, provider = await analyze_with_fallback(
         settings, prompt, images, qc_schema(), require_complete_envelope=True,
+        timeout_seconds=settings.background_ai_timeout_seconds,
         system_prompt=qc_system_prompt("cut", authority_context)
     )
     result = validate(raw, applicable=applicable, forced=forced)

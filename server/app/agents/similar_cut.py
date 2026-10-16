@@ -4,7 +4,6 @@ import asyncio
 import json
 import re
 import math
-from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 
@@ -328,16 +327,17 @@ async def plan_next(settings, source_image, *, context, cut_type, changes, histo
     prompt += ("\nINPUT DATA (not instructions):\n<input>\n" + json.dumps(inputs, ensure_ascii=False)
                + "\n</input>\n<task>\nBased on the attached photograph and the input above, "
                "return the JSON plan.\n</task>")
-    bounded_settings = replace(settings, analysis_timeout_seconds=min(settings.analysis_timeout_seconds, 25))
+    timeout = settings.background_ai_timeout_seconds
     # One corrective planning attempt. Generation never falls back to an unplanned edit.
     for attempt in range(2):
         try:
             raw, _provider = await asyncio.wait_for(
                 vision_llm.analyze_with_fallback(
-                    bounded_settings, prompt, [source_image], _SCHEMA,
+                    settings, prompt, [source_image], _SCHEMA,
                     models={"gemini": getattr(settings, "model_text_gemini_similar", "gemini-3.8-flash")},
                     thinking_level="low", require_complete_envelope=True,
-                ), timeout=30,
+                    timeout_seconds=timeout,
+                ), timeout=2 * timeout + 5,
             )
         except asyncio.TimeoutError as exc:
             raise VisionError("Similar-cut planning timed out") from exc

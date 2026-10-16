@@ -121,7 +121,8 @@ def test_build_prompt_does_not_leak_unknown_enum_tokens():
 def test_generate_calls_model_once_for_page_and_maps_in_storyboard_order(monkeypatch):
     calls = []
 
-    async def fake_complete(_settings, prompt, schema):
+    async def fake_complete(_settings, prompt, schema, *, timeout_seconds=None):
+        assert timeout_seconds == 120
         calls.append((prompt, schema))
         return ({"blocks": [
             {"blockId": "blk_3", "headline": "핀턱을 담은 허리선"},
@@ -147,7 +148,8 @@ def test_generate_calls_model_once_for_page_and_maps_in_storyboard_order(monkeyp
 def test_generate_retries_once_after_invalid_json_result(monkeypatch):
     calls = 0
 
-    async def fake_complete(_settings, _prompt, _schema):
+    async def fake_complete(_settings, _prompt, _schema, *, timeout_seconds=None):
+        assert timeout_seconds == 120
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -207,7 +209,8 @@ def test_headline_violations_detects_copy_rules(headline, reason):
 def test_generate_repairs_only_invalid_blocks_once_then_leaves_them_empty(monkeypatch):
     prompts = []
 
-    async def fake_complete(_settings, prompt, _schema):
+    async def fake_complete(_settings, prompt, _schema, *, timeout_seconds=None):
+        assert timeout_seconds == 120
         prompts.append(prompt)
         if len(prompts) == 1:
             return ({"blocks": [
@@ -233,7 +236,8 @@ def test_generate_repairs_only_invalid_blocks_once_then_leaves_them_empty(monkey
 def test_generate_accepts_valid_repair_for_invalid_block(monkeypatch):
     calls = 0
 
-    async def fake_complete(_settings, _prompt, _schema):
+    async def fake_complete(_settings, _prompt, _schema, *, timeout_seconds=None):
+        assert timeout_seconds == 120
         nonlocal calls
         calls += 1
         if calls == 1:

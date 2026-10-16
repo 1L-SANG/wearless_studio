@@ -223,6 +223,7 @@ async def verdict(
     prompt = build_prompt(len(product_images), matching, axis_spec, match_role=match_role)
     raw, _provider = await analyze_with_fallback(
         settings, prompt, images, qc_schema(axis_spec, matching=matching),
+        timeout_seconds=settings.background_ai_timeout_seconds,
         require_complete_envelope=True)
     return validate(raw, axis_spec, matching=matching)
 

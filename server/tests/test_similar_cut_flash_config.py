@@ -7,6 +7,7 @@ import pytest
 import yaml
 
 from app.agents import similar_cut
+from app.agents import vision_llm
 from app.agents.gemini_image import InlineImage
 from app.config import load_settings
 from conftest import make_settings
@@ -40,10 +41,10 @@ def _plan():
 
 
 @pytest.mark.parametrize("model", ["gemini-3.8-flash", "gemini-test-similar"])
-@pytest.mark.parametrize("timeout", [10.0, 60.0])
+@pytest.mark.parametrize("timeout", [120.0, 137.0])
 def test_planner_passes_dedicated_model_and_low_thinking(monkeypatch, model, timeout):
     monkeypatch.setenv("MODEL_ROUTING_TEXT_GEMINI_SIMILAR", model)
-    settings = replace(load_settings(), analysis_timeout_seconds=timeout,
+    settings = replace(load_settings(), background_ai_timeout_seconds=timeout,
                        model_text_gemini="gemini-3.1-pro-preview",
                        model_text="gpt-test-fallback", analysis_model_order="gemini,gpt")
     source = InlineImage("image/jpeg", b"source")
@@ -62,18 +63,20 @@ def test_planner_passes_dedicated_model_and_low_thinking(monkeypatch, model, tim
         "models": {"gemini": model},
         "thinking_level": "low",
         "require_complete_envelope": True,
+        "timeout_seconds": timeout,
     }
-    assert bounded_settings.analysis_timeout_seconds == min(timeout, 25)
+    assert bounded_settings is settings
     assert bounded_settings.model_text_gemini == settings.model_text_gemini
     assert bounded_settings.model_text == settings.model_text
     assert bounded_settings.analysis_model_order == "gemini,gpt"
-    assert settings.analysis_timeout_seconds == timeout
+    assert settings.background_ai_timeout_seconds == timeout
 
 
 def test_planner_uses_flash_with_legacy_settings_without_dedicated_field(monkeypatch):
     @dataclass(frozen=True)
     class LegacySettings:
         analysis_timeout_seconds: float = 60.0
+        background_ai_timeout_seconds: float = 120.0
         model_text_gemini: str = "gemini-3.1-pro-preview"
 
     analyze = AsyncMock(return_value=(_plan(), "gemini"))
@@ -88,6 +91,40 @@ def test_planner_uses_flash_with_legacy_settings_without_dedicated_field(monkeyp
     analyze.assert_awaited_once()
     assert analyze.await_args.kwargs["models"] == {"gemini": "gemini-3.8-flash"}
     assert analyze.await_args.kwargs["thinking_level"] == "low"
+
+
+@pytest.mark.parametrize("budget", [120, 137])
+def test_planner_outer_budget_accommodates_both_provider_attempts(monkeypatch, budget):
+    elapsed = [0]
+    calls = []
+
+    async def primary(settings, model, prompt, images, schema, timeout, **kwargs):
+        elapsed[0] += timeout
+        calls.append(("gemini", timeout))
+        raise TimeoutError
+
+    async def fallback(settings, model, prompt, images, schema, timeout, **kwargs):
+        elapsed[0] += timeout
+        calls.append(("gpt", timeout))
+        return _plan()
+
+    async def within_budget(coro, *, timeout):
+        assert timeout == 2 * budget + 5
+        result = await coro
+        assert elapsed[0] < timeout
+        return result
+
+    for name, func in (("gemini", primary), ("gpt", fallback)):
+        _, model_of, key_of = vision_llm._PROVIDERS[name]
+        monkeypatch.setitem(vision_llm._PROVIDERS, name, (func, model_of, key_of))
+    monkeypatch.setattr(similar_cut.asyncio, "wait_for", within_budget)
+    settings = make_settings(gemini_api_key="test", openai_api_key="test",
+                             analysis_model_order="gemini,gpt", background_ai_timeout_seconds=budget)
+    result = asyncio.run(similar_cut.plan_next(
+        settings, InlineImage("image/png", b"source"),
+        context={}, cut_type="styling", changes=[], history=[]))
+    assert result == _plan()
+    assert calls == [("gemini", budget), ("gpt", budget)]
 
 
 @pytest.mark.parametrize("service", ["api", "detail-worker"])

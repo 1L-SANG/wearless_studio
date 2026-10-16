@@ -55,6 +55,7 @@ async def judge_gate(settings, cut_image) -> dict:
     model = getattr(settings, "mannequin_untuck_gate_model", "") or ""
     raw, _provider = await analyze_with_fallback(
         settings, prompt, [cut_image], gate_schema(),
+        timeout_seconds=settings.background_ai_timeout_seconds,
         models={"gemini": model} if model else None,
         require_complete_envelope=True)
     return validate_gate(raw)
