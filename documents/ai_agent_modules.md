@@ -136,13 +136,15 @@ OPENAI_API_KEY=   # detail_cut GPT Image 2 + OpenAI text 폴백
 
 **2026-10-10 옛 수정 경로 삭제(ADR-0016 개정):** AG-07은 비슷한 컷 계획을 실행할 때만 쓴다. 변경값(방향, 샷, 포즈, 표정, 배경)을 프롬프트로 바꿔 한 장을 다시 그리던 옛 경로(`cut_vary_v1.txt`, 빈 변경의 제품컷 `이미지 수정`, 배경 참조 `refBg`)는 삭제했다. 원본 검수 레시피가 있는 디테일컷의 `같은 부위 다시 촬영`은 AG-07이 아니라 디테일 전용 경로(`detail_shot_runtime`, ADR-0012)로 처리한다. 그 밖의 vary 요청은 라우트가 400 `vary_unsupported`로 거절한다.
 
+**2026-10-15 조건 표 계획(ADR-0016 개정):** 계획은 전용 모델 설정 `MODEL_ROUTING_TEXT_GEMINI_SIMILAR`(기본 `gemini-3.8-flash`, low)로 원본 상태 장부를 먼저 채우고 서버 동작 표에서 조건이 맞는 자세·팔·손 동작 하나와 보조 시선을 고른다. 서버가 조건을 검사하고 그대로 둘 것 목록을 만든다. 생성 프롬프트는 `similar_cut_generate_v2.txt`이며 새 자세에 맞춰 옷 주름만 새로 그린다.
+
 | | |
 |---|---|
 | tier | `image_high` |
 | 호출 시점 | 에디터 AI 탭 `현재 이미지 수정`의 `비슷한 컷 생성`(`generateImage(mode:'vary', variationMode:'similar')`, PL-6), 콘티 비슷한 컷의 상세페이지 생성(PL-4, ADR-0016) |
 | 입력 | 최초 원본 사진 한 장과 저장된 비슷한 컷 계획. VaryRequest(계약 §6)는 `{ source: { src, cutType }, variationMode: 'similar' }`이며 변경값과 배경 참조는 받지 않는다 |
 | 출력 | `{ imageUrl, cutType }`. `WardrobeImage`로 의류 탭에 추가하고 원본은 보존(PRD §10.8) |
-| 프롬프트 | `similar_cut_generate_v1.txt`(계획 실행). 인물, 옷, 장소 동일성 유지 |
+| 프롬프트 | 계획 `similar_cut_plan_v2.txt`, 생성 `similar_cut_generate_v2.txt`(2026-10-15, 이전 v1). 인물, 옷, 장소, 방향, 앉고 선 상태 유지, 자세와 주름은 변화 |
 
 ---
 

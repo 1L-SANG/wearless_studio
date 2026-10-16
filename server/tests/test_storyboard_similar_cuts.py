@@ -522,3 +522,113 @@ def test_reclaimed_job_keeps_saved_action_without_planning_again():
         block_id="next", metadata={**saved, "plan": plan("proposed")}))
     assert result["plan"] == plan("saved")
     assert len(conn.calls) == 1
+
+
+def test_condition_plans_keep_fields_through_reservation_assets_and_checkpoint_retry(monkeypatch):
+    from test_similar_cut_conditions import new_plan, choice
+    app, seen = setup_generation(monkeypatch)
+    db = _IntentDB()
+    db.install(monkeypatch)
+    actions = []
+
+    async def next_plan(settings, image, **kwargs):
+        history = copy.deepcopy(kwargs["history"])
+        actions.append(history)
+        return new_plan(choice=choice(selected="imageRight" if history else "imageLeft"))
+
+    monkeypatch.setattr(similar_cut, "plan_next", next_plan)
+    prepared = [item(source()), item(child("first")), item(child("second"))]
+
+    async def run(jid):
+        job = {**worker_job(), "id": jid}
+        store = await cut_checkpoints.CutCheckpointStore.open(app, job, identity="NONE")
+        return await dpj._gen_cuts(app, job, prepared, {"clothingType": "top"}, {}, cut_checkpoints=store)
+
+    first = asyncio.run(run("j1"))
+    assert [r["blockId"] for r in first[0]] == ["original", "first", "second"]
+    assert actions[1][0]["plan"] == new_plan()
+    for generated, selected in zip(first[1][1:], ("imageLeft", "imageRight")):
+        expected = new_plan(choice=choice(selected=selected))
+        assert generated["metadata"]["similar_cut"]["plan"] == expected
+    assert len(seen["saved_plans"]) == 2
+    assert all("fabricResponse" in record["plan"] for record in seen["saved_plans"].values())
+    db.error_jobs.add("j1")
+    resumed = asyncio.run(run("j2"))
+    assert len(actions) == len(seen["vary"]) == 2
+    assert [a["metadata"]["similar_cut"]["plan"] for a in resumed[1][1:]] == [
+        a["metadata"]["similar_cut"]["plan"] for a in first[1][1:]]
+
+
+@pytest.mark.parametrize("prompt_name", ["similar_cut_plan_v2.txt", "similar_cut_generate_v2.txt"])
+def test_storyboard_similar_fingerprint_tracks_v2_prompt_files(monkeypatch, tmp_path, prompt_name):
+    from test_similar_cut_conditions import new_plan
+    app, seen = setup_generation(monkeypatch)
+    for path in similar_cut._PROMPTS.glob("similar_cut_*.txt"):
+        (tmp_path / path.name).write_bytes(path.read_bytes())
+    monkeypatch.setattr(similar_cut, "_PROMPTS", tmp_path)
+    calls = []
+    async def next_plan(*args, **kwargs):
+        calls.append(1)
+        return new_plan()
+    monkeypatch.setattr(similar_cut, "plan_next", next_plan)
+    prepared = [item(source()), item(child())]
+    for iteration in range(2):
+        results, *_ = asyncio.run(dpj._gen_cuts(app, worker_job(), prepared, {"clothingType": "top"}, {}))
+        assert len(results) == 2
+        (tmp_path / prompt_name).write_text("changed v2 prompt")
+    assert len(calls) == 2
+    assert len(seen["saved_plans"]) == 2
+
+
+@pytest.mark.parametrize("retry", ["same_job", "error_job", "current_before_other_v2", "changed_context"])
+def test_v1_saved_storyboard_plan_and_checkpoint_survive_v2_prompt_upgrade(monkeypatch, retry):
+    app, seen = setup_generation(monkeypatch)
+    db = _IntentDB()
+    db.install(monkeypatch)
+    digest = dpj._cut_checkpoints._digest
+    legacy_hashes = {
+        "similar_cut_plan_v1.txt": "451d642034771085774fcc77a5852a4d73a11e7611af4e5a0470118307783cac",
+        "similar_cut_generate_v1.txt": "53436a14e2c54e74da1ef3b1ca4d5f9ec54d761f923d0464b860f7fbf9e749e7",
+    }
+    def pre_upgrade_digest(value):
+        if isinstance(value, dict) and value.get("family") == "storyboard-similar-v1":
+            value = {**value, "prompts": legacy_hashes}
+        return digest(value)
+    monkeypatch.setattr(dpj._cut_checkpoints, "_digest", pre_upgrade_digest)
+    prepared = [item(source()), item(child())]
+
+    async def run(jid, metadata=None, context=None):
+        job = {**worker_job(), "id": jid, "metadata": metadata or {}}
+        store = await cut_checkpoints.CutCheckpointStore.open(app, job, identity="NONE")
+        return await dpj._gen_cuts(app, job, prepared, {"clothingType": "top"}, {},
+                                   cut_checkpoints=store, similar_context=context)
+
+    first = asyncio.run(run("j1"))
+    assert len(first[0]) == 2
+    legacy_record = next(iter(seen["saved_plans"].values()))
+    monkeypatch.setattr(dpj._cut_checkpoints, "_digest", digest)
+    metadata = {"storyboardSimilarPlans": {"next": legacy_record}} if retry in {"same_job", "current_before_other_v2"} else {}
+    if retry == "current_before_other_v2":
+        lookup = repo.get_storyboard_similar_cut_plan
+        reserve = repo.reserve_storyboard_similar_cut_plan
+        async def competing_lookup(conn, uid, pid, jid, block_id, fingerprint):
+            if fingerprint != legacy_record["fingerprint"]:
+                return {"fingerprint": fingerprint, "sourceBlockId": "original", "plan": plan("other_job")}
+            return await lookup(conn, uid, pid, jid, block_id, fingerprint)
+        async def fenced_reserve(conn, *, metadata, **kwargs):
+            if metadata["fingerprint"] != legacy_record["fingerprint"]:
+                raise ValueError("similar_cut_lineage_changed")
+            return await reserve(conn, metadata=metadata, **kwargs)
+        monkeypatch.setattr(repo, "get_storyboard_similar_cut_plan", competing_lookup)
+        monkeypatch.setattr(repo, "reserve_storyboard_similar_cut_plan", fenced_reserve)
+    db.error_jobs.add("j1")
+    resumed = asyncio.run(run("j2" if retry in {"error_job", "changed_context"} else "j1", metadata,
+                             {"name": "changed garment context"} if retry == "changed_context" else None))
+    assert [r["blockId"] for r in resumed[0]] == ["original", "next"]
+    if retry == "changed_context":
+        assert len(seen["plans"]) == len(seen["vary"]) == 2
+        assert len(seen["saved_plans"]) == 2
+        return
+    assert len(seen["plans"]) == len(seen["vary"]) == 1
+    assert resumed[1][1]["metadata"]["similar_cut"]["plan"] == first[1][1]["metadata"]["similar_cut"]["plan"]
+    assert len(seen["saved_plans"]) == 1

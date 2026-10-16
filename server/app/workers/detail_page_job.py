@@ -1071,7 +1071,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 cut_qc=cut_qc, cut_warnings=cut_warnings,
                 neck_repair_metadata=neck_repair_metadata, face_pass_outcome=face_pass_outcome)
 
-    def _similar_fingerprint(block, image, root_asset, context, previous_block_ids):
+    def _similar_fingerprint(block, image, root_asset, context, previous_block_ids, *, legacy=False):
+        prompt_names = (("similar_cut_plan_v1.txt", "similar_cut_generate_v1.txt") if legacy else
+                        ("similar_cut_plan_v2.txt", "similar_cut_generate_v2.txt"))
         return _cut_checkpoints._digest({
             "family": "storyboard-similar-v1", "blockId": str(block["id"]),
             "sourceBlockId": block["similarSourceBlockId"],
@@ -1084,10 +1086,19 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             "imageSize": s.detail_cut_image_size or s.mannequin_image_size,
             "recipe": _cut_checkpoints._final_recipe(s),
             "prompts": {name: hashlib.sha256((similar_cut._PROMPTS / name).read_bytes()).hexdigest()
-                        for name in ("similar_cut_plan_v1.txt", "similar_cut_generate_v1.txt")},
+                        for name in prompt_names},
         })
 
-    async def _one_similar(item, original, previous_block_ids, sibling_indexes):
+    def _legacy_similar_plan(candidate, fingerprint, source_id):
+        if (not isinstance(candidate, dict) or candidate.get("fingerprint") != fingerprint
+                or candidate.get("sourceBlockId") != source_id):
+            return False
+        try:
+            return "choice" not in similar_cut.validate_plan(candidate.get("plan"))
+        except VisionError:
+            return False
+
+    async def _one_similar(item, original, sibling_indexes):
         block = item[0]
         if original is None or isinstance(item, _SkippedCut):
             await _cut_failed(block, "similar_cut_source_failed")
@@ -1102,23 +1113,38 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         history = planned_actions.setdefault(root_asset["asset_id"], [])
         async with sem:
             await _emit(app.state.pool, job_id, "step", {"blockId": block["id"], "status": "cut_start"})
-            fingerprint = _similar_fingerprint(block, image, root_asset, context, previous_block_ids)
             if root_asset["asset_id"] not in saved_similar_plans:
                 # A later sibling may already be complete after an earlier planning failure.
                 # Protect every source-bound saved action before filling the missing plan.
                 saved_by_block = {}
+                job_metadata = job.get("metadata") or {}
+                own_plans = job_metadata.get("storyboardSimilarPlans") or {}
                 async with app.state.pool.connection() as conn:
                     for sibling_index in sibling_indexes:
                         sibling = prepared[sibling_index][0]
                         prior_ids = [str(prepared[i][0]["id"]) for i in previous_children[sibling_index]]
                         sibling_fingerprint = _similar_fingerprint(sibling, image, root_asset, context, prior_ids)
-                        candidate = await repo.get_storyboard_similar_cut_plan(
-                            conn, user_id, project_id, job_id, str(sibling["id"]), sibling_fingerprint)
+                        legacy_fingerprint = _similar_fingerprint(
+                            sibling, image, root_asset, context, prior_ids, legacy=True)
+                        own_saved = own_plans.get(str(sibling["id"]))
+                        # A reclaimed job's reservation wins over plans from other failed jobs,
+                        # even when those other jobs already used the new prompt fingerprint.
+                        if _legacy_similar_plan(own_saved, legacy_fingerprint, sibling["similarSourceBlockId"]):
+                            candidate, sibling_fingerprint = own_saved, legacy_fingerprint
+                        else:
+                            candidate = await repo.get_storyboard_similar_cut_plan(
+                                conn, user_id, project_id, job_id, str(sibling["id"]), sibling_fingerprint)
+                            if candidate is None:
+                                legacy_candidate = await repo.get_storyboard_similar_cut_plan(
+                                    conn, user_id, project_id, job_id, str(sibling["id"]), legacy_fingerprint)
+                                if _legacy_similar_plan(
+                                        legacy_candidate, legacy_fingerprint, sibling["similarSourceBlockId"]):
+                                    candidate, sibling_fingerprint = legacy_candidate, legacy_fingerprint
                         saved_by_block[str(sibling["id"])] = (
                             sibling_fingerprint, sibling["similarSourceBlockId"], candidate)
                 saved_similar_plans[root_asset["asset_id"]] = saved_by_block
             saved_by_block = saved_similar_plans[root_asset["asset_id"]]
-            saved = saved_by_block[str(block["id"])][2]
+            fingerprint, _source_id, saved = saved_by_block[str(block["id"])]
             protected_history = list(history)
             known_blocks = {str(entry["blockId"]) for entry in history} | {str(block["id"])}
             for sibling_id, (expected_fingerprint, source_id, candidate) in saved_by_block.items():
@@ -1245,8 +1271,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 if previous:
                     # Siblings plan in storyboard order, including a prior valid plan whose image failed.
                     await tasks_by_index[previous[-1]]
-                r = await _one_similar(
-                    item, original, [str(prepared[i][0]["id"]) for i in previous], children_by_source[source_index])
+                r = await _one_similar(item, original, children_by_source[source_index])
         except Exception as e:
             log.warning("AG-06 cut crashed for job %s block %s: %r; cut marked failed",
                         job_id, item[0].get("id"), e)

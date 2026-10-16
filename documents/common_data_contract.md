@@ -585,7 +585,7 @@ VaryRequest {                      // 캔버스에서 고른 사진으로 새 �
 
 최초 원본과 이력은 서버가 실제 자산에서 조회한다. 클라이언트의 `_similarCut`은 버린다. 서버 payload `_similarCut={version:1,rootAssetId,sourceAssetId}`의 root는 처음 선택한 원본, source는 이번에 선택한 사진이다. 파생 결과에서 다시 생성해도 root 이미지를 사용하며, 같은 사용자·프로젝트 소유와 삭제 여부를 접수·실행 시 재검증한다.
 
-동작 계획은 `jobs.metadata.similar_cut={version:1,rootAssetId,sourceAssetId,plan}`에 이미지 생성 전에 저장하고 결과 `assets.metadata.similar_cut`에도 보존한다. `plan`은 `actionKey, actionSummary, instructions, preserve[], avoid[]`다. 최근 12개 완료/예약 계획을 참고하고 실패·취소 작업은 제외한다. 저장 시 원본 단위 잠금과 이력 비교, 작업 lease를 확인하며 외부 AI 호출 동안 DB 연결을 잡지 않는다. 재시도는 이미 저장된 계획을 재사용한다. 계획 실패 시 B 방식으로 전환하지 않으며 기존 실패·크레딧 반환 계약을 따른다. DB 스키마 변경은 없다.
+동작 계획은 `jobs.metadata.similar_cut={version:1,rootAssetId,sourceAssetId,plan}`에 이미지 생성 전에 저장하고 결과 `assets.metadata.similar_cut`에도 보존한다. `plan`은 `actionKey, actionSummary, instructions, preserve[], avoid[]`를 기본으로 갖는다. 2026-10-15 개정(ADR-0016) 뒤 새 계획은 `sourceState`(원본 상태 장부), `choice={action, hand, target, secondary}`(서버 동작 표의 동작, 손은 `imageLeft`·`imageRight`·`both`·`none`, 보조 시선 또는 표정), `fabricResponse`(새 자세의 옷 주름 설명), `keepUnchanged[]`(서버가 장부로 만든 그대로 둘 것), `movingPart`(움직이는 부위를 역할로 부른 말)를 함께 저장한다. 이 필드가 없는 예전 계획도 이력으로 읽고 `actionKey`로만 반복을 비교한다. 반복은 같은 원본의 이전 계획과 `choice`의 동작, 손, 보조 시선 조합이 모두 같을 때로 본다. 최근 12개 완료/예약 계획을 참고하고 실패·취소 작업은 제외한다. 저장 시 원본 단위 잠금과 이력 비교, 작업 lease를 확인하며 외부 AI 호출 동안 DB 연결을 잡지 않는다. 재시도는 이미 저장된 계획을 재사용한다. 계획 실패 시 B 방식으로 전환하지 않으며 기존 실패·크레딧 반환 계약을 따른다. DB 스키마 변경은 없다.
 
 `editor_image`는 같은 중복 방지 키의 정규화한 요청 내용이 같으면 같은 작업을 돌려준다. 서버가 붙인 `_` 시작 필드는 비교에서 제외한다. 내용이 다르면 409 `idempotency_key_reused` "같은 요청 번호로 다른 내용이 왔어요. 다시 눌러 주세요."다. `mode='fill'`은 선택한 칸으로 비교하며 다른 키로 같은 칸의 진행 중 작업에 합류하는 동작을 유지한다.
 

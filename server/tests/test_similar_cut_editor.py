@@ -74,10 +74,13 @@ def test_route_similar_validates_before_reserving(client, make_token, monkeypatc
 
 
 @pytest.mark.parametrize("case", ["success", "planner_failure", "resume", "lease_lost", "conflict", "missing_root", "busy", "conflict_limit"])
-def test_similar_worker_plans_and_reserves_before_generation(monkeypatch, case):
+@pytest.mark.parametrize("plan_format", ["legacy", "conditions"])
+def test_similar_worker_plans_and_reserves_before_generation(monkeypatch, case, plan_format):
+    from test_similar_cut_conditions import new_plan
+    test_plan = new_plan() if plan_format == "conditions" else PLAN
     seen = {"plans": [], "generate": [], "saved": [], "failure": [], "connections": 0, "committed": False}
-    record = {"version": 1, "rootAssetId": ROOT, "sourceAssetId": CHILD, "plan": PLAN}
-    history = [{**record, "jobId": "previous-running", "plan": {**PLAN, "actionKey": "looking-away"}}]
+    record = {"version": 1, "rootAssetId": ROOT, "sourceAssetId": CHILD, "plan": test_plan}
+    history = [{**record, "jobId": "previous-running", "plan": {**test_plan, "actionKey": "looking-away"}}]
 
     async def lookup(conn, uid, pid, aid):
         if case == "missing_root" and aid == ROOT:
@@ -99,7 +102,7 @@ def test_similar_worker_plans_and_reserves_before_generation(monkeypatch, case):
         assert image.data == ROOT.encode()
         if case == "planner_failure":
             raise eij.VisionError("unavailable")
-        return PLAN
+        return test_plan
 
     async def reserve(conn, **kwargs):
         seen["saved"].append(kwargs)
@@ -118,7 +121,7 @@ def test_similar_worker_plans_and_reserves_before_generation(monkeypatch, case):
         assert seen["saved"], "Plan must be persisted and lease fenced before image generation"
         assert seen["committed"] and seen["connections"] == 0
         assert image.data == ROOT.encode()
-        assert kwargs["similar_plan"] == PLAN
+        assert kwargs["similar_plan"] == test_plan
         seen["generate"].append(kwargs)
         return b"generated", "image/png"
 

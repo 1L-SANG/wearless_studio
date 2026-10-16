@@ -10,6 +10,7 @@ from app.agents import similar_cut
 from app.agents.gemini_image import InlineImage
 from app.config import load_settings
 from conftest import make_settings
+from test_similar_cut_conditions import new_plan
 
 
 def test_similar_planner_settings_default_to_flash():
@@ -35,13 +36,7 @@ def test_similar_planner_env_is_independent_of_shared_text_model(monkeypatch, va
 
 
 def _plan():
-    return {
-        "actionKey": "hands_low",
-        "actionSummary": "손을 살짝 내리기",
-        "instructions": "Lower the hands slightly.",
-        "preserve": ["Keep the same garment."],
-        "avoid": ["Do not change the background."],
-    }
+    return new_plan()
 
 
 @pytest.mark.parametrize("model", ["gemini-3.8-flash", "gemini-test-similar"])
