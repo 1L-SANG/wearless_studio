@@ -1,11 +1,12 @@
 import asyncio
 import io
+import json
 from types import SimpleNamespace
 
 import cv2
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from app import image_usage
 from app.services import fal_api, fal_cutout, matching_flatlay, qwen_flatlay
@@ -24,6 +25,17 @@ def cutout(color=(40, 80, 120)):
     a[10:90, 25:75, :3] = color
     a[10:90, 25:75, 3] = 255
     return png(Image.fromarray(a))
+
+
+def white_sleeve_cutout():
+    image = Image.new("RGBA", (400, 500), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.polygon([(100, 60), (20, 120), (0, 230), (100, 250)],
+                 fill=(250, 250, 250, 255))
+    draw.polygon([(300, 60), (380, 120), (399, 230), (300, 250)],
+                 fill=(250, 250, 250, 255))
+    draw.rectangle((100, 60, 300, 480), fill=(40, 80, 120, 255))
+    return png(image)
 
 
 def test_canvas_centers_visible_garment_at_88_percent():
@@ -54,7 +66,7 @@ def test_soft_lab_translation_moves_only_garment_and_lightness_by_70_percent():
 
 
 @pytest.mark.parametrize("mask_fails", [False, True])
-def test_qwen_exact_payload_safe_fallback_grey_composite_and_stage(monkeypatch, mask_fails):
+def test_qwen_exact_payload_safe_fallback_grey_composite_and_stage(monkeypatch, caplog, mask_fails):
     calls = []
     generated = np.full((1024, 768, 3), 255, np.uint8)
     generated[100:924, 200:568] = (250, 250, 250) if mask_fails else (65, 90, 125)
@@ -81,7 +93,7 @@ def test_qwen_exact_payload_safe_fallback_grey_composite_and_stage(monkeypatch, 
     monkeypatch.setattr(fal_api, "fetch_image", fetch)
     monkeypatch.setattr(fal_cutout, "cutout_png", segment)
     settings = SimpleNamespace(matching_flatlay_provider="qwen", fal_key="test")
-    with image_usage.job_scope(job_id="j", stage="matching_cutout"):
+    with caplog.at_level("INFO"), image_usage.job_scope(job_id="j", stage="matching_cutout"):
         result = asyncio.run(matching_flatlay.render_thumbnail(None, settings=settings,
                              cutout_png=cutout((250, 250, 250)) if mask_fails else cutout(),
                              clothing_type="bottom"))
@@ -100,6 +112,8 @@ def test_qwen_exact_payload_safe_fallback_grey_composite_and_stage(monkeypatch, 
     a = np.array(Image.open(io.BytesIO(result.raw)))
     assert tuple(a[0, 0]) == (232, 232, 230)
     assert tuple(a[500, 300]) != (65, 90, 125), "garment was color corrected"
+    events = [json.loads(r.message) for r in caplog.records if r.name == "wearless.qwen_flatlay"]
+    assert len(events) == 1 and events[0]["mask_source"] == "sam3"
     thumb = Image.open(io.BytesIO(result.image))
     assert thumb.format == "JPEG" and max(thumb.size) == 512
 
@@ -155,3 +169,51 @@ def test_result_area_is_compared_in_prepared_canvas_coordinates(
         settings=SimpleNamespace(matching_flatlay_provider="qwen", fal_key="test"),
         cutout_png=reference, clothing_type=None))
     assert (result is not None) is accepted
+
+
+@pytest.mark.parametrize("reference", [cutout((110, 75, 40)), white_sleeve_cutout()],
+                         ids=["brown_garment", "white_sleeves"])
+def test_no_garment_mask_keeps_successful_cutout(monkeypatch, reference):
+    generated, _ = qwen_flatlay.prepare_canvas(reference)
+
+    async def run(settings, model, payload):
+        if model == fal_api.QWEN_MODEL:
+            return {"images": [{"url": "https://fake/generated.png"}]}
+        assert model == fal_api.SAM_MODEL
+        return {"masks": [], "scores": []}
+
+    async def fetch(url):
+        assert url == "https://fake/generated.png"
+        return generated
+
+    monkeypatch.setattr(fal_api, "run_model", run)
+    monkeypatch.setattr(fal_api, "fetch_image", fetch)
+    result = asyncio.run(matching_flatlay.render_thumbnail(None,
+        settings=SimpleNamespace(matching_flatlay_provider="qwen", fal_key="test"),
+        cutout_png=reference, clothing_type="top"))
+    assert result is None, "마스크가 없으면 흰 배색까지 보존한 기존 누끼를 유지한다"
+
+
+def _generated_result(monkeypatch, rgb, error):
+    async def run(*args):
+        return {"images": [{"url": "https://fake/generated.png"}]}
+
+    async def fetch(url):
+        return png(Image.fromarray(rgb))
+
+    async def segment(*args):
+        raise error
+
+    monkeypatch.setattr(fal_api, "run_model", run)
+    monkeypatch.setattr(fal_api, "fetch_image", fetch)
+    monkeypatch.setattr(fal_cutout, "cutout_png", segment)
+
+
+@pytest.mark.parametrize("error", [SamUnavailable("down"), ValueError("invalid mask image")])
+def test_second_segmentation_errors_propagate(monkeypatch, error):
+    generated = np.full((100, 100, 3), 255, np.uint8)
+    generated[10:90, 10:90] = (65, 90, 125)
+    _generated_result(monkeypatch, generated, error)
+    with pytest.raises(type(error)) as exc:
+        asyncio.run(qwen_flatlay.render(SimpleNamespace(fal_key="test"), cutout()))
+    assert exc.value is error

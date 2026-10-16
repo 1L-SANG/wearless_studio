@@ -111,6 +111,12 @@ class SamRetryPusher:
         if not sam_retry.within_revive_window(job):
             return False
         if not sam_retry.backoff_elapsed(job):
+            # fal 잡은 sam2 준비 상태와 무관하므로 정해진 백오프를 지킨다.
+            settings = getattr(getattr(self.app, "state", None), "settings", None)
+            provider_attr = ("matching_cutout_provider" if job["kind"] == "matching_cutout"
+                             else "sam_preprocess_provider")
+            if getattr(settings, provider_attr, "sam2") != "sam2":
+                return False
             # 백오프는 "sam2 가 언제 살아날지 모른다"를 대신하는 추측이었다. 살아난 걸 실제로
             # 확인했으면 더 기다릴 이유가 없다 — 예산(MAX_RETRIES)은 그대로 지킨다.
             # 실측(2026-08-27): 사다리가 15/60/90/120 이라 sam2 가 준비된 뒤에도 최대 80초를

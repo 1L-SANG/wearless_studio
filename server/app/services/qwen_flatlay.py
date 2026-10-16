@@ -3,12 +3,16 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
+import logging
 
 import cv2
 import numpy as np
 from PIL import Image
 
 from . import fal_api, fal_cutout, matching_cutout
+
+log = logging.getLogger("wearless.qwen_flatlay")
 
 PROMPT = (
     "Lay this garment out evenly on pure white with soft even light, smoothing creases "
@@ -91,10 +95,14 @@ async def render(settings, cutout_png: bytes) -> bytes:
     generated = await fal_api.fetch_image(body["images"][0]["url"])
     rgb = await asyncio.to_thread(_decode_rgb, generated)
     height, width = rgb.shape[:2]
-    # 실패는 render_thumbnail이 None으로 바꾼다. 색으로 배경을 추측하면 흰 옷도 지워진다.
+    # 마스크가 없으면 render_thumbnail이 기존 누끼를 유지한다.
+    # 흰 배경과 이어진 흰 소매도 사라질 수 있어 색으로 마스크를 추측하지 않는다.
     segmented = await fal_cutout.cutout_png(settings, generated)
     alpha = await asyncio.to_thread(_alpha, segmented, (width, height))
     result_area_fraction = float((alpha > 127).mean())
+    log.info(json.dumps({"provider": "fal", "model": fal_api.QWEN_MODEL,
+        "mask_source": "sam3", "source_area_fraction": source_area_fraction,
+        "result_area_fraction": result_area_fraction}))
     if source_area_fraction <= 0 or result_area_fraction < source_area_fraction * .5:
         raise ValueError("generated garment mask is too small")
     return await asyncio.to_thread(_composite, cutout_png, rgb, alpha)
