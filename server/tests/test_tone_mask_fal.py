@@ -176,12 +176,13 @@ def test_fal_prompts_png_and_cache(tone, monkeypatch, category, sub, prompt):
 
 @pytest.mark.parametrize("case,state", [("empty", "failed"), ("matching", "failed"),
     ("outage", "unavailable"), ("ready", "ready"), ("reference_outage", "unavailable")])
-def test_fal_worker_retains_status_and_guard(tone, monkeypatch, case, state):
+@pytest.mark.parametrize("local_provider", ["sam2", "fal"])
+def test_fal_worker_retains_status_and_guard(tone, monkeypatch, case, state, local_provider):
     from app.workers import editor_garment_mask_job as worker
     from conftest import fake_worker_app, worker_job
     masks = [] if case == "empty" else [_mask(SHAPE, COORD_BOX if case == "matching" else PRODUCT_BOX)]
     wire_fal(monkeypatch, masks, fail=case == "outage")
-    settings = SimpleNamespace(tone_mask_provider="fal", fal_key="test", mannequin_tone_editor="on",
+    settings = SimpleNamespace(tone_mask_provider=local_provider, fal_key="test", mannequin_tone_editor="on",
         sam_service_url=None, sam_internal_token=None, base_mannequin_women_asset_id="base",
         base_mannequin_men_asset_id="base")
     monkeypatch.setattr(worker, "load_settings", lambda: settings)
@@ -209,8 +210,10 @@ def test_fal_worker_retains_status_and_guard(tone, monkeypatch, case, state):
     if case == "reference_outage":
         del r2.objects["product"]
     app = fake_worker_app(settings, r2=r2)
-    asyncio.run(worker.run_editor_garment_mask_job(app, worker_job({"cutId": "A-1"})))
+    asyncio.run(worker.run_editor_garment_mask_job(app,
+        worker_job({"cutId": "A-1", "toneMaskProvider": "fal"})))
     assert finished["status"] == "done" and finished["result"]["state"] == state
+    assert finished["result"]["toneMaskProvider"] == "fal"
     assert sam_retry.job_is_retryable(finished) is (case in ("outage", "reference_outage"))
     if state == "ready":
         assert recorded["product_key"] == "product"
@@ -365,6 +368,7 @@ def test_reference_outage_can_retry_then_stops_after_recovery(monkeypatch):
     assert routes._tone_state_with_job({"status": "ready"}, previous)["status"] == "ready"
     # 성공하거나 예산을 소진하면 같은 상품 키로 더 실행하지 않는다.
     previous["result"]["state"] = "ready"
+    previous["result"]["toneMaskProvider"] = "fal"
     assert asyncio.run(enqueue())[0] is False
     previous["result"]["state"] = "unavailable"
     previous["payload"]["retry"] = sam_retry.MAX_RETRIES

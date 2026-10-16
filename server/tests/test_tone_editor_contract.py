@@ -168,7 +168,7 @@ def test_existing_cut_lazily_enqueues_the_same_free_mask_job(monkeypatch):
     assert created is True and conn.committed is True
     assert job == {"id": "mask-job"}, "합류한 잡 행이 화면 상태 판정에 필요하다"
     assert captured["kind"] == "editor_garment_mask"
-    assert captured["payload"] == {"cutId": "A-1"}
+    assert captured["payload"] == {"cutId": "A-1", "toneMaskProvider": "sam2"}
     assert captured["credits_reserved"] == 0
     assert egm.ALGORITHM_VERSION in captured["idempotency_key"]
 

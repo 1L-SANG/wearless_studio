@@ -2558,6 +2558,7 @@ async def _enqueue_editor_garment_mask(pool, s, *, user_id, project_id, cuts,
     """
     if getattr(s, "mannequin_tone_editor", "off") != "on":
         return
+    provider = getattr(s, "tone_mask_provider", "sam2")
     for cut in cuts:
         cut_id = (cut or {}).get("id")
         if not cut_id:
@@ -2567,9 +2568,10 @@ async def _enqueue_editor_garment_mask(pool, s, *, user_id, project_id, cuts,
                 await repo.create_job(
                     conn, user_id=user_id, project_id=project_id,
                     kind="editor_garment_mask",
-                    payload={"cutId": cut_id, "cutMetadata": cut_metadata},
+                    payload={"cutId": cut_id, "cutMetadata": cut_metadata,
+                             "toneMaskProvider": provider},
                     idempotency_key=editor_garment_mask.mask_job_key(
-                        project_id, cut_id, provider=getattr(s, "tone_mask_provider", "sam2")),
+                        project_id, cut_id, provider=provider),
                     credits_reserved=0, metadata={})
                 await conn.commit()
         except Exception:  # noqa: BLE001 - 마스크 큐잉 실패가 마네킹 생성을 되돌리지 않는다
