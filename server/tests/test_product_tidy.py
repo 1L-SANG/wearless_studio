@@ -1,5 +1,6 @@
 """Offline product display contract. All storage/provider boundaries stay in memory."""
 import asyncio
+import copy
 import hashlib
 import io
 from dataclasses import replace
@@ -8,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from PIL import Image
+from psycopg import OperationalError, errors
 
 from app import image_usage, repo
 from app.config import load_settings
@@ -61,10 +63,16 @@ class Cursor:
                 rows = [r for r in rows if r["id"] == params[0] and r["user_id"] == params[1]]
             elif "canonicaltype" in query:
                 assert "user_id = %s" in query and "sourceassetid" in query
-                owner, source_id, alias_id = params
+                if "product_tidy_input" in query:
+                    owner, project_id, source_id, alias_id = params
+                else:
+                    owner, source_id, alias_id = params
+                    project_id = None
                 assert source_id == alias_id
                 rows = [r for r in rows if r["user_id"] == owner
-                        and r.get("metadata", {}).get("canonicalType") == "canonical_cutout"
+                        and (r.get("metadata", {}).get("canonicalType") == "canonical_cutout"
+                             or project_id is not None and r.get("project_id") == project_id
+                             and r.get("metadata", {}).get("canonicalType") == "product_tidy_input")
                         and r["metadata"].get("view") == "Front"
                         and (r["metadata"].get("sourceAssetId") == source_id
                              or alias_id in r["metadata"].get("sourceAssetIds", []))]
@@ -77,6 +85,8 @@ class Cursor:
         elif query.startswith("insert into assets"):
             aid, uid, pid, source, bucket, key, mime, size, filename, meta = params
             if aid not in self.store.assets:
+                if any(row["r2_key"] == key for row in self.store.assets.values()):
+                    raise errors.UniqueViolation("assets_r2_key_key")
                 row = dict(id=aid, user_id=uid, project_id=pid, source=source,
                            r2_bucket=bucket, r2_key=key, mime_type=mime, byte_size=size,
                            metadata=meta.obj)
@@ -132,6 +142,8 @@ def env(monkeypatch):
     conn = Connection(store)
     r2 = SimpleNamespace(get_bytes=lambda key: store.objects[key],
                          put_bytes=lambda key, data, mime: store.objects.__setitem__(key, data),
+                         head=lambda key: {"size": len(store.objects[key]), "mime": "image/png"}
+                         if key in store.objects else None,
                          public_url=lambda key: f"https://images.wearless.kr/{key}")
     settings = SimpleNamespace(product_tidy="on", sam_preprocess_provider="sam2", r2_bucket="bucket")
     app = SimpleNamespace(state=SimpleNamespace(pool=SimpleNamespace(connection=lambda: conn),
@@ -266,6 +278,84 @@ def test_same_content_with_a_new_upload_id_reuses_tidy(env, monkeypatch):
     env.store.product["colors"][0]["images"][0]["id"] = "new-src"
     run(env)
     assert env.store.render_calls == 1 and visuals(env)["tidyStatus"] == "ready"
+
+
+def test_identical_photos_from_two_sellers_keep_separate_ready_tidy_results(env, monkeypatch):
+    from app.services import product_tidy
+
+    renderer(monkeypatch, env)
+    first_product = copy.deepcopy(env.store.product)
+    run(env)
+    first = visuals(env)
+    first_assets = copy.deepcopy(env.store.assets)
+
+    env.store.assets["src-2"] = dict(id="src-2", user_id="u2", project_id="p2",
+                                     source="upload", r2_key="raw-2", metadata={})
+    env.store.objects["raw-2"] = env.store.objects["raw"]
+    env.store.product["colors"][0]["images"][0]["id"] = "src-2"
+    env.job.update(user_id="u2", project_id="p2")
+    run(env)
+    second = asyncio.run(product_tidy.visuals(
+        env.conn, env.r2, env.settings, user_id="u2", project_id="p2",
+        product=env.store.product))["front"]
+    assert second["tidyStatus"] == "ready"
+    assert second["tidyUrl"].startswith("https://images.wearless.kr/users/u2/projects/p2/derived/")
+    assert second["tidyUrl"] != first["tidyUrl"]
+    assert second["cutoutUrl"] is None
+    assert env.store.render_calls == 2
+    assert all(env.store.assets[aid] == row for aid, row in first_assets.items())
+    display_input = next(row for row in env.store.assets.values()
+                         if row.get("user_id") == "u2"
+                         and row.get("metadata", {}).get("canonicalType") == "product_tidy_input")
+    assert display_input["r2_key"].startswith("users/u2/projects/p2/derived/")
+    assert not canonical_reference.is_current(
+        display_input["metadata"], source_asset_id="src-2",
+        source_hash=display_input["metadata"]["sourceHash"])
+
+    # The next generation can find its own display input and reuse the finished PNG.
+    run(env)
+    assert env.store.render_calls == 2
+    first_again = asyncio.run(product_tidy.visuals(
+        env.conn, env.r2, env.settings, user_id="u", project_id="p",
+        product=first_product))["front"]
+    assert first_again == first
+    env.settings.product_tidy = "off"
+    off = asyncio.run(product_tidy.visuals(
+        env.conn, env.r2, env.settings, user_id="u2", project_id="p2",
+        product=env.store.product))["front"]
+    assert off["tidyStatus"] == "off" and off["tidyUrl"] is None
+    assert off["cutoutStatus"] != "ready"
+
+
+def test_temporary_final_db_failure_retries_saved_png_without_another_generation(env, monkeypatch):
+    renderer(monkeypatch, env)
+    original = repo.create_asset
+    failed = False
+    writes = []
+    original_put = env.r2.put_bytes
+
+    def put(key, data, mime):
+        writes.append(key)
+        original_put(key, data, mime)
+
+    monkeypatch.setattr(env.r2, "put_bytes", put)
+
+    async def insert(*args, **kwargs):
+        nonlocal failed
+        if not failed and (kwargs.get("metadata") or {}).get("canonicalType") == "product_tidy":
+            failed = True
+            raise OperationalError("temporary DB outage")
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(repo, "create_asset", insert)
+    run(env)
+    assert sam_retry.job_is_retryable(env.store.latest)
+    assert visuals(env)["tidyStatus"] == "processing"
+    env.job["payload"] = {"retry": 1}
+    run(env)
+    assert visuals(env)["tidyStatus"] == "ready"
+    assert env.store.render_calls == 1
+    assert len(writes) == 1
 
 
 def test_processing_window_expires_and_terminal_failures_do_not_spin(env):

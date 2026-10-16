@@ -68,7 +68,8 @@ async def run_sam_preprocess_job(app, job: dict) -> None:
     if tidy_enabled:
         async with pool.connection() as conn:
             front_source, front_cutout = await product_tidy.load_front(
-                conn, user_id=user_id, product=product)
+                conn, user_id=user_id, product=product, project_id=project_id,
+                include_display_input=True)
         if front_cutout:
             recorded["Front"] = {"assetId": front_cutout["id"],
                                  "cutoutKey": front_cutout["r2_key"], "cached": True}
@@ -102,9 +103,11 @@ async def run_sam_preprocess_job(app, job: dict) -> None:
             if row:
                 recorded[slot] = {"assetId": row["id"], "cutoutKey": result.cutout_key,
                                   "cached": result.cached}
-                if tidy_enabled and slot == "Front":
-                    front_source = {"id": assets[slot]["id"], "hash": result.source_hash}
-                    front_cutout = {**row, "r2_key": result.cutout_key}
+            if tidy_enabled and slot == "Front":
+                front_source = {"id": assets[slot]["id"], "hash": result.source_hash}
+                # A foreign owner may hold the shared canonical key. The optional display
+                # path copies that verified result to this project, never their asset row.
+                front_cutout = {**(row or {}), "r2_key": result.cutout_key}
         await conn.commit()
 
     tidy = None
@@ -126,11 +129,12 @@ async def run_sam_preprocess_job(app, job: dict) -> None:
     if tidy_enabled:
         unavailable = (unavailable or "unavailable" in failed.values()
                        or bool(tidy and tidy["state"] == "unavailable"))
+    has_result = bool(recorded) or bool(tidy and tidy["state"] == "ready")
     state = ("unavailable" if unavailable
-             else "ready" if recorded and not failed
-             else "partial" if recorded
+             else "ready" if has_result and not failed
+             else "partial" if has_result
              else "failed")
     detail = {"state": state, "recorded": recorded, "failed": failed}
     if tidy is not None:
         detail["productTidy"] = tidy
-    await finish("done" if recorded or unavailable else "error", detail)
+    await finish("done" if has_result or unavailable else "error", detail)

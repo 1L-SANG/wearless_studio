@@ -57,7 +57,8 @@ async def bind_source(conn, *, user_id: str, asset_id: str, source_id: str,
             (source_id, asset_id, user_id, source_hash, source_id, source_id))
 
 
-async def load_front(conn, *, user_id: str, product: dict) -> tuple[dict | None, dict | None]:
+async def load_front(conn, *, user_id: str, product: dict, project_id: str | None = None,
+                     include_display_input: bool = False) -> tuple[dict | None, dict | None]:
     """Resolve the current upload ID and SAM's recorded hash using DB metadata only."""
     source_id = next((aid for view, aid in mannequin.base_color_images(product)
                       if view == "Front" and aid), None)
@@ -66,17 +67,62 @@ async def load_front(conn, *, user_id: str, product: dict) -> tuple[dict | None,
     source = await repo.get_asset_for_user(conn, user_id, source_id)
     if not source or not source.get("r2_key") or source.get("source") != "upload":
         return None, None
+    kinds = "metadata->>'canonicalType' = 'canonical_cutout'"
+    params = [user_id]
+    if include_display_input:
+        kinds = ("(" + kinds + " or (metadata->>'canonicalType' = 'product_tidy_input' "
+                 "and project_id = %s))")
+        params.append(project_id)
+    params.extend((source_id, source_id))
     async with conn.cursor() as cur:
         await cur.execute(
             "select id::text as id, r2_key, mime_type, byte_size, metadata from assets "
             "where user_id = %s and source = 'derived' and deleted_at is null "
-            "and metadata->>'canonicalType' = 'canonical_cutout' "
+            "and " + kinds + " "
             "and metadata->>'view' = 'Front' "
             "and (metadata->>'sourceAssetId' = %s or jsonb_exists(metadata->'sourceAssetIds', %s)) "
-            "order by created_at desc limit 1", (user_id, source_id, source_id))
+            "order by created_at desc limit 1", tuple(params))
         cutout = await cur.fetchone()
     return {"id": source_id, "key": source["r2_key"],
             "hash": ((cutout or {}).get("metadata") or {}).get("sourceHash")}, cutout
+
+
+def _png_size(image: bytes) -> tuple[int, int]:
+    with Image.open(io.BytesIO(image)) as decoded:
+        decoded.load()
+        if (decoded.format != "PNG" or decoded.mode != "RGBA"
+                or decoded.getchannel("A").getbbox() is None):
+            raise ValueError("invalid tidy PNG")
+        return decoded.size
+
+
+async def _owned_display_input(app, job: dict, source: dict, cutout: dict) -> dict:
+    """Copy a verified shared SAM result without borrowing another seller's asset row.
+
+    This metadata type is display-only: canonical generation consumers cannot load it.
+    """
+    uid, pid = job["user_id"], job["project_id"]
+    aid = str(uuid.uuid5(uuid.NAMESPACE_URL,
+                        f"{uid}:{pid}:display-input:{source['hash']}:{ALGORITHM_VERSION}"))
+    async with app.state.pool.connection() as conn:
+        existing = await repo.get_asset_for_user(conn, uid, aid)
+    if existing:
+        return existing
+    key = derived_key(uid, pid, aid, "png")
+    image = await asyncio.to_thread(app.state.r2.get_bytes, cutout["r2_key"])
+    width, height = await asyncio.to_thread(_png_size, image)
+    metadata = {"canonicalType": "product_tidy_input", "view": "Front",
+                "sourceAssetId": source["id"], "sourceHash": source["hash"],
+                "algorithmVersion": ALGORITHM_VERSION, "r2Key": key,
+                "width": width, "height": height}
+    await asyncio.to_thread(app.state.r2.put_bytes, key, image, "image/png")
+    async with app.state.pool.connection() as conn:
+        row = await repo.create_asset(
+            conn, asset_id=aid, user_id=uid, project_id=pid, source="derived",
+            bucket=app.state.settings.r2_bucket, key=key, mime="image/png", size=len(image),
+            original_filename=None, metadata=metadata)
+        await conn.commit()
+    return {**row, "metadata": metadata}
 
 
 async def produce(app, job: dict, *, source: dict, cutout: dict) -> dict:
@@ -87,6 +133,8 @@ async def produce(app, job: dict, *, source: dict, cutout: dict) -> dict:
     key = derived_key(uid, pid, aid, "png")
     detail = {"sourceHash": source["hash"], "algorithmVersion": ALGORITHM_VERSION}
     try:
+        if not cutout.get("id"):
+            cutout = await _owned_display_input(app, job, source, cutout)
         # Separate from canonical.record's transaction: an optional binding failure
         # must never roll back Front/Back, and a Qwen failure must not lose this binding.
         async with pool.connection() as conn:
@@ -104,32 +152,37 @@ async def produce(app, job: dict, *, source: dict, cutout: dict) -> dict:
         return {**detail, "state": "ready", "assetId": aid}
     try:
         try:
-            cutout_png = await asyncio.to_thread(r2.get_bytes, cutout["r2_key"])
+            stored = await asyncio.to_thread(r2.head, key)
+            image = await asyncio.to_thread(r2.get_bytes, key) if stored else None
+            if image is None:
+                cutout_png = await asyncio.to_thread(r2.get_bytes, cutout["r2_key"])
         except Exception:
             return {**detail, "state": "unavailable", "reason": "storage_unavailable"}
-        # The dispatcher already supplies job scope; explicit IDs also cover direct invocations.
-        with image_usage.job_scope(job_id=job["id"], user_id=uid, stage="product_tidy"):
-            image = await qwen_flatlay.render(app.state.settings, cutout_png, transparent=True)
-        with Image.open(io.BytesIO(image)) as decoded:
-            if decoded.mode != "RGBA" or decoded.getchannel("A").getbbox() is None:
-                raise ValueError("invalid tidy PNG")
-            width, height = decoded.size
+        if image is None:
+            # The dispatcher supplies job scope; explicit IDs cover direct invocations too.
+            with image_usage.job_scope(job_id=job["id"], user_id=uid, stage="product_tidy"):
+                image = await qwen_flatlay.render(app.state.settings, cutout_png, transparent=True)
+        width, height = await asyncio.to_thread(_png_size, image)
         metadata = {
             "canonicalType": "product_tidy", "view": "Front", "sourceAssetId": source["id"],
             "sourceHash": source["hash"], "cutoutAssetId": cutout["id"],
             "producer": "fal-qwen-product-tidy", "algorithmVersion": ALGORITHM_VERSION,
             "r2Key": key, "width": width, "height": height,
         }
+        if not stored:
+            try:
+                await asyncio.to_thread(r2.put_bytes, key, image, "image/png")
+            except Exception:
+                return {**detail, "state": "unavailable", "reason": "storage_unavailable"}
         try:
-            await asyncio.to_thread(r2.put_bytes, key, image, "image/png")
+            async with pool.connection() as conn:
+                await repo.create_asset(conn, asset_id=aid, user_id=uid, project_id=pid,
+                                        source="derived", bucket=app.state.settings.r2_bucket,
+                                        key=key, mime="image/png", size=len(image),
+                                        original_filename=None, metadata=metadata)
+                await conn.commit()
         except Exception:
-            return {**detail, "state": "unavailable", "reason": "storage_unavailable"}
-        async with pool.connection() as conn:
-            await repo.create_asset(conn, asset_id=aid, user_id=uid, project_id=pid,
-                                    source="derived", bucket=app.state.settings.r2_bucket,
-                                    key=key, mime="image/png", size=len(image),
-                                    original_filename=None, metadata=metadata)
-            await conn.commit()
+            return {**detail, "state": "unavailable", "reason": "asset_record_unavailable"}
         return {**detail, "state": "ready", "assetId": aid}
     except sam_client.SamUnavailable:
         return {**detail, "state": "unavailable", "reason": "provider_unavailable"}
@@ -169,7 +222,8 @@ async def visuals(conn, r2, settings, *, user_id: str, project_id: str, product:
     front = {"tidyStatus": "processing" if processing else "failed",
              "tidyUrl": None, "cutoutStatus": "processing" if processing else "failed" if job else "none",
              "cutoutUrl": None, "width": 0, "height": 0}
-    source, cutout = await load_front(conn, user_id=user_id, product=product)
+    source, cutout = await load_front(conn, user_id=user_id, product=product,
+                                     project_id=project_id, include_display_input=enabled)
     if cutout:
         meta = cutout.get("metadata") or {}
         front.update(cutoutStatus="ready", width=meta.get("width") or 0, height=meta.get("height") or 0)
