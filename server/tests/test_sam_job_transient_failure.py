@@ -50,7 +50,8 @@ class _Pool:
 def _capture(monkeypatch, module):
     seen = {}
 
-    async def finalize(_conn, *, job_id, lease_token, status, result):
+    async def finalize(_conn, *, job_id, lease_token, status, result, product_tidy_capable=False):
+        assert product_tidy_capable is False
         seen.update({"status": status, "result": result})
 
     monkeypatch.setattr(module.repo, "finalize_uncharged_job", finalize)

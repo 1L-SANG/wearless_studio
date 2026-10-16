@@ -55,13 +55,14 @@ def _queue(n, kind="mannequin"):
     ]
 
 
-def _wire(monkeypatch, jobs, worker):
+def _wire(monkeypatch, jobs, worker, *, product_tidy_capable=False):
     """claim/lease/sweep 을 대역으로 바꾸고 worker 하나만 남긴다."""
     from app.workers import dispatcher as mod
 
     pending = list(jobs)
 
-    async def fake_claim(conn, kinds, worker_id):
+    async def fake_claim(conn, kinds, worker_id, **capabilities):
+        assert capabilities.get("product_tidy_capable", False) is product_tidy_capable
         return pending.pop(0) if pending else None
 
     async def fake_recover(conn, timeout, kinds):
@@ -89,6 +90,22 @@ async def _drain(dispatcher, done_flag, timeout=5.0):
         await asyncio.wait_for(done_flag.wait(), timeout=timeout)
     finally:
         await dispatcher.stop()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_dispatcher_passes_product_tidy_capability_to_claim(monkeypatch, enabled):
+    all_done = asyncio.Event()
+
+    async def worker(app, job):
+        all_done.set()
+
+    async def run():
+        _wire(monkeypatch, _queue(1), worker, product_tidy_capable=enabled)
+        dispatcher = JobDispatcher(_app({"product_tidy": "on" if enabled else "off"}), kinds=("mannequin",))
+        await dispatcher.start()
+        await _drain(dispatcher, all_done, timeout=2)
+
+    asyncio.run(run())
 
 
 # ── 1. 동시 실행 수가 N 을 넘지 않는다 ────────────────────────────────────────

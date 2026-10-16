@@ -128,7 +128,8 @@ def test_off_matches_2cdc98db_finish_recording_and_retry_contract(monkeypatch, p
                                 source_asset_id="src-f" if view == "Front" else "src-b") for view in ready_views]
         expected_events = ["product", "src-f", "src-b", "segment",
                            *(f"record-{view}" for view in ready_views), "commit", "finish", "commit"]
-    assert finalized == [dict(job_id="j", lease_token="lease", status=expected_status, result=detail)]
+    assert finalized == [dict(job_id="j", lease_token="lease", status=expected_status, result=detail,
+                             product_tidy_capable=False)]
     assert events == expected_events
     assert sam_retry.job_is_retryable({"status": expected_status, "result": detail}) is retryable
     assert segmented == ([] if case in ("unconfigured", "no_assets") else [

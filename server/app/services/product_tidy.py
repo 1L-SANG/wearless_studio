@@ -20,13 +20,15 @@ from app.services import canonical_reference, qwen_flatlay, sam_client, sam_retr
 
 log = logging.getLogger(__name__)
 ALGORITHM_VERSION = "product-tidy-v1-qwen"
+ENQUEUE_VERSION = "required-v2"
 ACTIVE_WINDOW_MINUTES = 10
 
 
 def preprocess_key(project_id: str, product: dict, *, enabled: bool) -> str | None:
     key = canonical_reference.preprocess_idempotency_key(project_id, product)
-    # Completed off-mode jobs must not swallow the first on-mode request.
-    return f"{key}:{ALGORITHM_VERSION}" if key and enabled else key
+    # Queue protocol is separate from image identity: v1 jobs could finish on an
+    # incapable worker without producing tidy. Do not join those completed rows.
+    return f"{key}:{ALGORITHM_VERSION}:{ENQUEUE_VERSION}" if key and enabled else key
 
 
 def asset_id(user_id: str, project_id: str, source_hash: str) -> str:

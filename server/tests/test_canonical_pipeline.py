@@ -242,7 +242,8 @@ def _job_app(monkeypatch, *, configured=True, segment=None):
     app = types.SimpleNamespace(state=types.SimpleNamespace(pool=_Pool(conn)))
     finished = {}
 
-    async def _finalize(_c, *, job_id, lease_token, status, result):
+    async def _finalize(_c, *, job_id, lease_token, status, result, product_tidy_capable=False):
+        assert product_tidy_capable is False
         finished.update(status=status, result=result)
         return True
 

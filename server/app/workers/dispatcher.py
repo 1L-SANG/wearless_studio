@@ -141,7 +141,9 @@ class JobDispatcher:
                 released = False
                 try:
                     async with pool.connection() as conn:
-                        job = await repo.claim_next_job(conn, self.kinds, s.job_worker_id)
+                        job = await repo.claim_next_job(
+                            conn, self.kinds, s.job_worker_id,
+                            product_tidy_capable=getattr(s, "product_tidy", "off") == "on")
                         await conn.commit()
                     if job is None:
                         slots.release()
