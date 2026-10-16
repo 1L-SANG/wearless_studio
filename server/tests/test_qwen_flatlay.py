@@ -379,8 +379,11 @@ def test_qwen_exact_payload_safe_fallback_grey_composite_and_stage(monkeypatch, 
     assert tuple(a[0, 0]) == (232, 232, 230)
     assert tuple(a[500, 300]) != (65, 90, 125), "garment was color corrected"
     events = [json.loads(r.message) for r in caplog.records if r.name == "wearless.qwen_flatlay"]
-    assert len(events) == 2 and events[0]["mask_source"] == "sam3"
-    assert set(events[1]) == {"illumination_gain", "exposure_gain", "background_pixels", "chroma_capped",
+    mask_events = [event for event in events if "mask_source" in event]
+    assert len(mask_events) == 1 and mask_events[0]["mask_source"] == "sam3"
+    illumination_events = [event for event in events if "illumination_gain" in event]
+    assert len(illumination_events) == 1
+    assert set(illumination_events[0]) == {"illumination_gain", "exposure_gain", "background_pixels", "chroma_capped",
                               "edge_energy", "agreement_cos", "weight", "exposure_ref_frac", "reason"}
     thumb = Image.open(io.BytesIO(result.image))
     assert thumb.format == "JPEG" and max(thumb.size) == 512
@@ -540,9 +543,30 @@ def test_birefnet_recovers_second_sam_empty_mask_with_inline_payload(birefnet_re
         "sync_mode": True}
     assert payload["image_url"].startswith("data:image/jpeg;base64,")
     events = [json.loads(r.message) for r in caplog.records if r.name == "wearless.qwen_flatlay"]
-    assert len(events) == 1
-    assert events[0]["mask_source"] == "birefnet"
-    assert events[0]["result_area_fraction"] == .64
+    mask_events = [event for event in events if "mask_source" in event]
+    assert len(mask_events) == 1
+    assert mask_events[0]["mask_source"] == "birefnet"
+    assert mask_events[0]["result_area_fraction"] == .64
+
+
+def test_birefnet_recovery_keeps_illumination_correction_and_background(birefnet_response):
+    mask = np.zeros((100, 100), np.uint8)
+    mask[10:90, 10:90] = 255
+    calls = birefnet_response(png(Image.fromarray(mask)))
+    yellow = _linear_scene(illuminant=(1.15, 1, .8))
+    ideal_chroma = _garment_lab(_linear_scene())[1:]
+    old_distance = np.linalg.norm(_garment_lab(yellow)[1:] - ideal_chroma)
+    assert old_distance > 5
+    result = asyncio.run(matching_flatlay.render_thumbnail(None,
+        settings=SimpleNamespace(matching_flatlay_provider="qwen", fal_key="test"),
+        cutout_png=png(Image.fromarray(yellow)), clothing_type="bottom"))
+    assert result is not None
+    raw = np.array(Image.open(io.BytesIO(result.raw)))
+    result_lab = cv2.cvtColor(raw.astype(np.float32) / 255, cv2.COLOR_RGB2Lab)
+    assert np.linalg.norm(result_lab[50, 50, 1:] - ideal_chroma) < old_distance / 2 + 1
+    assert tuple(raw[0, 0]) == (232, 232, 230)
+    assert [path for path, _ in calls] == [
+        "/fal-ai/qwen-image-edit-2511", "/fal-ai/sam-3/image", "/fal-ai/birefnet/v2"]
 
 
 @pytest.mark.parametrize("source_area,pixels,error", [
