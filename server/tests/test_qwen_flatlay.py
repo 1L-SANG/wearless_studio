@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from app import image_usage
 from app.services import fal_api, fal_cutout, matching_flatlay, qwen_flatlay
@@ -25,6 +25,17 @@ def cutout(color=(40, 80, 120)):
     a[10:90, 25:75, :3] = color
     a[10:90, 25:75, 3] = 255
     return png(Image.fromarray(a))
+
+
+def white_sleeve_cutout():
+    image = Image.new("RGBA", (400, 500), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.polygon([(100, 60), (20, 120), (0, 230), (100, 250)],
+                 fill=(250, 250, 250, 255))
+    draw.polygon([(300, 60), (380, 120), (399, 230), (300, 250)],
+                 fill=(250, 250, 250, 255))
+    draw.rectangle((100, 60, 300, 480), fill=(40, 80, 120, 255))
+    return png(image)
 
 
 def test_canvas_centers_visible_garment_at_88_percent():
@@ -160,6 +171,29 @@ def test_result_area_is_compared_in_prepared_canvas_coordinates(
     assert (result is not None) is accepted
 
 
+@pytest.mark.parametrize("reference", [cutout((110, 75, 40)), white_sleeve_cutout()],
+                         ids=["brown_garment", "white_sleeves"])
+def test_no_garment_mask_keeps_successful_cutout(monkeypatch, reference):
+    generated, _ = qwen_flatlay.prepare_canvas(reference)
+
+    async def run(settings, model, payload):
+        if model == fal_api.QWEN_MODEL:
+            return {"images": [{"url": "https://fake/generated.png"}]}
+        assert model == fal_api.SAM_MODEL
+        return {"masks": [], "scores": []}
+
+    async def fetch(url):
+        assert url == "https://fake/generated.png"
+        return generated
+
+    monkeypatch.setattr(fal_api, "run_model", run)
+    monkeypatch.setattr(fal_api, "fetch_image", fetch)
+    result = asyncio.run(matching_flatlay.render_thumbnail(None,
+        settings=SimpleNamespace(matching_flatlay_provider="qwen", fal_key="test"),
+        cutout_png=reference, clothing_type="top"))
+    assert result is None, "마스크가 없으면 흰 배색까지 보존한 기존 누끼를 유지한다"
+
+
 def _generated_result(monkeypatch, rgb, error):
     async def run(*args):
         return {"images": [{"url": "https://fake/generated.png"}]}
@@ -175,86 +209,8 @@ def _generated_result(monkeypatch, rgb, error):
     monkeypatch.setattr(fal_cutout, "cutout_png", segment)
 
 
-@pytest.mark.parametrize("background", [(255, 255, 255), (245, 245, 245)])
-def test_no_garment_mask_uses_border_white_flood_and_shared_color_composite(
-        monkeypatch, caplog, background):
-    generated = np.full((100, 100, 3), background, np.uint8)
-    generated[10:90, 10:90] = (65, 90, 125)
-    generated[40:60, 40:60] = 255  # 옷 안의 흰 무늬는 테두리와 이어지지 않는다.
-    _generated_result(monkeypatch, generated, fal_cutout.NoGarmentMask("no_garment_mask"))
-    with caplog.at_level("INFO"):
-        result = asyncio.run(qwen_flatlay.render(SimpleNamespace(fal_key="test"), cutout()))
-    rgb = np.array(Image.open(io.BytesIO(result)))
-    assert tuple(rgb[0, 0, :3]) == (232, 232, 230)
-    assert tuple(rgb[20, 20, :3]) != (65, 90, 125), "shared soft color correction"
-    assert tuple(rgb[50, 50, :3]) != (232, 232, 230), "enclosed whites remain garment"
-    events = [json.loads(r.message) for r in caplog.records if r.name == "wearless.qwen_flatlay"]
-    assert len(events) == 1 and events[0]["mask_source"] == "white_flood"
-
-
-def test_white_flood_requires_all_three_channels_at_least_245(monkeypatch):
-    generated = np.full((100, 100, 3), 255, np.uint8)
-    generated[10:90, 10:90] = (244, 250, 250)
-    _generated_result(monkeypatch, generated, fal_cutout.NoGarmentMask("no_garment_mask"))
-    result = asyncio.run(qwen_flatlay.render(SimpleNamespace(fal_key="test"), cutout()))
-    rgb = np.array(Image.open(io.BytesIO(result)))
-    assert tuple(rgb[0, 0, :3]) == (232, 232, 230)
-    assert tuple(rgb[50, 50, :3]) != (232, 232, 230)
-
-
-def test_white_flood_removes_disconnected_backgrounds_on_every_border(monkeypatch):
-    generated = np.full((100, 100, 3), 255, np.uint8)
-    generated[20:80, :] = (65, 90, 125)
-    generated[:, 20:80] = (65, 90, 125)
-    _generated_result(monkeypatch, generated, fal_cutout.NoGarmentMask("no_garment_mask"))
-    result = asyncio.run(qwen_flatlay.render(SimpleNamespace(fal_key="test"), cutout()))
-    rgb = np.array(Image.open(io.BytesIO(result)))
-    for point in ((0, 0), (0, 99), (99, 0), (99, 99)):
-        assert tuple(rgb[point][:3]) == (232, 232, 230)
-    assert tuple(rgb[50, 50, :3]) != (232, 232, 230)
-
-
-@pytest.mark.parametrize("background,garment", [
-    ((255, 255, 255), (250, 250, 250)),  # 흰 옷에서는 로고만 남는다.
-    ((230, 230, 230), (65, 90, 125)),    # 흰 배경이 없으면 화면 전체가 남는다.
-])
-def test_white_flood_rejects_lost_white_garment_or_nonwhite_background(
-        monkeypatch, background, garment):
-    generated = np.full((100, 100, 3), background, np.uint8)
-    generated[10:90, 10:90] = garment
-    generated[40:45, 40:45] = 30
-    _generated_result(monkeypatch, generated, fal_cutout.NoGarmentMask("no_garment_mask"))
-    reference = (png(Image.new("RGBA", (100, 100), (40, 80, 120, 255)))
-                 if background[0] < 245 else cutout((250, 250, 250)))
-    with pytest.raises(ValueError, match="mask.*(small|large|area)"):
-        asyncio.run(qwen_flatlay.render(SimpleNamespace(fal_key="test"), reference))
-
-
-def test_white_flood_rejects_full_canvas_even_for_large_source(monkeypatch):
-    # 3:4 원본은 캔버스의 0.77을 차지해 1.6배 기준만으로는 화면 전체 마스크가 통과한다.
-    generated = np.full((100, 100, 3), 230, np.uint8)
-    _generated_result(monkeypatch, generated, fal_cutout.NoGarmentMask("no_garment_mask"))
-    reference = png(Image.new("RGBA", (75, 100), (40, 80, 120, 255)))
-    with pytest.raises(ValueError, match="too large"):
-        asyncio.run(qwen_flatlay.render(SimpleNamespace(fal_key="test"), reference))
-
-
-@pytest.mark.parametrize("mask_width,accepted", [(29, False), (30, True), (85, True), (86, False)])
-def test_white_flood_area_limits_use_prepared_source_area(monkeypatch, mask_width, accepted):
-    generated = np.full((100, 100, 3), 255, np.uint8)
-    generated[:, :mask_width] = (65, 90, 125)
-    _generated_result(monkeypatch, generated, fal_cutout.NoGarmentMask("no_garment_mask"))
-    # 정사각형 원본은 캔버스의 676*676/(768*1024) 부분을 차지한다.
-    reference = png(Image.new("RGBA", (100, 100), (40, 80, 120, 255)))
-    if accepted:
-        assert asyncio.run(qwen_flatlay.render(SimpleNamespace(fal_key="test"), reference))
-    else:
-        with pytest.raises(ValueError, match="mask.*(small|large|area)"):
-            asyncio.run(qwen_flatlay.render(SimpleNamespace(fal_key="test"), reference))
-
-
 @pytest.mark.parametrize("error", [SamUnavailable("down"), ValueError("invalid mask image")])
-def test_second_segmentation_other_errors_propagate_without_white_flood(monkeypatch, error):
+def test_second_segmentation_errors_propagate(monkeypatch, error):
     generated = np.full((100, 100, 3), 255, np.uint8)
     generated[10:90, 10:90] = (65, 90, 125)
     _generated_result(monkeypatch, generated, error)
