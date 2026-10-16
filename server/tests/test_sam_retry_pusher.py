@@ -373,3 +373,34 @@ def test_candidate_query_does_not_transfer_unused_job_columns():
     projection = cursor.sql.lower().split("from jobs", 1)[0]
     for unused in ("steps", "metadata", "error_message", "credits_reserved", "progress"):
         assert unused not in projection
+
+
+def test_product_tidy_waits_for_fal_backoff_even_when_sam2_is_ready():
+    job = _fresh(kind="sam_preprocess", result={"state": "unavailable",
+                 "productTidy": {"state": "unavailable"}}, payload={"retry": 0},
+                 idempotency_key="p:sam_preprocess:source")
+    rec = _Recorder([job])
+    resolver = _Resolver(ready=True)
+    assert _push_with(rec, resolver, sam_preprocess_provider="sam2") == 0
+    assert rec.created == [] and resolver.asked == 0
+
+
+def test_product_tidy_uses_existing_retry_generations_and_stops_at_budget():
+    for retry in range(5):
+        job = _job(kind="sam_preprocess", payload={"mode": "canonical_cutout", "retry": retry},
+                   result={"state": "unavailable", "productTidy": {"state": "unavailable"}},
+                   idempotency_key="p:sam_preprocess:source" + (f":r{retry}" if retry else ""))
+        rec = _Recorder([job])
+        assert _push(rec) == (1 if retry < 4 else 0)
+        if retry < 4:
+            assert rec.created == [{"kind": "sam_preprocess", "key": f"p:sam_preprocess:source:r{retry + 1}",
+                                    "payload": {"mode": "canonical_cutout", "retry": retry + 1},
+                                    "credits_reserved": 0}]
+
+
+def test_back_retry_carries_terminal_tidy_verdict_without_another_paid_attempt():
+    terminal = {"state": "failed", "sourceHash": "h1", "algorithmVersion": "product-tidy-v1-qwen", "reason": "tidy_failed"}
+    rec = _Recorder([_job(kind="sam_preprocess", result={"state": "unavailable", "productTidy": terminal},
+                         payload={"mode": "canonical_cutout"}, idempotency_key="p:sam_preprocess:source")])
+    assert _push(rec) == 1
+    assert rec.created[0]["payload"] == {"mode": "canonical_cutout", "retry": 1, "_productTidy": terminal}

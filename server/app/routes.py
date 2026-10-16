@@ -78,6 +78,7 @@ from .models import (
     SellerConsentIn,
     SellerConsentResponse,
 )
+from .services import product_tidy
 from .r2 import (
     ASSET_CACHE_VERSION,
     IMMUTABLE_CACHE,
@@ -1012,8 +1013,26 @@ async def get_product(
     return row
 
 
+@router.get(
+    "/projects/{project_id}/product/visuals",
+    responses={**COMMON_RESPONSES},
+    tags=["Products"],
+    summary="상품 앞면 정돈 사진과 누끼 상태 조회",
+)
+async def get_product_visuals(
+    request: Request, project_id: str, user_id: str = Depends(require_user),
+):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        product = await repo.get_product(conn, project_id) or {}
+        return await product_tidy.visuals(
+            conn, _r2(request), request.app.state.settings,
+            user_id=user_id, project_id=project_id, product=product)
+
+
 async def _enqueue_canonical_cutout(conn, *, user_id: str, project_id: str,
-                                    product: dict) -> bool:
+                                    product: dict, tidy_enabled: bool = False) -> bool:
     """주상품 사진의 배경 제거 컷아웃(canonical cutout)을 무과금으로 건다.
 
     두 곳에서 부른다. 분석 라우트는 로그인 상태로 시작한 셀러를, 상품 저장 라우트는 게스트로
@@ -1023,7 +1042,7 @@ async def _enqueue_canonical_cutout(conn, *, user_id: str, project_id: str,
 
     호출자가 커밋한다. 실패는 호출자가 삼킨다 — 보조 인프라가 본 기능을 되돌리지 않는다.
     """
-    key = canonical_reference.preprocess_idempotency_key(project_id, product or {})
+    key = product_tidy.preprocess_key(project_id, product or {}, enabled=tidy_enabled)
     if not key:
         return False
     await repo.create_job(
@@ -1077,7 +1096,8 @@ async def save_product(
         # 안 되므로 **커밋 뒤에** 별도로 걸고 예외는 삼킨다(analyze 라우트와 같은 규율).
         try:
             if await _enqueue_canonical_cutout(
-                    conn, user_id=user_id, project_id=project_id, product=row or {}):
+                    conn, user_id=user_id, project_id=project_id, product=row or {},
+                    tidy_enabled=getattr(request.app.state.settings, "product_tidy", "off") == "on"):
                 await conn.commit()
                 _wake_dispatcher(request)
         except Exception:  # noqa: BLE001 - 전처리 큐잉 실패가 상품 저장을 막지 않는다
@@ -1463,7 +1483,8 @@ async def analyze_product(
         try:
             await _enqueue_canonical_cutout(
                 conn, user_id=user_id, project_id=project_id,
-                product=await repo.get_product(conn, project_id) or {})
+                product=await repo.get_product(conn, project_id) or {},
+                tidy_enabled=getattr(request.app.state.settings, "product_tidy", "off") == "on")
             await conn.commit()
         except Exception:  # noqa: BLE001 - 전처리 큐잉 실패가 분석을 막지 않는다
             # 정리 코드가 다시 터져서 500 이 되면 위 보장이 무의미하다. rollback 실패까지 삼킨다.

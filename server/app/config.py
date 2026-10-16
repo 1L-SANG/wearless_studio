@@ -35,6 +35,7 @@ class Settings:
     matching_cutout_provider: str = "sam2"  # sam2 | fal
     matching_flatlay_provider: str = "gemini"  # gemini | qwen
     sam_preprocess_provider: str = "sam2"  # sam2 | fal
+    product_tidy: str = "off"  # off | on, display only
     # Front+Back 실측 ~49s(warm, x86_64 Fargate). 90s 는 그 위의 여유다.
     sam_request_timeout_s: float = 90.0
     # 생성예시 레지스트리의 상대 URL 기준. prod 상대경로는 명시 필수, dev만 dummy 기본값 허용.
@@ -623,7 +624,8 @@ class Settings:
     def __post_init__(self):
         if (self.matching_cutout_provider == "fal"
                 or self.sam_preprocess_provider == "fal"
-                or self.matching_flatlay_provider == "qwen"):
+                or self.matching_flatlay_provider == "qwen"
+                or self.product_tidy == "on"):
             if not (self.fal_key or "").strip():
                 raise ValueError("fal 또는 Qwen을 쓰려면 FAL_KEY가 필요해요.")
         if self.detail_qc_claude_effort not in {"low", "medium", "high", "xhigh", "max"}:
@@ -812,6 +814,7 @@ def load_settings() -> Settings:
         matching_cutout_provider=_flag("MATCHING_CUTOUT_PROVIDER", "sam2", {"sam2", "fal"}),
         matching_flatlay_provider=_flag("MATCHING_FLATLAY_PROVIDER", "gemini", {"gemini", "qwen"}),
         sam_preprocess_provider=_flag("SAM_PREPROCESS_PROVIDER", "sam2", {"sam2", "fal"}),
+        product_tidy=_flag("PRODUCT_TIDY", "off", {"off", "on"}),
         sam_autoscale=_flag("SAM_AUTOSCALE", "off", {"off", "on"}),
         sam_direct_endpoint=_flag("SAM_DIRECT_ENDPOINT", "off", {"off", "on"}),
         sam_autoscale_idle_minutes=_int_env("SAM_AUTOSCALE_IDLE_MINUTES", 30),

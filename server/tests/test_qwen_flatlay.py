@@ -607,3 +607,38 @@ def test_invalid_birefnet_mask_fails_and_thumbnail_keeps_cutout(birefnet_respons
     assert asyncio.run(matching_flatlay.render_thumbnail(None, settings=settings,
         cutout_png=cutout(), clothing_type="bottom")) is None
     assert sum(path == "/fal-ai/birefnet/v2" for path, _ in calls) == 2
+
+
+def test_transparent_render_keeps_alpha_and_default_bytes_match_existing_composite(monkeypatch):
+    generated = np.full((100, 100, 3), 255, np.uint8)
+    generated[10:90, 25:75] = (65, 90, 125)
+    alpha = np.zeros((100, 100), np.uint8)
+    alpha[10:90, 25:75] = 255
+
+    async def run(*_):
+        return {"images": [{"url": "data:fake"}]}
+
+    async def fetch(*_):
+        return png(Image.fromarray(generated))
+
+    async def segment(*_):
+        image = Image.fromarray(generated).convert("RGBA")
+        image.putalpha(Image.fromarray(alpha))
+        return png(image)
+
+    monkeypatch.setattr(fal_api, "run_model", run)
+    monkeypatch.setattr(fal_api, "fetch_image", fetch)
+    monkeypatch.setattr(fal_cutout, "cutout_png", segment)
+    reference = cutout()
+    corrected = qwen_flatlay.soft_color_correct(reference, generated, alpha > 127)
+    image = Image.fromarray(corrected).convert("RGBA")
+    image.putalpha(Image.fromarray(alpha))
+    # This is the original pre-change _composite algorithm, including the final encode.
+    from app.services.matching_cutout import flatten_on_bg
+    expected_default = flatten_on_bg(png(image))
+    assert asyncio.run(qwen_flatlay.render(SimpleNamespace(), reference)) == expected_default
+    transparent = asyncio.run(qwen_flatlay.render(SimpleNamespace(), reference, transparent=True))
+    decoded = Image.open(io.BytesIO(transparent))
+    assert decoded.mode == "RGBA"
+    assert np.array_equal(np.array(decoded.getchannel("A")), alpha)
+    assert transparent == png(image)

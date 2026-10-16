@@ -707,6 +707,10 @@ export const httpAdapter = {
   // 상품 조회 (계약 §3.1) — {id,projectId,name,clothingType,colors[],measurements[],
   // measurementsUnknown,uploadComplete}. colors 는 프론트-소유 JSONB(saveProduct 가 저장한 isBase·images shape).
   // projectId 없는 입력단계는 api/index가 mock seed 템플릿에 위임한다.
+  async getProductVisuals(projectId) {
+    return http(`/v1/projects/${projectId}/product/visuals`);
+  },
+
   async getProduct(projectId) {
     return http(`/v1/projects/${projectId}/product`);
   },
