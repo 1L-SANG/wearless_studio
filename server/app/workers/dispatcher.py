@@ -12,6 +12,7 @@ import os
 import time
 
 from .. import image_usage, repo
+from ..services import sam_autoscale
 from .analyze_job import run_analyze_job
 from .detail_page_job import run_detail_page_job
 from .editor_image_job import run_editor_image_job
@@ -143,7 +144,9 @@ class JobDispatcher:
                     async with pool.connection() as conn:
                         job = await repo.claim_next_job(
                             conn, self.kinds, s.job_worker_id,
-                            product_tidy_capable=getattr(s, "product_tidy", "off") == "on")
+                            product_tidy_capable=getattr(s, "product_tidy", "off") == "on",
+                            sam_providers={kind: sam_autoscale.provider_for_kind(s, kind)
+                                           for kind in ("sam_preprocess", "matching_cutout")})
                         await conn.commit()
                     if job is None:
                         slots.release()

@@ -55,7 +55,7 @@ def _queue(n, kind="mannequin"):
     ]
 
 
-def _wire(monkeypatch, jobs, worker, *, product_tidy_capable=False):
+def _wire(monkeypatch, jobs, worker, *, product_tidy_capable=False, claim_capabilities=None):
     """claim/lease/sweep 을 대역으로 바꾸고 worker 하나만 남긴다."""
     from app.workers import dispatcher as mod
 
@@ -63,6 +63,8 @@ def _wire(monkeypatch, jobs, worker, *, product_tidy_capable=False):
 
     async def fake_claim(conn, kinds, worker_id, **capabilities):
         assert capabilities.get("product_tidy_capable", False) is product_tidy_capable
+        if claim_capabilities is not None:
+            claim_capabilities.append(capabilities)
         return pending.pop(0) if pending else None
 
     async def fake_recover(conn, timeout, kinds):
@@ -106,6 +108,24 @@ def test_dispatcher_passes_product_tidy_capability_to_claim(monkeypatch, enabled
         await _drain(dispatcher, all_done, timeout=2)
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("canonical,matching", [("fal", "sam2"), ("sam2", "fal")])
+def test_dispatcher_passes_its_executing_cutout_providers_to_claim(monkeypatch, canonical, matching):
+    all_done = asyncio.Event()
+    claims = []
+    async def worker(app, job):
+        all_done.set()
+    async def run():
+        _wire(monkeypatch, _queue(1), worker, claim_capabilities=claims)
+        app = _app({"sam_preprocess_provider": canonical, "matching_cutout_provider": matching})
+        dispatcher = JobDispatcher(app, kinds=("mannequin",))
+        await dispatcher.start()
+        await _drain(dispatcher, all_done, timeout=2)
+    asyncio.run(run())
+    assert claims
+    assert claims[0].get("sam_providers") == {
+        "sam_preprocess": canonical, "matching_cutout": matching}
 
 
 # ── 1. 동시 실행 수가 N 을 넘지 않는다 ────────────────────────────────────────
