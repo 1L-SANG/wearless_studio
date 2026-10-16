@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 import cv2
+import httpx
 import numpy as np
 import pytest
 from PIL import Image, ImageDraw
@@ -362,6 +363,7 @@ def test_qwen_exact_payload_safe_fallback_grey_composite_and_stage(monkeypatch, 
                              cutout_png=cutout((250, 250, 250)) if mask_fails else cutout(),
                              clothing_type="bottom"))
         assert image_usage._ctx.get().stage == "matching_cutout"
+    assert len(calls) == 1, "SAM 성공과 가용성 오류에는 BiRefNet을 부르지 않는다"
     if mask_fails:
         assert result is None, "누끼 실패는 기존 누끼를 유지해야 한다"
         return
@@ -377,8 +379,11 @@ def test_qwen_exact_payload_safe_fallback_grey_composite_and_stage(monkeypatch, 
     assert tuple(a[0, 0]) == (232, 232, 230)
     assert tuple(a[500, 300]) != (65, 90, 125), "garment was color corrected"
     events = [json.loads(r.message) for r in caplog.records if r.name == "wearless.qwen_flatlay"]
-    assert len(events) == 2 and events[0]["mask_source"] == "sam3"
-    assert set(events[1]) == {"illumination_gain", "exposure_gain", "background_pixels", "chroma_capped",
+    mask_events = [event for event in events if "mask_source" in event]
+    assert len(mask_events) == 1 and mask_events[0]["mask_source"] == "sam3"
+    illumination_events = [event for event in events if "illumination_gain" in event]
+    assert len(illumination_events) == 1
+    assert set(illumination_events[0]) == {"illumination_gain", "exposure_gain", "background_pixels", "chroma_capped",
                               "edge_energy", "agreement_cos", "weight", "exposure_ref_frac", "reason"}
     thumb = Image.open(io.BytesIO(result.image))
     assert thumb.format == "JPEG" and max(thumb.size) == 512
@@ -439,14 +444,16 @@ def test_result_area_is_compared_in_prepared_canvas_coordinates(
 
 @pytest.mark.parametrize("reference", [cutout((110, 75, 40)), white_sleeve_cutout()],
                          ids=["brown_garment", "white_sleeves"])
-def test_no_garment_mask_keeps_successful_cutout(monkeypatch, reference):
+def test_no_garment_mask_and_empty_birefnet_keep_successful_cutout(monkeypatch, reference):
     generated, _ = qwen_flatlay.prepare_canvas(reference)
 
     async def run(settings, model, payload):
         if model == fal_api.QWEN_MODEL:
             return {"images": [{"url": "https://fake/generated.png"}]}
-        assert model == fal_api.SAM_MODEL
-        return {"masks": [], "scores": []}
+        if model == fal_api.SAM_MODEL:
+            return {"masks": [], "scores": []}
+        assert model == "fal-ai/birefnet/v2"
+        return {}
 
     async def fetch(url):
         assert url == "https://fake/generated.png"
@@ -483,3 +490,120 @@ def test_second_segmentation_errors_propagate(monkeypatch, error):
     with pytest.raises(type(error)) as exc:
         asyncio.run(qwen_flatlay.render(SimpleNamespace(fal_key="test"), cutout()))
     assert exc.value is error
+
+
+@pytest.fixture
+def birefnet_response(monkeypatch):
+    """실제 fal 경계를 유지하고 HTTP 응답만 합성 이미지로 대체한다."""
+    def setup(mask, *, body=None, source_area=None):
+        generated = png(Image.new("RGB", (100, 100), (65, 90, 125)))
+        generated_url = fal_api.image_input_url(generated, "image/png")
+        mask_url = fal_api.image_input_url(mask, "image/png")
+        calls = []
+
+        def handler(request):
+            calls.append((request.url.path, json.loads(request.content)))
+            if request.url.path == "/fal-ai/qwen-image-edit-2511":
+                return httpx.Response(200, json={"images": [{"url": generated_url}]})
+            if request.url.path == "/fal-ai/sam-3/image":
+                return httpx.Response(200, json={"masks": [], "scores": []})
+            assert request.url.path == "/fal-ai/birefnet/v2"
+            return httpx.Response(200, json=body if body is not None else {
+                "image": {"url": mask_url, "content_type": "image/png"}})
+
+        real_client = httpx.AsyncClient
+        monkeypatch.setattr(fal_api.httpx, "AsyncClient", lambda **kw: real_client(
+            transport=httpx.MockTransport(handler), **kw))
+        if source_area is not None:
+            monkeypatch.setattr(qwen_flatlay, "prepare_canvas", lambda _: (generated, source_area))
+        return calls
+    return setup
+
+
+def test_birefnet_recovers_second_sam_empty_mask_with_inline_payload(birefnet_response, caplog):
+    # 127은 배경, 128은 옷이다. 작은 마스크를 생성 이미지 크기로 맞춘다.
+    mask = np.full((50, 50), 127, np.uint8)
+    mask[5:45, 5:45] = 128
+    calls = birefnet_response(png(Image.fromarray(mask)))
+    with caplog.at_level("INFO"):
+        result = asyncio.run(matching_flatlay.render_thumbnail(None,
+            settings=SimpleNamespace(matching_flatlay_provider="qwen", fal_key="test"),
+            cutout_png=cutout(), clothing_type="bottom"))
+    assert result is not None
+    raw = np.array(Image.open(io.BytesIO(result.raw)))
+    assert tuple(raw[0, 0]) == (232, 232, 230)
+    assert tuple(raw[50, 50]) != (232, 232, 230)
+    assert Image.open(io.BytesIO(result.image)).format == "JPEG"
+    assert [path for path, _ in calls] == [
+        "/fal-ai/qwen-image-edit-2511", "/fal-ai/sam-3/image", "/fal-ai/birefnet/v2"]
+    payload = calls[-1][1]
+    assert payload == {"image_url": calls[1][1]["image_url"],
+        "model": "General Use (Heavy)", "operating_resolution": "1024x1024",
+        "output_format": "png", "mask_only": True, "refine_foreground": False,
+        "sync_mode": True}
+    assert payload["image_url"].startswith("data:image/jpeg;base64,")
+    events = [json.loads(r.message) for r in caplog.records if r.name == "wearless.qwen_flatlay"]
+    mask_events = [event for event in events if "mask_source" in event]
+    assert len(mask_events) == 1
+    assert mask_events[0]["mask_source"] == "birefnet"
+    assert mask_events[0]["result_area_fraction"] == .64
+
+
+def test_birefnet_recovery_keeps_illumination_correction_and_background(birefnet_response):
+    mask = np.zeros((100, 100), np.uint8)
+    mask[10:90, 10:90] = 255
+    calls = birefnet_response(png(Image.fromarray(mask)))
+    yellow = _linear_scene(illuminant=(1.15, 1, .8))
+    ideal_chroma = _garment_lab(_linear_scene())[1:]
+    old_distance = np.linalg.norm(_garment_lab(yellow)[1:] - ideal_chroma)
+    assert old_distance > 5
+    result = asyncio.run(matching_flatlay.render_thumbnail(None,
+        settings=SimpleNamespace(matching_flatlay_provider="qwen", fal_key="test"),
+        cutout_png=png(Image.fromarray(yellow)), clothing_type="bottom"))
+    assert result is not None
+    raw = np.array(Image.open(io.BytesIO(result.raw)))
+    result_lab = cv2.cvtColor(raw.astype(np.float32) / 255, cv2.COLOR_RGB2Lab)
+    assert np.linalg.norm(result_lab[50, 50, 1:] - ideal_chroma) < old_distance / 2 + 1
+    assert tuple(raw[0, 0]) == (232, 232, 230)
+    assert [path for path, _ in calls] == [
+        "/fal-ai/qwen-image-edit-2511", "/fal-ai/sam-3/image", "/fal-ai/birefnet/v2"]
+
+
+@pytest.mark.parametrize("source_area,pixels,error", [
+    (.4, 1999, "too small"),
+    (.4, 2000, None),        # 정확히 원본의 0.5배
+    (.4, 6400, None),        # 정확히 원본의 1.6배
+    (.4, 6401, "too large"),
+    (.6, 8500, None),        # 정확히 캔버스의 85%
+    (.6, 8501, "too large"),
+])
+def test_birefnet_area_limits_include_boundaries(birefnet_response, source_area, pixels, error):
+    mask = np.zeros((100, 100), np.uint8)
+    mask.flat[:pixels] = 255
+    birefnet_response(png(Image.fromarray(mask)), source_area=source_area)
+    if error:
+        with pytest.raises(ValueError, match=f"generated garment mask is {error}"):
+            asyncio.run(qwen_flatlay.render(SimpleNamespace(fal_key="test"), cutout()))
+    else:
+        result = asyncio.run(qwen_flatlay.render(SimpleNamespace(fal_key="test"), cutout()))
+        assert Image.open(io.BytesIO(result)).size == (100, 100)
+
+
+@pytest.mark.parametrize("body,mask", [
+    ({}, png(Image.new("L", (10, 10), 255))),
+    ({"image": None}, png(Image.new("L", (10, 10), 255))),
+    ({"image": []}, png(Image.new("L", (10, 10), 255))),
+    ({"image": {}}, png(Image.new("L", (10, 10), 255))),
+    ({"image": {"url": ""}}, png(Image.new("L", (10, 10), 255))),
+    ({"image": {"url": 123}}, png(Image.new("L", (10, 10), 255))),
+    (None, png(Image.new("L", (10, 10), 0))),
+    (None, b"broken mask image"),
+])
+def test_invalid_birefnet_mask_fails_and_thumbnail_keeps_cutout(birefnet_response, body, mask):
+    calls = birefnet_response(mask, body=body)
+    settings = SimpleNamespace(matching_flatlay_provider="qwen", fal_key="test")
+    with pytest.raises(fal_cutout.NoGarmentMask):
+        asyncio.run(qwen_flatlay.render(settings, cutout()))
+    assert asyncio.run(matching_flatlay.render_thumbnail(None, settings=settings,
+        cutout_png=cutout(), clothing_type="bottom")) is None
+    assert sum(path == "/fal-ai/birefnet/v2" for path, _ in calls) == 2
