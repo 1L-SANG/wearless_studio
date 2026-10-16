@@ -85,12 +85,13 @@ def test_product_job_uses_fal_and_existing_canonical_recorder(monkeypatch, failu
         assert all(r["result"].algorithm_version == "fal-sam3-v1" for r in recorded)
 
 
-@pytest.mark.parametrize("qwen_failure", [None, "generation", "mask", "small_mask"])
+@pytest.mark.parametrize("qwen_failure", [None, "generation", "mask", "small_mask", "no_mask"])
 def test_qwen_full_job_uses_raw_alpha_and_keeps_cutout_on_failure(monkeypatch, qwen_failure):
     from app.services import fal_cutout
-    from test_qwen_flatlay import cutout
+    from test_qwen_flatlay import cutout, white_sleeve_cutout
 
-    app, r2, calls = _wire_worker(monkeypatch, cut_png=cutout())
+    reference = white_sleeve_cutout() if qwen_failure == "no_mask" else cutout()
+    app, r2, calls = _wire_worker(monkeypatch, cut_png=reference)
     app.state.settings.matching_flatlay = "full"
     app.state.settings.matching_flatlay_provider = "qwen"
     app.state.settings.fal_key = "test"
@@ -109,6 +110,8 @@ def test_qwen_full_job_uses_raw_alpha_and_keeps_cutout_on_failure(monkeypatch, q
     async def segment(*args):
         if qwen_failure == "mask":
             raise SamUnavailable("mask unavailable")
+        if qwen_failure == "no_mask":
+            raise fal_cutout.NoGarmentMask("no_garment_mask")
         if qwen_failure == "small_mask":
             tiny = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
             ImageDraw.Draw(tiny).rectangle((45, 45, 54, 54), fill=(65, 80, 110, 255))
@@ -116,6 +119,8 @@ def test_qwen_full_job_uses_raw_alpha_and_keeps_cutout_on_failure(monkeypatch, q
         return cutout()
 
     async def fetch(*args):
+        if qwen_failure == "no_mask":
+            return captured["canvas"]
         return png(Image.new("RGB", (100, 100), (65, 80, 110)))
 
     monkeypatch.setattr(fal_api, "run_model", run)
@@ -134,7 +139,7 @@ def test_qwen_full_job_uses_raw_alpha_and_keeps_cutout_on_failure(monkeypatch, q
         assert metadata[calls["swap"][2]]["flatlayModel"] == "fal-ai/qwen-image-edit-2511"
     else:
         from app.services import garment_grid
-        original_cutout = matching_cutout.flatten_on_bg(cutout())
+        original_cutout = matching_cutout.flatten_on_bg(reference)
         assert r2.puts[0][1] == matching_cutout.encode_thumbnail(original_cutout)
         assert r2.puts[1][1] == garment_grid.compose_garment_grid([original_cutout] * 2)
     # White canvas corners prove the RGBA cutout, rather than the grey composite, was supplied.

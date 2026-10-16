@@ -98,7 +98,7 @@ def test_retry_once_and_record_spend_without_secret(monkeypatch, caplog, status)
     assert len(posts) == 2
     sleep.assert_awaited_once_with(1.5)
     assert str(posts[0].url) == "https://fal.run/fal-ai/sam-3/image"
-    assert json.loads(posts[0].content) == {"image_url": "data:test"}
+    assert json.loads(posts[0].content) == {"image_url": "data:test", "sync_mode": True}
     assert body["scores"] == [0.9]
     assert recorded[0]["model"] == "fal-ai/sam-3/image"
     events = [json.loads(r.message) for r in caplog.records if r.name == "wearless.fal"]
@@ -188,3 +188,50 @@ def test_timeout_and_invalid_json_use_recoverable_failure(monkeypatch):
 ])
 def test_fal_estimates_fit_existing_usage_ledger(model, usage, cost):
     assert estimate_cost(model, "768x1024", usage).usd == cost
+
+
+@pytest.mark.parametrize("model", [fal_api.SAM_MODEL, fal_api.QWEN_MODEL])
+def test_all_models_force_inline_output_and_keep_usage_record(monkeypatch, model):
+    posts, recorded = [], []
+
+    def handler(request):
+        posts.append(request)
+        return httpx.Response(200, json={"result": "ok"})
+
+    _transport(monkeypatch, handler)
+    monkeypatch.setattr(image_usage, "record", lambda **kw: recorded.append(kw))
+    payload = {"sync_mode": False, "image_size": {"width": 768, "height": 1024}}
+    body = asyncio.run(fal_api.run_model(SimpleNamespace(fal_key="test"), model, payload))
+    assert body == {"result": "ok"}
+    assert json.loads(posts[0].content) == {
+        "sync_mode": True, "image_size": {"width": 768, "height": 1024}}
+    assert payload["sync_mode"] is False, "caller payload is not mutated"
+    assert len(recorded) == 1
+    assert recorded[0]["model"] == model
+    assert recorded[0]["image_size"] == "768x1024"
+    assert recorded[0]["usage"] == {"provider": "fal", "megapixels": 0.786432}
+
+
+def test_inline_image_is_decoded_without_creating_http_client(monkeypatch):
+    def no_client(**kwargs):
+        pytest.fail("data URI must not create an HTTP client")
+
+    monkeypatch.setattr(fal_api.httpx, "AsyncClient", no_client)
+    raw = io.BytesIO()
+    Image.new("RGB", (2, 3), (10, 20, 30)).save(raw, "PNG")
+    url = "data:image/png;base64," + base64.b64encode(raw.getvalue()).decode("ascii")
+    assert asyncio.run(fal_api.fetch_image(url)) == raw.getvalue()
+
+
+@pytest.mark.parametrize("url", [
+    "data:image/png;base64", "data:image/png,AA==", "data:image/png;base64,",
+    "data:image/png;base64,!!!!", "data:image/png;base64,A",
+    "data:image/png;base64,AA==\n", "data:image/png;base64,é",
+])
+def test_broken_inline_image_uses_recoverable_failure_without_network(monkeypatch, url):
+    def no_client(**kwargs):
+        pytest.fail("broken data URI must not create an HTTP client")
+
+    monkeypatch.setattr(fal_api.httpx, "AsyncClient", no_client)
+    with pytest.raises(SamUnavailable):
+        asyncio.run(fal_api.fetch_image(url))

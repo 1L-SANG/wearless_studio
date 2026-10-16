@@ -1,13 +1,17 @@
 import asyncio
+import base64
 import hashlib
 import io
+import json
 from types import SimpleNamespace
 
+import httpx
 import numpy as np
 import pytest
 from PIL import Image
 
 from app.services import fal_api, fal_cutout
+from app import image_usage
 from app.services.sam_client import SamUnavailable
 
 
@@ -229,3 +233,26 @@ def test_empty_candidates_fail_per_view_and_http_failure_remains_retryable(monke
     result = asyncio.run(fal_cutout.segment_garment(SimpleNamespace(fal_key="test"), r2,
                                                   {"Front": "source"}))["Front"]
     assert not result.ready and result.code == "unavailable"
+
+
+def test_sam_inline_mask_runs_through_common_decoder_without_download(monkeypatch):
+    posts = []
+    mask_url = "data:image/png;base64," + base64.b64encode(
+        candidate((20, 20, 80, 80))).decode("ascii")
+
+    def handler(request):
+        assert request.method == "POST", "inline SAM masks must not be downloaded"
+        posts.append(request)
+        return httpx.Response(200, json={"masks": [{"url": mask_url}], "scores": [.9]})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(fal_api.httpx, "AsyncClient", lambda **kwargs: real_client(
+        transport=httpx.MockTransport(handler), **kwargs))
+    monkeypatch.setattr(image_usage, "record", lambda **kwargs: None)
+    source = png(Image.new("RGB", (100, 100), (30, 40, 50)))
+    result = asyncio.run(fal_cutout.cutout_png(SimpleNamespace(fal_key="test"), source))
+    rgba = np.array(Image.open(io.BytesIO(result)))
+    assert tuple(rgba[50, 50]) == (30, 40, 50, 255)
+    assert rgba[0, 0, 3] == 0
+    assert len(posts) == 1
+    assert json.loads(posts[0].content)["sync_mode"] is True

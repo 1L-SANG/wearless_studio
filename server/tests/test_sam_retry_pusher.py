@@ -7,6 +7,7 @@
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -153,13 +154,14 @@ def test_poll_interval_follows_the_shortest_backoff():
 # 살아난 걸 확인했으면 더 기다릴 이유가 없다. 예산(MAX_RETRIES=4)은 그대로 지킨다.
 
 class _State:
-    def __init__(self, resolver):
+    def __init__(self, resolver, **providers):
         self.sam_endpoint = resolver
+        self.settings = SimpleNamespace(**providers)
 
 
 class _App:
-    def __init__(self, resolver):
-        self.state = _State(resolver)
+    def __init__(self, resolver, **providers):
+        self.state = _State(resolver, **providers)
 
 
 class _Resolver:
@@ -180,9 +182,66 @@ def _fresh(**over):
     return _job(finished_at=datetime.now(timezone.utc) - timedelta(seconds=1), **over)
 
 
-def _push_with(rec, resolver):
-    pusher = SamRetryPusher(app=_App(resolver))
+def _push_with(rec, resolver, **providers):
+    pusher = SamRetryPusher(app=_App(resolver, **providers))
     return asyncio.run(pusher._push_once(rec, None))
+
+
+@pytest.mark.parametrize("kind,matching_provider,preprocess_provider", [
+    ("matching_cutout", "fal", "sam2"),
+    ("sam_preprocess", "sam2", "fal"),
+])
+def test_fal_waits_for_its_backoff_even_when_sam2_is_ready(
+        kind, matching_provider, preprocess_provider):
+    job = _job(kind=kind, payload={"retry": 1},
+               finished_at=datetime.now(timezone.utc) - timedelta(seconds=16),
+               idempotency_key=f"p:{kind}:source:v1:r1")
+    rec = _Recorder([job])
+    resolver = _Resolver(ready=True)
+
+    assert _push_with(rec, resolver, matching_cutout_provider=matching_provider,
+                      sam_preprocess_provider=preprocess_provider) == 0
+    assert rec.created == []
+    assert resolver.asked == 0
+
+
+@pytest.mark.parametrize("kind,matching_provider,preprocess_provider", [
+    ("matching_cutout", "fal", "sam2"),
+    ("sam_preprocess", "sam2", "fal"),
+])
+def test_fal_retries_after_its_backoff_without_probing_sam2(
+        kind, matching_provider, preprocess_provider):
+    payload = {"retry": 1, "sourceKeys": ["front", "back"]}
+    job = _job(kind=kind, payload=payload,
+               finished_at=datetime.now(timezone.utc) - timedelta(seconds=61),
+               idempotency_key=f"p:{kind}:source:v1:r1")
+    rec = _Recorder([job])
+    resolver = _Resolver(ready=False)
+
+    assert _push_with(rec, resolver, matching_cutout_provider=matching_provider,
+                      sam_preprocess_provider=preprocess_provider) == 1
+    assert rec.created == [{"kind": kind, "key": f"p:{kind}:source:v1:r2",
+                            "payload": {"retry": 2, "sourceKeys": ["front", "back"]},
+                            "credits_reserved": 0}]
+    assert resolver.asked == 0
+
+
+@pytest.mark.parametrize("kind,matching_provider,preprocess_provider", [
+    ("matching_cutout", "sam2", "fal"),
+    ("sam_preprocess", "fal", "sam2"),
+])
+def test_sam2_keeps_early_retry_when_the_other_job_kind_uses_fal(
+        kind, matching_provider, preprocess_provider):
+    job = _job(kind=kind, payload={"retry": 1},
+               finished_at=datetime.now(timezone.utc) - timedelta(seconds=16),
+               idempotency_key=f"p:{kind}:source:v1:r1")
+    rec = _Recorder([job])
+    resolver = _Resolver(ready=True)
+
+    assert _push_with(rec, resolver, matching_cutout_provider=matching_provider,
+                      sam_preprocess_provider=preprocess_provider) == 1
+    assert rec.created[0]["payload"]["retry"] == 2
+    assert resolver.asked == 1
 
 
 def test_a_live_sam_skips_the_backoff():

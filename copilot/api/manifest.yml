@@ -242,6 +242,10 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 접힌 갈색 배럴팬츠 → 갈색 청바지). 이미 만든 1장을 재사용하므로 이미지 호출은 늘지 않고,
   # 재렌더가 실패하면 누끼 썸네일(그 폴백은 셀러 원본)이 그대로 남는다.
   MATCHING_FLATLAY: full
+  # 내 옷 누끼와 정돈의 fal 1단계. 되돌릴 때는 아래 두 값을 지운다.
+  # SAM_PREPROCESS_PROVIDER는 일부러 sam2 기본값을 유지, 하루 관찰 뒤 2단계에서 전환한다.
+  MATCHING_CUTOUT_PROVIDER: fal
+  MATCHING_FLATLAY_PROVIDER: qwen
   # flat-lay 재렌더 모델. 리포트는 정체성 동률·비용 절반·속도 2배로 flash 를 추천했으나,
   # 디테일 우선으로 pro 를 쓴다(오너 결정 2026-08-15). 비용을 줄이려면 image_light.
   MATCHING_FLATLAY_TIER: image_high
@@ -613,6 +617,9 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   R2_SECRET_ACCESS_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/R2_SECRET_ACCESS_KEY
   CLOUDFLARE_CACHE_PURGE_TOKEN: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/CLOUDFLARE_CACHE_PURGE_TOKEN
   GEMINI_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/GEMINI_API_KEY
+  # 2026-10-16 SSM 저장, copilot application/environment 태그 확인 완료.
+  # 내 옷 누끼와 정돈에 사용, 상품 누끼는 2단계에서 전환한다.
+  FAL_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FAL_KEY
   # 얼굴 렌더 서비스 인증 토큰과 RunPod API 키.
   # ★ SSM 값 없이 이 두 줄이 배포되면 ECS 태스크가 기동에 실패하고 롤백된다(2026-07-17 주석과 같은 함정).
   #   배포 전 반드시: copilot secret init --name FACE_IDENTITY_BACKEND_TOKEN / --name RUNPOD_API_KEY
