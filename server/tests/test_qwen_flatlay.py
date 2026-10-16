@@ -57,12 +57,168 @@ def test_soft_lab_translation_moves_only_garment_and_lightness_by_70_percent():
     mask = np.zeros((100, 100), bool)
     mask[10:90, 25:75] = True
     corrected = qwen_flatlay.soft_color_correct(reference, result, mask)
-    lab_ref = cv2.cvtColor(np.float32([[[110, 120, 140]]]) / 255, cv2.COLOR_RGB2Lab)[0, 0]
+    ref = np.array(Image.open(io.BytesIO(reference)))
+    reference_mask = cv2.erode((ref[:, :, 3] > 127).astype(np.uint8),
+                               np.ones((7, 7), np.uint8)).astype(bool)
+    lab_ref = qwen_flatlay._color_target(ref, reference_mask)
     lab_old = cv2.cvtColor(result.astype(np.float32) / 255, cv2.COLOR_RGB2Lab)[50, 50]
     lab_new = cv2.cvtColor(corrected.astype(np.float32) / 255, cv2.COLOR_RGB2Lab)[50, 50]
     assert lab_new[0] - lab_old[0] == pytest.approx((lab_ref[0] - lab_old[0]) * .7, abs=.5)
     assert lab_new[1:] == pytest.approx(lab_ref[1:], abs=.8)
     assert np.array_equal(corrected[~mask], result[~mask])
+
+
+def _linear_scene(background=None, garment=(.65, .4, .5), illuminant=(1, 1, 1)):
+    # 강한 중립 배경 질감은 옷 경계보다 많은 조명 단서를 제공한다.
+    yy, xx = np.indices((192, 192))
+    grey = np.where((xx // 8 + yy // 8) % 2, .92, .15)
+    linear = np.repeat(grey[:, :, None], 3, axis=2)
+    if background is not None:
+        linear[:] = background
+    alpha = np.zeros((192, 192), np.uint8)
+    alpha[72:120, 72:120] = 255
+    linear[alpha > 127] = garment
+    linear = np.clip(linear * illuminant, 0, 1)
+    srgb = np.where(linear <= .0031308, linear * 12.92,
+                    1.055 * linear ** (1 / 2.4) - .055)
+    return np.dstack((np.rint(srgb * 255).astype(np.uint8), alpha))
+
+
+def _reference_target(ref, caplog):
+    mask = cv2.erode((ref[:, :, 3] > 127).astype(np.uint8),
+                     np.ones((7, 7), np.uint8)).astype(bool)
+    with caplog.at_level("INFO", logger="wearless.qwen_flatlay"):
+        target = qwen_flatlay._color_target(ref, mask)
+    event = json.loads(caplog.records[-1].message)
+    return target, event
+
+
+def _garment_lab(ref):
+    lab = cv2.cvtColor(ref[:, :, :3].astype(np.float32) / 255, cv2.COLOR_RGB2Lab)
+    return np.median(lab[ref[:, :, 3] > 127], axis=0)
+
+
+def test_neutral_light_preserves_pink_reference(caplog):
+    ref = _linear_scene()
+    target, event = _reference_target(ref, caplog)
+    assert event["illumination_gain"] == pytest.approx([1, 1, 1], abs=.01)
+    assert event["exposure_gain"] == pytest.approx(1, abs=.01)
+    assert np.linalg.norm(target - _garment_lab(ref)) < 1
+
+
+def test_yellow_light_recovers_pink_chroma(caplog):
+    neutral = _linear_scene()
+    yellow = _linear_scene(illuminant=(1.15, 1, .8))
+    target, _ = _reference_target(yellow, caplog)
+    ideal = _garment_lab(neutral)[1:]
+    old_distance = np.linalg.norm(_garment_lab(yellow)[1:] - ideal)
+    assert old_distance > 5
+    assert np.linalg.norm(target[1:] - ideal) <= old_distance / 2
+
+
+def test_red_wall_limits_channel_gain_and_chroma_shift(caplog):
+    ref = _linear_scene(background=(.8, .08, .04))
+    target, event = _reference_target(ref, caplog)
+    assert all(.75 <= value <= 1.3 for value in event["illumination_gain"])
+    assert np.linalg.norm(target[1:] - _garment_lab(ref)[1:]) <= 10 + 1e-5
+
+
+def test_chroma_shift_cap_applies_at_full_strength(monkeypatch, caplog):
+    # 기본 세기(70%)에서는 빨간 벽도 10 안쪽이라, 상한 자체는 세기 100%로 확인한다.
+    monkeypatch.setattr(qwen_flatlay, "CHROMA_SHIFT_STRENGTH", 1.)
+    ref = _linear_scene(background=(.8, .08, .04))
+    target, event = _reference_target(ref, caplog)
+    assert np.linalg.norm(target[1:] - _garment_lab(ref)[1:]) == pytest.approx(10, abs=1e-5)
+    assert event["chroma_capped"] is True
+
+
+@pytest.mark.parametrize("stripes,expected", [(False, 1.3), (True, .95 / .9)])
+def test_exposure_restores_dark_scene_without_blowing_white_stripes(caplog, stripes, expected):
+    ref = _linear_scene(background=(.45, .45, .45))
+    if stripes:
+        ref[80:86, 72:120, :3] = 244  # sRGB 244의 선형 휘도는 약 0.905다.
+    target, event = _reference_target(ref, caplog)
+    assert event["exposure_gain"] == pytest.approx(expected, abs=.007)
+    assert target[0] > _garment_lab(ref)[0]
+
+
+def test_exposure_never_darkens_bright_garment(caplog):
+    ref = _linear_scene(background=(.45, .45, .45), garment=(.99, .99, .99))
+    _, event = _reference_target(ref, caplog)
+    assert event["exposure_gain"] == 1
+
+
+def test_zero_rgb_outside_alpha_falls_back_to_valid_garment_pixels(caplog):
+    ref = _linear_scene()
+    ref[ref[:, :, 3] == 0, :3] = 0
+    target, event = _reference_target(ref, caplog)
+    assert np.isfinite(target).all()
+    assert event["background_pixels"] == 48 * 48
+
+
+@pytest.mark.parametrize("invalid", [0, np.nan, np.inf, -1])
+def test_invalid_estimate_keeps_legacy_target_and_output(monkeypatch, caplog, invalid):
+    ref = _linear_scene()
+    rgb = ref[:, :, :3].copy()
+    mask = ref[:, :, 3] > 127
+    rgb[mask] = (100, 125, 150)
+    lab = cv2.cvtColor(rgb.astype(np.float32) / 255, cv2.COLOR_RGB2Lab)
+    delta = _garment_lab(ref) - np.median(lab[mask], axis=0)
+    delta[0] *= .7
+    lab[mask] += delta
+    lab[:, :, 0] = np.clip(lab[:, :, 0], 0, 100)
+    lab[:, :, 1:] = np.clip(lab[:, :, 1:], -127, 127)
+    legacy = np.clip(np.rint(cv2.cvtColor(lab, cv2.COLOR_Lab2RGB) * 255), 0, 255).astype(np.uint8)
+    legacy[~mask] = rgb[~mask]
+    # 조명 추정 직전의 실패와 수치 오류 모두 원래 Lab 목표로 복귀해야 한다.
+    monkeypatch.setattr(cv2, "GaussianBlur", lambda image, *args, **kwargs:
+                        np.full_like(image, invalid))
+    target, event = _reference_target(ref, caplog)
+    assert np.array_equal(target, _garment_lab(ref))
+    assert event["illumination_gain"] == [1, 1, 1]
+    assert event["exposure_gain"] == 1
+    corrected = qwen_flatlay.soft_color_correct(png(Image.fromarray(ref)), rgb, mask)
+    assert np.array_equal(corrected, legacy)
+
+
+def test_estimation_exception_keeps_legacy_target(monkeypatch, caplog):
+    def broken(*args, **kwargs):
+        raise cv2.error("synthetic estimation failure")
+
+    monkeypatch.setattr(cv2, "GaussianBlur", broken)
+    ref = _linear_scene()
+    target, event = _reference_target(ref, caplog)
+    assert np.array_equal(target, _garment_lab(ref))
+    assert event["illumination_gain"] == [1, 1, 1]
+    assert event["exposure_gain"] == 1
+
+
+def test_large_reference_limits_estimation_resolution(caplog):
+    ref = cv2.resize(_linear_scene(), (1536, 1152), interpolation=cv2.INTER_NEAREST)
+    target, event = _reference_target(ref, caplog)
+    assert 700_000 < event["background_pixels"] < 1024 * 768
+    assert np.linalg.norm(target - _garment_lab(ref)) < 1
+
+
+@pytest.mark.parametrize("color", [(0, 0, 0), (255, 255, 255), (120, 120, 120), (120, 0, 120)])
+def test_empty_valid_pixels_zero_edges_or_zero_channel_use_legacy_target(caplog, color):
+    ref = np.full((64, 64, 4), (*color, 255), np.uint8)
+    target, event = _reference_target(ref, caplog)
+    assert np.array_equal(target, _garment_lab(ref))
+    assert event["illumination_gain"] == [1, 1, 1]
+    assert event["exposure_gain"] == 1
+
+
+@pytest.mark.parametrize("empty_reference", [True, False])
+def test_empty_color_reference_or_garment_still_raises(empty_reference):
+    ref = _linear_scene()
+    mask = ref[:, :, 3] > 127
+    if empty_reference:
+        ref[:, :, 3] = 0
+    else:
+        mask[:] = False
+    with pytest.raises(ValueError, match="empty color reference or garment"):
+        qwen_flatlay.soft_color_correct(png(Image.fromarray(ref)), ref[:, :, :3], mask)
 
 
 @pytest.mark.parametrize("mask_fails", [False, True])
@@ -113,7 +269,8 @@ def test_qwen_exact_payload_safe_fallback_grey_composite_and_stage(monkeypatch, 
     assert tuple(a[0, 0]) == (232, 232, 230)
     assert tuple(a[500, 300]) != (65, 90, 125), "garment was color corrected"
     events = [json.loads(r.message) for r in caplog.records if r.name == "wearless.qwen_flatlay"]
-    assert len(events) == 1 and events[0]["mask_source"] == "sam3"
+    assert len(events) == 2 and events[0]["mask_source"] == "sam3"
+    assert set(events[1]) == {"illumination_gain", "exposure_gain", "background_pixels", "chroma_capped"}
     thumb = Image.open(io.BytesIO(result.image))
     assert thumb.format == "JPEG" and max(thumb.size) == 512
 
