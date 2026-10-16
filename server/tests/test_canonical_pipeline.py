@@ -83,6 +83,14 @@ def test_metadata_records_the_full_provenance_chain():
     assert m["r2Key"].endswith("h1.png") and m["checksum"] == "c"
 
 
+def test_fal_cutouts_are_not_labelled_as_sam2():
+    m = cr.metadata_for("Front", _result(model_version="fal-ai/sam-3/image",
+                                         algorithm_version="fal-sam3-v1"),
+                        source_asset_id="src-1")
+    assert m["producer"] == cr.FAL_PRODUCER == "fal-sam3"
+    assert cr.is_current(m, source_asset_id="src-1", source_hash="h1")
+
+
 def test_a_cutout_from_the_current_source_is_current():
     m = cr.metadata_for("Front", _result(), source_asset_id="src-1")
     assert cr.is_current(m, source_asset_id="src-1", source_hash="h1")
