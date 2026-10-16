@@ -2140,6 +2140,8 @@ async def sam_demand_snapshot(conn: AsyncConnection, kinds: tuple[str, ...]):
     """sam2 가 켜져 있어야 하는지 판단할 세 값을 한 왕복으로(2026-08-21, sam_autoscaler 전용).
 
     업로드는 `source='upload'` 만 센다 — 파생 asset(누끼·마스크·생성물)은 SAM 수요가 아니다.
+    정돈 필수 pending 잡은 OFF 롤백 뒤에도 남는다. 실행을 맡기 전까지 수요에서 빼되,
+    running 은 모든 프로세스에서 센다. 로컬 플래그로 다른 ON 워커의 SAM을 끄면 안 된다.
     `jobs_sam_retry_idx`(kind, finished_at) 와 `assets_upload_created_idx` 가 받친다.
     """
     from app.services.sam_autoscale import DemandSnapshot
@@ -2147,7 +2149,9 @@ async def sam_demand_snapshot(conn: AsyncConnection, kinds: tuple[str, ...]):
         await cur.execute(
             "select "
             "  (select count(*) from jobs where kind = any(%s) "
-            "     and status in ('pending', 'running')) as active_sam_jobs, "
+            "     and status in ('pending', 'running') "
+            "     and not (status = 'pending' and kind = 'sam_preprocess' "
+            "       and coalesce(payload->'productTidyRequired', 'false'::jsonb) = 'true'::jsonb)) as active_sam_jobs, "
             "  (select max(finished_at) from jobs where kind = any(%s) "
             "     and finished_at is not null) as last_sam_finished_at, "
             "  (select max(created_at) from assets where source = 'upload') as last_upload_at",

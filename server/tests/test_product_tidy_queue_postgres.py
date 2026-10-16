@@ -5,6 +5,7 @@ tables referenced by claim SQL. It does not run migrations or contact providers.
 """
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 import os
 from types import SimpleNamespace
 import uuid
@@ -17,7 +18,7 @@ from psycopg.types.json import Jsonb
 import pytest
 
 from app import repo, routes
-from app.services import canonical_reference, product_tidy
+from app.services import canonical_reference, product_tidy, sam_autoscale
 
 
 @pytest.fixture
@@ -64,7 +65,8 @@ def database():
                 );
                 create table fm_cutover_batches(status text);
                 create table personalization_profiles(id uuid, status text);
-                create table fm_models(id uuid, user_id uuid)
+                create table fm_models(id uuid, user_id uuid);
+                create table assets(source text, created_at timestamptz not null default now())
             """)
             yield SimpleNamespace(dsn=dsn, schema=schema)
         finally:
@@ -96,6 +98,59 @@ async def add(conn, *, payload=None, kind="sam_preprocess", status="pending", ke
 
 async def row(conn, job_id):
     return await (await conn.execute("select * from jobs where id = %s", (job_id,))).fetchone()
+
+
+def test_deferred_required_job_allows_sam_idle_shutdown_and_claim_restores_demand(database):
+    async def scenario():
+        async with connection(database) as conn:
+            required = await add(conn, payload={"mode": "canonical_cutout", "productTidyRequired": True})
+            finished = await add(conn, status="done")
+            await conn.execute("update jobs set finished_at = now() - interval '2 hours' where id = %s", (finished,))
+            await conn.execute("insert into assets(source, created_at) values "
+                               "('upload', now() - interval '2 hours'), ('derived', now())")
+            now = datetime.now(timezone.utc)
+            idle = await repo.sam_demand_snapshot(conn, sam_autoscale.SAM_KINDS)
+            assert idle.active_sam_jobs == 0
+            assert not sam_autoscale.want_running(idle, idle_minutes=30, now=now)
+
+            claimed = await repo.claim_next_job(conn, ("sam_preprocess",), "on", product_tidy_capable=True)
+            assert claimed["id"] == required
+            busy = await repo.sam_demand_snapshot(conn, sam_autoscale.SAM_KINDS)
+            assert busy.active_sam_jobs == 1
+            assert sam_autoscale.want_running(busy, idle_minutes=30, now=now)
+
+            assert await repo.finalize_uncharged_job(
+                conn, job_id=required, lease_token=claimed["lease_token"], status="done",
+                result={"state": "pending"}, product_tidy_capable=False)
+            deferred = await repo.sam_demand_snapshot(conn, sam_autoscale.SAM_KINDS)
+            assert (await row(conn, required))["status"] == "pending"
+            assert deferred.active_sam_jobs == 0
+            assert not sam_autoscale.want_running(deferred, idle_minutes=30, now=now)
+            assert deferred.last_sam_finished_at == idle.last_sam_finished_at
+            assert deferred.last_upload_at == idle.last_upload_at
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("kind,status,payload,want", [
+    ("sam_preprocess", "pending", {"productTidyRequired": True}, 0),
+    ("sam_preprocess", "running", {"productTidyRequired": True}, 1),
+    ("sam_preprocess", "pending", {"mode": "canonical_cutout"}, 1),
+    ("sam_preprocess", "running", {"mode": "canonical_cutout"}, 1),
+    ("sam_preprocess", "pending", {"productTidyRequired": False}, 1),
+    ("sam_preprocess", "pending", {"productTidyRequired": None}, 1),
+    ("sam_preprocess", "pending", {"productTidyRequired": "true"}, 1),
+    ("matching_cutout", "pending", {"productTidyRequired": True}, 1),
+    ("editor_garment_mask", "pending", {"productTidyRequired": True}, 1),
+    ("analyze", "pending", {"productTidyRequired": True}, 0),
+])
+def test_sam_demand_excludes_only_required_pending_preprocess_jobs(database, kind, status, payload, want):
+    async def scenario():
+        async with connection(database) as conn:
+            await add(conn, kind=kind, status=status, payload=payload)
+            snapshot = await repo.sam_demand_snapshot(conn, sam_autoscale.SAM_KINDS)
+            assert snapshot.active_sam_jobs == want
+            assert sam_autoscale.want_running(snapshot, idle_minutes=30) is bool(want)
+    asyncio.run(scenario())
 
 
 def test_incapable_claim_skips_required_jobs_without_starving_other_work(database):
