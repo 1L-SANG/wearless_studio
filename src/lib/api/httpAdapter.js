@@ -215,13 +215,14 @@ export async function http(path, {
    그 최종 응답에 CORS 헤더가 있어야 하는데 그건 CDN 설정이라 앱이 보장할 수 없다. 그래서
    편집 소스만 API 가 직접 실어 보내는 라우트를 쓴다 — 여기 CORS 는 우리 것이다.
    에디터를 열 때 원본 1장 + 마스크 1장이고, 슬라이더를 움직이는 동안엔 0장이다. */
-export async function httpBlob(path, { signal, accountGeneration = clientEvents.getAccountGeneration() } = {}) {
+export async function httpBlob(path, { signal, cache, accountGeneration = clientEvents.getAccountGeneration() } = {}) {
   const { data } = await supabase.auth.getSession().catch((error) => { throw clientEvents.bindGeneration(error, accountGeneration); });
   const token = data?.session?.access_token;
   if (!token) throw clientEvents.bindGeneration(new Error('로그인이 필요해요. 로그인 후 다시 시도해 주세요.'), accountGeneration);
   const res = await clientApiFetch(`${BASE_URL}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
     signal,
+    cache,
   }, { accountGeneration });
   if (!res.ok) {
     const err = new Error('이미지를 불러오지 못했어요.');
@@ -927,7 +928,8 @@ export const httpAdapter = {
     return httpBlob(`/v1/projects/${projectId}/mannequins/${encodeURIComponent(cutId)}/tone-editor/source`, opts);
   },
   toneEditorMask(projectId, cutId, opts) {
-    return httpBlob(`/v1/projects/${projectId}/mannequins/${encodeURIComponent(cutId)}/tone-editor/mask`, opts);
+    // 같은 URL에서도 provider나 상품 레퍼런스가 바뀌면 다른 마스크가 선택된다.
+    return httpBlob(`/v1/projects/${projectId}/mannequins/${encodeURIComponent(cutId)}/tone-editor/mask`, { ...opts, cache: 'no-store' });
   },
   applyToneEditor(projectId, cutId, { assetId, saturation, exposure }) {
     return http(`/v1/projects/${projectId}/mannequins/${encodeURIComponent(cutId)}/tone-editor:apply`, {

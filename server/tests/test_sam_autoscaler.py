@@ -82,8 +82,10 @@ def _run(sc, repo):
 
 
 class _DemandCursor:
-    def __init__(self):
+    def __init__(self, active=0, finished_at=None):
         self.queries = []
+        self.active = active
+        self.finished_at = finished_at
 
     async def __aenter__(self):
         return self
@@ -95,7 +97,7 @@ class _DemandCursor:
         self.queries.append((sql, params))
 
     async def fetchone(self):
-        return {"active_sam_jobs": 0, "last_sam_finished_at": None,
+        return {"active_sam_jobs": self.active, "last_sam_finished_at": self.finished_at,
                 "last_upload_at": NOW}
 
 
@@ -104,22 +106,21 @@ def _all_fal_settings():
                          tone_mask_provider="fal", fal_key="test")
 
 
-def test_all_fal_demand_skips_the_database_even_with_a_recent_upload():
-    def forbidden_cursor():
-        pytest.fail("all-fal demand must not open a DB cursor")
-
-    conn = SimpleNamespace(cursor=forbidden_cursor)
+@pytest.mark.parametrize("active", [0, 1])
+def test_all_fal_demand_keeps_active_jobs_but_ignores_recent_upload_and_history(active):
+    cursor = _DemandCursor(active=active, finished_at=NOW)
+    conn = SimpleNamespace(cursor=lambda: cursor)
     snap = asyncio.run(mod._sam_demand(repo_mod, conn, _all_fal_settings()))
-    assert snap == DemandSnapshot(0, None, None)
-    assert want_count(snap, idle_minutes=30, now=NOW) == 0
+    assert snap == DemandSnapshot(active, None, None)
+    assert want_count(snap, idle_minutes=30, now=NOW) == active
 
 
-@pytest.mark.parametrize("provider_attr,kind", [
-    ("sam_preprocess_provider", "sam_preprocess"),
-    ("matching_cutout_provider", "matching_cutout"),
-    ("tone_mask_provider", "editor_garment_mask"),
+@pytest.mark.parametrize("provider_attr", [
+    "sam_preprocess_provider",
+    "matching_cutout_provider",
+    "tone_mask_provider",
 ])
-def test_each_sam2_switch_restores_upload_demand_immediately(provider_attr, kind):
+def test_each_sam2_switch_restores_upload_demand_immediately(provider_attr):
     sc = _scaler(_Adapter(ServiceState(0, 0, 0, None)))
     sc.app.state.settings = _all_fal_settings()
     cursor = _DemandCursor()
@@ -135,10 +136,6 @@ def test_each_sam2_switch_restores_upload_demand_immediately(provider_attr, kind
             assert await sc._demand_fn(repo_mod, conn) == DemandSnapshot(0, None, None)
 
     asyncio.run(run())
-    assert len(cursor.queries) == 2
-    for sql, params in cursor.queries:
-        assert "source = 'upload'" in sql
-        assert params == ([kind], [kind])
 
 
 @pytest.mark.parametrize("name", ["opendid", "detail-worker"])

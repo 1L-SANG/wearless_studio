@@ -109,7 +109,8 @@ async def row(conn, job_id):
     ("fal", "running", "fal", 0),
     (None, "pending", "fal", 1),  # Claimed legacy rows do not expose the key; they execute SAM2.
 ])
-def test_tone_demand_survives_provider_switch(database, provider, status, key_provider, expected):
+@pytest.mark.parametrize("all_fal", [False, True])
+def test_tone_demand_survives_provider_switch(database, provider, status, key_provider, expected, all_fal):
     from app.services import editor_garment_mask
     from test_sam_autoscaler import _Adapter, _scaler, NOW
     async def scenario():
@@ -122,11 +123,31 @@ def test_tone_demand_survives_provider_switch(database, provider, status, key_pr
             # All unrelated activity is outside the idle window.
             await conn.execute("insert into assets(source, created_at) values ('upload', now() - interval '2 hours')")
             adapter = _Adapter(sam_autoscale.ServiceState(1, 1, 0, NOW - timedelta(hours=2)))
-            scaler = _scaler(adapter, tone_mask_provider="fal", fal_key="test")
+            overrides = {"sam_preprocess_provider": "fal", "matching_cutout_provider": "fal"} if all_fal else {}
+            scaler = _scaler(adapter, tone_mask_provider="fal", fal_key="test", **overrides)
             scaler._now = lambda: datetime.now(timezone.utc)
             result = await scaler.reconcile_once(repo, conn)
             assert result == ("noop" if expected else "down")
             assert adapter.set_calls == ([] if expected else [0])
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status", ["pending", "running"])
+def test_all_fal_queue_does_not_wake_sam_from_recent_upload_or_completion(database, status):
+    from test_sam_autoscaler import _Adapter, _scaler
+    async def scenario():
+        async with connection(database) as conn:
+            await add(conn, kind="editor_garment_mask", status=status,
+                      payload={"cutId": "A-1", "toneMaskProvider": "fal"})
+            finished = await add(conn, kind="editor_garment_mask", status="done", payload={"cutId": "B-1"})
+            await conn.execute("update jobs set finished_at = now() where id = %s", (finished,))
+            await conn.execute("insert into assets(source) values ('upload')")
+            adapter = _Adapter(sam_autoscale.ServiceState(0, 0, 0, None))
+            scaler = _scaler(adapter, sam_preprocess_provider="fal", matching_cutout_provider="fal",
+                             tone_mask_provider="fal", fal_key="test")
+            scaler._now = lambda: datetime.now(timezone.utc)
+            assert await scaler.reconcile_once(repo, conn) == "noop"
+            assert adapter.set_calls == []
     asyncio.run(scenario())
 
 
