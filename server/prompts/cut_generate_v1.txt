@@ -456,3 +456,9 @@ not frozen duplicates of a single moment.
   full or medium framing, provided the result remains physically coherent within the same space.
 - Match the person's perspective, scale, ground contact, cast/contact shadows and reflected light
   to this camera position and illumination so the result reads as one real photograph.
+
+
+[[OUTFIT_REFS]]SELECTED ACTUAL OUTFIT AUTHORITY:
+- OUTFIT INNER, MATCHING, OUTFIT FOOTWEAR, OUTFIT BAG and OUTFIT ACCESSORY images, when attached, are the identity authority for their exact roles. Preserve their actual type, shape, color, neckline and design as one coherent outfit. These selected references override neutral basics, example fixedInner or fixedFootwear and any mannequin inner where they differ.
+- The sold PRODUCT remains the hero. Never transfer clothing, shoes, bags or accessories from examples or mood images. For an unreferenced clothing or footwear role use the existing plain neutral basic; add no unreferenced bag or accessory.
+- Respect the requested crop. A shoe, bag or accessory that is outside the frame need not be forced into view.

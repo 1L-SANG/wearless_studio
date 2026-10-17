@@ -10,14 +10,16 @@ import { AI_MODELS } from '../../src/features/analysis/aiModels.js';
 import { modelSection, selectionEffect } from './helpers/analysis-model-entry.mjs';
 
 test('analysis offers only AI models with no real-model tab or brand category', async () => {
-  const { nodes, changes } = await modelSection({ selectedModelId: 'mA', targetGenders: ['women'] });
+  const { nodes, changes, allItems } = await modelSection({ selectedModelId: 'mA', targetGenders: ['women'] });
   assert.equal(nodes.some((node) => node.type === 'chips'), false);
   assert.equal(nodes.some((node) => node.props?.className === 'fm-use-category'), false);
   const cards = nodes.filter((node) => node.props?.onClick);
-  assert.equal(cards.length, 10);
+  assert.equal(cards.length, 6);
+  assert.equal(allItems.length, 10, '전체 보기에는 모든 여성 AI 모델이 있다');
   for (const card of cards) card.props.onClick();
-  assert.deepEqual(changes.map((patch) => patch.selectedModelId), AI_MODELS.filter((m) => m.gender === 'women').map((m) => m.id));
-  assert.ok(nodes.some((node) => node.props?.children === '가상 인물 모델이에요 · 라이선스 비용 없이 바로 쓸 수 있어요.'));
+  assert.deepEqual(changes.map((patch) => patch.selectedModelId), AI_MODELS.filter((m) => m.gender === 'women').slice(0, 6).map((m) => m.id));
+  assert.ok(nodes.some((node) => node.type === 'strong' && node.props.children.includes('무료')));
+  assert.ok(nodes.some((node) => node.type === 'strong' && node.props.children.some(text => /^\+\d+ 크레딧$/.test(String(text)))));
 });
 
 for (const [gender, expected] of [['women', 'mA'], ['men', 'mB'], ['unisex', 'mA']]) {

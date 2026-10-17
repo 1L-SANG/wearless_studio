@@ -8,6 +8,8 @@
 새로 들어온 색은 0.5(중립)로 처리해 색 어휘 확장이 전체 랭킹을 망가뜨리지 않는다.
 """
 
+import re
+
 HARMONY: dict[tuple[str, str], float] = {
     # 톤온톤 — 안정적이지만 대비가 약하므로 중간값
     ("white", "white"): 0.55,
@@ -136,3 +138,80 @@ HARMONY: dict[tuple[str, str], float] = {
 def harmony_map() -> dict:
     """현재 활성 색 조화 맵을 반환한다 (교체 가능한 accessor)."""
     return HARMONY
+
+
+# @nsteady_kr, https://www.instagram.com/p/DZg7EuIkhXY/ (2~16장, 2026-10-13 확인).
+# 각 행은 상의 색과 어울리는 하의 4색이다. 나열 순서는 우열이 아니며 역방향으로
+# 복제하지 않는다. 사진/문구는 저장하지 않고 배색 사실만 사용한다.
+TOP_BOTTOM_COLORS = {
+    "white": ("light_denim", "mid_denim", "beige", "khaki"),
+    "burgundy": ("cream", "dark_denim", "beige", "black_denim"),
+    "navy": ("khaki", "white", "light_denim", "brown"),
+    "gray": ("white", "dark_denim", "beige", "black"),
+    "brown": ("mid_denim", "beige", "white", "light_denim"),
+    "light_green": ("white", "light_denim", "cream", "black_denim"),
+    "black": ("white", "dark_denim", "cream", "gray"),
+    "yellow": ("brown", "white", "dark_denim", "black_denim"),
+    "purple": ("white", "dark_denim", "beige", "black_denim"),
+    "mid_denim": ("black_denim", "gray", "dark_denim", "khaki"),
+    "ivory": ("khaki", "beige", "light_denim", "brown"),
+    "pink": ("beige", "white", "light_denim", "brown"),
+    "charcoal": ("white", "light_denim", "khaki", "gray"),
+    "red": ("white", "mid_denim", "beige", "light_denim"),
+    "khaki": ("beige", "black_denim", "cream", "dark_denim"),
+}
+
+_SHADE_GROUPS = {
+    "burgundy": ("red",), "charcoal": ("gray", "black"),
+    "light_green": ("green",), "cream": ("ivory", "white"),
+    "light_denim": ("blue",), "mid_denim": ("blue",),
+    "dark_denim": ("navy", "blue"), "black_denim": ("black", "gray"),
+    "khaki": ("khaki", "green"),
+}
+_SHADE_NAMES = {
+    "burgundy": ("버건디", "버건디레드", "와인", "와인레드", "burgundy", "wine", "winered"),
+    "charcoal": ("차콜", "차콜그레이", "charcoal", "charcoalgray", "charcoalgrey"),
+    "light_green": ("라이트그린", "연두", "연두색", "lightgreen"),
+    "cream": ("크림", "크림색", "크림아이보리", "cream", "creamivory"),
+    "light_denim": ("연청", "연청색", "아이스진", "lightdenim", "lightwashdenim"),
+    "mid_denim": ("중청", "중청색", "미디엄데님", "middenim", "mediumdenim"),
+    "dark_denim": ("진청", "진청색", "딥인디고", "darkdenim", "darkwashdenim"),
+    "black_denim": ("흑청", "흑청색", "블랙데님", "blackdenim"),
+    "khaki": ("카키", "워시드카키", "올리브", "올리브그린", "khaki", "olive", "olivegreen"),
+}
+_DENIM_CATEGORIES = {"데님팬츠", "데님셔츠", "데님재킷", "데님자켓", "denim_pants", "denim_shirt", "denim_jacket"}
+_LIGHT_DENIM_NAMES = {"라이트블루", "아이스블루", "lightblue", "iceblue"}
+
+
+def matching_color(group: str | None, name: str | None = None, category: str | None = None) -> str | None:
+    """스와치와 모순되지 않는 명시적 색 이름만 세분화한다. 저장 enum은 바꾸지 않는다."""
+    group = group.strip().lower() if isinstance(group, str) else None
+    if not group:
+        return None
+    normalized = re.sub(r"[\s_-]+", "", name.lower()) if isinstance(name, str) else ""
+    for shade, names in _SHADE_NAMES.items():
+        if normalized in names and group in _SHADE_GROUPS[shade]:
+            return shade
+    # 색 이름만으로 파란 옷을 데님으로 간주하지 않는다. 큐레이션 카테고리로 확정한다.
+    if category in _DENIM_CATEGORIES:
+        if group == "blue":
+            return "light_denim" if normalized in _LIGHT_DENIM_NAMES else "mid_denim"
+        if group == "navy":
+            return "dark_denim"
+        if group == "black":
+            return "black_denim"
+    return group
+
+
+def outfit_color_score(product_color: str | None, item_color: str | None,
+                       clothing_type: str, harmony: dict | None = None) -> float:
+    """추천 배색은 최소 0.95, 나머지는 기존 조화 점수. 0.95는 제품의 랭킹 가중값이다."""
+    scores = HARMONY if harmony is None else harmony
+    product_group = _SHADE_GROUPS.get(product_color, (product_color,))[0]
+    item_group = _SHADE_GROUPS.get(item_color, (item_color,))[0]
+    fallback = scores.get((product_group, item_group), scores.get((item_group, product_group), 0.5))
+    top, bottom = ((product_color, item_color) if clothing_type in ("top", "outer")
+                   else (item_color, product_color))
+    if clothing_type in ("top", "outer", "bottom") and bottom in TOP_BOTTOM_COLORS.get(top, ()):
+        return max(0.95, fallback)
+    return fallback

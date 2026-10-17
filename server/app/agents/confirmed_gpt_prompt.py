@@ -17,6 +17,9 @@ import re
 
 _TEMPLATE = Path(__file__).resolve().parents[2] / "prompts" / "cut_generate_confirmed_gpt_v1.txt"
 _TEMPLATE_SHA256 = "d06ff48fa1185efadbda85d2f543b2340577716e72be9b105d6e3b8e407134fd"
+_OUTFIT_TEMPLATE = _TEMPLATE.with_name("cut_generate_confirmed_gpt_outfit_v2.txt")
+_OUTFIT_TEMPLATE_SHA256 = "76cf2babce4278341228e0abed704c57739278895395d5c3aa98ff5a886da33a"
+_OUTFIT_ROLES = ("inner", "footwear", "bag", "accessory")
 _TOKEN_RE = re.compile(r"\$\{([a-z_]+)\}")
 _CODE_RE = re.compile(r"[a-z0-9_]+")
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -57,6 +60,10 @@ class InputRole(StrEnum):
     MODEL_FULL_BODY_DIRECTION_SHEET = "MODEL FULL-BODY DIRECTION SHEET"
     SOLD_PRODUCT_LABELED_EVIDENCE_GRID = "SOLD PRODUCT LABELED EVIDENCE GRID"
     MATCHING_GARMENT_EVIDENCE = "MATCHING GARMENT EVIDENCE"
+    SELECTED_INNER_EVIDENCE = "SELECTED INNER EVIDENCE"
+    SELECTED_FOOTWEAR_EVIDENCE = "SELECTED FOOTWEAR EVIDENCE"
+    SELECTED_BAG_EVIDENCE = "SELECTED BAG EVIDENCE"
+    SELECTED_ACCESSORY_EVIDENCE = "SELECTED ACCESSORY EVIDENCE"
     SERVICE_EXAMPLE_REFERENCE = "SERVICE EXAMPLE REFERENCE"
 
 
@@ -93,6 +100,16 @@ _ROLE_AUTHORITY = {
         "person, body or garment identity"
     ),
 }
+
+OUTFIT_INPUT_ROLES = dict(zip(_OUTFIT_ROLES, (
+    InputRole.SELECTED_INNER_EVIDENCE, InputRole.SELECTED_FOOTWEAR_EVIDENCE,
+    InputRole.SELECTED_BAG_EVIDENCE, InputRole.SELECTED_ACCESSORY_EVIDENCE,
+), strict=True))
+for _role, _input_role in OUTFIT_INPUT_ROLES.items():
+    _ROLE_AUTHORITY[_input_role] = (
+        f"owns only the directly selected {_role} item's identity, shape, color, material, "
+        "pattern and permanent details; it owns no sold-product, model, pose, camera or scene attributes"
+    )
 
 
 @dataclass(frozen=True)
@@ -144,6 +161,7 @@ class OutfitLock:
     fixed_inner: str | None
     fixed_footwear: str
     matching_attached: bool
+    selected_roles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -211,7 +229,8 @@ def _validate_scope(scope: ConfirmedGptScope) -> None:
         raise ConfirmedGptPromptError("confirmed_gpt_requires_service_example")
 
 
-def _role_manifest(roles: tuple[InputRole, ...], *, matching_attached: bool) -> str:
+def _role_manifest(roles: tuple[InputRole, ...], *, matching_attached: bool,
+                   selected_roles: tuple[str, ...] = ()) -> str:
     try:
         normalized = tuple(InputRole(role) for role in roles)
     except (TypeError, ValueError) as exc:
@@ -221,7 +240,9 @@ def _role_manifest(roles: tuple[InputRole, ...], *, matching_attached: bool) -> 
         InputRole.MODEL_FACE_DIRECTION_SHEET,
         InputRole.MODEL_FULL_BODY_DIRECTION_SHEET,
         InputRole.SOLD_PRODUCT_LABELED_EVIDENCE_GRID,
+        *((InputRole.SELECTED_INNER_EVIDENCE,) if "inner" in selected_roles else ()),
         *((InputRole.MATCHING_GARMENT_EVIDENCE,) if matching_attached else ()),
+        *(OUTFIT_INPUT_ROLES[role] for role in selected_roles if role != "inner"),
         InputRole.SERVICE_EXAMPLE_REFERENCE,
     )
     if normalized != expected:
@@ -358,6 +379,10 @@ def _facts(
 def _outfit_lock(outfit: OutfitLock) -> str:
     if not isinstance(outfit, OutfitLock) or not isinstance(outfit.matching_attached, bool):
         raise ConfirmedGptPromptError("confirmed_gpt_outfit_lock_required")
+    selected = outfit.selected_roles
+    if (not isinstance(selected, tuple) or any(role not in _OUTFIT_ROLES for role in selected)
+            or selected != tuple(role for role in _OUTFIT_ROLES if role in selected)):
+        raise ConfirmedGptPromptError("confirmed_gpt_invalid_outfit_roles")
     fixed_inner = "none" if outfit.fixed_inner is None else _line(
         outfit.fixed_inner, "fixed_inner"
     )
@@ -369,7 +394,17 @@ def _outfit_lock(outfit: OutfitLock) -> str:
         else "No matching garment is supplied. Use only a plain unbranded neutral basic where "
         "the complete outfit requires one; never copy the example garment."
     )
-    return f"Fixed inner: {fixed_inner}. Fixed footwear: {footwear}. {matching}"
+    inner_line = ("Inner: reproduce SELECTED INNER EVIDENCE."
+                  if "inner" in selected else f"Fixed inner: {fixed_inner}.")
+    footwear_line = ("Footwear: reproduce SELECTED FOOTWEAR EVIDENCE."
+                     if "footwear" in selected else f"Fixed footwear: {footwear}.")
+    result = f"{inner_line} {footwear_line} {matching}"
+    if selected:
+        raw = _OUTFIT_TEMPLATE.read_bytes()
+        if sha256(raw).hexdigest() != _OUTFIT_TEMPLATE_SHA256:
+            raise ConfirmedGptPromptError("confirmed_gpt_outfit_template_drift")
+        result += "\n" + raw.decode("utf-8").strip()
+    return result
 
 
 def _pose_semantics(pose: PoseSemantics) -> str:
@@ -429,7 +464,8 @@ def compile_confirmed_gpt_prompt(
     cut_lock = _cut_lock(request.cut_lock)
     outfit_lock = _outfit_lock(request.outfit)
     manifest = _role_manifest(
-        request.ordered_roles, matching_attached=request.outfit.matching_attached
+        request.ordered_roles, matching_attached=request.outfit.matching_attached,
+        selected_roles=request.outfit.selected_roles,
     )
     evidence = _seller_evidence_map(
         request.seller_evidence, direction=request.cut_lock.user_direction

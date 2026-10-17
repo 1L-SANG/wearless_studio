@@ -89,6 +89,12 @@ _INNER_DEFAULT = (
     " Keep any inner top already visible in the image unchanged. "
     "If the inner top is not visible in any image, show a plain white crew-neck T-shirt with no print or text."
 )
+_INNER_SELECTED = (
+    " The second image is the selected actual inner garment from the original outfit. "
+    "Use it only for the newly revealed inner layer: preserve its actual type, color, neckline, "
+    "shape and design. Keep any already visible inner areas unchanged. Do not substitute a white "
+    "T-shirt, recolor it to match the outer garment or copy a model, pose or background from it."
+)
 _INNER_REFERENCE = (
     " The second image is a photograph of the same person before the edits. Use it only as a reference for the inner top. "
     "If the inner top is already visible in the first image, keep that same inner top unchanged. "
@@ -145,7 +151,7 @@ def target_image_ids(product: dict, color_id: object) -> list[str] | None:
 
 
 def prompt_for(mode: str, *, clothing_type: str, closure_state: str | None, front_closure: dict,
-               has_inner_reference: bool = False) -> str:
+               has_inner_reference: bool = False, has_selected_inner: bool = False) -> str:
     noun = {"outer": "jacket", "아우터": "jacket", "top": "top", "상의": "top",
             "bottom": "pants", "하의": "pants", "dress": "dress", "원피스": "dress"}.get(clothing_type, "garment")
     possessive = "pants'" if noun == "pants" else f"{noun}'s"
@@ -178,9 +184,9 @@ def prompt_for(mode: str, *, clothing_type: str, closure_state: str | None, fron
             closure += (f"Operate the existing secondary {secondary} fastening to the same height and in the same way "
                         "as the main fastening. ")
         opening = uses_inner_reference(mode, clothing_type, closure_state, front_closure)
-        prompt = closure + (keep if opening and has_inner_reference else keep.replace("first image", "image"))
+        prompt = closure + (keep if opening and (has_inner_reference or has_selected_inner) else keep.replace("first image", "image"))
         if opening:
-            prompt += _INNER_REFERENCE if has_inner_reference else _INNER_DEFAULT
+            prompt += _INNER_SELECTED if has_selected_inner else _INNER_REFERENCE if has_inner_reference else _INNER_DEFAULT
     prompt = prompt.replace("jacket's", possessive).replace("jacket", noun)
     return prompt
 
@@ -188,15 +194,22 @@ def prompt_for(mode: str, *, clothing_type: str, closure_state: str | None, fron
 async def generate(settings, gemini, source_image: InlineImage, target_image: InlineImage | None,
                    cut_type: str, *, mode: str, clothing_type: str, closure_state: str | None,
                    front_closure: dict, inner_reference_image: InlineImage | None = None,
+                   selected_inner_image: InlineImage | None = None,
                    face_identity_spec=None, face_pass_outcome=None,
                    face_pass_url_provider=None) -> tuple[bytes, str]:
     model = resolve_model(settings, "image_high")
     if not uses_inner_reference(mode, clothing_type, closure_state, front_closure):
         inner_reference_image = None
+        selected_inner_image = None
+    if selected_inner_image is not None:
+        inner_reference_image = None
     prompt = prompt_for(mode, clothing_type=clothing_type, closure_state=closure_state, front_closure=front_closure,
-                        has_inner_reference=inner_reference_image is not None)
+                        has_inner_reference=inner_reference_image is not None,
+                        has_selected_inner=selected_inner_image is not None)
     images = [source_image] + ([target_image] if target_image is not None else [])
-    if inner_reference_image is not None:
+    if selected_inner_image is not None:
+        images.append(selected_inner_image)
+    elif inner_reference_image is not None:
         images.append(inner_reference_image)
     image_size = getattr(settings, "detail_cut_image_size", None) or settings.mannequin_image_size
     size_options = {}

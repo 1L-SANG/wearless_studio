@@ -17,6 +17,7 @@ import { api, isMockMode } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
 import { generationWorkWarningKind } from '@/lib/generationWorkWarning.js';
+import { mergeOutfitSaveResponse, outfitContextKey, syncOutfitLegacySelection } from '@/lib/outfitSelections.js';
 import { mannequinGenerationCreditShortfall } from '@/lib/creditPreflight.js';
 import {
   CREDIT_COSTS,
@@ -839,8 +840,10 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
         const { analysis: savedAnalysis } = await persistAnalysisEdit(api, analysisProjectId, retryPatch);
         failedAnalysisPatchRef.current = null;
         analysisSaveErrorRef.current = null;
-        if ((isMatchRecommendationPatch(retryPatch) || 'matchClothing' in retryPatch) && savedAnalysis) {
-          setAnalysis((current) => ({ ...current, matchClothing: savedAnalysis.matchClothing }));
+        if ((isMatchRecommendationPatch(retryPatch) || 'matchClothing' in retryPatch || 'outfitSelections' in retryPatch) && savedAnalysis) {
+          const merged = mergeOutfitSaveResponse(latestAnalysisRef.current, savedAnalysis);
+          latestAnalysisRef.current = merged;
+          setAnalysis(merged);
         }
       }
       if (analysisSaveErrorRef.current) throw analysisSaveErrorRef.current;
@@ -961,7 +964,8 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   const queueAnalysisPatch = (patch) => {
     // 후보 목록은 서버 소유 — 추천 갱신 패치뿐 아니라 선택 토글 응답도
     // 서버 머지 결과로 동기화해 묵은 후보가 로컬에 남지 않게 한다.
-    const syncMatch = isMatchRecommendationPatch(patch) || 'matchClothing' in patch;
+    const syncMatch = isMatchRecommendationPatch(patch) || 'matchClothing' in patch || 'outfitSelections' in patch;
+    const requestContextKey = outfitContextKey(latestAnalysisRef.current, latestProductRef.current);
     latestAnalysisPatchRef.current = { ...latestAnalysisPatchRef.current, ...patch };
     if (failedAnalysisPatchRef.current) {
       failedAnalysisPatchRef.current = mergeLatestFailedAnalysisPatch(
@@ -976,7 +980,17 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
         if (!failedAnalysisPatchRef.current) analysisSaveErrorRef.current = null;
         if ('colors' in patch) persistedColorsRef.current = savedProduct?.colors || patch.colors;
         if (!savedAnalysis) return;
-        if (syncMatch) setAnalysis((a) => ({ ...a, matchClothing: savedAnalysis.matchClothing }));
+        if (syncMatch) {
+          const current = latestAnalysisRef.current;
+          const merged = mergeOutfitSaveResponse(current, savedAnalysis, {
+            requestContextKey, product: latestProductRef.current,
+          });
+          if (isGenerationRelevantAnalysisPatch({ outfitSelections: merged?.outfitSelections }, current)) {
+            useAppStore.getState().markGenerationRelevantEdits();
+          }
+          latestAnalysisRef.current = merged;
+          setAnalysis(merged);
+        }
       })
       .catch((error) => {
         failedAnalysisPatchRef.current = mergeLatestFailedAnalysisPatch(
@@ -1012,12 +1026,15 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   // 바꿀 때 기존 작업이 있으면 이 함수를 곧장 부르지 않고 경고 모달의 확정을 거친다 — 취소하면
   // 아예 호출되지 않으므로 화면·서버 어디에도 흔적이 남지 않는다.
   const applyAnalysisPatch = (patch) => {
-    if (isGenerationRelevantAnalysisPatch(patch)) {
+    if (isGenerationRelevantAnalysisPatch(patch, latestAnalysisRef.current)) {
       useAppStore.getState().markGenerationRelevantEdits();
     }
     const { productPatch } = splitAnalysisEditPatch(patch);
-    setProduct((p) => (hasPatchFields(productPatch) ? { ...p, ...productPatch } : p));
-    latestAnalysisRef.current = { ...latestAnalysisRef.current, ...patch };
+    if (hasPatchFields(productPatch)) {
+      latestProductRef.current = { ...latestProductRef.current, ...productPatch };
+      setProduct(latestProductRef.current);
+    }
+    latestAnalysisRef.current = syncOutfitLegacySelection({ ...latestAnalysisRef.current, ...patch });
     setAnalysis(latestAnalysisRef.current);
     queueAnalysisPatch(patch);
   };
@@ -1044,7 +1061,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   // 바로 적용하지 않고 대가를 먼저 보여준다. 없으면(새 프로젝트의 첫 분석 검토) 잃을 게
   // 없으니 그대로 적용해 방해하지 않는다.
   const onAnalysisFormChange = (patch) => {
-    if (isGenerationRelevantAnalysisPatch(patch) && generationWorkKind !== 'none') {
+    if (isGenerationRelevantAnalysisPatch(patch, latestAnalysisRef.current) && generationWorkKind !== 'none') {
       pendingRelevantWorkKindRef.current = generationWorkKind;
       setPendingRelevantPatch(patch);
       return;
@@ -1105,6 +1122,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
     persistedColorsRef.current = restored.colors || [];
     latestProductRef.current = restored;
     latestAnalysisRef.current = (mobile ? payload.analysis : normalizeAnalysisFit(payload.analysis)) || null;
+    void api.restoreInputDraft(restored, latestAnalysisRef.current, payload.customMatch);
     setProduct(restored);
     setAnalysis((mobile ? payload.analysis : normalizeAnalysisFit(payload.analysis)) || null);
     useAppStore.getState().restoreComposeMode(payload.composeMode);
@@ -1395,6 +1413,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
         if (draft.analysis && (mobile || restoredHasRequired)) {
           latestProductRef.current = restored;
           latestAnalysisRef.current = draft.analysis;
+          void api.restoreInputDraft(restored, draft.analysis, draft.customMatch);
           setAnalysis(draft.analysis);
           const awaitingCore = draft.analysis.featureRun?.coreReceived === false;
           setPhase(awaitingCore ? (isAnalysisFastEntryEnabled() ? 'analyzing' : 'input') : 'done');
@@ -1636,11 +1655,10 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
     <div className="surface pi-summary">
       <div className="pi-summary-row">
         <div className="pi-summary-thumbs">
-          {allImages.slice(0, 5).map((im) => {
+          {allImages.slice(0, 3).map((im) => {
             const src = photoPreviewRegistryRef.current.displayUrl(im.id, im.src);
             return src ? <img key={im.id} src={src} alt="" decoding="async" /> : null;
           })}
-          {allImages.length > 5 && <span className="more">+{allImages.length - 5}</span>}
         </div>
         <div className="pi-summary-meta">
           <div className="sec-title" style={{ fontSize: 15 }}>{product.name || '상품 이미지'}</div>
@@ -1802,9 +1820,13 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       )}
       {!mobile && phase === 'done' && (
         <div className="pi-reveal">
-          <AnalysisForm inline analysis={analysis} catalogs={catalogs}
+          <AnalysisForm inline analysis={analysis} catalogs={catalogs} product={product}
             projectId={analysisProjectId}
-            onAnalysisReplace={setAnalysis}
+            onAnalysisReplace={(next) => {
+              const resolved = typeof next === 'function' ? next(latestAnalysisRef.current) : next;
+              latestAnalysisRef.current = resolved;
+              setAnalysis(resolved);
+            }}
             onChange={onAnalysisFormChange}
             onConfirmingChange={setFlowPromotionLocked}
             onNext={goToStoryboard} />

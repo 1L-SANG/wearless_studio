@@ -8,7 +8,7 @@
    ============================================================= */
 import { mockAdapter } from './mockAdapter.js';
 import { httpAdapter } from './httpAdapter.js';
-import { analyzePublicDraft } from './publicAnalysis.js';
+import { analyzePublicDraft, savePublicAnalysisEdit } from './publicAnalysis.js';
 import { withoutDemoPhotos } from './guestProductTemplate.js';
 
 const mode = import.meta.env.VITE_API_MODE ?? 'mock';
@@ -22,7 +22,7 @@ export const isMockMode = mode !== 'http';
 // resetInputDraft: 게스트 구간 로컬 저장소(mock 싱글톤) 비우기 — 새 제작이 http 모드에서도
 // 불러야 한다(직전 제작의 분석이 다음 분석 응답에 섞이는 것을 막는다).
 const CLIENT_ONLY = ['getCatalogs', 'download', 'getCustomMatchDraft', 'clearCustomMatchDraft',
-  'resetInputDraft'];
+  'resetInputDraft', 'restoreInputDraft'];
 
 // 제품 결정: 입력·분석은 로그인 없이 공개하고, 로그인은 마네킹 단계부터 요구한다.
 // 공개 흐름은 서버 projectId가 없으므로 로컬 draft 기능은 mock에 위임한다. 단 분석만은
@@ -42,7 +42,30 @@ const PUBLIC_INPUT = [
 
 function buildHttpApi() {
   const api = { ...httpAdapter };
+  api.getOutfitRecommendation = async (projectId, options = {}) => {
+    const response = await httpAdapter.getOutfitRecommendation(projectId, options);
+    if (projectId == null && response.outfitRecommendation) {
+      const current = await mockAdapter.getAnalysis(null);
+      if (current.outfitRecommendation?.contextKey === response.outfitRecommendation.contextKey) {
+        const { mergeOutfitAnalysis } = await import('../outfitSelections.js');
+        await mockAdapter.saveAnalysis(null, mergeOutfitAnalysis(current, response), { serverCatalog: true });
+      }
+    }
+    return response;
+  };
   for (const name of PUBLIC_INPUT) {
+    if (name === 'saveAnalysis') {
+      api[name] = (projectId, patch, options) => projectId == null
+        ? savePublicAnalysisEdit(patch, { remote: httpAdapter, local: mockAdapter })
+        : httpAdapter.saveAnalysis(projectId, patch, options);
+      continue;
+    }
+    if (name === 'refreshMatchClothing') {
+      api[name] = (projectId, ...args) => projectId == null
+        ? mockAdapter.refreshMatchClothing(null, { preserveCatalog: true })
+        : httpAdapter.refreshMatchClothing(projectId, ...args);
+      continue;
+    }
     if (name === 'analyzeProduct') {
       api[name] = async (projectId, options) => (
         projectId == null

@@ -26,7 +26,7 @@ def _run(monkeypatch, blocks, recommendations=(), *, missing_rows=(), missing_as
          missing_bytes=(), metadata=None, analysis=None, generate_errors=None, detail_errors=None,
          settings=None, checkpoint_db=None, r2=None, lease_lost=False, job_id="j1",
          model_id=None, checkpoint_base_error=None, job_metadata=None, reserved=None,
-         assemble_real=False):
+         assemble_real=False, job_payload=None):
     captured = {"events": [], "generated": {}, "cut_plans": [], "page_plans": [],
                 "metadata_lookups": [], "matching_lookups": [], "checkpoint_inputs": [],
                 "qc_fit_profiles": {}, "base_reused": False, "generation_attempts": []}
@@ -149,6 +149,8 @@ def _run(monkeypatch, blocks, recommendations=(), *, missing_rows=(), missing_as
     app = types.SimpleNamespace(state=types.SimpleNamespace(settings=config, pool=Pool(), r2=r2,
                                                           gemini=types.SimpleNamespace()))
     job = worker_job(credits_reserved=19 * len(blocks) if reserved is None else reserved)
+    if job_payload is not None:
+        job["payload"].update(job_payload)
     if model_id is not None:
         job["payload"]["modelId"] = model_id
     job.update(id=job_id, metadata={"perCutCost": 19, **(job_metadata or {})})

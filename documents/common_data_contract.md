@@ -98,6 +98,34 @@ Measurement {
 
 ### 3.2 Analysis — AI 제안 + 사용자 확인 속성
 
+2026-10-17 전체 코디 계약([ADR-0022](../docs/adr/0022-full-outfit-recommendation.md)):
+
+- `outfitSelections = {version:1, slots:{[role]:{itemId:string|null, origin:'ai'|'user'}}, setIndex:0|1|2, optional:{bag:boolean,accessory:boolean}}`. 처음 `setIndex`는 0, 소품 두 개는 false다. 역할은 상품 종류별 `inner`, `top` 또는 `bottom`, `footwear`, `bag`, `accessory`이며 역할마다 최대 하나다. `origin:'user', itemId:null`은 명시적 비움이다. 종류 전환은 불가능한 역할만 제거한다. 서버가 활성 카탈로그 ID·역할·성별·자산 소유권을 확인한다. 사용자 업로드는 기존 보완 의류 한 벌만 허용하며 `matchClothing`, `matchIds`, `LIMITS.matchClothingMax`의 한 벌 계약은 그대로다.
+- `outfitRecommendation = {version:1,status:'pending'|'ready'|'fallback'|'unavailable',model:string|null,contextKey:string,sets:Array<{slots:Record<role,string|null>,reason:string}>,candidates:Record<role,MatchItem[]>,roleStatus:Record<role,status>}`. 자료가 있으면 `sets`는 서로 다른 조합 1~3벌, 전체 자료가 없으면 빈 배열이다. 후보마다 `inSets:boolean`을 갖는다. 단일 `selections` 또는 최상위 `reason` 필드는 쓰지 않는다. 설명은 세트에만 보관하며 화면에는 표시하지 않는다. 빈 역할은 `roleStatus[role]='unavailable'`이므로 그 줄을 숨긴다.
+- R1 표시 그림: 코디 `candidates[role][]`와 기존 `matchClothing[]`의 `boardUrl:string|null`은 표시 전용이다. 카탈로그는 현재 `image_asset_id`를 `metadata.sourceAssetId`로 가리키는 공개·소유자 없는·삭제되지 않은 derived 자산 중 `canonicalType='catalog_cutout'`의 URL을 쓴다. 목록 조회에서 원본 ID들을 한 번에 묶어 읽고 없으면 null이다. R2부터 커스텀은 `cutoutStatus='ready'`이고 현재 grid와 썸네일에 연결된 `canonicalType='custom_board_cutout'` PNG가 있으면 그 URL, 없으면 기존 정돈 썸네일 URL이다. 처리 중·실패면 null이다. 보드 자산은 같은 사용자·프로젝트의 private derived이며 `sourceAssetId`는 현재 `image_asset_id`, `thumbnailAssetId`는 현재 `thumbnail_asset_id`, `matchingItemId`는 아이템 ID다. `sourceHash`에 정돈 지문을 기록한다. 카탈로그와 커스텀 그림은 목록당 한 번의 묶음 조회로 읽는다. Qwen 1회 호출의 투명본 또는 정돈 없는 SAM 누끼에서 알파 bbox를 자르고 긴 변을 512px 이하로 만든다. 카드 JPEG와 생성용 raw·grid의 바이트 및 자산 ID는 유지한다. 커스텀 삭제 시 보드 자산의 이전 재시도 버전까지 기존 미참조 자산 삭제 경로로 회수한다. 프론트 우선순위는 `boardUrl`, `thumb`, `thumbnailUrl`, `imageUrl`이다. 생성용 원본·추천 판단용 썸네일·선택 저장 계약은 바꾸지 않으며, 표시 URL만 달라져도 추천 재사용 키와 유료 호출 수는 바뀌지 않는다. 저장된 분석·추천 조회, 분석 저장 응답, 공개 상태 조회도 현재 표시 URL을 갱신한다.
+- A2 내부 저장은 `outfitRecommendation.sets[].concept`(48자 이내 영문 키워드)을 보존한다. 서버 캐시·서명된 승격 handoff 내부에도 보존하되 위 화면용 세트 응답에는 포함하지 않는다. 과거 데이터에 concept이 없어도 읽을 수 있으며 클라이언트 서비스 계약은 바꾸지 않는다.
+- `OUTFIT_RECOMMENDATION` 기본값은 off다. off면 유료 호출 없이 결정적 폴백만 만든다. AI·폴백 공통 후보 수는 `OUTFIT_CANDIDATES_PER_ROLE` 기본 6(2~8), 같은 색 묶음 최대 2개, 스타일 중복 감점, 사용자 고정 아이템 우선이며 결정적이다. `candidates` 목록은 전체 유효 후보 그대로다. 폴백은 앞선 세트와 달라지는 역할 수를 우선해 최대 세 벌을 만든다. v2 모델 응답에서 복수 후보 역할의 선택이 전부 같은 뒤 세트와 concept 중복 세트는 버리며 한 벌 이상 남으면 ready다. 상품 판단은 원본 Front 최대 변 512px, 후보는 정돈 썸네일 최대 변 256px를 쓴다. 재사용 키에 프롬프트 v2·후보 수·유료 스위치 상태를 포함한다.
+- 분석 결과를 확정 저장하고 commit/lease 성공을 확인한 직후 서버가 추천을 시작한다. 공개 분석은 core 결과가 준비된 뒤 동일한 공개 rate limit 안에서 시작한다. Gemini 3.8 Flash, thinking low, 응답 최대 4096 tokens, 1회 요청에서 세 벌을 받는다. 전체 시간 제한 `OUTFIT_TIMEOUT_SECONDS`(기본 12초, 설정 1~30초)은 동시 실행 대기도 포함한다. 사진·종류·하위분류·색·스타일·성별·핏·소재·사용자 선택·카탈로그(모델 입력인 name·fit·length 포함)·모델·프롬프트 버전 키로 같은 프로세스의 진행 요청을 합치고 120초 결과를 재사용한다. 저장된 동일 문맥의 추천은 캐시가 사라져도 재사용한다.
+- `pending`은 다양성 추리기로 고른 결정적 폴백 `sets`, `fallbackReady:true`, `pendingSince`(Unix seconds)를 즉시 포함한다. 시간 제한을 지난 pending 조회는 기존 세트를 `fallback`으로 반환하며 모델을 재시작하지 않는다. 조회와 화면 진입은 유료 호출을 만들지 않는다. 늦은 결과는 추천 정보만 바꾸며 저장된 선택과 토글을 덮지 않는다.
+- `GET /v1/projects/{id}/analysis/outfit-recommendations`는 저장 상태 조회다. `GET .../outfit-candidates`는 `candidates`와 `roleStatus`를 반환한다. 명시적 문맥 변경만 `POST .../outfit-recommendations`로 시작하며 pending을 저장한 뒤 뒤에서 실행한다. 일반 선택 PATCH와 동일 문맥 재저장은 추천을 시작하지 않는다. 승격 저장은 서비스 옵션 `{recommendOutfit:false}`를 전달해 재시도에서도 새 추천을 시작하지 않는다. `outfitRecommendation`과 handoff는 서버 소유이고 클라이언트 URL·설명을 신뢰하지 않는다.
+- 공개 조회는 `POST /v1/public/outfit-recommendations/status`의 `{handoff}` 서명 capability를 사용한다. 단순 `contextKey`로 조회할 수 없다. 시작은 별도 multipart `POST /v1/public/outfit-recommendations`다. 캐시가 없으면 서명된 문맥과 현재 공용 카탈로그로 무료 폴백을 반환한다. 로그인 승격은 사진 바이트 바인딩·알려진 상품 문맥·모든 세트 및 선택 ID를 다시 검증하고 URL을 현재 행으로 복원한다. 진행 중 승격은 이미 시작된 추천 완료만 구독한다.
+- 명시적 세트 적용은 PATCH의 일회성 `outfitSetIndex`(저장하지 않음)로 서버의 현재 `sets[index]`를 적용한다. 직접 고른 non-null 칸도 AI 세트로 바꾸지만 user-null은 보존한다. 꺼진 소품의 슬롯 기억값과 꺼짐 상태도 보존한다. 프론트는 `applyOutfitSet`을 통해 같은 변경을 먼저 표시한다. 새 문맥에서 첫 세트를 적용할 때는 `setIndex=0`으로 맞추고, 동일 문맥의 늦은 응답에서는 현재 번호를 유지한다. `optional`을 켤 때 기존 슬롯이 있으면 기억한 것을, 없으면 현재 세트 값을 사용한다. 끌 때 ID는 기억한다.
+- 정규화 지점은 서버 `services/outfit.py`의 `normalize_selections`, `apply_set`, `toggle_optional`, `selection_snapshot`이며 프론트 대응은 `src/lib/outfitSelections.js`다. `generation_snapshot`은 꺼진 소품을 먼저 제거한 뒤 현재 DB ID를 검증한다. `outfitSelectionsSnapshot={version:1,slots:...}`은 실제 생성 역할만 가진다(`setIndex`, `optional`은 저장하지 않음). 실제 참조 `{role,itemId,assetId,imageSha256}`를 `outfitReferenceAssets`로 기록하고 재시도·비슷한 컷·열림 편집은 원본 recipe를 따른다. 제품 단독컷은 코디 참조를 받지 않는다.
+
+B 화면 작업용 목 사용법(목 모드의 `api.setOutfitScenario` 또는 `src/mock/api.js` API):
+
+```js
+api.setOutfitScenario({ status: 'pending', settleTo: 'ready', delayMs: 2500 });
+// 다음 analyzeProduct / recommendOutfit은 폴백 세 벌과 pending을 반환한다.
+// getOutfitRecommendation은 2.5초 뒤 ready를 반환하며 현재 선택은 유지한다.
+api.setOutfitScenario({ status: 'fallback' });
+api.setOutfitScenario({ status: 'unavailable' }); // 전체 빈 카탈로그
+api.setOutfitScenario({ status: 'ready', unavailableRoles: ['footwear'] });
+api.setOutfitScenario(null); // 기본: 기존 실제 목 의류 후보 + 나머지 빈 역할
+```
+
+각 설정은 다음 분석/명시적 추천부터 적용된다. `candidates:{bag:[MatchItem,...],...}` 옵션으로 B가 가진 실제 사진 fixture를 역할별 주입할 수 있다. 기본 목은 신발·가방 등의 가짜 사진을 만들지 않는다. `pending`만 주고 `settleTo`를 생략하면 지속 pending을 재현한다. 세트는 후보 순위 조합으로 최대 세 개이며 후보의 `inSets`와 역할 상태는 자동 계산한다.
+
 ```ts
 Analysis {
   projectId: string

@@ -8,7 +8,7 @@ silently substitute the generic detail-cut packet.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 
 from .confirmed_gpt_directing import (
@@ -20,6 +20,7 @@ from .confirmed_gpt_prompt import (
     ConfirmedGptPromptInput,
     ConfirmedGptScope,
     InputRole,
+    OUTFIT_INPUT_ROLES,
     SellerEvidencePanel,
     SellerFact,
     SellerUncertainty,
@@ -111,15 +112,20 @@ def _image(value: object, field: str) -> InlineImage:
     return value
 
 
-def _manifest(*, matching_attached: bool) -> str:
+def _manifest(*, matching_attached: bool, outfit_roles: tuple[str, ...] = ()) -> str:
     labels = [
         "MANNEQUIN — selected garment-local color and fit authority",
         "MODEL FACE — direction sheet",
         "MODEL FULL BODY — direction sheet",
         "PRODUCT — sold-product labelled evidence grid",
     ]
+    if "inner" in outfit_roles:
+        labels.append("OUTFIT INNER - directly selected inner evidence")
     if matching_attached:
         labels.append("MATCHING — directly selected garment evidence")
+    for role in outfit_roles:
+        if role != "inner":
+            labels.append(f"OUTFIT {role.upper()} - directly selected item evidence")
     labels.append("EXAMPLE REFERENCE (scope: all) — service reference")
     return "\n".join(f"{index}. {label}" for index, label in enumerate(labels, 1))
 
@@ -177,6 +183,7 @@ def build_packet(
     matching_images: tuple[InlineImage, ...],
     example_image: InlineImage,
     evidence_contract: object,
+    outfit_images: tuple[tuple[str, InlineImage], ...] = (),
 ) -> ConfirmedGptRuntimePacket:
     """Build the exact ordered provider packet or reject the cut without fallback."""
 
@@ -192,6 +199,17 @@ def build_packet(
         raise ConfirmedGptRuntimeError("confirmed_gpt_requires_one_to_four_seller_images")
     if not isinstance(matching_images, tuple) or len(matching_images) > 1:
         raise ConfirmedGptRuntimeError("confirmed_gpt_supports_at_most_one_matching_garment")
+    if (not isinstance(outfit_images, tuple) or any(
+        not isinstance(row, tuple) or len(row) != 2 or not isinstance(row[0], str)
+        or row[0] not in OUTFIT_INPUT_ROLES for row in outfit_images
+    )):
+        raise ConfirmedGptRuntimeError("confirmed_gpt_invalid_outfit_images")
+    outfit_roles = tuple(role for role, _image_value in outfit_images)
+    if outfit_roles != tuple(role for role in OUTFIT_INPUT_ROLES if role in outfit_roles):
+        raise ConfirmedGptRuntimeError("confirmed_gpt_outfit_order_mismatch")
+    if "inner" in outfit_roles and clothing_type != "outer":
+        raise ConfirmedGptRuntimeError("confirmed_gpt_inner_requires_outer_product")
+    extras = {role: _image(value, role) for role, value in outfit_images}
 
     mannequin = _image(mannequin_image, "mannequin")
     face_sheet = _image(face_direction_sheet, "face_direction_sheet")
@@ -280,7 +298,9 @@ def build_packet(
         InputRole.MODEL_FACE_DIRECTION_SHEET,
         InputRole.MODEL_FULL_BODY_DIRECTION_SHEET,
         InputRole.SOLD_PRODUCT_LABELED_EVIDENCE_GRID,
+        *((InputRole.SELECTED_INNER_EVIDENCE,) if "inner" in extras else ()),
         *((InputRole.MATCHING_GARMENT_EVIDENCE,) if matching_attached else ()),
+        *(OUTFIT_INPUT_ROLES[role] for role in outfit_roles if role != "inner"),
         InputRole.SERVICE_EXAMPLE_REFERENCE,
     )
     prompt_input = ConfirmedGptPromptInput(
@@ -304,14 +324,16 @@ def build_packet(
             )
             for fact in contract["uncertainties"]
         ),
-        outfit=directing.outfit_lock(matching_attached=matching_attached),
+        outfit=replace(directing.outfit_lock(matching_attached=matching_attached), selected_roles=outfit_roles),
         pose_semantics=directing.pose_semantics,
     )
     grid = InlineImage("image/png", grid_bytes)
-    images = (mannequin, face_sheet, body_sheet, grid, *matches, example)
+    images = (mannequin, face_sheet, body_sheet, grid,
+              *((extras["inner"],) if "inner" in extras else ()), *matches,
+              *(extras[role] for role in outfit_roles if role != "inner"), example)
     return ConfirmedGptRuntimePacket(
         prompt_input=prompt_input,
         images=images,
-        manifest=_manifest(matching_attached=matching_attached),
+        manifest=_manifest(matching_attached=matching_attached, outfit_roles=outfit_roles),
         evidence_grid_sha256=sha256(grid_bytes).hexdigest(),
     )

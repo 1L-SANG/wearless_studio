@@ -97,6 +97,7 @@ class FlatlayThumbnail:
     raw: bytes
     model: str
     latency_ms: int
+    board: bytes | None = None  # 보드 전용 투명 PNG. raw/grid 와 별개다.
 
 
 def enabled(settings) -> bool:
@@ -171,10 +172,17 @@ async def render_thumbnail(gemini, *, settings, cutout_png: bytes,
         try:
             started = time.monotonic()
             with image_usage.job_scope(stage=STAGE):
-                raw = await qwen_flatlay.render(settings, cutout_png)
+                transparent = await qwen_flatlay.render(settings, cutout_png, transparent=True)
+            # render의 기존 불투명 분기와 같은 합성. raw는 여백과 회색 바탕을 유지한다.
+            raw = await asyncio.to_thread(matching_cutout.flatten_on_bg, transparent)
             image = await asyncio.to_thread(encode_thumbnail, raw)
+            try:
+                board = await asyncio.to_thread(matching_cutout.encode_board_cutout, transparent)
+            except Exception:
+                log.warning("matching_flatlay board encode failed; keeping opaque result")
+                board = None
             return FlatlayThumbnail(image=image, raw=raw, model=fal_api.QWEN_MODEL,
-                                    latency_ms=int((time.monotonic() - started) * 1000))
+                                    latency_ms=int((time.monotonic() - started) * 1000), board=board)
         except Exception:  # Qwen 실패도 성공한 누끼를 버리지 않는다. 비밀값은 기록하지 않는다.
             log.warning("matching_flatlay qwen render failed; keeping cutout thumbnail")
             return None

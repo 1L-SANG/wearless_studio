@@ -23,6 +23,7 @@ from ..cut_failures import failure_info
 from ..services import fm_fingerprint
 from ..agents import identity_scope
 from ..agents import (
+    asset_recipe,
     content_roles,
     copy_qc,
     copywriter,
@@ -48,7 +49,7 @@ from ..agents.gemini_image import InlineImage, normalize_openai_images
 from ..agents.model_routing import resolve_detail_cut_model
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
-from ..services import garment_color_measure, matching
+from ..services import garment_color_measure, matching, outfit_generation
 from . import cut_checkpoints as _cut_checkpoints
 from . import detail_shot_runtime
 from ..agents.detail_shot_pipeline import DetailShotRejected
@@ -292,6 +293,9 @@ def _duplicate_source_indexes(
                 if analysis is not None:
                     spec["fitProfile"] = fit_axes.normalize_fit_profile(
                         (_analysis_for_cut(block, analysis) or {}).get("fitProfile"))
+                if block.get("outfitSelectionsSnapshot") is not None:
+                    spec["outfitSelectionsSnapshot"] = block["outfitSelectionsSnapshot"]
+                    spec["outfitReferenceAssets"] = block.get("outfitReferenceAssets")
                 key = json.dumps(
                     {k: v for k, v in spec.items() if k not in {"id", "blockId"}},
                     sort_keys=True, ensure_ascii=False, default=str,
@@ -597,6 +601,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
              "metadata": {
                  "facemarket_real_derived": real_identity_attached,
                  "cut_type": b.get("cutType"),
+                 "generation": {"version": 1, "origin": "page", "recipeFrom": "self",
+                                "sourceAssetId": None, "recipe": asset_recipe.project_recipe(b)},
                  **({"fallback": list(b["_fallback"])} if b.get("_fallback") else {}),
                  **({"similar_cut": similar_metadata} if similar_metadata else {}),
                  **_background_result_metadata(b),
@@ -1520,6 +1526,7 @@ async def run_detail_page_job(app, job: dict) -> None:
     reserved = job.get("credits_reserved") or 0
     settle_key = f"credit:job:{job_id}:settle"
     payload = job.get("payload") or {}
+    outfit_recipes = {}
     # holder(opendid)는 scale-to-zero 다. 실존 모델 잡은 verify_license 로 반드시 holder 를
     # 부르므로, 커넥션을 잡기 **전에** 깨우고 콜드스타트(~2분)를 여기서 흡수한다. 못 깨워도
     # 진행은 한다 — 게이트가 fail-closed 로 막고 그 실패가 잡 실패로 남는다.
@@ -1532,12 +1539,14 @@ async def run_detail_page_job(app, job: dict) -> None:
     async def _fail(message: str, meta: dict, code: str = "generation_failed", **extra):
         # extra = 부분 실패(incomplete_cuts)의 result·job_metadata·event_extra(2026-09-28). 다른 실패는
         # 예전과 같은 인자로 부른다.
+        if outfit_recipes:
+            extra["job_metadata"] = {**(extra.get("job_metadata") or {}), "outfitRecipes": outfit_recipes}
         try:
             async with pool.connection() as conn:
                 await repo.finalize_detail_page_failure(
                     conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
                     project_id=project_id, reserved=reserved, settle_key=settle_key,
-                    message=message, metadata=meta, code=code,
+                    message=message, metadata={**meta, **({"outfitRecipes": outfit_recipes} if outfit_recipes else {})}, code=code,
                     **{k: v for k, v in extra.items() if v is not None})
                 await conn.commit()
         except Exception:
@@ -1618,6 +1627,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 or product.get("clothingType")
                 or "top"
             )
+            outfit_snapshot = outfit_generation.from_payload(payload, analysis, clothing_type)
             storyboard = _repair_signature_storyboard(
                 storyboard,
                 product=product,
@@ -1637,6 +1647,12 @@ async def run_detail_page_job(app, job: dict) -> None:
                 for b in storyboard
                 if isinstance(b, dict) and b.get("source") == "ai"
             ]
+            if outfit_snapshot is not None:
+                for block in ai_blocks:
+                    if block.get("cutType") in _WORN_CUT_TYPES:
+                        block_outfit, matches = outfit_generation.for_cut(outfit_snapshot, clothing_type, block)
+                        outfit_recipes[str(block.get("id"))] = asset_recipe.project_recipe({
+                            **block, "matchIds": matches, "outfitSelectionsSnapshot": block_outfit})
             selected_model_id = payload.get("modelId")
             block_model_ids = {
                 id(block): facemarket.resolve_block_model_id(
@@ -1784,14 +1800,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 return "back" if block.get("direction") == "back" else "front"
 
             def _matching_ids(block: dict) -> list[str]:
-                # normalize_spec 과 같은 최대 2개 계약을 입력 로드 단계에도 적용한다.
-                # 블록 순서를 그대로 보존해야 manifest/image 위치 계약이 흔들리지 않는다.
-                return [
-                    str(match_id)
-                    for match_id in (
-                        block.get("matchIds") or block.get("match_ids") or []
-                    )
-                ][:2]
+                return outfit_generation.for_cut(outfit_snapshot, clothing_type, block)[1]
 
             for b in ai_blocks:
                 ckey = _color_key(b)
@@ -2209,7 +2218,11 @@ async def run_detail_page_job(app, job: dict) -> None:
             if cut_mannequin_asset is None and not prods:
                 prepared.append(_skipped_cut(cut_spec, "no_garment_photo"))
                 continue
-            mids = normalized.get("matchIds", []) if is_worn_cut else []
+            actual_snapshot, mids = outfit_generation.for_cut(
+                outfit_snapshot, clothing_type, b) if is_worn_cut else (None, [])
+            if is_worn_cut:
+                cut_spec["matchIds"] = mids
+                normalized["matchIds"] = mids
             try:
                 mids, matching_images, matching_fallbacks = await _resolve_matching(mids)
             except Exception as e:
@@ -2229,6 +2242,29 @@ async def run_detail_page_job(app, job: dict) -> None:
                 for fallback in matching_fallbacks:
                     log.info("AG-06 matching substituted job %s block %s: %s -> %s", job_id, b.get("id"),
                              fallback["missingMatchId"], fallback["substituteMatchId"])
+            outfit_images, outfit_assets = [], []
+            if is_worn_cut:
+                actual_snapshot = outfit_generation.with_complement(actual_snapshot, clothing_type, mids)
+                try:
+                    outfit_images = await outfit_generation.resolve_images(
+                        app, snapshot=actual_snapshot, clothing_type=clothing_type,
+                        user_id=user_id, project_id=project_id, resolved_assets=outfit_assets)
+                except outfit_generation.OutfitReferenceError as exc:
+                    log.warning("AG-06 outfit reference unavailable job %s block %s role %s",
+                                job_id, b.get("id"), exc.role)
+                    prepared.append(_skipped_cut(cut_spec, "outfit_asset_unavailable"))
+                    continue
+                if actual_snapshot is not None:
+                    cut_spec["outfitSelectionsSnapshot"] = actual_snapshot
+                    cut_spec["outfitReferenceAssets"] = outfit_assets
+                cut_spec["_outfitRoles"] = tuple(role for role, _ in outfit_images)
+                normalized["_outfitRoles"] = cut_spec["_outfitRoles"]
+                if actual_snapshot is not None:
+                    outfit_recipes[str(b.get("id"))] = asset_recipe.project_recipe(cut_spec)
+            else:
+                cut_spec.pop("outfitSelectionsSnapshot", None)
+                cut_spec.pop("outfitReferenceAssets", None)
+                cut_spec.pop("_outfitRoles", None)
             moods = [mood_assets[str(r)] for r in (b.get("refAssetIds") or [])[:3] if mood_assets.get(str(r))]
             # 얼굴이 실제로 담기는 컷에만 첨부 — product(사람 금지)·
             # 뒷모습·머리가 프레임 밖인 샷은 제외(cut_generator.wants_face 가 단일 규칙).
@@ -2302,7 +2338,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     )
                 cut_spec = horizon_background.apply_runtime(cut_spec, horizon_palettes)
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
-            imgs.extend(matching_images)
+            imgs.extend(outfit_generation.ordered_images(outfit_images, matching_images))
             # 무드는 장면 자산보다 앞에 와야 하지만, 완성 예시/대표 plate가 장면·조명을 소유하면
             # 아예 첨부하지 않는다. 예시를 해석한 뒤 이 위치에 필요한 경우에만 삽입한다.
             scene_suffix_start = len(imgs)
@@ -2468,6 +2504,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                             for asset, image in zip(prods, product_images, strict=True)
                         ),
                         matching_images=tuple(matching_images),
+                        outfit_images=tuple(outfit_images),
                         example_image=service_example_image,
                         evidence_contract=analysis.get(
                             "confirmedGptProductEvidence"
@@ -2490,6 +2527,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     prods, has_mannequin=cut_mannequin_asset is not None,
                     has_match=bool(matching_images), matching_count=len(matching_images),
                     matching_custom=[matching_id.startswith("custom_") for matching_id in mids],
+                    outfit_roles=tuple(role for role, _ in outfit_images),
                     mood_count=attached_mood_count,
                     has_model_face=len(model_images) >= 2,
                     has_model_sheet=len(model_images) >= 2 and not model_has_full_body,
@@ -2686,6 +2724,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             fallback_per_cut=s.credit_cost_storyboard_per_cut,
         )
         success_metadata = {
+            **({"outfitRecipes": outfit_recipes} if outfit_recipes else {}),
             "creditCostVersion": s.credit_cost_version,
             "generatedCuts": len(cut_assets),
         }

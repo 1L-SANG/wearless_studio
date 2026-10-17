@@ -1184,6 +1184,7 @@ def test_editor_product_cut_strips_real_model_before_facemarket_gate(
         "mode": "new",
         "cutType": "product",
         "shot": "ghost",
+        "outfitSelectionsSnapshot": {"version": 1, "slots": {}},
     }
 
 

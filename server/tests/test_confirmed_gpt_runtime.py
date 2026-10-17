@@ -165,7 +165,7 @@ def _spec():
 
 
 def _build(monkeypatch, *, source=None, selected="mF", effective="mF", matches=(),
-           contract=None, seller_images=None):
+           contract=None, seller_images=None, outfit_images=(), clothing_type="top"):
     source = source or _png()
     monkeypatch.setattr(
         confirmed_gpt_runtime,
@@ -175,7 +175,7 @@ def _build(monkeypatch, *, source=None, selected="mF", effective="mF", matches=(
     image = InlineImage("image/png", source)
     return confirmed_gpt_runtime.build_packet(
         _spec(),
-        clothing_type="top",
+        clothing_type=clothing_type,
         identity_source="VIRTUAL",
         selected_model_id=selected,
         effective_model_id=effective,
@@ -187,7 +187,39 @@ def _build(monkeypatch, *, source=None, selected="mF", effective="mF", matches=(
         matching_images=matches,
         example_image=InlineImage("image/png", b"example"),
         evidence_contract=contract if contract is not None else _contract(source),
+        **({"outfit_images": outfit_images} if outfit_images else {}),
     )
+
+
+def test_actual_outfit_packet_owns_inner_shoes_bag_and_accessory(monkeypatch):
+    extras = tuple((role, InlineImage("image/png", role.encode()))
+                   for role in ("inner", "footwear", "bag", "accessory"))
+    match = InlineImage("image/png", b"selected-bottom")
+    packet = _build(monkeypatch, clothing_type="outer", matches=(match,), outfit_images=extras)
+    assert [im.data for im in packet.images[4:]] == [b"inner", b"selected-bottom", b"footwear", b"bag", b"accessory", b"example"]
+    prompt = compile_confirmed_gpt_prompt(packet.prompt_input)
+    assert "OUTFIT CONTRACT V2" in prompt
+    assert "Fixed inner: none" not in prompt
+    assert "Fixed footwear: not visible" not in prompt
+    assert "SELECTED INNER EVIDENCE" in prompt
+    assert "SELECTED FOOTWEAR EVIDENCE" in prompt
+    assert "SELECTED BAG EVIDENCE" in prompt
+    assert "SELECTED ACCESSORY EVIDENCE" in prompt
+    from app.agents import cut_output_qc
+    assert [r.role for r in cut_output_qc.references_from_manifest(packet.manifest, packet.images)][4:] == [
+        "inner", "matching", "footwear", "bag", "accessory", "example"]
+
+
+@pytest.mark.parametrize("roles", [("unknown",), ("inner", "inner"), ("bag", "inner")])
+def test_outfit_packet_rejects_unknown_duplicate_or_reordered_roles(monkeypatch, roles):
+    with pytest.raises(confirmed_gpt_runtime.ConfirmedGptRuntimeError):
+        _build(monkeypatch, clothing_type="outer", outfit_images=tuple(
+            (role, InlineImage("image/png", b"item")) for role in roles))
+
+
+def test_non_outer_packet_cannot_add_an_inner_layer(monkeypatch):
+    with pytest.raises(confirmed_gpt_runtime.ConfirmedGptRuntimeError):
+        _build(monkeypatch, outfit_images=(("inner", InlineImage("image/png", b"inner")),))
 
 
 def _observation_contract(front, *, extra_slot=None, changes=None):

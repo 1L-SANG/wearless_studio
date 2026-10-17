@@ -1,4 +1,5 @@
 import { LIMITS } from '../limits.js';
+import { mergeOutfitAnalysis } from '../outfitSelections.js';
 
 // Match-candidate API row → analysis.matchClothing row.
 // Keep this mapper small so mock/http contract tests share one source of truth.
@@ -9,6 +10,7 @@ export const toMatchItem = (item, selOrder) => ({
   thumb: item.thumb,
   imageUrl: item.imageUrl,
   thumbnailUrl: item.thumbnailUrl,
+  boardUrl: item.boardUrl ?? null,
   clothingType: item.clothingType ?? null,
   category: item.category ?? null,
   colorName: item.colorName ?? null,
@@ -20,6 +22,7 @@ export const toMatchItem = (item, selOrder) => ({
   isCustom: item.isCustom === true,
   isCompatible: item.isCompatible !== false,
   cutoutStatus: item.cutoutStatus ?? null,
+  ...(Object.hasOwn(item, 'inSets') ? { inSets: item.inSets === true } : {}),
   selected: selOrder != null,
   ...(selOrder != null ? { selOrder } : {}),
 });
@@ -30,6 +33,7 @@ export const toMatchItem = (item, selOrder) => ({
 export const mergeMatchClothing = (prev, nextAnalysis) => {
   const next = nextAnalysis?.matchClothing;
   if (!prev || !Array.isArray(next)) return prev;
+  if (prev.outfitSelections) return mergeOutfitAnalysis(prev, { matchClothing: next });
   return { ...prev, matchClothing: next };
 };
 

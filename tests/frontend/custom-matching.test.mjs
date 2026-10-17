@@ -33,6 +33,7 @@ const custom = {
 test('http match mapper preserves custom and compatibility fields', () => {
   assert.deepEqual(toMatchItem(custom, null), {
     ...custom,
+    boardUrl: null,
     colorName: null,
     colorGroup: null,
     colorBrightness: null,
@@ -146,9 +147,10 @@ test('analysis UI keeps hooks before loading returns and direct public custom th
   const hooksEnd = source.indexOf("if (phase === 'loading')");
   assert.ok(source.indexOf('const [customMatchOpen, setCustomMatchOpen]') < hooksEnd);
   assert.ok(source.indexOf('const closeCustomMatchModal = useCallback') < hooksEnd);
-  assert.match(source, /<img src=\{m\.thumb\} alt=\{m\.name\}/);
-  assert.match(source, /custom-match-badge">내 옷/);
-  assert.match(source, /aria-label="내 옷 삭제"/);
+  const catalog = readFileSync(new URL('../../src/features/analysis/OutfitCatalog.jsx', import.meta.url), 'utf8');
+  assert.match(catalog, /item\?\.thumb \|\| item\?\.thumbnailUrl/);
+  assert.match(catalog, /item\.isCustom \? '내 옷'/);
+  assert.match(catalog, /aria-label="내 옷 삭제"/);
   assert.doesNotMatch(source, /custom.*Blob|Blob.*custom/i);
 });
 
@@ -199,7 +201,9 @@ test('type changes synchronously deselect and disable stale incompatible matches
     new URL('../../src/lib/api/httpAdapter.js', import.meta.url), 'utf8',
   );
   assert.match(analysis, /reconcileMatchCompatibility\(a\.matchClothing, t\)/);
-  assert.match(analysis, /if \(!item \|\| !isMatchCompatible\(item\)\) return/);
+  const outfit = readFileSync(new URL('../../src/lib/outfitSelections.js', import.meta.url), 'utf8');
+  assert.match(outfit, /item.isCompatible !== false/);
+  assert.match(outfit, /item.clothingType === complementary/);
   // 선택 머지는 matchSelection.js 로 분리됐다(node --test 가 직접 실행 검증하려고).
   // 어댑터는 그 함수에 clothingType 을 넘기는 배선만 유지한다.
   assert.match(adapter, /mergeMatchSelection\(\s*body\.matchClothing \|\| cached\?\.matchClothing \|\| \[\], patch\.matchClothing, base\.clothingType/);
@@ -230,9 +234,9 @@ test('analysis matching UI replaces the previous choice instead of adding a sub 
   const analysis = readFileSync(
     new URL('../../src/features/analysis/AnalysisForm.jsx', import.meta.url), 'utf8',
   );
-  assert.match(analysis, /selected: true, selOrder: 1/);
-  assert.match(analysis, /selected: false, selOrder: undefined/);
-  assert.match(analysis, /1개 선택/);
+  const outfit = readFileSync(new URL('../../src/features/analysis/OutfitSelection.jsx', import.meta.url), 'utf8');
+  assert.match(outfit, /setOutfitSelection\(current, role, id === selectedFor\(role\) \? null : id\)/);
+  assert.match(analysis, /withMatchSelection\(patch.matchClothing\)/);
   assert.doesNotMatch(analysis, /최대 2개|subMatchId|>서브</);
 });
 

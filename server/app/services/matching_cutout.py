@@ -100,6 +100,20 @@ def encode_thumbnail(image_bytes: bytes, *, max_px: int = THUMBNAIL_MAX_PX) -> b
     return out.getvalue()
 
 
+def encode_board_cutout(rgba_png: bytes, *, max_px: int = THUMBNAIL_MAX_PX) -> bytes:
+    """보드 표시용 PNG. 알파 여백만 자르고 카드와 같은 긴 변 상한을 쓴다."""
+    with Image.open(io.BytesIO(rgba_png)) as opened:
+        cut = opened.convert("RGBA")
+        bbox = cut.getchannel("A").getbbox()
+        if bbox is None:
+            raise ValueError("empty board cutout")
+        cut = cut.crop(bbox)
+        cut.thumbnail((max_px, max_px), Image.LANCZOS)
+        out = io.BytesIO()
+        cut.save(out, "PNG")
+    return out.getvalue()
+
+
 def source_fingerprint(values: Sequence[str | None], *, provider: str = "sam2") -> str:
     """소스들의 안정 지문. SAM 이 준 source_hash(없으면 소스 키)를 순서 그대로 묶는다."""
     joined = "|".join(value or "" for value in values)

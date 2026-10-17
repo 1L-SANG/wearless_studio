@@ -136,6 +136,24 @@ export function analysisWaitProgress({ elapsedMs, resultAtMs = null, resultValue
   return ANALYSIS_LINEAR_END + ANALYSIS_TAIL * age / (age + tailK);
 }
 
+/** v18 custom match cleanup: 12s to 80%, then the same continuous ramp capped at 4×. */
+export function customMatchWaitProgress({ elapsedMs, resultAtMs = null }) {
+  const elapsed = Math.max(0, Number(elapsedMs) || 0);
+  const rate = 80 / 12000, linearMs = 12000, tailK = 19 / rate, ramp = 500;
+  const waiting = (at) => at <= linearMs ? at * rate : 80 + 19 * (at - linearMs) / (at - linearMs + tailK);
+  if (resultAtMs == null || elapsed < resultAtMs) return waiting(elapsed);
+  const resultAt = Math.max(0, Number(resultAtMs) || 0);
+  const at = waiting(resultAt);
+  const v0 = resultAt <= linearMs ? rate : 19 * tailK / (resultAt - linearMs + tailK) ** 2;
+  const vf = Math.max(rate, Math.min(rate * 4, (100 - at) / 1200));
+  const age = elapsed - resultAt;
+  if (age <= ramp) {
+    const u = age / ramp;
+    return Math.min(100, at + v0 * age + (vf - v0) * ramp * (u ** 3 - u ** 4 / 2));
+  }
+  return Math.min(100, at + v0 * ramp + (vf - v0) * ramp / 2 + vf * (age - ramp));
+}
+
 /* 한 프레임 진행 — 상태를 받아 다음 상태를 돌려주는 순수 리듀서. 훅은 이걸 rAF 로 돌리기만 한다. */
 export function advanceProgress(state, {
   serverProgress, now, expectedMs, done = false,

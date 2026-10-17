@@ -660,7 +660,9 @@ def test_upload_edit_unknown_recipe_has_null_fields_and_failure_releases(recordi
     assert "failure" not in state, state.get("failure")
     assert state["success"]["cut_type"] == "styling"
     recipe = state.pop("success")["image"]["metadata"]["generation"]["recipe"]
-    assert recipe == {key: "closed" if key == "outerClosureState" else None for key in content_roles.GENERATION_RECIPE_FIELDS}
+    assert recipe == {key: "closed" if key == "outerClosureState" else None
+                      for key in content_roles.GENERATION_RECIPE_FIELDS
+                      if key not in ("outfitSelectionsSnapshot", "outfitReferenceAssets")}
     state["error"] = True
     asyncio.run(worker.run_editor_image_job(state["app"], worker_job(request, credits_reserved=19)))
     assert "success" not in state and state["failure"]["reserved"] == 19

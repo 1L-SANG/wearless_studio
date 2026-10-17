@@ -251,7 +251,12 @@ def render_mannequin_prompt(
             "them naturally; if absent, retain continuous shoulder fabric and its genuine edge binding.")
     outerwear_inner_token = "${outerwearInnerLine}"
     if str(ctx.clothing_type or "").strip().lower() in ("outer", "아우터"):
-        template = template.replace(outerwear_inner_token, "")
+        if "OUTFIT INNER" in ctx.image_manifest:
+            template = re.sub(rf"^.*{re.escape(outerwear_inner_token)}.*(?:\n|$)",
+                "- SELECTED INNER: Dress the mannequin in the actual OUTFIT INNER garment shown in the attachment manifest. Preserve its actual color, neckline, shape and design under the sold outerwear.\n",
+                template, flags=re.MULTILINE)
+        else:
+            template = template.replace(outerwear_inner_token, "")
     else:
         template = re.sub(
             rf"^.*{re.escape(outerwear_inner_token)}.*(?:\n|$)", "", template, flags=re.MULTILINE

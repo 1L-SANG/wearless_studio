@@ -170,6 +170,9 @@ def _worn_settings(recipe, context):
         matches = next((b.get("matchIds") for b in context["storyboard"] if isinstance(b, dict) and b.get("source") == "ai"
                         and b.get("cutType") in _WORN and b.get("colorId") == out.get("colorId") and b.get("matchIds") is not None), [])
     out["matchIds"] = list(matches or [])
+    for key in ("outfitSelectionsSnapshot", "outfitReferenceAssets"):
+        if pair_recipe.get(key) is not None:
+            out[key] = deepcopy(pair_recipe[key])
     out.update({"faceExposure": "same", "refAssetIds": [], "refScope": "all"})
     if (context["product"].get("clothingType") or context["product"].get("clothing_type")) == "outer":
         closure = outer_closure.front_closure_of(context["analysis"])

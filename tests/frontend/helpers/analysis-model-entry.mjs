@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
-import React from 'react';
-import { transformWithEsbuild } from 'vite';
+import { outfitHarness, nodes as allNodes } from './outfitHarness.mjs';
+import { extensionModelFee } from '../../../src/lib/limits.js';
+import { outfitModelCredit } from '../../../src/lib/outfitPresentation.js';
 import { AI_MODELS } from '../../../src/features/analysis/aiModels.js';
 import { isRealModelSelection, resolveSelectedModelId } from '../../../src/features/analysis/modelSelection.js';
 
@@ -26,21 +27,26 @@ export function selectionEffect(a, onChange, toast) {
 
 // Render the actual model section without starting a browser or a dev server.
 export async function modelSection(a) {
-  const start = source.indexOf('      {/* 5. model select');
-  const section = source.slice(start, source.indexOf('      {/* 6. match clothing', start));
-  const { code } = await transformWithEsbuild(`function section() { return (<>${section}</>); }`, 'model-entry.jsx', { jsx: 'transform' });
-  const changes = [];
-  const bindings = {
-    React, a, isRealModelSelection, visibleAiModels: AI_MODELS.filter((m) => !a.targetGenders?.[0] || m.gender === a.targetGenders[0]),
-    quotePlan: 'free', extensionModelGroupLabel: () => '확장', onChange: (patch) => changes.push(patch),
-    Chips: 'chips', Icon: 'icon', modelTab: 'ai', setModelTab() {}, detailFor: null,
-  };
-  const tree = new Function(...Object.keys(bindings), `${code}; return section();`)(...Object.values(bindings));
-  return { nodes: flatten(tree), changes };
-}
-
-function flatten(node) {
-  if (Array.isArray(node)) return node.flatMap(flatten);
-  if (!node || typeof node !== 'object') return [];
-  return [node, ...flatten(node.props?.children)];
+  const h = await outfitHarness();
+  const priorRaf = globalThis.requestAnimationFrame;
+  const priorCancel = globalThis.cancelAnimationFrame;
+  globalThis.requestAnimationFrame = () => 0;
+  globalThis.cancelAnimationFrame = () => {};
+  try {
+    const { OutfitSelection } = await h.load('/src/features/analysis/OutfitSelection.jsx');
+    const { OutfitTile } = await h.load('/src/features/analysis/OutfitCatalog.jsx');
+    const changes = [];
+    const props = { analysis: { ...a, clothingType: 'dress' },
+      models: AI_MODELS.filter(model => model.gender === a.targetGenders[0]),
+      modelCredit: model => model.tier === 'basic' ? '무료' : outfitModelCredit(extensionModelFee('free', model.id)),
+      onChange: patch => changes.push(patch) };
+    let tree = h.render(OutfitSelection, props);
+    allNodes(tree).find(node => node.props['aria-controls'] === 'outfit-panel-model').props.onClick();
+    tree = h.render(OutfitSelection, props);
+    const tiles = allNodes(tree).filter(node => node.type === OutfitTile);
+    const more = allNodes(tree).find(node => node.type?.name === 'OutfitMore');
+    return { nodes: tiles.flatMap(node => allNodes(OutfitTile(node.props))), changes, allItems: more.props.items };
+  } finally {
+    await h.close(); globalThis.requestAnimationFrame = priorRaf; globalThis.cancelAnimationFrame = priorCancel;
+  }
 }

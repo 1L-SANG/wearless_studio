@@ -14,7 +14,7 @@ from io import BytesIO
 from PIL import Image
 
 from .. import facemarket, fm_fingerprint_store, repo
-from ..services import fm_fingerprint, matching
+from ..services import fm_fingerprint, matching, outfit_generation
 from ..agents import (
     asset_recipe,
     content_roles,
@@ -320,6 +320,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 (source_recipes.get(generation_source_asset_id) or {}).get("recipe"))
             target_img = None
             inner_reference_img = None
+            selected_inner_img = None
             if edit_mode:
                 trusted_type = garment_edit.source_cut_type(
                     src_asset, source_recipes.get(generation_source_asset_id) or {})
@@ -360,6 +361,19 @@ async def run_editor_image_job(app, job: dict) -> None:
                     target_img = InlineImage(target_asset["mime_type"],
                         await asyncio.to_thread(app.state.r2.get_bytes, target_asset["r2_key"]))
                 elif payload["outerClosureState"] != "closed":
+                    original_outfit = (generation_recipe or {}).get("outfitSelectionsSnapshot")
+                    if (original_outfit or {}).get("slots", {}).get("inner", {}).get("itemId"):
+                        try:
+                            original_refs = await outfit_generation.resolve_images(
+                                app, snapshot=original_outfit,
+                                clothing_type=edit_product.get("clothingType") or edit_product.get("clothing_type") or "top",
+                                user_id=user_id, project_id=project_id, mannequin_only=True,
+                                reference_assets=(generation_recipe or {}).get("outfitReferenceAssets"))
+                            selected_inner_img = next((image for role, image in original_refs if role == "inner"), None)
+                        except outfit_generation.OutfitReferenceError as exc:
+                            await _fail("원본 사진의 이너를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
+                                        {"error": "outfit_asset_unavailable", "role": exc.role})
+                            return
                     # 참고 조회/읽기는 선택 입력이다. 원본을 못 읽어도 한 장으로 고쳐 만든다.
                     try:
                         async with pool.connection() as conn:
@@ -435,7 +449,9 @@ async def run_editor_image_job(app, job: dict) -> None:
                     if vary_lora_spec is not None:
                         edit_kwargs = {"face_identity_spec": vary_lora_spec, "face_pass_outcome": face_pass_outcome,
                             "face_pass_url_provider": lambda: identity_source.active_face_backend_url(pool, str(snapshot["modelId"]))}
-                    if inner_reference_img is not None:
+                    if selected_inner_img is not None:
+                        edit_kwargs["selected_inner_image"] = selected_inner_img
+                    elif inner_reference_img is not None:
                         edit_kwargs["inner_reference_image"] = inner_reference_img
                     image, mime = await garment_edit.generate(
                         editor_settings, app.state.gemini, src_img, target_img, cut_type,
@@ -511,6 +527,11 @@ async def run_editor_image_job(app, job: dict) -> None:
                 # analysis 도 로드 — 프롬프트 ground truth(소재·강조특징)와 확정 fitProfile
                 # 텍스트 제약이 detail_page 경로와 동일하게 반영되도록(컷 파이프라인 계약 정합).
                 analysis = await repo.get_analysis(conn, project_id) or {}
+                outfit_snapshot = outfit_generation.from_payload(
+                    new_payload, analysis, product.get("clothing_type") or product.get("clothingType") or "top")
+                if new_payload.get("cutType") in _WORN_CUT_TYPES:
+                    outfit_snapshot, matching_ids = outfit_generation.for_cut(
+                        outfit_snapshot, product.get("clothing_type") or product.get("clothingType") or "top", new_payload)
                 if new_payload.get("retryBlockId"):
                     storyboard = await repo.get_storyboard(conn, project_id)
                     original_payload = next((block for block in storyboard if isinstance(block, dict)
@@ -935,11 +956,27 @@ async def run_editor_image_job(app, job: dict) -> None:
                     analysis = {**analysis, "fitProfile": {
                         key: value for key, value in analysis["fitProfile"].items()
                         if key not in ("matchCut", "matchingFit")}}
+            outfit_images, outfit_assets = [], []
+            if normalized["cutType"] in _WORN_CUT_TYPES:
+                outfit_snapshot = outfit_generation.with_complement(outfit_snapshot, clothing_type, matching_ids)
+                try:
+                    outfit_images = await outfit_generation.resolve_images(
+                        app, snapshot=outfit_snapshot, clothing_type=clothing_type,
+                        user_id=user_id, project_id=project_id,
+                        reference_assets=new_payload.get("outfitReferenceAssets"), resolved_assets=outfit_assets)
+                except outfit_generation.OutfitReferenceError as exc:
+                    await _fail("선택한 코디 아이템을 불러오지 못했어요. 아이템을 다시 확인해 주세요.",
+                                {"error": "outfit_asset_unavailable", "role": exc.role})
+                    return
+                if outfit_snapshot is not None:
+                    cut_spec["outfitSelectionsSnapshot"] = outfit_snapshot
+                    cut_spec["outfitReferenceAssets"] = outfit_assets
+                cut_spec["_outfitRoles"] = tuple(role for role, _ in outfit_images)
             images = [
                 *mannequin_images,
                 *model_images,
                 *product_images,
-                *matching_images,
+                *outfit_generation.ordered_images(outfit_images, matching_images),
             ]
             # 순서 = 매니페스트: 기준색 MANNEQUIN? → MODEL 2장? → 상품 슬롯들
             # → 선택 MATCHING 최대 2장 → 무드? → 예시.
@@ -1041,6 +1078,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 has_match=bool(matching_images),
                 matching_count=len(matching_images),
                 matching_custom=[matching_id.startswith("custom_") for matching_id in matching_ids],
+                outfit_roles=tuple(role for role, _ in outfit_images),
                 mood_count=attached_mood_count,
                 # REAL 2장 = FACE + SHEET · REAL 3장 = FACE + SHEET + FULL BODY · VIRTUAL 2장 = FACE + FULL BODY
                 has_model_face=n_model_images >= 2,

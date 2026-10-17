@@ -18,6 +18,19 @@ _SKIRT_CATEGORIES = frozenset({"스커트"})
 _SHORT_CATEGORIES = frozenset({"쇼츠", "버뮤다쇼츠"})
 
 
+def board_url_for(r2, item: dict, *, has_active_job: bool = False) -> str | None:
+    """Display only: board derivative, with a ready custom thumbnail as fallback."""
+    from .matching_cutout import cutout_status_for
+
+    if item.get("is_custom"):
+        ready = cutout_status_for(is_custom=True, image_meta=item.get("image_meta"),
+                                 has_active_job=has_active_job) == "ready"
+        key = (item.get("board_key") or item.get("thumb_key")) if ready else None
+    else:
+        key = item.get("board_key")
+    return r2.public_url(key) if key else None
+
+
 def matching_fallback_candidates(
     recommendations: list[dict], missing_id: str, used_ids: list[str], metadata: dict | None = None,
 ) -> list[str]:

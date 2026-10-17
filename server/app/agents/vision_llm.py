@@ -447,6 +447,10 @@ def _to_gemini_schema(node: dict) -> dict:
     out: dict = {"type": _TYPE.get(t, "STRING")}
     if nullable:
         out["nullable"] = True
+    # Preserve bounded structured responses (e.g. three outfit sets and short text).
+    for key in (("minLength", "maxLength") if t == "string" else ("minItems", "maxItems") if t == "array" else ()):
+        if key in node:
+            out[key] = node[key]
     if node.get("enum"):
         out["enum"] = node["enum"]
     if node.get("description"):

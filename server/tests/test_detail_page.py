@@ -648,7 +648,7 @@ def test_detail_product_only_storyboard_strips_real_model_before_facemarket_gate
     # id·라이선스(_facemarket)가 페이로드에서 빠지고 FaceMarket 게이트에도 들어가지 않는다
     # (forbidden_resolve 가 불리면 AssertionError, 컷오버 잠금도 없음).
     assert response.status_code == 202, response.text
-    assert seen["payload"] == {"mode": "generate"}
+    assert seen["payload"] == {"mode": "generate", "outfitSelectionsSnapshot": {"version": 1, "slots": {}}}
     assert events == ["cache", "job", "reserve", "commit"]
 
 
@@ -733,6 +733,7 @@ def test_detail_real_styling_needs_no_virtual_stand_in(
     # 스타일링 컷이 실제 모델 하나로 간다 — 가상 대역(stylingModelId) 없이 라이선스가 붙는다.
     assert seen["payload"] == {
         "mode": "generate",
+        "outfitSelectionsSnapshot": {"version": 1, "slots": {}},
         "modelId": MODEL_ID,
         "brandUseCategory": CATEGORY,
         "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
@@ -761,6 +762,7 @@ def test_detail_real_hooking_cuts_are_reserved_like_styling(
     assert response.status_code == 202, response.text
     assert seen["payload"] == {
         "mode": "generate",
+        "outfitSelectionsSnapshot": {"version": 1, "slots": {}},
         "modelId": MODEL_ID,
         "brandUseCategory": CATEGORY,
         "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
@@ -860,6 +862,7 @@ def test_detail_mixed_real_selection_queues_one_model_for_every_cut(
     # 저장된 옛 stylingModelId 는 더 이상 읽지 않는다 — 모든 컷이 선택 모델 하나로 간다.
     assert seen["payload"] == {
         "mode": "generate",
+        "outfitSelectionsSnapshot": {"version": 1, "slots": {}},
         "modelId": MODEL_ID,
         "brandUseCategory": CATEGORY,
         "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
@@ -933,6 +936,7 @@ def test_detail_current_selection_updates_lock_and_queues_snapshot_atomically(
     assert response.status_code == 202, response.text
     assert seen["payload"] == {
         "mode": "generate",
+        "outfitSelectionsSnapshot": {"version": 1, "slots": {}},
         "modelId": MODEL_ID,
         "brandUseCategory": CATEGORY,
         "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},

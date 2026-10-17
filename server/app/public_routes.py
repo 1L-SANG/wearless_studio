@@ -13,12 +13,13 @@ from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
-from . import rate_limit
+from . import rate_limit, repo
 from .agents import product_evidence_contract, detail_recommendations, points_merge
 from .agents.vision_llm import VisionError
 from .auth import optional_user
 from .client_ip import client_ip as _client_ip
 from .r2 import ext_for_mime
+from .services import outfit
 from .routes import MAX_UPLOAD_BYTES
 from .workers.analyze_job import analyze_image_bytes, analyze_core_image_bytes, extract_image_features
 
@@ -190,6 +191,85 @@ def _handoff_unavailable():
     })
 
 
+async def _public_outfit_fields(request, source_images, product, analysis, slots):
+    items = []
+    pool = getattr(request.app.state, "pool", None)
+    if pool is not None:
+        try:
+            async with pool.connection() as conn:
+                items = await repo.list_curated_matching_items(conn)
+        except Exception as exc:
+            # Catalog availability must not discard an otherwise valid product analysis.
+            logger.warning("public outfit catalog unavailable: %s", type(exc).__name__)
+    clothing_type = analysis.get("clothingType") or product.get("clothingType") or product.get("clothing_type") or "top"
+    product = {**product, "clothingType": clothing_type}
+    try:
+        selections = outfit.normalize_selections(analysis.get("outfitSelections"), clothing_type,
+            allowed_items=items, strict=True,
+            genders=outfit.product_context(product, analysis)["targetGenders"], prune_invalid_ai=True)
+    except outfit.OutfitSelectionError as exc:
+        raise _bad_request(str(exc), "선택한 코디 아이템을 다시 확인해 주세요.") from None
+    fields = outfit.start_recommendation(request.app.state.settings, request.app.state.r2,
+        product, {**analysis, "outfitSelections": selections}, source_images, items,
+        slots=slots, semaphore=_analysis_semaphore)
+    secret = request.app.state.settings.r2_secret_access_key
+    if isinstance(secret, str) and len(secret) >= 16:
+        fields[outfit.HANDOFF_KEY] = outfit.issue_handoff(fields, source_images, slots, secret, context=outfit.product_context(product, analysis))
+    return {**fields, **outfit.read_fields(fields, request.app.state.settings.outfit_timeout_seconds)}
+
+
+@router.post("/outfit-recommendations/status", tags=["Public Analysis"])
+async def public_outfit_status(request: Request, body: dict = Body(...)):
+    secret = request.app.state.settings.r2_secret_access_key
+    try:
+        contract = outfit.verify_handoff(body.get("handoff"), secret)
+        recommendation = contract["outfitRecommendation"]
+    except (outfit.OutfitSelectionError, KeyError):
+        raise _bad_request("invalid_analysis_handoff", "분석 결과를 다시 확인해 주세요.") from None
+    fields = outfit.read_recommendation(recommendation["contextKey"])
+    items = None
+    pool = getattr(request.app.state, "pool", None)
+    if pool is not None:
+        async with pool.connection() as conn:
+            items = await repo.list_curated_matching_items(conn)
+    if fields is None:
+        # Eviction/restart never retriggers inference. Rehydrate only signed catalog IDs.
+        items = items or []
+        pools = outfit.candidate_pools(items, contract["context"])
+        shortlists = outfit.candidate_pools(items, contract["context"], contract["outfitSelections"],
+            limit=request.app.state.settings.outfit_candidates_per_role)
+        recommendation = {**recommendation, "status": "fallback" if any(pools.values()) else "unavailable",
+                          "sets": outfit.fallback_sets(shortlists, contract["outfitSelections"])}
+        recommendation.pop("fallbackReady", None)
+        fields = {"outfitRecommendation": outfit.recommendation_display(recommendation, pools, request.app.state.r2),
+                  "outfitSelections": contract["outfitSelections"]}
+    fields = outfit.read_fields(fields, request.app.state.settings.outfit_timeout_seconds, include_internal=True,
+                               items=items, r2=request.app.state.r2)
+    fields[outfit.HANDOFF_KEY] = outfit.issue_bound_handoff(fields, contract["sourceBinding"], secret,
+                                                          context=contract["context"])
+    return {"data": {**fields, **outfit.read_fields(fields, request.app.state.settings.outfit_timeout_seconds)}}
+
+
+@router.post("/outfit-recommendations", tags=["Public Analysis"])
+async def public_recommend_outfit(request: Request, images: list[UploadFile] = File(...),
+        slots: list[str] | None = Form(default=None), productContext: str | None = Form(default=None),
+        analysisContext: str | None = Form(default=None), authenticated_user: str | None = Depends(optional_user)):
+    if not isinstance(analysisContext, str) or len(analysisContext) > 16384:
+        raise _bad_request("invalid_outfit_context", "상품 정보를 다시 확인해 주세요.")
+    try:
+        analysis = json.loads(analysisContext)
+        if not isinstance(analysis, dict):
+            raise ValueError()
+    except ValueError:
+        raise _bad_request("invalid_outfit_context", "상품 정보를 다시 확인해 주세요.") from None
+    # Public requests can submit context and IDs, but never create server results or assets.
+    analysis = {key: analysis[key] for key in ("clothingType", "subCategory", "customCategory", "targetGenders", "styleTags", "swatchSuggestions", "fit", "materials", "outfitSelections") if key in analysis}
+    async with _public_slot(request, authenticated_user, _analysis_semaphore, "analysis"):
+        source_images, product = await _read_analysis_inputs(images, slots, productContext)
+        fields = await _public_outfit_fields(request, source_images, product, analysis, slots)
+    return JSONResponse({"data": fields})
+
+
 @router.post("/analyze", tags=["Public Analysis"], summary="비로그인 상품 사진 AI 분석")
 async def public_analyze(
     request: Request,
@@ -217,6 +297,9 @@ async def public_analyze(
             raise HTTPException(status_code=502, detail={
                 "code": "analysis_failed", "message": "상품 분석에 실패했어요. 다시 시도해 주세요.",
             }) from None
+        fields = await _public_outfit_fields(request, source_images, product,
+                    {**(core.get("analysis_payload") or {}), **core["result_data"]}, slots)
+        core["result_data"].update(fields)
     data = dict(core["result_data"])
     evidence = (core.get("analysis_payload") or {}).get(
         product_evidence_contract.PERSISTED_KEY

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer, transformWithEsbuild } from 'vite';
 import { defaultAnalysisShape } from '../../src/lib/api/shapes.js';
 import { isGenerationRelevantAnalysisPatch } from '../../src/lib/generationRelevance.js';
+import { outfitContextKey } from '../../src/lib/outfitSelections.js';
 import { createFeatureRun, stripFeatureClientFields } from '../../src/lib/featureRun.js';
 import { persistAnalysisEdit, registerAnalysisEditSave, mergeLatestFailedAnalysisPatch } from '../../src/features/product-input/saveRouting.js';
 
@@ -102,6 +103,7 @@ test('변경 없음과 앞뒤 공백만 바뀐 경우에는 저장하지 않고 
 test('확정은 포커스 중인 초안을 기존 분석 저장 대기열에 먼저 넣고 저장이 끝나야 이동한다', async () => {
   const blocked = deferred(), events = [], analysisSaveChainRef = { current: Promise.resolve() };
   const bindings = { analysisSaveChainRef, analysisProjectId: 'md-project',
+    outfitContextKey, latestAnalysisRef: { current: {} }, latestProductRef: { current: { colors: [] } },
     latestAnalysisPatchRef: { current: {} }, failedAnalysisPatchRef: { current: null }, analysisSaveErrorRef: { current: null },
     persistedColorsRef: { current: [] }, setAnalysis() {}, toast: { push() {} },
     isMatchRecommendationPatch: () => false, mergeLatestFailedAnalysisPatch, registerAnalysisEditSave, persistAnalysisEdit,

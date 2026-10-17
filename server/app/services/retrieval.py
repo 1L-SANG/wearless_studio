@@ -15,6 +15,7 @@ tie-break은 전부 `id` 오름차순으로 고정한다(NFR-1 결정성).
 
 import logging
 
+from app.agents.color_harmony import matching_color, outfit_color_score
 from .matching import diversify_top_two, prefilter
 
 logger = logging.getLogger(__name__)
@@ -118,8 +119,10 @@ def recommend_v1(
                 item,
                 _quantize(
                     (1 - weight) * (style_score / max_style if max_style > 0 else 0.0)
-                    + weight * _color_harmony_score(
-                        product_color, item.get("color_group"), harmony_scores
+                    + weight * outfit_color_score(
+                        product_color,
+                        matching_color(item.get("color_group"), item.get("color_name"), item.get("category")),
+                        clothing_type, harmony_scores,
                     )
                 ),
             )

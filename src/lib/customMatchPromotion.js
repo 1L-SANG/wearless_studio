@@ -148,8 +148,13 @@ export function applyPromotedMatchSelection(blocks, colors, matchClothing) {
 // 서버 payload 에 박히면 죽은 링크가 된다. 정식 항목은 서버 등록이 다시 넣는다.
 export function stripLocalCustomMatch(analysis) {
   if (!analysis || !Array.isArray(analysis.matchClothing)) return analysis;
+  const customIds = new Set(analysis.matchClothing.filter((item) => item.isCustom).map((item) => item.id));
+  const outfitSelections = analysis.outfitSelections ? { ...analysis.outfitSelections, slots:
+    Object.fromEntries(Object.entries(analysis.outfitSelections.slots || {}).map(([slot, selection]) =>
+      [slot, customIds.has(selection.itemId) ? { itemId: null, origin: 'user' } : selection])) } : null;
   return {
     ...analysis,
+    ...(outfitSelections ? { outfitSelections } : {}),
     matchClothing: analysis.matchClothing.filter((m) => !m.isCustom),
   };
 }

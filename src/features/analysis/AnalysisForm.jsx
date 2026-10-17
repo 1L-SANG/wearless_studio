@@ -3,16 +3,14 @@ import { getActiveFeatureRun, isFeatureRunPending } from '@/lib/featureRun.js';
 import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
 /* =============================================================
    features/analysis — ② AI 분석·세부 확인 (PRD §6)
-   Ported verbatim from reference/prototype/features/analysis.jsx.
-   Only change: ES imports + exports (was window globals). Markup,
-   classNames, inline styles unchanged.
+   입력 분석 편집을 유지하고 v18 코디 단계를 AnalysisStepFlow로 연결한다.
    ============================================================= */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/index.js';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
 import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { analysisWaitProgress } from '@/lib/smoothProgress.js';
-import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
+import { PageHead } from '@/features/shell/shell.jsx';
 import { AI_MODELS } from '@/features/analysis/aiModels.js';
 import { axesFor, fitProfileCategory, subcategoryLength } from '@/lib/fitAxes.js';
 import {
@@ -33,11 +31,17 @@ import {
 } from './modelSelection.js';
 import { SELLING_POINTS_MAX, applySellingPointEdit } from './sellingPoints.js';
 import { selectAnalysisComposeMode } from './composeModeSelection.js';
+import { OutfitSelection } from './OutfitSelection.jsx';
+import { AnalysisStepFlow, OutfitCreditLabel } from './AnalysisStepFlow.jsx';
+import { outfitModelCredit } from '@/lib/outfitPresentation.js';
+import { useCustomOutfitUpload } from './useCustomOutfitUpload.js';
+import { complementaryOutfitSlot, mergeOutfitAnalysis, setOutfitSelection,
+  syncOutfitLegacySelection } from '@/lib/outfitSelections.js';
 // 글자 폭 추정(em) — 한글 ≈1em, 그 외 ≈0.55em. '직접 입력' pill이 다른 칩과 같은 크기로
 // 시작해 내용 길이만큼만 유동 확장되게 하는 계산 (2026-07-13 사용자 피드백).
 const chWidth = (s) => [...s].reduce((n, ch) => n + (/[가-힣]/.test(ch) ? 1 : 0.55), 0).toFixed(1);
 import {
-  extensionModelGroupLabel,
+  extensionModelFee,
   mannequinGenerationCtaLabel,
   mannequinGenerationTotal,
 } from '@/lib/limits.js';
@@ -49,7 +53,7 @@ import {
 
 const MD_COMMENT_PLACEHOLDER = '- 가을 출근룩으로 활용할 니트예요.\n- 소매가 길어서 키 작은 분은 접어 입으면 예뻐요.\n- 나일론 소재라서 여름에도 시원하게 착용 가능해요.';
 
-export const isMatchRecommendationPatch = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
+export const isMatchRecommendationPatch = (patch) => ['clothingType', 'subCategory', 'customCategory', 'targetGenders', 'styleTags', 'colors', 'fit', 'materials'].some((key) => key in patch);
 
 // ── 분석 대기 연출 (A안 · 단계 체크리스트 — 2026-07-13 확정, mockups/analysis-waiting-concepts.html) ──
 // 마운트부터 하나의 시간 모델로 바와 체크를 함께 그린다(analysisWaitProgress).
@@ -142,16 +146,6 @@ export function AnalysisSkeleton() {
       <Skeleton w={sw} h={13} r={4} style={{ marginTop: 9 }} />
     </div></div>
   );
-  const cards = (n, ws) => (
-    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-      {Array.from({ length: n }).map((_, i) => (
-        <div key={i} style={{ width: 110 }}>
-          <Skeleton h={130} r={8} />
-          <Skeleton w={ws} h={12} r={4} style={{ marginTop: 8 }} />
-        </div>
-      ))}
-    </div>
-  );
   return (
     <div className="af-skeleton" aria-busy="true">
       {/* 진행 헤더는 AnalysisProgress(단계 체크리스트)가 담당 — 여기는 폼 뼈대만 */}
@@ -185,28 +179,15 @@ export function AnalysisSkeleton() {
           {secHead(118, 230)}
           {chipRow([90, 72, 124, 96, 108])}
         </div>
-        {/* 모델 선택 */}
         <div className="surface">
-          <Skeleton w={70} h={18} r={5} />
-          <Skeleton w={200} h={13} r={4} style={{ margin: '9px 0 16px' }} />
-          {cards(3, 56)}
-        </div>
-        {/* 매칭 의류 */}
-        <div className="surface">
-          <Skeleton w={70} h={18} r={5} />
-          <Skeleton w={220} h={13} r={4} style={{ margin: '9px 0 16px' }} />
-          {cards(4, 64)}
+          {secHead(80, 160)}
+          <Skeleton h={96} r={8} />
         </div>
       </div>
     </div>
   );
 }
 
-
-const expectedMatchingType = (clothingType) => {
-  if (clothingType === 'dress') return null;
-  return clothingType === 'bottom' ? 'top' : 'bottom';
-};
 
 const CUSTOM_MATCH_IMAGE_OPTIONS = Object.freeze({
   maxEdge: 1600,
@@ -215,7 +196,7 @@ const CUSTOM_MATCH_IMAGE_OPTIONS = Object.freeze({
   timeoutMs: 10000,
 });
 
-function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
+function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose, onUploadStart, onUploadError }) {
   const [phase, setPhase] = useState('idle');
   const [files, setFiles] = useState([]);
   const [originalError, setOriginalError] = useState(null);
@@ -350,6 +331,7 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
   };
   const requestClose = () => {
     controllerRef.current.abort();
+    if (phase !== 'done') onUploadError?.();
     onClose();
   };
   const submit = async () => {
@@ -358,6 +340,7 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
     setOriginalError(null);
     setError('');
     setPhase('uploading');
+    onUploadStart?.(files[0]?.file);
     try {
       const uploaded = await Promise.all(files.map(({ file }) => api.uploadPhoto(
         projectId,
@@ -380,8 +363,9 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
       onApply(result.analysis);
       setDoneItem(result.item);
       setPhase('done');
-      setTimeout(() => { if (aliveRef.current) requestClose(); }, 500);
+      setTimeout(() => { if (aliveRef.current) { controllerRef.current.abort(); onClose(); } }, 500);
     } catch (uploadError) {
+      onUploadError?.();
       if (uploadError?.name === 'AbortError' || !aliveRef.current) return;
       setOriginalError(uploadError);
       setError(uploadError?.message || '옷을 추가하지 못했어요. 다시 시도해 주세요.');
@@ -474,7 +458,7 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
 }
 
 export function AnalysisForm({
-  inline, analysis, catalogs, onChange, onNext, projectId = null, onAnalysisReplace,
+  inline, analysis, catalogs, onChange, onNext, projectId = null, onAnalysisReplace, product,
   onConfirmingChange,
 }) {
   const a = analysis;
@@ -671,36 +655,46 @@ export function AnalysisForm({
   const quotePlan = currentQuote?.plan || account?.plan;
   const mannequinGenerationCost = currentQuote?.mannequinGenerate?.total
     ?? mannequinGenerationTotal(account?.plan, a.selectedModelId);
-  const applyAnalysisReplacement = useCallback((nextAnalysis) => {
-    if (!nextAnalysis) return;
-    if (onAnalysisReplace) onAnalysisReplace(nextAnalysis);
-    else onChange(nextAnalysis);
+  const applyMatchClothingRefresh = useCallback((nextAnalysis) => {
+    if (!Array.isArray(nextAnalysis?.matchClothing)) return;
+    if (onAnalysisReplace) onAnalysisReplace((prev) => mergeMatchClothing(prev, nextAnalysis));
+    else onChange({ matchClothing: nextAnalysis.matchClothing });
   }, [onAnalysisReplace, onChange]);
   const closeCustomMatchModal = useCallback(async () => {
     setCustomMatchOpen(false);
     try {
       const actual = await api.refreshMatchClothing(projectId);
-      applyAnalysisReplacement(actual);
+      applyMatchClothingRefresh(actual);
     } catch (refreshError) {
       toast.push(refreshError?.message || '매칭 의류 상태를 다시 불러오지 못했어요.', { icon: 'alertTri', variant: 'error', error: refreshError, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
     }
-  }, [applyAnalysisReplacement, projectId, toast]);
+  }, [applyMatchClothingRefresh, projectId, toast]);
   const removeCustomMatch = useCallback(async () => {
     if (customMatchDeleting) return;
     if (!window.confirm('업로드한 매칭 의류를 삭제할까요?')) return;
     setCustomMatchDeleting(true);
     try {
       const result = await api.removeCustomMatchItem(projectId);
-      applyAnalysisReplacement(result.analysis);
+      const applyRemoval = (current) => {
+        const merged = mergeMatchClothing(current, result.analysis);
+        const role = complementaryOutfitSlot(current.clothingType);
+        const selected = current.outfitSelections?.slots?.[role]?.itemId;
+        if (selected && !(merged.matchClothing || []).some((item) => item.id === selected)) {
+          return { ...merged, ...setOutfitSelection(merged, role, null) };
+        }
+        return merged;
+      };
+      if (onAnalysisReplace) onAnalysisReplace(applyRemoval);
+      else onChange(applyRemoval(a));
     } catch (removeError) {
       toast.push(removeError?.message || '내 옷을 지우지 못했어요.', { icon: 'alertTri', variant: 'error', error: removeError, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
       try {
-        applyAnalysisReplacement(await api.refreshMatchClothing(projectId));
+        applyMatchClothingRefresh(await api.refreshMatchClothing(projectId));
       } catch { /* 원래 삭제 오류를 사용자에게 유지 */ }
     } finally {
       setCustomMatchDeleting(false);
     }
-  }, [applyAnalysisReplacement, customMatchDeleting, projectId, toast]);
+  }, [applyMatchClothingRefresh, onAnalysisReplace, onChange, a, customMatchDeleting, projectId, toast]);
 
   // 커스텀 매칭 누끼는 백그라운드에서 ~25s 처리된다(Task 5). processing 인 아이템이 하나라도
   // 있는 동안만 기존 refreshMatchClothing 을 5s 간격으로 폴링해 ready/failed 로 교체한다 —
@@ -708,21 +702,19 @@ export function AnalysisForm({
   // 폴링 결과는 matchClothing 만 머지한다(전체 치환 금지). onAnalysisReplace 는 상위의
   // setAnalysis 라 함수형 업데이트를 받는다 — 인터벌 클로저가 붙잡고 있는 옛 analysis 로
   // 덮어쓰면 저장 왕복 중이던 편집이 한 틱 되돌아간다.
-  const applyMatchClothingRefresh = useCallback((nextAnalysis) => {
-    if (!Array.isArray(nextAnalysis?.matchClothing)) return;
-    if (onAnalysisReplace) onAnalysisReplace((prev) => mergeMatchClothing(prev, nextAnalysis));
-    else onChange({ matchClothing: nextAnalysis.matchClothing });
-  }, [onAnalysisReplace, onChange]);
+  const matchRefreshRef = useRef(applyMatchClothingRefresh);
+  matchRefreshRef.current = applyMatchClothingRefresh;
   const hasPendingCutout = (a.matchClothing || []).some((item) => item.cutoutStatus === 'processing');
   useEffect(() => {
-    if (!hasPendingCutout || !projectId) return undefined;
+    if (!hasPendingCutout) return undefined;
+    let canceled = false;
     const interval = setInterval(() => {
       api.refreshMatchClothing(projectId)
-        .then((actual) => applyMatchClothingRefresh(actual))
+        .then((actual) => { if (!canceled) matchRefreshRef.current(actual); })
         .catch(() => { /* 다음 tick 에서 재시도 — 사용자에게 토스트 스팸 없음 */ });
     }, 5000);
-    return () => clearInterval(interval);
-  }, [hasPendingCutout, projectId, applyMatchClothingRefresh]);
+    return () => { canceled = true; clearInterval(interval); };
+  }, [hasPendingCutout, projectId]);
 
   const [highlightedPoints, setHighlightedPoints] = useState([]);
   const previousFeatureRecordRef = useRef(a.featureRun);
@@ -780,14 +772,6 @@ export function AnalysisForm({
       (item) => !item.gender || item.gender === gender,
     );
   }
-  const selMatch = (a.matchClothing || []).filter((c) => c.selected).sort((x, y) => (x.selOrder || 0) - (y.selOrder || 0));
-  const mainMatchId = selMatch[0]?.id;
-  const isMatchCompatible = (item, clothingType = a.clothingType) => {
-    const expectedType = expectedMatchingType(clothingType);
-    return expectedType !== null
-      && item.isCompatible !== false
-      && (item.clothingType == null || item.clothingType === expectedType);
-  };
   const withMatchSelection = (matchClothing) => {
     const category = fitProfileCategory(a.clothingType, a.subCategory) || 'top';
     const gender = genderForClothingType(a.clothingType, a.targetGenders);
@@ -820,19 +804,12 @@ export function AnalysisForm({
       },
     };
   };
-  const toggleMatch = (id) => {
-    const cur = a.matchClothing;
-    const item = cur.find((c) => c.id === id);
-    if (!item || !isMatchCompatible(item)) return;
-    if (item.selected) {
-      const next = cur.map((c) => c.id === id ? { ...c, selected: false, selOrder: undefined } : c);
-      onChange(withMatchSelection(next));
-    } else {
-      const next = cur.map((c) => c.id === id
-        ? { ...c, selected: true, selOrder: 1 }
-        : { ...c, selected: false, selOrder: undefined });
-      onChange(withMatchSelection(next));
-    }
+  const customUpload = useCustomOutfitUpload({ analysis: a,
+    onChange: (patch) => onChange({ ...patch, ...(patch.matchClothing ? withMatchSelection(patch.matchClothing) : {}) }),
+    onRefresh: applyMatchClothingRefresh });
+  const changeOutfit = (patch) => {
+    if (patch.matchClothing || patch.outfitSetIndex != null) customUpload.noteSelection();
+    return onChange({ ...patch, ...(patch.matchClothing ? withMatchSelection(patch.matchClothing) : {}) });
   };
   const setMat = (i, patch) => onChange({ materials: a.materials.map((m, j) => j === i ? { ...m, ...patch } : m) });
   const draftWash = async () => {
@@ -1174,100 +1151,7 @@ export function AnalysisForm({
         </div>
       </div>
 
-      {/* 5. model select, AI 모델만 제공 */}
-      <div className="surface">
-        <div className="sec-title" style={{ marginBottom: 6 }}>모델 선택</div>
-        <div className="sec-sub" style={{ margin: '10px 0 16px' }}>
-          가상 인물 모델이에요 · 라이선스 비용 없이 바로 쓸 수 있어요.
-        </div>
-        <div className="ai-model-groups">
-          {['basic', 'extension'].map((tier) => {
-            const group = visibleAiModels.filter((model) => model.tier === tier);
-            if (!group.length) return null;
-            return (
-              <div className="ai-model-group" key={tier}>
-                <div className="ai-model-group-title">
-                  {tier === 'basic' ? '기본 · 무료' : extensionModelGroupLabel(quotePlan)}
-                </div>
-                <div className="model-grid">
-                  {group.map((m) => {
-                    const on = a.selectedModelId === m.id;
-                    return (
-                      <div key={m.id} className={`model-card ai-model${on ? ' on' : ''}`}
-                        onClick={() => onChange({ selectedModelId: m.id })} title={m.displayName}>
-                        <img src={m.thumb} alt={m.displayName} />
-                        <span className="ai-name">
-                          {m.displayName}{on && <Icon name="check" size={12} />}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* 6. match clothing — full width */}
-      {expectedMatchingType(a.clothingType) && <div className="surface">
-        <div className="sec-title" style={{ marginBottom: 6 }}>매칭 의류</div>
-        <div className="sec-sub" style={{ marginBottom: 16 }}>핏·코디 이미지 생성에 쓰여요 · 1개 선택</div>
-        <div className="model-grid custom-match-grid">
-          {a.matchClothing.map((m) => {
-            const compatible = isMatchCompatible(m);
-            return (
-              <div key={m.id}
-                className={`model-card custom-match-card${m.selected ? ' on' : ''}${compatible ? '' : ' incompatible'}`}
-                onClick={() => toggleMatch(m.id)}>
-                {m.cutoutStatus === 'processing' ? (
-                  <div className="custom-match-cutout-pending">
-                    <Icon name="loader" className="spin" size={16} />
-                    <span>이미지 업로드됐어요! 지금 배경 정리 중이에요</span>
-                  </div>
-                ) : (
-                  <img src={m.thumb} alt={m.name} />
-                )}
-                {m.isCustom && <span className="custom-match-badge">내 옷</span>}
-                {m.isCustom && (
-                  <button className="custom-match-delete" disabled={customMatchDeleting}
-                    aria-label="내 옷 삭제"
-                    onClick={(event) => { event.stopPropagation(); removeCustomMatch(); }}>
-                    <Icon name={customMatchDeleting ? 'loader' : 'x'}
-                      className={customMatchDeleting ? 'spin' : ''} size={14} />
-                  </button>
-                )}
-                {m.id === mainMatchId && <span className="match-role main">선택</span>}
-                <div className="nm">
-                  <span>{m.name}{!compatible && <small>현재 상품과 종류가 맞지 않아요</small>}</span>
-                  {m.selected && <Icon name="check" size={13} className="star" />}
-                </div>
-              </div>
-            );
-          })}
-          {!a.matchClothing.some((item) => item.isCustom) && (
-            <button className="model-card custom-match-add"
-              onClick={(event) => {
-                setCustomMatchAnchor(event.currentTarget.getBoundingClientRect());
-                setCustomMatchOpen(true);
-              }}>
-              <span className="custom-match-add-art">
-                <Icon name={expectedMatchingType(a.clothingType) === 'top' ? 'shirt' : 'pants'}
-                  size={52} stroke={1.4} />
-              </span>
-              <span className="nm">의류 추가하기</span>
-            </button>
-          )}
-        </div>
-        {customMatchOpen && (
-          <CustomMatchUploadModal
-            projectId={projectId}
-            anchorRect={customMatchAnchor}
-            onApply={applyAnalysisReplacement}
-            onClose={closeCustomMatchModal}
-          />
-        )}
-      </div>}
+      {/* 5. model select — 코디 고르기 첫 줄로 이동 */}
     </>
   );
 
@@ -1316,27 +1200,24 @@ export function AnalysisForm({
       <Button variant="primary" size="lg" iconRight="arrowRight"
         className="af-cta-confirm"
         disabled={composeModeSaving || confirming}
-        onClick={confirmAnalysis}>{mannequinGenerationCtaLabel(mannequinGenerationCost)}</Button>
+        onClick={confirmAnalysis}><OutfitCreditLabel cost={mannequinGenerationCost} label={mannequinGenerationCtaLabel(mannequinGenerationCost)} /></Button>
     </div>
   );
 
-  if (inline) {
-    return (
-      <>
-        <div className="af-inline-head"><div><div className="af-head-title">AI가 분석한 정보예요</div><div className="hint" style={{ marginTop: 2 }}>틀린 부분이 있으면 직접 수정해주세요.</div></div></div>
-        <div className="af-body af-cards merged-card">{sections}</div>
-        <WizardCTA className="wizard-cta-analysis">{cta}</WizardCTA>
-      </>
-    );
-  }
-
-  return (
-    <div className="wizard">
-      <PageHead title="AI가 상품 정보를 분석했어요" sub="틀린 부분이 있으면 직접 수정해주세요." />
-      <div className="af-body af-cards merged-card">{sections}</div>
-      <WizardCTA className="wizard-cta-analysis">{cta}</WizardCTA>
-    </div>
-  );
+  const outfit = <>
+    <OutfitSelection analysis={a} product={product} projectId={projectId} models={visibleAiModels}
+      modelCredit={(model) => model.tier === 'basic' ? '무료' : outfitModelCredit(extensionModelFee(quotePlan, model.id))}
+      onRecommendation={onAnalysisReplace} onChange={changeOutfit}
+      onUpload={(event) => { setCustomMatchAnchor(event.currentTarget.getBoundingClientRect()); setCustomMatchOpen(true); }}
+      onDeleteCustom={removeCustomMatch} deletingCustom={customMatchDeleting} customUpload={customUpload.upload} />
+    {customMatchOpen && <CustomMatchUploadModal projectId={projectId} anchorRect={customMatchAnchor}
+      onApply={customUpload.receive} onClose={closeCustomMatchModal}
+      onUploadStart={customUpload.begin} onUploadError={customUpload.fail} />}
+  </>;
+  const flow = <AnalysisStepFlow inline={inline} analysis={a} product={product} outfit={outfit}
+    cta={cta} beforeEnter={commitMdComment}>{sections}</AnalysisStepFlow>;
+  if (inline) return flow;
+  return <div className="wizard"><PageHead title="AI가 상품 정보를 분석했어요" sub="틀린 부분이 있으면 직접 수정해주세요." />{flow}</div>;
 }
 
 export function Analysis({ onNext }) {
@@ -1344,12 +1225,13 @@ export function Analysis({ onNext }) {
   const [analysisError, setAnalysisError] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [catalogs, setCatalogs] = useState(null);
+  const [product, setProduct] = useState(null);
 
   const run = useCallback(() => {
     setPhase('loading');
     // 시그니처 통일 — analyzeProduct 는 projectId 를 받는다(http 모드 job 시작 대상). mock 은 무시.
-    Promise.all([api.analyzeProduct(useAppStore.getState().projectId, {}), api.getCatalogs()])
-      .then(([a, c]) => { setAnalysis(a); setCatalogs(c); setPhase('ready'); })
+    Promise.all([api.analyzeProduct(useAppStore.getState().projectId, {}), api.getCatalogs(), api.getProduct(useAppStore.getState().projectId)])
+      .then(([a, c, p]) => { setAnalysis(a); setCatalogs(c); setProduct(p); setPhase('ready'); })
       .catch((error) => { setAnalysisError(error); setPhase('error'); });
   }, []);
   useEffect(() => { run(); }, [run]);
@@ -1357,17 +1239,19 @@ export function Analysis({ onNext }) {
   if (phase === 'loading') return <div className="wizard"><PageHead title="AI가 상품 정보를 분석했어요" sub="틀린 부분이 있으면 직접 수정해주세요." /><AnalysisSkeleton /></div>;
   if (phase === 'error') return <div className="wizard narrow"><div className="surface"><ErrorState error={analysisError} kind="analysis_error" action="analyze" desc="분석 서버에 일시적인 문제가 발생했어요." onRetry={run} /></div></div>;
 
-  return <AnalysisForm analysis={analysis} catalogs={catalogs}
+  return <AnalysisForm analysis={analysis} catalogs={catalogs} product={product}
     projectId={useAppStore.getState().projectId}
     onAnalysisReplace={setAnalysis}
     onChange={(patch) => {
       const refreshMatch = isMatchRecommendationPatch(patch);
-      if (isGenerationRelevantAnalysisPatch(patch)) {
+      if (isGenerationRelevantAnalysisPatch(patch, analysis)) {
         useAppStore.getState().markGenerationRelevantEdits();
       }
-      setAnalysis((a) => ({ ...a, ...patch }));
-      return api.saveAnalysis(null, patch).then((saved) => {
-        if (refreshMatch) setAnalysis((a) => ({ ...a, matchClothing: saved.matchClothing }));
+      setAnalysis((a) => syncOutfitLegacySelection({ ...a, ...patch }));
+      return api.saveAnalysis(useAppStore.getState().projectId, patch).then((saved) => {
+        if (refreshMatch || 'outfitSelections' in patch || 'matchClothing' in patch) {
+          setAnalysis((a) => mergeOutfitAnalysis(a, saved));
+        }
       });
     }} onNext={onNext} />;
 }

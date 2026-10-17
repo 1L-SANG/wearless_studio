@@ -77,6 +77,14 @@ def patch_route_db(monkeypatch, routes_module):
         yield FakeConn()
 
     monkeypatch.setattr(routes_module, "get_conn", fake_conn)
+    # These tests have no analysis rows unless they explicitly configure one.
+    # Keep repository fakes limited to reads, without turning worker no-DB fakes into SQL connections.
+    for name, empty in (("get_analysis", {}), ("get_failed_cut_outfit_recipe", None)):
+        original = getattr(routes_module.repo, name)
+        if getattr(original, "__module__", None) == routes_module.repo.__name__:
+            async def no_row(*_args, _empty=empty, **_kwargs):
+                return _empty
+            monkeypatch.setattr(routes_module.repo, name, no_row)
 
 
 class FakePool:
@@ -189,6 +197,7 @@ def make_settings(**overrides) -> Settings:
         # 상세 컷 체크포인트(운영 기본 on)도 테스트 기본은 off — 기존 워커 테스트의 generate 목
         # 상당수가 고정 시그니처라 base_checkpoint 키를 모른다. 체크포인트 테스트만 켠다.
         detail_cut_checkpoint_enabled=False,
+        outfit_recommendation_enabled=False,  # Tests must explicitly mock and opt in to recommendation calls.
         # 관리자 기기 게이트도 같은 이유로 테스트 기본 off — 기존 admin 라우트 테스트는 FakeConn
         # 큐에 role 행 하나만 넣고 도는데, shadow 도 기기 조회를 실행한다. 기기 테스트만 켠다.
         admin_device_gate="off",

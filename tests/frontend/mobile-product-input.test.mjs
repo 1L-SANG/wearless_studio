@@ -15,6 +15,7 @@ import { checkDraftEntry, canAutoOpenInput } from '../../src/lib/draftEntryCheck
 import { draftStoreFixture, drainDraftTasks } from './helpers/draft-store-fixture.mjs';
 import { createProductPhotoPreviewRegistry } from '../../src/features/product-input/productPhotoPreviewRegistry.js';
 import { getBaseSlotUploadRoom, getPendingTileCount, PENDING_TILE_DELAY_MS } from '../../src/features/product-input/pendingTiles.js';
+import { mergeOutfitSaveResponse, outfitContextKey, syncOutfitLegacySelection } from '../../src/lib/outfitSelections.js';
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 const clean = (source) => source.replace(/^import [\s\S]*?;\n/gm, '').replace(/^export default .*;$/gm, '').replace(/^export /gm, '');
@@ -75,6 +76,7 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
     saveAll: async (snapshot) => { calls.push(['saveAll', snapshot]); return saveAll ? saveAll(snapshot) : { status: 'saved', photoCount: 2 }; },
   };
   const bindings = {
+    mergeOutfitSaveResponse, outfitContextKey, syncOutfitLegacySelection,
     isAnalysisFastEntryEnabled: () => fastEntry,
     preparePublicAnalysis: prepare || (async () => ({ photos: [], photoSignature: 'signature' })), analysisPhotoKey: () => 'photos',
     getActiveFeatureRun: () => featureController,
@@ -113,7 +115,7 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
     useDoneGuard: (enabled) => { doneGuardChecks.push(enabled); return doneBlocked; }, useToast: () => ({ push: (...args) => calls.push(['toast', ...args]) }),
     useQuery: ({ queryKey }) => ({ data: queryKey.length === 1 ? [{ id: 'finished', title: '완성본' }] : [], isLoading: false }),
     useAppStore, isMobileDevice: () => mobile, isMockMode: false, draftSlot: slot, createDraftEntryActions, isMobileDraftWriter, draftSavedTime,
-    api: { getProduct: async (id) => { calls.push(['getProduct', id]); return photos; },
+    api: { restoreInputDraft: async () => {}, getProduct: async (id) => { calls.push(['getProduct', id]); return photos; },
       getAnalysis: async () => ({ projectId: 'desktop', fit: 'regular' }), getCatalogs: async () => ({ angleSlots: ['Front', 'Back'], swatchColors: [] }),
       analyzeProduct: async (...args) => { calls.push('analyze'); return analyze ? analyze(...args) : { suggestedName: '니트' }; }, ...(slotApi || {}) },
     createProductPhotoPreviewRegistry: previewRegistry || (() => ({ sync() {}, dispose() {}, release() {}, displayUrl: (_id, src) => src })),

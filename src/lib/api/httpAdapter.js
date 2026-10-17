@@ -1,5 +1,6 @@
 import { uploadWardrobeGif, readWardrobeGifs, writeWardrobeGifs, mergeWardrobeGifs } from './gifWardrobe.js';
-import { publicAnalysisForm } from './publicAnalysisRequest.js';
+import { preparePublicAnalysis, publicAnalysisForm } from './publicAnalysisRequest.js';
+import { hasOutfitContextChange, mergeOutfitAnalysis } from '../outfitSelections.js';
 import { stripFeatureClientFields } from '../featureRun.js';
 import { stripJpegMetadata } from '../jpegMetadata.js';
 /* =============================================================
@@ -398,7 +399,7 @@ export function resetAnalysisCache() {
 }
 
 const isMatchRefresh = (patch) =>
-  ['clothingType', 'targetGenders', 'styleTags'].some((k) => patch[k] != null);
+  ['clothingType', 'subCategory', 'customCategory', 'targetGenders', 'styleTags', 'colors', 'fit', 'materials'].some((k) => k in patch);
 
 function mergeAnalysisResult(ai) {
   const base = defaultAnalysisShape(ai.clothingType || 'top');
@@ -424,6 +425,10 @@ function mergeAnalysisResult(ai) {
     customCategory: ai.customCategory ?? null,
     sellingPoints: [],
     inputConsistency: ai.inputConsistency ?? null,
+    ...(Array.isArray(ai.matchClothing) ? { matchClothing: ai.matchClothing } : {}),
+    ...(ai.outfitSelections ? { outfitSelections: ai.outfitSelections } : {}),
+    ...(ai.outfitRecommendation ? { outfitRecommendation: ai.outfitRecommendation } : {}),
+    ...(ai.outfitRecommendationHandoff ? { outfitRecommendationHandoff: ai.outfitRecommendationHandoff } : {}),
   });
 }
 
@@ -526,6 +531,40 @@ export const httpAdapter = {
     const response = await publicHttp('/v1/public/analyze/features', publicAnalysisForm(product, photos, { runId, attempt }), { signal });
     return response.data;
   },
+  async publicRecommendOutfit(product, analysis, { photos, signal } = {}) {
+    const prepared = photos ? { photos } : await preparePublicAnalysis(product, { signal });
+    const analysisContext = Object.fromEntries(['clothingType', 'subCategory', 'customCategory',
+      'targetGenders', 'styleTags', 'fit', 'materials', 'outfitSelections'].map((key) => [key, analysis?.[key] ?? null]));
+    const response = await publicHttp('/v1/public/outfit-recommendations', publicAnalysisForm(product,
+      prepared.photos, { analysisContext: JSON.stringify(analysisContext) }), { signal });
+    return response?.data || {};
+  },
+  async recommendOutfit(projectId, analysis, options = {}) {
+    const context = Object.fromEntries(['clothingType', 'subCategory', 'customCategory', 'targetGenders',
+      'styleTags', 'fit', 'materials', 'outfitSelections'].filter((key) => analysis?.[key] !== undefined).map((key) => [key, analysis[key]]));
+    const response = await http(`/v1/projects/${projectId}/analysis/outfit-recommendations`, {
+      ...options, method: 'POST', body: context,
+    });
+    const merged = mergeOutfitAnalysis(cachedAnalysisFor(projectId) || analysis, response);
+    analysisCache = { projectId, analysis: merged };
+    return response;
+  },
+  async getOutfitRecommendation(projectId, { handoff, signal } = {}) {
+    if (projectId) return http(`/v1/projects/${projectId}/analysis/outfit-recommendations`, { signal });
+    if (!handoff) return {};
+    const response = await http('/v1/public/outfit-recommendations/status', {
+      requireAuth: false, method: 'POST', body: { handoff }, signal,
+    });
+    return response?.data || {};
+  },
+  async getOutfitCandidates(projectId) {
+    return http(`/v1/projects/${projectId}/analysis/outfit-candidates`);
+  },
+  async promoteOutfitRecommendation(projectId, handoff, outfitSelections) {
+    return http(`/v1/projects/${projectId}/analysis/outfit-recommendations:promote`, {
+      method: 'POST', body: { handoff, ...(outfitSelections ? { outfitSelections } : {}) },
+    });
+  },
   async mergePublicPoints({ runId, pointsTicket, featureTicket }) {
     const response = await http('/v1/public/analyze/points-merge', { requireAuth: false, method: 'POST', body: { runId, pointsTicket, featureTicket } });
     return response.data;
@@ -586,7 +625,7 @@ export const httpAdapter = {
     // 매칭 의류 후보 시드 — 서버 matching_items 실 후보(top-N 기본 선택, mock 계약 §6 동일 shape).
     // defaultAnalysisShape 는 matchClothing:[] 라 여기서 채우지 않으면 분석 페이지 매칭 그리드가
     // 비어 보인다(과거 mock base 시절엔 가짜 목이 채워줬음). 실패는 비치명 — 빈 목록 유지.
-    try {
+    if (!merged.outfitRecommendation) try {
       merged.matchClothing = await recommendMatchHttp(projectId, merged, []);
     } catch { /* 후보 조회 실패 — 분석 자체는 진행 */ }
     analysisCache = { projectId, analysis: merged };   // 화면 복원과 매칭 추천 문맥의 프로젝트별 캐시
@@ -715,15 +754,17 @@ export const httpAdapter = {
     return http(`/v1/projects/${projectId}/product`);
   },
   // 분석 저장은 바뀐 키만 병합한다. 매칭 선택에는 최신 후보를 읽어 선택 상태만 적용한다.
-  async saveAnalysis(projectId, patch) {
+  async saveAnalysis(projectId, patch, { recommendOutfit = true } = {}) {
     patch = stripFeatureClientFields(patch);
     const body = { ...patch };
+    delete body.outfitRecommendation;
+    delete body.outfitRecommendationHandoff;
     let cached = cachedAnalysisFor(projectId);
-    if (projectId && (isMatchRefresh(patch) || Array.isArray(patch.matchClothing))) {
+    if (projectId && (isMatchRefresh(patch) || Array.isArray(patch.matchClothing) || patch.outfitSelections)) {
       cached = await http(`/v1/projects/${projectId}/analysis`);
     }
     const base = mergeAnalysisPatch(cached, patch);
-    if (isMatchRefresh(patch)) {
+    if (isMatchRefresh(patch) && !cached?.outfitRecommendation) {
       body.matchClothing = await recommendMatchHttp(projectId, base, cached?.matchClothing);
     }
     if (Array.isArray(patch.matchClothing)) {
@@ -734,8 +775,17 @@ export const httpAdapter = {
     const saved = projectId
       ? await http(`/v1/projects/${projectId}/analysis?merge=1`, { method: 'PATCH', body })
       : mergeAnalysisPatch(base, body);
-    const savedAnalysis = { ...saved, frontClosure: saved?.frontClosure ?? null };
+    let savedAnalysis = { ...saved, frontClosure: saved?.frontClosure ?? null };
+    if (savedAnalysis.outfitSelections && !savedAnalysis.clothingType) {
+      const productType = base?.clothingType || (await http(`/v1/projects/${projectId}/product`))?.clothingType;
+      if (productType) savedAnalysis.clothingType = productType;
+    }
     analysisCache = { projectId, analysis: savedAnalysis };
+    if (recommendOutfit && cached?.outfitRecommendation && hasOutfitContextChange(cached, patch)) {
+      const recommended = await this.recommendOutfit(projectId, savedAnalysis);
+      savedAnalysis = mergeOutfitAnalysis(savedAnalysis, recommended);
+      analysisCache = { projectId, analysis: savedAnalysis };
+    }
     return savedAnalysis;
   },
   // 저장된 분석 payload 조회 (계약 §3.2) — 하드 새로고침 후 매칭 선택 등 복원용. {projectId, ...payload}.

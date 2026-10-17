@@ -16,7 +16,9 @@ def project_recipe(value: dict | None) -> dict | None:
     cut_type = value.get("cutType") or value.get("cut_type")
     if cut_type and cut_type not in ("styling", "horizon", "product"):
         return None
-    return {key: deepcopy(value.get(key)) for key in content_roles.GENERATION_RECIPE_FIELDS}
+    optional = {"outfitSelectionsSnapshot", "outfitReferenceAssets"}
+    return {key: deepcopy(value.get(key)) for key in content_roles.GENERATION_RECIPE_FIELDS
+            if key not in optional or value.get(key) is not None}
 
 
 def _stored_recipe(value: dict) -> dict:
@@ -111,6 +113,15 @@ def recipe_for_asset(
                 out["colorId"] = recipe["colorId"]
         return out
 
+    def from_original_job(recipe):
+        if not isinstance(recipe, dict):
+            return recipe
+        out = dict(recipe)
+        for key in ("outfitSelectionsSnapshot", "outfitReferenceAssets"):
+            if payload.get(key) is not None:
+                out[key] = payload[key]
+        return out
+
     generation = metadata.get("generation")
     if isinstance(generation, dict) and generation.get("version") == 1:
         return with_recipe(generation.get("origin"), generation.get("recipe"),
@@ -118,14 +129,14 @@ def recipe_for_asset(
 
     block = storyboard_by_id.get((page_map or {}).get(str(asset_row.get("id"))))
     if isinstance(block, dict) and block.get("source") == "ai":
-        return with_recipe("page", _stored_recipe(block))
+        return with_recipe("page", from_original_job(_stored_recipe(block)))
 
     # 옛 다시 만들기는 요청 필드보다 저장 콘티를 먼저 사용한다.
     retry_id = payload.get("retryBlockId")
     stored = storyboard_by_id.get(retry_id) if retry_id else None
     is_editor_job = (producing_job or {}).get("kind", "editor_image") == "editor_image"
     if is_editor_job and isinstance(stored, dict) and stored.get("source") == "ai":
-        return with_recipe("editor_retry", _stored_recipe(stored),
+        return with_recipe("editor_retry", from_original_job(_stored_recipe(stored)),
                            "anchor" if payload.get("mode") == "vary" else "self",
                            _source_asset_id(payload))
     if is_editor_job and payload.get("mode") == "new" and not retry_id:

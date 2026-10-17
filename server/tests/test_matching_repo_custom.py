@@ -185,7 +185,7 @@ def test_matching_asset_owner_gate_hides_other_custom_scope():
 
     sql, params = cursor.calls[0]
     assert result is None
-    assert "owner_user_id is null or (owner_user_id = %s and project_id = %s)" in sql.lower()
+    assert "(owner_user_id is null and project_id is null) or (owner_user_id = %s and project_id = %s)" in sql.lower()
     assert params == ("custom-known-id", "owner-1", "project-1")
 
 
@@ -197,7 +197,7 @@ def test_matching_metadata_owner_gate_hides_other_custom_scope():
 
     sql, params = cursor.calls[0]
     assert result is None
-    assert "owner_user_id is null or (owner_user_id = %s and project_id = %s)" in sql.lower()
+    assert "(owner_user_id is null and project_id is null) or (owner_user_id = %s and project_id = %s)" in sql.lower()
     assert params == ("custom-known-id", "owner-1", "project-1")
 
 

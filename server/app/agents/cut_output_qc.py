@@ -52,8 +52,9 @@ GATES = (
     "lightingShadowReflectionDrape",
 )
 STATUSES = ("PASS", "FAIL", "NA", "UNJUDGEABLE")
+OUTFIT_ROLES = ("inner", "footwear", "bag", "accessory")
 REFERENCE_ROLES = (
-    "product", "mannequin", "modelFace", "modelBody", "matching", "example", "plate",
+    "product", "mannequin", "modelFace", "modelBody", "matching", "example", "plate", *OUTFIT_ROLES,
 )
 _REFERENCE_ROLE_LABELS = {
     "product": "PRODUCT",
@@ -63,6 +64,7 @@ _REFERENCE_ROLE_LABELS = {
     "matching": "MATCHING",
     "example": "EXAMPLE",
     "plate": "PLATE",
+    **{role: f"SELECTED OUTFIT {role.upper()}" for role in OUTFIT_ROLES},
 }
 _HORIZON_WALL_EXCEPTION = """HORIZON WALL OPTION: the compiled horizonBackground.mode is garment-tone.
 The vertical wall may shift toward wallHex's muted hue/chroma. wallHex is not an exact
@@ -304,16 +306,22 @@ _CONFIRMED_GPT_CORRECTIONS = MappingProxyType({
 def _correction_map_for(
     contract: Mapping[str, Any], authority_profile: str,
 ) -> Mapping[str, str]:
-    if authority_profile == "confirmed_gpt_v1":
-        return _CONFIRMED_GPT_CORRECTIONS
     base = (
-        _HORIZON_TONE_CORRECTIONS
+        _CONFIRMED_GPT_CORRECTIONS if authority_profile == "confirmed_gpt_v1"
+        else _HORIZON_TONE_CORRECTIONS
         if contract.get("recipeFamily") == "horizon"
         and horizon_background.normalize_runtime(contract.get("horizonBackground"))
         else _CORRECTIONS
     )
+    if contract.get("outfitRoles"):
+        base = {**base, "matchingGarmentIdentity": (
+            "Restore each selected MATCHING and OUTFIT item from its own reference, including "
+            "visible construction, color, material, pattern, hardware and permanent details. "
+            "Never replace actual inner, footwear, bag or accessory with example or generic items. "
+            "Keep the required crop and preserve the sold product."
+        )}
     signature_framing = contract.get("signatureFraming")
-    if signature_framing in _SIGNATURE_FRAMING_CORRECTIONS:
+    if authority_profile != "confirmed_gpt_v1" and signature_framing in _SIGNATURE_FRAMING_CORRECTIONS:
         return {
             **base,
             "framingCrop": _SIGNATURE_FRAMING_CORRECTIONS[signature_framing],
@@ -385,6 +393,8 @@ def references_from_manifest(
             role = "modelFace"
         elif label.startswith(("MATCHING ", "MATCHING —")):
             role = "matching"
+        elif any(label.startswith(f"OUTFIT {value.upper()} ") for value in OUTFIT_ROLES):
+            role = next(value for value in OUTFIT_ROLES if label.startswith(f"OUTFIT {value.upper()} "))
         elif label.startswith("POSE CONTROL"):
             role = "example"
         elif label.startswith(("EXAMPLE REFERENCE (scope: all)", "EXAMPLE (scope: all)")):
@@ -579,6 +589,15 @@ def normalize_plan(plan: Any) -> dict:
 
     declared_axes = source.get("declaredFitAxes") or []
     declared_axis_count = len(declared_axes) if isinstance(declared_axes, (list, tuple)) else 0
+    raw_outfit_roles = source.get("outfitRoles", [])
+    outfit_roles = []
+    if (not isinstance(raw_outfit_roles, (list, tuple))
+            or any(not isinstance(role, str) or role not in OUTFIT_ROLES for role in raw_outfit_roles)
+            or len(set(raw_outfit_roles)) != len(raw_outfit_roles)
+            or (raw_outfit_roles and recipe not in {"styling", "horizon"})):
+        errors.append("invalid_outfit_roles")
+    else:
+        outfit_roles = [role for role in OUTFIT_ROLES if role in raw_outfit_roles]
     return {
         "contractVersion": 1,
         "recipeFamily": recipe or "unknown",
@@ -602,6 +621,7 @@ def normalize_plan(plan: Any) -> dict:
         "declaredFitAxisCount": declared_axis_count,
         "exampleRepeatIndex": example_repeat_index,
         "spaceSetContinuity": continuity,
+        **({"outfitRoles": outfit_roles} if outfit_roles else {}),
         **({"horizonBackground": background} if recipe == "horizon"
            and (background := horizon_background.normalize_runtime(source.get("horizonBackground"))) else {}),
         "precedence": precedence_contract,
@@ -610,6 +630,14 @@ def normalize_plan(plan: Any) -> dict:
         **({"signatureBackground": signature_background}
            if signature_background is not None else {}),
     }
+
+
+def _visible_outfit_roles(contract: Mapping[str, Any]) -> list[str]:
+    storyboard = _mapping(contract.get("storyboard"))
+    return [role for role in contract.get("outfitRoles", [])
+            if not (role == "footwear" and storyboard.get("shot") == "medium"
+                    and contract.get("clothingType") != "bottom")
+            and not (role == "inner" and storyboard.get("outerClosure") == "closed")]
 
 
 def gate_applicability(contract: Mapping[str, Any]) -> dict[str, bool]:
@@ -631,7 +659,7 @@ def gate_applicability(contract: Mapping[str, Any]) -> dict[str, bool]:
     )
     applicable = {gate: True for gate in GATES}
     applicable["matchingGarmentIdentity"] = (
-        worn and storyboard.get("matchingCount", 0) > 0
+        worn and (storyboard.get("matchingCount", 0) > 0 or bool(_visible_outfit_roles(contract)))
     )
     applicable["modelIdentity"] = face_can_identify
     applicable["modelBodyProportions"] = selected_model
@@ -710,6 +738,18 @@ def build_prompt(
         prompt += "\n\n" + _SIGNATURE_FRAMING_GUIDANCE[signature_framing]
     if contract.get("signatureBackground") is not None:
         prompt += "\n\n" + _SIGNATURE_BACKGROUND_EXCEPTION
+    if contract.get("outfitRoles"):
+        prompt = prompt.replace("NA only when matchingCount=0.", "NA only when the applicability table says false.")
+        prompt += (
+            "\n\nSELECTED OUTFIT IDENTITY: Gate matchingGarmentIdentity also checks the actual "
+            "INNER, FOOTWEAR, BAG and ACCESSORY references in outfitRoles independently of MATCHING. "
+            "Each owns only its selected item's visible shape, construction, color, material, "
+            "hardware and permanent details. Do not substitute a generic item or copy EXAMPLE items. "
+            "Do not require shoes outside a top/outer medium crop, an inner hidden by a closed "
+            "outer garment, or bag/accessory parts naturally outside the required framing. "
+            "Judge every naturally visible part. Keep the framing rather than demanding extra body "
+            "area just to show a selected item. Unselected example bags/accessories remain forbidden."
+        )
     return prompt
 
 
@@ -742,6 +782,8 @@ def _confirmed_authority_contract(
     storyboard = _mapping(contract.get("storyboard"))
     if framing["shot"] != storyboard.get("shot"):
         raise VisionError("cut_output_qc: confirmed framing shot mismatch")
+    if tuple(contract.get("outfitRoles", ())) != prompt_input.outfit.selected_roles:
+        raise VisionError("cut_output_qc: confirmed outfit roles mismatch")
     aligned["confirmedExampleFraming"] = framing
     return aligned
 
@@ -1021,6 +1063,18 @@ def _forced_preflight(
     actual_matching_count = sum(
         reference.role == "matching" for reference in references
     )
+    for role in OUTFIT_ROLES:
+        expected_count = int(role in contract.get("outfitRoles", ()))
+        actual_count = sum(ref.role == role for ref in references)
+        if actual_count != expected_count:
+            forced["matchingGarmentIdentity"] = {
+                "status": "UNJUDGEABLE",
+                "evidence": f"Selected outfit {role} reference mismatch ({actual_count} supplied; {expected_count} required).",
+            }
+            forced["recipeIntent"] = {
+                "status": "UNJUDGEABLE",
+                "evidence": "Selected outfit reference packet does not match the frozen plan.",
+            }
     if actual_matching_count != expected_matching_count:
         evidence = (
             "MATCHING reference count does not match the compiled plan "

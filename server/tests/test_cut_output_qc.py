@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -81,6 +82,42 @@ def _raw(status="PASS"):
             for gate in qc.GATES
         ]
     }
+
+
+def test_outfit_reference_roles_are_distinct_from_matching():
+    roles = ("inner", "footwear", "bag", "accessory")
+    manifest = "\n".join(f"{n}. OUTFIT {role.upper()} - selected item" for n, role in enumerate(roles, 1))
+    refs = qc.references_from_manifest(manifest, [_img(role.encode()) for role in roles])
+    assert [ref.role for ref in refs] == list(roles)
+
+
+def test_outfit_identity_is_required_without_legacy_matching_and_missing_reference_fails():
+    plan = _plan(outfitRoles=["footwear", "bag"])
+    plan["storyboard"]["matching"] = []
+    contract = qc.normalize_plan(plan)
+    assert contract["storyboard"]["matchingCount"] == 0
+    assert contract["outfitRoles"] == ["footwear", "bag"]
+    assert qc.gate_applicability(contract)["matchingGarmentIdentity"] is True
+    refs = [qc.LabeledReference("product", _img()), qc.LabeledReference("bag", _img())]
+    forced = qc._forced_preflight(contract, refs, _img(b"output"))
+    assert forced["matchingGarmentIdentity"]["status"] == "UNJUDGEABLE"
+    assert "footwear" in forced["matchingGarmentIdentity"]["evidence"]
+
+
+def test_outfit_qc_respects_crop_and_actual_selected_item_authority():
+    plan = _plan(outfitRoles=["footwear"])
+    plan["storyboard"].update(matching=[], shot="medium")
+    contract = qc.normalize_plan(plan)
+    assert qc.gate_applicability(contract)["matchingGarmentIdentity"] is False
+    prompt = qc.build_prompt(contract, [qc.LabeledReference("footwear", _img())])
+    assert "SELECTED OUTFIT" in prompt
+    assert "outside" in prompt
+    assert "OUTFIT" in qc._correction_map_for(contract, "confirmed_gpt_v1")["matchingGarmentIdentity"]
+
+
+@pytest.mark.parametrize("roles", [["bag", "bag"], ["unknown"], "footwear"])
+def test_invalid_outfit_role_contract_is_not_silently_ignored(roles):
+    assert "invalid_outfit_roles" in qc.normalize_plan(_plan(outfitRoles=roles))["contractErrors"]
 
 
 def test_schema_is_strict_complete_and_names_text_logo_gate():
@@ -318,7 +355,7 @@ def test_confirmed_prompt_promotes_only_mannequin_color_and_fit_authority(monkey
         "roughFraming": "vertical full-body",
     }
     monkeypatch.setattr(qc, "confirmed_gpt_framing_contract", lambda _request: framing)
-    aligned = qc._confirmed_authority_contract(contract, object())
+    aligned = qc._confirmed_authority_contract(contract, SimpleNamespace(outfit=SimpleNamespace(selected_roles=())))
     assert aligned["attributeOwners"]["color"] == "mannequin"
     assert aligned["attributeOwners"]["length"] == "mannequin"
     assert aligned["attributeOwners"]["silhouette"] == "mannequin"

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -212,7 +213,8 @@ def test_same_privileged_policy_preserves_distinct_generic_and_confirmed_field_o
         cut_output_qc.LabeledReference("mannequin", _img(b"MANNEQUIN"))]
     generic = asyncio.run(cut_output_qc.verdict(config, plan, refs, _img(b"CURRENT")))
     confirmed = asyncio.run(cut_output_qc.verdict(config, plan, refs, _img(b"CURRENT"),
-        authority_profile="confirmed_gpt_v1", confirmed_prompt_input=object()))
+        authority_profile="confirmed_gpt_v1", confirmed_prompt_input=SimpleNamespace(
+            outfit=SimpleNamespace(selected_roles=()))))
     assert generic["contract"]["attributeOwners"]["length"] == "productTruth"
     assert confirmed["contract"]["attributeOwners"]["length"] == "mannequin"
     assert confirmed["contract"]["attributeOwners"]["construction"] == "productTruth"
