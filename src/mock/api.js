@@ -55,7 +55,7 @@ import { applySeededHookStyle } from '@/lib/api/shapes.js';
 import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
 import { isSupportedCutType } from '@/lib/storyboardTaxonomy.js';
 import { createDraftSlotMemory } from './draftSlotMemory.js';
-import { applyOutfitSet, complementaryOutfitSlot, mergeOutfitAnalysis, normalizeOutfitSelections,
+import { applyOutfitSet, complementaryOutfitSlot, mergeOutfitAnalysis, normalizeOutfitSelections, outfitSelectionsForTypeChange,
   outfitSlotsFor, syncOutfitLegacySelection } from '@/lib/outfitSelections.js';
 import { mockQuery, outfitScenarioFromQuery, v18FixtureCandidates, v18FixtureRecommendation } from './outfitV18Fixtures.js';
 
@@ -685,6 +685,10 @@ export const api = {
   async saveAnalysis(_projectId, patch, { isCurrent, product, serverCatalog = false, preserveCatalog = false } = {}) {
     await wait(180);
     if (isCurrent && !await isCurrent()) return null;
+    const clothingTypeChanged = patch.clothingType != null && patch.clothingType !== DB.analysis.clothingType;
+    if (clothingTypeChanged && !patch.outfitSelections) {
+      patch = { ...patch, outfitSelections: outfitSelectionsForTypeChange(DB.analysis, patch.clothingType) };
+    }
     // 공개 분석의 실제 입력. 취소 검사를 통과한 뒤에만 추천의 상품 정본을 바꾼다.
     if (!_projectId && product) Object.assign(DB.product, clone(product));
     if (Object.hasOwn(patch, 'outfitSetIndex')) {

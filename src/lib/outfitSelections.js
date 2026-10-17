@@ -32,6 +32,16 @@ export function normalizeOutfitSelections(value, clothingType, matchClothing = [
 
 }
 
+export function outfitSelectionsForTypeChange(analysis, clothingType) {
+  const previous = normalizeOutfitSelections(analysis.outfitSelections, analysis.clothingType, analysis.matchClothing);
+  const role = complementaryOutfitSlot(analysis.clothingType);
+  // Migrate a saved legacy pick in its original role before pruning impossible roles.
+  if (!analysis.outfitSelections?.slots?.[role] && previous.slots[role]?.itemId) {
+    previous.slots[role].origin = 'user';
+  }
+  return normalizeOutfitSelections(previous, clothingType);
+}
+
 export function syncOutfitLegacySelection(analysis) {
   if (!analysis?.outfitSelections) return analysis;
   const outfitSelections = normalizeOutfitSelections(analysis.outfitSelections, analysis.clothingType, analysis.matchClothing);
@@ -83,6 +93,12 @@ export function toggleOutfitOptional(analysis, slot, enabled) {
     outfitSelections.slots[slot] = { itemId: set?.slots?.[slot] ?? null, origin: 'ai' };
   }
   return { outfitSelections };
+}
+
+// Status reads own suggestions and their signed handoff, never the seller's draft.
+export function outfitRecommendationPatch(response) {
+  return Object.fromEntries(['outfitRecommendation', 'outfitRecommendationHandoff']
+    .filter(key => Object.hasOwn(response || {}, key)).map(key => [key, response[key]]));
 }
 
 // 저장 중에도 선택할 수 있으므로 직전 user 선택이 오래된 응답보다 우선한다.

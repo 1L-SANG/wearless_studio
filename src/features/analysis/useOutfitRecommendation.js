@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api/index.js';
-import { applyOutfitSet, mergeOutfitAnalysis } from '@/lib/outfitSelections.js';
+import { applyOutfitSet, outfitRecommendationPatch } from '@/lib/outfitSelections.js';
 import { initialRecommendationState, advanceRecommendationState, acceptLateRecommendation } from '@/lib/outfitPresentation.js';
 
 // 이미 보인 폴백은 유지하고, 늦은 AI 후보와 세트는 명시 버튼을 누를 때 적용한다.
@@ -25,10 +25,8 @@ export function useOutfitRecommendation({ analysis, projectId, onRecommendation,
     const controller = new AbortController();
     const poll = async () => {
       try {
-        const fields = await api.getOutfitRecommendation(projectId, { handoff: latest.current.analysis.outfitRecommendationHandoff, signal: controller.signal });
+        const fields = outfitRecommendationPatch(await api.getOutfitRecommendation(projectId, { handoff: latest.current.analysis.outfitRecommendationHandoff, signal: controller.signal }));
         if (canceled || fields?.outfitRecommendation?.contextKey !== contextKey) return;
-        const automaticReady = latest.current.state.skeleton && Date.now() - latest.current.state.enteredAt < 1500
-          && fields.outfitRecommendation?.status === 'ready';
         const next = advanceRecommendationState(latest.current.state, fields.outfitRecommendation, Date.now());
         delivery.current = fields;
         setState(next);
@@ -36,11 +34,10 @@ export function useOutfitRecommendation({ analysis, projectId, onRecommendation,
           if (!next.lateRecommendation) {
             const replace = (current) => {
               if (current.outfitRecommendation?.contextKey !== contextKey) return current;
-              const merged = mergeOutfitAnalysis(current, fields);
-              return automaticReady ? { ...merged, ...applyOutfitSet(merged, 0) } : merged;
+              return { ...current, ...fields };
             };
             if (latest.current.onRecommendation) latest.current.onRecommendation(replace);
-            else latest.current.onChange(replace(latest.current.analysis));
+            else latest.current.onChange(fields);
           }
           return;
         }
@@ -57,11 +54,11 @@ export function useOutfitRecommendation({ analysis, projectId, onRecommendation,
       && delivery.current.outfitRecommendation.contextKey === accepted.recommendation.contextKey ? delivery.current : {};
     const fields = { ...delivered, outfitRecommendation: accepted.recommendation };
     if (fields.outfitRecommendation?.contextKey !== latest.current.analysis.outfitRecommendation?.contextKey) return;
-    const merged = mergeOutfitAnalysis(latest.current.analysis, fields);
+    const merged = { ...latest.current.analysis, ...fields };
     const patch = applyOutfitSet(merged, 0);
     setState(accepted);
-    latest.current.onRecommendation?.((current) => mergeOutfitAnalysis(current, fields));
-    latest.current.onChange(patch);
+    latest.current.onRecommendation?.((current) => ({ ...current, ...fields }));
+    latest.current.onChange(latest.current.onRecommendation ? patch : { ...fields, ...patch });
   };
   const markEdited = () => setState((prior) => prior.recommendation?.status === 'pending'
     ? { ...prior, skeleton: false, recommendation: { ...prior.recommendation, status: 'fallback' } } : prior);

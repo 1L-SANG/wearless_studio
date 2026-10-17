@@ -10,6 +10,7 @@ import { mockAdapter } from './mockAdapter.js';
 import { httpAdapter } from './httpAdapter.js';
 import { analyzePublicDraft, savePublicAnalysisEdit } from './publicAnalysis.js';
 import { withoutDemoPhotos } from './guestProductTemplate.js';
+import { outfitRecommendationPatch } from '../outfitSelections.js';
 
 const mode = import.meta.env.VITE_API_MODE ?? 'mock';
 export const isMockMode = mode !== 'http';
@@ -47,8 +48,11 @@ function buildHttpApi() {
     if (projectId == null && response.outfitRecommendation) {
       const current = await mockAdapter.getAnalysis(null);
       if (current.outfitRecommendation?.contextKey === response.outfitRecommendation.contextKey) {
-        const { mergeOutfitAnalysis } = await import('../outfitSelections.js');
-        await mockAdapter.saveAnalysis(null, mergeOutfitAnalysis(current, response), { serverCatalog: true });
+        await mockAdapter.saveAnalysis(null, outfitRecommendationPatch(response), {
+          serverCatalog: true,
+          isCurrent: async () => (await mockAdapter.getAnalysis(null)).outfitRecommendation?.contextKey
+            === response.outfitRecommendation.contextKey,
+        });
       }
     }
     return response;

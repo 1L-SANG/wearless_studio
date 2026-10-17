@@ -35,7 +35,7 @@ import { OutfitSelection } from './OutfitSelection.jsx';
 import { AnalysisStepFlow, OutfitCreditLabel } from './AnalysisStepFlow.jsx';
 import { outfitModelCredit } from '@/lib/outfitPresentation.js';
 import { useCustomOutfitUpload } from './useCustomOutfitUpload.js';
-import { complementaryOutfitSlot, mergeOutfitAnalysis, setOutfitSelection,
+import { complementaryOutfitSlot, mergeOutfitAnalysis, outfitSelectionsForTypeChange, setOutfitSelection,
   syncOutfitLegacySelection } from '@/lib/outfitSelections.js';
 // 글자 폭 추정(em) — 한글 ≈1em, 그 외 ≈0.55em. '직접 입력' pill이 다른 칩과 같은 크기로
 // 시작해 내용 길이만큼만 유동 확장되게 하는 계산 (2026-07-13 사용자 피드백).
@@ -880,6 +880,7 @@ export function AnalysisForm({
       targetGenders,
       measurements: createMeasurementFields(t),
       matchClothing,
+      outfitSelections: outfitSelectionsForTypeChange(a, t),
     }));
   };
   const measurementValues = Object.fromEntries((a.measurements || []).map((m) => [m.key, m.value]));

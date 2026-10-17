@@ -1227,6 +1227,9 @@ async def save_analysis(
             items = await outfit.load_items(conn, user_id, project_id)
             try:
                 value = previous.get("outfitSelections")
+                if value is None:
+                    value = outfit.normalize_selections(None, clothing_type,
+                        legacy_match_items=previous.get("matchClothing") or [], allowed_items=items)
                 if "outfitSetIndex" in analysis:
                     value = outfit.apply_set(value, previous.get("outfitRecommendation"), clothing_type, analysis.pop("outfitSetIndex"))
                 elif "outfitSelections" in analysis:
@@ -1236,7 +1239,11 @@ async def save_analysis(
                     selected = [item for item in analysis.get("matchClothing") or []
                                 if isinstance(item, dict) and item.get("selected")][:1]
                     value = outfit.normalize_selections(value, clothing_type)
-                    if role:
+                    # A type chip also sends reconciled legacy flags. It is not a
+                    # deliberate pick/clear of the new complementary role.
+                    type_changed = (analysis.get("clothingType") is not None
+                                    and analysis["clothingType"] != previous.get("clothingType"))
+                    if role and not type_changed:
                         value["slots"][role] = {"itemId": str(selected[0]["id"]) if selected else None, "origin": "user"}
                 requested_optional = (analysis.get("outfitSelections") or {}).get("optional", {})
                 if isinstance(requested_optional, dict):
