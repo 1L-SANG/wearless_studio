@@ -64,7 +64,7 @@ def _actual_candidate(monkeypatch, report, mode='enforce'):
 
 
 @pytest.mark.parametrize('mode', ['enforce', 'shadow'])
-def test_depth_cap_fresh_keeps_parent_only_for_existing_paired_qc(monkeypatch, mode):
+def test_depth_cap_fresh_keeps_parent_for_studio_and_existing_paired_qc(monkeypatch, mode):
     execute, seen = _actual_candidate(monkeypatch, rated(95), mode)
     calls, storage = _run_worker(monkeypatch, parent=_parent(editDepth=2),
         candidate_runner=execute, assert_success=False, settings_overrides={'image_qc': mode})
@@ -72,7 +72,9 @@ def test_depth_cap_fresh_keeps_parent_only_for_existing_paired_qc(monkeypatch, m
     assert calls['run'][0]['generation_path'] == 'fresh'
     assert calls['run'][0]['parent_cut_img'] is None
     assert len(seen.generation) == len(seen.qc) == 1
-    assert [image.data for image in seen.generation[0]['images']] == [b'base', b'product']
+    assert [image.data for image in seen.generation[0]['images']] == [b'base', b'product', b'parent-cut']
+    assert '3. BEFORE STUDIO' in seen.generation[0]['prompt']
+    assert 'not garment identity or fit evidence' in seen.generation[0]['prompt']
     assert 'CURRENT CUT' not in seen.generation[0]['prompt']
     assert seen.qc[0]['before_image'].data == b'parent-cut'
     assert 'MAIN PRODUCT' in seen.qc[0]['edit_goal'] and 'fit:' in seen.qc[0]['edit_goal']

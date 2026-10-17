@@ -145,7 +145,7 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   R2_ENDPOINT: https://2b7c948b56f129faaa10e5076b9e9a66.r2.cloudflarestorage.com
   R2_PUBLIC_BASE: https://images.wearless.kr
   CLOUDFLARE_ZONE_ID: "cc7b2bd968c6eb89fe30e45333c9ebd9"  # wearless.kr zone — images.wearless.kr CDN 캐시 파기용
-  MANNEQUIN_BASE_WOMEN_ASSET_ID: 486937ac-7cb3-4597-b563-d185d378a10d
+  MANNEQUIN_BASE_WOMEN_ASSET_ID: 0a269b99-73f2-4f74-8637-7723467415a7
   MANNEQUIN_BASE_MEN_ASSET_ID: e3eb5ebe-65b8-4854-aab3-21706022d7ac
   # shadow 모드(판정·metrics 로그만, 게이팅 X). 2026-07-07: 실 gemini-3-pro 출력에서 QC pass율
   # 0%(missing_lower_body 오탐 — 임계가 합성 프리셋 캘리브라 실 프레이밍/종횡비와 미스매치)라 게이팅이
