@@ -35,6 +35,7 @@ class Settings:
     matching_cutout_provider: str = "sam2"  # sam2 | fal
     matching_flatlay_provider: str = "gemini"  # gemini | qwen
     sam_preprocess_provider: str = "sam2"  # sam2 | fal
+    tone_mask_provider: str = "sam2"  # sam2 | fal
     product_tidy: str = "off"  # off | on, display only
     # Front+Back 실측 ~49s(warm, x86_64 Fargate). 90s 는 그 위의 여유다.
     sam_request_timeout_s: float = 90.0
@@ -193,6 +194,8 @@ class Settings:
     # 2026-09 검증과 사용자 선택: 복합 줄무늬의 4K 이득이 부족해 기본 승급을 끈다.
     # 필요 시 운영자가 명시적으로 크기를 지정할 수 있지만 패턴만으로 비용을 늘리지 않는다.
     mannequin_pattern_image_size: str = "OFF"  # off | 1K | 2K | 4K
+    # 준비된 정돈 사진을 무늬 상품의 첫 마네킹 생성과 QC 재시도에만 추가한다.
+    mannequin_pattern_flat_reference: str = "off"  # off | on
     # 로고·레터링·프린트 상품의 출력 해상도 (2026-08-19 해상도 A/B — 오너 승인).
     # 1K 는 작은 글자가 뭉개져 "로고 변형" 재롤·구제의 주 원인(실컷 0/3 통과)이었고,
     # 2K 는 3/4 통과 + **1K 와 요금 동일**(공식 표 출력 1,120tok)이라 승급 비용 0.
@@ -628,6 +631,7 @@ class Settings:
     def __post_init__(self):
         if (self.matching_cutout_provider == "fal"
                 or self.sam_preprocess_provider == "fal"
+                or self.tone_mask_provider == "fal"
                 or self.matching_flatlay_provider == "qwen"
                 or self.product_tidy == "on"):
             if not (self.fal_key or "").strip():
@@ -818,6 +822,7 @@ def load_settings() -> Settings:
         matching_cutout_provider=_flag("MATCHING_CUTOUT_PROVIDER", "sam2", {"sam2", "fal"}),
         matching_flatlay_provider=_flag("MATCHING_FLATLAY_PROVIDER", "gemini", {"gemini", "qwen"}),
         sam_preprocess_provider=_flag("SAM_PREPROCESS_PROVIDER", "sam2", {"sam2", "fal"}),
+        tone_mask_provider=_flag("TONE_MASK_PROVIDER", "sam2", {"sam2", "fal"}),
         product_tidy=_flag("PRODUCT_TIDY", "off", {"off", "on"}),
         sam_autoscale=_flag("SAM_AUTOSCALE", "off", {"off", "on"}),
         sam_direct_endpoint=_flag("SAM_DIRECT_ENDPOINT", "off", {"off", "on"}),
@@ -940,6 +945,8 @@ def load_settings() -> Settings:
             str(Settings.__dataclass_fields__["qc_edit_regression_margin"].default))),
         mannequin_pattern_image_size=_flag(
             "MANNEQUIN_PATTERN_IMAGE_SIZE", "off", {"off", "1k", "2k", "4k"}).upper(),
+        mannequin_pattern_flat_reference=_flag(
+            "MANNEQUIN_PATTERN_FLAT_REFERENCE", "off", {"off", "on"}),
         mannequin_logo_image_size=_flag(
             "MANNEQUIN_LOGO_IMAGE_SIZE", "off", {"off", "1k", "2k", "4k"}).upper(),
         cut_output_qc_mode=_flag(

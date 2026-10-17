@@ -17,6 +17,17 @@ log = logging.getLogger("wearless.sam_autoscale")
 #: 수요를 만드는 잡. 셋 중 하나라도 pending/running 이면 켜져 있어야 한다.
 SAM_KINDS = ("sam_preprocess", "matching_cutout", "editor_garment_mask")
 
+
+def provider_for_kind(settings, kind: str) -> str:
+    attr = {"sam_preprocess": "sam_preprocess_provider",
+            "matching_cutout": "matching_cutout_provider",
+            "editor_garment_mask": "tone_mask_provider"}[kind]
+    return getattr(settings, attr, "sam2")
+
+
+def sam_kinds(settings) -> tuple[str, ...]:
+    return tuple(kind for kind in SAM_KINDS if provider_for_kind(settings, kind) == "sam2")
+
 #: 세 태그 모두 정확히 일치해야 한다. 실측(2026-08-21): Copilot 이 ECS 서비스에 이 태그를 단다.
 #: 서비스명에는 랜덤 접미사가 붙어(…-6uWul9L25eM7) 박아 두면 스택 재생성 시 조용히 깨진다.
 #: service 만 바꿔 sam2·opendid 등 다른 scale-to-zero 서비스에 재사용한다(어댑터 인스턴스별).

@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+from dataclasses import replace
 
 import pytest
 
@@ -59,6 +60,29 @@ def test_upload_url_calls_prewarm_soon(client, make_token, monkeypatch):
     r = _issue(client, make_token, monkeypatch)
     assert r.status_code == 200, r.text
     assert sc.soon_calls == 1
+
+
+@pytest.mark.parametrize("sam2_provider", [
+    None, "sam_preprocess_provider", "matching_cutout_provider", "tone_mask_provider",
+])
+def test_upload_prewarm_follows_current_providers(client, make_token, monkeypatch, sam2_provider):
+    settings = replace(client.app.state.settings, sam_preprocess_provider="fal",
+                       matching_cutout_provider="fal", tone_mask_provider="fal", fal_key="test")
+    client.app.state.settings = settings
+    sc = _Scaler()
+    client.app.state.sam_autoscaler = sc
+    response = _issue(client, make_token, monkeypatch)
+    assert response.status_code == 200, response.text
+    assert sc.soon_calls == 0
+    if sam2_provider is not None:
+        client.app.state.settings = replace(settings, **{sam2_provider: "sam2"})
+        response = _issue(client, make_token, monkeypatch)
+        assert response.status_code == 200, response.text
+        assert sc.soon_calls == 1
+        client.app.state.settings = settings
+        response = _issue(client, make_token, monkeypatch)
+        assert response.status_code == 200, response.text
+        assert sc.soon_calls == 1
 
 
 def test_upload_url_succeeds_even_when_the_hook_raises(client, make_token, monkeypatch):

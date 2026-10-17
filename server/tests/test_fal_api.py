@@ -184,7 +184,7 @@ def test_timeout_and_invalid_json_use_recoverable_failure(monkeypatch):
 
 @pytest.mark.parametrize("model,usage,cost", [
     ("fal-ai/sam-3/image", {}, 0.005),
-    ("fal-ai/birefnet/v2", {}, 0.005),
+    ("fal-ai/birefnet/v2", {}, 0.0006),
     ("fal-ai/qwen-image-edit-2511", {"megapixels": 0.786432}, 0.023593),
 ])
 def test_fal_estimates_fit_existing_usage_ledger(model, usage, cost):

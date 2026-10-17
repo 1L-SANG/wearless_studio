@@ -1,4 +1,4 @@
-"""Display-only product flatlay. Never a reference for mannequin/detail generation.
+"""Product flatlay for display and opt-in patterned mannequin generation.
 
 Canonical files are globally shared; only the project-scoped tidy PNG is public.
 Failures live in sam_preprocess.result.productTidy, independently of committed cutouts.
@@ -40,6 +40,23 @@ def source_is_bound(metadata: dict, source_id: str) -> bool:
     aliases = metadata.get("sourceAssetIds") or []
     return (metadata.get("sourceAssetId") == source_id
             or isinstance(aliases, list) and source_id in aliases)
+
+
+async def ready_front_asset(conn, *, user_id: str, project_id: str,
+                            source_id: str, source_hash: str) -> dict | None:
+    """Read an already committed tidy asset bound to this exact Front upload.
+
+    Never enqueue, render or wait for preprocessing. Generation supplies the hash
+    of the loaded original bytes; display uses SAM's recorded source hash.
+    """
+    row = await repo.get_asset_for_user(conn, user_id, asset_id(user_id, project_id, source_hash))
+    meta = (row or {}).get("metadata") or {}
+    if (row and row.get("r2_key") and meta.get("canonicalType") == "product_tidy"
+            and meta.get("view") == "Front"
+            and source_is_bound(meta, source_id) and meta.get("sourceHash") == source_hash
+            and meta.get("algorithmVersion") == ALGORITHM_VERSION):
+        return row
+    return None
 
 
 async def bind_source(conn, *, user_id: str, asset_id: str, source_id: str,
@@ -233,12 +250,10 @@ async def visuals(conn, r2, settings, *, user_id: str, project_id: str, product:
         front["tidyStatus"] = "off"
         return {"front": front}
     if source and source["hash"]:
-        row = await repo.get_asset_for_user(conn, user_id, asset_id(user_id, project_id, source["hash"]))
+        row = await ready_front_asset(conn, user_id=user_id, project_id=project_id,
+                                      source_id=source["id"], source_hash=source["hash"])
         meta = (row or {}).get("metadata") or {}
-        if (row and row.get("r2_key") and meta.get("canonicalType") == "product_tidy"
-                and source_is_bound(meta, source["id"])
-                and meta.get("sourceHash") == source["hash"]
-                and meta.get("algorithmVersion") == ALGORITHM_VERSION):
+        if row:
             front.update(tidyStatus="ready", tidyUrl=r2.public_url(row["r2_key"]),
                          width=meta.get("width") or 0, height=meta.get("height") or 0)
         else:

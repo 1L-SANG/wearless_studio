@@ -66,7 +66,8 @@ async def run_model(settings, model: str, payload: dict) -> dict:
     size = payload.get("image_size") or {}
     width, height = size.get("width", 0), size.get("height", 0)
     megapixels = width * height / 1_000_000
-    estimate = 0.005 if model == SAM_MODEL else megapixels * 0.03
+    estimate = (0.005 if model == SAM_MODEL else 0.0006 if model == BIREFNET_MODEL
+                else megapixels * 0.03)
     headers = {"Authorization": f"Key {settings.fal_key.strip()}"}
     async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
         for attempt in range(2):

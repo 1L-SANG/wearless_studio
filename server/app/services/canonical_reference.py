@@ -45,6 +45,7 @@ ELIGIBLE_VIEWS = ("Front", "Back")
 #: garment silhouette to isolate, so there is no CanonicalDetail.
 CANONICAL_KIND = "canonical_cutout"
 PRODUCER = "sam2_service"
+FAL_PRODUCER = "fal-sam3"
 
 
 def preprocess_idempotency_key(project_id: str, product: dict, *,
@@ -77,7 +78,8 @@ def metadata_for(view: str, result, source_asset_id: str) -> dict:
         "view": view,
         "sourceAssetId": source_asset_id,
         "sourceHash": result.source_hash,
-        "producer": PRODUCER,
+        "producer": (FAL_PRODUCER if str(result.model_version or "").startswith("fal-ai/")
+                     else PRODUCER),
         "modelVersion": result.model_version,
         "algorithmVersion": result.algorithm_version,
         "r2Key": result.cutout_key,

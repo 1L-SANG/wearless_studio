@@ -9,7 +9,7 @@ That is why this worker reports `skipped`/`failed` states rather than raising, a
 separate job rather than a step inside `mannequin`: a mask failure must never turn a paid,
 successful generation into a red job badge.
 
-No credits, no image generation, no Gemini, no VLM. One HTTP call to the internal SAM service.
+No credits, no image generation, no Gemini, no VLM. SAM2 or fal SAM 3 produces candidates.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import time
 from app import repo
 from app.agents import mannequin
 from app.config import load_settings
-from app.services import canonical_reference, editor_garment_mask, sam_client
+from app.services import canonical_reference, editor_garment_mask, fal_api, sam_client, tone_mask
 
 log = logging.getLogger("wearless.editor_garment_mask")
 
@@ -75,11 +75,13 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
     s = load_settings()
     payload = job.get("payload") or {}
     cut_id = payload.get("cutId")
+    provider = editor_garment_mask.job_provider(job)
 
     async def finish(status: str, detail: dict) -> None:
         async with pool.connection() as conn:
             await repo.finalize_uncharged_job(
-                conn, job_id=job_id, lease_token=lease_token, status=status, result=detail)
+                conn, job_id=job_id, lease_token=lease_token, status=status,
+                result={**detail, "toneMaskProvider": provider})
             await conn.commit()
         log.info("editor_garment_mask job=%s project=%s cut=%s %s %s",
                  job_id, project_id, cut_id, status, detail.get("state"))
@@ -92,7 +94,7 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
     if getattr(s, "mannequin_tone_editor", "off") != "on":
         await skip(SKIP_DISABLED)
         return
-    if not sam_client.configured(s):
+    if not (fal_api.configured(s) if provider == "fal" else sam_client.configured(s)):
         await skip(SKIP_SAM_UNCONFIGURED)
         return
     if not isinstance(cut_id, str) or not cut_id:
@@ -126,11 +128,18 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
         return
 
     t0 = time.monotonic()
+    reference_retry = False
     try:
-        result = await sam_client.segment_worn_garment(
-            s, source_key=cut["r2_key"], base_key=base_asset["r2_key"],
-            clothing_type=clothing_type, sub_category=analysis.get("subCategory"),
-            matching_side=matching_side, product_key=product_key)
+        kwargs = dict(source_key=cut["r2_key"], base_key=base_asset["r2_key"],
+                      clothing_type=clothing_type, sub_category=analysis.get("subCategory"),
+                      matching_side=matching_side, product_key=product_key)
+        if provider == "fal":
+            result = await tone_mask.segment_worn_garment(s, app.state.r2, **kwargs)
+            if result.ready:
+                reference_retry = bool(product_key and not result.product_key)
+                product_key = result.product_key
+        else:
+            result = await sam_client.segment_worn_garment(s, **kwargs)
     except sam_client.SamUnavailable as exc:
         # done + retryable — error 가 아니다. error 잡은 디스패처가 재시도하지 않고(2026-08-18
         # 실측: 재시도 코드가 존재하지 않는다) 멱등키를 문 채 종착이라, 일시 장애 한 번이
@@ -190,7 +199,9 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
             matching_side=matching_side, match_share=match_share, product_key=product_key)
         await conn.commit()
 
-    await finish("done", {"state": "ready", "cutId": cut_id,
+    # 참고 이미지만 못 읽었어도 만든 마스크는 제공한다. 업그레이드 잡까지 ready로
+    # 끝내면 같은 상품 키의 완료 잡에 영구 합류하므로 기존 예산 안에서 다시 시도한다.
+    await finish("done", {"state": "unavailable" if reference_retry else "ready", "cutId": cut_id,
                           "maskAssetId": (row or {}).get("id"),
                           "sourceHash": result.source_hash,
                           "algorithmVersion": result.algorithm_version,

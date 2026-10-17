@@ -58,12 +58,12 @@ def test_qc_flags_are_declared(manifest_vars):
     assert not missing, f"매니페스트에 QC 플래그 미선언: {missing}"
 
 
-def test_fal_step1_deployment_loads_matching_providers_and_keeps_product_sam2(monkeypatch):
+def test_fal_deployment_moves_every_sam2_job_kind_to_fal(monkeypatch):
     doc = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
     assert doc["secrets"].get("FAL_KEY") == (
         "/copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FAL_KEY")
     for name in ("MATCHING_CUTOUT_PROVIDER", "MATCHING_FLATLAY_PROVIDER",
-                 "SAM_PREPROCESS_PROVIDER"):
+                 "SAM_PREPROCESS_PROVIDER", "TONE_MASK_PROVIDER"):
         monkeypatch.delenv(name, raising=False)
         if name in doc["variables"]:
             monkeypatch.setenv(name, str(doc["variables"][name]))
@@ -71,7 +71,8 @@ def test_fal_step1_deployment_loads_matching_providers_and_keeps_product_sam2(mo
     settings = load_settings()
     assert settings.matching_cutout_provider == "fal"
     assert settings.matching_flatlay_provider == "qwen"
-    assert settings.sam_preprocess_provider == "sam2"
+    assert settings.sam_preprocess_provider == "fal"
+    assert settings.tone_mask_provider == "fal"
 
 
 def test_production_db_pool_leaves_room_during_rolling_deploy(manifest_vars):
