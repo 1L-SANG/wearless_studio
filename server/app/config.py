@@ -119,6 +119,12 @@ class Settings:
     # 1차가 상한을 다 쓰는 순간 ALB 는 이미 504 를 내보낸 뒤라 2차가 돌 시간이 없다.
     # ALB 180s 아래에서 1차 30 + 2차 30 이면 폴백까지 끝나고도 여유가 남는다.
     analysis_timeout_seconds: float = 30.0
+    # 셀러가 화면에서 기다리지 않는 글 생성과 출고 검수의 공급자별 대기 상한.
+    background_ai_timeout_seconds: float = 120.0
+    page_copy_timeout_seconds: float = 300.0
+    ai_breaker_failures: int = 3
+    ai_breaker_window_seconds: float = 300.0
+    ai_breaker_cooldown_seconds: float = 300.0
     # 부가 호출(AG-08 특징·입력 일관성) 예산. 이 둘은 없어도 분석이 성립하는데 실측에서
     # 전체 응답 시간을 좌우했다(analyze_job 의 gather 주석 참고).
     analysis_aux_timeout_seconds: float = 12.0
@@ -875,6 +881,11 @@ def load_settings() -> Settings:
         analysis_model_order=os.getenv("ANALYSIS_MODEL_ORDER", "gemini,gpt"),
         analysis_spike=_flag("ANALYSIS_SPIKE", "off", {"off", "on"}),
         analysis_timeout_seconds=float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "30")),
+        background_ai_timeout_seconds=float(os.getenv("BACKGROUND_AI_TIMEOUT_SECONDS", "120")),
+        page_copy_timeout_seconds=float(os.getenv("PAGE_COPY_TIMEOUT_SECONDS", "300")),
+        ai_breaker_failures=int(os.getenv("AI_BREAKER_FAILURES", "3")),
+        ai_breaker_window_seconds=float(os.getenv("AI_BREAKER_WINDOW_SECONDS", "300")),
+        ai_breaker_cooldown_seconds=float(os.getenv("AI_BREAKER_COOLDOWN_SECONDS", "300")),
         analysis_aux_timeout_seconds=float(os.getenv("ANALYSIS_AUX_TIMEOUT_SECONDS", "12")),
         analysis_thinking_level=_flag(
             "ANALYSIS_THINKING_LEVEL", "low", {"low", "medium", "high", "off"}),

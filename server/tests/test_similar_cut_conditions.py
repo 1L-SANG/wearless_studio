@@ -275,9 +275,10 @@ def test_planner_corrects_condition_violation_once(monkeypatch, always_invalid):
     assert "<correction>" not in calls[0][1]
     assert calls[1][1].startswith(calls[0][1] + "\n<correction>\n")
     assert calls[1][1].endswith("</correction>\n")
-    assert calls[0][0].analysis_timeout_seconds == 25
+    assert calls[0][0].analysis_timeout_seconds == 60
     assert calls[0][2] == {"models": {"gemini": "gemini-3.8-flash"},
-                           "thinking_level": "low", "require_complete_envelope": True}
+                           "thinking_level": "low", "require_complete_envelope": True,
+                           "timeout_seconds": 120}
 
 
 def test_planner_uses_known_state_even_if_model_reinterprets_source(monkeypatch):
@@ -377,7 +378,8 @@ def test_planner_does_not_accept_legacy_output_for_a_new_plan(monkeypatch):
     assert len(calls) == 2
 
 
-def test_planner_keeps_thirty_second_outer_timeout_and_does_not_retry_provider_failure(monkeypatch):
+@pytest.mark.parametrize("budget", [120, 137])
+def test_planner_outer_timeout_allows_both_providers_without_retrying_provider_failure(monkeypatch, budget):
     timeouts = []
     async def analyze(*args, **kwargs):
         raise VisionError("provider failed")
@@ -387,9 +389,9 @@ def test_planner_keeps_thirty_second_outer_timeout_and_does_not_retry_provider_f
     monkeypatch.setattr(vision_llm, "analyze_with_fallback", analyze)
     monkeypatch.setattr(similar_cut.asyncio, "wait_for", wait_for)
     with pytest.raises(VisionError, match="provider failed"):
-        asyncio.run(similar_cut.plan_next(make_settings(), InlineImage("image/png", b"original"),
+        asyncio.run(similar_cut.plan_next(make_settings(background_ai_timeout_seconds=budget), InlineImage("image/png", b"original"),
             context={}, cut_type="styling", changes=[], history=[]))
-    assert timeouts == [30]
+    assert timeouts == [2 * budget + 5]
 
 
 def test_bounded_source_state_fits_server_generated_constraints(monkeypatch):

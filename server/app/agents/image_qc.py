@@ -378,6 +378,7 @@ async def verdict(
     raw, _provider = await analyze_with_fallback(
         settings, prompt, images,
         qc_schema(scored=scored, matching=matching, paired=paired, visibility_required=visibility_required),
+        timeout_seconds=settings.background_ai_timeout_seconds,
         system_prompt=qc_system_prompt("image", authority_context), **complete_kwargs)
     result = validate(raw, scored=scored, matching=matching, paired=paired,
                       visibility_required=visibility_required,
@@ -411,5 +412,6 @@ async def scene_verdict(
         prompt = f.read()
     raw, _provider = await analyze_with_fallback(
         settings, prompt, [plate, generated_image], qc_schema(),
+        timeout_seconds=settings.background_ai_timeout_seconds,
         require_complete_envelope=True, system_prompt=qc_system_prompt("image", {"productCount": 0, "imageRoles": ["PLATE", "CURRENT"]}))
     return validate(raw)

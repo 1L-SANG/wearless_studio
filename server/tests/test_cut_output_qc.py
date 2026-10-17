@@ -483,7 +483,8 @@ def test_dress_signature_qc_failure_routes_exact_crop_correction(monkeypatch):
     raw["gates"][qc.GATES.index("modelIdentity")]["status"] = "FAIL"
 
     async def fake_analyze(settings, prompt, images, schema, *,
-                           require_complete_envelope=False, system_prompt=None):
+                           require_complete_envelope=False, system_prompt=None, timeout_seconds=None):
+        assert timeout_seconds == 120
         assert "just below the collarbone" in prompt
         return raw, "gemini"
 
@@ -781,7 +782,8 @@ def test_verdict_orchestrates_labeled_references_then_generated(monkeypatch):
     captured = {}
 
     async def fake_analyze(settings, prompt, images, schema, *,
-                           require_complete_envelope=False, system_prompt=None):
+                           require_complete_envelope=False, system_prompt=None, timeout_seconds=None):
+        assert timeout_seconds == 120
         captured.update(prompt=prompt, images=images, schema=schema)
         return _raw(), "gemini"
 
@@ -804,7 +806,8 @@ def test_verdict_orchestrates_labeled_references_then_generated(monkeypatch):
 
 def test_verdict_missing_required_reference_overrides_provider_pass(monkeypatch):
     async def fake_analyze(settings, prompt, images, schema, *,
-                           require_complete_envelope=False, system_prompt=None):
+                           require_complete_envelope=False, system_prompt=None, timeout_seconds=None):
+        assert timeout_seconds == 120
         return _raw(), "gemini"
 
     monkeypatch.setattr(qc, "analyze_with_fallback", fake_analyze)
@@ -819,7 +822,8 @@ def test_verdict_missing_required_reference_overrides_provider_pass(monkeypatch)
 
 def test_face_only_reference_cannot_satisfy_hidden_face_body_gate(monkeypatch):
     async def fake_analyze(settings, prompt, images, schema, *,
-                           require_complete_envelope=False, system_prompt=None):
+                           require_complete_envelope=False, system_prompt=None, timeout_seconds=None):
+        assert timeout_seconds == 120
         return _raw(), "gemini"
 
     monkeypatch.setattr(qc, "analyze_with_fallback", fake_analyze)
@@ -842,7 +846,8 @@ def test_face_only_reference_cannot_satisfy_hidden_face_body_gate(monkeypatch):
 
 def test_body_only_reference_cannot_satisfy_visible_face_identity_gate(monkeypatch):
     async def fake_analyze(settings, prompt, images, schema, *,
-                           require_complete_envelope=False, system_prompt=None):
+                           require_complete_envelope=False, system_prompt=None, timeout_seconds=None):
+        assert timeout_seconds == 120
         return _raw(), "gemini"
 
     monkeypatch.setattr(qc, "analyze_with_fallback", fake_analyze)
@@ -861,7 +866,8 @@ def test_body_only_reference_cannot_satisfy_visible_face_identity_gate(monkeypat
 
 def test_verdict_missing_selected_matching_reference_fails_matching_identity(monkeypatch):
     async def fake_analyze(settings, prompt, images, schema, *,
-                           require_complete_envelope=False, system_prompt=None):
+                           require_complete_envelope=False, system_prompt=None, timeout_seconds=None):
+        assert timeout_seconds == 120
         return _raw(), "gemini"
 
     monkeypatch.setattr(qc, "analyze_with_fallback", fake_analyze)
@@ -889,7 +895,8 @@ def test_verdict_requires_exact_matching_reference_count(
     monkeypatch, selected_count, reference_count,
 ):
     async def fake_analyze(settings, prompt, images, schema, *,
-                           require_complete_envelope=False, system_prompt=None):
+                           require_complete_envelope=False, system_prompt=None, timeout_seconds=None):
+        assert timeout_seconds == 120
         return _raw(), "gemini"
 
     monkeypatch.setattr(qc, "analyze_with_fallback", fake_analyze)
@@ -920,7 +927,8 @@ def test_verdict_requires_exact_matching_reference_count(
 
 def test_verdict_accepts_two_selected_matching_references(monkeypatch):
     async def fake_analyze(settings, prompt, images, schema, *,
-                           require_complete_envelope=False, system_prompt=None):
+                           require_complete_envelope=False, system_prompt=None, timeout_seconds=None):
+        assert timeout_seconds == 120
         return _raw(), "gemini"
 
     monkeypatch.setattr(qc, "analyze_with_fallback", fake_analyze)

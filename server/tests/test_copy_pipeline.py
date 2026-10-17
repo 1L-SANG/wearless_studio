@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from app.workers import detail_page_job as dpj
 from conftest import fake_worker_app, make_settings
 
@@ -15,7 +17,8 @@ def _blocks():
     ]
 
 
-def test_gen_copy_calls_page_generator_once_and_maps_qc_by_text_id(monkeypatch):
+@pytest.mark.parametrize("budget", [300, 337])
+def test_gen_copy_calls_page_generator_once_and_maps_qc_by_text_id(monkeypatch, budget):
     calls = []
     reviewed = []
 
@@ -35,9 +38,15 @@ def test_gen_copy_calls_page_generator_once_and_maps_qc_by_text_id(monkeypatch):
              "revisedText": None, "reason": None},
         ]
 
+    async def within_budget(coro, *, timeout):
+        assert timeout == budget
+        return await coro
+
     monkeypatch.setattr(dpj.copywriter, "generate", fake_generate)
     monkeypatch.setattr(dpj.copy_qc, "review", fake_review)
-    app = fake_worker_app(make_settings(gemini_api_key="x"))
+    monkeypatch.setattr(dpj.asyncio, "wait_for", within_budget)
+    app = fake_worker_app(make_settings(
+        gemini_api_key="x", analysis_timeout_seconds=1, page_copy_timeout_seconds=budget))
 
     result, generated_name = run(dpj._gen_copy(
         app, {"id": "job-1"}, _blocks(), {"name": "슬랙스"}, {"sellingPoints": ["핀턱"]},
@@ -52,19 +61,17 @@ def test_gen_copy_calls_page_generator_once_and_maps_qc_by_text_id(monkeypatch):
     assert generated_name is None
 
 
-def test_gen_copy_page_timeout_returns_empty_without_blocking_job(monkeypatch):
-    never = asyncio.Event()
+@pytest.mark.parametrize("budget", [300, 337])
+def test_gen_copy_page_timeout_returns_empty_without_blocking_job(monkeypatch, budget):
+    async def expired(coro, *, timeout):
+        assert timeout == budget
+        coro.close()
+        raise TimeoutError
 
-    async def fake_generate(*_args, **_kwargs):
-        await never.wait()
-
-    monkeypatch.setattr(dpj.copywriter, "generate", fake_generate)
-    app = fake_worker_app(make_settings(gemini_api_key="x", analysis_timeout_seconds=0.01))
-
-    result = run(asyncio.wait_for(
-        dpj._gen_copy(app, {"id": "job-1"}, _blocks(), {"name": "슬랙스"}, {}),
-        timeout=0.2,
-    ))
+    monkeypatch.setattr(dpj.asyncio, "wait_for", expired)
+    app = fake_worker_app(make_settings(
+        gemini_api_key="x", analysis_timeout_seconds=1, page_copy_timeout_seconds=budget))
+    result = run(dpj._gen_copy(app, {"id": "job-1"}, _blocks(), {"name": "슬랙스"}, {}))
 
     assert result == ([], None)
 

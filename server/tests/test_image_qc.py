@@ -383,7 +383,7 @@ def test_validate_out_of_enum_defaults_pass():
 
 def test_verdict_orchestrates(monkeypatch):
     async def fake_fallback(settings, prompt, images, schema, *, system_prompt=None, **kwargs):
-        assert kwargs == {"require_complete_envelope": True}
+        assert kwargs == {"require_complete_envelope": True, "timeout_seconds": 120}
         assert len(images) == 3            # 상품 2 + 생성 1
         assert images[-1].data == b"GEN"   # 마지막이 생성 이미지
         return ({"verdict": "retry", "mismatches": ["색 다름"], "correctionPrompt": "블랙 유지"}, "gemini")

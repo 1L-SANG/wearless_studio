@@ -16,8 +16,10 @@ import hashlib
 import json
 import logging
 import time
+from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from io import BytesIO
+from threading import Lock
 
 import httpx
 from PIL import Image
@@ -182,10 +184,81 @@ def qc_system_prompt(family: str, context=None) -> str:
 class VisionError(RuntimeError):
     """분석 LLM 호출/파싱 실패 — 워커·라우트가 한국어 error 봉투로 매핑."""
 
-    def __init__(self, message, *, unknown_cause="provider_error", retry_after_seconds=None):
+    def __init__(self, message, *, unknown_cause="provider_error", retry_after_seconds=None,
+                 status_code=None):
         super().__init__(message)
         self.unknown_cause = unknown_cause
         self.retry_after_seconds = retry_after_seconds
+        self.status_code = status_code
+
+
+def _breaker_failure_reason(error):
+    status = (error.response.status_code if isinstance(error, httpx.HTTPStatusError)
+              else getattr(error, "status_code", None))
+    if status is not None:
+        return f"http_{status}" if status == 429 or 500 <= status < 600 else None
+    if isinstance(error, (TimeoutError, httpx.TimeoutException)):
+        return "timeout"
+    if isinstance(error, (httpx.NetworkError, httpx.RemoteProtocolError, httpx.ProxyError)):
+        return "connection_error"
+    return None
+
+
+@dataclass
+class _BreakerState:
+    failures: list[float] = field(default_factory=list)
+    open_until: float = 0
+    reason: str = ""
+
+
+class _CircuitBreaker:
+    def __init__(self, *, clock=time.monotonic):
+        self._clock = clock
+        self._states: dict[tuple[str, str], _BreakerState] = {}
+        # No provider await holds this lock; API threads and worker loops can share it.
+        self._lock = Lock()
+
+    def should_skip(self, provider, model, *, has_next):
+        with self._lock:
+            key = (provider, model)
+            state = self._states.get(key)
+            if state is None or not state.open_until:
+                return False
+            if self._clock() >= state.open_until:
+                del self._states[key]
+                logger.info("vision_llm breaker released: provider=%s model=%s reason=cooldown_elapsed",
+                            provider, model)
+                return False
+            if has_next:
+                logger.warning("vision_llm breaker skipped: provider=%s model=%s reason=%s",
+                               provider, model, state.reason)
+                return True
+            return False
+
+    def success(self, provider, model):
+        with self._lock:
+            state = self._states.pop((provider, model), None)
+            if state is not None and state.open_until:
+                logger.info("vision_llm breaker released: provider=%s model=%s reason=success",
+                            provider, model)
+
+    def failure(self, settings, provider, model, reason):
+        with self._lock:
+            now = self._clock()
+            key = (provider, model)
+            state = self._states.setdefault(key, _BreakerState())
+            state.failures = [at for at in state.failures
+                              if now - at <= settings.ai_breaker_window_seconds]
+            state.failures.append(now)
+            state.failures = state.failures[-max(1, settings.ai_breaker_failures):]
+            if len(state.failures) >= settings.ai_breaker_failures and not state.open_until:
+                state.open_until = now + settings.ai_breaker_cooldown_seconds
+                state.reason = reason
+                logger.warning("vision_llm breaker opened: provider=%s model=%s reason=%s",
+                               provider, model, reason)
+
+
+_breaker = _CircuitBreaker()
 
 
 def _retry_after_seconds(header):
@@ -314,7 +387,7 @@ async def _call_gpt(settings: Settings, model: str, prompt: str,
         retry_after = (_retry_after_seconds(getattr(res, "headers", {}).get("Retry-After"))
                        if res.status_code == 429 and cause == "provider_error" else None)
         raise VisionError(f"OpenAI {res.status_code}: {res.text[:300]}", unknown_cause=cause,
-                          retry_after_seconds=retry_after)
+                          retry_after_seconds=retry_after, status_code=res.status_code)
     return await run_cpu_bound(_parse_gpt_response, res, metadata, model)
 
 
@@ -547,7 +620,7 @@ async def _call_gemini(settings: Settings, model: str, prompt: str,
             _GEMINI_URL.format(model=model), json=body,
             headers={"x-goog-api-key": settings.gemini_api_key})
     if res.status_code != 200:
-        raise VisionError(f"Gemini {res.status_code}: {res.text[:300]}")
+        raise VisionError(f"Gemini {res.status_code}: {res.text[:300]}", status_code=res.status_code)
     return await run_cpu_bound(_parse_gemini_response, res, metadata, model)
 
 
@@ -568,25 +641,32 @@ async def analyze_with_fallback(
     thinking_level: str | None = None, models: dict[str, str] | None = None,
     require_complete_envelope: bool = False,
     system_prompt: str | None = None,
+    timeout_seconds: float | None = None,
 ) -> tuple[dict, str]:
     """순서대로 provider 시도 → (파싱된 raw dict, 사용한 provider). 전부 실패 시 VisionError.
 
-    키 미설정 provider 는 skip. 각 provider 는 timeout(analysis_timeout_seconds) 상한;
+    키 미설정 provider 는 skip. timeout_seconds 미지정 시 analysis_timeout_seconds 상한;
     실패/비순응/타임아웃이면 다음으로 폴백. `images` 는 bytes(InlineImage).
     thinking_level 은 콜별 오버라이드(미지정 시 settings.analysis_thinking_level).
     models 는 provider 별 모델 오버라이드({'gemini': 'gemini-3.7-flash'}) — 에이전트별 tier
     분기용(AG-08). 미지정 provider 는 settings 의 정본 모델을 그대로 쓴다.
     require_complete_envelope=True는 정상 종료, 단일 후보, 비차단 응답만 인정한다.
     system_prompt는 opt-in privileged 정책이며 미지정 호출의 body와 옵션은 유지한다."""
-    timeout = settings.analysis_timeout_seconds
+    timeout = settings.analysis_timeout_seconds if timeout_seconds is None else timeout_seconds
     attempts: list[str] = []
     last_error: Exception | None = None
-    for name in _order(settings):
-        call, model_of, key_of = _PROVIDERS[name]
-        if not key_of(settings):
+    order = list(dict.fromkeys(_order(settings)))
+    available = {name for name in order if _PROVIDERS[name][2](settings)}
+    for index, name in enumerate(order):
+        if name not in available:
             attempts.append(f"{name}:no_key")
             continue
+        call, model_of, _key_of = _PROVIDERS[name]
         model = (models or {}).get(name) or model_of(settings)
+        has_next = any(other in available for other in order[index + 1:])
+        if _breaker.should_skip(name, model, has_next=has_next):
+            attempts.append(f"{name}:breaker_open")
+            continue
         started = time.perf_counter()
         try:
             complete_kwargs = {"metadata": {}} if require_complete_envelope else {}
@@ -594,11 +674,15 @@ async def analyze_with_fallback(
                 complete_kwargs["system_prompt"] = system_prompt
             raw = await call(settings, model, prompt, images, schema, timeout,
                              thinking_level=thinking_level, **complete_kwargs)
+            _breaker.success(name, model)
             if attempts:
                 logger.info("vision_llm fallback used", extra={"provider": name, "prior": attempts})
             return raw, name
-        except (VisionError, httpx.HTTPError) as e:
+        except (VisionError, httpx.HTTPError, TimeoutError) as e:
             last_error = e
+            reason = _breaker_failure_reason(e)
+            if reason is not None:
+                _breaker.failure(settings, name, model, reason)
             attempts.append(f"{name}:err")
             # 예외 **타입**과 경과 시간을 함께 남긴다. httpx 의 전송 계층 예외
             # (ReadError·ConnectError·RemoteProtocolError)는 str() 이 비어 있어서,
@@ -615,7 +699,8 @@ async def analyze_with_fallback(
     raise VisionError("상품 분석에 실패했어요. 잠시 후 다시 시도해 주세요.")
 
 
-async def complete_json(settings: Settings, prompt: str, schema: dict) -> tuple[dict, str]:
+async def complete_json(settings: Settings, prompt: str, schema: dict, *,
+                        timeout_seconds: float | None = None) -> tuple[dict, str]:
     """텍스트 전용 구조화 호출(이미지 없음) — AG-02 카피·AG-03 카피검수 등 text tier 재사용.
     `analyze_with_fallback` 을 images=[] 로 호출한다(프로바이더 content/parts 에 이미지 파트만 빠짐)."""
-    return await analyze_with_fallback(settings, prompt, [], schema)
+    return await analyze_with_fallback(settings, prompt, [], schema, timeout_seconds=timeout_seconds)

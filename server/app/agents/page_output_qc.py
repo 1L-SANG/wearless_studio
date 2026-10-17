@@ -389,6 +389,7 @@ async def judge(settings, page_plan, generated_images, *, product_truth_refs=())
             [*refs, *generated],
             schema(),
             thinking_level="low",
+            timeout_seconds=settings.background_ai_timeout_seconds,
         )
     except VisionError:
         raw = {"overall": "UNJUDGEABLE", "gates": [

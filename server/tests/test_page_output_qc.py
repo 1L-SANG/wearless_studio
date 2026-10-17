@@ -214,7 +214,8 @@ def test_validation_bounds_and_filters_outliers():
 def test_orchestration_prepends_truth_refs_and_validates(monkeypatch):
     captured = {}
 
-    async def fake_analyze(settings, prompt, images, response_schema, thinking_level=None):
+    async def fake_analyze(settings, prompt, images, response_schema, thinking_level=None, timeout_seconds=None):
+        assert timeout_seconds == 120
         captured.update(
             prompt=prompt,
             image_data=[image.data for image in images],

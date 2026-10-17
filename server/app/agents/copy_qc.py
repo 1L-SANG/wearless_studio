@@ -97,5 +97,6 @@ def validate(raw: dict, items: list[dict]) -> list[dict]:
 async def review(settings: Settings, items: list[dict], confirmed_facts: dict) -> list[dict]:
     """프롬프트 → complete_json → 검증. 실패는 호출측이 원문 채택(게이트 아님)."""
     prompt = build_prompt(items, confirmed_facts)
-    raw, _provider = await complete_json(settings, prompt, review_schema())
+    raw, _provider = await complete_json(
+        settings, prompt, review_schema(), timeout_seconds=settings.background_ai_timeout_seconds)
     return validate(raw, items)

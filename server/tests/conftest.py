@@ -20,6 +20,13 @@ AUDIENCE = "authenticated"
 _FACE_QC_TEST_WEIGHTS_DIR = None
 
 
+@pytest.fixture(autouse=True)
+def reset_vision_llm_breaker(monkeypatch):
+    from app.agents import vision_llm
+
+    monkeypatch.setattr(vision_llm, "_breaker", vision_llm._CircuitBreaker())
+
+
 def _face_qc_test_weights_dir() -> str:
     """SFace/YuNet 자리표시(placeholder) 파일을 담은 임시 디렉터리.
 

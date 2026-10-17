@@ -79,7 +79,7 @@ def validate(raw: dict) -> dict:
 
 async def judge(
     settings, generated: InlineImage, references: list[InlineImage], *,
-    model: str | None = None, timeout: float = 60.0,
+    model: str | None = None, timeout: float | None = None,
 ) -> dict | None:
     """새 컷 + 기존 컷들의 일관성 판정. 기존 컷이 없으면 None(판정 스킵 — 비교 대상 부재).
 
@@ -90,6 +90,7 @@ async def judge(
         return None
     prompt = build_prompt(len(references))
     model = model or settings.model_text_gemini
+    timeout = settings.background_ai_timeout_seconds if timeout is None else timeout
     raw = await _call_gemini(
         settings, model, prompt, [*references, generated], schema(), timeout,
         thinking_level="low")

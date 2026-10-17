@@ -1418,7 +1418,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
 
 
 async def _gen_copy(app, job, ai_blocks, product, analysis):
-    """페이지 단위 AG-02 생성과 AG-03 검수를 전체 30초 상한 안에서 수행한다."""
+    """페이지 단위 AG-02 생성과 AG-03 검수를 카피 단계 상한 안에서 수행한다."""
     s = app.state.settings
 
     async def _within_budget():
@@ -1476,11 +1476,11 @@ async def _gen_copy(app, job, ai_blocks, product, analysis):
         return copy_results, None
 
     try:
-        return await asyncio.wait_for(_within_budget(), timeout=s.analysis_timeout_seconds)
+        return await asyncio.wait_for(_within_budget(), timeout=s.page_copy_timeout_seconds)
     except TimeoutError:
         log.warning(
             "page copy exceeded %.1fs for job %s; continuing without copy",
-            s.analysis_timeout_seconds, job["id"],
+            s.page_copy_timeout_seconds, job["id"],
         )
         return [], None
 
@@ -2587,7 +2587,8 @@ async def run_detail_page_job(app, job: dict) -> None:
         # 포인트 출처는 프론트(Editor.jsx buildInfoCtx)와 같은 우선순위다.
         points = analysis.get("sellingPoints") or analysis.get("aiSuggestedPoints") or []
         try:
-            items = await feature_copy.generate(s, points, product, analysis)
+            items = await feature_copy.generate(
+                s, points, product, analysis, timeout_seconds=s.background_ai_timeout_seconds)
         except Exception as e:  # 카피는 게이트 아님 — 상세페이지 생성을 막지 않는다
             log.warning("feature copy failed for job %s: %r", job_id, e)
             items = []

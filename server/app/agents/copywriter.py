@@ -337,7 +337,8 @@ async def generate(
     for attempt in range(2):
         try:
             raw, _provider = await complete_json(
-                settings, build_prompt(targets, product, analysis), copy_schema())
+                settings, build_prompt(targets, product, analysis), copy_schema(),
+                timeout_seconds=settings.background_ai_timeout_seconds)
             parsed = _parse_response(raw, block_ids)
             break
         except Exception as exc:
@@ -355,6 +356,7 @@ async def generate(
                     target_ids=invalid, used_headlines=list(valid.values()),
                 ),
                 copy_schema(),
+                timeout_seconds=settings.background_ai_timeout_seconds,
             )
             repair = _parse_response(repair_raw, [block_id for block_id in block_ids if block_id in invalid])
             valid, _still_invalid = validate_headlines(

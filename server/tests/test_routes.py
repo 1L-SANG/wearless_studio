@@ -5,6 +5,7 @@ explicit-null PATCH가 500이 아니라 422 봉투로 떨어지는지 — 에러
 """
 
 from dataclasses import replace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -21,6 +22,27 @@ CATEGORY = "일반 의류"
 
 def _auth(make_token):
     return {"Authorization": f"Bearer {make_token()}"}
+
+
+def test_feature_copy_draft_uses_seller_timeout(client, make_token, monkeypatch):
+    patch_route_db(monkeypatch, routes)
+    for name, value in (
+        ("get_project", {"id": "p1"}),
+        ("get_product", {}),
+        ("get_analysis", {"sellingPoints": ["빈티지한 워싱감"]}),
+        ("save_analysis", {}),
+    ):
+        monkeypatch.setattr(routes.repo, name, AsyncMock(return_value=value))
+    items = [{"point": "빈티지한 워싱감", "desc": "물 빠진 듯한 색이 자연스럽게 번집니다."}]
+    complete = AsyncMock(return_value=({"items": items}, "spy"))
+    monkeypatch.setattr(routes.feature_copy, "complete_json", complete)
+
+    response = client.post("/v1/projects/p1/feature-copy:draft", headers=_auth(make_token))
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"items": items}
+    complete.assert_awaited_once()
+    assert complete.call_args.kwargs.get("timeout_seconds") is None
 
 
 @pytest.mark.parametrize("plan, expected", [
