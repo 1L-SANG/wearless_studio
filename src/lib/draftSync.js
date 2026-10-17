@@ -80,6 +80,7 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
     // 분석 폼이 이들을 analysis 작업본에 둘 수 있으니(과도기) → product 로 미러(현재값 반영)하고
     // analysis payload 에선 제거한다(analysis 에 stale product 상태가 박히는 것 방지).
     let analysis = draft.analysis;
+    let outfitHandoff = analysis?.outfitRecommendationHandoff ?? null;
     const evidenceHandoff = analysis?.confirmedGptProductEvidenceHandoff ?? null;
     let detailHandoff = analysis?.detailRecommendationsHandoff ?? null;
     let featureRun = null;
@@ -88,6 +89,8 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
       analysis.confirmedGptProductEvidenceHandoff = null;
       analysis.detailRecommendationsHandoff = null;
       delete analysis.detailRecommendations;
+      delete analysis.outfitRecommendation;
+      delete analysis.outfitRecommendationHandoff;
       for (const k of ['clothingType', 'measurements', 'measurementsUnknown']) {
         if (analysis[k] != null) product[k] = analysis[k];
         analysis[k] = null;
@@ -107,18 +110,24 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
       const settled = await settleDraftFeatureRun(draft, projectId, { restoreFeatures });
       featureRun = settled.run;
       analysis = settled.analysis;
+      outfitHandoff = analysis?.outfitRecommendationHandoff ?? outfitHandoff;
       detailHandoff = analysis?.detailRecommendations?.status === 'unavailable' ? null : analysis?.detailRecommendationsHandoff ?? null;
       if (analysis) {
         analysis = stripLocalCustomMatch({ ...analysis });
         analysis.confirmedGptProductEvidenceHandoff = null;
         analysis.detailRecommendationsHandoff = null;
         delete analysis.detailRecommendations;
+        delete analysis.outfitRecommendation;
+        delete analysis.outfitRecommendationHandoff;
         for (const key of ['clothingType', 'measurements', 'measurementsUnknown']) analysis[key] = null;
       }
     }
     if (analysis) {
-      await api.saveAnalysis(projectId, analysis);
+      await api.saveAnalysis(projectId, analysis, { recommendOutfit: false });
       featureRun?.committed();
+      if (outfitHandoff) {
+        await api.promoteOutfitRecommendation(projectId, outfitHandoff, analysis.outfitSelections);
+      }
       if (detailHandoff) {
         // 디테일 추천은 부가 자료라 서명·유효기간 검증 실패(invalid_analysis_handoff)는 확정을 막지
         // 않는다. 추천 없이 넘어가면 콘티는 "디테일 추천을 준비하지 못했어요" 안내와 수동 추가로

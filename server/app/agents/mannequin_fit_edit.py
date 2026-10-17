@@ -70,7 +70,7 @@ def build_adjust_directives(profile: dict, adjusted_axes: tuple | list) -> str:
 def build_adjust_manifest(
     product_count: int, has_match: bool, *, clothing_type: str | None = None,
     product_slots: tuple[str, ...] | list[str] | None = None,
-    match_is_custom: bool = False,
+    match_is_custom: bool = False, outfit_roles=(),
 ) -> str:
     """편집 입력 순서: 1=현재 컷(캔버스), 2..=상품 사진(정체성 기준), 마지막=매칭(있으면)."""
     if product_slots is not None and len(product_slots) != product_count:
@@ -88,6 +88,12 @@ def build_adjust_manifest(
         slot = product_slots[index] if product_slots is not None else None
         role = roles.get(slot, "product photo")
         lines.append(f"{i}. {role} - identity reference for the MAIN PRODUCT")
+        i += 1
+    from ..services.outfit_generation import ROLE_LABELS
+    for role in outfit_roles:
+        if role != "inner":
+            raise ValueError("mannequin_outfit_role_not_allowed")
+        lines.append(f"{i}. {ROLE_LABELS[role]}")
         i += 1
     if has_match:
         role = "TOP" if str(clothing_type or "").lower() == "bottom" else "BOTTOM"

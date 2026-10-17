@@ -14,7 +14,7 @@ CUT_FAILURE_REASONS = {
         "detail_judgment_retry_state_changed",
     ), "retryable"),
     **dict.fromkeys((
-        "no_garment_photo", "matching_asset_unavailable", "no_angle_photo",
+        "no_garment_photo", "matching_asset_unavailable", "outfit_asset_unavailable", "no_angle_photo",
         "identity_scope_mismatch", "real_model_studio_only", "pose_direction_incompatible",
         "invalid_cut_spec", "detail_target_unavailable", "invalid_detail_region",
         "detail_reference_required", "detail_color_reference_required", "detail_source_unavailable",

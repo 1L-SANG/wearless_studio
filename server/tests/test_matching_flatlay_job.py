@@ -481,7 +481,7 @@ def test_model_routing_failure_does_not_discard_a_successful_cutout(monkeypatch)
     assert calls["swap"][1] == mc.derived_asset_id(
         role="thumb", matching_item_id="custom_x",
         source_hash=_fingerprint()), "누끼 썸네일로 폴백"
-    assert len(r2.puts) == 2, "썸네일 + grid 가 그대로 올라간다"
+    assert len(r2.puts) == 3, "썸네일과 grid를 유지하고 SAM 보드 PNG도 저장한다"
 
 
 def test_both_thumbnail_candidates_stay_reclaimable_by_delete(monkeypatch):

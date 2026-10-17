@@ -52,6 +52,7 @@ from ..agents.prompts import (
 )
 from ..agents.product_reference import ProductReference
 from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
+from ..services import outfit_generation
 from ..services import canonical_reference, editor_garment_mask, mannequin_display, product_tidy, qc, sam_fallback
 from ..services import generation_input_strategy as gis
 from ._common import emit_job_event as _emit  # 공용 헬퍼 (analyze_job과 공유)
@@ -96,7 +97,7 @@ def _valid_fit_profile_snapshot(snapshot) -> bool:
 
 
 def _compatible_parent_metadata(
-    parent: dict | None, profile: dict | None, match_item_id: str | None
+    parent: dict | None, profile: dict | None, match_item_id: str | None, *, outfit_snapshot=None, outfit_reference_assets=None
 ) -> dict | None:
     """현재 조정의 category/gender/매칭과 같은 부모인지 확인한다. 깊이는 생성에만 사용한다."""
     if not parent or not isinstance(profile, dict):
@@ -112,14 +113,19 @@ def _compatible_parent_metadata(
         return None
     if metadata.get("matchItemId") != match_item_id:
         return None
+    if metadata.get("outfitSelectionsSnapshot") != outfit_snapshot:
+        return None
+    if outfit_reference_assets is not None and metadata.get("outfitReferenceAssets", []) != outfit_reference_assets:
+        return None
     return metadata
 
 
 def _compatible_parent_edit_depth(
-    parent: dict | None, profile: dict | None, match_item_id: str | None
+    parent: dict | None, profile: dict | None, match_item_id: str | None, *, outfit_snapshot=None, outfit_reference_assets=None
 ) -> int | None:
     """같은 조정 입력이며 깊이가 두 번 미만일 때만 부모를 생성 캔버스로 쓴다."""
-    metadata = _compatible_parent_metadata(parent, profile, match_item_id)
+    metadata = _compatible_parent_metadata(parent, profile, match_item_id, outfit_snapshot=outfit_snapshot,
+                                           outfit_reference_assets=outfit_reference_assets)
     if metadata is None:
         return None
     depth = metadata.get("editDepth")
@@ -313,7 +319,7 @@ def _maybe_augment_with_canonical(
 
 def _build_manifest(
     prod_assets: list[dict], has_match: bool, clothing_type: str | None = None,
-    match_is_custom: bool = False,
+    match_is_custom: bool = False, outfit_roles=(),
 ) -> str:
     """images=[base, *prod(slot순), match]와 동일 순서의 역할 목록 (모델이 어느 이미지가 무엇인지 알게).
     내용은 전부 고정 라벨(_SLOT_LABEL 룩업) — 셀러 데이터를 직접 끼우지 않는다(프롬프트 인젝션 방지).
@@ -329,6 +335,11 @@ def _build_manifest(
         label = (slot if slot.startswith("Front crop ") else
                  _SLOT_LABEL.get(slot, "view of the garment"))
         lines.append(f"{i}. {label}")
+        i += 1
+    for role in outfit_roles:
+        if role != "inner":
+            raise ValueError("mannequin_outfit_role_not_allowed")
+        lines.append(f"{i}. {outfit_generation.ROLE_LABELS[role]}; the mannequin stays barefoot")
         i += 1
     if has_match:
         custom_guard = (
@@ -1093,6 +1104,7 @@ async def _apply_bust_pass(
     clothing_type=None, image_size=None, prod_imgs=None, product_refs=None, match_img=None,
     fit_profile=None, source_mirrored=False,
     match_is_custom=False,
+    outfit_images=(),
 ):
     """여성 기본 가슴 볼륨 2패스. → (선택 결과, 편집콜 소비 여부).
 
@@ -1143,7 +1155,7 @@ async def _apply_bust_pass(
             source_mirrored=source_mirrored,
             template_path=Path(__file__).parents[2].joinpath("prompts/mannequin_bust_v3.txt"),
             clothing_type=clothing_type, match_is_custom=match_is_custom,
-        )
+        outfit_images=outfit_images)
         out = await gemini.generate_content_image(
             resolve_model(s, "image_mannequin"), prompt, edit_images,
             image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
@@ -1174,6 +1186,7 @@ async def _apply_untuck_postpass(
     clothing_type=None, image_size=None, cancel_check=None, prod_imgs=None,
     product_refs=None, fit_profile=None, source_mirrored=False,
     match_is_custom=False,
+    outfit_images=(),
 ):
     """untuck 전용 post-pass — 일반 retry 가 끝난 **출고 확정본**에 정확히 1회. → 최종 res.
 
@@ -1226,7 +1239,7 @@ async def _apply_untuck_postpass(
             source_mirrored=source_mirrored,
             template_path=Path(__file__).parents[2].joinpath("prompts/mannequin_untuck_v1.txt"),
             clothing_type=clothing_type, match_is_custom=match_is_custom,
-        )
+        outfit_images=outfit_images)
         out = await gemini.generate_content_image(
             resolve_model(s, "image_mannequin"), prompt, edit_images,
             image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
@@ -1277,6 +1290,7 @@ async def _apply_checked_untuck_postpass(
     clothing_type=None, image_size=None, cancel_check=None, product_refs=None,
     source_mirrored=False,
     match_is_custom=False,
+    outfit_images=(),
 ):
     """마지막 편집 이미지와 그 이미지의 판정을 한 묶음으로 채택한다.
 
@@ -1291,7 +1305,7 @@ async def _apply_checked_untuck_postpass(
         generation_attempts=generation_attempts, res=res, match_img=match_img,
         clothing_type=clothing_type, image_size=image_size, cancel_check=cancel_check,
         prod_imgs=prod_imgs, product_refs=product_refs, fit_profile=fit_profile,
-        source_mirrored=source_mirrored, match_is_custom=match_is_custom)
+        source_mirrored=source_mirrored, match_is_custom=match_is_custom, outfit_images=outfit_images)
     edited_hash = hashlib.sha256(edited.image).hexdigest()
     if edited_hash == before_hash:
         return edited, qc_scores
@@ -1427,6 +1441,7 @@ async def _apply_edits(
     fit_profile, profile_hash, base_gender, calls_spent, clothing_type=None, enabled=True,
     image_size=None, has_fine_pattern=False, cancel_check=None, product_refs=None,
     source_mirrored=False, match_is_custom=False, confirmed_repair_reasons=None,
+    outfit_images=(),
 ):
     """채택본에 편집(축 교정 → 가슴 2패스)을 적용하고, 바뀌었으면 재판정·회귀 시 되돌린다.
 
@@ -1463,7 +1478,7 @@ async def _apply_edits(
         base_gender=base_gender, res=res, calls_spent=calls_spent,
         clothing_type=clothing_type, image_size=image_size, prod_imgs=prod_imgs,
         product_refs=product_refs, match_img=match_img, fit_profile=fit_profile,
-        source_mirrored=source_mirrored, match_is_custom=match_is_custom)
+        source_mirrored=source_mirrored, match_is_custom=match_is_custom, outfit_images=outfit_images)
     await _cancel_checkpoint(cancel_check)
     calls_spent += bust_spent
     # 원단 패턴 2패스 — 가슴 2패스 **뒤**에 둔다. 두 편집이 겹치면 순서가 결과를 가르는데,
@@ -1739,7 +1754,7 @@ class _PaidDraftSink:
 
 def mannequin_draft_fingerprint(
     *, clothing_type, base_asset_id, product_assets, match_asset_id, match_item_id,
-    fit_profile, source_mirrored, prompt_version,
+    fit_profile, source_mirrored, prompt_version, outfit_snapshot=None, outfit_reference_assets=None,
 ) -> str:
     """초안을 이어 써도 되는 '같은 입력'의 지문 (순수).
 
@@ -1756,6 +1771,8 @@ def mannequin_draft_fingerprint(
         "fitProfile": _canonical_profile_hash(fit_profile),
         "sourceMirrored": source_mirrored is True,
         "promptVersion": str(prompt_version or ""),
+        **({"outfitSelectionsSnapshot": outfit_snapshot} if outfit_snapshot is not None else {}),
+        **({"outfitReferenceAssets": outfit_reference_assets} if outfit_reference_assets else {}),
     }
     return hashlib.sha256(json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -1860,7 +1877,7 @@ def _matching_warning_scores(scores, phase: str) -> dict:
 async def _source_backed_edit_request(
     res, product_refs, prod_imgs, match_img, fit_profile, edit_goal, *,
     source_mirrored=False, template_path=None, clothing_type=None,
-    match_is_custom=False,
+    match_is_custom=False, outfit_images=(),
 ):
     """현재 컷을 첫 입력으로 두고 원본 근거와 제한된 수정 목표를 결합한다."""
     refs = list(product_refs or [])
@@ -1877,19 +1894,21 @@ async def _source_backed_edit_request(
                            for index in range(1, len(evidence_images) + 1)]
     if not evidence_images:
         raise ValueError("source product photographs are required for mannequin edits")
-    images = [InlineImage(res.mime, res.image), *evidence_images] + ([match_img] if match_img else [])
+    images = [InlineImage(res.mime, res.image), *evidence_images] + outfit_generation.ordered_images(outfit_images, [match_img] if match_img else [])
     prompt_path = template_path or Path(__file__).parents[2].joinpath(
         "prompts/mannequin_targeted_repair_v1.txt")
     prompt = prompt_path.read_text()
     prompt += f"\nEDIT GOAL (only authorized change):\n{edit_goal}\n"
     prompt += "\nATTACHMENT ORDER:\nImage 1: current mannequin to edit.\n" + "\n".join(
         f"Image {index}: {label}" for index, label in enumerate(evidence_labels, 2))
+    for role, _image in outfit_images:
+        prompt += f"\nImage {len(evidence_images) + 2}: {outfit_generation.ROLE_LABELS[role]}."
     if match_img:
         role = "TOP" if str(clothing_type or "").lower() == "bottom" else "BOTTOM"
         custom = custom_match_grid_context(match_is_custom)
         custom_suffix = f" {custom}." if custom else ""
         prompt += (
-            f"\nImage {len(evidence_images) + 2}: separate matching {role} garment; "
+            f"\nImage {len(evidence_images) + 2 + len(outfit_images)}: separate matching {role} garment; "
             f"preserve its identity.{custom_suffix}")
     prompt += image_qc.build_declared_fit_block(fit_profile)
     if source_mirrored is True:
@@ -1900,13 +1919,13 @@ async def _source_backed_edit_request(
 async def _specialist_repair_request(
     res, product_refs, match_img, fit_profile, *, source_mirrored=False, prod_imgs=None,
     edit_goal="Apply only the listed source-supported corrections.",
-    clothing_type=None, match_is_custom=False,
+    clothing_type=None, match_is_custom=False, outfit_images=(),
 ):
     """기존 공개 헬퍼를 소스 근거 공통 빌더에 유지한다."""
     return await _source_backed_edit_request(
         res, product_refs, prod_imgs, match_img, fit_profile, edit_goal,
         source_mirrored=source_mirrored, clothing_type=clothing_type,
-        match_is_custom=match_is_custom)
+        match_is_custom=match_is_custom, outfit_images=outfit_images)
 
 
 async def _run_candidate(
@@ -1916,7 +1935,7 @@ async def _run_candidate(
     generation_path="fresh", parent_cut_img=None, adjust_directives="",
     cancel_check=None, canonical_refs=None, product_refs=None,
     source_mirrored=False, match_is_custom=False, draft_sink=None,
-    preservation_before_image=None, preservation_edit_goal=None,
+    preservation_before_image=None, preservation_edit_goal=None, outfit_images=(),
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None.
 
@@ -1953,20 +1972,21 @@ async def _run_candidate(
             generation_refs = await asyncio.to_thread(mannequin_photo_structure.prepare, list(product_refs or []))
             generation_prods = [ref.image for ref in generation_refs]
             image_manifest = _build_manifest([{"slot": ref.slot} for ref in generation_refs],
-                match_img is not None, clothing_type, match_is_custom="2x2 contact sheet" in image_manifest)
+                match_img is not None, clothing_type, match_is_custom="2x2 contact sheet" in image_manifest,
+                outfit_roles=tuple(role for role, _ in outfit_images))
             if ref_imgs:
                 image_manifest += "\n" + "\n".join(
-                    f"{len(generation_refs) + 2 + int(match_img is not None) + index}. STYLE REFERENCE, look only, not product construction."
+                    f"{len(generation_refs) + 2 + int(match_img is not None) + len(outfit_images) + index}. STYLE REFERENCE, look only, not product construction."
                     for index, _ref in enumerate(ref_imgs))
             await _emit(pool, job_id, "step", {"status": "photo_evidence_reused", "candidate": candidate,
                 "contract_hash": photo_structure["contractSha256"], "additional_analysis_calls": 0})
     if generation_path == "edit" and parent_cut_img is not None and adjust_directives:
-        images = [parent_cut_img, *prod_imgs] + ([match_img] if match_img else [])
+        images = [parent_cut_img, *prod_imgs] + outfit_generation.ordered_images(outfit_images, [match_img] if match_img else [])
         base_prompt = render_adjust_prompt(
             adjust_directives, build_adjust_manifest(
                 len(prod_imgs), match_img is not None, clothing_type=clothing_type,
                 product_slots=[ref.slot for ref in product_refs] if product_refs is not None else None,
-                match_is_custom=match_is_custom))
+                match_is_custom=match_is_custom, outfit_roles=tuple(role for role, _ in outfit_images)))
         if source_mirrored is True:
             base_prompt += "\n\n" + build_mirrored_source_block({"sourceMirrored": True})
         prompt_version = ADJUST_PROMPT_VERSION
@@ -1976,14 +1996,14 @@ async def _run_candidate(
     else:
         generation_path = "fresh"
         # STYLE REFERENCE(있으면)는 상품·매칭 뒤 맨 끝에 붙는다 — 매니페스트 번호 순서와 일치.
-        images = [base_img, *generation_prods] + ([match_img] if match_img else []) + list(ref_imgs)
+        images = [base_img, *generation_prods] + outfit_generation.ordered_images(outfit_images, [match_img] if match_img else []) + list(ref_imgs)
         if pattern_flat is not None:
             images, image_manifest = _insert_pattern_references(
                 images, image_manifest, [pattern_flat], [_PATTERN_FLAT_LABEL])
         # 캐노니컬 폴백이 매니페스트만 바꿔 **같은 템플릿을 다시 렌더**할 수 있도록 kwargs 로 둔다.
         ctx_kwargs = dict(
             clothing_type=clothing_type,
-            product_count=len(generation_prods) + int(match_img is not None) if photo_structure is not None else product_count,
+            product_count=len(generation_prods) + int(match_img is not None) + len(outfit_images) if photo_structure is not None else product_count,
             base_gender=base_gender, image_manifest=image_manifest, fit_profile=fit_profile,
             adjusted_axes=adjusted_axes,
             photo_structure=photo_structure,
@@ -2126,7 +2146,7 @@ async def _run_candidate(
                 fit_profile=fit_profile, eff_image_qc=eff_image_qc,
                 clothing_type=clothing_type, image_size=image_size,
                 cancel_check=cancel_check, product_refs=product_refs,
-                source_mirrored=source_mirrored, match_is_custom=match_is_custom)
+                source_mirrored=source_mirrored, match_is_custom=match_is_custom, outfit_images=outfit_images)
             offer_draft(res, scores, "untuck_checked")
         specialist = await inspect(res)
         specialist_failed = specialist_mode == "enforce" and bool(mannequin_specialist_qc.blocking_issues(specialist))
@@ -2152,7 +2172,7 @@ async def _run_candidate(
                 res, product_refs, match_img, fit_profile,
                 source_mirrored=source_mirrored,
                 prod_imgs=prod_imgs, edit_goal=repair_goal,
-                clothing_type=clothing_type, match_is_custom=match_is_custom)
+                clothing_type=clothing_type, match_is_custom=match_is_custom, outfit_images=outfit_images)
             repair_model = resolve_model(s, "image_mannequin")
             await _emit(pool, job_id, "step", {
                 "status": "quality_repair", "candidate": candidate, "outcome": "started",
@@ -2471,7 +2491,7 @@ async def _run_candidate(
                 has_fine_pattern=has_fine_pattern, cancel_check=cancel_check,
                 product_refs=product_refs, source_mirrored=source_mirrored,
                 match_is_custom=match_is_custom,
-                confirmed_repair_reasons=confirmed_repair_reasons)
+                confirmed_repair_reasons=confirmed_repair_reasons, outfit_images=outfit_images)
             # D축 시리즈 일관성 — bust 2패스 뒤(측정본=출고본), R2 저장 직전. fail-open.
             # 재처리 대상이 아니면(=이미 판정을 거친 구제본) 그때의 스냅샷을 그대로 쓴다.
             series = (
@@ -2594,7 +2614,7 @@ async def _run_candidate(
                 has_fine_pattern=has_fine_pattern, cancel_check=cancel_check,
                 product_refs=product_refs, source_mirrored=source_mirrored,
                 match_is_custom=match_is_custom,
-                confirmed_repair_reasons=confirmed_repair_reasons)
+                confirmed_repair_reasons=confirmed_repair_reasons, outfit_images=outfit_images)
             series = await _apply_series_qc(
                 app=app, pool=pool, s=s, job_id=job_id, project_id=project_id,
                 candidate=candidate, attempt=s.mannequin_max_attempts, res=res)
@@ -2751,7 +2771,12 @@ async def run_mannequin_job(app, job: dict) -> None:
                     a["slot"] = slot  # Front/Back/Detail/BackDetail — 매니페스트 라벨용
                     prod_assets.append(a)
             match_asset = None
-            match_id = mannequin.main_match_item_id(analysis)
+            outfit_snapshot = outfit_generation.from_payload(
+                job.get("payload") or {}, analysis, product_clothing_type)
+            legacy_match_id = mannequin.main_match_item_id(analysis)
+            match_ids = outfit_generation.complement_ids(
+                outfit_snapshot, product_clothing_type, [legacy_match_id] if legacy_match_id else [])
+            match_id = next(iter(match_ids), None)
             if match_id:
                 m_aid = await repo.get_matching_item_asset(
                     conn, match_id, user_id, project_id
@@ -2759,6 +2784,10 @@ async def run_mannequin_job(app, job: dict) -> None:
                 if m_aid:
                     match_asset = await repo.get_asset_for_user(conn, user_id, m_aid)
 
+        if outfit_snapshot is not None and match_id and match_asset is None:
+            await _fail("선택한 보완 의류를 불러오지 못했어요. 의류를 다시 확인해 주세요.",
+                        {"error": "matching_asset_unavailable"})
+            return
         if base_asset is None:
             await _fail("마네킹 베이스가 설정되지 않았어요. 잠시 후 다시 시도해 주세요.",
                         {"error": "base_mannequin_missing", "gender": gender})
@@ -2787,7 +2816,14 @@ async def run_mannequin_job(app, job: dict) -> None:
         match_img = None
         if match_asset:
             match_img = InlineImage(match_asset["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, match_asset["r2_key"]))
-        product_count = len(prod_imgs) + (1 if match_img else 0)
+        outfit_assets = []
+        outfit_images = await outfit_generation.resolve_images(
+            app, snapshot=outfit_snapshot, clothing_type=product_clothing_type,
+            user_id=user_id, project_id=project_id, mannequin_only=True,
+            resolved_assets=outfit_assets)
+        outfit_snapshot = outfit_generation.with_complement(
+            outfit_snapshot, product_clothing_type, [match_id] if match_img else [])
+        product_count = len(prod_imgs) + (1 if match_img else 0) + len(outfit_images)
         template = load_prompt_template(s)
         await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",
                                                "withBottom": match_img is not None})
@@ -2810,6 +2846,7 @@ async def run_mannequin_job(app, job: dict) -> None:
         manifest = _build_manifest(
             prod_assets, match_img is not None, clothing_type,
             match_is_custom=match_is_custom,
+            outfit_roles=tuple(role for role, _ in outfit_images),
         )
         # fit profile 은 잡 생성 시점 스냅샷이 정본(payload.fitProfileSnapshot — fidelity 설계 D3).
         # 워커가 최신 analysis 를 재독하면 잡 생성↔실행 사이의 저장 경합으로 다른 프로필이
@@ -2858,9 +2895,11 @@ async def run_mannequin_job(app, job: dict) -> None:
                 except Exception:
                     parent = None
                 parent_edit_depth = _compatible_parent_edit_depth(
-                    parent, fit_profile, resolved_match_id)
+                    parent, fit_profile, resolved_match_id, outfit_snapshot=outfit_snapshot,
+                    outfit_reference_assets=outfit_assets)
                 compatible_metadata = _compatible_parent_metadata(
-                    parent, fit_profile, resolved_match_id)
+                    parent, fit_profile, resolved_match_id, outfit_snapshot=outfit_snapshot,
+                    outfit_reference_assets=outfit_assets)
                 depth = compatible_metadata.get("editDepth") if compatible_metadata is not None else None
                 # off는 기존 fresh/0콜을 유지한다. 켜진 QC의 같은 1콜에만 BEFORE를 추가한다.
                 fresh_preservation_required = (
@@ -2898,7 +2937,8 @@ async def run_mannequin_job(app, job: dict) -> None:
             product_assets=[(a.get("slot"), a.get("id")) for a in prod_assets],
             match_asset_id=(match_asset or {}).get("id") if match_img is not None else None,
             match_item_id=resolved_match_id, fit_profile=fit_profile,
-            source_mirrored=source_mirrored, prompt_version=s.mannequin_prompt_version))
+            source_mirrored=source_mirrored, prompt_version=s.mannequin_prompt_version,
+            outfit_snapshot=outfit_snapshot, outfit_reference_assets=outfit_assets))
         if generation_path == "fresh" and getattr(s, "mannequin_draft_reuse", "off") == "on":
             draft_img = await _load_mannequin_draft(app, draft_state["key"])
             if draft_img is not None:
@@ -2922,7 +2962,7 @@ async def run_mannequin_job(app, job: dict) -> None:
                 clothing_type=(product.get("clothing_type") or product.get("clothingType")),
                 gender=gender)
             if ref_imgs:
-                next_i = 2 + len(prod_assets) + (1 if match_img else 0)
+                next_i = 2 + len(prod_assets) + (1 if match_img else 0) + len(outfit_images)
                 manifest = manifest + "\n" + _ref_manifest_lines(next_i, len(ref_imgs))
                 # 이벤트는 잡 소유자에게 전달되므로 타 프로젝트 UUID 는 opaque 해시만 노출한다.
                 log.info("job %s style_refs_attached ids=%s", job_id, ref_ids)
@@ -2978,7 +3018,7 @@ async def run_mannequin_job(app, job: dict) -> None:
                     source_mirrored=source_mirrored, match_is_custom=match_is_custom,
                     draft_sink=draft_sink,
                     preservation_before_image=preservation_before_image,
-                    preservation_edit_goal=preservation_edit_goal)
+                    preservation_edit_goal=preservation_edit_goal, outfit_images=outfit_images)
             except _MannequinJobCancelled:
                 raise
             except MannequinQualityError:
@@ -3016,6 +3056,8 @@ async def run_mannequin_job(app, job: dict) -> None:
         if repair_scores.get("quality_repair_used") and not targeted_repair:
             generation_path = "fresh"
         cut_generation_metadata = {
+            **({"outfitSelectionsSnapshot": outfit_snapshot, "outfitReferenceAssets": outfit_assets}
+               if outfit_snapshot is not None else {}),
             "generationPath": generation_path,
             "editDepth": (parent_edit_depth + 1 + int(targeted_repair)) if generation_path == "edit" else int(targeted_repair),
             "parentCutId": parent_cut_id if generation_path == "edit" else None,

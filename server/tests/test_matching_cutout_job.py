@@ -21,6 +21,7 @@ def test_flag_defaults_off():
 
 
 import asyncio
+import contextlib
 import types
 from app.services.sam_client import SamViewResult
 from app.workers import matching_cutout_job as job
@@ -81,7 +82,7 @@ def _wire_worker(monkeypatch, *, r2=None, cut_png=None, swap_rows=1,
                  current_image_asset_id="live-grid"):
     """워커의 DB·SAM 경계를 전부 가짜로 잡고 호출 기록을 돌려준다."""
     calls = {"segment": [], "swap": None, "finalize": None, "assets": [],
-             "commits": 0, "item_asset_lookups": []}
+             "commits": 0, "item_asset_lookups": [], "savepoints": []}
 
     async def fake_segment(settings, views):
         calls["segment"].append(views)
@@ -110,7 +111,8 @@ def _wire_worker(monkeypatch, *, r2=None, cut_png=None, swap_rows=1,
     async def fake_create_asset(conn, *, asset_id, user_id, project_id, source, bucket, key,
                                  mime, size, original_filename, metadata=None):
         calls["assets"].append({"asset_id": asset_id, "key": key, "mime": mime,
-                                 "metadata": metadata})
+                                 "metadata": metadata, "source": source,
+                                 "user_id": user_id, "project_id": project_id})
         return {"id": asset_id}
 
     monkeypatch.setattr(job.repo, "create_asset", fake_create_asset)
@@ -123,6 +125,17 @@ def _wire_worker(monkeypatch, *, r2=None, cut_png=None, swap_rows=1,
     class _CountingConn(_Conn):
         async def commit(self):
             calls["commits"] += 1
+
+        @contextlib.asynccontextmanager
+        async def transaction(self):
+            calls["savepoints"].append("begin")
+            try:
+                yield
+            except Exception:
+                calls["savepoints"].append("rollback")
+                raise
+            else:
+                calls["savepoints"].append("release")
 
     class _CountingPool:
         def connection(self):
@@ -155,11 +168,12 @@ def test_worker_cutouts_each_source_and_swaps_assets(monkeypatch):
     assert calls["commits"] == 2, "파생 asset 트랜잭션 + 종결"
     assert calls["item_asset_lookups"] == [], "payload 에 gridAssetId 가 있으면 조회 안 함"
     assert calls["finalize"][0] == "done" and calls["finalize"][1]["state"] == "ready"
-    # 저장하는 건 카드용 썸네일 + grid 둘뿐이다 — 원본 해상도 컷은 grid 입력으로만 쓴다(I6).
-    assert [mime for _key, _data, mime in r2.puts] == ["image/jpeg", "image/jpeg"]
+    # 카드 JPEG와 grid는 유지하고 보드 전용 PNG만 추가한다.
+    assert [mime for _key, _data, mime in r2.puts] == ["image/jpeg", "image/jpeg", "image/png"]
     thumb_asset_id, grid_asset_id = calls["swap"][1], calls["swap"][2]
     meta = {a["asset_id"]: a["metadata"] for a in calls["assets"]}
-    assert set(meta) == {thumb_asset_id, grid_asset_id}
+    board_id, = set(meta) - {thumb_asset_id, grid_asset_id}
+    assert meta[board_id]["canonicalType"] == "custom_board_cutout"
     # grid(=image_asset_id) 는 매칭 컷아웃 메타데이터가 붙어야 Task 5 가 ready 를 읽는다
     assert meta[grid_asset_id].get("type") == "matchingCutout"
     # I4 — 삭제 경로가 읽는 정리 손잡이(purpose + 원본 id 이월)
@@ -205,7 +219,7 @@ def test_worker_derived_identity_is_stable_across_reruns(monkeypatch):
 
     assert first_calls["swap"] == second_calls["swap"]
     assert [key for key, _d, _m in first_r2.puts] == [key for key, _d, _m in second_r2.puts]
-    assert len({a["asset_id"] for a in first_calls["assets"]}) == 2
+    assert len({a["asset_id"] for a in first_calls["assets"]}) == 3
 
 
 def test_worker_fails_open_on_any_unexpected_error(monkeypatch):

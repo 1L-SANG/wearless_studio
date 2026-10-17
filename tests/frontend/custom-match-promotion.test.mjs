@@ -11,6 +11,13 @@ import {
   stripLocalCustomMatch,
 } from '../../src/lib/customMatchPromotion.js';
 
+test('로컬 내 옷의 선택 ID도 승격 전에 비워 서버 ID 검증에 걸리지 않는다', () => {
+  const actual = stripLocalCustomMatch({ matchClothing: [{ id: 'local', isCustom: true }],
+    outfitSelections: { version: 1, slots: { bottom: { itemId: 'local', origin: 'user' }, footwear: { itemId: 'real-shoe', origin: 'user' } } } });
+  assert.deepEqual(actual.outfitSelections.slots.bottom, { itemId: null, origin: 'user' });
+  assert.equal(actual.outfitSelections.slots.footwear.itemId, 'real-shoe');
+});
+
 function fakeApi({ addResult, addError } = {}) {
   const calls = { uploads: [], adds: [], saves: [], cleared: 0 };
   return {

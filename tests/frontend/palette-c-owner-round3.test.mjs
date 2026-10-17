@@ -111,7 +111,9 @@ test('셀러 UI CSS에는 토스 파랑과 명시한 콘텐츠·빛 예외 밖�
         const contentThumb = file === 'src/styles/features.css' && selectors.trim() === '.object-preset-glyph.qa-bubbles' && property === 'background';
         const orbToken = file === 'src/styles/features.css' && ['--canvas-ai-sky', '--bead-rim-sky'].includes(property);
         const lightToken = file === 'src/styles/sellerDesign.css' && property === '--ring-flow-6';
-        if (contentHue || contentThumb || orbToken || lightToken) continue;
+        const contentOutfitSwatch = file === 'src/features/analysis/OutfitSelection.module.css'
+          && selectors.trim() === '.swatch[data-color="blue"]' && property === 'background';
+        if (contentHue || contentThumb || orbToken || lightToken || contentOutfitSwatch) continue;
         for (const match of value.matchAll(/#[\da-f]{3,8}\b|rgba?\([^()]*\)/gi)) {
           if (isBlue(match[0]) && !(file === 'src/styles/sellerDesign.css' && property === '--accent-blue' && match[0].toLowerCase() === '#3182f6')) {
             violations.push(`${file} ${selectors.trim()} ${property}: ${match[0]}`);

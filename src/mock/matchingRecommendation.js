@@ -211,15 +211,80 @@ export const colorHarmonyScore = (productColor, itemColor) => (
   symmetricScore(COLOR_HARMONY, productColor, itemColor, 0.5)
 );
 
+// server/app/agents/color_harmony.py와 같은 방향성 배색표. 게시물 2~16장.
+// 출처: https://www.instagram.com/p/DZg7EuIkhXY/ (2026-10-13 확인)
+// 각 하의 4색은 동등한 추천이며 반대 방향의 상하의 조합으로 복제하지 않는다.
+export const TOP_BOTTOM_COLORS = {
+  white: ['light_denim', 'mid_denim', 'beige', 'khaki'],
+  burgundy: ['cream', 'dark_denim', 'beige', 'black_denim'],
+  navy: ['khaki', 'white', 'light_denim', 'brown'],
+  gray: ['white', 'dark_denim', 'beige', 'black'],
+  brown: ['mid_denim', 'beige', 'white', 'light_denim'],
+  light_green: ['white', 'light_denim', 'cream', 'black_denim'],
+  black: ['white', 'dark_denim', 'cream', 'gray'],
+  yellow: ['brown', 'white', 'dark_denim', 'black_denim'],
+  purple: ['white', 'dark_denim', 'beige', 'black_denim'],
+  mid_denim: ['black_denim', 'gray', 'dark_denim', 'khaki'],
+  ivory: ['khaki', 'beige', 'light_denim', 'brown'],
+  pink: ['beige', 'white', 'light_denim', 'brown'],
+  charcoal: ['white', 'light_denim', 'khaki', 'gray'],
+  red: ['white', 'mid_denim', 'beige', 'light_denim'],
+  khaki: ['beige', 'black_denim', 'cream', 'dark_denim'],
+};
+const SHADE_GROUPS = {
+  burgundy: ['red'], charcoal: ['gray', 'black'], light_green: ['green'],
+  cream: ['ivory', 'white'], light_denim: ['blue'], mid_denim: ['blue'],
+  dark_denim: ['navy', 'blue'], black_denim: ['black', 'gray'], khaki: ['khaki', 'green'],
+};
+const SHADE_NAMES = {
+  burgundy: ['버건디', '버건디레드', '와인', '와인레드', 'burgundy', 'wine', 'winered'],
+  charcoal: ['차콜', '차콜그레이', 'charcoal', 'charcoalgray', 'charcoalgrey'],
+  light_green: ['라이트그린', '연두', '연두색', 'lightgreen'],
+  cream: ['크림', '크림색', '크림아이보리', 'cream', 'creamivory'],
+  light_denim: ['연청', '연청색', '아이스진', 'lightdenim', 'lightwashdenim'],
+  mid_denim: ['중청', '중청색', '미디엄데님', 'middenim', 'mediumdenim'],
+  dark_denim: ['진청', '진청색', '딥인디고', 'darkdenim', 'darkwashdenim'],
+  black_denim: ['흑청', '흑청색', '블랙데님', 'blackdenim'],
+  khaki: ['카키', '워시드카키', '올리브', '올리브그린', 'khaki', 'olive', 'olivegreen'],
+};
+const DENIM_CATEGORIES = new Set(['데님팬츠', '데님셔츠', '데님재킷', '데님자켓', 'denim_pants', 'denim_shirt', 'denim_jacket']);
+const LIGHT_DENIM_NAMES = new Set(['라이트블루', '아이스블루', 'lightblue', 'iceblue']);
+
+export function matchingColor(group, name, category) {
+  const base = typeof group === 'string' ? group.trim().toLowerCase() : null;
+  if (!base) return null;
+  const normalized = typeof name === 'string' ? name.toLowerCase().replace(/[\s_-]+/g, '') : '';
+  for (const [shade, names] of Object.entries(SHADE_NAMES)) {
+    if (names.includes(normalized) && SHADE_GROUPS[shade].includes(base)) return shade;
+  }
+  if (DENIM_CATEGORIES.has(category)) {
+    if (base === 'blue') return LIGHT_DENIM_NAMES.has(normalized) ? 'light_denim' : 'mid_denim';
+    if (base === 'navy') return 'dark_denim';
+    if (base === 'black') return 'black_denim';
+  }
+  return base;
+}
+
+export function outfitColorScore(productColor, itemColor, clothingType) {
+  const fallback = colorHarmonyScore(SHADE_GROUPS[productColor]?.[0] ?? productColor,
+    SHADE_GROUPS[itemColor]?.[0] ?? itemColor);
+  const [top, bottom] = TOP_SIDE_TYPES.includes(clothingType)
+    ? [productColor, itemColor] : [itemColor, productColor];
+  if (['top', 'outer', 'bottom'].includes(clothingType) && TOP_BOTTOM_COLORS[top]?.includes(bottom)) {
+    return Math.max(0.95, fallback);
+  }
+  return fallback;
+}
+
 export function productColorFrom(product, analysis) {
   const colors = Array.isArray(product?.colors) ? product.colors : [];
   const base = colors.find((color) => color?.isBase) || colors[0];
-  if (base?.swatchId) return base.swatchId;
+  if (typeof base?.swatchId === 'string' && base.swatchId.trim()) return matchingColor(base.swatchId, base.name);
   // 서버 routes._matching_product_color 와 동일: 첫 제안이 아니라 기준 색 그룹과
   // 연결된 제안을 우선한다 — 다색 상품에서 엉뚱한 색이 랭킹에 들어가지 않게.
   const suggestions = Array.isArray(analysis?.swatchSuggestions) ? analysis.swatchSuggestions : [];
   const preferred = (base?.id && suggestions.find((s) => s?.colorGroupId === base.id)) || suggestions[0];
-  return preferred?.swatchId || null;
+  return matchingColor(preferred?.swatchId, base?.name || preferred?.colorName);
 }
 
 const styleAffinityScore = (item, productTags) => (productTags || []).reduce(
@@ -237,7 +302,7 @@ const compareIds = (left, right) => {
   return a < b ? -1 : a > b ? 1 : 0;
 };
 
-const rankByStyleAndColor = (items, productTags, productColor, colorWeight) => {
+const rankByStyleAndColor = (items, productTags, productColor, colorWeight, clothingType) => {
   // 서버 retrieval._quantize 와 동일 — 합산 순서의 부동소수점 노이즈를 지워
   // 같은 태그 집합이 같은 점수가 되게 한다(id tie-break·서버 순서 일치).
   const quantize = (score) => Math.round(score * 1e9) / 1e9;
@@ -258,7 +323,8 @@ const rankByStyleAndColor = (items, productTags, productColor, colorWeight) => {
     .map(({ item, styleScore }) => ({
       item,
       combinedScore: quantize((1 - weight) * (maxStyle > 0 ? styleScore / maxStyle : 0)
-        + weight * colorHarmonyScore(productColor, item.colorGroup)),
+        + weight * outfitColorScore(productColor,
+          matchingColor(item.colorGroup, item.colorName, item.category), clothingType)),
     }))
     .sort((left, right) => (right.combinedScore - left.combinedScore)
       || compareIds(left.item, right.item))
@@ -309,6 +375,8 @@ function toLegacyMatchItem(item, selected, selOrder) {
     thumb: item.thumbnailUrl,
     imageUrl: item.imageUrl,
     thumbnailUrl: item.thumbnailUrl,
+    // Existing seed photos are opaque; only explicit transparent fixtures qualify.
+    boardUrl: item.isCustom && item.cutoutStatus !== 'ready' ? null : item.boardUrl ?? null,
     gender: item.gender,
     clothingType: item.clothingType ?? null,
     category: item.category ?? null,
@@ -320,6 +388,7 @@ function toLegacyMatchItem(item, selected, selOrder) {
     fitCategory: item.fitCategory ?? fitCategoryFromMatchingMetadata(item),
     isCustom: item.isCustom === true,
     isCompatible: item.isCompatible !== false,
+    ...(Object.hasOwn(item, 'cutoutStatus') ? { cutoutStatus: item.cutoutStatus } : {}),
     // 승격 키 — draft 내 옷의 원본 업로드 id. 이 화이트리스트가 떨어뜨리면 확정 승격이
     // 조용히 무산된다(2026-08-14 전수조사: 모달 자동 refresh 가 확정 전에 키를 지웠음).
     ...(item.sourceAssetIds ? { sourceAssetIds: [...item.sourceAssetIds] } : {}),
@@ -352,7 +421,7 @@ export function recommendMatchingItems({
   // 서버 라우트 패리티: styleTags가 있을 때만 recommend_v1(스타일+색), 없으면
   // 레거시 밝기 정렬로 폴백한다.
   const ranked = styleTags.length
-    ? rankByStyleAndColor(pool, styleTags, productColor, colorWeight)
+    ? rankByStyleAndColor(pool, styleTags, productColor, colorWeight, clothingType)
     : pool.slice().sort((a, b) => ((b.colorBrightness ?? 50) - (a.colorBrightness ?? 50))
       || ((a.sortOrder ?? 0) - (b.sortOrder ?? 0)) || compareIds(a, b));
   const sorted = diversifyTopTwo(ranked);
@@ -439,4 +508,29 @@ export function removeCustomMatchFromAnalysis(analysis) {
     delete fitProfile.matchingFit;
   }
   return { ...analysis, matchClothing, ...(fitProfile ? { fitProfile } : {}) };
+}
+
+// Same bounded rank combinations as the server. Fixture photos are supplied explicitly;
+// absent roles stay unavailable, never populated with imaginary catalog assets.
+export function buildMockOutfitRecommendation(candidates, { status = 'fallback', contextKey = 'mock' } = {}) {
+  const pools = status === 'unavailable'
+    ? Object.fromEntries(Object.keys(candidates).map(role => [role, []])) : candidates;
+  const roles = Object.keys(pools);
+  const ranked = roles.reduce((combinations, role) => combinations.flatMap(choice =>
+    (pools[role].slice(0, 3).length ? pools[role].slice(0, 3) : [null]).map((item, rank) => ({
+      slots: { ...choice.slots, [role]: item?.id ?? null }, ranks: [...choice.ranks, rank], score: choice.score + rank,
+    }))), [{ slots: {}, ranks: [], score: 0 }]);
+  ranked.sort((a, b) => {
+    if (a.score !== b.score) return a.score - b.score;
+    for (let i = 0; i < a.ranks.length; i++) if (a.ranks[i] !== b.ranks[i]) return a.ranks[i] - b.ranks[i];
+    return 0;
+  });
+  const hasItems = Object.values(pools).some(items => items.length);
+  const sets = hasItems ? ranked.slice(0, 3).map(({ slots }) => ({ slots, reason: '등록된 아이템으로 코디를 골랐어요.' })) : [];
+  const actualStatus = hasItems ? status : 'unavailable';
+  return { version: 1, status: actualStatus, model: null, contextKey, sets,
+    ...(actualStatus === 'pending' ? { fallbackReady: true } : {}),
+    roleStatus: Object.fromEntries(roles.map(role => [role, pools[role].length ? actualStatus : 'unavailable'])),
+    candidates: Object.fromEntries(roles.map(role => [role, pools[role].map(item => ({ ...item,
+      inSets: sets.some(set => set.slots[role] === item.id) }))])) };
 }

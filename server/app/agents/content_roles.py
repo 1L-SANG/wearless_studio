@@ -66,14 +66,14 @@ GENERATION_RECIPE_FIELDS = (
     "faceExposure", "modelId", "matchIds", "matchIdsOrigin", "refAssetIds", "refScope",
     "exampleId", "exampleSelectionOrigin", "outerClosureState", "detailTargetId",
     "detailTargetOrigin", "spaceGroupId", "spaceVariation", "spaceSetMemberOrder",
-    "horizonBackgroundMode",
+    "horizonBackgroundMode", "outfitSelectionsSnapshot", "outfitReferenceAssets",
 )
 
 _SIMILAR_RECIPE_FIELDS = (
     "cutType", "direction", "sideStyle", "shot", "colorId", "colorIds", "faceExposure",
     "modelId", "matchIds", "matchIdsOrigin", "refAssetIds", "refImages", "refScope",
     "exampleId", "exampleSelectionOrigin", "outerClosureState", "horizonBackgroundMode",
-    "angle", "thumb", "previewThumb", "baseThumb",
+    "angle", "thumb", "previewThumb", "baseThumb", "outfitSelectionsSnapshot", "outfitReferenceAssets",
 )
 
 

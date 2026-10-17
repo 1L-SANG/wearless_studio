@@ -157,8 +157,8 @@ test('http and screen wiring refreshes quotes without delaying local labels', ()
   assert.match(http, /credit-quote\$\{selectedModelId \? `\?selectedModelId=\$\{encodeURIComponent\(selectedModelId\)\}` : ''\}/);
   assert.match(productInput, /api\.getCreditQuote\(analysisProjectId, \{ selectedModelId: analysis\?\.selectedModelId \}\)/);
   assert.match(analysis, /mannequinGenerationCtaLabel\(mannequinGenerationCost\)/);
-  assert.match(analysis, /기본 · 무료/);
-  assert.match(analysis, /extensionModelGroupLabel\(quotePlan\)/);
+  assert.match(analysis, /model.tier === 'basic' \? '무료'/);
+  assert.match(analysis, /extensionModelFee\(quotePlan, model.id\)/);
   assert.match(mannequin, /mannequinRegenerationCtaLabel\(regenerationQuote\)/);
   assert.match(productInput, /mannequinRegenerationCreditText\(creditQuote\?\.mannequinRegenerate\)/);
 });

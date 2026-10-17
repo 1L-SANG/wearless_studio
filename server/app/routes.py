@@ -11,6 +11,7 @@ import contextlib
 import logging
 import time
 import uuid
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import get_args
 from urllib.parse import urlsplit
@@ -41,7 +42,7 @@ from .agents.vision_llm import VisionError
 from .services import (canonical_reference, editor_garment_mask, garment_color_measure, garment_grid,
                        input_qc, mannequin_display,
                        mannequin_tone_render, matching, matching_cutout, product_photos,
-                       retrieval, sam_autoscale, sam_retry)
+                       retrieval, sam_autoscale, sam_retry, outfit, outfit_jobs)
 from .auth import require_user
 from .config import load_settings
 from .db import get_conn
@@ -214,6 +215,18 @@ def _bad_request(code: str, message: str, meta: dict | None = None) -> HTTPExcep
     return HTTPException(status_code=400, detail=detail)
 
 
+def _mannequin_cached_outfit_matches(cut, snapshot, inner_asset_id):
+    if (cut.get("outfit_selections_snapshot") or {"version": 1, "slots": {}}) != snapshot:
+        return False
+    inner = snapshot.get("slots", {}).get("inner") or {}
+    if inner.get("itemId") is None:
+        return True
+    bindings = cut.get("outfit_reference_assets") or []
+    return bool(inner_asset_id) and any(isinstance(binding, dict) and binding.get("role") == "inner"
+        and binding.get("itemId") == inner["itemId"] and binding.get("assetId") == str(inner_asset_id)
+        for binding in bindings)
+
+
 def _mannequin_payload_matches(job: dict, requested_payload: dict) -> bool:
     """활성 마네킹 job 합류가 안전한지 의미 입력만 비교한다.
 
@@ -236,6 +249,7 @@ def _mannequin_payload_matches(job: dict, requested_payload: dict) -> bool:
     return (
         existing.get("mode") == requested_payload.get("mode")
         and existing_snapshot == requested_snapshot
+        and (existing.get("outfitSelectionsSnapshot") or {"version": 1, "slots": {}}) == (requested_payload.get("outfitSelectionsSnapshot") or {"version": 1, "slots": {}})
     )
 
 
@@ -306,6 +320,7 @@ def _matching_item_to_api(r2: R2Client, item: dict, *, compatible: bool = True,
         "thumb": r2.public_url(item["thumb_key"]),
         "imageUrl": r2.public_url(item["image_key"]) if item.get("image_key") else None,
         "thumbnailUrl": r2.public_url(item["thumb_key"]),
+        "boardUrl": matching.board_url_for(r2, item, has_active_job=has_active_cutout_job),
         "clothingType": item.get("clothing_type"),
         "category": item.get("category"),
         "colorName": item.get("color_name"),
@@ -340,7 +355,7 @@ def _matching_product_color(product: dict | None, analysis: dict | None = None) 
     )
     swatch_id = base.get("swatchId") if isinstance(base, dict) else None
     if isinstance(swatch_id, str) and swatch_id.strip():
-        return swatch_id.strip()
+        return color_harmony.matching_color(swatch_id, base.get("name"))
 
     suggestions = analysis.get("swatchSuggestions") if isinstance(analysis, dict) else None
     suggestions = [s for s in suggestions if isinstance(s, dict)] if isinstance(suggestions, list) else []
@@ -352,7 +367,10 @@ def _matching_product_color(product: dict | None, analysis: dict | None = None) 
         suggestions[0] if suggestions else None,
     )
     fallback = preferred.get("swatchId") if isinstance(preferred, dict) else None
-    return fallback.strip() if isinstance(fallback, str) and fallback.strip() else None
+    return color_harmony.matching_color(
+        fallback, (base.get("name") if isinstance(base, dict) else None) or
+        (preferred.get("colorName") if isinstance(preferred, dict) else None),
+    )
 
 
 def _analysis_with_added_custom(payload: dict, item: dict) -> dict:
@@ -378,6 +396,14 @@ def _analysis_without_custom(payload: dict, item_id: str) -> dict:
 
     # 내 옷 배열과 삭제된 옷의 핏 연결만 저장한다. 다른 분석 키는 원자 병합이 보존한다.
     next_payload = {"matchClothing": normalized}
+    selections = payload.get("outfitSelections")
+    if isinstance(selections, dict) and isinstance(selections.get("slots"), dict):
+        slots = {role: ({"itemId": None, "origin": "user"} if role in ("top", "bottom") and
+                         isinstance(entry, dict) and entry.get("itemId") == item_id else entry)
+                 for role, entry in selections["slots"].items()}
+        if slots != selections["slots"]:
+            next_payload["outfitSelections"] = {**selections, "slots": slots}
+            next_payload["matchIds"] = [item["id"] for item in normalized if item.get("selected")][:1]
     fit_profile = payload.get("fitProfile")
     matching_fit = fit_profile.get("matchingFit") if isinstance(fit_profile, dict) else None
     if isinstance(matching_fit, dict) and matching_fit.get("clothingId") == item_id:
@@ -1095,17 +1121,18 @@ async def save_product(
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         row = await repo.save_product(conn, project_id, user_id, fields)
-        if (
-            row
-            and (row.get("clothingType") or row.get("clothing_type")) == "dress"
-        ):
+        if row and (fields.get("clothingType") or fields.get("clothing_type")
+                    or (row.get("clothingType") or row.get("clothing_type")) == "dress"):
             analysis = await repo.get_analysis(conn, project_id) or {}
-            if analysis and analysis.get("targetGenders") != ["women"]:
-                await repo.save_analysis(
-                    conn,
-                    project_id,
-                    {"targetGenders": ["women"]},
-                )
+            kind = row.get("clothingType") or row.get("clothing_type") or "top"
+            updates = {"targetGenders": ["women"]} if kind == "dress" and analysis else {}
+            if analysis.get("outfitSelections"):
+                selections = outfit.normalize_selections(analysis["outfitSelections"], kind)
+                if selections != analysis["outfitSelections"]:
+                    items = await outfit.load_items(conn, user_id, project_id)
+                    updates.update(outfit.sync_legacy(analysis, selections, items, request.app.state.r2))
+            if updates:
+                await repo.save_analysis(conn, project_id, updates)
         await conn.commit()
         # 사진이 서버에 확정된 첫 지점이다. 컷아웃 큐잉 실패가 상품 저장을 500 으로 만들면
         # 안 되므로 **커밋 뒤에** 별도로 걸고 예외는 삼킨다(analyze 라우트와 같은 규율).
@@ -1183,6 +1210,7 @@ async def save_analysis(
             )
         else:
             analysis = {**analysis, "brandUseCategory": category}
+    items = None
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
@@ -1191,14 +1219,54 @@ async def save_analysis(
             product.get("clothingType") or product.get("clothing_type")
         ) == "dress":
             analysis = {**analysis, "targetGenders": ["women"]}
+        # Only catalog IDs enter selections; legacy display assets are rebuilt from DB.
+        previous = await repo.get_analysis(conn, project_id) if any(
+            key in analysis for key in ("outfitSelections", "outfitSetIndex", "matchClothing", "subCategory")) else {}
+        if "outfitSelections" in analysis or "outfitSetIndex" in analysis or "matchClothing" in analysis or previous.get("outfitSelections"):
+            clothing_type = product.get("clothingType") or product.get("clothing_type") or "top"
+            items = await outfit.load_items(conn, user_id, project_id)
+            try:
+                value = previous.get("outfitSelections")
+                if value is None:
+                    value = outfit.normalize_selections(None, clothing_type,
+                        legacy_match_items=previous.get("matchClothing") or [], allowed_items=items)
+                if "outfitSetIndex" in analysis:
+                    value = outfit.apply_set(value, previous.get("outfitRecommendation"), clothing_type, analysis.pop("outfitSetIndex"))
+                elif "outfitSelections" in analysis:
+                    value = outfit.merge_selections(value, analysis["outfitSelections"], clothing_type)
+                elif "matchClothing" in analysis:
+                    role = outfit.complementary_slot(clothing_type)
+                    selected = [item for item in analysis.get("matchClothing") or []
+                                if isinstance(item, dict) and item.get("selected")][:1]
+                    value = outfit.normalize_selections(value, clothing_type)
+                    # A type chip also sends reconciled legacy flags. It is not a
+                    # deliberate pick/clear of the new complementary role.
+                    type_changed = (analysis.get("clothingType") is not None
+                                    and analysis["clothingType"] != previous.get("clothingType"))
+                    if role and not type_changed:
+                        value["slots"][role] = {"itemId": str(selected[0]["id"]) if selected else None, "origin": "user"}
+                requested_optional = (analysis.get("outfitSelections") or {}).get("optional", {})
+                if isinstance(requested_optional, dict):
+                    for role, enabled in requested_optional.items():
+                        value = outfit.toggle_optional(value, previous.get("outfitRecommendation"), clothing_type, role, enabled)
+                selections = outfit.normalize_selections(value, clothing_type, allowed_items=items, strict=True,
+                    genders=["women"] if clothing_type == "dress" else analysis.get("targetGenders", previous.get("targetGenders")))
+            except outfit.OutfitSelectionError as exc:
+                raise _bad_request(str(exc), "선택한 코디 아이템을 다시 확인해 주세요.") from None
+            analysis = {**analysis, **outfit.sync_legacy({**previous, **analysis}, selections, items, request.app.state.r2)}
         row = await repo.save_analysis(conn, project_id, analysis, merge=merge, delete_nulls=merge)
+        if items is None and ((row["payload"] or {}).get("outfitRecommendation")
+                              or (row["payload"] or {}).get("matchClothing")):
+            items = await outfit.load_items(conn, user_id, project_id)
         await conn.commit()
     payload = dict(row["payload"] or {})
     if detail_recommendations.PERSISTED_KEY in payload:
         payload[detail_recommendations.PERSISTED_KEY] = detail_recommendations.public_summary(payload[detail_recommendations.PERSISTED_KEY])
     if garment_color_evidence.PERSISTED_KEY in payload:
         payload[garment_color_evidence.PERSISTED_KEY] = garment_color_evidence.public_summary(payload[garment_color_evidence.PERSISTED_KEY])
-    return {"projectId": row["project_id"], **payload}
+    return {"projectId": row["project_id"], **payload,
+            **outfit.read_fields(payload, request.app.state.settings.outfit_timeout_seconds,
+                                items=items, r2=request.app.state.r2)}
 
 
 @router.post(
@@ -1364,11 +1432,14 @@ async def get_analysis(
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         payload = fit_axes.normalize_analysis_fit(await repo.get_analysis(conn, project_id))
+        items = await outfit.load_items(conn, user_id, project_id) if payload and (
+            payload.get("outfitRecommendation") or payload.get("matchClothing")) else None
     if detail_recommendations.PERSISTED_KEY in (payload or {}):
         payload = {**payload, detail_recommendations.PERSISTED_KEY: detail_recommendations.public_summary(payload[detail_recommendations.PERSISTED_KEY])}
     if garment_color_evidence.PERSISTED_KEY in (payload or {}):
         payload = {**payload, garment_color_evidence.PERSISTED_KEY: garment_color_evidence.public_summary(payload[garment_color_evidence.PERSISTED_KEY])}
-    return {"projectId": project_id, **(payload or {})}
+    return {"projectId": project_id, **(payload or {}), **outfit.read_fields(payload or {}, request.app.state.settings.outfit_timeout_seconds,
+        items=items, r2=request.app.state.r2)}
 
 
 @router.post(
@@ -1554,6 +1625,188 @@ async def analyze_spike(
     obs = product_analyst.observation(provider, order, int((time.perf_counter() - t0) * 1000), distributed)
     logger.info("analysis_spike", extra=obs)  # provider 결정 회의용 관측 로그
     return JSONResponse({"observation": obs, "data": distributed})
+
+
+async def _outfit_generation_snapshot(conn, user_id, project_id, *, analysis=None, product=None):
+    analysis = analysis if analysis is not None else await repo.get_analysis(conn, project_id) or {}
+    # Empty old projects require no additional product or catalog query.
+    if not analysis.get("outfitSelections") and not any(
+        isinstance(item, dict) and item.get("selected") for item in analysis.get("matchClothing") or []):
+        return {"version": 1, "slots": {}}
+    product = product if product is not None else await repo.get_product(conn, project_id) or {}
+    clothing_type = product.get("clothingType") or product.get("clothing_type") or "top"
+    items = await outfit.load_items(conn, user_id, project_id)
+    try:
+        return outfit.generation_snapshot(analysis, clothing_type, items, sub_category=analysis.get("subCategory"))
+    except outfit.OutfitSelectionError as exc:
+        raise _bad_request(str(exc), "선택한 코디 아이템을 다시 확인해 주세요.") from None
+
+
+async def _outfit_source_images(conn, user_id, project_id, product, r2):
+    entries = detail_recommendations.analysis_source_entries(product)
+    source_images, slots = [], []
+    for slot, asset_id in entries:
+        asset = await repo.get_asset_for_user(conn, user_id, asset_id)
+        if asset is None or (asset.get("project_id") and str(asset["project_id"]) != project_id):
+            raise _bad_request("outfit_source_missing", "상품 사진을 다시 확인해 주세요.")
+        source_images.append((await asyncio.to_thread(r2.get_bytes, asset["r2_key"]), asset["mime_type"]))
+        slots.append(slot)
+    if not source_images:
+        raise _bad_request("outfit_source_missing", "상품 사진을 다시 확인해 주세요.")
+    return source_images, slots
+
+
+def _outfit_context_conflict():
+    return HTTPException(status_code=409, detail={"code": "outfit_context_changed",
+        "message": "상품 정보가 바뀌었어요. 현재 상품으로 코디를 다시 골라 주세요."})
+
+
+@router.get("/projects/{project_id}/analysis/outfit-candidates", tags=["Analysis"])
+async def get_outfit_candidates(request: Request, project_id: str,
+        clothingType: str | None = Query(None), subCategory: str | None = Query(None),
+        gender: list[str] = Query(default=[]), user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        product = await repo.get_product(conn, project_id) or {}
+        analysis = await repo.get_analysis(conn, project_id) or {}
+        items = await outfit.load_items(conn, user_id, project_id)
+    context = outfit.product_context(product, analysis)
+    if clothingType is not None:
+        context["clothingType"] = clothingType
+    if subCategory is not None:
+        context["subCategory"] = subCategory
+    if gender:
+        context["targetGenders"] = [entry for part in gender for entry in part.split(",") if entry]
+    pools = outfit.candidate_pools(items, context, analysis.get("outfitSelections"))
+    recommendation = analysis.get("outfitRecommendation") or {"status": "fallback", "sets": []}
+    display = outfit.recommendation_display(recommendation, pools, request.app.state.r2)
+    return {"version": 1, "candidates": display["candidates"], "roleStatus": display["roleStatus"]}
+
+
+@router.get("/projects/{project_id}/analysis/outfit-recommendations", tags=["Analysis"])
+async def get_outfit_recommendation(request: Request, project_id: str, user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        analysis = await repo.get_analysis(conn, project_id) or {}
+        items = await outfit.load_items(conn, user_id, project_id)
+    return outfit.read_fields(analysis, request.app.state.settings.outfit_timeout_seconds, items=items, r2=request.app.state.r2)
+
+
+@router.post("/projects/{project_id}/analysis/outfit-recommendations", tags=["Analysis"])
+async def recommend_outfit(request: Request, project_id: str, body: dict = Body(default={}),
+                           user_id: str = Depends(require_user)):
+    # Same public-analysis concurrency and authenticated analysis quota, single provider call.
+    from .public_routes import _public_slot, _analysis_semaphore
+    async with _public_slot(request, user_id, _analysis_semaphore, "analysis"):
+        async with get_conn(request) as conn:
+            if await repo.get_project(conn, user_id, project_id) is None:
+                raise _not_found()
+            product = await repo.get_product(conn, project_id) or {}
+            analysis = await repo.get_analysis(conn, project_id) or {}
+            context = outfit.product_context(product, analysis)
+            for key in ("clothingType", "subCategory", "customCategory", "targetGenders", "styleTags"):
+                if key in body and body[key] != context[key]:
+                    raise _outfit_context_conflict()
+            supplied_context = outfit.product_context(product, {**analysis, **body})
+            for key in ("fit", "materials"):
+                if key in body and supplied_context[key] != context[key]:
+                    raise _outfit_context_conflict()
+            items = await outfit.load_items(conn, user_id, project_id)
+            request_analysis = dict(analysis)
+            try:
+                request_analysis["outfitSelections"] = outfit.normalize_selections(analysis.get("outfitSelections"),
+                    context["clothingType"], legacy_match_items=analysis.get("matchClothing") or [],
+                    allowed_items=items, strict=True, genders=context["targetGenders"], prune_invalid_ai=True)
+            except outfit.OutfitSelectionError as exc:
+                raise _bad_request(str(exc), "선택한 코디 아이템을 다시 확인해 주세요.") from None
+            if "outfitSelections" in body:
+                try:
+                    request_analysis["outfitSelections"] = outfit.normalize_selections(
+                        outfit.merge_selections(analysis.get("outfitSelections"), body["outfitSelections"], context["clothingType"]),
+                        context["clothingType"], allowed_items=items, strict=True, genders=context["targetGenders"], prune_invalid_ai=True)
+                except outfit.OutfitSelectionError as exc:
+                    raise _bad_request(str(exc), "선택한 코디 아이템을 다시 확인해 주세요.") from None
+            source_images, slots = await _outfit_source_images(conn, user_id, project_id, product, request.app.state.r2)
+        fields = outfit.prepare_recommendation(request.app.state.settings, request.app.state.r2, product,
+                                       request_analysis, source_images, items, slots=slots)
+        if (analysis.get("outfitRecommendation") or {}).get("contextKey") == fields["outfitRecommendation"]["contextKey"]:
+            return outfit.read_fields(analysis, request.app.state.settings.outfit_timeout_seconds, items=items, r2=request.app.state.r2)
+        async with get_conn(request) as conn:
+            if await repo.get_project(conn, user_id, project_id) is None:
+                raise _not_found()
+            latest = await repo.get_analysis(conn, project_id) or {}
+            latest_product = await repo.get_product(conn, project_id) or {}
+            if (outfit.product_context(latest_product, latest) != context or
+                latest.get("outfitSelections") != analysis.get("outfitSelections") or
+                detail_recommendations.analysis_source_entries(latest_product) != detail_recommendations.analysis_source_entries(product)):
+                raise _outfit_context_conflict()
+            fresh_items = await outfit.load_items(conn, user_id, project_id)
+            try:
+                selections = outfit.normalize_selections(fields["outfitSelections"], context["clothingType"], allowed_items=fresh_items, strict=True)
+                fields.update(outfit.sync_legacy(fields, selections, fresh_items, request.app.state.r2))
+                await repo.save_outfit_recommendation(conn, project_id, fields, expected_analysis=latest)
+            except (outfit.OutfitSelectionError, ValueError):
+                raise _outfit_context_conflict() from None
+            await conn.commit()
+        if fields["outfitRecommendation"]["status"] == "pending":
+            outfit_jobs.start_project(request.app, user_id, project_id, product,
+                {**request_analysis, **fields}, source_images, fresh_items, slots=slots)
+    return outfit.read_fields(fields, request.app.state.settings.outfit_timeout_seconds)
+
+
+@router.post("/projects/{project_id}/analysis/outfit-recommendations:promote", tags=["Analysis"])
+async def promote_outfit_recommendation(request: Request, project_id: str, body: dict = Body(...),
+                                        user_id: str = Depends(require_user)):
+    try:
+        contract = outfit.verify_handoff(body.get("handoff"), request.app.state.settings.r2_secret_access_key)
+    except outfit.OutfitSelectionError:
+        raise _bad_request("invalid_analysis_handoff", "분석 결과를 다시 확인해 주세요.") from None
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        product = await repo.get_product(conn, project_id) or {}
+        analysis = await repo.get_analysis(conn, project_id) or {}
+        source_images, slots = await _outfit_source_images(conn, user_id, project_id, product, request.app.state.r2)
+        if not outfit.source_binding_matches(contract, source_images, slots):
+            raise _bad_request("analysis_handoff_source_drift", "상품 사진이 바뀌었어요. 현재 사진으로 다시 분석해 주세요.")
+        items = await outfit.load_items(conn, user_id, project_id)
+        context = outfit.product_context(product, analysis)
+        signed_context = contract.get("context") or {}
+        if not outfit.promotion_context_matches(signed_context, context):
+            raise _outfit_context_conflict()
+        try:
+            cached = outfit.read_recommendation(contract["outfitRecommendation"]["contextKey"])
+            if cached and contract["outfitRecommendation"].get("status") == "pending":
+                contract["outfitRecommendation"] = cached["outfitRecommendation"]
+            value = contract["outfitSelections"]
+            # A restored local draft may contain user changes made after the public judgement.
+            if "outfitSelections" in body:
+                value = outfit.normalize_selections(body["outfitSelections"], context["clothingType"], strict=True)
+            if analysis.get("outfitSelections"):
+                fixed = {role: entry for role, entry in outfit.normalize_selections(analysis["outfitSelections"], context["clothingType"])["slots"].items()
+                         if entry["origin"] == "user"}
+                value = outfit.merge_selections(value, {"version": 1, "slots": fixed}, context["clothingType"])
+            selections = outfit.normalize_selections(value, context["clothingType"], allowed_items=items, strict=True, genders=context["targetGenders"])
+            pools = outfit.candidate_pools(items, context)
+            recommendation = deepcopy(contract["outfitRecommendation"])
+            if recommendation["sets"]:
+                recommendation["sets"] = outfit.validate_sets(recommendation["sets"], pools, selections)
+            recommendation = outfit.recommendation_display(recommendation, pools, request.app.state.r2)
+            fields = {"outfitRecommendation": recommendation,
+                      **outfit.sync_legacy({"matchClothing": recommendation["candidates"].get(outfit.complementary_slot(context["clothingType"]), [])}, selections, items, request.app.state.r2)}
+            # Repeated promotion cannot replace a newer server-owned recommendation.
+            existing = analysis.get("outfitRecommendation")
+            if existing and existing.get("contextKey") != recommendation.get("contextKey"):
+                raise _outfit_context_conflict()
+            await repo.save_outfit_recommendation(conn, project_id, fields, expected_analysis=analysis)
+        except (outfit.OutfitSelectionError, KeyError, ValueError):
+            raise _bad_request("outfit_item_unavailable", "선택한 코디 아이템을 다시 확인해 주세요.") from None
+        await conn.commit()
+    if fields["outfitRecommendation"]["status"] == "pending":
+        outfit_jobs.follow_existing(request.app, user_id, project_id, product, {**analysis, **fields}, fields)
+    return {"promoted": True, **outfit.read_fields(fields, request.app.state.settings.outfit_timeout_seconds)}
 
 
 @router.get(
@@ -1870,7 +2123,8 @@ async def add_custom_match_item(
     _wake_dispatcher(request)
     return {
         "item": item,
-        "analysis": {"projectId": saved["project_id"], **(saved["payload"] or {})},
+        "analysis": {"projectId": saved["project_id"], **(saved["payload"] or {}),
+                     **outfit.read_fields(saved["payload"] or {}, request.app.state.settings.outfit_timeout_seconds)},
     }
 
 
@@ -1906,7 +2160,7 @@ async def remove_custom_match_item(
             await repo.delete_custom_matching_item(conn, user_id, project_id)
             await repo.save_analysis(conn, project_id, payload)
             cleanup_assets = await repo.soft_delete_unreferenced_custom_assets(
-                conn, user_id, project_id, asset_ids
+                conn, user_id, project_id, asset_ids, matching_item_id=item["id"]
             )
         await conn.commit()
     if cleanup_assets:
@@ -2404,7 +2658,12 @@ async def generate_mannequins(
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         # 완료 재호출 → 기존 결과 반환 (새 job·차감 없음)
+        outfit_snapshot = await _outfit_generation_snapshot(conn, user_id, project_id)
         cuts = await repo.list_mannequin_cuts(conn, user_id, project_id)
+        inner = outfit_snapshot["slots"].get("inner") or {}
+        inner_asset_id = (await repo.get_matching_item_asset(conn, inner["itemId"], user_id, project_id)
+                          if cuts and inner.get("itemId") else None)
+        cuts = [cut for cut in cuts if _mannequin_cached_outfit_matches(cut, outfit_snapshot, inner_asset_id)]
         if cuts:
             account = await repo.get_account(conn, user_id)
             return JSONResponse(
@@ -2416,7 +2675,8 @@ async def generate_mannequins(
         # 합류(created=False)는 게이트·예약 없이 기존 job 반환 → 동시 재시도/입력검증으로 막지 않음.
         # 합류 시 기존 job payload 가 정본 — 아래 스냅샷은 신규 job 에만 실린다.
         snapshot = await _fit_profile_snapshot(conn, user_id, project_id, None)
-        job_payload = {"mode": "generate", "fitProfileSnapshot": snapshot}
+        job_payload = {"mode": "generate", "fitProfileSnapshot": snapshot,
+                       "outfitSelectionsSnapshot": outfit_snapshot}
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
             payload=job_payload, idempotency_key=scoped_key,
@@ -2998,6 +3258,7 @@ async def regenerate_mannequins(
             "mode": "regenerate",
             "fitProfile": body.get("fitProfile"),
             "fitProfileSnapshot": snapshot,
+            "outfitSelectionsSnapshot": await _outfit_generation_snapshot(conn, user_id, project_id),
         }
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
@@ -3441,7 +3702,8 @@ async def generate_editor_image(
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
-        payload = {key: value for key, value in (body or {}).items() if not key.startswith("_")}
+        payload = {key: value for key, value in (body or {}).items() if not key.startswith("_")
+                   and key not in ("outfitSelectionsSnapshot", "outfitReferenceAssets")}
         if fill_requested:
             slot = body["slot"]
             try:
@@ -3469,6 +3731,10 @@ async def generate_editor_image(
                 message = ("원본 컷을 먼저 만들어 주세요." if code == "similar_source_required"
                            else "원래 콘티의 빈 이미지 칸만 다시 만들 수 있어요.")
                 raise _bad_request(code, message) from exc
+            if payload.get("mode") == "new":
+                original_outfit = await repo.get_failed_cut_outfit_recipe(conn, user_id, project_id, str(payload["retryBlockId"]))
+                if original_outfit is not None:
+                    payload.update(original_outfit)
         analysis = None
         selected_model_id = None
         brand_use_category = None
@@ -3725,6 +3991,18 @@ async def generate_editor_image(
                     "modelId": str(license_row["model_id"]),
                     "licenseId": str(license_row["id"]),
                 }
+        if payload.get("mode") == "new":
+            if payload.get("outfitSelectionsSnapshot") is not None and (fill_requested or payload.get("retryBlockId")):
+                current_product = await repo.get_product(conn, project_id) or {}
+                current_type = current_product.get("clothingType") or current_product.get("clothing_type") or "top"
+                items = await repo.list_active_matching_items(conn, user_id, project_id)
+                try:
+                    restored = outfit.normalize_selections(payload["outfitSelectionsSnapshot"], current_type, allowed_items=items, strict=True)
+                    payload["outfitSelectionsSnapshot"] = {"version": 1, "slots": restored["slots"]}
+                except outfit.OutfitSelectionError as exc:
+                    raise _bad_request(str(exc), "원래 코디 아이템을 다시 확인해 주세요.") from None
+            else:
+                payload["outfitSelectionsSnapshot"] = await _outfit_generation_snapshot(conn, user_id, project_id, analysis=analysis)
         # 검증·복원한 요청으로 단가를 고른다. 빈 칸은 내부 vary/similar여도 이미지 생성값이다.
         # 워커는 이 예약액을 확정·해제하므로 배포 도중 단가가 바뀌어도 다시 계산하지 않는다.
         cost = s.credit_cost_editor_image
@@ -3741,6 +4019,9 @@ async def generate_editor_image(
                           **({"contextFill": payload["_contextFill"]} if payload.get("_contextFill") else {})})
         except repo.IdempotencyKeyReused as exc:
             raise _credit_error(exc) from exc
+        if (not created and job.get("status") in ("pending", "running")
+                and ((job.get("payload") or {}).get("outfitSelectionsSnapshot") or {"version": 1, "slots": {}}) != (payload.get("outfitSelectionsSnapshot") or {"version": 1, "slots": {}})):
+            raise _generation_in_progress()
         if created:  # 신규 job만 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
             if await repo.reserve_credits(conn, user_id, cost) is None:
                 raise HTTPException(
@@ -3862,6 +4143,8 @@ async def generate_detail_page(
         product_row = await repo.get_product(conn, project_id)
         clothing_type = ((product_row or {}).get("clothing_type")
                          or (product_row or {}).get("clothingType") or "top")
+        payload["outfitSelectionsSnapshot"] = await _outfit_generation_snapshot(
+            conn, user_id, project_id, analysis=analysis, product=product_row or {})
         try:
             generation_storyboard = content_roles.canonicalize_storyboard(storyboard)
         except ValueError as exc:
@@ -3894,6 +4177,9 @@ async def generate_detail_page(
             metadata={"creditCostVersion": s.credit_cost_version,
                       "perCutCost": s.credit_cost_storyboard_per_cut, "aiCount": ai_count,
                       "minCuts": min_cuts, "storyboardDigest": _storyboard_digest(storyboard)})
+        if (not created and job.get("status") in ("pending", "running")
+                and ((job.get("payload") or {}).get("outfitSelectionsSnapshot") or {"version": 1, "slots": {}}) != (payload.get("outfitSelectionsSnapshot") or {"version": 1, "slots": {}})):
+            raise _generation_in_progress()
         if created:
             if not storyboard:
                 raise _bad_request("empty_storyboard", "콘티가 비어 있어요. 먼저 콘티를 저장해 주세요.")

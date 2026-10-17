@@ -201,6 +201,8 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         fallback = raw.get("_signatureBackgroundFallback")
         if isinstance(fallback, dict):
             spec["_signatureBackgroundFallback"] = dict(fallback)
+    if cut in _WORN_CUTS and raw.get("_outfitRoles"):
+        spec["_outfitRoles"] = tuple(raw["_outfitRoles"])
     return spec
 
 
@@ -685,6 +687,7 @@ def render_cut_prompt(
     hair_profile: dict | None = None,
     face_shape_profile: dict | None = None,
     face_pass: bool = False,
+    outfit_roles: tuple[str, ...] = (),
 ) -> str:
     """섹션 선택 + ${토큰} 치환 + PRODUCT CONTEXT(ground truth) 자동 주입.
 
@@ -898,7 +901,9 @@ def render_cut_prompt(
         if _SPACE_SET_PLATE_LABEL in image_manifest:
             space_line = "\n".join((space_line, need("SPACE_SET_PLATE")))
     outerwear_inner_line = ""
-    if _is_outer(clothing_type) and cut in _WORN_CUTS:
+    actual_outfit_roles = tuple(role for role in ("inner", "footwear", "bag", "accessory")
+                                if f"OUTFIT {role.upper()}" in image_manifest) if cut in _WORN_CUTS else ()
+    if _is_outer(clothing_type) and cut in _WORN_CUTS and "inner" not in actual_outfit_roles:
         outerwear_inner_line = need("OUTER_INNER")
     outer_closure_line = ""
     if _is_outer(clothing_type) and cut in _WORN_CUTS:
@@ -996,8 +1001,9 @@ def render_cut_prompt(
         if spec["cutType"] in _WORN_CUTS and not is_framed_signature else ""
     )
     block = _product_block(product, analysis or {}, include_legacy_fit=fit_profile is None)
+    outfit_block = need("OUTFIT_REFS") if actual_outfit_roles else ""
     return "\n\n".join(
-        part for part in (text, directing_block, fit_block, body_block, hair_block, face_shape_block, block)
+        part for part in (text, directing_block, fit_block, body_block, hair_block, face_shape_block, block, outfit_block)
         if part
     )
 
@@ -1177,6 +1183,7 @@ def build_manifest(
     example_is_product: bool = False, has_space_set_plate: bool = False,
     example_is_horizon: bool = False,
     reference_direction_compatible: bool = True,
+    outfit_roles: tuple[str, ...] = (),
 ) -> str:
     """첨부 이미지와 동일 순서의 역할 목록.
 
@@ -1234,6 +1241,12 @@ def build_manifest(
     for a in prod_assets:
         lines.append(f"{i}. {_SLOT_LABEL.get(a.get('slot'), 'PRODUCT — view of the garment')}")
         i += 1
+    from ..services.outfit_generation import ROLE_LABELS
+    if len(set(outfit_roles)) != len(outfit_roles) or any(role not in ROLE_LABELS for role in outfit_roles):
+        raise ValueError("invalid_outfit_roles")
+    if "inner" in outfit_roles:
+        lines.append(f"{i}. {ROLE_LABELS['inner']}")
+        i += 1
     resolved_matching_count = (
         matching_count if matching_count is not None else int(has_match)
     )
@@ -1244,6 +1257,10 @@ def build_manifest(
         ) else _MATCH_LABEL
         lines.append(f"{i}. {label}")
         i += 1
+    for role in ("footwear", "bag", "accessory"):
+        if role in outfit_roles:
+            lines.append(f"{i}. {ROLE_LABELS[role]}")
+            i += 1
     if has_face:
         lines.append(f"{i}. {_FACE_LABEL}")
         i += 1

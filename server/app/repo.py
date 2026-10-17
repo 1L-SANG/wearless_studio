@@ -41,6 +41,11 @@ def editor_request_content(payload: dict) -> dict:
     if isinstance(fill, dict):
         return {"mode": "fill", "slot": fill.get("slot") or {"slotKey": fill.get("slotKey")}}
     public = {key: value for key, value in payload.items() if not key.startswith("_")}
+    # Before ADR-0022, an omitted snapshot represented the same empty outfit.
+    if public.get("outfitSelectionsSnapshot") == {"version": 1, "slots": {}}:
+        public.pop("outfitSelectionsSnapshot")
+    if public.get("outfitReferenceAssets") == []:
+        public.pop("outfitReferenceAssets")
     similar = payload.get("_similarCut")
     if (payload.get("mode") == "vary" and payload.get("variationMode") == "similar"
             and isinstance(similar, dict) and similar.get("sourceAssetId")):
@@ -890,6 +895,36 @@ async def list_in_progress(conn: AsyncConnection, user_id: str) -> list[dict]:
         return await cur.fetchall()
 
 
+async def get_failed_cut_outfit_recipe(conn: AsyncConnection, user_id: str, project_id: str, block_id: str) -> dict | None:
+    """Only original server job records can restore a failed cut's frozen outfit."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select payload, metadata
+            from jobs
+            where user_id = %s and project_id = %s and kind = 'detail_page'
+              and status in ('done', 'error', 'canceled')
+              and (metadata->'outfitRecipes' ? %s or exists (
+                  select 1 from jsonb_array_elements(case
+                      when jsonb_typeof(metadata->'partial'->'failedCuts') = 'array'
+                      then metadata->'partial'->'failedCuts' else '[]'::jsonb end) failure
+                  where failure->>'blockId' = %s
+              ))
+            order by created_at desc, id desc limit 1
+            """,
+            (user_id, project_id, block_id, block_id),
+        )
+        row = await cur.fetchone()
+    if row is None:
+        return None
+    recipes = (row.get("metadata") or {}).get("outfitRecipes") or {}
+    recipe = recipes.get(block_id) if isinstance(recipes, dict) else None
+    if not isinstance(recipe, dict):
+        recipe = row.get("payload") or {}
+    return {"outfitSelectionsSnapshot": recipe.get("outfitSelectionsSnapshot") or {"version": 1, "slots": {}},
+            **{key: recipe[key] for key in ("outfitReferenceAssets", "matchIds") if key in recipe}}
+
+
 async def get_latest_project_jobs(conn: AsyncConnection, user_id: str, project_id: str) -> dict:
     """소유 확인 뒤 호출. 오래된 잡의 갱신이 새 생성 시도를 가리지 않도록 created_at 순."""
     async with conn.cursor() as cur:
@@ -1093,12 +1128,14 @@ _SERVER_OWNED_ANALYSIS_KEYS = (
     "detailRecommendations",
     "garmentColorEvidence",
     "frontClosure",
+    "outfitRecommendation",
+    "outfitSelections",
 )
 # Unlike sourceMirrored (which the analysis form may explicitly edit), these values are
 # hash-bound server artifacts. API clients may echo them but can never create or replace
 # them; finalize_analyze_success replaces the full payload after a fresh provider call, and
 # replace_garment_color_evidence is the only other writer (lazy garment color measurement).
-_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence", "detailRecommendations", "garmentColorEvidence", "frontClosure")
+_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence", "detailRecommendations", "garmentColorEvidence", "frontClosure", "outfitRecommendation")
 
 
 async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict, *,
@@ -1170,6 +1207,14 @@ async def get_analysis(conn: AsyncConnection, project_id: str) -> dict:
     return (row or {}).get("payload") or {}
 
 
+async def get_analysis_for_update(conn: AsyncConnection, project_id: str) -> dict:
+    """Lock existing user selections until the analysis worker atomically finalizes."""
+    async with conn.cursor() as cur:
+        await cur.execute("select payload from analyses where project_id = %s for update", (project_id,))
+        row = await cur.fetchone()
+    return (row or {}).get("payload") or {}
+
+
 async def save_confirmed_gpt_product_evidence(
     conn: AsyncConnection,
     project_id: str,
@@ -1216,6 +1261,25 @@ async def save_detail_recommendations(conn: AsyncConnection, project_id: str, co
         row = await cur.fetchone()
     if row is None:
         raise ValueError("detail_recommendations_promotion_conflict")
+    return row["payload"]
+
+
+async def save_outfit_recommendation(conn: AsyncConnection, project_id: str, fields: dict, *, expected_analysis=None) -> dict:
+    """Write only server-produced or verified recommendation fields."""
+    payload = {key: fields[key] for key in ("outfitRecommendation", "outfitSelections", "matchClothing", "matchIds")
+               if key in fields}
+    async with conn.cursor() as cur:
+        condition = " and payload = %s::jsonb" if expected_analysis is not None else ""
+        params = [Json(payload), project_id]
+        if expected_analysis is not None:
+            params.append(Json(expected_analysis))
+        await cur.execute(
+            "update analyses set payload = payload || %s::jsonb where project_id = %s" + condition + " returning payload",
+            params,
+        )
+        row = await cur.fetchone()
+    if row is None:
+        raise ValueError("analysis_required_before_outfit_recommendation")
     return row["payload"]
 
 
@@ -1371,7 +1435,7 @@ async def get_matching_item_asset(
         await cur.execute(
             "select image_asset_id::text as asset_id from matching_items "
             "where id = %s and is_active "
-            "and (owner_user_id is null or (owner_user_id = %s and project_id = %s))",
+            "and ((owner_user_id is null and project_id is null) or (owner_user_id = %s and project_id = %s))",
             (item_id, user_id, project_id),
         )
         row = await cur.fetchone()
@@ -1385,13 +1449,96 @@ async def get_matching_item_metadata(
     async with conn.cursor() as cur:
         await cur.execute(
             # owner_user_id 도 같이 — matching.fit_category 가 custom 이면 조정 축을 닫는다(D11).
-            "select clothing_type, category, length, owner_user_id::text as owner_user_id "
+            "select clothing_type, category, length, is_active, owner_user_id::text as owner_user_id, "
+            "project_id::text as owner_project_id, image_asset_id::text as image_asset_id "
             "from matching_items "
             "where id = %s and is_active "
-            "and (owner_user_id is null or (owner_user_id = %s and project_id = %s))",
+            "and ((owner_user_id is null and project_id is null) or (owner_user_id = %s and project_id = %s))",
             (item_id, user_id, project_id),
         )
         return await cur.fetchone()
+
+
+async def list_matching_board_keys(
+    conn: AsyncConnection, source_asset_ids: list[str], *,
+    custom_source_asset_ids: list[str] | None = None,
+    user_id: str | None = None, project_id: str | None = None,
+) -> dict[str, str]:
+    """One lookup for catalog and scoped custom board art, separate from generation art."""
+    custom_sources = list(dict.fromkeys(custom_source_asset_ids or [])) if user_id and project_id else []
+    if not source_asset_ids and not custom_sources:
+        return {}
+    scope = (
+        "(visibility = 'public' and user_id is null and project_id is null "
+        "and metadata->>'canonicalType' = 'catalog_cutout' "
+        "and metadata->>'sourceAssetId' = any(%s))")
+    params = [list(dict.fromkeys(source_asset_ids))]
+    if custom_sources:
+        # Bind both current assets: a retry can change the thumbnail while reusing the grid.
+        scope += (
+            " or (visibility = 'private' and user_id = %s and project_id = %s "
+            "and mime_type = 'image/png' "
+            "and metadata->>'canonicalType' = 'custom_board_cutout' "
+            "and metadata->>'sourceAssetId' = any(%s) "
+            "and exists (select 1 from matching_items mi "
+            "where mi.is_active and mi.owner_user_id = assets.user_id "
+            "and mi.project_id = assets.project_id "
+            "and mi.id = assets.metadata->>'matchingItemId' "
+            "and mi.image_asset_id::text = assets.metadata->>'sourceAssetId' "
+            "and mi.thumbnail_asset_id::text = assets.metadata->>'thumbnailAssetId'))")
+        params.extend([user_id, project_id, custom_sources])
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select distinct on (metadata->>'sourceAssetId') "
+            "metadata->>'sourceAssetId' as source_asset_id, r2_key "
+            "from assets where source = 'derived' and deleted_at is null "
+            f"and ({scope}) "
+            "order by metadata->>'sourceAssetId', created_at desc, id desc",
+            tuple(params),
+        )
+        rows = await cur.fetchall()
+    return {row["source_asset_id"]: row["r2_key"] for row in rows}
+
+
+async def _with_matching_board_keys(
+    conn: AsyncConnection, items: list[dict], *, user_id: str | None = None,
+    project_id: str | None = None,
+) -> list[dict]:
+    sources = list(dict.fromkeys(str(item["image_asset_id"]) for item in items
+                                if not item.get("is_custom") and item.get("image_asset_id")))
+    custom_sources = [str(item["image_asset_id"]) for item in items
+                      if item.get("is_custom") and item.get("image_asset_id")
+                      and (item.get("image_meta") or {}).get("type") == "matchingCutout"]
+    keys = await list_matching_board_keys(conn, sources, custom_source_asset_ids=custom_sources,
+                                          user_id=user_id, project_id=project_id)
+    return [{**item, "board_key": keys.get(str(item["image_asset_id"]))}
+            if item.get("image_asset_id") and (not item.get("is_custom")
+                or str(item["image_asset_id"]) in custom_sources) else item for item in items]
+
+
+async def list_curated_matching_items(conn: AsyncConnection) -> list[dict]:
+    """Public recommendation can see only active ownerless items with seed/public assets."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select mi.id, mi.name, mi.clothing_type, mi.gender, mi.category,
+                   mi.color_name, mi.color_group, mi.style_tags, mi.fit, mi.length,
+                   mi.color_brightness, mi.sort_order, mi.is_active,
+                   false as is_custom,
+                   img.id::text as image_asset_id, img.r2_key as image_key,
+                   thb.id::text as thumbnail_asset_id, thb.r2_key as thumb_key,
+                   img.r2_bucket as image_bucket, thb.r2_bucket as thumb_bucket,
+                   img.metadata as image_meta
+            from matching_items mi
+            join assets img on img.id = mi.image_asset_id
+              and img.source = 'seed' and img.visibility = 'public' and img.deleted_at is null
+            join assets thb on thb.id = mi.thumbnail_asset_id
+              and thb.source = 'seed' and thb.visibility = 'public' and thb.deleted_at is null
+            where mi.is_active and mi.owner_user_id is null and mi.project_id is null
+            """
+        )
+        items = await cur.fetchall()
+    return await _with_matching_board_keys(conn, items)
 
 
 async def list_active_matching_items(
@@ -1445,7 +1592,8 @@ async def list_active_matching_items(
             """,
             (user_id, user_id, project_id),
         )
-        return await cur.fetchall()
+        items = await cur.fetchall()
+    return await _with_matching_board_keys(conn, items, user_id=user_id, project_id=project_id)
 
 
 #: 누끼 잡을 "진행 중"으로 인정하는 최대 나이(분). 디스패처는 프로세스당 완전 직렬이라
@@ -1675,20 +1823,26 @@ async def delete_custom_matching_item(
 
 
 async def soft_delete_unreferenced_custom_assets(
-    conn: AsyncConnection, user_id: str, project_id: str, asset_ids: list[str]
+    conn: AsyncConnection, user_id: str, project_id: str, asset_ids: list[str], *,
+    matching_item_id: str | None = None,
 ) -> list[dict]:
     """Soft-delete custom source/grid/cutout assets only when no product or FK consumer uses them.
 
     `custom_match_cutout` 은 누끼 워커가 만든 파생 컷(썸네일)이다. 원본 업로드·원본 grid 와
     같은 생명주기라 "내 옷 삭제" 한 번에 같이 회수되어야 한다(2026-08-13 리뷰 I4).
     """
-    if not asset_ids:
+    # Board assets are not item FKs. Collect every retry revision, including those created
+    # after a legacy grid row (create_asset intentionally does not overwrite its metadata).
+    if not asset_ids and not matching_item_id:
         return []
     async with conn.cursor() as cur:
         await cur.execute(
             """
             update assets a set deleted_at = now()
-            where a.id = any(%s::uuid[]) and a.user_id = %s and a.project_id = %s
+            where (a.id = any(%s::uuid[]) or (
+                    a.source = 'derived' and a.metadata->>'canonicalType' = 'custom_board_cutout'
+                    and a.metadata->>'matchingItemId' = %s))
+              and a.user_id = %s and a.project_id = %s
               and a.metadata->>'purpose' in ('custom_match_source', 'custom_match_grid',
                                             'custom_match_cutout')
               and not exists (select 1 from matching_items mi
@@ -1710,7 +1864,7 @@ async def soft_delete_unreferenced_custom_assets(
               )
             returning a.id::text as id, a.r2_bucket, a.r2_key
             """,
-            (asset_ids, user_id, project_id),
+            (asset_ids, matching_item_id, user_id, project_id),
         )
         return await cur.fetchall()
 
@@ -1723,6 +1877,8 @@ async def list_mannequin_cuts(conn: AsyncConnection, user_id: str, project_id: s
             select mc.candidate, mc.version, mc.base_fit, mc.fit_adjust,
                    mc.length_adjust, mc.match_adjust, mc.qc_scores,
                    a.metadata->'fitProfileSnapshot' as fit_profile_snapshot,
+                   a.metadata->'outfitSelectionsSnapshot' as outfit_selections_snapshot,
+                   a.metadata->'outfitReferenceAssets' as outfit_reference_assets,
                    a.id::text as asset_id, a.r2_key,
                    tone.id::text as active_asset_id, tone.r2_key as active_r2_key
             from mannequin_cuts mc

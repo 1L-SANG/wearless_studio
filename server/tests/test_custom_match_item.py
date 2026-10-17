@@ -475,7 +475,8 @@ def test_custom_match_delete_is_locked_atomic_and_idempotent(
         state["payload"] = {**state["payload"], **payload}
         return {"project_id": project_id, "payload": state["payload"]}
 
-    async def soft_delete(conn, user_id, project_id, asset_ids):
+    async def soft_delete(conn, user_id, project_id, asset_ids, *, matching_item_id):
+        assert matching_item_id == "custom_test_item"
         events.append("soft-delete-assets")
         return [{"id": "grid", "r2_key": "derived/grid.jpg"}]
 
@@ -541,7 +542,8 @@ def test_custom_match_delete_reclaims_originals_after_a_cutout_swap(
     async def save_analysis(conn, project_id, payload):
         return {"project_id": project_id, "payload": payload}
 
-    async def soft_delete(conn, user_id, project_id, asset_ids):
+    async def soft_delete(conn, user_id, project_id, asset_ids, *, matching_item_id):
+        assert matching_item_id == swapped["id"]
         seen["asset_ids"] = asset_ids
         return []
 

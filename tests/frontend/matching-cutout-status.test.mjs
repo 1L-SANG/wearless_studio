@@ -64,7 +64,8 @@ test('누끼 폴링 경로는 전체 치환(applyAnalysisReplacement)을 쓰지 
     source.indexOf('const hasPendingCutout'),
     source.indexOf('const commitSp ='),
   );
-  assert.match(effect, /applyMatchClothingRefresh\(actual\)/);
+  assert.match(effect, /if \(!canceled\) matchRefreshRef.current\(actual\)/);
+  assert.match(source, /matchRefreshRef.current = applyMatchClothingRefresh/);
   assert.doesNotMatch(effect, /applyAnalysisReplacement/);
   // 인터벌 클로저의 옛 analysis 로 덮어쓰지 않게 함수형 업데이트여야 한다
   assert.match(source, /onAnalysisReplace\(\(prev\) => mergeMatchClothing\(prev, nextAnalysis\)\)/);

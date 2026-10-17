@@ -24,6 +24,7 @@ import {
 } from '@/mock/customMatchDraftStore.js';
 import { Placeholder } from '@/mock/placeholders.js';
 import {
+  buildMockOutfitRecommendation,
   addCustomMatchToAnalysis,
   getComplementaryMatchingType,
   productColorFrom,
@@ -54,6 +55,9 @@ import { applySeededHookStyle } from '@/lib/api/shapes.js';
 import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
 import { isSupportedCutType } from '@/lib/storyboardTaxonomy.js';
 import { createDraftSlotMemory } from './draftSlotMemory.js';
+import { applyOutfitSet, complementaryOutfitSlot, mergeOutfitAnalysis, normalizeOutfitSelections, outfitSelectionsForTypeChange,
+  outfitSlotsFor, syncOutfitLegacySelection } from '@/lib/outfitSelections.js';
+import { mockQuery, outfitScenarioFromQuery, v18FixtureCandidates, v18FixtureRecommendation } from './outfitV18Fixtures.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 // 가짜 지연 배율. 테스트는 MOCK_API_LATENCY_SCALE=0 으로 돌린다 — 지연을 실제로 기다리면
@@ -87,7 +91,59 @@ const settleMockMannequinCharge = (job) => {
 let ewSim = null;
 const detailJobs = new Map();
 const mockDraftSlot = createDraftSlotMemory({ tokenFactory: () => uid('draft-token') });
-const shouldRefreshMatchClothing = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => patch[key] != null);
+const shouldRefreshMatchClothing = (patch) => ['clothingType', 'subCategory', 'customCategory', 'targetGenders', 'styleTags', 'colors', 'fit', 'materials'].some((key) => key in patch);
+const mockMatchCurrent = (analysis, current = analysis.matchClothing || []) => (
+  analysis.outfitSelections?.slots?.[complementaryOutfitSlot(analysis.clothingType)]?.origin === 'ai'
+    ? current.map((item) => ({ ...item, selected: false, selOrder: undefined })) : current
+);
+let outfitScenario;
+let outfitRun = null;
+let outfitRunSequence = 0;
+let customMatchScenario;
+const customMatchJobs = new Map();
+const currentOutfitScenario = () => outfitScenario === undefined ? outfitScenarioFromQuery() : outfitScenario;
+const currentCustomMatchScenario = () => {
+  if (customMatchScenario !== undefined) return customMatchScenario;
+  const delayMs = Number(mockQuery().get('customCleanMs'));
+  return [7000, 12000, 18000].includes(delayMs) ? { status: 'processing', settleTo: 'ready', delayMs } : null;
+};
+const buildScenarioRecommendation = (candidates, scenario, { status, contextKey, settled = false }) => (
+  scenario?.fixture === 'v18'
+    ? v18FixtureRecommendation(candidates, { status, contextKey, setCount: scenario.setCount, settled })
+    : buildMockOutfitRecommendation(candidates, { status, contextKey })
+);
+const mockOutfit = (analysis, { refreshAI = false, startRecommendation = false } = {}) => {
+  if (startRecommendation) {
+    const scenario = currentOutfitScenario();
+    outfitRun = { scenario, startedAt: Date.now(), status: scenario?.status || 'fallback', settled: false,
+      contextKey: scenario ? `mock-${analysis.clothingType}-${++outfitRunSequence}` : `mock-${analysis.clothingType}` };
+  }
+  const scenario = outfitRun?.scenario ?? currentOutfitScenario();
+  const fixtures = scenario?.fixture === 'v18' ? v18FixtureCandidates(analysis) : {};
+  const complementary = complementaryOutfitSlot(analysis.clothingType);
+  const candidates = Object.fromEntries(outfitSlotsFor(analysis.clothingType).map((slot) => [slot,
+    scenario?.unavailableRoles?.includes(slot) ? [] : scenario?.candidates?.[slot]
+      || fixtures[slot] || (slot === complementary ? analysis.matchClothing || [] : [])]));
+  const outfitSelections = normalizeOutfitSelections(analysis.outfitSelections, analysis.clothingType, analysis.matchClothing);
+  if (refreshAI && complementary && outfitSelections.slots[complementary].origin === 'ai') {
+    outfitSelections.slots[complementary].itemId = candidates[complementary].find((item) => item.selected)?.id || null;
+  }
+  const outfitRecommendation = buildScenarioRecommendation(candidates, scenario, {
+    status: outfitRun?.status || scenario?.status || 'fallback',
+    contextKey: outfitRun?.contextKey || `mock-${analysis.clothingType}`, settled: outfitRun?.settled,
+  });
+  // Only a new QA recommendation fills the initial required roles. Polling never applies sets.
+  if (startRecommendation && scenario?.fixture === 'v18') {
+    for (const slot of outfitSlotsFor(analysis.clothingType)) {
+      if (outfitSelections.slots[slot].origin === 'user'
+        || (Object.hasOwn(outfitSelections.optional, slot) && !outfitSelections.optional[slot])) continue;
+      outfitSelections.slots[slot].itemId = outfitRecommendation.sets[0]?.slots[slot] ?? null;
+    }
+    outfitSelections.setIndex = 0;
+  }
+  return syncOutfitLegacySelection({ ...analysis, outfitSelections, outfitRecommendation,
+    matchClothing: outfitRecommendation.candidates[complementary] || [] });
+};
 const mockSwatchSuggestions = (product) => {
   const palette = ['black', 'ivory', 'blue'];
   const labels = Object.fromEntries((DB.catalogs.swatchColors || []).map((swatch) => [swatch.id, swatch.label]));
@@ -228,11 +284,15 @@ export const api = {
   async createProject() {
     rememberProject();
     reseedDraft();
+    outfitRun = null;
+    customMatchJobs.clear();
     inflight.analyze = null; inflight.mannequins = null; inflight.detailPage = null;
     await wait(80); return clone(DB.project);
   },
   async resetInputDraft() {
     reseedDraft();
+    outfitRun = null;
+    customMatchJobs.clear();
     inflight.analyze = null; inflight.mannequins = null; inflight.detailPage = null;
     await wait(20);
   },
@@ -540,13 +600,23 @@ export const api = {
     }).then(() => {
       if (forceError) throw new Error('분석 서버에 일시적인 문제가 발생했어요.');
       const a = normalizeAnalysisFit({ mdComment: '', ...clone(DB.analysis) });
+      if (currentOutfitScenario()?.fixture === 'v18' && product?.clothingType
+        && product.clothingType !== a.clothingType) {
+        a.clothingType = product.clothingType;
+        a.targetGenders = normalizeTargetGendersForClothingType(a.clothingType, a.targetGenders);
+        a.matchClothing = recommendLegacyMatchClothing({ clothingType: a.clothingType,
+          targetGenders: a.targetGenders, styleTags: a.styleTags, current: a.matchClothing,
+          productColor: productColorFrom(product, a) });
+      }
       a.swatchSuggestions = mockSwatchSuggestions(product || DB.product);
       a.frontClosure = { version: 1, kind: (product || DB.product).clothingType === 'outer' ? 'zipper' : 'unknown',
         range: 'graded', secondary: null, evidenceSlots: ['Front'], note: null };
       a.matchClothing = normalizeMatchClothingSelection(a.matchClothing);
       // 실측은 AI가 추정하지 않는다 — 사용자가 직접 입력하도록 빈칸으로 둔다.
       a.measurements = createMeasurementFields(a.clothingType);
-      return a;
+      const recommended = mockOutfit(a, { startRecommendation: true });
+      DB.analysis = clone(recommended);
+      return recommended;
     }));
     if (onProgress) job.listeners.push(onProgress);
     return clone(await job.promise);
@@ -556,13 +626,76 @@ export const api = {
     const analysis = normalizeAnalysisFit({ mdComment: '', ...clone(DB.analysis) });
     return { ...analysis, matchClothing: normalizeMatchClothingSelection(analysis.matchClothing) };
   },
+  async restoreInputDraft(product, analysis, customMatch) {
+    if (product) Object.assign(DB.product, clone(product));
+    if (analysis) DB.analysis = normalizeAnalysisFit(clone(analysis));
+    const custom = DB.analysis.matchClothing?.find((item) => item.isCustom);
+    if (custom && customMatch?.uploads?.length) {
+      const ids = customMatch.uploads.map((upload) => {
+        const assetId = uid('asset');
+        customMatchUploads.set(assetId, { ...upload, purpose: 'custom_match_source', url: URL.createObjectURL(upload.blob) });
+        return assetId;
+      });
+      const url = customMatchUploads.get(ids[0]).url;
+      Object.assign(custom, { thumb: url, imageUrl: url, thumbnailUrl: url, sourceAssetIds: ids });
+      rememberCustomMatchDraft({ assetIds: ids });
+    }
+    return clone(DB.analysis);
+  },
+  setOutfitScenario(scenario) {
+    outfitScenario = scenario === undefined ? undefined : scenario ? clone(scenario) : null;
+    outfitRun = null;
+  },
+  async getOutfitRecommendation() {
+    const scenario = outfitRun?.scenario;
+    if (DB.analysis.outfitRecommendation?.status === 'pending' && scenario?.settleTo
+      && Date.now() - outfitRun.startedAt >= (scenario.delayMs ?? 2000)) {
+      outfitRun.status = scenario.settleTo;
+      outfitRun.settled = true;
+      const recommendation = buildScenarioRecommendation(DB.analysis.outfitRecommendation.candidates, scenario,
+        { status: outfitRun.status, contextKey: DB.analysis.outfitRecommendation.contextKey, settled: true });
+      DB.analysis = mergeOutfitAnalysis(DB.analysis, { outfitRecommendation: recommendation });
+    }
+    return clone(DB.analysis);
+  },
+  async recommendOutfit(_projectId, analysis) {
+    await wait(80);
+    const current = { ...DB.analysis, ...analysis };
+    const matchClothing = recommendLegacyMatchClothing({ clothingType: current.clothingType,
+      targetGenders: current.targetGenders, styleTags: current.styleTags,
+      productColor: productColorFrom(DB.product, current), current: mockMatchCurrent(current) });
+    DB.analysis = mockOutfit({ ...current, matchClothing }, { refreshAI: true, startRecommendation: true });
+    return clone(DB.analysis);
+  },
+  async getOutfitCandidates() {
+    const recommendation = mockOutfit(DB.analysis).outfitRecommendation;
+    return { version: 1, candidates: recommendation.candidates, roleStatus: recommendation.roleStatus };
+  },
+  async promoteOutfitRecommendation(_projectId, handoff, outfitSelections) {
+    await wait(40);
+    if (handoff?.contract) DB.analysis = mergeOutfitAnalysis(DB.analysis, handoff.contract);
+    if (outfitSelections) DB.analysis.outfitSelections = clone(outfitSelections);
+    DB.analysis = syncOutfitLegacySelection(DB.analysis);
+    return { promoted: true, ...clone(DB.analysis) };
+  },
   // 의류색 측정은 서버 전용이라 목에서는 측정할 것이 없다고 답한다(http 와 같은 shape).
   async measureGarmentColors(/* projectId */) {
     return { status: 'skipped', garmentColorEvidence: null };
   },
-  async saveAnalysis(_projectId, patch, { isCurrent } = {}) {
+  async saveAnalysis(_projectId, patch, { isCurrent, product, serverCatalog = false, preserveCatalog = false } = {}) {
     await wait(180);
     if (isCurrent && !await isCurrent()) return null;
+    const clothingTypeChanged = patch.clothingType != null && patch.clothingType !== DB.analysis.clothingType;
+    if (clothingTypeChanged && !patch.outfitSelections) {
+      patch = { ...patch, outfitSelections: outfitSelectionsForTypeChange(DB.analysis, patch.clothingType) };
+    }
+    // 공개 분석의 실제 입력. 취소 검사를 통과한 뒤에만 추천의 상품 정본을 바꾼다.
+    if (!_projectId && product) Object.assign(DB.product, clone(product));
+    if (Object.hasOwn(patch, 'outfitSetIndex')) {
+      const applied = applyOutfitSet(DB.analysis, patch.outfitSetIndex);
+      patch = { ...patch, ...applied };
+      delete patch.outfitSetIndex;
+    }
     // 매칭 후보 목록은 서버(추천)가 소유 — matchClothing patch 는 통째로 덮지 않고
     // 아래에서 "선택 상태만" id 단위로 머지한다. 의류 종류 전환 직후 도착하는 묵은
     // 클라 스냅샷이 갱신된 후보 목록을 되살리는 레이스 차단 (stale save 방어).
@@ -592,16 +725,23 @@ export const api = {
       );
     }
     if ('fitProfile' in rest) DB.project.fitProfile = clone(rest.fitProfile);
-    if (shouldRefreshMatchClothing(patch)) {
+    // 게스트 색상 편집도 Product에 먼저 반영해야 이번 추천과 다음 새로고침이 같은 색을 쓴다.
+    if (Array.isArray(patch.colors)) DB.product.colors = clone(patch.colors);
+    if (!serverCatalog && !preserveCatalog && shouldRefreshMatchClothing(patch)) {
       DB.analysis.matchClothing = recommendLegacyMatchClothing({
         clothingType: DB.analysis.clothingType,
         targetGenders: DB.analysis.targetGenders,
         styleTags: DB.analysis.styleTags,
         productColor: productColorFrom(DB.product, DB.analysis),
-        current: DB.analysis.matchClothing,
+        // 새 공개 분석은 데모 시드의 자동 선택을 승계하지 않는다. 내 옷은 유지하고,
+        // 이후 색상 편집(입력 product 옵션 없음)은 사용자의 기존 선택을 그대로 보존한다.
+        current: mockMatchCurrent(DB.analysis, !_projectId && product
+          ? (DB.analysis.matchClothing || []).filter((item) => item.isCustom)
+          : DB.analysis.matchClothing),
       });
     }
-    if (Array.isArray(matchPatch)) {
+    if (serverCatalog && Array.isArray(matchPatch)) DB.analysis.matchClothing = clone(matchPatch);
+    if (!serverCatalog && Array.isArray(matchPatch)) {
       if (matchPatch.length === 0) DB.analysis.matchClothing = [];
       const patchById = new Map(matchPatch.map((m) => [m.id, m]));
       const merged = (DB.analysis.matchClothing || []).map((m) => {
@@ -627,6 +767,17 @@ export const api = {
     const owned = {};
     ['clothingType', 'measurements', 'measurementsUnknown'].forEach((k) => { if (patch[k] != null) owned[k] = patch[k]; });
     if (Object.keys(owned).length) Object.assign(DB.product, clone(owned));
+    if (DB.analysis.outfitSelections && !serverCatalog) {
+      if (Array.isArray(matchPatch) && !patch.outfitSelections) {
+        const slot = complementaryOutfitSlot(DB.analysis.clothingType);
+        if (slot) DB.analysis.outfitSelections.slots[slot] = {
+          itemId: DB.analysis.matchClothing.find((item) => item.selected)?.id || null, origin: 'user',
+        };
+      }
+      DB.analysis = preserveCatalog ? syncOutfitLegacySelection(DB.analysis)
+        : mockOutfit(DB.analysis, { refreshAI: shouldRefreshMatchClothing(patch),
+          startRecommendation: shouldRefreshMatchClothing(patch) });
+    }
     const analysis = normalizeAnalysisFit(clone(DB.analysis));
     return { ...analysis, matchClothing: normalizeMatchClothingSelection(analysis.matchClothing) };
   },
@@ -646,6 +797,9 @@ export const api = {
     return normalizeMatchClothingSelection(
       clone((DB.analysis?.matchClothing?.length ? DB.analysis.matchClothing : DB.matchClothing)),
     );
+  },
+  setCustomMatchScenario(scenario) {
+    customMatchScenario = scenario === undefined ? undefined : scenario ? clone(scenario) : null;
   },
   async addCustomMatchItem(_projectId, { assetIds }, { signal } = {}) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -669,12 +823,14 @@ export const api = {
     const filenameType = filename.includes('bottom') ? 'bottom' : filename.includes('top') ? 'top' : expectedType;
     const clothingType = filenameType === expectedType ? filenameType : expectedType;
     const category = clothingType === 'top' ? '티셔츠' : '팬츠';
+    const scenario = currentCustomMatchScenario();
     const item = {
       id: uid('custom'),
       name: clothingType === 'top' ? '커스텀 상의' : '커스텀 하의',
       thumb: uploads[0].url,
       imageUrl: uploads[0].url,
       thumbnailUrl: uploads[0].url,
+      boardUrl: null,
       gender: 'unisex',
       clothingType,
       category,
@@ -687,7 +843,15 @@ export const api = {
       // draft 승격용(mock 전용) — 확정 시 이 업로드 blob 들을 실서버에 재업로드해
       // custom-match-item 으로 등록한다(draftSync). 서버 응답 shape 에는 없는 필드.
       sourceAssetIds: [...assetIds],
+      ...(scenario ? { cutoutStatus: scenario.status || 'processing' } : {}),
     };
+    if (scenario) {
+      // This is a status fixture, not real image processing. A caller may supply a
+      // fixture tidyUrl; otherwise retain the uploaded pixels at a distinct result URL.
+      const readyUrl = scenario.tidyUrl || `${uploads[0].url}#mock-cutout-ready`;
+      if (item.cutoutStatus === 'ready') Object.assign(item, { thumb: readyUrl, thumbnailUrl: readyUrl, imageUrl: readyUrl, boardUrl: scenario.tidyUrl || null });
+      customMatchJobs.set(item.id, { ...scenario, startedAt: Date.now(), readyUrl });
+    }
     const result = addCustomMatchToAnalysis(DB.analysis, item);
     DB.analysis.matchClothing = result.analysis.matchClothing;
     // 승격 키는 목록 밖 전용 저장소에 둔다 — 목록은 화이트리스트 재구성(toLegacyMatchItem)
@@ -697,8 +861,14 @@ export const api = {
   },
   async removeCustomMatchItem(/* projectId */) {
     await wait(80);
+    const custom = DB.analysis.matchClothing?.find((item) => item.isCustom);
+    if (custom) customMatchJobs.delete(custom.id);
     const analysis = removeCustomMatchFromAnalysis(DB.analysis);
     DB.analysis.matchClothing = analysis.matchClothing;
+    const slot = complementaryOutfitSlot(DB.analysis.clothingType);
+    if (custom && DB.analysis.outfitSelections?.slots?.[slot]?.itemId === custom.id) {
+      DB.analysis.outfitSelections.slots[slot] = { itemId: null, origin: 'user' };
+    }
     if (analysis.fitProfile) DB.analysis.fitProfile = analysis.fitProfile;
     forgetCustomMatchDraft();
     return { analysis: clone(DB.analysis) };
@@ -729,8 +899,16 @@ export const api = {
     });
     forgetCustomMatchDraft();
   },
-  async refreshMatchClothing(/* projectId */) {
-    DB.analysis.matchClothing = recommendLegacyMatchClothing({
+  async refreshMatchClothing(_projectId, { preserveCatalog = false } = {}) {
+    DB.analysis.matchClothing = (DB.analysis.matchClothing || []).map(item => {
+      const job = customMatchJobs.get(item.id);
+      if (!job || item.cutoutStatus !== 'processing' || !job.settleTo
+        || Date.now() - job.startedAt < (job.delayMs ?? 12000)) return item;
+      customMatchJobs.delete(item.id);
+      return { ...item, cutoutStatus: job.settleTo, ...(job.settleTo === 'ready'
+        ? { thumb: job.readyUrl, thumbnailUrl: job.readyUrl, imageUrl: job.readyUrl, boardUrl: job.tidyUrl || null } : { boardUrl: null }) };
+    });
+    if (!preserveCatalog) DB.analysis.matchClothing = recommendLegacyMatchClothing({
       clothingType: DB.analysis.clothingType,
       targetGenders: DB.analysis.targetGenders,
       styleTags: DB.analysis.styleTags,

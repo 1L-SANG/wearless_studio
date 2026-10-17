@@ -88,6 +88,7 @@ class CutPlan:
     horizon_background: Mapping[str, Any] | None = None
     signature_framing: SignatureFraming | None = None
     signature_background: Mapping[str, Any] | None = None
+    outfit_roles: tuple[str, ...] = ()
 
     def uses_styling_all_location_recomposition(self) -> bool:
         """Whether ``all`` is a styling inspiration, not an exact location plate."""
@@ -158,6 +159,8 @@ class CutPlan:
             out["signatureFraming"] = self.signature_framing
         if self.signature_background is not None:
             out["signatureBackground"] = dict(self.signature_background)
+        if self.outfit_roles:
+            out["outfitRoles"] = list(self.outfit_roles)
         return out
 
     def render_prompt_contract(self) -> str:
@@ -293,6 +296,7 @@ def compile_cut_plan(
     clothing_type: str,
     *,
     fit_profile: Mapping[str, Any] | None = None,
+    outfit_roles: tuple[str, ...] = (),
 ) -> CutPlan:
     """Compile a normalized cut spec into an unambiguous prompt contract.
 
@@ -306,6 +310,11 @@ def compile_cut_plan(
     signature_framing = _signature_framing(spec, normalized_clothing_type)
     signature_background = horizon_background.signature_decision(dict(spec))
     recipe_family, capture_mode, product_variant = _recipe(spec)
+    roles = tuple(outfit_roles or spec.get("_outfitRoles") or ())
+    if len(set(roles)) != len(roles) or any(role not in ("inner", "footwear", "bag", "accessory") for role in roles):
+        raise CutPlanError("invalid_outfit_roles")
+    if recipe_family == "product":
+        roles = ()
     reference_mode = _reference_mode(spec, recipe_family)
     reference_direction_compatible = spec.get("_referenceDirectionCompatible", True)
     if type(reference_direction_compatible) is not bool:
@@ -394,6 +403,7 @@ def compile_cut_plan(
     }
 
     return CutPlan(
+        outfit_roles=roles,
         clothing_type=normalized_clothing_type,
         recipe_family=recipe_family,
         capture_mode=capture_mode,

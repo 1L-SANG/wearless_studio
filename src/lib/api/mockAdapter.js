@@ -6,6 +6,7 @@ import { CREDIT_COSTS, editorImageCreditCost } from '@/lib/limits.js';
 import { classifyEditorAssetInfo, extractEditorAssetId } from '@/lib/editorAssetInfo.js';
 import { OUTER_CLOSURE_VALUES, outerClosureDisplayValue, outerClosureRange } from '@/lib/outerClosure.js';
 import { isSupportedCutType } from '@/lib/storyboardTaxonomy.js';
+import { mockQuery, MOCK_TIDY_KNIT } from '@/mock/outfitV18Fixtures.js';
 
 // Mirrors ADR-0019's server recipe fields. UI-only canvas and preview fields stay out.
 const RECIPE_FIELDS = [
@@ -19,6 +20,8 @@ const error = (code, message, status = 400) => Object.assign(new Error(message),
 const hasKey = (key) => typeof key === 'string' && !!key.trim();
 const recipeOf = (recipe) => recipe ? Object.fromEntries(RECIPE_FIELDS.map((key) => [key, clone(recipe[key] ?? null)])) : null;
 const states = new WeakMap();
+let productVisualsScenario;
+let productVisualsScenarioVersion = 0;
 function state() {
   if (!states.has(DB.project)) states.set(DB.project, { assets: new Map(), jobs: new Map(), fills: new Map(), details: new Map() });
   return states.get(DB.project);
@@ -174,10 +177,29 @@ function editPlan(projectId, body) {
 
 export const mockAdapter = {
   ...base,
+  setProductVisualsScenario(scenario) {
+    productVisualsScenario = scenario === undefined ? undefined : scenario ? clone(scenario) : null;
+    productVisualsScenarioVersion++;
+  },
   async getProductVisuals(_projectId) {
     const image = Placeholder.product('product-tidy-front', 768, 1024);
-    return { front: { tidyStatus: 'ready', tidyUrl: image, cutoutStatus: 'ready',
+    const queryStatus = mockQuery().get('tidyDemo');
+    const scenario = productVisualsScenario === undefined
+      ? ['processing', 'failed', 'off', 'ready'].includes(queryStatus)
+        ? { status: queryStatus, ...(queryStatus === 'processing' ? { settleTo: 'ready', delayMs: 7000 } : {}) }
+        : null
+      : productVisualsScenario;
+    if (!scenario) return { front: { tidyStatus: 'ready', tidyUrl: image, cutoutStatus: 'ready',
       cutoutUrl: image, width: 768, height: 1024 } };
+    const key = JSON.stringify([productVisualsScenarioVersion, scenario]);
+    if (state().productVisuals?.key !== key) state().productVisuals = { key, startedAt: Date.now() };
+    const status = scenario.status === 'processing' && scenario.settleTo
+      && Date.now() - state().productVisuals.startedAt >= (scenario.delayMs ?? 7000)
+      ? scenario.settleTo : scenario.status || 'ready';
+    const cutoutUrl = Object.hasOwn(scenario, 'cutoutUrl') ? scenario.cutoutUrl : image;
+    const tidyUrl = Object.hasOwn(scenario, 'tidyUrl') ? scenario.tidyUrl : MOCK_TIDY_KNIT;
+    return { front: { tidyStatus: status, tidyUrl: status === 'ready' ? tidyUrl : null,
+      cutoutStatus: cutoutUrl ? 'ready' : 'off', cutoutUrl, width: 768, height: 1024 } };
   },
   async analyzeProduct(projectId, options = {}) {
     const result = await base.analyzeProduct(projectId, options);

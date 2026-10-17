@@ -12,6 +12,7 @@ from io import BytesIO
 from PIL import Image, ImageOps
 
 from .. import repo
+from ..services import outfit, outfit_jobs
 from ..agents import (
     feature_extractor,
     input_consistency,
@@ -269,6 +270,23 @@ async def run_analyze_job(app, job: dict) -> None:
             persist_confirmed_evidence=True,
         )
 
+        previous_analysis, items = {}, []
+        try:
+            async with pool.connection() as conn:
+                previous_analysis = await repo.get_analysis(conn, project_id) or {}
+                items = await outfit.load_items(conn, user_id, project_id)
+        except Exception as exc:
+            log.warning("outfit catalog unavailable during analysis: %s", type(exc).__name__)
+        outfit_analysis = {**core["analysis_payload"]}
+        if previous_analysis.get("outfitSelections"):
+            outfit_analysis["outfitSelections"] = previous_analysis["outfitSelections"]
+        elif previous_analysis.get("matchClothing"):
+            outfit_analysis["matchClothing"] = previous_analysis["matchClothing"]
+        fields = outfit.prepare_recommendation(s, app.state.r2, {**product, "clothingType": core["clothing_type"]},
+                                         outfit_analysis, loaded, items, slots=slots)
+        core["analysis_payload"].update(fields)
+        core["result_data"].update(outfit.read_fields(fields))
+
         provider = core["provider"]
         feature_provider = core["feature_provider"]
         consistency = core["consistency"]
@@ -287,6 +305,23 @@ async def run_analyze_job(app, job: dict) -> None:
 
         # 4) 성공 종결 (원자·lease 펜스, 무과금)
         async with pool.connection() as conn:
+            latest_analysis, latest_items = previous_analysis, items
+            try:
+                latest_analysis = await repo.get_analysis_for_update(conn, project_id) or {}
+                latest_items = await outfit.load_items(conn, user_id, project_id)
+            except Exception as exc:
+                log.warning("outfit catalog refresh unavailable: %s", type(exc).__name__)
+            locks = latest_analysis.get("outfitSelections")
+            if locks:
+                selections = outfit.merge_selections(analysis_payload["outfitSelections"], locks, clothing_type)
+                updated = outfit.sync_legacy(analysis_payload, selections, latest_items, app.state.r2)
+                analysis_payload.update(updated)
+                result_data.update(updated)
+            # Refresh the key after merging a seller edit that arrived during core analysis.
+            fields = outfit.prepare_recommendation(s, app.state.r2, {**product, "clothingType": clothing_type},
+                analysis_payload, loaded, latest_items, slots=slots)
+            analysis_payload.update(fields)
+            result_data.update(outfit.read_fields(fields))
             out = await repo.finalize_analyze_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
                 project_id=project_id, clothing_type=clothing_type,
@@ -298,6 +333,9 @@ async def run_analyze_job(app, job: dict) -> None:
             await conn.commit()
         if out is None:  # lease 상실(복구·재클레임) → 결과 폐기
             log.warning("analyze job %s lost lease", job_id)
+        elif fields["outfitRecommendation"]["status"] == "pending":
+            outfit_jobs.start_project(app, user_id, project_id, {**product, "clothingType": clothing_type},
+                analysis_payload, loaded, latest_items, slots=slots)
     except VisionError as e:
         await _fail(str(e), {"error": "vision_failed"}, code="analysis_failed")
     except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로

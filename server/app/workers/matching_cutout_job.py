@@ -174,6 +174,26 @@ async def run_matching_cutout_job(app, job: dict) -> None:
                 purpose=matching_cutout.CUTOUT_PURPOSE, provider=cutout_provider)
         thumb_key = derived_key(user_id, project_id, thumb_asset_id, "jpg")
 
+        # 보드는 같은 정돈 호출의 투명본을 쓴다. 정돈이 없거나 실패하면 첫 SAM 누끼다.
+        # Gemini 정돈은 투명본이 없으므로 기존 썸네일 폴백을 유지한다.
+        try:
+            board_bytes = (flat.board if flat is not None else await asyncio.to_thread(
+                matching_cutout.encode_board_cutout, first_rgba))
+        except Exception:
+            log.warning("matching_cutout board encode failed item=%s", matching_item_id)
+            board_bytes = None
+        if board_bytes is not None:
+            board_asset_id = matching_cutout.derived_asset_id(
+                role="board", matching_item_id=matching_item_id,
+                source_hash=f"{grid_asset_id}:{thumb_asset_id}", provider=cutout_provider)
+            board_key = derived_key(user_id, project_id, board_asset_id, "png")
+            board_meta = {**thumb_meta,
+                "canonicalType": "custom_board_cutout",
+                "sourceAssetId": grid_asset_id,
+                "thumbnailAssetId": thumb_asset_id,
+                "sourceHash": (matching_flatlay.flatlay_fingerprint(
+                    fingerprint, provider=flatlay_provider) if flat is not None else fingerprint)}
+
         # 4) grid 재합성(마네킹 생성 입력). 기본은 누끼 합성본 그대로 — 배경 오염은
         #    이미 해결됐고, 원본 1~4장 재렌더는 비용만 곱한다. 원본 해상도 컷은 grid
         #    입력으로만 쓰고 저장하지 않는다 — 130px 카드에 2048px 무압축 PNG 를
@@ -188,6 +208,12 @@ async def run_matching_cutout_job(app, job: dict) -> None:
         grid_bytes = await asyncio.to_thread(garment_grid.compose_garment_grid, grid_inputs)
         await asyncio.to_thread(r2.put_bytes, thumb_key, thumb_bytes, "image/jpeg")
         await asyncio.to_thread(r2.put_bytes, grid_key, grid_bytes, "image/jpeg")
+        if board_bytes is not None:
+            try:
+                await asyncio.to_thread(r2.put_bytes, board_key, board_bytes, "image/png")
+            except Exception:
+                log.warning("matching_cutout board upload failed item=%s", matching_item_id)
+                board_bytes = None
 
         # 5) asset 행 생성 + 매칭 아이템 스왑 (원자적)
         if not origin_grid_asset_id:
@@ -239,6 +265,17 @@ async def run_matching_cutout_job(app, job: dict) -> None:
                 source="derived", bucket=s.r2_bucket, key=grid_key, mime="image/jpeg",
                 size=len(grid_bytes), original_filename=None,
                 metadata=grid_meta)
+            if board_bytes is not None:
+                try:
+                    # 위 thumb/grid INSERT가 연 트랜잭션 안의 savepoint다.
+                    # 표시 자산만 실패해도 기존 생성 입력 스왑은 유지한다.
+                    async with conn.transaction():
+                        await repo.create_asset(
+                            conn, asset_id=board_asset_id, user_id=user_id, project_id=project_id,
+                            source="derived", bucket=s.r2_bucket, key=board_key, mime="image/png",
+                            size=len(board_bytes), original_filename=None, metadata=board_meta)
+                except Exception:
+                    log.warning("matching_cutout board asset failed item=%s", matching_item_id)
             swapped = await repo.swap_matching_item_assets(
                 conn, matching_item_id=matching_item_id, project_id=project_id,
                 thumbnail_asset_id=thumb_asset_id, image_asset_id=grid_asset_id)
