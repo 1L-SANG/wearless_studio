@@ -582,13 +582,24 @@ test('사진 완료를 두 번 눌러도 라이브니스 세션은 한 번만 �
   }finally{if(resolve)resolve({sessionId:'session-1'});await harness.close();}
 });
 
-test('처리 중 일시적인 조회 오류 뒤에는 등록을 이어가요',async()=>{
-  const original=setTimeout;globalThis.setTimeout=(callback,ms,...args)=>original(callback,ms===2500?0:ms,...args);
+test('처리 중 일시적인 조회 오류 뒤에는 등록을 이어가요',async t=>{
   let calls=0;
   const harness=await modelComponentHarness({initialStates:['processing',photoRecord(),4],api:{getEnrollment:async()=>{if(++calls===1)throw new Error('temporary');return {...photoRecord(),status:'license_pending'};}}});
   let cleanup;
-  try{harness.render();cleanup=harness.runtime.effects[4]();await eventually(()=>harness.runtime.states[0]==='3');assert.equal(calls,2);}
-  finally{cleanup?.();globalThis.setTimeout=original;await harness.close();}
+  try{
+    // setImmediate 반복 횟수는 실제 타이머 실행을 보장하지 않으므로 조회 간격을 직접 진행해요.
+    t.mock.timers.enable({apis:['setTimeout']});
+    harness.render();cleanup=harness.runtime.effects[4]();
+    await flush();
+    assert.equal(calls,1);
+    assert.equal(harness.runtime.states[0],'processing');
+    t.mock.timers.tick(2499);await flush();
+    assert.equal(calls,1,'조회 간격 전에는 다시 요청하지 않아요');
+    t.mock.timers.tick(1);await flush();
+    assert.equal(calls,2);
+    assert.equal(harness.runtime.states[0],'3');
+  }
+  finally{cleanup?.();t.mock.timers.reset();await harness.close();}
 });
 
 for (const action of ['deadline','unmount']) {
