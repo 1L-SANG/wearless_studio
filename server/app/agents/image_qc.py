@@ -6,8 +6,15 @@ correctionPrompt(재생성 시 보정 지시)를 반환한다(ai_agent_modules �
 단일 이미지 판정(verdict)과 장소 일치 판정(scene_verdict)을 제공한다.
 """
 
+import asyncio
 import hashlib
+import logging
 import os
+import time
+from io import BytesIO
+
+import httpx
+from PIL import Image, ImageOps
 
 from ..config import Settings
 from .gemini_image import InlineImage
@@ -15,7 +22,9 @@ from .prompts import clean_text
 from .prompts import build_mirrored_source_block
 from .mannequin_fit_edit import custom_match_grid_context
 from .vision_llm import analyze_with_fallback, qc_system_prompt
-from . import mannequin_quality
+from . import mannequin_quality, vision_llm
+
+logger = logging.getLogger(__name__)
 
 VERDICTS = ("pass", "retry")
 
@@ -335,6 +344,18 @@ def edit_accepted(result: dict | None, *, matching_blocks: bool = True) -> bool:
     return True
 
 
+def _shrink_claude_image(image: InlineImage) -> InlineImage:
+    with Image.open(BytesIO(image.data)) as im:
+        orientation = im.getexif().get(274, 1)
+        im = ImageOps.exif_transpose(im)
+        if max(im.size) <= 1536 and orientation == 1:
+            return image
+        im.thumbnail((1536, 1536))
+        buf = BytesIO()
+        im.convert("RGB").save(buf, format="JPEG", quality=85)
+    return InlineImage("image/jpeg", buf.getvalue())
+
+
 async def verdict(
     settings: Settings, product_images: list[InlineImage], generated_image: InlineImage,
     *, scored: bool = False, fit_profile: dict | None = None,
@@ -375,11 +396,33 @@ async def verdict(
         authority_context.update(declaredFitOwner="fitProfile", declaredFitCategory=fit_profile["category"])
     if scored and matching and _matching_top_length_observable(fit_profile):
         authority_context.update(matchingFitOwner="fitProfile", matchingFitCategory="top")
-    raw, _provider = await analyze_with_fallback(
-        settings, prompt, images,
-        qc_schema(scored=scored, matching=matching, paired=paired, visibility_required=visibility_required),
-        timeout_seconds=settings.background_ai_timeout_seconds,
-        system_prompt=qc_system_prompt("image", authority_context), **complete_kwargs)
+    schema = qc_schema(scored=scored, matching=matching, paired=paired, visibility_required=visibility_required)
+    system_prompt = qc_system_prompt("image", authority_context)
+    raw = None
+    if settings.model_image_qc.startswith("claude-"):
+        started = time.monotonic()
+        md = {}
+        try:
+            claude_images = [await vision_llm.run_cpu_bound(_shrink_claude_image, image) for image in images]
+            raw = await asyncio.wait_for(vision_llm._call_claude(
+                settings, settings.model_image_qc, prompt, claude_images, schema,
+                settings.image_qc_timeout_seconds, effort=settings.image_qc_claude_effort,
+                metadata=md, system_prompt=system_prompt), timeout=settings.image_qc_timeout_seconds)
+            usage = md.get("usage") or {}
+            logger.info(
+                "image QC provider=claude requested_model=%s returned_model=%s effort=%s "
+                "elapsed_seconds=%.2f input_tokens=%s output_tokens=%s",
+                settings.model_image_qc, md.get("returned_model"), settings.image_qc_claude_effort,
+                time.monotonic() - started, usage.get("input_tokens"), usage.get("output_tokens"))
+        except (vision_llm.VisionError, httpx.HTTPError, asyncio.TimeoutError, ValueError, OSError) as exc:
+            cause = ("timeout" if isinstance(exc, (asyncio.TimeoutError, httpx.TimeoutException))
+                     else "invalid_input" if isinstance(exc, (ValueError, OSError)) else "provider_error")
+            logger.warning("image QC error=%s unknown_cause=%s elapsed_seconds=%.2f",
+                           type(exc).__name__, getattr(exc, "unknown_cause", cause), time.monotonic() - started)
+    if raw is None:
+        raw, _provider = await analyze_with_fallback(
+            settings, prompt, images, schema, timeout_seconds=settings.background_ai_timeout_seconds,
+            system_prompt=system_prompt, **complete_kwargs)
     result = validate(raw, scored=scored, matching=matching, paired=paired,
                       visibility_required=visibility_required,
                       main_product_category=_main_category(main_product_category, fit_profile))
