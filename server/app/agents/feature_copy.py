@@ -229,7 +229,10 @@ def validate(raw: dict, points: list) -> dict:
     return out
 
 
-async def generate(settings: Settings, points: list, product: dict, analysis: dict) -> list:
+async def generate(
+    settings: Settings, points: list, product: dict, analysis: dict,
+    *, timeout_seconds: float | None = None,
+) -> list:
     """강조특징 → [{point, desc}]. 사전 히트는 즉시, 미스만 LLM 1콜.
 
     카피는 게이트가 아니다 — LLM 실패는 삼키고 사전 히트만 돌려준다(호출측이 desc 빈칸 처리).
@@ -244,7 +247,7 @@ async def generate(settings: Settings, points: list, product: dict, analysis: di
         try:
             raw, _provider = await complete_json(
                 settings, build_prompt(misses, product, analysis), copy_schema(),
-                timeout_seconds=settings.background_ai_timeout_seconds)
+                timeout_seconds=timeout_seconds)
             hits.update(validate(raw, misses))
         except Exception as e:  # VisionError 포함 — 카피는 게이트 아님
             log.warning("feature copy generation failed: %r", e)

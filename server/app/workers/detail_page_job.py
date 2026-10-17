@@ -2549,7 +2549,8 @@ async def run_detail_page_job(app, job: dict) -> None:
         # 포인트 출처는 프론트(Editor.jsx buildInfoCtx)와 같은 우선순위다.
         points = analysis.get("sellingPoints") or analysis.get("aiSuggestedPoints") or []
         try:
-            items = await feature_copy.generate(s, points, product, analysis)
+            items = await feature_copy.generate(
+                s, points, product, analysis, timeout_seconds=s.background_ai_timeout_seconds)
         except Exception as e:  # 카피는 게이트 아님 — 상세페이지 생성을 막지 않는다
             log.warning("feature copy failed for job %s: %r", job_id, e)
             items = []

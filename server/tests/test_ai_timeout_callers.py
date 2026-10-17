@@ -1,4 +1,5 @@
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -9,7 +10,8 @@ from app.agents import (
     mannequin_untuck, page_output_qc, points_merge, product_analyst, vision_llm,
 )
 from app.agents.gemini_image import InlineImage
-from conftest import make_settings
+from app.workers import detail_page_job
+from conftest import fake_worker_app, make_settings, worker_job
 from test_copywriter import _blocks
 from test_cut_output_qc import _plan
 from test_page_output_qc import plan
@@ -52,7 +54,7 @@ def _invoke(name, s, image):
     ("fit_qc", "background"), ("base_qc", "background"),
     ("series_qc", "background"), ("untuck", "background"),
     ("cut_qc", "background"), ("page_qc", "background"),
-    ("copywriter", "background"), ("copy_qc", "background"), ("feature_copy", "background"),
+    ("copywriter", "background"), ("copy_qc", "background"), ("feature_copy", 19),
     ("product_analyst", 19), ("wash_care", 19), ("feature_extractor", 19),
     ("input_consistency", 19), ("points_merge", 8), ("garment_color_observer", 19),
 ])
@@ -74,3 +76,29 @@ def test_provider_timeout_follows_caller_policy(monkeypatch, name, expected, bac
     with pytest.raises(CapturedCall):
         asyncio.run(_invoke(name, settings, image))
     assert seen == [background_timeout if expected == "background" else expected]
+
+
+@pytest.mark.parametrize("background_timeout", [120, 137])
+def test_detail_page_feature_copy_passes_background_timeout(monkeypatch, background_timeout):
+    seen = []
+
+    async def capture(settings, prompt, schema, *, timeout_seconds=None):
+        seen.append(timeout_seconds)
+        raise CapturedCall
+
+    for name, value in (
+        ("get_project", {"copywriting": False}),
+        ("get_storyboard", []),
+        ("get_product", {"name": "셔츠"}),
+        ("get_analysis", {"sellingPoints": ["빈티지한 워싱감"]}),
+    ):
+        monkeypatch.setattr(detail_page_job.repo, name, AsyncMock(return_value=value))
+    monkeypatch.setattr(detail_page_job, "_emit", AsyncMock())
+    monkeypatch.setattr(feature_copy, "complete_json", capture)
+    app = fake_worker_app(make_settings(
+        analysis_timeout_seconds=19, background_ai_timeout_seconds=background_timeout))
+
+    with pytest.raises(CapturedCall):
+        asyncio.run(detail_page_job.run_detail_page_job(app, worker_job()))
+
+    assert seen == [background_timeout]

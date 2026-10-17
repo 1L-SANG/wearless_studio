@@ -3015,8 +3015,9 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
     async def fake_review(settings, items, confirmed):
         raise RuntimeError("qc down")  # 검수 실패 → 원문 유지 (except 커버)
 
-    async def fake_feature(settings, points, product_row, analysis_row):
+    async def fake_feature(settings, points, product_row, analysis_row, *, timeout_seconds=None):
         captured["feature_points"] = points
+        captured["feature_timeout"] = timeout_seconds
         return []
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
@@ -3059,6 +3060,7 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
     assert captured["cut_spec"]["cutType"] == "product"
     assert captured["cut_spec"]["shot"] == "detail"
     assert captured["feature_points"] == ["촉감"]
+    assert captured["feature_timeout"] == 120
     assert captured["storyboard"][0]["sectionRole"] == "product"
     assert captured["storyboard"][0]["cutType"] == "product"
     assert captured["storyboard"][0]["shot"] == "detail"
@@ -3176,8 +3178,8 @@ def test_striped_detail_page_never_publishes_uploaded_detail_photo(monkeypatch):
         captured["detail_calls"] += 1
         return dpj.InlineImage("image/png", b"POLISHED-DETAIL"), {"passed": True}
 
-    async def feature(settings, points, product_row, analysis_row):
-        captured["feature_calls"].append((points, product_row.get("name")))
+    async def feature(settings, points, product_row, analysis_row, *, timeout_seconds=None):
+        captured["feature_calls"].append((points, product_row.get("name"), timeout_seconds))
         return []
 
     def assemble(storyboard_rows, cut_results, *args, **kwargs):
@@ -3213,7 +3215,7 @@ def test_striped_detail_page_never_publishes_uploaded_detail_photo(monkeypatch):
     assert captured["cut_results"][0]["imageUrl"] != "/v1/assets/source-detail/file"
     assert len(captured["finalize"]["cut_assets"]) == 1
     assert captured["finalize"]["charge"] == 95
-    assert captured["feature_calls"] == [([], "잔스트라이프 셔츠")]
+    assert captured["feature_calls"] == [([], "잔스트라이프 셔츠", 120)]
     assert all(payload.get("status") != "cut_passthrough" for _, payload in captured["events"])
 
 

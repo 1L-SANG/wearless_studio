@@ -150,7 +150,7 @@ def test_generate_sends_only_dictionary_misses_to_the_model(monkeypatch):
     seen = []
 
     async def spy(_settings, prompt, _schema, *, timeout_seconds=None):
-        assert timeout_seconds == 120
+        assert timeout_seconds is None
         seen.append(prompt)
         return ({"items": [{"point": "빈티지한 워싱감", "desc": "물 빠진 듯한 색이 자연스럽게 번집니다."}]}, "spy")
 
@@ -164,6 +164,20 @@ def test_generate_sends_only_dictionary_misses_to_the_model(monkeypatch):
         {"point": "하이웨이스트", "desc": "하이웨이스트 디테일을 확인할 수 있습니다."},
         {"point": "빈티지한 워싱감", "desc": "물 빠진 듯한 색이 자연스럽게 번집니다."},
     ]
+
+
+@pytest.mark.parametrize("timeout", [None, 120, 7.5, 0])
+def test_generate_forwards_optional_timeout(monkeypatch, timeout):
+    seen = []
+
+    async def spy(_settings, _prompt, _schema, *, timeout_seconds=None):
+        seen.append(timeout_seconds)
+        return ({"items": []}, "spy")
+
+    monkeypatch.setattr(fc, "complete_json", spy)
+    run(fc.generate(make_settings(), ["빈티지한 워싱감"], {}, {}, timeout_seconds=timeout))
+
+    assert seen == [timeout]
 
 
 def test_validate_keeps_matching_points_only():
