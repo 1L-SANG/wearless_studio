@@ -34,10 +34,14 @@ ALERT_DEBOUNCE_SECONDS = 600.0
 
 async def _sam_demand(repo, conn, settings=None):
     kinds = sam_autoscale.sam_kinds(settings)
+    snapshot = await repo.sam_demand_snapshot(conn, kinds)
     if not kinds:
+        # Mixed deployments may still have SAM2 jobs; uploads and old completions
+        # only warrant idle grace while a current provider can create SAM2 work.
         return sam_autoscale.DemandSnapshot(
-            active_sam_jobs=0, last_sam_finished_at=None, last_upload_at=None)
-    return await repo.sam_demand_snapshot(conn, kinds)
+            active_sam_jobs=snapshot.active_sam_jobs,
+            last_sam_finished_at=None, last_upload_at=None)
+    return snapshot
 
 
 class SamAutoscaler:

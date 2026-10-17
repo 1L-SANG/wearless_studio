@@ -2142,20 +2142,32 @@ async def sam_demand_snapshot(conn: AsyncConnection, kinds: tuple[str, ...]):
     업로드는 `source='upload'` 만 센다 — 파생 asset(누끼·마스크·생성물)은 SAM 수요가 아니다.
     정돈 필수 pending 잡은 OFF 롤백 뒤에도 남는다. 실행을 맡기 전까지 수요에서 빼되,
     running 은 모든 프로세스에서 센다. 로컬 플래그로 다른 ON 워커의 SAM을 끄면 안 된다.
+    톤 잡은 생산자가 묶은 provider를 따른다. 표시 없는 과거 잡은 SAM2이며,
+    다른 종류의 running 잡은 현재 lease에 묶인 fal 실행만 제외한다.
+    표시가 없거나 옛 lease의 표시면 과거 SAM2 작업일 수 있어 보호한다.
     `jobs_sam_retry_idx`(kind, finished_at) 와 `assets_upload_created_idx` 가 받친다.
     """
-    from app.services.sam_autoscale import DemandSnapshot
+    from app.services.sam_autoscale import DemandSnapshot, SAM_KINDS
     async with conn.cursor() as cur:
         await cur.execute(
             "select "
             "  (select count(*) from jobs where kind = any(%s) "
             "     and status in ('pending', 'running') "
+            "     and case when kind = 'editor_garment_mask' "
+            "       then coalesce(payload->>'toneMaskProvider', 'sam2') <> 'fal' "
+            "       when status = 'running' then not coalesce( "
+            "         metadata #>> '{samExecution,provider}' = 'fal' "
+            "         and metadata #>> '{samExecution,leaseToken}' = locked_by, false) "
+            "       else kind = any(%s) end "
             "     and not (status = 'pending' and kind = 'sam_preprocess' "
             "       and coalesce(payload->'productTidyRequired', 'false'::jsonb) = 'true'::jsonb)) as active_sam_jobs, "
             "  (select max(finished_at) from jobs where kind = any(%s) "
-            "     and finished_at is not null) as last_sam_finished_at, "
+            "     and finished_at is not null "
+            "     and case when kind = 'editor_garment_mask' "
+            "       then coalesce(payload->>'toneMaskProvider', 'sam2') <> 'fal' "
+            "       else kind = any(%s) end) as last_sam_finished_at, "
             "  (select max(created_at) from assets where source = 'upload') as last_upload_at",
-            (list(kinds), list(kinds)),
+            (list(SAM_KINDS), list(kinds), list(SAM_KINDS), list(kinds)),
         )
         row = await cur.fetchone() or {}
     return DemandSnapshot(
@@ -2658,13 +2670,21 @@ async def set_pending_job_pricing(
 
 async def claim_next_job(
     conn: AsyncConnection, kinds: tuple[str, ...], worker_id: str, *, product_tidy_capable: bool = False,
+    sam_providers: dict[str, str] | None = None,
 ) -> dict | None:
     """pending job 1건을 FOR UPDATE SKIP LOCKED로 점유 → running + lease (§5).
 
     locked_by에 **클레임마다 고유한 lease 토큰**(worker_id:uuid)을 넣는다 — 단순 worker_id면
     복구 후 같은 프로세스의 재클레임과 옛 stale 실행을 구분 못 한다. 워커는 반환된 row의
-    locked_by(=토큰)로 종결을 펜싱(lock_owned_running_job)해야 한다."""
+    locked_by(=토큰)로 종결을 펜싱(lock_owned_running_job)해야 한다.
+
+    캐노니컬·매칭 누끼는 실행 프로세스가 provider를 고른다. 같은 원자적 claim 안에서
+    provider와 이번 lease를 함께 기록해 autoscaler가 실제 fal 실행만 제외하게 한다.
+    과거 호출자는 표시를 남기지 않으며, 옛 표시는 새 lease와 맞지 않아 보호된다.
+    """
     lease_token = f"{worker_id}:{uuid.uuid4()}"
+    providers = {kind: provider for kind, provider in (sam_providers or {}).items()
+                 if kind in ("sam_preprocess", "matching_cutout") and provider in ("sam2", "fal")}
     await lock_facemarket_writer_boundary(conn)
     async with conn.cursor() as cur:
         await cur.execute(
@@ -2729,7 +2749,12 @@ async def claim_next_job(
               for update skip locked limit 1
             )
             update jobs j set status = 'running', locked_by = %s, locked_at = now(),
-              started_at = coalesce(j.started_at, now()), progress = greatest(j.progress, 5)
+              started_at = coalesce(j.started_at, now()), progress = greatest(j.progress, 5),
+              metadata = case when (%s::jsonb ->> j.kind) in ('sam2', 'fal')
+                then coalesce(j.metadata, '{{}}'::jsonb) || jsonb_build_object(
+                  'samExecution', jsonb_build_object('provider', %s::jsonb ->> j.kind,
+                                                   'leaseToken', %s::text))
+                else j.metadata end
             from next_job where j.id = next_job.nid
             returning {_JOB_COLS}, locked_by as lease_token
             """,
@@ -2739,6 +2764,9 @@ async def claim_next_job(
                 list(FACEMARKET_CUTOVER_JOB_KINDS),
                 list(FACEMARKET_CLOSED_BATCH_STATUSES),
                 list(FACEMARKET_CUTOVER_JOB_KINDS),
+                lease_token,
+                Json(providers),
+                Json(providers),
                 lease_token,
             ),
         )

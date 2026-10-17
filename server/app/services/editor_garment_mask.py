@@ -48,6 +48,33 @@ def algorithm_version(provider: str | None = None) -> str:
         provider = getattr(load_settings(), "tone_mask_provider", "sam2")
     return FAL_ALGORITHM_VERSION if provider == "fal" else ALGORITHM_VERSION
 
+
+def job_provider(job: dict) -> str:
+    """The producer owns provider identity; unmarked claimed jobs mean legacy SAM2."""
+    provider = (job.get("payload") or {}).get("toneMaskProvider")
+    if provider in ("sam2", "fal"):
+        return provider
+    return "sam2"
+
+
+def job_provider_mismatch(job: dict, *, intended: str) -> bool:
+    """Old workers could complete a fal key using SAM2, even with a final verdict."""
+    if job.get("status") == "cancelled":
+        return False
+    result = job.get("result") or {}
+    actual = result.get("toneMaskProvider")
+    if actual not in ("sam2", "fal"):
+        version = str(result.get("algorithmVersion") or "")
+        if version.startswith("editor-worn-garment-sam2-"):
+            actual = "sam2"
+        elif version.startswith("editor-worn-garment-fal-"):
+            actual = "fal"
+    if actual in ("sam2", "fal"):
+        return actual != intended
+    # Before provider stamps a failed fal-key job cannot prove fal ever ran.
+    return intended == "fal"
+
+
 STATUS_READY = "ready"
 STATUS_PROCESSING = "processing"
 STATUS_FAILED = "failed"
@@ -160,8 +187,10 @@ async def current_mask_for_cut(conn, *, user_id: str, project_id: str, cut_id: s
     직접 부르면 그 경로로 검증되지 않은 마스크가 새고, 배포 순간 에디터를 열어 둔 셀러가
     바로 그 경로를 탄다(2026-08-17 리뷰).
     """
-    mask = await find_for_cut(conn, project_id=project_id, cut_id=cut_id)
     side = await matching_side_for_project(conn, user_id=user_id, project_id=project_id)
+    mask = await find_for_cut(conn, project_id=project_id, cut_id=cut_id,
+                              preferred_algorithm=algorithm_version(), product_key=product_key,
+                              matching_side=side)
     if mask is not None and needs_match_guard(mask.get("metadata") or {}, matching_side=side):
         # 유일한 **하드** 무효화다. 코디 의류 위일 수 있는 마스크는 내주는 것 자체가 해롭다.
         return None, side, None
@@ -359,9 +388,19 @@ async def list_for_project(conn, *, project_id: str) -> list[dict]:
 
 
 async def find_for_cut(conn, *, project_id: str, cut_id: str,
-                       source_hash: str | None = None) -> dict | None:
-    """The current mask row for one cut, or None. Stale rows are skipped, never returned."""
+                       source_hash: str | None = None, preferred_algorithm: str | None = None,
+                       product_key: str | None = None,
+                       matching_side: str | None = None) -> dict | None:
+    """Prefer the current algorithm and reference, then keep the newest usable fallback."""
+    best, best_rank = None, (-1, -1)
     for row in await list_for_project(conn, project_id=project_id):
-        if is_current(row.get("metadata") or {}, cut_id=cut_id, source_hash=source_hash):
-            return row
-    return None
+        meta = row.get("metadata") or {}
+        if not is_current(meta, cut_id=cut_id, source_hash=source_hash):
+            continue
+        if needs_match_guard(meta, matching_side=matching_side):
+            continue
+        rank = (int(not preferred_algorithm or meta.get("algorithmVersion") == preferred_algorithm),
+                int(not product_key or meta.get("productKey") == product_key))
+        if rank > best_rank:
+            best, best_rank = row, rank
+    return best

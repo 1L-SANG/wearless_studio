@@ -37,7 +37,7 @@ def select_base_gender(
 # 무지·단색은 재현할 고주파가 없어 해당 없음(그래서 잘 나온다).
 _FINE_PATTERN_TOKENS = (
     "스트라이프", "줄무늬", "핀스트라이프", "체크", "깅엄", "타탄", "글렌체크", "하운드투스",
-    "헤링본", "도트", "물방울", "잔무늬", "패턴", "격자",
+    "헤링본", "도트", "물방울", "잔무늬", "패턴", "격자", "바둑판",
     "stripe", "pinstripe", "check", "gingham", "tartan", "plaid", "houndstooth",
     "herringbone", "polka", "dot", "windowpane",
 )

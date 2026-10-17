@@ -75,11 +75,13 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
     s = load_settings()
     payload = job.get("payload") or {}
     cut_id = payload.get("cutId")
+    provider = editor_garment_mask.job_provider(job)
 
     async def finish(status: str, detail: dict) -> None:
         async with pool.connection() as conn:
             await repo.finalize_uncharged_job(
-                conn, job_id=job_id, lease_token=lease_token, status=status, result=detail)
+                conn, job_id=job_id, lease_token=lease_token, status=status,
+                result={**detail, "toneMaskProvider": provider})
             await conn.commit()
         log.info("editor_garment_mask job=%s project=%s cut=%s %s %s",
                  job_id, project_id, cut_id, status, detail.get("state"))
@@ -92,7 +94,6 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
     if getattr(s, "mannequin_tone_editor", "off") != "on":
         await skip(SKIP_DISABLED)
         return
-    provider = getattr(s, "tone_mask_provider", "sam2")
     if not (fal_api.configured(s) if provider == "fal" else sam_client.configured(s)):
         await skip(SKIP_SAM_UNCONFIGURED)
         return

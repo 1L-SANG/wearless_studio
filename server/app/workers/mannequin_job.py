@@ -52,7 +52,7 @@ from ..agents.prompts import (
 )
 from ..agents.product_reference import ProductReference
 from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
-from ..services import canonical_reference, editor_garment_mask, mannequin_display, qc, sam_fallback
+from ..services import canonical_reference, editor_garment_mask, mannequin_display, product_tidy, qc, sam_fallback
 from ..services import generation_input_strategy as gis
 from ._common import emit_job_event as _emit  # 공용 헬퍼 (analyze_job과 공유)
 
@@ -159,6 +159,68 @@ _SLOT_LABEL = {
 _CANONICAL_SLOTS = (canonical_reference.CANONICAL_FRONT, canonical_reference.CANONICAL_BACK)
 
 
+_PATTERN_FLAT_LABEL = (
+    "FLAT REFERENCE: a clean flat-lay of the same sold garment; use it for the overall shape, "
+    "proportions and length; take fabric texture, small details, logos and color from the product photos."
+)
+
+
+def _tidy_on_white(data: bytes) -> InlineImage:
+    with Image.open(BytesIO(data)) as image:
+        rgba = image.convert("RGBA")
+        white = Image.new("RGB", rgba.size, "white")
+        white.paste(rgba, mask=rgba.getchannel("A"))
+        out = BytesIO()
+        white.save(out, "PNG")
+    return InlineImage("image/png", out.getvalue())
+
+
+async def _load_pattern_flat_reference(
+    app, *, job, product, analysis, product_refs, generation_path, is_adjustment=False,
+):
+    """Snapshot once before generation; readiness changes cannot affect QC retries."""
+    def skipped(reason):
+        return None, {"status": "skipped", "reason": reason}
+
+    if getattr(app.state.settings, "mannequin_pattern_flat_reference", "off") != "on":
+        return skipped("switch_off")
+    if (generation_path == "edit" or is_adjustment
+            or (job.get("payload") or {}).get("mode") == "regenerate"
+            or job.get("kind") in {"mannequin_adjust", "editor_image"}):
+        return skipped("edit_path")
+    if not mannequin.has_fine_pattern(product, analysis):
+        return skipped("not_patterned")
+    front = next((ref for ref in (product_refs or ()) if ref.slot == "Front"), None)
+    if front is None:
+        return skipped("tidy_not_ready")
+    try:
+        async with app.state.pool.connection() as conn:
+            row = await product_tidy.ready_front_asset(
+                conn, user_id=job["user_id"], project_id=job["project_id"],
+                source_id=front.asset_id, source_hash=hashlib.sha256(front.image.data).hexdigest())
+        if row is not None:
+            data = await asyncio.to_thread(app.state.r2.get_bytes, row["r2_key"])
+            image = await asyncio.to_thread(_tidy_on_white, data)
+            return image, {"status": "used", "assetId": row["id"]}
+    except Exception:  # Optional reference failures must not block the original request.
+        log.warning("pattern flat reference unavailable for job %s", job["id"], exc_info=True)
+    return skipped("tidy_not_ready")
+
+
+def _insert_pattern_references(images, image_manifest, extra_images, extra_labels):
+    """Keep matching last and flat immediately before it, even with knit/style refs."""
+    entries = [(image, line.split(". ", 1)[1])
+               for image, line in zip(images, image_manifest.splitlines(), strict=True)]
+    matching = [entry for entry in entries if entry[1].startswith("matching ")]
+    entries = [entry for entry in entries if not entry[1].startswith("matching ")]
+    # A knit retry inserts its new evidence before the already frozen flat image.
+    index = next((i for i, (_, label) in enumerate(entries) if label == _PATTERN_FLAT_LABEL), len(entries))
+    entries[index:index] = list(zip(extra_images, extra_labels, strict=True))
+    entries.extend(matching)
+    return ([image for image, _ in entries],
+            "\n".join(f"{i}. {label}" for i, (_, label) in enumerate(entries, 1)))
+
+
 def _canonical_sources(prod_assets: list[dict]) -> dict[str, dict]:
     """캐노니컬 조회에 쓸 {view: {"id", "hash"}} — 지금 이 상품의 원본 사진이 무엇인지.
 
@@ -234,6 +296,10 @@ def _maybe_augment_with_canonical(
         return None, {**verdict, "samFallbackTriggered": False, "augment": False,
                       "samFallbackReason": "canonical_missing"}
     manifest = "\n".join([image_manifest, *lines]) if image_manifest else "\n".join(lines)
+    augmented = (*images, *extra)
+    if _PATTERN_FLAT_LABEL in image_manifest:
+        augmented, manifest = _insert_pattern_references(
+            images, image_manifest, extra, [line.split(". ", 1)[1] for line in lines])
     ctx = mannequin.prompt_context(**{**ctx_kwargs, "image_manifest": manifest})
     prompt = render_mannequin_prompt(
         template, ctx, product, analysis,
@@ -242,7 +308,7 @@ def _maybe_augment_with_canonical(
     )
     if prompt_suffix:
         prompt = f"{prompt}\n\n{prompt_suffix}"
-    return ((*images, *extra), prompt), verdict
+    return (tuple(augmented), prompt), verdict
 
 
 def _build_manifest(
@@ -1868,6 +1934,13 @@ async def _run_candidate(
     photo_structure = None
     generation_refs = product_refs
     generation_prods = prod_imgs
+    pattern_flat, pattern_flat_verdict = await _load_pattern_flat_reference(
+        app, job=job, product=product, analysis=analysis, product_refs=product_refs,
+        generation_path=generation_path,
+        is_adjustment=bool(adjust_directives or adjusted_axes or preservation_before_image))
+    await _emit(pool, job_id, "step", {
+        "status": "pattern_flat_reference", "candidate": candidate,
+        "patternFlatReference": pattern_flat_verdict})
     if generation_path != "edit":
         await _cancel_checkpoint(cancel_check)
         try:
@@ -1904,6 +1977,9 @@ async def _run_candidate(
         generation_path = "fresh"
         # STYLE REFERENCE(있으면)는 상품·매칭 뒤 맨 끝에 붙는다 — 매니페스트 번호 순서와 일치.
         images = [base_img, *generation_prods] + ([match_img] if match_img else []) + list(ref_imgs)
+        if pattern_flat is not None:
+            images, image_manifest = _insert_pattern_references(
+                images, image_manifest, [pattern_flat], [_PATTERN_FLAT_LABEL])
         # 캐노니컬 폴백이 매니페스트만 바꿔 **같은 템플릿을 다시 렌더**할 수 있도록 kwargs 로 둔다.
         ctx_kwargs = dict(
             clothing_type=clothing_type,
@@ -2558,6 +2634,7 @@ async def _enqueue_editor_garment_mask(pool, s, *, user_id, project_id, cuts,
     """
     if getattr(s, "mannequin_tone_editor", "off") != "on":
         return
+    provider = getattr(s, "tone_mask_provider", "sam2")
     for cut in cuts:
         cut_id = (cut or {}).get("id")
         if not cut_id:
@@ -2567,9 +2644,10 @@ async def _enqueue_editor_garment_mask(pool, s, *, user_id, project_id, cuts,
                 await repo.create_job(
                     conn, user_id=user_id, project_id=project_id,
                     kind="editor_garment_mask",
-                    payload={"cutId": cut_id, "cutMetadata": cut_metadata},
+                    payload={"cutId": cut_id, "cutMetadata": cut_metadata,
+                             "toneMaskProvider": provider},
                     idempotency_key=editor_garment_mask.mask_job_key(
-                        project_id, cut_id, provider=getattr(s, "tone_mask_provider", "sam2")),
+                        project_id, cut_id, provider=provider),
                     credits_reserved=0, metadata={})
                 await conn.commit()
         except Exception:  # noqa: BLE001 - 마스크 큐잉 실패가 마네킹 생성을 되돌리지 않는다
