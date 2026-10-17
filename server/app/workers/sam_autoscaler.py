@@ -32,8 +32,16 @@ PREWARM_DEBOUNCE_SECONDS = 60.0
 ALERT_DEBOUNCE_SECONDS = 600.0
 
 
-async def _sam_demand(repo, conn):
-    return await repo.sam_demand_snapshot(conn, sam_autoscale.SAM_KINDS)
+async def _sam_demand(repo, conn, settings=None):
+    kinds = sam_autoscale.sam_kinds(settings)
+    snapshot = await repo.sam_demand_snapshot(conn, kinds)
+    if not kinds:
+        # Mixed deployments may still have SAM2 jobs; uploads and old completions
+        # only warrant idle grace while a current provider can create SAM2 work.
+        return sam_autoscale.DemandSnapshot(
+            active_sam_jobs=snapshot.active_sam_jobs,
+            last_sam_finished_at=None, last_upload_at=None)
+    return snapshot
 
 
 class SamAutoscaler:
@@ -42,7 +50,8 @@ class SamAutoscaler:
                  capacity_attr=None, max_tasks_attr=None, start_grace_attr=None):
         self.app = app
         self.adapter = adapter
-        self._demand_fn = demand_fn or _sam_demand
+        self._demand_fn = demand_fn or (
+            lambda repo, conn: _sam_demand(repo, conn, self.app.state.settings))
         self._idle_attr = idle_attr
         self._name = name
         self._lock_key = lock_key or LOCK_KEY

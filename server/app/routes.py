@@ -41,8 +41,9 @@ from .agents.vision_llm import VisionError
 from .services import (canonical_reference, editor_garment_mask, garment_color_measure, garment_grid,
                        input_qc, mannequin_display,
                        mannequin_tone_render, matching, matching_cutout, product_photos,
-                       retrieval, sam_retry)
+                       retrieval, sam_autoscale, sam_retry)
 from .auth import require_user
+from .config import load_settings
 from .db import get_conn
 from .models import (
     Account,
@@ -2173,7 +2174,8 @@ async def create_upload_url(
     scaler = getattr(request.app.state, "sam_autoscaler", None)
     if scaler is not None:
         with contextlib.suppress(Exception):   # 훅은 발급 응답을 절대 막지 않는다
-            scaler.prewarm_soon()
+            if sam_autoscale.sam_kinds(request.app.state.settings):
+                scaler.prewarm_soon()
 
     asset_id = str(uuid.uuid4())
     storage_scope = DRAFT_SLOT_STORAGE_KEY if body.purpose == "draft_slot" else body.project_id
@@ -2513,8 +2515,8 @@ async def _enqueue_tone_mask_upgrade(conn, *, user_id: str, project_id: str, cut
 
     무효화하지 않는 이유가 핵심이다. 낡았다고 화면에서 빼면 재큐가 이미 done 인 잡에 합류하는
     순간 상태가 failed 로 떨어져, 잘 쓰던 컷이 "지원하지 않아요"가 된다 — 두 서비스가 따로
-    배포되는 창이나 컷아웃 읽기 실패가 정확히 거기 걸린다. 성공하면 새 행이 이기고(조회는
-    최신 행부터), 끝내 실패해도 셀러는 아무것도 잃지 않는다.
+    배포되는 창이나 컷아웃 읽기 실패가 정확히 거기 걸린다. 성공하면 현재 provider와
+    레퍼런스의 행을 고르고, 끝내 실패해도 셀러는 아무것도 잃지 않는다.
 
     멱등키가 레퍼런스를 물어서 옛 잡에 합류하지 않는다. 일시 장애로 끝나면 기본 마스크와
     같은 세대·백오프 규칙으로 재시도하며, 예산을 다 써도 현재 마스크는 그대로 둔다.
@@ -2572,14 +2574,17 @@ async def _tone_state(conn, r2, *, user_id: str, project_id: str, cut_id: str) -
 _TONE_JOB_TERMINAL = ("done", "error", "cancelled")
 
 
-def _tone_job_is_retryable(job: dict) -> bool:
+def _tone_job_is_retryable(job: dict, *, provider: str | None = None) -> bool:
     """이 종결이 판정(재시도해도 같은 답)이 아니라 일시 장애(다시 돌리면 답이 바뀔 수 있음)인가.
 
-    판정 규칙은 `sam_retry` 가 단일 출처다 — 세 SAM 잡이 같은 기준으로 움직여야 한다.
+    같은 provider의 판정 규칙은 `sam_retry` 가 단일 출처다.
+    다른 provider가 끝낸 과거 잡도 기존 재시도 예산 안에서 복구한다.
     result.state 로 판별하므로 구버전 워커가 error 로 종결해 둔 과거 잡(2026-08-18 05:59
     실사고)도 되살아난다.
     """
-    return sam_retry.job_is_retryable(
+    if provider is None:
+        provider = getattr(load_settings(), "tone_mask_provider", "sam2")
+    return editor_garment_mask.job_provider_mismatch(job, intended=provider) or sam_retry.job_is_retryable(
         job, states=editor_garment_mask.TONE_MASK_RETRYABLE_STATES)
 
 
@@ -2597,15 +2602,16 @@ async def _enqueue_tone_mask_generations(
     product_key: str | None = None, metadata: dict,
 ) -> tuple[bool, dict | None]:
     """기본·업그레이드 마스크가 공유하는 세대 선택과 백오프."""
+    provider = getattr(load_settings(), "tone_mask_provider", "sam2")
     base_key = editor_garment_mask.mask_job_key(
-        project_id, cut_id, product_key=product_key)
+        project_id, cut_id, product_key=product_key, provider=provider)
     job = await repo.get_latest_job_generation(conn, user_id, base_key)
     retry = 0
-    payload = {"cutId": cut_id}
+    payload = {"cutId": cut_id, "toneMaskProvider": provider}
     if job is not None:
         if str(job.get("status") or "") not in _TONE_JOB_TERMINAL:
             return False, job
-        if not _tone_job_is_retryable(job):
+        if not _tone_job_is_retryable(job, provider=provider):
             return False, job
         if str((job.get("payload") or {}).get("cutId") or "") != str(cut_id):
             return False, job
@@ -2616,13 +2622,14 @@ async def _enqueue_tone_mask_generations(
             return False, job
         payload = {k: v for k, v in (job.get("payload") or {}).items() if k != "retry"}
         payload.setdefault("cutId", cut_id)
+        payload["toneMaskProvider"] = provider
         payload["retry"] = retry
 
     job, created = await repo.create_job(
         conn, user_id=user_id, project_id=project_id, kind="editor_garment_mask",
         payload=payload,
         idempotency_key=editor_garment_mask.mask_job_key(
-            project_id, cut_id, product_key=product_key, retry=retry),
+            project_id, cut_id, product_key=product_key, retry=retry, provider=provider),
         credits_reserved=0, metadata=metadata)
     return created, job
 
@@ -2725,8 +2732,9 @@ async def _tone_bytes(request: Request, project_id: str, cut_id: str, user_id: s
             key, mime = cut["r2_key"], cut.get("mime_type") or "image/png"
         else:
             # 검증된 마스크만 픽셀을 내준다 — 클라이언트가 받은 마스크가 곧 조정 대상이다.
+            product_key = await _tone_product_reference(conn, user_id=user_id, project_id=project_id)
             mask, _side, _upgrade = await editor_garment_mask.current_mask_for_cut(
-                conn, user_id=user_id, project_id=project_id, cut_id=cut_id)
+                conn, user_id=user_id, project_id=project_id, cut_id=cut_id, product_key=product_key)
             if mask is None or not mask.get("r2_key"):
                 raise _not_found()
             key, mime = mask["r2_key"], "image/png"
@@ -2787,8 +2795,9 @@ async def apply_tone_editor(request: Request, project_id: str, cut_id: str,
         cut = await repo.get_mannequin_cut_asset(conn, user_id, project_id, cut_id)
         if cut is None:
             raise _not_found()
+        product_key = await _tone_product_reference(conn, user_id=user_id, project_id=project_id)
         mask, _side, _upgrade = await editor_garment_mask.current_mask_for_cut(
-            conn, user_id=user_id, project_id=project_id, cut_id=cut_id)
+            conn, user_id=user_id, project_id=project_id, cut_id=cut_id, product_key=product_key)
 
         # 초기화(0/0)는 마스크와 무관하게 항상 받는다 — 이미 붙은 조정본을 내리는 동작이다.
         # 마스크를 요구하면, 보장 이전 마스크로 붙인 조정을 셀러가 되돌릴 수 없게 된다.

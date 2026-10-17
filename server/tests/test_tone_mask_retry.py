@@ -305,7 +305,7 @@ def test_upgrade_mask_uses_retry_generations_and_keeps_the_existing_mask(monkeyp
     assert queued is True
     assert [row["idempotency_key"] for row in created] == [
         egm.mask_job_key("p1", "A-1", product_key=product_key, retry=1)]
-    assert created[0]["payload"] == {"cutId": "A-1", "retry": 1}
+    assert created[0]["payload"] == {"cutId": "A-1", "toneMaskProvider": "sam2", "retry": 1}
 
 
 # ── ③ 워커 큐잉 직후 디스패처 기상 ─────────────────────────────────────────

@@ -246,6 +246,7 @@ class _RecordingMask:
     """`editor_garment_mask` 대역 — 밴드 계산·픽셀 판정은 진짜 모듈 함수를 그대로 쓴다."""
 
     MATCH_ZONE_MAX = egm.MATCH_ZONE_MAX
+    job_provider = staticmethod(egm.job_provider)
     matching_core_band = staticmethod(egm.matching_core_band)
     band_mass_fraction = staticmethod(egm.band_mass_fraction)
     matching_side_for_project = staticmethod(egm.matching_side_for_project)

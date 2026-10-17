@@ -5,7 +5,7 @@ tables referenced by claim SQL. It does not run migrations or contact providers.
 """
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 from types import SimpleNamespace
 import uuid
@@ -98,6 +98,208 @@ async def add(conn, *, payload=None, kind="sam_preprocess", status="pending", ke
 
 async def row(conn, job_id):
     return await (await conn.execute("select * from jobs where id = %s", (job_id,))).fetchone()
+
+
+async def dispatch_one(conn, monkeypatch, *, kind, provider):
+    from app.workers.dispatcher import JobDispatcher
+    @asynccontextmanager
+    async def pooled_connection():
+        yield conn
+    settings = SimpleNamespace(job_worker_id="test-worker", job_poll_interval_seconds=0.01,
+        sam_preprocess_provider=provider, matching_cutout_provider=provider)
+    app = SimpleNamespace(state=SimpleNamespace(settings=settings,
+        pool=SimpleNamespace(connection=pooled_connection)))
+    dispatcher = JobDispatcher(app, kinds=(kind,))
+    captured = {}
+    async def no_sweep(*args):
+        pass
+    async def capture(s, pool, job, worker, slots):
+        captured.update(job)
+        dispatcher._stop.set()
+        dispatcher.wake()
+        slots.release()
+    monkeypatch.setattr(dispatcher, "_recover_stale", no_sweep)
+    monkeypatch.setattr(dispatcher, "_run_job", capture)
+    await asyncio.wait_for(dispatcher._run(), timeout=2)
+    return captured
+
+
+@pytest.mark.parametrize("kind", ["sam_preprocess", "matching_cutout"])
+@pytest.mark.parametrize("provider", ["fal", "sam2"])
+def test_dispatched_cutout_demand_follows_executing_provider(database, monkeypatch, kind, provider):
+    from test_sam_autoscaler import _Adapter, _scaler
+    async def scenario():
+        async with connection(database) as conn:
+            ident = await add(conn, kind=kind)
+            claimed = await dispatch_one(conn, monkeypatch, kind=kind, provider=provider)
+            assert claimed["id"] == ident
+            await conn.execute("insert into assets(source) values ('upload')")
+            adapter = _Adapter(sam_autoscale.ServiceState(0, 0, 0, None))
+            scaler = _scaler(adapter, sam_preprocess_provider="fal", matching_cutout_provider="fal",
+                             tone_mask_provider="fal", fal_key="test")
+            scaler._now = lambda: datetime.now(timezone.utc)
+            assert await scaler.reconcile_once(repo, conn) == ("noop" if provider == "fal" else "up")
+            assert adapter.set_calls == ([] if provider == "fal" else [1])
+            stored = await row(conn, ident)
+            assert stored["metadata"].get("samExecution") == {
+                "provider": provider, "leaseToken": claimed["lease_token"]}
+            assert stored["metadata"]["attempt"] == 2
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("kind", ["sam_preprocess", "matching_cutout"])
+@pytest.mark.parametrize("metadata", [None, {}, {"samExecution": {}},
+    {"samExecution": {"provider": "fal"}},
+    {"samExecution": {"provider": "fal", "leaseToken": "expired-lease"}}])
+def test_unknown_or_stale_non_tone_execution_keeps_sam_demand(database, kind, metadata):
+    async def scenario():
+        async with connection(database) as conn:
+            ident = await add(conn, kind=kind, status="running")
+            await conn.execute("update jobs set metadata = %s where id = %s", (Jsonb(metadata), ident))
+            snapshot = await repo.sam_demand_snapshot(conn, ())
+            assert snapshot.active_sam_jobs == 1
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("kind", ["sam_preprocess", "matching_cutout"])
+@pytest.mark.parametrize("new_provider", [None, "sam2"])
+def test_reclaim_cannot_reuse_a_fal_stamp_from_an_expired_lease(database, kind, new_provider):
+    async def scenario():
+        async with connection(database) as conn:
+            ident = await add(conn, kind=kind)
+            first = await repo.claim_next_job(conn, (kind,), "new-fal", sam_providers={kind: "fal"})
+            assert (await repo.sam_demand_snapshot(conn, ())).active_sam_jobs == 0
+            await conn.execute("update jobs set locked_at = now() - interval '2 hours' where id = %s", (ident,))
+            await repo.recover_stale_leases(conn, 60, (kind,))
+            options = {"sam_providers": {kind: new_provider}} if new_provider else {}
+            second = await repo.claim_next_job(conn, (kind,), "replacement", **options)
+            assert second["id"] == ident and second["lease_token"] != first["lease_token"]
+            before = await row(conn, ident)
+            assert await repo.claim_next_job(conn, (kind,), "expired-worker") is None
+            assert (await repo.sam_demand_snapshot(conn, ())).active_sam_jobs == 1
+            if new_provider:
+                assert before["metadata"]["samExecution"] == {
+                    "provider": "sam2", "leaseToken": second["lease_token"]}
+            else:
+                assert before["metadata"]["samExecution"]["leaseToken"] == first["lease_token"]
+            assert not await repo.renew_job_lease(conn, ident, first["lease_token"])
+            assert not await repo.finalize_uncharged_job(conn, job_id=ident,
+                lease_token=first["lease_token"], status="done", result={"state": "ready"})
+            assert await row(conn, ident) == before
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("provider,expected", [("sam2", 1), ("fal", 0)])
+def test_required_tidy_demand_uses_provider_only_after_capable_claim(database, provider, expected):
+    async def scenario():
+        async with connection(database) as conn:
+            ident = await add(conn, payload={"mode": "canonical_cutout", "productTidyRequired": True})
+            assert (await repo.sam_demand_snapshot(conn, sam_autoscale.SAM_KINDS)).active_sam_jobs == 0
+            assert await repo.claim_next_job(conn, ("sam_preprocess",), "off",
+                sam_providers={"sam_preprocess": provider}) is None
+            claimed = await repo.claim_next_job(conn, ("sam_preprocess",), "on",
+                product_tidy_capable=True, sam_providers={"sam_preprocess": provider})
+            assert claimed["id"] == ident
+            assert (await repo.sam_demand_snapshot(conn, sam_autoscale.SAM_KINDS)).active_sam_jobs == expected
+    asyncio.run(scenario())
+
+
+def test_provider_stamping_preserves_claim_priority_payload_and_credits(database):
+    async def scenario():
+        async with connection(database) as conn:
+            background = await add(conn, kind="matching_cutout", payload={"matchingItemId": "item"})
+            mask = await add(conn, kind="editor_garment_mask", payload={"cutId": "A-1", "toneMaskProvider": "fal"})
+            other = await add(conn, kind="analyze", payload={"input": "kept"})
+            await conn.execute("update jobs set credits_reserved = 17, created_at = now() - interval '3 hours' where id = %s", (background,))
+            await conn.execute("update jobs set created_at = now() - interval '2 hours' where id = %s", (mask,))
+            await conn.execute("update jobs set created_at = now() - interval '1 hour' where id = %s", (other,))
+            kinds = ("matching_cutout", "editor_garment_mask", "analyze")
+            providers = {"matching_cutout": "fal", "analyze": "fal", "editor_garment_mask": "fal"}
+            claims = [await repo.claim_next_job(conn, kinds, "worker", sam_providers=providers) for _ in kinds]
+            assert [job["id"] for job in claims] == [mask, other, background]
+            assert claims[0]["metadata"] == claims[1]["metadata"] == {"attempt": 2}
+            assert claims[2]["payload"] == {"matchingItemId": "item"}
+            assert claims[2]["credits_reserved"] == 17
+            assert claims[2]["metadata"]["attempt"] == 2
+            assert (await repo.sam_demand_snapshot(conn, ())).active_sam_jobs == 0
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("provider,status,key_provider,expected", [
+    ("sam2", "pending", "sam2", 1),
+    ("sam2", "running", "sam2", 1),
+    (None, "running", "sam2", 1),
+    (None, "running", "fal", 1),  # An old worker may already be executing SAM2.
+    ("fal", "pending", "fal", 0),
+    ("fal", "running", "fal", 0),
+    (None, "pending", "fal", 1),  # Claimed legacy rows do not expose the key; they execute SAM2.
+])
+@pytest.mark.parametrize("all_fal", [False, True])
+def test_tone_demand_survives_provider_switch(database, provider, status, key_provider, expected, all_fal):
+    from app.services import editor_garment_mask
+    from test_sam_autoscaler import _Adapter, _scaler, NOW
+    async def scenario():
+        async with connection(database) as conn:
+            payload = {"cutId": "A-1"}
+            if provider:
+                payload["toneMaskProvider"] = provider
+            await add(conn, kind="editor_garment_mask", status=status, payload=payload,
+                key=editor_garment_mask.mask_job_key("p", "A-1", provider=key_provider))
+            # All unrelated activity is outside the idle window.
+            await conn.execute("insert into assets(source, created_at) values ('upload', now() - interval '2 hours')")
+            adapter = _Adapter(sam_autoscale.ServiceState(1, 1, 0, NOW - timedelta(hours=2)))
+            overrides = {"sam_preprocess_provider": "fal", "matching_cutout_provider": "fal"} if all_fal else {}
+            scaler = _scaler(adapter, tone_mask_provider="fal", fal_key="test", **overrides)
+            scaler._now = lambda: datetime.now(timezone.utc)
+            result = await scaler.reconcile_once(repo, conn)
+            assert result == ("noop" if expected else "down")
+            assert adapter.set_calls == ([] if expected else [0])
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status", ["pending", "running"])
+def test_all_fal_queue_does_not_wake_sam_from_recent_upload_or_completion(database, status):
+    from test_sam_autoscaler import _Adapter, _scaler
+    async def scenario():
+        async with connection(database) as conn:
+            await add(conn, kind="editor_garment_mask", status=status,
+                      payload={"cutId": "A-1", "toneMaskProvider": "fal"})
+            finished = await add(conn, kind="editor_garment_mask", status="done", payload={"cutId": "B-1"})
+            await conn.execute("update jobs set finished_at = now() where id = %s", (finished,))
+            await conn.execute("insert into assets(source) values ('upload')")
+            adapter = _Adapter(sam_autoscale.ServiceState(0, 0, 0, None))
+            scaler = _scaler(adapter, sam_preprocess_provider="fal", matching_cutout_provider="fal",
+                             tone_mask_provider="fal", fal_key="test")
+            scaler._now = lambda: datetime.now(timezone.utc)
+            assert await scaler.reconcile_once(repo, conn) == "noop"
+            assert adapter.set_calls == []
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("provider,expected", [("sam2", "sam2"), ("fal", "fal"), (None, "sam2")])
+def test_claimed_tone_job_preserves_provider_without_key(database, provider, expected):
+    from app.services import editor_garment_mask
+    async def scenario():
+        async with connection(database) as conn:
+            payload = {"cutId": "A-1", **({"toneMaskProvider": provider} if provider else {})}
+            await add(conn, kind="editor_garment_mask", payload=payload)
+            claimed = await repo.claim_next_job(conn, ("editor_garment_mask",), "worker")
+            assert "idempotency_key" not in claimed
+            assert editor_garment_mask.job_provider(claimed) == expected
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("provider,expected", [("sam2", True), ("fal", False), (None, True)])
+def test_tone_completion_idle_grace_follows_persisted_provider(database, provider, expected):
+    async def scenario():
+        async with connection(database) as conn:
+            payload = {"cutId": "A-1", **({"toneMaskProvider": provider} if provider else {})}
+            job_id = await add(conn, kind="editor_garment_mask", payload=payload, status="done")
+            await conn.execute("update jobs set finished_at = now() where id = %s", (job_id,))
+            snapshot = await repo.sam_demand_snapshot(conn, ("sam_preprocess", "matching_cutout"))
+            assert snapshot.active_sam_jobs == 0
+            assert (snapshot.last_sam_finished_at is not None) is expected
+    asyncio.run(scenario())
 
 
 def test_deferred_required_job_allows_sam_idle_shutdown_and_claim_restores_demand(database):
