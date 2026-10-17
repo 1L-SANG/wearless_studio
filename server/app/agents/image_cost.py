@@ -231,9 +231,11 @@ def estimate_cost(
     if model in {"fal-ai/sam-3/image", "fal-ai/qwen-image-edit-2511", "fal-ai/birefnet/v2"}:
         if not has_image:
             return ImageCost(0, 0, 0, None, "unavailable_no_image")
-        if model in {"fal-ai/sam-3/image", "fal-ai/birefnet/v2"}:
-            # BiRefNet은 단가 미확인, 보수값.
+        if model == "fal-ai/sam-3/image":
             return ImageCost(0, 0, 0, 0.005, "table")
+        if model == "fal-ai/birefnet/v2":
+            # 초당 $0.000575, 회당 약 1초(오너 fal 청구 확인 2026-10-17).
+            return ImageCost(0, 0, 0, 0.0006, "table")
         megapixels = usage.get("megapixels") if isinstance(usage, dict) else None
         if (not isinstance(megapixels, (int, float)) or isinstance(megapixels, bool)
                 or not 0 < megapixels < float("inf")):
