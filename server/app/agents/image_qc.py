@@ -346,8 +346,9 @@ def edit_accepted(result: dict | None, *, matching_blocks: bool = True) -> bool:
 
 def _shrink_claude_image(image: InlineImage) -> InlineImage:
     with Image.open(BytesIO(image.data)) as im:
+        orientation = im.getexif().get(274, 1)
         im = ImageOps.exif_transpose(im)
-        if max(im.size) <= 1536:
+        if max(im.size) <= 1536 and orientation == 1:
             return image
         im.thumbnail((1536, 1536))
         buf = BytesIO()

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hashlib
 import logging
 import threading
@@ -62,6 +63,7 @@ def test_default_verdict_keeps_original_fallback_request(monkeypatch, scored, ma
     fallback.assert_awaited_once_with(
         settings, iq.build_prompt(1, scored=scored, matching=matching, paired=paired, edit_goal=goal),
         images, iq.qc_schema(scored=scored, matching=matching, paired=paired),
+        timeout_seconds=settings.background_ai_timeout_seconds,
         system_prompt=vision_llm.qc_system_prompt("image", {
             "productCount": 1, "imageRoles": ["PRODUCT"] + (["MATCHING"] if matching else [])
             + (["BEFORE"] if paired else []) + ["CURRENT"],
@@ -143,18 +145,37 @@ def test_claude_verdict_preserves_contract_and_shrinks_in_order(
 
 
 @pytest.mark.parametrize("size,expected,identity", [
-    ((2048, 1024), (768, 1536), False), ((64, 32), (64, 32), True),
+    ((2048, 1024), (768, 1536), False), ((64, 32), (32, 64), False),
+    ((1024, 768), (768, 1024), False),
 ])
 def test_claude_shrink_applies_exif_rotation(monkeypatch, size, expected, identity):
     source = _image(size, orientation=6)
+    with Image.open(BytesIO(source.data)) as image:
+        buf = BytesIO()
+        image.convert("RGB").save(buf, format="JPEG", exif=image.getexif())
+    source = InlineImage("image/jpeg", buf.getvalue())
     claude = AsyncMock(return_value=RAW)
     monkeypatch.setattr(vision_llm, "_call_claude", claude)
     monkeypatch.setattr(iq, "analyze_with_fallback", AsyncMock(side_effect=AssertionError("fallback")))
     asyncio.run(iq.verdict(_settings(), [source], _image()))
     sent = claude.await_args.args[3][0]
     assert (sent is source) is identity
+    assert sent.mime == "image/jpeg"
     with Image.open(BytesIO(sent.data)) as image:
         assert image.size == expected
+        assert image.mode == "RGB"
+        assert image.getexif().get(274, 1) == 1
+    body = vision_llm._claude_body("claude-opus-5-5", "test", [sent], iq.qc_schema(),
+                                   "low", None, 32000)
+    encoded = body["messages"][0]["content"][1]["source"]["data"]
+    with Image.open(BytesIO(base64.b64decode(encoded))) as image:
+        assert image.size == expected
+
+
+@pytest.mark.parametrize("orientation", [None, 1])
+def test_claude_shrink_keeps_small_unrotated_original(orientation):
+    source = _image((1024, 768), orientation=orientation)
+    assert iq._shrink_claude_image(source) is source
 
 
 @pytest.mark.parametrize("error", [
@@ -179,6 +200,7 @@ def test_claude_failure_falls_back_with_originals_and_safe_log(monkeypatch, capl
     assert all(sent is original for sent, original in zip(fallback.await_args.args[2], originals))
     assert len(fallback.await_args.args[2]) == len(originals)
     assert fallback.await_args.kwargs["require_complete_envelope"] is True
+    assert fallback.await_args.kwargs["timeout_seconds"] == settings.background_ai_timeout_seconds
     assert out["verdict"] == "retry" and out["mismatches"] == ["wrong logo"]
     assert out["image_hash"] == hashlib.sha256(generated.data).hexdigest()
     assert type(error).__name__ in caplog.text and "unknown_cause=" in caplog.text
