@@ -77,6 +77,9 @@ class Settings:
     # 검수 전용 Claude 경로. 기본 검수 모델과 분석 폴백 순서는 유지한다.
     anthropic_api_key: str = ""
     detail_qc_claude_effort: str = "xhigh"
+    model_image_qc: str = ""
+    image_qc_claude_effort: str = "low"
+    image_qc_timeout_seconds: float = 90.0
     # 에디터 컷(editor_image_job) 전용 모델. 빈 값이면 image_high 로 폴백해 기존 환경을 보존한다.
     # image_high 를 바꾸면 마네킹(mannequin_tier)·매칭 플랫레이(matching_flatlay_tier)·AG-07(cut_variator)
     # 까지 전부 딸려 간다 — 에디터만 바꾸려면 이 노브를 쓴다(detail_cut 과 같은 관례).
@@ -644,8 +647,14 @@ class Settings:
                 raise ValueError("fal 또는 Qwen을 쓰려면 FAL_KEY가 필요해요.")
         if self.detail_qc_claude_effort not in {"low", "medium", "high", "xhigh", "max"}:
             raise ValueError("DETAIL_QC_CLAUDE_EFFORT 설정이 잘못됐어요.")
+        if self.image_qc_claude_effort not in {"low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("IMAGE_QC_CLAUDE_EFFORT 설정이 잘못됐어요.")
+        if not math.isfinite(self.image_qc_timeout_seconds) or self.image_qc_timeout_seconds <= 0:
+            raise ValueError("IMAGE_QC_TIMEOUT_SECONDS는 유한한 양수여야 해요.")
+        if self.model_image_qc and not self.model_image_qc.startswith("claude-"):
+            raise ValueError("MODEL_IMAGE_QC는 Claude 모델이거나 빈 값이어야 해요.")
         if any(isinstance(model, str) and model.startswith("claude-")
-               for model in (self.model_detail_core, self.model_detail_specialist)):
+               for model in (self.model_detail_core, self.model_detail_specialist, self.model_image_qc)):
             if not (self.anthropic_api_key or "").strip():
                 raise ValueError("Claude 검수 모델을 쓰려면 ANTHROPIC_API_KEY가 필요해요.")
 
@@ -862,6 +871,9 @@ def load_settings() -> Settings:
         detail_specialist_timeout_seconds=float(os.getenv("DETAIL_SPECIALIST_TIMEOUT_SECONDS", "90")),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
         detail_qc_claude_effort=os.getenv("DETAIL_QC_CLAUDE_EFFORT", "xhigh"),
+        model_image_qc=os.getenv("MODEL_IMAGE_QC", "").strip(),
+        image_qc_claude_effort=os.getenv("IMAGE_QC_CLAUDE_EFFORT", "low"),
+        image_qc_timeout_seconds=float(os.getenv("IMAGE_QC_TIMEOUT_SECONDS", "90")),
         model_editor_cut=os.getenv("MODEL_ROUTING_EDITOR_CUT", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         openai_api_key_fallback=os.getenv("OPENAI_API_KEY_FALLBACK") or None,
