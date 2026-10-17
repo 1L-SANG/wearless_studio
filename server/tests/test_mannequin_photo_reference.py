@@ -40,7 +40,7 @@ class _ProviderCaptured(Exception):
 
 def capture_candidate(monkeypatch, *, clothing_type="top", name="제품", slots=("Front", "Back"),
                       generation_path="fresh", parent=None, profile=None, match_image=None,
-                      with_product_roles=False):
+                      with_product_roles=False, style_refs=None, preservation_before=None):
     """Run real orchestration until its first provider request, with no DB/R2 writes."""
     captured = {}
 
@@ -73,6 +73,9 @@ def capture_candidate(monkeypatch, *, clothing_type="top", name="제품", slots=
             fit_profile=profile, adjusted_axes=("fit", "length") if profile else (),
             generation_path=generation_path, parent_cut_img=parent, adjust_directives=directives,
             product_refs=refs,
+            ref_imgs=style_refs or (),
+            preservation_before_image=preservation_before,
+            preservation_edit_goal=directives if preservation_before is not None else None,
         ))
     return captured
 
