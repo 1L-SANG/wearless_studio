@@ -260,7 +260,8 @@ class Settings:
     #        갈색 청바지)의 해법 — 이미 만든 flat-lay 1장을 재사용하므로 호출 증가 0.
     matching_flatlay: str = "off"  # off | on | full
     mannequin_prompt_file: str | None = None  # 없으면 server/prompts/mannequin_generate_v1.txt
-    mannequin_prompt_version: str = "v1"
+    # 공통 배경·재질 정책이 다른 이전 유료 초안은 새 생성에 이어 쓰지 않는다.
+    mannequin_prompt_version: str = "v1-studio-a"
     # 여성 기본 가슴 볼륨 2패스 (2026-07-30 스파이크). 생성된 컷에 "가슴만 바꿔라"를 단독 과제로
     # 한 번 더 돌린다 — 1패스만으로는 모델이 몸을 표준으로 정규화해 반영되지 않는다.
     # off | on. 기본 off, 실물 확인 후 on. 켜면 여성 컷당 이미지 호출이 1→2회.
@@ -914,7 +915,7 @@ def load_settings() -> Settings:
         detail_cut_checkpoint_enabled=(os.getenv("DETAIL_CUT_CHECKPOINT", "on").lower() != "off"),
         bg_scene_qc_attempts=int(os.getenv("BG_SCENE_QC_ATTEMPTS", "3")),
         mannequin_prompt_file=os.getenv("MANNEQUIN_PROMPT_FILE") or None,
-        mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "v1"),
+        mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "v1-studio-a"),
         mannequin_bust_pass=_bust_pass(),
         mannequin_fabric_pass=_flag("MANNEQUIN_FABRIC_PASS", "off", {"off", "on"}),
         mannequin_untuck_pass=_default_on_flag("MANNEQUIN_UNTUCK_PASS"),

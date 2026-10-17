@@ -49,6 +49,7 @@ from ..agents.prompts import (
     load_untuck_prompt_template,
     render_mannequin_prompt,
     build_mirrored_source_block,
+    build_studio_preservation_block,
 )
 from ..agents.product_reference import ProductReference
 from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
@@ -360,8 +361,10 @@ def _build_manifest(
 # 첨부해 컷 간 톤·조명·프레이밍·마감 일관성을 끌어올린다. 최대 리스크 = 레퍼런스의 '다른 옷'이
 # 결과에 새는 오염 → 아래 가드로 look-only 를 강하게 못박고, image_qc(①동일성)로 계측한다.
 _STYLE_REF_GUARD = (
-    "STYLE REFERENCE images (labeled in the manifest) are provided ONLY as examples of the target "
-    "studio look — lighting, background tone, camera framing and finish. They show DIFFERENT garments. "
+    "STYLE REFERENCE images (labeled in the manifest) support photographic finish only. "
+    "The BASE MANNEQUIN (image 1) remains the sole authority for background tone, lighting, "
+    "mannequin resin colour, camera angle and framing. A STYLE REFERENCE must never override the base. "
+    "These references show DIFFERENT garments. "
     "NEVER copy any garment, color, pattern, print, logo, or detail from a STYLE REFERENCE; the garment "
     "identity comes exclusively from the product photos and the PRODUCT CONTEXT."
 )
@@ -371,7 +374,7 @@ _REF_MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "web
 def _ref_manifest_lines(start_index: int, n: int) -> str:
     """images 끝에 붙는 STYLE REFERENCE 슬롯의 매니페스트 라벨(고정 문자열 — 셀러 데이터 미포함)."""
     return "\n".join(
-        f"{start_index + i}. STYLE REFERENCE — target studio look ONLY "
+        f"{start_index + i}. STYLE REFERENCE, supporting photographic finish ONLY "
         "(a DIFFERENT garment; never copy its garment)"
         for i in range(n)
     )
@@ -1755,6 +1758,7 @@ class _PaidDraftSink:
 def mannequin_draft_fingerprint(
     *, clothing_type, base_asset_id, product_assets, match_asset_id, match_item_id,
     fit_profile, source_mirrored, prompt_version, outfit_snapshot=None, outfit_reference_assets=None,
+    preserved_studio_sha256=None,
 ) -> str:
     """초안을 이어 써도 되는 '같은 입력'의 지문 (순수).
 
@@ -1773,6 +1777,7 @@ def mannequin_draft_fingerprint(
         "promptVersion": str(prompt_version or ""),
         **({"outfitSelectionsSnapshot": outfit_snapshot} if outfit_snapshot is not None else {}),
         **({"outfitReferenceAssets": outfit_reference_assets} if outfit_reference_assets else {}),
+        **({"preservedStudioSha256": preserved_studio_sha256} if preserved_studio_sha256 else {}),
     }
     return hashlib.sha256(json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -1928,6 +1933,14 @@ async def _specialist_repair_request(
         match_is_custom=match_is_custom, outfit_images=outfit_images)
 
 
+def _with_studio_preservation(images, manifest, before_image):
+    if before_image is None:
+        return images, manifest, ""
+    images = [*images, before_image]
+    manifest += f"\n{len(images)}. BEFORE STUDIO, existing scene and mannequin colour only; not a product or matching garment."
+    return images, manifest, build_studio_preservation_block()
+
+
 async def _run_candidate(
     *, app, job, candidate, base_fit, base_gender, base_img, prod_imgs, match_img,
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
@@ -1982,17 +1995,21 @@ async def _run_candidate(
                 "contract_hash": photo_structure["contractSha256"], "additional_analysis_calls": 0})
     if generation_path == "edit" and parent_cut_img is not None and adjust_directives:
         images = [parent_cut_img, *prod_imgs] + outfit_generation.ordered_images(outfit_images, [match_img] if match_img else [])
-        base_prompt = render_adjust_prompt(
-            adjust_directives, build_adjust_manifest(
-                len(prod_imgs), match_img is not None, clothing_type=clothing_type,
-                product_slots=[ref.slot for ref in product_refs] if product_refs is not None else None,
-                match_is_custom=match_is_custom, outfit_roles=tuple(role for role, _ in outfit_images)))
+        edit_manifest = build_adjust_manifest(
+            len(prod_imgs), match_img is not None, clothing_type=clothing_type,
+            product_slots=[ref.slot for ref in product_refs] if product_refs is not None else None,
+            match_is_custom=match_is_custom, outfit_roles=tuple(role for role, _ in outfit_images))
+        images, edit_manifest, prompt_suffix = _with_studio_preservation(
+            images, edit_manifest, preservation_before_image)
+        base_prompt = render_adjust_prompt(adjust_directives, edit_manifest)
+        if prompt_suffix:
+            base_prompt += "\n\n" + prompt_suffix
         if source_mirrored is True:
             base_prompt += "\n\n" + build_mirrored_source_block({"sourceMirrored": True})
         prompt_version = ADJUST_PROMPT_VERSION
         adjust_tier = getattr(s, "mannequin_adjust_tier", "") or "image_mannequin"
         model = resolve_model(s, adjust_tier)
-        ctx_kwargs, prompt_suffix = {}, ""  # 편집 경로는 캐노니컬 재렌더 대상이 아니다
+        ctx_kwargs = {}  # 편집 경로는 캐노니컬 재렌더 대상이 아니다
     else:
         generation_path = "fresh"
         # STYLE REFERENCE(있으면)는 상품·매칭 뒤 맨 끝에 붙는다 — 매니페스트 번호 순서와 일치.
@@ -2000,6 +2017,9 @@ async def _run_candidate(
         if pattern_flat is not None:
             images, image_manifest = _insert_pattern_references(
                 images, image_manifest, [pattern_flat], [_PATTERN_FLAT_LABEL])
+        # 깊이 제한으로 새로 그려도 기존 컷의 배경·재질은 조정 대상이 아니다.
+        images, image_manifest, studio_preservation = _with_studio_preservation(
+            images, image_manifest, preservation_before_image)
         # 캐노니컬 폴백이 매니페스트만 바꿔 **같은 템플릿을 다시 렌더**할 수 있도록 kwargs 로 둔다.
         ctx_kwargs = dict(
             clothing_type=clothing_type,
@@ -2015,7 +2035,9 @@ async def _run_candidate(
             material_policy="photo_evidence",
         )
         # 레퍼런스 첨부 시에만 오염 가드를 프롬프트 말미에 강조(look-only). 재렌더도 같은 꼬리를 받는다.
-        prompt_suffix = _STYLE_REF_GUARD if ref_imgs else ""
+        prompt_suffix = "\n\n".join(part for part in (
+            _STYLE_REF_GUARD if ref_imgs else "", studio_preservation,
+        ) if part)
         if prompt_suffix:
             base_prompt = f"{base_prompt}\n\n{prompt_suffix}"
         prompt_version = s.mannequin_prompt_version
@@ -2938,7 +2960,9 @@ async def run_mannequin_job(app, job: dict) -> None:
             match_asset_id=(match_asset or {}).get("id") if match_img is not None else None,
             match_item_id=resolved_match_id, fit_profile=fit_profile,
             source_mirrored=source_mirrored, prompt_version=s.mannequin_prompt_version,
-            outfit_snapshot=outfit_snapshot, outfit_reference_assets=outfit_assets))
+            outfit_snapshot=outfit_snapshot, outfit_reference_assets=outfit_assets,
+            preserved_studio_sha256=hashlib.sha256(preservation_before_image.data).hexdigest()
+            if preservation_before_image is not None else None))
         if generation_path == "fresh" and getattr(s, "mannequin_draft_reuse", "off") == "on":
             draft_img = await _load_mannequin_draft(app, draft_state["key"])
             if draft_img is not None:

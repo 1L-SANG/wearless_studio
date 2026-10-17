@@ -177,11 +177,11 @@ def verdict(state):
 
 
 @pytest.mark.parametrize('has_match,prompt_hash', [
-    (False, 'f8b9e2eb3e1bbbaad406c67b8736dea0ea92179aa397750ebfe2489c43afef60'),
-    (True, '677976764e37760ff93e809d4fea15d5a9f14b099d00c790e279fc3105700e6b'),
+    (False, '554a9b455aee44c2e9ece114fac5795f06ff9b2cc5461121a78b7111cc829047'),
+    (True, 'ea23bdb7dc37fc4e7eee6d02a14031c25567eda39fedd72785544aaf7973c02b'),
 ])
 def test_switch_off_preserves_request_bytes_and_avoids_storage(monkeypatch, has_match, prompt_hash):
-    # Captured from the unmodified worker at 289d7941, not the new renderer.
+    # Reviewed 2026-10-17 baseline: shared studio policy and manifest-based matching role.
     off, _ = capture(monkeypatch, switch='off', has_match=has_match)
     assert hashlib.sha256(off.calls[0]['prompt'].encode()).hexdigest() == prompt_hash
     assert [image.data for image in off.calls[0]['images']] == [

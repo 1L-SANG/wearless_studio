@@ -8,7 +8,7 @@ ${imageManifest}
 
 - Image 1 is the CURRENT CUT: the editing canvas for pose, framing and unchanged fit. It is not independent evidence of the product's design.
 - The PRODUCT PHOTOS are the identity ground truth for the MAIN PRODUCT garment — exact color, pattern, fabric, construction, seams, neckline, trims, hardware, logos, prints. They outrank the current cut for identity.
-- The matching garment photo (if attached, the last image) is the identity ground truth for the separate coordinating garment. Follow its TOP or BOTTOM role in the input manifest.
+- The matching garment photo (if attached, as labeled in the input manifest) is the identity ground truth for the separate coordinating garment. Follow its TOP or BOTTOM role in the input manifest.
 </input_images>
 
 <adjustments>

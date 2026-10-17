@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import types
 from copy import deepcopy
+from dataclasses import replace
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -265,10 +266,14 @@ def test_draft_fingerprint_changes_with_any_input():
         {"base_asset_id": "bm"},
         {"prompt_version": "v2"},
         {"source_mirrored": True},
+        {"preserved_studio_sha256": "selected-studio-sha256"},
     ):
         assert job.mannequin_draft_fingerprint(**{**base, **change}) != fp, change
     key = job.mannequin_draft_key("u1", "p1", fp)
     assert key == f"users/u1/projects/p1/ai/mannequin-drafts/{fp}"
+    assert job.mannequin_draft_fingerprint(**base, preserved_studio_sha256=None) == fp
+    assert job.mannequin_draft_fingerprint(**base, preserved_studio_sha256="old-studio") != (
+        job.mannequin_draft_fingerprint(**base, preserved_studio_sha256="other-studio"))
 
 
 class _Conn:
@@ -534,6 +539,34 @@ def test_explicit_seller_adjust_edit_still_takes_priority_over_a_draft(monkeypat
     asyncio.run(job.run_mannequin_job(app, regenerate))
     assert seen[0]["parent_cut_img"].data == PNG_B, "셀러가 조정한 부모 컷이 우선"
     assert not _statuses(calls, "draft_reused")
+
+
+def test_depth_cap_adjustment_does_not_reuse_an_unrelated_studio_draft(monkeypatch):
+    ledger, storage = _DraftLedger(), _Storage()
+    app, _ = _wire_job(monkeypatch, ledger=ledger, storage=storage, runner=_failing_runner())
+    asyncio.run(job.run_mannequin_job(app, _job("job-1")))
+    unrelated_key = storage.puts[0]["key"]
+    parent = {"id": "old-cut", "r2_key": "parent.png", "mime_type": "image/png",
+              "generation_metadata": {"profileCategory": "top", "profileGender": "women",
+                                      "matchItemId": None, "editDepth": 2}}
+    storage.objects["parent.png"] = PNG_B
+
+    async def get_parent(conn, user_id, project_id):
+        return parent
+
+    seen = []
+    app, calls = _wire_job(monkeypatch, ledger=ledger, storage=storage, runner=_passing_runner(seen))
+    app.state.settings = replace(app.state.settings, image_qc="enforce")
+    monkeypatch.setattr(repo, "get_mannequin_edit_parent", get_parent)
+    regenerate = _job("job-2", mode="regenerate")
+    regenerate["payload"]["fitProfileSnapshot"]["adjustedAxes"] = ["fit"]
+    asyncio.run(job.run_mannequin_job(app, regenerate))
+    assert calls["success"] and not calls["failure"]
+    assert seen[0]["preservation_before_image"].data == PNG_B
+    assert seen[0]["generation_path"] == "fresh"
+    assert seen[0]["parent_cut_img"] is None
+    assert not _statuses(calls, "draft_reused")
+    assert ledger.rows[unrelated_key]["live"] is True
 
 
 def test_draft_repo_functions_use_the_cleanup_ledger_with_a_ttl():

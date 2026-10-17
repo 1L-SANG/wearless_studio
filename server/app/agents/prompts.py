@@ -29,6 +29,7 @@ _FABRIC_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_fabric_v1.txt")
 _UNTUCK_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_untuck_v1.txt")
 _UNTUCK_GATE_PROMPT = os.path.join(_SERVER_DIR, "prompts", "untuck_gate_v1.txt")
 _BUST_GATE_PROMPT = os.path.join(_SERVER_DIR, "prompts", "bust_gate_v1.txt")
+_STUDIO_PRESERVATION_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_studio_preserve_v1.txt")
 
 
 def _sanitize(value: Any) -> str:
@@ -63,6 +64,12 @@ def load_prompt_template(settings: Settings) -> str:
         path = os.path.join(_SERVER_DIR, path)
     with open(path, encoding="utf-8") as f:
         return f.read()
+
+
+def build_studio_preservation_block() -> str:
+    """새로 그리는 핏 조정에서도 기존 스튜디오의 참조 역할을 유지한다."""
+    with open(_STUDIO_PRESERVATION_PROMPT, encoding="utf-8") as f:
+        return f.read().strip()
 
 
 def load_bust_prompt_template() -> str:
