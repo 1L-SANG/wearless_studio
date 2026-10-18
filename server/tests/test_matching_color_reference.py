@@ -64,6 +64,37 @@ def test_known_shades_are_resolved_without_guessing(group, name, category, expec
     assert color_harmony.matching_color(group, name, category) == expected
 
 
+@pytest.mark.parametrize("group,name", [
+    ("ivory", "아이보리"), ("silver", "실버"), ("gold", "골드"),
+    ("green", "그린"), ("red", "레드"),
+])
+def test_october_catalog_colors_normalize_without_changing_groups(group, name):
+    assert color_harmony.matching_color(f" {group.upper()} ", name) == group
+    assert color_harmony.matching_color(group, "블랙", "가방") == group
+
+
+@pytest.mark.parametrize("product,item_color,expected", [
+    ("white", "ivory", 0.75), ("white", "silver", 0.5),
+    ("white", "gold", 0.5), ("white", "green", 0.82),
+    ("white", "red", 0.88), ("silver", "silver", 0.5),
+    ("gold", "gold", 0.5), ("red", "green", 0.22),
+])
+@pytest.mark.parametrize("clothing_type", ["top", "bottom", "outer", "dress"])
+def test_october_catalog_scores_keep_existing_harmony_and_neutral_metals(product, item_color, expected, clothing_type):
+    # Red top + white bottom retains the existing directional recommendation bonus.
+    if (product, item_color, clothing_type) == ("white", "red", "bottom"):
+        expected = 0.95
+    assert color_harmony.outfit_color_score(product, item_color, clothing_type) == expected
+
+
+@pytest.mark.parametrize("product_color", ["ivory", "silver", "gold", "green", "red"])
+def test_october_catalog_colors_are_rankable_in_legacy_recommendations(product_color):
+    candidates = [item(color, color) for color in ["ivory", "silver", "gold", "green", "red"]]
+    ranked = recommend(candidates, product_color)
+    assert sorted(candidate["id"] for candidate in ranked) == ["gold", "green", "ivory", "red", "silver"]
+    assert ranked == recommend(candidates, product_color)
+
+
 def test_base_color_and_analysis_fallback_keep_fine_color_names():
     product = {"colors": [{"id": "other", "swatchId": "blue", "name": "연청"},
                           {"id": "base", "isBase": True, "swatchId": "red", "name": "버건디"}]}

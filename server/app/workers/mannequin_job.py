@@ -41,6 +41,7 @@ from ..agents.mannequin_fit_edit import (
     render_adjust_prompt,
 )
 from ..agents.gemini_image import GeminiError, InlineImage
+from ..agents.catalog_image import catalog_image
 from ..agents.model_routing import resolve_model
 from ..agents.prompts import (
     load_bust_prompt_template,
@@ -2837,7 +2838,8 @@ async def run_mannequin_job(app, job: dict) -> None:
         prod_imgs = [ref.image for ref in product_refs]
         match_img = None
         if match_asset:
-            match_img = InlineImage(match_asset["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, match_asset["r2_key"]))
+            match_img = await asyncio.to_thread(catalog_image, match_asset["mime_type"],
+                await asyncio.to_thread(app.state.r2.get_bytes, match_asset["r2_key"]))
         outfit_assets = []
         outfit_images = await outfit_generation.resolve_images(
             app, snapshot=outfit_snapshot, clothing_type=product_clothing_type,

@@ -9,9 +9,46 @@ export function useOutfitRecommendation({ analysis, projectId, onRecommendation,
   const latest = useRef({ analysis, onRecommendation, onChange, state });
   latest.current = { analysis, onRecommendation, onChange, state };
   const delivery = useRef(null);
+  const selectionKey = JSON.stringify([analysis.outfitSelections,
+    (analysis.matchClothing || []).filter(item => item.selected).map(item => item.id)]);
+  const interaction = useRef({ contextKey: analysis.outfitRecommendation?.contextKey, selectionKey, edited: false });
+  if (interaction.current.contextKey !== analysis.outfitRecommendation?.contextKey) {
+    interaction.current = { contextKey: analysis.outfitRecommendation?.contextKey, selectionKey, edited: false };
+  } else if (interaction.current.selectionKey !== selectionKey) {
+    // Uploads can change a selection outside this picker's markEdited handlers.
+    interaction.current.edited = true;
+  }
+  const receiveRecommendation = (fields, publish = false) => {
+    const current = latest.current;
+    if (fields.outfitRecommendation?.contextKey !== current.analysis.outfitRecommendation?.contextKey) return;
+    const now = Date.now();
+    const prior = interaction.current.edited && current.state.skeleton
+      ? { ...current.state, skeleton: false, recommendation: { ...current.state.recommendation, status: 'fallback' } }
+      : current.state;
+    const next = advanceRecommendationState(prior, fields.outfitRecommendation, now);
+    const automaticReady = prior.skeleton && !interaction.current.edited
+      && now - prior.enteredAt < 1500 && fields.outfitRecommendation?.status === 'ready'
+      && fields.outfitRecommendation.contextKey === prior.recommendation?.contextKey;
+    latest.current.state = next;
+    setState(next);
+    if (fields.outfitRecommendation?.status === 'pending' || next.lateRecommendation) return;
+    let patch;
+    if (automaticReady) {
+      patch = applyOutfitSet({ ...current.analysis, ...fields }, 0, { preserveUser: true });
+      // Persist exactly what is displayed. A server set command would reapply
+      // the set and replace user picks, or use a different pending/ready set.
+      if (patch) delete patch.outfitSetIndex;
+    }
+    if (!publish && !patch) return;
+    if (current.onRecommendation) {
+      current.onRecommendation(value => value.outfitRecommendation?.contextKey === fields.outfitRecommendation?.contextKey
+        ? { ...value, ...fields } : value);
+      if (patch) current.onChange(patch);
+    } else current.onChange({ ...fields, ...patch });
+  };
   useEffect(() => {
     if (delivery.current?.outfitRecommendation?.contextKey !== analysis.outfitRecommendation?.contextKey) delivery.current = null;
-    setState((prior) => advanceRecommendationState(prior, analysis.outfitRecommendation, Date.now()));
+    receiveRecommendation(outfitRecommendationPatch(analysis));
   }, [analysis.outfitRecommendation]);
   useEffect(() => {
     if (!state.skeleton) return undefined;
@@ -27,18 +64,9 @@ export function useOutfitRecommendation({ analysis, projectId, onRecommendation,
       try {
         const fields = outfitRecommendationPatch(await api.getOutfitRecommendation(projectId, { handoff: latest.current.analysis.outfitRecommendationHandoff, signal: controller.signal }));
         if (canceled || fields?.outfitRecommendation?.contextKey !== contextKey) return;
-        const next = advanceRecommendationState(latest.current.state, fields.outfitRecommendation, Date.now());
         delivery.current = fields;
-        setState(next);
+        receiveRecommendation(fields, true);
         if (fields.outfitRecommendation?.status !== 'pending') {
-          if (!next.lateRecommendation) {
-            const replace = (current) => {
-              if (current.outfitRecommendation?.contextKey !== contextKey) return current;
-              return { ...current, ...fields };
-            };
-            if (latest.current.onRecommendation) latest.current.onRecommendation(replace);
-            else latest.current.onChange(fields);
-          }
           return;
         }
       } catch { if (canceled) return; }
@@ -60,7 +88,13 @@ export function useOutfitRecommendation({ analysis, projectId, onRecommendation,
     latest.current.onRecommendation?.((current) => ({ ...current, ...fields }));
     latest.current.onChange(latest.current.onRecommendation ? patch : { ...fields, ...patch });
   };
-  const markEdited = () => setState((prior) => prior.recommendation?.status === 'pending'
-    ? { ...prior, skeleton: false, recommendation: { ...prior.recommendation, status: 'fallback' } } : prior);
+  const markEdited = () => {
+    interaction.current.edited = true;
+    const prior = latest.current.state;
+    const next = prior.recommendation?.status === 'pending'
+      ? { ...prior, skeleton: false, recommendation: { ...prior.recommendation, status: 'fallback' } } : prior;
+    latest.current.state = next;
+    setState(next);
+  };
   return { ...state, acceptLate, markEdited };
 }

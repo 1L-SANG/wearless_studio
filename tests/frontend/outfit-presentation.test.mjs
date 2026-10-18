@@ -15,7 +15,8 @@ test('catalog colors use role-specific broad groups, including Korean names and 
   const group = helper('colorGroupForItem');
   const cases = [
     [{ colorName: '아이보리' }, 'bottom', 'white'],
-    [{ colorName: '워시드카키', colorGroup: 'green' }, 'bottom', 'beige'],
+    [{ colorName: '워시드카키', colorGroup: 'green' }, 'bottom', 'color'],
+    [{ colorName: '워시드카키' }, 'bottom', 'beige'],
     [{ colorName: '멜란지그레이' }, 'inner', 'gray'],
     [{ colorKey: 'light_blue' }, 'top', 'blue'],
     [{ colorFamily: 'navy' }, 'top', 'blue'],
@@ -26,14 +27,14 @@ test('catalog colors use role-specific broad groups, including Korean names and 
     [{ colorHex: '#d8c4a3' }, 'bottom', 'beige'],
     [{ color: { hex: '#15141a' } }, 'footwear', 'black'],
     [{ colorHex: '#d2b069' }, 'accessory', 'gold'],
-    [{ colorName: '핑크' }, 'top', null],
+    [{ colorName: '핑크' }, 'top', 'color'],
     [{ colorGroup: 'white' }, 'model', null],
     [{}, 'bottom', null],
   ];
   for (const [item, role, expected] of cases) assert.equal(group(item, role), expected);
-  assert.deepEqual(helper('colorGroupsForRole')('top').map(x => x.value), ['white', 'beige', 'gray', 'blue', 'black']);
+  assert.deepEqual(helper('colorGroupsForRole')('top').map(x => x.value), ['white', 'beige', 'gray', 'blue', 'black', 'color']);
   assert.deepEqual(presentation.colorGroupsForRole('footwear').map(x => x.value), ['white', 'brown', 'black']);
-  assert.deepEqual(presentation.colorGroupsForRole('accessory').map(x => x.value), ['white', 'gold', 'brown', 'black']);
+  assert.deepEqual(presentation.colorGroupsForRole('accessory').map(x => x.value), ['white', 'silver', 'gold', 'brown', 'black']);
   assert.deepEqual(presentation.colorGroupsForRole('model'), []);
 });
 

@@ -8,6 +8,7 @@ import re
 from PIL import Image, ImageOps
 
 from .gemini_image import InlineImage
+from .catalog_image import catalog_image
 from .vision_llm import _call_gemini
 
 PROMPT_VERSION = "outfit_recommendation_v2"
@@ -72,8 +73,10 @@ def display_reason(value):
     return text
 
 
-def _image(data, mime, max_edge):
+def _image(data, mime, max_edge, *, catalog=False):
     try:
+        if catalog:
+            data = catalog_image(mime, data).data
         image = ImageOps.exif_transpose(Image.open(BytesIO(data))).convert("RGBA")
         image.thumbnail((max_edge, max_edge))
         # Transparent cutouts need a neutral background, not hidden RGB pixels.
@@ -117,7 +120,7 @@ async def build_request(r2, source_images, pools, *, context, fixed):
     for role, pool in pools.items():
         for item in pool:
             data = await asyncio.to_thread(r2.get_bytes, item["thumb_key"])
-            images.append(await asyncio.to_thread(_image, data, "image/png", CANDIDATE_IMAGE_MAX_EDGE))
+            images.append(await asyncio.to_thread(_image, data, "image/png", CANDIDATE_IMAGE_MAX_EDGE, catalog=True))
     schema = {"type": "object", "additionalProperties": False,
         "properties": {"sets": {"type": "array", "minItems": 1, "maxItems": 3,
             "items": {"type": "object", "additionalProperties": False,

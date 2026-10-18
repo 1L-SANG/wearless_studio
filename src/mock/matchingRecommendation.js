@@ -375,7 +375,7 @@ function toLegacyMatchItem(item, selected, selOrder) {
     thumb: item.thumbnailUrl,
     imageUrl: item.imageUrl,
     thumbnailUrl: item.thumbnailUrl,
-    // Existing seed photos are opaque; only explicit transparent fixtures qualify.
+    // Only explicitly supplied board art takes priority over the thumbnail.
     boardUrl: item.isCustom && item.cutoutStatus !== 'ready' ? null : item.boardUrl ?? null,
     gender: item.gender,
     clothingType: item.clothingType ?? null,

@@ -129,11 +129,12 @@ test('curated skirt still falls back to the neutral silhouette vocabulary for me
   assert.deepEqual(definition.values.map((value) => value.value), ['h_line', 'a_line', 'mermaid']);
 });
 
-test('curated seed stays at sixty and fifteen per gender/type bucket', () => {
-  assert.equal(seedMatchingItems.length, 60);
+test('legacy seed keeps sixty entries alongside the supplemental mock catalog', () => {
+  const legacy = seedMatchingItems.filter(item => !item.isMockFixture);
+  assert.equal(legacy.length, 60);
   for (const gender of ['women', 'men']) {
     for (const clothingType of ['top', 'bottom']) {
-      assert.equal(seedMatchingItems.filter(
+      assert.equal(legacy.filter(
         (item) => item.gender === gender && item.clothingType === clothingType,
       ).length, 15);
     }

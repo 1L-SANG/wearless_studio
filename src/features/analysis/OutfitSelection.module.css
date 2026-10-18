@@ -81,6 +81,8 @@
 .swatch[data-color="brown"] { background: #6b4a35; }
 .swatch[data-color="gold"] { background: #d2b069; }
 .swatch[data-color="gray"] { background: var(--fg-2); }
+.swatch[data-color="silver"] { background: var(--fg-3); }
+.swatch[data-color="color"] { background: var(--outfit-swatch-color); }
 .swatch[data-color="blue"] { background: #5b8ad1; }
 .swatch[data-color="black"] { background: var(--fg-1); }
 .panelFoot { display: flex; align-items: center; gap: 8px; margin-top: 12px; }

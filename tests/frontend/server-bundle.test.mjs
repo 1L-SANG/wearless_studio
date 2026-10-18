@@ -120,8 +120,9 @@ test('mock combines normalized style affinity with product color and supports we
 test('mock matching seed keeps the server retagging inputs in parity', async () => {
   const serverSeed = JSON.parse(await read('server/seed/matching_items.json'));
   const serverTags = new Map(serverSeed.map((item) => [item.id, item.styleTags]));
-  assert.equal(seedMatchingItems.length, serverSeed.length);
-  for (const item of seedMatchingItems) {
+  const legacy = seedMatchingItems.filter(item => !item.isMockFixture);
+  assert.equal(legacy.length, serverSeed.length);
+  for (const item of legacy) {
     assert.deepEqual(item.styleTags, serverTags.get(item.id), item.id);
   }
 });

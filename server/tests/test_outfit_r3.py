@@ -144,7 +144,8 @@ def test_public_type_refresh_and_promotion_preserve_ai_fillable_role(
     assert saved['outfitSelections']['slots'][role]['origin'] == 'ai'
 
 
-def test_background_completion_persists_only_recommendation_over_latest_custom_selection(monkeypatch):
+@pytest.mark.parametrize('origin', ['user', 'ai'])
+def test_background_completion_persists_only_recommendation_over_latest_selection(monkeypatch, origin):
     async def run():
         outfit.clear_cache()
         product = {'clothingType': 'top', 'colors': []}
@@ -166,7 +167,8 @@ def test_background_completion_persists_only_recommendation_over_latest_custom_s
         try:
             outfit_jobs.follow_existing(app, 'u1', 'p1', product, fields, fields)
             selections = deepcopy(fields['outfitSelections'])
-            selections['slots']['bottom'] = {'itemId': 'custom', 'origin': 'user'}
+            selected_id = 'custom' if origin == 'user' else 'bottom'
+            selections['slots']['bottom'] = {'itemId': selected_id, 'origin': origin}
             saved.update(outfit.sync_legacy(saved, selections, items, app.state.r2))
             saved['mdComment'] = '추천 대기 중 편집'
             expected = deepcopy(saved)
@@ -178,7 +180,35 @@ def test_background_completion_persists_only_recommendation_over_latest_custom_s
             assert saved['outfitRecommendation']['status'] == 'ready'
             for key in ('outfitSelections', 'matchClothing', 'matchIds', 'mdComment'):
                 assert saved[key] == expected[key]
-            assert outfit.generation_snapshot(saved, 'top', items)['slots']['bottom']['itemId'] == 'custom'
+            assert outfit.generation_snapshot(saved, 'top', items)['slots']['bottom']['itemId'] == selected_id
         finally:
             outfit._inflight.pop(fields['outfitRecommendation']['contextKey'], None)
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('status', ['pending', 'ready'])
+@pytest.mark.parametrize('user_bottom', [False, True])
+def test_automatic_ready_saves_displayed_ids_for_confirmation_without_reapplying_server_set(
+        client, make_token, state, status, user_bottom):
+    saved, _, items = state
+    items.extend([row('new-bottom', 'bottom'), row('old-shoes', 'shoes'), row('new-shoes', 'shoes')])
+    selections = {'version': 1, 'setIndex': 0, 'optional': {'bag': False, 'accessory': False}, 'slots': {
+        'bottom': {'itemId': 'bottom', 'origin': 'user' if user_bottom else 'ai'},
+        'footwear': {'itemId': 'old-shoes', 'origin': 'ai'},
+        'bag': {'itemId': 'bag', 'origin': 'ai'}, 'accessory': {'itemId': None, 'origin': 'user'}}}
+    saved.update(outfitSelections=deepcopy(selections), outfitRecommendation={
+        'contextKey': 'context', 'status': status, 'sets': [{'slots': {
+            'bottom': 'bottom' if status == 'pending' else 'new-bottom',
+            'footwear': 'old-shoes' if status == 'pending' else 'new-shoes'}}]})
+    if not user_bottom:
+        selections['slots']['bottom']['itemId'] = 'new-bottom'
+    selections['slots']['footwear']['itemId'] = 'new-shoes'
+    response = client.patch('/v1/projects/p1/analysis?merge=1', headers=auth_headers(make_token),
+                            json={'outfitSelections': selections})
+    assert response.status_code == 200, response.text
+    assert response.json()['outfitSelections'] == selections
+    assert saved['outfitSelections'] == selections
+    # This is the same snapshot builder used when confirming a mannequin/detail/editor job.
+    snapshot = asyncio.run(routes._outfit_generation_snapshot(None, 'u1', 'p1'))
+    expected = {role: entry for role, entry in selections['slots'].items() if role not in ('bag', 'accessory')}
+    assert snapshot == {'version': 1, 'slots': expected}
