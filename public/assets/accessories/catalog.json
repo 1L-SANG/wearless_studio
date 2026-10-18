@@ -1,0 +1,429 @@
+{
+  "version": 1,
+  "genderClassification": "styling-display-priority",
+  "items": [
+    {
+      "id": "GW02-01",
+      "gender": "women",
+      "category": "necklaces",
+      "name": "가는 스네이크 체인",
+      "color": "silver",
+      "colorLabel": "실버",
+      "imageUrl": "/assets/accessories/women/necklaces/GW02-01.png"
+    },
+    {
+      "id": "GW02-02",
+      "gender": "women",
+      "category": "necklaces",
+      "name": "가는 스네이크 체인",
+      "color": "gold",
+      "colorLabel": "골드",
+      "imageUrl": "/assets/accessories/women/necklaces/GW02-02.png"
+    },
+    {
+      "id": "GW03-01",
+      "gender": "women",
+      "category": "necklaces",
+      "name": "작은 원포인트 펜던트",
+      "color": "silver",
+      "colorLabel": "실버",
+      "imageUrl": "/assets/accessories/women/necklaces/GW03-01.png"
+    },
+    {
+      "id": "GW03-02",
+      "gender": "women",
+      "category": "necklaces",
+      "name": "작은 원포인트 펜던트",
+      "color": "gold",
+      "colorLabel": "골드",
+      "imageUrl": "/assets/accessories/women/necklaces/GW03-02.png"
+    },
+    {
+      "id": "GW04-01",
+      "gender": "women",
+      "category": "earrings",
+      "name": "작은 볼륨 링",
+      "color": "silver",
+      "colorLabel": "실버",
+      "imageUrl": "/assets/accessories/women/earrings/GW04-01.png"
+    },
+    {
+      "id": "GW04-02",
+      "gender": "women",
+      "category": "earrings",
+      "name": "작은 볼륨 링",
+      "color": "gold",
+      "colorLabel": "골드",
+      "imageUrl": "/assets/accessories/women/earrings/GW04-02.png"
+    },
+    {
+      "id": "GW05-01",
+      "gender": "women",
+      "category": "earrings",
+      "name": "가는 링",
+      "color": "silver",
+      "colorLabel": "실버",
+      "imageUrl": "/assets/accessories/women/earrings/GW05-01.png"
+    },
+    {
+      "id": "GW05-02",
+      "gender": "women",
+      "category": "earrings",
+      "name": "가는 링",
+      "color": "gold",
+      "colorLabel": "골드",
+      "imageUrl": "/assets/accessories/women/earrings/GW05-02.png"
+    },
+    {
+      "id": "GW07-01",
+      "gender": "women",
+      "category": "earrings",
+      "name": "라운드 진주 스터드",
+      "color": "ivory",
+      "colorLabel": "아이보리",
+      "imageUrl": "/assets/accessories/women/earrings/GW07-01.png"
+    },
+    {
+      "id": "GW08-01",
+      "gender": "women",
+      "category": "rings",
+      "name": "슬림 민자 밴드",
+      "color": "silver",
+      "colorLabel": "실버",
+      "imageUrl": "/assets/accessories/women/rings/GW08-01.png"
+    },
+    {
+      "id": "GW08-02",
+      "gender": "women",
+      "category": "rings",
+      "name": "슬림 민자 밴드",
+      "color": "gold",
+      "colorLabel": "골드",
+      "imageUrl": "/assets/accessories/women/rings/GW08-02.png"
+    },
+    {
+      "id": "GW09-01",
+      "gender": "women",
+      "category": "rings",
+      "name": "가는 꼬임 밴드",
+      "color": "silver",
+      "colorLabel": "실버",
+      "imageUrl": "/assets/accessories/women/rings/GW09-01.png"
+    },
+    {
+      "id": "GW10-02",
+      "gender": "women",
+      "category": "bracelets",
+      "name": "가는 체인 팔찌",
+      "color": "gold",
+      "colorLabel": "골드",
+      "imageUrl": "/assets/accessories/women/bracelets/GW10-02.png"
+    },
+    {
+      "id": "GW11-01",
+      "gender": "women",
+      "category": "bracelets",
+      "name": "슬림 오픈 뱅글",
+      "color": "silver",
+      "colorLabel": "실버",
+      "imageUrl": "/assets/accessories/women/bracelets/GW11-01.png"
+    },
+    {
+      "id": "GW11-02",
+      "gender": "women",
+      "category": "bracelets",
+      "name": "슬림 오픈 뱅글",
+      "color": "gold",
+      "colorLabel": "골드",
+      "imageUrl": "/assets/accessories/women/bracelets/GW11-02.png"
+    },
+    {
+      "id": "GW12-01",
+      "gender": "women",
+      "category": "watches",
+      "name": "라운드 가죽 시계",
+      "color": "black",
+      "colorLabel": "블랙",
+      "imageUrl": "/assets/accessories/women/watches/GW12-01.png"
+    },
+    {
+      "id": "GW12-02",
+      "gender": "women",
+      "category": "watches",
+      "name": "라운드 가죽 시계",
+      "color": "dark-brown",
+      "colorLabel": "다크브라운",
+      "imageUrl": "/assets/accessories/women/watches/GW12-02.png"
+    },
+    {
+      "id": "GW13-01",
+      "gender": "women",
+      "category": "belts",
+      "name": "슬림 가죽 벨트",
+      "color": "black",
+      "colorLabel": "블랙",
+      "imageUrl": "/assets/accessories/women/belts/GW13-01.png"
+    },
+    {
+      "id": "GW13-02",
+      "gender": "women",
+      "category": "belts",
+      "name": "슬림 가죽 벨트",
+      "color": "dark-brown",
+      "colorLabel": "다크브라운",
+      "imageUrl": "/assets/accessories/women/belts/GW13-02.png"
+    },
+    {
+      "id": "GW13-03",
+      "gender": "women",
+      "category": "belts",
+      "name": "슬림 가죽 벨트",
+      "color": "ivory",
+      "colorLabel": "아이보리",
+      "imageUrl": "/assets/accessories/women/belts/GW13-03.png"
+    },
+    {
+      "id": "GW16-01",
+      "gender": "women",
+      "category": "sunglasses",
+      "name": "슬림 오벌 선글라스",
+      "color": "black",
+      "colorLabel": "블랙",
+      "imageUrl": "/assets/accessories/women/sunglasses/GW16-01.png"
+    },
+    {
+      "id": "GM22-01",
+      "gender": "men",
+      "category": "rings",
+      "name": "기본 민자 밴드",
+      "color": "silver",
+      "colorLabel": "실버",
+      "imageUrl": "/assets/accessories/men/rings/GM22-01.png"
+    },
+    {
+      "id": "GM23-01",
+      "gender": "men",
+      "category": "rings",
+      "name": "작은 직사각 시그넷",
+      "color": "silver",
+      "colorLabel": "실버",
+      "imageUrl": "/assets/accessories/men/rings/GM23-01.png"
+    },
+    {
+      "id": "GM25-01",
+      "gender": "men",
+      "category": "bracelets",
+      "name": "기본 커브 체인",
+      "color": "silver",
+      "colorLabel": "실버",
+      "imageUrl": "/assets/accessories/men/bracelets/GM25-01.png"
+    },
+    {
+      "id": "GM26-01",
+      "gender": "men",
+      "category": "bracelets",
+      "name": "얇은 가죽 팔찌",
+      "color": "black",
+      "colorLabel": "블랙",
+      "imageUrl": "/assets/accessories/men/bracelets/GM26-01.png"
+    },
+    {
+      "id": "GM26-02",
+      "gender": "men",
+      "category": "bracelets",
+      "name": "얇은 가죽 팔찌",
+      "color": "dark-brown",
+      "colorLabel": "다크브라운",
+      "imageUrl": "/assets/accessories/men/bracelets/GM26-02.png"
+    },
+    {
+      "id": "GM27-01",
+      "gender": "men",
+      "category": "watches",
+      "name": "라운드 가죽 시계",
+      "color": "black",
+      "colorLabel": "블랙",
+      "imageUrl": "/assets/accessories/men/watches/GM27-01.png"
+    },
+    {
+      "id": "GM27-02",
+      "gender": "men",
+      "category": "watches",
+      "name": "라운드 가죽 시계",
+      "color": "dark-brown",
+      "colorLabel": "다크브라운",
+      "imageUrl": "/assets/accessories/men/watches/GM27-02.png"
+    },
+    {
+      "id": "GM28-01",
+      "gender": "men",
+      "category": "belts",
+      "name": "기본 가죽 벨트",
+      "color": "black",
+      "colorLabel": "블랙",
+      "imageUrl": "/assets/accessories/men/belts/GM28-01.png"
+    },
+    {
+      "id": "GM31-01",
+      "gender": "men",
+      "category": "sunglasses",
+      "name": "기본 직사각 선글라스",
+      "color": "black",
+      "colorLabel": "블랙",
+      "imageUrl": "/assets/accessories/men/sunglasses/GM31-01.png"
+    },
+    {
+      "id": "GB34-01",
+      "gender": "women",
+      "category": "bags",
+      "name": "기본 가죽 토트",
+      "color": "black",
+      "colorLabel": "블랙",
+      "imageUrl": "/assets/accessories/women/bags/GB34-01.png"
+    },
+    {
+      "id": "GB34-02",
+      "gender": "women",
+      "category": "bags",
+      "name": "기본 가죽 토트",
+      "color": "dark-brown",
+      "colorLabel": "다크브라운",
+      "imageUrl": "/assets/accessories/women/bags/GB34-02.png"
+    },
+    {
+      "id": "GB34-03",
+      "gender": "women",
+      "category": "bags",
+      "name": "기본 가죽 토트",
+      "color": "ivory",
+      "colorLabel": "아이보리",
+      "imageUrl": "/assets/accessories/women/bags/GB34-03.png"
+    },
+    {
+      "id": "GB35-01",
+      "gender": "women",
+      "category": "bags",
+      "name": "미니 숄더백",
+      "color": "black",
+      "colorLabel": "블랙",
+      "imageUrl": "/assets/accessories/women/bags/GB35-01.png"
+    },
+    {
+      "id": "GB35-02",
+      "gender": "women",
+      "category": "bags",
+      "name": "미니 숄더백",
+      "color": "dark-brown",
+      "colorLabel": "다크브라운",
+      "imageUrl": "/assets/accessories/women/bags/GB35-02.png"
+    },
+    {
+      "id": "GB35-03",
+      "gender": "women",
+      "category": "bags",
+      "name": "미니 숄더백",
+      "color": "ivory",
+      "colorLabel": "아이보리",
+      "imageUrl": "/assets/accessories/women/bags/GB35-03.png"
+    },
+    {
+      "id": "GB36-01",
+      "gender": "women",
+      "category": "bags",
+      "name": "소프트 호보백",
+      "color": "black",
+      "colorLabel": "블랙",
+      "imageUrl": "/assets/accessories/women/bags/GB36-01.png"
+    },
+    {
+      "id": "GB36-02",
+      "gender": "women",
+      "category": "bags",
+      "name": "소프트 호보백",
+      "color": "dark-brown",
+      "colorLabel": "다크브라운",
+      "imageUrl": "/assets/accessories/women/bags/GB36-02.png"
+    },
+    {
+      "id": "GB36-03",
+      "gender": "women",
+      "category": "bags",
+      "name": "소프트 호보백",
+      "color": "ivory",
+      "colorLabel": "아이보리",
+      "imageUrl": "/assets/accessories/women/bags/GB36-03.png"
+    },
+    {
+      "id": "GB37-01",
+      "gender": "women",
+      "category": "bags",
+      "name": "기본 버킷백",
+      "color": "black",
+      "colorLabel": "블랙",
+      "imageUrl": "/assets/accessories/women/bags/GB37-01.png"
+    },
+    {
+      "id": "GB37-03",
+      "gender": "women",
+      "category": "bags",
+      "name": "기본 버킷백",
+      "color": "ivory",
+      "colorLabel": "아이보리",
+      "imageUrl": "/assets/accessories/women/bags/GB37-03.png"
+    },
+    {
+      "id": "GB38-01",
+      "gender": "women",
+      "category": "bags",
+      "name": "미니 박스 크로스백",
+      "color": "black",
+      "colorLabel": "블랙",
+      "imageUrl": "/assets/accessories/women/bags/GB38-01.png"
+    },
+    {
+      "id": "GB38-03",
+      "gender": "women",
+      "category": "bags",
+      "name": "미니 박스 크로스백",
+      "color": "ivory",
+      "colorLabel": "아이보리",
+      "imageUrl": "/assets/accessories/women/bags/GB38-03.png"
+    },
+    {
+      "id": "GB39-01",
+      "gender": "men",
+      "category": "bags",
+      "name": "플랫 사코슈",
+      "color": "black",
+      "colorLabel": "블랙",
+      "imageUrl": "/assets/accessories/men/bags/GB39-01.png"
+    },
+    {
+      "id": "GB40-01",
+      "gender": "men",
+      "category": "bags",
+      "name": "기본 데일리 백팩",
+      "color": "black",
+      "colorLabel": "블랙",
+      "imageUrl": "/assets/accessories/men/bags/GB40-01.png"
+    },
+    {
+      "id": "GB40-03",
+      "gender": "men",
+      "category": "bags",
+      "name": "기본 데일리 백팩",
+      "color": "gray",
+      "colorLabel": "그레이",
+      "imageUrl": "/assets/accessories/men/bags/GB40-03.png"
+    },
+    {
+      "id": "GB41-01",
+      "gender": "men",
+      "category": "bags",
+      "name": "기본 메신저백",
+      "color": "black",
+      "colorLabel": "블랙",
+      "imageUrl": "/assets/accessories/men/bags/GB41-01.png"
+    }
+  ]
+}
