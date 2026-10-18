@@ -46,6 +46,7 @@ from ..agents import (
     space_set_assets,
 )
 from ..agents.gemini_image import InlineImage, normalize_openai_images
+from ..agents.catalog_image import catalog_image
 from ..agents.model_routing import resolve_detail_cut_model
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
@@ -1882,7 +1883,8 @@ async def run_detail_page_job(app, job: dict) -> None:
             asset = match_assets[matching_id]
             if asset is None:
                 raise LookupError("matching_asset_unavailable")
-            return await _img(asset)
+            image = await _img(asset)
+            return await asyncio.to_thread(catalog_image, image.mime, image.data)
 
         async def _resolve_matching(mids: list[str]) -> tuple[list[str], list[InlineImage], list[dict]]:
             resolved_ids, images, fallbacks = [], [], []

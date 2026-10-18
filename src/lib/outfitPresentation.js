@@ -1,4 +1,4 @@
-// Pure presentation rules for the v18 outfit picker. Groups follow E12_CGROUPS.
+// Pure presentation rules for the v18 outfit picker and the 2026-10-18 catalog.
 export const OUTFIT_COLOR_GROUPS = Object.freeze({
   garment: [
     { value: 'white', label: '화이트', hex: '#f4f4f4', colors: ['white', 'ivory', 'cream'] },
@@ -6,23 +6,32 @@ export const OUTFIT_COLOR_GROUPS = Object.freeze({
     { value: 'gray', label: '그레이', hex: '#8e8e95', colors: ['gray', 'charcoal'] },
     { value: 'blue', label: '블루', hex: '#5b8ad1', colors: ['lightblue', 'blue', 'navy'] },
     { value: 'black', label: '블랙', hex: '#15141a', colors: ['black'] },
+    { value: 'color', label: '컬러', hex: 'var(--outfit-swatch-color)', colors: ['green', 'olive', 'red', 'burgundy', 'pink', 'purple', 'yellow', 'orange'] },
   ],
   shoes: [
-    { value: 'white', label: '화이트', hex: '#f4f4f4', colors: ['white'] },
+    { value: 'white', label: '화이트', hex: '#f4f4f4', colors: ['white', 'ivory', 'cream'] },
     { value: 'brown', label: '브라운', hex: '#6b4a35', colors: ['brown', 'beige', 'tan', 'camel'] },
     { value: 'black', label: '블랙', hex: '#15141a', colors: ['black'] },
   ],
-  acc: [
-    { value: 'white', label: '화이트', hex: '#f3efe6', colors: ['pearl', 'white'] },
+  bag: [
+    { value: 'white', label: '화이트', hex: '#f3efe6', colors: ['white', 'ivory', 'cream'] },
+    { value: 'gray', label: '그레이', hex: 'var(--fg-2)', colors: ['gray', 'silver'] },
+    { value: 'brown', label: '브라운', hex: '#6b4a35', colors: ['beige', 'camel', 'brown'] },
+    { value: 'black', label: '블랙', hex: '#1f1e24', colors: ['black', 'navy'] },
+  ],
+  accessory: [
+    { value: 'white', label: '화이트', hex: '#f3efe6', colors: ['white', 'ivory', 'pearl'] },
+    { value: 'silver', label: '실버', hex: 'var(--fg-3)', colors: ['silver', 'gray'] },
     { value: 'gold', label: '골드', hex: '#d2b069', colors: ['gold'] },
     { value: 'brown', label: '브라운', hex: '#6b4a35', colors: ['beige', 'camel', 'brown'] },
-    { value: 'black', label: '블랙', hex: '#1f1e24', colors: ['navy', 'black'] },
+    { value: 'black', label: '블랙', hex: '#1f1e24', colors: ['black', 'navy'] },
   ],
 });
 
 export function colorGroupsForRole(role) {
   if (['footwear', 'shoes'].includes(role)) return OUTFIT_COLOR_GROUPS.shoes;
-  if (['bag', 'accessory', 'acc'].includes(role)) return OUTFIT_COLOR_GROUPS.acc;
+  if (role === 'bag') return OUTFIT_COLOR_GROUPS.bag;
+  if (['accessory', 'acc'].includes(role)) return OUTFIT_COLOR_GROUPS.accessory;
   if (['top', 'bottom', 'inner', 'outer', 'dress', 'garment'].includes(role)) return OUTFIT_COLOR_GROUPS.garment;
   return [];
 }
@@ -37,7 +46,8 @@ const COLOR_NAMES = [
   ['lightblue', /lightblue|skyblue|라이트블루|스카이블루|아이스블루/],
   ['navy', /navy|네이비|남색/], ['blue', /blue|블루|파랑|청색/],
   ['black', /black|블랙|검정|검은/],
-  ['pink', /pink|핑크/], ['green', /green|그린|초록/],
+  ['pink', /pink|핑크/], ['green', /green|olive|그린|초록|올리브/],
+  ['burgundy', /burgundy|버건디|와인/], ['orange', /orange|오렌지|주황/],
   ['red', /^red$|레드|빨강/], ['purple', /purple|퍼플|보라/],
   ['yellow', /yellow|옐로우|노랑/], ['silver', /silver|실버|은색/],
 ];
@@ -62,11 +72,11 @@ function hexColor(value, role) {
   return null;
 }
 
-/** Prefer explicit catalog names/keys to coarse families (washed khaki is beige, not green). */
+/** Catalog groups are authoritative; names and hex only fill absent color metadata. */
 export function colorGroupForItem(item, role) {
   const color = item?.color;
-  const values = [item?.colorKey, item?.colorName, typeof color === 'string' ? color : null,
-    color?.key, color?.name, item?.colorFamily, color?.family, item?.colorGroup, item?.family, item?.swatchId];
+  const values = [item?.colorGroup, item?.color_group, item?.colorKey, item?.colorName, typeof color === 'string' ? color : null,
+    color?.key, color?.name, item?.colorFamily, color?.family, item?.family, item?.swatchId];
   const named = values.map(namedColor).find(Boolean);
   const resolved = named || [item?.colorHex, item?.hex, color?.hex, color]
     .map(value => hexColor(value, role)).find(Boolean);

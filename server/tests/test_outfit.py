@@ -26,6 +26,25 @@ def test_role_branches(kind, roles):
     assert outfit.eligible_slots(kind, "shirt") == roles
 
 
+@pytest.mark.parametrize("product_color,expected", [
+    ("white", ["red", "green", "ivory", "gold", "silver"]),
+    ("ivory", ["red", "green", "ivory", "gold", "silver"]),
+    ("silver", ["gold", "green", "ivory", "red", "silver"]),
+    ("gold", ["gold", "green", "ivory", "red", "silver"]),
+    ("green", ["ivory", "green", "gold", "silver", "red"]),
+    ("red", ["ivory", "red", "gold", "silver", "green"]),
+])
+def test_october_catalog_colors_keep_role_ranking_and_neutral_metal_ties(product_color, expected):
+    colors = ["ivory", "silver", "gold", "green", "red"]
+    kinds = {"inner": "inner", "bottom": "bottom", "footwear": "shoes", "bag": "bag", "accessory": "accessory"}
+    items = [row(f"{role}-{color}", kind, color_group=color, category="가방" if role == "bag" else None)
+             for role, kind in kinds.items() for color in colors]
+    pools = outfit.candidate_pools(items, {"clothingType": "outer", "productColor": product_color,
+                                          "targetGenders": ["women"], "styleTags": []})
+    for role in kinds:
+        assert [item["color_group"] for item in pools[role]] == expected
+
+
 def test_normalization_preserves_user_empty_and_prunes_impossible_slots():
     value = {"version": 1, "slots": {"footwear": {"itemId": None, "origin": "user"},
              "bottom": {"itemId": "removed", "origin": "user"}}}

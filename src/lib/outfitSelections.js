@@ -68,13 +68,13 @@ export function setOutfitSelection(analysis, slot, itemId) {
   return { outfitSelections, ...(slot === complementary && changed ? { matchClothing: synced.matchClothing } : {}) };
 }
 
-export function applyOutfitSet(analysis, index) {
+export function applyOutfitSet(analysis, index, { preserveUser = false } = {}) {
   const set = analysis.outfitRecommendation?.sets?.[index];
   if (!Number.isInteger(index) || !set) return null;
   const outfitSelections = normalizeOutfitSelections(analysis.outfitSelections, analysis.clothingType, analysis.matchClothing);
   for (const slot of outfitSlotsFor(analysis.clothingType)) {
     const prior = outfitSelections.slots[slot];
-    if (prior.origin === 'user' && prior.itemId === null) continue;
+    if (prior.origin === 'user' && (preserveUser || prior.itemId === null)) continue;
     if (Object.hasOwn(outfitSelections.optional, slot) && !outfitSelections.optional[slot]) continue;
     outfitSelections.slots[slot] = { itemId: set.slots[slot] ?? null, origin: 'ai' };
   }

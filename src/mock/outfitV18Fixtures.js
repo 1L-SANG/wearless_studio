@@ -1,4 +1,5 @@
-import { recommendLegacyMatchClothing, buildMockOutfitRecommendation } from './matchingRecommendation.js';
+import { buildMockOutfitRecommendation } from './matchingRecommendation.js';
+import { catalog1018Garments } from './outfitCatalogFixtures.js';
 
 // Explicit QA catalog, never a source for production or the default mock catalog.
 // Owner-supplied bag/accessory photos are still pending. SVGs below are mock illustrations.
@@ -43,15 +44,15 @@ function fixtureImage(role, color, index) {
 const fixtureRows = {
   footwear: [
     ['화이트 스니커즈', 'white', '#f5f2ee'], ['브라운 로퍼', 'brown', '#866349'], ['블랙 슬링백', 'black', '#302d32'],
-    ['크림 스니커즈', 'white', '#ece7dc'], ['카멜 로퍼', 'brown', '#b6936f'], ['블랙 스니커즈', 'black', '#49464c'],
+    ['아이보리 스니커즈', 'ivory', '#ece7dc'], ['카멜 로퍼', 'brown', '#b6936f'], ['블랙 스니커즈', 'black', '#49464c'],
   ],
   bag: [
-    ['아이보리 토트백', 'white', '#e9e4da'], ['브라운 숄더백', 'brown', '#8e6a51'], ['블랙 크로스백', 'black', '#373239'],
-    ['화이트 토트백', 'white', '#f4f0e9'], ['카멜 숄더백', 'brown', '#b68c67'], ['블랙 미니백', 'black', '#4b454f'],
+    ['아이보리 토트백', 'ivory', '#e9e4da'], ['브라운 숄더백', 'brown', '#8e6a51'], ['블랙 크로스백', 'black', '#373239'],
+    ['그레이 토트백', 'gray', '#96939a'], ['카멜 숄더백', 'brown', '#b68c67'], ['블랙 미니백', 'black', '#4b454f'],
   ],
   accessory: [
-    ['골드 이어링', 'gold', '#d2b069'], ['진주 목걸이', 'white', '#eee9df'], ['블랙 선글라스', 'black', '#39343e'],
-    ['화이트 이어링', 'white', '#f5f1e7'], ['골드 목걸이', 'gold', '#c5a369'], ['브라운 선글라스', 'brown', '#8a6953'],
+    ['골드 이어링', 'gold', '#d2b069'], ['아이보리 목걸이', 'ivory', '#eee9df'], ['블랙 선글라스', 'black', '#39343e'],
+    ['실버 이어링', 'silver', '#b4b4ba'], ['골드 목걸이', 'gold', '#c5a369'], ['브라운 선글라스', 'brown', '#8a6953'],
   ],
 };
 
@@ -59,17 +60,17 @@ export function v18FixtureCandidates(analysis) {
   const props = Object.fromEntries(Object.entries(fixtureRows).map(([role, rows]) => [role,
     rows.map(([name, colorGroup, color], index) => {
       const image = fixtureImage(role, color, index);
-      return { id: `mock_v18_${role}_${index + 1}`, name: `데모 ${name}`, role, colorGroup,
+      return { id: `mock_v18_${role}_${index + 1}`, name: `데모 ${name}`, role, colorGroup, length: 'na', gender: 'unisex',
         thumb: image, thumbnailUrl: image, imageUrl: image, boardUrl: index % 2 === 0 ? image : null,
         isMockFixture: true, isCompatible: true,
         ...(role === 'footwear' ? { cm: 16, ar: 2.1 } : {}) };
     })]));
   if (analysis.clothingType === 'outer') {
-    props.inner = [{ id: 'mock_v18_inner_knit', name: '데모 아이보리 니트', clothingType: 'top',
+    props.inner = [{ id: 'mock_v18_inner_knit', name: '데모 아이보리 니트', clothingType: 'inner', length: 'regular', gender: 'unisex',
       role: 'inner', colorGroup: 'ivory', thumb: MOCK_TIDY_KNIT, thumbnailUrl: MOCK_TIDY_KNIT,
       imageUrl: MOCK_TIDY_KNIT, boardUrl: null, isMockFixture: true, isCompatible: true, cm: 64, ar: .95 },
-    ...recommendLegacyMatchClothing({ clothingType: 'bottom', targetGenders: analysis.targetGenders,
-      styleTags: analysis.styleTags, defaultSelection: false })];
+    ...catalog1018Garments.filter(item => item.clothingType === 'inner').map(item => ({ ...item,
+      role: 'inner', thumb: item.thumbnailUrl, boardUrl: item.imageUrl, isCompatible: true }))];
   }
   return props;
 }

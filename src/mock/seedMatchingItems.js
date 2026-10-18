@@ -1,14 +1,8 @@
-/* =============================================================
-   mock/seedMatchingItems.js — Supabase-ready matching clothing seed.
-   AUTO-GENERATED from outputs/coor_matching/generated_v2 by
-   .scratch/gen-matching.mjs (women+men × top+bottom = 60 items (4벌 제거 2026-08-05)).
-   colorBrightness: 100(밝음)→0(어두움), 색상 정렬용.
-   imageUrl/thumbnailUrl 는 R2 공개 URL(https://images.wearless.kr/seed/matching/...). 배포·클론에서 정상 표시.
-   원본 업로드/갱신: cd server && python -m scripts.seed_matching.
-   에셋 원본(public/assets/matching/)은 IP 리스크로 git 제외(.gitignore).
-   ============================================================= */
+// Legacy metadata retains its IDs and retagging inputs. Images are local SVG
+// illustrations; the supplemental mock catalog covers the 10/18 data vocabulary.
+import { catalog1018Garments, mockGarmentImage } from './outfitCatalogFixtures.js';
 
-export const seedMatchingItems = [
+const legacyMatchingItems = [
   {
     "id": "match_women_top_01",
     "name": "화이트 헨리넥 반팔 티셔츠",
@@ -25,8 +19,6 @@ export const seedMatchingItems = [
     ],
     "fit": "레귤러핏",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_top_01.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_top_01.png",
     "isActive": true,
     "sortOrder": 101
   },
@@ -47,8 +39,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_top_02.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_top_02.png",
     "isActive": true,
     "sortOrder": 102
   },
@@ -69,8 +59,6 @@ export const seedMatchingItems = [
     ],
     "fit": "오버핏",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_top_03.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_top_03.png",
     "isActive": true,
     "sortOrder": 103
   },
@@ -91,8 +79,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_top_04.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_top_04.png",
     "isActive": true,
     "sortOrder": 104
   },
@@ -112,8 +98,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_top_05.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_top_05.png",
     "isActive": true,
     "sortOrder": 105
   },
@@ -134,8 +118,6 @@ export const seedMatchingItems = [
     ],
     "fit": "레귤러핏",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_top_06.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_top_06.png",
     "isActive": true,
     "sortOrder": 106
   },
@@ -156,8 +138,6 @@ export const seedMatchingItems = [
     ],
     "fit": "레귤러",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_top_07.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_top_07.png",
     "isActive": true,
     "sortOrder": 107
   },
@@ -178,8 +158,6 @@ export const seedMatchingItems = [
     ],
     "fit": "세미오버핏",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_top_08.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_top_08.png",
     "isActive": true,
     "sortOrder": 108
   },
@@ -200,8 +178,6 @@ export const seedMatchingItems = [
     ],
     "fit": "오버핏",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_top_09.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_top_09.png",
     "isActive": true,
     "sortOrder": 109
   },
@@ -222,8 +198,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_top_10.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_top_10.png",
     "isActive": true,
     "sortOrder": 110
   },
@@ -244,8 +218,6 @@ export const seedMatchingItems = [
     ],
     "fit": "오버핏",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_top_11.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_top_11.png",
     "isActive": true,
     "sortOrder": 111
   },
@@ -266,8 +238,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_top_13.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_top_13.png",
     "isActive": true,
     "sortOrder": 113
   },
@@ -288,8 +258,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_top_14.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_top_14.png",
     "isActive": true,
     "sortOrder": 114
   },
@@ -309,8 +277,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_top_15.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_top_15.png",
     "isActive": true,
     "sortOrder": 115
   },
@@ -331,8 +297,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_top_16.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_top_16.png",
     "isActive": true,
     "sortOrder": 116
   },
@@ -352,8 +316,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_bottom_02.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_bottom_02.png",
     "isActive": true,
     "sortOrder": 202
   },
@@ -373,8 +335,6 @@ export const seedMatchingItems = [
     ],
     "fit": "스트레이트",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_bottom_03.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_bottom_03.png",
     "isActive": true,
     "sortOrder": 203
   },
@@ -394,8 +354,6 @@ export const seedMatchingItems = [
     ],
     "fit": "플리츠",
     "length": "short",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_bottom_04.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_bottom_04.png",
     "isActive": true,
     "sortOrder": 204
   },
@@ -416,8 +374,6 @@ export const seedMatchingItems = [
     ],
     "fit": "릴랙스드",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_bottom_05.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_bottom_05.png",
     "isActive": true,
     "sortOrder": 205
   },
@@ -437,8 +393,6 @@ export const seedMatchingItems = [
     ],
     "fit": "루즈핏",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_bottom_06.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_bottom_06.png",
     "isActive": true,
     "sortOrder": 206
   },
@@ -458,8 +412,6 @@ export const seedMatchingItems = [
     ],
     "fit": "와이드레그",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_bottom_07.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_bottom_07.png",
     "isActive": true,
     "sortOrder": 207
   },
@@ -480,8 +432,6 @@ export const seedMatchingItems = [
     ],
     "fit": "와이드레그",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_bottom_08.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_bottom_08.png",
     "isActive": true,
     "sortOrder": 208
   },
@@ -502,8 +452,6 @@ export const seedMatchingItems = [
     ],
     "fit": "와이드레그",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_bottom_09.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_bottom_09.png",
     "isActive": true,
     "sortOrder": 209
   },
@@ -523,8 +471,6 @@ export const seedMatchingItems = [
     ],
     "fit": "스트레이트",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_bottom_10.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_bottom_10.png",
     "isActive": true,
     "sortOrder": 210
   },
@@ -544,8 +490,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "short",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_bottom_11.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_bottom_11.png",
     "isActive": true,
     "sortOrder": 211
   },
@@ -566,8 +510,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "midi",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_bottom_12.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_bottom_12.png",
     "isActive": true,
     "sortOrder": 212
   },
@@ -587,8 +529,6 @@ export const seedMatchingItems = [
     ],
     "fit": "와이드",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_bottom_13.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_bottom_13.png",
     "isActive": true,
     "sortOrder": 213
   },
@@ -608,8 +548,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "long",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_bottom_14.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_bottom_14.png",
     "isActive": true,
     "sortOrder": 214
   },
@@ -629,8 +567,6 @@ export const seedMatchingItems = [
     ],
     "fit": "플리츠",
     "length": "midi",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_bottom_15.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_bottom_15.png",
     "isActive": true,
     "sortOrder": 215
   },
@@ -651,8 +587,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "midi",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_bottom_16.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_bottom_16.png",
     "isActive": true,
     "sortOrder": 216
   },
@@ -673,8 +607,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_top_01.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_top_01.png",
     "isActive": true,
     "sortOrder": 301
   },
@@ -695,8 +627,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_top_02.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_top_02.png",
     "isActive": true,
     "sortOrder": 302
   },
@@ -717,8 +647,6 @@ export const seedMatchingItems = [
     ],
     "fit": "세미오버핏",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_top_03.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_top_03.png",
     "isActive": true,
     "sortOrder": 303
   },
@@ -739,8 +667,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_top_04.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_top_04.png",
     "isActive": true,
     "sortOrder": 304
   },
@@ -761,8 +687,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_top_05.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_top_05.png",
     "isActive": true,
     "sortOrder": 305
   },
@@ -783,8 +707,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_top_06.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_top_06.png",
     "isActive": true,
     "sortOrder": 306
   },
@@ -804,8 +726,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_top_07.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_top_07.png",
     "isActive": true,
     "sortOrder": 307
   },
@@ -825,8 +745,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_top_08.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_top_08.png",
     "isActive": true,
     "sortOrder": 308
   },
@@ -846,8 +764,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_top_10.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_top_10.png",
     "isActive": true,
     "sortOrder": 310
   },
@@ -868,8 +784,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_top_11.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_top_11.png",
     "isActive": true,
     "sortOrder": 311
   },
@@ -889,8 +803,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_top_12.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_top_12.png",
     "isActive": true,
     "sortOrder": 312
   },
@@ -910,8 +822,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_top_13.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_top_13.png",
     "isActive": true,
     "sortOrder": 313
   },
@@ -932,8 +842,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_top_14.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_top_14.png",
     "isActive": true,
     "sortOrder": 314
   },
@@ -954,8 +862,6 @@ export const seedMatchingItems = [
     ],
     "fit": "레귤러",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_top_15.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_top_15.png",
     "isActive": true,
     "sortOrder": 315
   },
@@ -976,8 +882,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_top_16.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_top_16.png",
     "isActive": true,
     "sortOrder": 316
   },
@@ -998,8 +902,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_bottom_01.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_bottom_01.png",
     "isActive": true,
     "sortOrder": 401
   },
@@ -1019,8 +921,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "short",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_bottom_02.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_bottom_02.png",
     "isActive": true,
     "sortOrder": 402
   },
@@ -1041,8 +941,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "short",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_bottom_03.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_bottom_03.png",
     "isActive": true,
     "sortOrder": 403
   },
@@ -1063,8 +961,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_bottom_04.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_bottom_04.png",
     "isActive": true,
     "sortOrder": 404
   },
@@ -1084,8 +980,6 @@ export const seedMatchingItems = [
     ],
     "fit": "스트레이트",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_bottom_05.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_bottom_05.png",
     "isActive": true,
     "sortOrder": 405
   },
@@ -1106,8 +1000,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_bottom_06.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_bottom_06.png",
     "isActive": true,
     "sortOrder": 406
   },
@@ -1128,8 +1020,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_bottom_07.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_bottom_07.png",
     "isActive": true,
     "sortOrder": 407
   },
@@ -1149,8 +1039,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "short",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_bottom_08.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_bottom_08.png",
     "isActive": true,
     "sortOrder": 408
   },
@@ -1170,8 +1058,6 @@ export const seedMatchingItems = [
     ],
     "fit": "이지",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_bottom_09.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_bottom_09.png",
     "isActive": true,
     "sortOrder": 409
   },
@@ -1191,8 +1077,6 @@ export const seedMatchingItems = [
     ],
     "fit": "와이드",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_bottom_10.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_bottom_10.png",
     "isActive": true,
     "sortOrder": 410
   },
@@ -1213,8 +1097,6 @@ export const seedMatchingItems = [
     ],
     "fit": "플레어",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_bottom_11.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_bottom_11.png",
     "isActive": true,
     "sortOrder": 411
   },
@@ -1235,8 +1117,6 @@ export const seedMatchingItems = [
     ],
     "fit": "테이퍼드",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_bottom_12.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_bottom_12.png",
     "isActive": true,
     "sortOrder": 412
   },
@@ -1257,8 +1137,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_bottom_13.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_bottom_13.png",
     "isActive": true,
     "sortOrder": 413
   },
@@ -1278,8 +1156,6 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "full",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_bottom_14.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_bottom_14.png",
     "isActive": true,
     "sortOrder": 414
   },
@@ -1300,11 +1176,17 @@ export const seedMatchingItems = [
     ],
     "fit": "regular",
     "length": "short",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_bottom_15.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_bottom_15.png",
     "isActive": true,
     "sortOrder": 415
   }
+];
+
+export const seedMatchingItems = [
+  ...legacyMatchingItems.map(item => {
+    const image = mockGarmentImage(item);
+    return { ...item, imageUrl: image, thumbnailUrl: image };
+  }),
+  ...catalog1018Garments,
 ];
 
 export default seedMatchingItems;

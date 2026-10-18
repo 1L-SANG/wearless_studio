@@ -2,6 +2,7 @@ import test, { before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
+import { colorGroupForItem, colorGroupsForRole, filterOutfitItems } from '../../src/lib/outfitPresentation.js';
 
 let vite, api;
 const originalWindow = globalThis.window;
@@ -68,7 +69,32 @@ test('QA analysis uses the supplied product type without needing a prior analysi
   assert.ok(result.matchClothing.every(item => item.clothingType === 'top'));
 });
 
-test('mock board art uses existing transparent SVGs and null for uncropped catalog photos', async () => {
+test('v18 analysis exposes the new chips and all six bottom lengths through the mock API', async () => {
+  query('?outfitDemo=ready');
+  await api.saveAnalysis(null, { targetGenders: ['women', 'men'] });
+  const expected = {
+    top: ['white', 'beige', 'gray', 'blue', 'black', 'color'],
+    bottom: ['white', 'beige', 'gray', 'blue', 'black', 'color'],
+    inner: ['white', 'beige', 'gray', 'blue', 'black', 'color'],
+    footwear: ['white', 'brown', 'black'], bag: ['white', 'gray', 'brown', 'black'],
+    accessory: ['white', 'silver', 'gold', 'brown', 'black'],
+  };
+  for (const kind of ['top', 'bottom', 'outer']) {
+    const result = await analyze(kind);
+    for (const [role, items] of Object.entries(result.outfitRecommendation.candidates)) {
+      const groups = colorGroupsForRole(role).filter(group => items.some(item => colorGroupForItem(item, role) === group.value));
+      assert.deepEqual(groups.map(group => group.value), expected[role], `${kind}/${role}`);
+      for (const group of groups) assert.ok(filterOutfitItems(items, { role, color: group.value }).length);
+    }
+    if (kind === 'top') {
+      for (const length of ['mini', 'short', 'knee', 'midi', 'maxi', 'full']) {
+        assert.ok(result.matchClothing.some(item => item.length === length), length);
+      }
+    }
+  }
+});
+
+test('mock board art uses transparent prop SVGs and garment thumbnail fallbacks', async () => {
   query('?outfitDemo=ready');
   const result = await analyze();
   assert.ok(result.matchClothing.every(item => item.boardUrl === null));

@@ -8,13 +8,27 @@ import styles from './OutfitSelection.module.css';
 
 // 총장이 없는 후보는 카탈로그의 길이 분류를 사용한다. 실측을 분석 값으로 저장하지 않는다.
 const DEFAULT_CM = { top: 64, inner: 64, outer: 76, bottom: 100, dress: 115, footwear: 16 };
+const LENGTH_KEYS = {
+  mini: 'mini', 미니: 'mini', short: 'short', 숏: 'short',
+  knee: 'knee', 무릎: 'knee', midi: 'midi', 미디: 'midi', maxi: 'maxi', 맥시: 'maxi',
+  full: 'full', 풀: 'full', long: 'full', 롱: 'full', semi_long: 'full', 세미롱: 'full',
+  cropped: 'cropped', crop: 'cropped', 크롭: 'cropped', semi_crop: 'cropped', 세미크롭: 'cropped',
+  crop_short: 'short', '크롭·숏': 'short',
+  regular: 'regular', basic: 'regular', 레귤러: 'regular', 기본: 'regular',
+};
+const TOP_LENGTH_CM = { cropped: 45, regular: 64, mini: 50, short: 50, full: 75 };
+const DISPLAY_LENGTH_CM = {
+  top: TOP_LENGTH_CM, inner: TOP_LENGTH_CM,
+  bottom: { mini: 42, short: 48, knee: 56, midi: 72, maxi: 90, full: 100, cropped: 85 },
+  outer: { mini: 50, short: 50, cropped: 45, full: 115 },
+  dress: { mini: 50, short: 50, cropped: 45, full: 115 },
+};
 export function garmentDisplayLength(item, role) {
   const numeric = Number(item?.lengthCm || item?.cm || item?.totalLength || item?.measurements?.find?.((m) => m.key === 'totalLength')?.value);
-  if (numeric > 0) return numeric;
-  const length = String(item?.length || '');
-  if (/short|mini|숏|미니/.test(length)) return role === 'bottom' ? 42 : 50;
-  if (/crop|크롭/.test(length)) return role === 'bottom' ? 85 : 45;
-  if (/long|롱|full/.test(length)) return ['outer', 'dress'].includes(role) ? 115 : role === 'bottom' ? 100 : 75;
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  const length = LENGTH_KEYS[String(item?.length || '').trim().toLowerCase()];
+  const cm = DISPLAY_LENGTH_CM[role]?.[length];
+  if (cm) return cm;
   return DEFAULT_CM[role] || 64;
 }
 

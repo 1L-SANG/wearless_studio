@@ -35,6 +35,7 @@ from ..agents import (
 )
 from ..agents import face_identity
 from ..agents.gemini_image import GeminiError, InlineImage
+from ..agents.catalog_image import catalog_image
 from ..agents.model_routing import resolve_editor_cut_model
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
@@ -908,8 +909,8 @@ async def run_editor_image_job(app, job: dict) -> None:
                 read_error = None
                 if asset is not None:
                     try:
-                        matching_image = InlineImage(asset["mime_type"], await asyncio.to_thread(
-                            app.state.r2.get_bytes, asset["r2_key"]))
+                        matching_image = await asyncio.to_thread(catalog_image, asset["mime_type"],
+                            await asyncio.to_thread(app.state.r2.get_bytes, asset["r2_key"]))
                     except Exception as exc:
                         read_error = exc
                 if matching_image is None:
@@ -928,8 +929,8 @@ async def run_editor_image_job(app, job: dict) -> None:
                         if candidate_asset is None:
                             continue
                         try:
-                            matching_image = InlineImage(candidate_asset["mime_type"], await asyncio.to_thread(
-                                app.state.r2.get_bytes, candidate_asset["r2_key"]))
+                            matching_image = await asyncio.to_thread(catalog_image, candidate_asset["mime_type"],
+                                await asyncio.to_thread(app.state.r2.get_bytes, candidate_asset["r2_key"]))
                         except Exception as exc:
                             read_error = exc
                             continue

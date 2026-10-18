@@ -5,6 +5,7 @@ import hashlib
 
 from .. import repo
 from ..agents.gemini_image import InlineImage
+from ..agents.catalog_image import catalog_image
 from . import matching, outfit
 
 EXTRA_ROLES = ("inner", "footwear", "bag", "accessory")
@@ -135,7 +136,7 @@ async def resolve_images(app, *, snapshot, clothing_type, user_id, project_id,
             digest = hashlib.sha256(data).hexdigest()
             if expected.get(role) and expected[role].get("imageSha256") != digest:
                 raise OutfitReferenceError(role)
-            images.append((role, InlineImage(asset["mime_type"], data)))
+            images.append((role, await asyncio.to_thread(catalog_image, asset["mime_type"], data)))
             if resolved_assets is not None:
                 resolved_assets.append({"role": role, "itemId": identifier,
                                         "assetId": asset_id, "imageSha256": digest})
