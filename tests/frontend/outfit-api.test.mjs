@@ -210,3 +210,17 @@ test('같은 공개 문맥 저장도 추천을 다시 시작하지 않는다', a
   });
   assert.equal(calls, 0);
 });
+
+test('소품 추천은 인증 역할 JSON 또는 공개 사진·현재 분석·handoff multipart로 요청한다', async t => {
+  assert.equal(typeof adapter.recommendOutfitProps, 'function');
+  supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test' } } });
+  const calls = capture(t, { data: fields, ...fields });
+  await adapter.recommendOutfitProps('props-project', 'bag');
+  assert.deepEqual(JSON.parse(calls[0].body), { role: 'bag' });
+  await adapter.recommendOutfitProps(null, 'accessory', { product: { colors: [] },
+    analysis: { clothingType: 'top', ...fields }, photos: [{ slot: 'Front', blob: new Blob(['photo']) }] });
+  assert.equal(calls[1].body.get('role'), 'accessory');
+  assert.deepEqual(JSON.parse(calls[1].body.get('handoff')), fields.outfitRecommendationHandoff);
+  assert.deepEqual(JSON.parse(calls[1].body.get('analysisContext')).outfitSelections, fields.outfitSelections);
+  assert.deepEqual(calls[1].body.getAll('slots'), ['Front']);
+});

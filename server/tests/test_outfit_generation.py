@@ -1,4 +1,5 @@
 import asyncio
+from copy import deepcopy
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
@@ -196,3 +197,150 @@ def test_complement_role_is_revalidated_at_generation_even_without_extra_refs(ap
         asyncio.run(outfit_generation.resolve_images(
             application, snapshot=snapshot(bottom="bottom"), clothing_type="top",
             user_id="user", project_id="project"))
+
+
+def accessory_snapshot(*identifiers):
+    selected = snapshot(accessory=identifiers[0] if identifiers else None)
+    selected["slots"]["accessory"]["extraIds"] = list(identifiers[1:])
+    return selected
+
+
+def test_freeze_keeps_three_distinct_accessories_without_mutating_input():
+    selected = accessory_snapshot("hat", "hat", "watch", "watch", "necklace", "fourth")
+    original = deepcopy(selected)
+    assert outfit_generation.freeze(selected, "top") == {
+        "version": 1, "slots": {"accessory": {
+            "itemId": "hat", "extraIds": ["watch", "necklace"], "origin": "user"}}}
+    assert selected == original
+    selected["slots"]["accessory"]["itemId"] = None
+    assert outfit_generation.freeze(selected, "top")["slots"]["accessory"] == {
+        "itemId": None, "origin": "user"}
+
+
+@pytest.mark.parametrize("extras", ["watch", {"itemId": "watch"}, [1], [None], [" "]])
+def test_freeze_rejects_malformed_extra_accessory_ids(extras):
+    selected = accessory_snapshot("hat")
+    selected["slots"]["accessory"]["extraIds"] = extras
+    with pytest.raises(outfit_generation.OutfitReferenceError, match="accessory"):
+        outfit_generation.freeze(selected, "top")
+
+
+def test_resolver_preserves_every_accessory_and_replays_each_item_binding(app):
+    application, rows = app
+    for identifier in ("watch", "hat"):
+        rows.append({"id": identifier, "clothing_type": "accessory", "is_active": True,
+                     "image_asset_id": "asset-" + identifier, "image_key": "key-" + identifier})
+    selected = accessory_snapshot("accessory", "watch", "hat")
+    provenance = []
+    refs = asyncio.run(outfit_generation.resolve_images(
+        application, snapshot=selected, clothing_type="top", user_id="user", project_id="project",
+        resolved_assets=provenance))
+    assert [image.data for role, image in refs] == [b"key-accessory", b"key-watch", b"key-hat"]
+    assert [row["itemId"] for row in provenance] == ["accessory", "watch", "hat"]
+    assert [row["role"] for row in provenance] == ["accessory"] * 3
+    replayed = asyncio.run(outfit_generation.resolve_images(
+        application, snapshot=selected, clothing_type="top", user_id="user", project_id="project",
+        reference_assets=list(reversed(provenance))))
+    assert replayed == refs
+    rows[-2]["image_asset_id"] = "asset-changed-watch"
+    with pytest.raises(outfit_generation.OutfitReferenceError, match="accessory"):
+        asyncio.run(outfit_generation.resolve_images(
+            application, snapshot=selected, clothing_type="top", user_id="user", project_id="project",
+            reference_assets=provenance))
+
+
+def test_mannequin_never_loads_multiple_accessories(app):
+    application, rows = app
+    refs = asyncio.run(outfit_generation.resolve_images(
+        application, snapshot=accessory_snapshot("missing", "also-missing", "third-missing"),
+        clothing_type="top", user_id="user", project_id="project", mannequin_only=True))
+    assert refs == []
+
+
+def test_retry_cannot_replace_an_accessory_with_an_unrecorded_item(app):
+    application, rows = app
+    with pytest.raises(outfit_generation.OutfitReferenceError, match="accessory"):
+        asyncio.run(outfit_generation.resolve_images(
+            application, snapshot=snapshot(accessory="accessory"), clothing_type="top",
+            user_id="user", project_id="project", reference_assets=[{
+                "role": "accessory", "itemId": "other", "assetId": "asset-accessory",
+                "imageSha256": "unused"}]))
+
+
+@pytest.mark.parametrize("change", ["inactive", "wrong_role", "missing", "changed_bytes"])
+def test_second_accessory_is_revalidated_and_never_silently_omitted(app, change):
+    application, rows = app
+    rows.append({"id": "watch", "clothing_type": "accessory", "is_active": True,
+                 "image_asset_id": "asset-watch", "image_key": "key-watch"})
+    selected = accessory_snapshot("accessory", "watch")
+    provenance = []
+    asyncio.run(outfit_generation.resolve_images(
+        application, snapshot=selected, clothing_type="top", user_id="user", project_id="project",
+        resolved_assets=provenance))
+    if change == "inactive":
+        rows[-1]["is_active"] = False
+    elif change == "wrong_role":
+        rows[-1]["clothing_type"] = "bag"
+    elif change == "missing":
+        rows.pop()
+    else:
+        application.state.r2.get_bytes = lambda key: b"new-watch" if key == "key-watch" else key.encode()
+    with pytest.raises(outfit_generation.OutfitReferenceError, match="accessory"):
+        asyncio.run(outfit_generation.resolve_images(
+            application, snapshot=selected, clothing_type="top", user_id="user", project_id="project",
+            reference_assets=provenance))
+
+
+def test_manifest_and_cut_plan_keep_three_accessory_roles_in_image_order():
+    from app.agents import cut_output_qc
+    from app.agents.cut_plan import compile_cut_plan
+    roles = ("inner", "footwear", "bag", "accessory", "accessory", "accessory")
+    manifest = cut_generator.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=True, mood_count=0, outfit_roles=roles)
+    images = [InlineImage("image/png", str(i).encode()) for i in range(8)]
+    assert [ref.role for ref in cut_output_qc.references_from_manifest(manifest, images)] == [
+        "product", "inner", "matching", "footwear", "bag", "accessory", "accessory", "accessory"]
+    spec = cut_generator.apply_reference_compatibility(cut_generator.normalize_spec(
+        {"cutType": "horizon", "_outfitRoles": roles}))
+    assert compile_cut_plan(spec, "outer").to_dict()["outfitRoles"] == list(roles)
+
+
+def test_generation_fingerprint_changes_when_only_extra_accessory_id_changes():
+    from conftest import make_settings
+    old = accessory_snapshot("hat", "watch")
+    new = accessory_snapshot("hat", "other-watch")
+    spec = {"cutType": "horizon", "outfitSelectionsSnapshot": old}
+    args = (make_settings(), {"clothingType": "top"}, [InlineImage("image/png", b"same-image")])
+    first = cut_generator.base_fingerprint(args[0], spec, args[1], args[2])
+    assert first != cut_generator.base_fingerprint(
+        args[0], {**spec, "outfitSelectionsSnapshot": new}, args[1], args[2])
+
+
+def test_extra_accessory_changes_mannequin_draft_and_running_job_identity():
+    from app import routes
+    old = outfit_generation.freeze(accessory_snapshot("hat", "watch"), "top")
+    new = outfit_generation.freeze(accessory_snapshot("hat", "necklace"), "top")
+    args = dict(clothing_type="top", base_asset_id="base", product_assets=[("Front", "front")],
+                match_asset_id=None, match_item_id=None, fit_profile={},
+                source_mirrored=False, prompt_version="v1")
+    assert mannequin_job.mannequin_draft_fingerprint(**args, outfit_snapshot=old) != (
+        mannequin_job.mannequin_draft_fingerprint(**args, outfit_snapshot=new))
+    assert not routes._mannequin_payload_matches(
+        {"status": "running", "payload": {"mode": "generate", "outfitSelectionsSnapshot": old}},
+        {"mode": "generate", "outfitSelectionsSnapshot": new})
+
+
+def test_original_recipe_and_similar_source_keep_each_accessory_binding():
+    from app.agents import content_roles
+    selected = accessory_snapshot("hat", "watch", "necklace")
+    assets = [{"role": "accessory", "itemId": identifier, "assetId": "asset-" + identifier,
+               "imageSha256": "hash-" + identifier} for identifier in ("hat", "watch", "necklace")]
+    original = {"id": "original", "source": "ai", "cutType": "horizon", "shot": "full",
+                "outfitSelectionsSnapshot": selected, "outfitReferenceAssets": assets}
+    similar = {"id": "similar", "source": "ai", "similarSourceBlockId": "original"}
+    inherited = content_roles.inherit_similar_cut_recipes([original, similar])[1]
+    recipe = asset_recipe.project_recipe(inherited)
+    assert recipe["outfitSelectionsSnapshot"] == selected
+    assert recipe["outfitReferenceAssets"] == assets
+    recipe["outfitSelectionsSnapshot"]["slots"]["accessory"]["extraIds"].clear()
+    assert selected["slots"]["accessory"]["extraIds"] == ["watch", "necklace"]

@@ -99,6 +99,7 @@ const mockMatchCurrent = (analysis, current = analysis.matchClothing || []) => (
 let outfitScenario;
 let outfitRun = null;
 let outfitRunSequence = 0;
+const outfitPropsRuns = new Map();
 let customMatchScenario;
 const customMatchJobs = new Map();
 const currentOutfitScenario = () => outfitScenario === undefined ? outfitScenarioFromQuery() : outfitScenario;
@@ -114,6 +115,7 @@ const buildScenarioRecommendation = (candidates, scenario, { status, contextKey,
 );
 const mockOutfit = (analysis, { refreshAI = false, startRecommendation = false } = {}) => {
   if (startRecommendation) {
+    outfitPropsRuns.clear();
     const scenario = currentOutfitScenario();
     outfitRun = { scenario, startedAt: Date.now(), status: scenario?.status || 'fallback', settled: false,
       contextKey: scenario ? `mock-${analysis.clothingType}-${++outfitRunSequence}` : `mock-${analysis.clothingType}` };
@@ -132,6 +134,13 @@ const mockOutfit = (analysis, { refreshAI = false, startRecommendation = false }
     status: outfitRun?.status || scenario?.status || 'fallback',
     contextKey: outfitRun?.contextKey || `mock-${analysis.clothingType}`, settled: outfitRun?.settled,
   });
+  if (!startRecommendation && analysis.outfitRecommendation?.props) {
+    outfitRecommendation.props = clone(analysis.outfitRecommendation.props);
+    for (const [role, value] of Object.entries(outfitRecommendation.props)) {
+      const picks = new Set(value.picks);
+      for (const item of outfitRecommendation.candidates[role] || []) item.inSets = picks.has(item.id);
+    }
+  }
   // Only a new QA recommendation fills the initial required roles. Polling never applies sets.
   if (startRecommendation && scenario?.fixture === 'v18') {
     for (const slot of outfitSlotsFor(analysis.clothingType)) {
@@ -285,6 +294,7 @@ export const api = {
     rememberProject();
     reseedDraft();
     outfitRun = null;
+    outfitPropsRuns.clear();
     customMatchJobs.clear();
     inflight.analyze = null; inflight.mannequins = null; inflight.detailPage = null;
     await wait(80); return clone(DB.project);
@@ -292,6 +302,7 @@ export const api = {
   async resetInputDraft() {
     reseedDraft();
     outfitRun = null;
+    outfitPropsRuns.clear();
     customMatchJobs.clear();
     inflight.analyze = null; inflight.mannequins = null; inflight.detailPage = null;
     await wait(20);
@@ -645,8 +656,15 @@ export const api = {
   setOutfitScenario(scenario) {
     outfitScenario = scenario === undefined ? undefined : scenario ? clone(scenario) : null;
     outfitRun = null;
+    outfitPropsRuns.clear();
   },
   async getOutfitRecommendation() {
+    for (const [role, run] of outfitPropsRuns) {
+      if (DB.analysis.outfitRecommendation?.props?.[role]?.status === 'pending'
+        && Date.now() - run.startedAt >= run.delayMs) {
+        DB.analysis.outfitRecommendation.props[role].status = run.status;
+      }
+    }
     const scenario = outfitRun?.scenario;
     if (DB.analysis.outfitRecommendation?.status === 'pending' && scenario?.settleTo
       && Date.now() - outfitRun.startedAt >= (scenario.delayMs ?? 2000)) {
@@ -654,6 +672,7 @@ export const api = {
       outfitRun.settled = true;
       const recommendation = buildScenarioRecommendation(DB.analysis.outfitRecommendation.candidates, scenario,
         { status: outfitRun.status, contextKey: DB.analysis.outfitRecommendation.contextKey, settled: true });
+      if (DB.analysis.outfitRecommendation.props) recommendation.props = clone(DB.analysis.outfitRecommendation.props);
       DB.analysis = mergeOutfitAnalysis(DB.analysis, { outfitRecommendation: recommendation });
     }
     return clone(DB.analysis);
@@ -665,6 +684,27 @@ export const api = {
       targetGenders: current.targetGenders, styleTags: current.styleTags,
       productColor: productColorFrom(DB.product, current), current: mockMatchCurrent(current) });
     DB.analysis = mockOutfit({ ...current, matchClothing }, { refreshAI: true, startRecommendation: true });
+    return clone(DB.analysis);
+  },
+  async recommendOutfitProps(_projectId, role) {
+    if (!['bag', 'accessory'].includes(role)) throw new Error('지원하지 않는 소품이에요.');
+    if (!DB.analysis.outfitRecommendation) DB.analysis = mockOutfit(DB.analysis);
+    if (DB.analysis.outfitRecommendation.props?.[role]) return clone(DB.analysis);
+    const candidates = DB.analysis.outfitRecommendation.candidates[role] || [];
+    const categories = new Set();
+    const picks = candidates.filter(item => {
+      const category = String(item.category || '').trim().toLowerCase();
+      if (role === 'accessory' && categories.has(category)) return false;
+      categories.add(category); return item.isCompatible !== false;
+    }).slice(0, 3).map(item => item.id);
+    const scenario = currentOutfitScenario();
+    const ready = scenario?.fixture === 'v18' && !['fallback', 'unavailable'].includes(scenario.status);
+    const delayMs = ready && LATENCY_SCALE !== 0 ? (scenario.propsDelayMs ?? 1500) : 0;
+    const status = !picks.length ? 'unavailable' : ready ? 'ready' : 'fallback';
+    DB.analysis.outfitRecommendation.props = { ...DB.analysis.outfitRecommendation.props,
+      [role]: { status: delayMs && picks.length ? 'pending' : status, picks } };
+    for (const item of candidates) item.inSets = picks.includes(item.id);
+    outfitPropsRuns.set(role, { startedAt: Date.now(), delayMs, status });
     return clone(DB.analysis);
   },
   async getOutfitCandidates() {
@@ -692,8 +732,17 @@ export const api = {
     // 공개 분석의 실제 입력. 취소 검사를 통과한 뒤에만 추천의 상품 정본을 바꾼다.
     if (!_projectId && product) Object.assign(DB.product, clone(product));
     if (Object.hasOwn(patch, 'outfitSetIndex')) {
-      const applied = applyOutfitSet(DB.analysis, patch.outfitSetIndex);
-      patch = { ...patch, ...applied };
+      if (patch.outfitSelections) {
+        const outfitSelections = normalizeOutfitSelections(patch.outfitSelections, DB.analysis.clothingType,
+          DB.analysis.matchClothing, DB.analysis.outfitRecommendation?.candidates);
+        outfitSelections.setIndex = patch.outfitSetIndex;
+        for (const role of outfitSlotsFor(DB.analysis.clothingType)) {
+          const prior = DB.analysis.outfitSelections?.slots?.[role];
+          if (prior?.origin === 'user' && prior.itemId === null) outfitSelections.slots[role] = clone(prior);
+        }
+        const synced = syncOutfitLegacySelection({ ...DB.analysis, outfitSelections });
+        patch = { ...patch, outfitSelections, matchClothing: synced.matchClothing };
+      } else patch = { ...patch, ...applyOutfitSet(DB.analysis, patch.outfitSetIndex) };
       delete patch.outfitSetIndex;
     }
     // 매칭 후보 목록은 서버(추천)가 소유 — matchClothing patch 는 통째로 덮지 않고

@@ -13,7 +13,38 @@ export const complementaryOutfitSlot = (clothingType) => (
   clothingType === 'bottom' ? 'top' : ['top', 'outer'].includes(clothingType) ? 'bottom' : null
 );
 
-export function normalizeOutfitSelections(value, clothingType, matchClothing = []) {
+export const selectedOutfitIds = (value, slot) => {
+  const choice = value?.slots?.[slot];
+  return choice?.itemId ? [...new Set([choice.itemId, ...(slot === 'accessory' && Array.isArray(choice.extraIds) ? choice.extraIds : [])]
+    .filter(id => typeof id === 'string' && id))].slice(0, slot === 'accessory' ? 3 : 1) : [];
+};
+const accessoryCategory = item => String(item?.category || '').trim().toLowerCase();
+const candidateAllowed = (item, slot) => item?.isCompatible !== false && item?.active !== false && item?.isActive !== false && item?.is_active !== false
+  && (!item?.role || item.role === slot)
+  && (!(item?.clothingType || item?.clothing_type) || (item.clothingType || item.clothing_type) === slot
+    || (slot === 'footwear' && (item.clothingType || item.clothing_type) === 'shoes'));
+const accessoryChoice = (ids, origin) => ({ itemId: ids[0] || null,
+  ...(ids.length > 1 ? { extraIds: ids.slice(1) } : {}), origin });
+
+export function toggleOutfitAccessorySelection(analysis, itemId) {
+  const candidates = analysis.outfitRecommendation?.candidates?.accessory || [];
+  const item = candidates.find(candidate => candidate.id === itemId && candidateAllowed(candidate, 'accessory'));
+  if (!item) return null;
+  const outfitSelections = normalizeOutfitSelections(analysis.outfitSelections, analysis.clothingType, analysis.matchClothing, analysis.outfitRecommendation?.candidates);
+  const ids = selectedOutfitIds(outfitSelections, 'accessory');
+  const selected = ids.indexOf(itemId);
+  if (selected >= 0) ids.splice(selected, 1);
+  else {
+    const sameCategory = ids.findIndex(id => accessoryCategory(candidates.find(candidate => candidate.id === id)) === accessoryCategory(item));
+    if (sameCategory >= 0) ids[sameCategory] = itemId;
+    else if (ids.length >= 3) return null;
+    else ids.push(itemId);
+  }
+  outfitSelections.slots.accessory = accessoryChoice(ids, 'user');
+  return { outfitSelections };
+}
+
+export function normalizeOutfitSelections(value, clothingType, matchClothing = [], candidates) {
   const slots = {};
   const complementary = complementaryOutfitSlot(clothingType);
   for (const slot of outfitSlotsFor(clothingType)) {
@@ -25,6 +56,22 @@ export function normalizeOutfitSelections(value, clothingType, matchClothing = [
         : selection ? null : legacy?.id || null,
       origin: selection?.origin === 'user' ? 'user' : 'ai',
     };
+    if (slot === 'accessory') {
+      const pool = candidates?.accessory;
+      const primary = slots[slot].itemId;
+      const ids = primary ? [primary] : [];
+      const seen = new Set(ids);
+      const categories = new Set(pool ? [accessoryCategory(pool.find(item => item.id === primary))] : []);
+      for (const id of primary && Array.isArray(selection?.extraIds) ? selection.extraIds : []) {
+        if (typeof id !== 'string' || !id || id.length > 128 || seen.has(id)) continue;
+        const item = pool?.find(candidate => candidate.id === id);
+        if (pool && (!item || !candidateAllowed(item, slot) || categories.has(accessoryCategory(item)))) continue;
+        ids.push(id); seen.add(id);
+        if (item) categories.add(accessoryCategory(item));
+        if (ids.length === 3) break;
+      }
+      slots[slot] = accessoryChoice(ids, slots[slot].origin);
+    }
   }
   return { version: 1, slots,
     setIndex: Number.isInteger(value?.setIndex) && value.setIndex >= 0 && value.setIndex < 3 ? value.setIndex : 0,
@@ -33,7 +80,7 @@ export function normalizeOutfitSelections(value, clothingType, matchClothing = [
 }
 
 export function outfitSelectionsForTypeChange(analysis, clothingType) {
-  const previous = normalizeOutfitSelections(analysis.outfitSelections, analysis.clothingType, analysis.matchClothing);
+  const previous = normalizeOutfitSelections(analysis.outfitSelections, analysis.clothingType, analysis.matchClothing, analysis.outfitRecommendation?.candidates);
   const role = complementaryOutfitSlot(analysis.clothingType);
   // Migrate a saved legacy pick in its original role before pruning impossible roles.
   if (!analysis.outfitSelections?.slots?.[role] && previous.slots[role]?.itemId) {
@@ -44,7 +91,7 @@ export function outfitSelectionsForTypeChange(analysis, clothingType) {
 
 export function syncOutfitLegacySelection(analysis) {
   if (!analysis?.outfitSelections) return analysis;
-  const outfitSelections = normalizeOutfitSelections(analysis.outfitSelections, analysis.clothingType, analysis.matchClothing);
+  const outfitSelections = normalizeOutfitSelections(analysis.outfitSelections, analysis.clothingType, analysis.matchClothing, analysis.outfitRecommendation?.candidates);
   const slot = complementaryOutfitSlot(analysis.clothingType);
   const selectedId = outfitSelections.slots[slot]?.itemId || null;
   const matchClothing = (analysis.matchClothing || []).map((item) => ({ ...item,
@@ -61,7 +108,7 @@ export function setOutfitSelection(analysis, slot, itemId) {
     : analysis.outfitRecommendation?.candidates?.[slot] || [];
   if (itemId != null && !candidates.some((item) => item.id === itemId && item.isCompatible !== false
     && (slot !== complementary || item.clothingType == null || item.clothingType === complementary))) return null;
-  const outfitSelections = normalizeOutfitSelections(analysis.outfitSelections, analysis.clothingType, analysis.matchClothing);
+  const outfitSelections = normalizeOutfitSelections(analysis.outfitSelections, analysis.clothingType, analysis.matchClothing, analysis.outfitRecommendation?.candidates);
   const changed = outfitSelections.slots[slot]?.itemId !== (itemId || null);
   outfitSelections.slots[slot] = { itemId: itemId || null, origin: 'user' };
   const synced = syncOutfitLegacySelection({ ...analysis, outfitSelections });
@@ -71,12 +118,14 @@ export function setOutfitSelection(analysis, slot, itemId) {
 export function applyOutfitSet(analysis, index, { preserveUser = false } = {}) {
   const set = analysis.outfitRecommendation?.sets?.[index];
   if (!Number.isInteger(index) || !set) return null;
-  const outfitSelections = normalizeOutfitSelections(analysis.outfitSelections, analysis.clothingType, analysis.matchClothing);
+  const outfitSelections = normalizeOutfitSelections(analysis.outfitSelections, analysis.clothingType, analysis.matchClothing, analysis.outfitRecommendation?.candidates);
   for (const slot of outfitSlotsFor(analysis.clothingType)) {
     const prior = outfitSelections.slots[slot];
     if (prior.origin === 'user' && (preserveUser || prior.itemId === null)) continue;
     if (Object.hasOwn(outfitSelections.optional, slot) && !outfitSelections.optional[slot]) continue;
-    outfitSelections.slots[slot] = { itemId: set.slots[slot] ?? null, origin: 'ai' };
+    const picks = analysis.outfitRecommendation?.props?.[slot]?.picks || [];
+    const itemId = ['bag', 'accessory'].includes(slot) ? picks[index % picks.length] ?? null : set.slots[slot] ?? null;
+    outfitSelections.slots[slot] = { itemId, origin: 'ai' };
   }
   outfitSelections.setIndex = index;
   const synced = syncOutfitLegacySelection({ ...analysis, outfitSelections });
@@ -85,12 +134,12 @@ export function applyOutfitSet(analysis, index, { preserveUser = false } = {}) {
 
 export function toggleOutfitOptional(analysis, slot, enabled) {
   if (!['bag', 'accessory'].includes(slot) || typeof enabled !== 'boolean') return null;
-  const outfitSelections = normalizeOutfitSelections(analysis.outfitSelections, analysis.clothingType, analysis.matchClothing);
+  const outfitSelections = normalizeOutfitSelections(analysis.outfitSelections, analysis.clothingType, analysis.matchClothing, analysis.outfitRecommendation?.candidates);
   outfitSelections.optional[slot] = enabled;
   const prior = outfitSelections.slots[slot];
-  if (enabled && !prior.itemId && prior.origin !== 'user') {
-    const set = analysis.outfitRecommendation?.sets?.[outfitSelections.setIndex];
-    outfitSelections.slots[slot] = { itemId: set?.slots?.[slot] ?? null, origin: 'ai' };
+  if (enabled && prior.origin !== 'user') {
+    const picks = analysis.outfitRecommendation?.props?.[slot]?.picks || [];
+    outfitSelections.slots[slot] = { itemId: picks[outfitSelections.setIndex % picks.length] ?? null, origin: 'ai' };
   }
   return { outfitSelections };
 }
@@ -127,7 +176,7 @@ export function mergeOutfitAnalysis(current, response) {
 
 export function outfitSelectionIds(value) {
   return Object.fromEntries(Object.entries(value?.slots || {}).filter(([slot, choice]) => choice?.itemId && (!['bag', 'accessory'].includes(slot) || value?.optional?.[slot] === true))
-    .sort(([left], [right]) => left.localeCompare(right)).map(([slot, choice]) => [slot, choice.itemId]));
+    .sort(([left], [right]) => left.localeCompare(right)).map(([slot, choice]) => [slot, slot === 'accessory' && choice.extraIds?.length ? selectedOutfitIds(value, slot) : choice.itemId]));
 }
 
 export const isOutfitContextPatch = (patch) => ['clothingType', 'subCategory', 'customCategory', 'targetGenders', 'styleTags', 'colors', 'fit', 'materials']

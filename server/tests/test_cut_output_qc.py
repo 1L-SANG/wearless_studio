@@ -115,9 +115,61 @@ def test_outfit_qc_respects_crop_and_actual_selected_item_authority():
     assert "OUTFIT" in qc._correction_map_for(contract, "confirmed_gpt_v1")["matchingGarmentIdentity"]
 
 
-@pytest.mark.parametrize("roles", [["bag", "bag"], ["unknown"], "footwear"])
+@pytest.mark.parametrize("roles", [["bag", "bag"], ["unknown"], "footwear",
+                                   ["accessory"] * 4, ["accessory", "bag", "accessory"]])
 def test_invalid_outfit_role_contract_is_not_silently_ignored(roles):
     assert "invalid_outfit_roles" in qc.normalize_plan(_plan(outfitRoles=roles))["contractErrors"]
+
+
+def test_compiled_three_accessory_plan_survives_qc_normalization():
+    from test_cut_plan import worn_spec
+    plan = cut_plan.compile_cut_plan(
+        worn_spec(_outfitRoles=("footwear", "bag", "accessory", "accessory", "accessory")), "top")
+    contract = qc.normalize_plan(plan)
+    assert contract["contractErrors"] == []
+    assert contract["outfitRoles"] == ["footwear", "bag", "accessory", "accessory", "accessory"]
+
+
+@pytest.mark.parametrize("reference_count", [1, 2, 3, 4])
+def test_verdict_requires_the_exact_selected_accessory_count(monkeypatch, reference_count):
+    async def analyze(*args, **kwargs):
+        return _raw(), "gemini"
+
+    monkeypatch.setattr(qc, "analyze_with_fallback", analyze)
+    refs = [qc.LabeledReference("product", _img(b"PRODUCT")), *_model_refs(),
+            *(qc.LabeledReference("accessory", _img(f"ACCESSORY-{i}".encode()))
+              for i in range(reference_count)), qc.LabeledReference("example", _img(b"EXAMPLE"))]
+    out = asyncio.run(qc.verdict(make_settings(), _plan(outfitRoles=["accessory"] * 3),
+                               refs, _img(b"GENERATED")))
+    assert out["passed"] is (reference_count == 3)
+    assert out["contract"]["contractErrors"] == []
+    if reference_count == 3:
+        assert out["gates"]["recipeIntent"]["status"] == "PASS"
+        assert out["gates"]["matchingGarmentIdentity"]["status"] == "PASS"
+    else:
+        assert out["gates"]["matchingGarmentIdentity"]["status"] == "UNJUDGEABLE"
+        assert f"{reference_count} supplied; 3 required" in out["gates"]["matchingGarmentIdentity"]["evidence"]
+
+
+def test_confirmed_qc_accepts_each_accessory_reference_from_the_runtime_packet(monkeypatch):
+    from test_confirmed_gpt_runtime import _build
+    extras = tuple(("accessory", _img(name)) for name in (b"hat", b"watch", b"necklace"))
+    packet = _build(monkeypatch, outfit_images=extras)
+
+    async def analyze(*args, **kwargs):
+        return _raw(), "gemini"
+
+    monkeypatch.setattr(qc, "analyze_with_fallback", analyze)
+    refs = qc.references_from_manifest(packet.manifest, packet.images)
+    plan = _plan(outfitRoles=["accessory"] * 3)
+    plan["storyboard"]["shot"] = "medium"
+    out = asyncio.run(qc.verdict(
+        make_settings(), plan, refs, _img(b"GENERATED"),
+        authority_profile="confirmed_gpt_v1", confirmed_prompt_input=packet.prompt_input))
+    assert out["passed"] is True
+    assert out["contract"]["outfitRoles"] == ["accessory"] * 3
+    assert out["gates"]["recipeIntent"]["status"] == "PASS"
+    assert out["gates"]["matchingGarmentIdentity"]["status"] == "PASS"
 
 
 def test_schema_is_strict_complete_and_names_text_logo_gate():

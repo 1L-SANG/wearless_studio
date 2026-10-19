@@ -57,6 +57,23 @@ function buildHttpApi() {
     }
     return response;
   };
+  api.recommendOutfitProps = async (projectId, role, options = {}) => {
+    const analysis = projectId == null ? await mockAdapter.getAnalysis(null) : options.analysis;
+    let response = await httpAdapter.recommendOutfitProps(projectId, role, {
+      ...options, analysis: options.analysis || analysis,
+      product: options.product || (projectId == null ? await mockAdapter.getProduct(null) : undefined),
+    });
+    if (projectId == null && response.outfitRecommendationHandoff) {
+      const refreshed = await httpAdapter.getOutfitRecommendation(null, { handoff: response.outfitRecommendationHandoff, signal: options.signal });
+      if (refreshed.outfitRecommendation?.contextKey === response.outfitRecommendation?.contextKey) response = refreshed;
+    }
+    if (projectId == null && response.outfitRecommendation) {
+      const key = (options.analysis || analysis)?.outfitRecommendation?.contextKey;
+      await mockAdapter.saveAnalysis(null, outfitRecommendationPatch(response), { serverCatalog: true,
+        isCurrent: async () => (await mockAdapter.getAnalysis(null)).outfitRecommendation?.contextKey === key });
+    }
+    return response;
+  };
   for (const name of PUBLIC_INPUT) {
     if (name === 'saveAnalysis') {
       api[name] = (projectId, patch, options) => projectId == null

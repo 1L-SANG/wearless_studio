@@ -25,6 +25,16 @@ export function OutfitColorChips({ role, items, value, onChange, drawer = false 
   </div>;
 }
 
+export function OutfitCategoryChips({ items, value, onChange }) {
+  const categories = [...new Set(items.filter(item => !item.isCustom).map(item => item.category).filter(Boolean))];
+  if (!categories.length) return null;
+  return <div className={styles.chips} aria-label="액세서리 종류">
+    {['', ...categories].map(category => <button type="button" key={category}
+      className={`${styles.chip} ${value === category ? styles.chipSelected : ''}`} aria-pressed={value === category}
+      onClick={() => onChange(category)}>{category || '전체'}</button>)}
+  </div>;
+}
+
 function CustomMatchProgress({ upload }) {
   const circle = useRef(null);
   useEffect(() => {

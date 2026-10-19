@@ -53,6 +53,7 @@ const fixtureRows = {
   accessory: [
     ['골드 이어링', 'gold', '#d2b069'], ['아이보리 목걸이', 'ivory', '#eee9df'], ['블랙 선글라스', 'black', '#39343e'],
     ['실버 이어링', 'silver', '#b4b4ba'], ['골드 목걸이', 'gold', '#c5a369'], ['브라운 선글라스', 'brown', '#8a6953'],
+    ['블랙 모자', 'black', '#39343e'],
   ],
 };
 
@@ -63,6 +64,7 @@ export function v18FixtureCandidates(analysis) {
       return { id: `mock_v18_${role}_${index + 1}`, name: `데모 ${name}`, role, colorGroup, length: 'na', gender: 'unisex',
         thumb: image, thumbnailUrl: image, imageUrl: image, boardUrl: index % 2 === 0 ? image : null,
         isMockFixture: true, isCompatible: true,
+        ...(role === 'accessory' ? { category: ['귀걸이', '목걸이', '안경', '귀걸이', '목걸이', '안경', '모자'][index] } : {}),
         ...(role === 'footwear' ? { cm: 16, ar: 2.1 } : {}) };
     })]));
   if (analysis.clothingType === 'outer') {
@@ -78,13 +80,13 @@ export function v18FixtureCandidates(analysis) {
 export function v18FixtureRecommendation(candidates, { status, contextKey, setCount = 3, settled = false }) {
   const recommendation = buildMockOutfitRecommendation(candidates, { status, contextKey });
   if (!recommendation.sets.length) return recommendation;
-  const roles = Object.keys(candidates);
+  const roles = Object.keys(candidates).filter(role => !['bag', 'accessory'].includes(role));
   const pools = Object.fromEntries(roles.map(role => [role, candidates[role].filter(item => !item.isCustom)]));
   const sets = Array.from({ length: Math.min(3, Math.max(1, setCount)) }, (_, index) => ({
     slots: Object.fromEntries(roles.map(role => [role,
       pools[role][(index + (settled ? 1 : 0)) % Math.min(3, pools[role].length)]?.id ?? null])),
     reason: 'v18 화면 검사용 모의 코디예요.',
   })).filter((set, index, all) => all.findIndex(other => JSON.stringify(other.slots) === JSON.stringify(set.slots)) === index);
-  return { ...recommendation, sets, candidates: Object.fromEntries(roles.map(role => [role,
+  return { ...recommendation, sets, candidates: Object.fromEntries(Object.keys(candidates).map(role => [role,
     candidates[role].map(item => ({ ...item, inSets: sets.some(set => set.slots[role] === item.id) }))])) };
 }

@@ -591,13 +591,13 @@ def normalize_plan(plan: Any) -> dict:
     declared_axis_count = len(declared_axes) if isinstance(declared_axes, (list, tuple)) else 0
     raw_outfit_roles = source.get("outfitRoles", [])
     outfit_roles = []
+    from ..services.outfit_generation import valid_roles
     if (not isinstance(raw_outfit_roles, (list, tuple))
-            or any(not isinstance(role, str) or role not in OUTFIT_ROLES for role in raw_outfit_roles)
-            or len(set(raw_outfit_roles)) != len(raw_outfit_roles)
+            or not valid_roles(raw_outfit_roles)
             or (raw_outfit_roles and recipe not in {"styling", "horizon"})):
         errors.append("invalid_outfit_roles")
     else:
-        outfit_roles = [role for role in OUTFIT_ROLES if role in raw_outfit_roles]
+        outfit_roles = list(raw_outfit_roles)
     return {
         "contractVersion": 1,
         "recipeFamily": recipe or "unknown",
@@ -1064,7 +1064,7 @@ def _forced_preflight(
         reference.role == "matching" for reference in references
     )
     for role in OUTFIT_ROLES:
-        expected_count = int(role in contract.get("outfitRoles", ()))
+        expected_count = contract.get("outfitRoles", ()).count(role)
         actual_count = sum(ref.role == role for ref in references)
         if actual_count != expected_count:
             forced["matchingGarmentIdentity"] = {

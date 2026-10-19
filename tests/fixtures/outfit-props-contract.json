@@ -1,0 +1,268 @@
+{
+  "items": [
+    {
+      "id": "ear",
+      "clothingType": "accessory",
+      "clothing_type": "accessory",
+      "category": "귀걸이",
+      "isActive": true,
+      "is_active": true,
+      "isCompatible": true,
+      "image_asset_id": "ear-image",
+      "image_key": "ear.png",
+      "thumb_key": "ear-thumb.png"
+    },
+    {
+      "id": "ear2",
+      "clothingType": "accessory",
+      "clothing_type": "accessory",
+      "category": "귀걸이",
+      "isActive": true,
+      "is_active": true,
+      "isCompatible": true,
+      "image_asset_id": "ear2-image",
+      "image_key": "ear2.png",
+      "thumb_key": "ear2-thumb.png"
+    },
+    {
+      "id": "neck",
+      "clothingType": "accessory",
+      "clothing_type": "accessory",
+      "category": "목걸이",
+      "isActive": true,
+      "is_active": true,
+      "isCompatible": true,
+      "image_asset_id": "neck-image",
+      "image_key": "neck.png",
+      "thumb_key": "neck-thumb.png"
+    },
+    {
+      "id": "ring",
+      "clothingType": "accessory",
+      "clothing_type": "accessory",
+      "category": "반지",
+      "isActive": true,
+      "is_active": true,
+      "isCompatible": true,
+      "image_asset_id": "ring-image",
+      "image_key": "ring.png",
+      "thumb_key": "ring-thumb.png"
+    },
+    {
+      "id": "hat",
+      "clothingType": "accessory",
+      "clothing_type": "accessory",
+      "category": "모자",
+      "isActive": true,
+      "is_active": true,
+      "isCompatible": true,
+      "image_asset_id": "hat-image",
+      "image_key": "hat.png",
+      "thumb_key": "hat-thumb.png"
+    },
+    {
+      "id": "off",
+      "clothingType": "accessory",
+      "clothing_type": "accessory",
+      "category": "시계",
+      "isActive": false,
+      "is_active": false,
+      "isCompatible": false,
+      "image_asset_id": "off-image",
+      "image_key": "off.png",
+      "thumb_key": "off-thumb.png"
+    },
+    {
+      "id": "bag",
+      "clothingType": "bag",
+      "clothing_type": "bag",
+      "category": "가방",
+      "isActive": true,
+      "is_active": true,
+      "isCompatible": true,
+      "image_asset_id": "bag-image",
+      "image_key": "bag.png",
+      "thumb_key": "bag-thumb.png"
+    },
+    {
+      "id": "bottom",
+      "clothingType": "bottom",
+      "clothing_type": "bottom",
+      "category": "바지",
+      "isActive": true,
+      "is_active": true,
+      "isCompatible": true,
+      "image_asset_id": "bottom-image",
+      "image_key": "bottom.png",
+      "thumb_key": "bottom-thumb.png"
+    }
+  ],
+  "normalize": [
+    {
+      "name": "legacy",
+      "input": {
+        "version": 1,
+        "slots": {
+          "accessory": {
+            "itemId": "ear",
+            "origin": "user"
+          }
+        }
+      },
+      "accessory": {
+        "itemId": "ear",
+        "origin": "user"
+      }
+    },
+    {
+      "name": "filtered",
+      "input": {
+        "version": 1,
+        "slots": {
+          "accessory": {
+            "itemId": "ear",
+            "extraIds": [
+              "ear",
+              "ear2",
+              "bag",
+              "off",
+              "neck",
+              "ring",
+              "hat"
+            ],
+            "origin": "user"
+          }
+        }
+      },
+      "accessory": {
+        "itemId": "ear",
+        "extraIds": [
+          "neck",
+          "ring"
+        ],
+        "origin": "user"
+      }
+    },
+    {
+      "name": "null",
+      "input": {
+        "version": 1,
+        "slots": {
+          "accessory": {
+            "itemId": null,
+            "extraIds": [
+              "neck"
+            ],
+            "origin": "user"
+          }
+        }
+      },
+      "accessory": {
+        "itemId": null,
+        "origin": "user"
+      }
+    }
+  ],
+  "apply": {
+    "input": {
+      "version": 1,
+      "setIndex": 0,
+      "optional": {
+        "bag": true,
+        "accessory": true
+      },
+      "slots": {
+        "bottom": {
+          "itemId": "bottom",
+          "origin": "ai"
+        },
+        "footwear": {
+          "itemId": null,
+          "origin": "user"
+        },
+        "bag": {
+          "itemId": null,
+          "origin": "user"
+        },
+        "accessory": {
+          "itemId": "ear",
+          "extraIds": [
+            "neck",
+            "ring"
+          ],
+          "origin": "user"
+        }
+      }
+    },
+    "recommendation": {
+      "sets": [
+        {
+          "slots": {
+            "bottom": "bottom",
+            "footwear": null,
+            "bag": "legacy-bag",
+            "accessory": "legacy-accessory"
+          }
+        },
+        {
+          "slots": {
+            "bottom": "bottom",
+            "footwear": null,
+            "bag": "legacy-bag",
+            "accessory": "legacy-accessory"
+          }
+        },
+        {
+          "slots": {
+            "bottom": "bottom",
+            "footwear": null,
+            "bag": "legacy-bag",
+            "accessory": "legacy-accessory"
+          }
+        }
+      ],
+      "props": {
+        "bag": {
+          "status": "fallback",
+          "picks": [
+            "bag"
+          ]
+        },
+        "accessory": {
+          "status": "ready",
+          "picks": [
+            "neck",
+            "hat"
+          ]
+        }
+      }
+    },
+    "index": 2,
+    "expected": {
+      "version": 1,
+      "setIndex": 2,
+      "optional": {
+        "bag": true,
+        "accessory": true
+      },
+      "slots": {
+        "bottom": {
+          "itemId": "bottom",
+          "origin": "ai"
+        },
+        "footwear": {
+          "itemId": null,
+          "origin": "user"
+        },
+        "bag": {
+          "itemId": null,
+          "origin": "user"
+        },
+        "accessory": {
+          "itemId": "neck",
+          "origin": "ai"
+        }
+      }
+    }
+  }
+}

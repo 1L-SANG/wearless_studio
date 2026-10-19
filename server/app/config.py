@@ -101,7 +101,8 @@ class Settings:
     # 비슷한 컷 계획 전용. 공용 텍스트 모델을 쓰는 검수와 분리한다.
     model_text_gemini_similar: str = "gemini-3.8-flash"
     model_text_gemini_outfit: str = "gemini-3.8-flash"
-    outfit_timeout_seconds: float = 12.0
+    outfit_timeout_seconds: float = 30.0
+    outfit_props_timeout_seconds: float = 10.0
     outfit_recommendation_enabled: bool = False
     outfit_candidates_per_role: int = 6
     # AG-01 상품 분석만 별도 분기 (2026-08-14 사용자 결정). model_text_gemini 는 게이팅 QC
@@ -888,7 +889,8 @@ def load_settings() -> Settings:
         model_text_gemini_outfit="gemini-3.8-flash",
         outfit_recommendation_enabled=_flag("OUTFIT_RECOMMENDATION", "off", {"off", "on"}) == "on",
         outfit_candidates_per_role=min(8, max(2, _int_env("OUTFIT_CANDIDATES_PER_ROLE", 6))),
-        outfit_timeout_seconds=min(30.0, max(1.0, float(os.getenv("OUTFIT_TIMEOUT_SECONDS", "12")))),
+        outfit_props_timeout_seconds=min(30.0, max(1.0, _int_env("OUTFIT_PROPS_TIMEOUT_SECONDS", 10))),
+        outfit_timeout_seconds=min(30.0, max(1.0, float(os.getenv("OUTFIT_TIMEOUT_SECONDS", "30")))),
         # 기본값 없음(빈 문자열=정본 폴백) — env 를 지우는 것이 진짜 롤백이 되게 한다.
         model_text_gemini_analysis=os.getenv("MODEL_ROUTING_TEXT_GEMINI_ANALYSIS", ""),
         analysis_model_order=os.getenv("ANALYSIS_MODEL_ORDER", "gemini,gpt"),

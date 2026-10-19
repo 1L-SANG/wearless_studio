@@ -1230,8 +1230,22 @@ async def save_analysis(
                 if value is None:
                     value = outfit.normalize_selections(None, clothing_type,
                         legacy_match_items=previous.get("matchClothing") or [], allowed_items=items)
-                if "outfitSetIndex" in analysis:
-                    value = outfit.apply_set(value, previous.get("outfitRecommendation"), clothing_type, analysis.pop("outfitSetIndex"))
+                applying_set = "outfitSetIndex" in analysis
+                if applying_set:
+                    index = analysis.pop("outfitSetIndex")
+                    if "outfitSelections" in analysis:
+                        # An explicit click applies the IDs actually displayed, including
+                        # fallback sets when a newer server judgement arrived meanwhile.
+                        if type(index) is not int or not 0 <= index <= 2:
+                            raise outfit.OutfitSelectionError("invalid_outfit_set_index")
+                        incoming = outfit.normalize_selections(analysis["outfitSelections"], clothing_type, strict=True)
+                        for role, entry in outfit.normalize_selections(value, clothing_type)["slots"].items():
+                            if entry["origin"] == "user" and entry["itemId"] is None:
+                                incoming["slots"][role] = entry
+                        incoming["setIndex"] = index
+                        value = incoming
+                    else:
+                        value = outfit.apply_set(value, previous.get("outfitRecommendation"), clothing_type, index)
                 elif "outfitSelections" in analysis:
                     value = outfit.merge_selections(value, analysis["outfitSelections"], clothing_type)
                 elif "matchClothing" in analysis:
@@ -1246,7 +1260,7 @@ async def save_analysis(
                     if role and not type_changed:
                         value["slots"][role] = {"itemId": str(selected[0]["id"]) if selected else None, "origin": "user"}
                 requested_optional = (analysis.get("outfitSelections") or {}).get("optional", {})
-                if isinstance(requested_optional, dict):
+                if isinstance(requested_optional, dict) and not applying_set:
                     for role, enabled in requested_optional.items():
                         value = outfit.toggle_optional(value, previous.get("outfitRecommendation"), clothing_type, role, enabled)
                 selections = outfit.normalize_selections(value, clothing_type, allowed_items=items, strict=True,
@@ -1627,7 +1641,7 @@ async def analyze_spike(
     return JSONResponse({"observation": obs, "data": distributed})
 
 
-async def _outfit_generation_snapshot(conn, user_id, project_id, *, analysis=None, product=None):
+async def _outfit_generation_snapshot(conn, user_id, project_id, *, analysis=None, product=None, settings=None):
     analysis = analysis if analysis is not None else await repo.get_analysis(conn, project_id) or {}
     # Empty old projects require no additional product or catalog query.
     if not analysis.get("outfitSelections") and not any(
@@ -1637,7 +1651,8 @@ async def _outfit_generation_snapshot(conn, user_id, project_id, *, analysis=Non
     clothing_type = product.get("clothingType") or product.get("clothing_type") or "top"
     items = await outfit.load_items(conn, user_id, project_id)
     try:
-        return outfit.generation_snapshot(analysis, clothing_type, items, sub_category=analysis.get("subCategory"))
+        return outfit.generation_snapshot(analysis, clothing_type, items, sub_category=analysis.get("subCategory"),
+            product=product, candidates_per_role=settings.outfit_candidates_per_role if settings else 6)
     except outfit.OutfitSelectionError as exc:
         raise _bad_request(str(exc), "선택한 코디 아이템을 다시 확인해 주세요.") from None
 
@@ -1694,6 +1709,25 @@ async def get_outfit_recommendation(request: Request, project_id: str, user_id: 
     return outfit.read_fields(analysis, request.app.state.settings.outfit_timeout_seconds, items=items, r2=request.app.state.r2)
 
 
+async def _start_project_props(request, project_id, user_id, product, analysis, source_images, slots, role):
+    from .public_routes import _analysis_semaphore
+    context = outfit.product_context(product, analysis)
+    async with get_conn(request) as conn:
+        latest = await repo.get_analysis_for_update(conn, project_id) or {}
+        current_product = await repo.get_product(conn, project_id) or {}
+        if (outfit.product_context(current_product, latest) != context or
+            detail_recommendations.analysis_source_entries(current_product) != detail_recommendations.analysis_source_entries(product)):
+            raise _outfit_context_conflict()
+        items = await outfit.load_items(conn, user_id, project_id)
+        fields = outfit.start_props(request.app.state.settings, request.app.state.r2, current_product,
+            latest, source_images, items, role, slots=slots, semaphore=_analysis_semaphore)
+        await repo.save_outfit_recommendation(conn, project_id, fields, expected_analysis=latest)
+        await conn.commit()
+    if fields["outfitRecommendation"]["props"][role]["status"] == "pending":
+        outfit_jobs.follow_props(request.app, user_id, project_id, current_product, latest, fields, role)
+    return outfit.read_fields(fields, request.app.state.settings.outfit_timeout_seconds)
+
+
 @router.post("/projects/{project_id}/analysis/outfit-recommendations", tags=["Analysis"])
 async def recommend_outfit(request: Request, project_id: str, body: dict = Body(default={}),
                            user_id: str = Depends(require_user)):
@@ -1714,21 +1748,28 @@ async def recommend_outfit(request: Request, project_id: str, body: dict = Body(
                 if key in body and supplied_context[key] != context[key]:
                     raise _outfit_context_conflict()
             items = await outfit.load_items(conn, user_id, project_id)
-            request_analysis = dict(analysis)
-            try:
-                request_analysis["outfitSelections"] = outfit.normalize_selections(analysis.get("outfitSelections"),
-                    context["clothingType"], legacy_match_items=analysis.get("matchClothing") or [],
-                    allowed_items=items, strict=True, genders=context["targetGenders"], prune_invalid_ai=True)
-            except outfit.OutfitSelectionError as exc:
-                raise _bad_request(str(exc), "선택한 코디 아이템을 다시 확인해 주세요.") from None
-            if "outfitSelections" in body:
+            if "role" in body:
+                if body["role"] not in outfit.PROP_ROLES:
+                    raise _bad_request("invalid_outfit_props_role", "소품 종류를 다시 확인해 주세요.")
+                source_images, slots = await _outfit_source_images(conn, user_id, project_id, product, request.app.state.r2)
+            if "role" not in body:
+                request_analysis = dict(analysis)
                 try:
-                    request_analysis["outfitSelections"] = outfit.normalize_selections(
-                        outfit.merge_selections(analysis.get("outfitSelections"), body["outfitSelections"], context["clothingType"]),
-                        context["clothingType"], allowed_items=items, strict=True, genders=context["targetGenders"], prune_invalid_ai=True)
+                    request_analysis["outfitSelections"] = outfit.normalize_selections(analysis.get("outfitSelections"),
+                        context["clothingType"], legacy_match_items=analysis.get("matchClothing") or [],
+                        allowed_items=items, strict=True, genders=context["targetGenders"], prune_invalid_ai=True)
                 except outfit.OutfitSelectionError as exc:
                     raise _bad_request(str(exc), "선택한 코디 아이템을 다시 확인해 주세요.") from None
-            source_images, slots = await _outfit_source_images(conn, user_id, project_id, product, request.app.state.r2)
+                if "outfitSelections" in body:
+                    try:
+                        request_analysis["outfitSelections"] = outfit.normalize_selections(
+                            outfit.merge_selections(analysis.get("outfitSelections"), body["outfitSelections"], context["clothingType"]),
+                            context["clothingType"], allowed_items=items, strict=True, genders=context["targetGenders"], prune_invalid_ai=True)
+                    except outfit.OutfitSelectionError as exc:
+                        raise _bad_request(str(exc), "선택한 코디 아이템을 다시 확인해 주세요.") from None
+                source_images, slots = await _outfit_source_images(conn, user_id, project_id, product, request.app.state.r2)
+        if "role" in body:
+            return await _start_project_props(request, project_id, user_id, product, analysis, source_images, slots, body["role"])
         fields = outfit.prepare_recommendation(request.app.state.settings, request.app.state.r2, product,
                                        request_analysis, source_images, items, slots=slots)
         if (analysis.get("outfitRecommendation") or {}).get("contextKey") == fields["outfitRecommendation"]["contextKey"]:
@@ -1779,6 +1820,9 @@ async def promote_outfit_recommendation(request: Request, project_id: str, body:
         try:
             cached = outfit.read_recommendation(contract["outfitRecommendation"]["contextKey"])
             if cached and contract["outfitRecommendation"].get("status") == "pending":
+                for role in outfit.PROP_ROLES:
+                    if role not in cached["outfitRecommendation"].get("props", {}):
+                        outfit.copy_prop(cached["outfitRecommendation"], contract["outfitRecommendation"], role)
                 contract["outfitRecommendation"] = cached["outfitRecommendation"]
             value = contract["outfitSelections"]
             # A restored local draft may contain user changes made after the public judgement.
@@ -1793,6 +1837,7 @@ async def promote_outfit_recommendation(request: Request, project_id: str, body:
             recommendation = deepcopy(contract["outfitRecommendation"])
             if recommendation["sets"]:
                 recommendation["sets"] = outfit.validate_sets(recommendation["sets"], pools, selections)
+            recommendation = outfit.validate_props(outfit.refreshed_props(recommendation), pools)
             recommendation = outfit.recommendation_display(recommendation, pools, request.app.state.r2)
             fields = {"outfitRecommendation": recommendation,
                       **outfit.sync_legacy({"matchClothing": recommendation["candidates"].get(outfit.complementary_slot(context["clothingType"]), [])}, selections, items, request.app.state.r2)}
@@ -1806,6 +1851,9 @@ async def promote_outfit_recommendation(request: Request, project_id: str, body:
         await conn.commit()
     if fields["outfitRecommendation"]["status"] == "pending":
         outfit_jobs.follow_existing(request.app, user_id, project_id, product, {**analysis, **fields}, fields)
+    for role, prop in fields["outfitRecommendation"].get("props", {}).items():
+        if prop["status"] == "pending":
+            outfit_jobs.follow_props(request.app, user_id, project_id, product, {**analysis, **fields}, fields, role)
     return {"promoted": True, **outfit.read_fields(fields, request.app.state.settings.outfit_timeout_seconds)}
 
 
@@ -2658,7 +2706,7 @@ async def generate_mannequins(
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         # 완료 재호출 → 기존 결과 반환 (새 job·차감 없음)
-        outfit_snapshot = await _outfit_generation_snapshot(conn, user_id, project_id)
+        outfit_snapshot = await _outfit_generation_snapshot(conn, user_id, project_id, settings=request.app.state.settings)
         cuts = await repo.list_mannequin_cuts(conn, user_id, project_id)
         inner = outfit_snapshot["slots"].get("inner") or {}
         inner_asset_id = (await repo.get_matching_item_asset(conn, inner["itemId"], user_id, project_id)
@@ -3258,7 +3306,7 @@ async def regenerate_mannequins(
             "mode": "regenerate",
             "fitProfile": body.get("fitProfile"),
             "fitProfileSnapshot": snapshot,
-            "outfitSelectionsSnapshot": await _outfit_generation_snapshot(conn, user_id, project_id),
+            "outfitSelectionsSnapshot": await _outfit_generation_snapshot(conn, user_id, project_id, settings=request.app.state.settings),
         }
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
@@ -4002,7 +4050,7 @@ async def generate_editor_image(
                 except outfit.OutfitSelectionError as exc:
                     raise _bad_request(str(exc), "원래 코디 아이템을 다시 확인해 주세요.") from None
             else:
-                payload["outfitSelectionsSnapshot"] = await _outfit_generation_snapshot(conn, user_id, project_id, analysis=analysis)
+                payload["outfitSelectionsSnapshot"] = await _outfit_generation_snapshot(conn, user_id, project_id, analysis=analysis, settings=request.app.state.settings)
         # 검증·복원한 요청으로 단가를 고른다. 빈 칸은 내부 vary/similar여도 이미지 생성값이다.
         # 워커는 이 예약액을 확정·해제하므로 배포 도중 단가가 바뀌어도 다시 계산하지 않는다.
         cost = s.credit_cost_editor_image
@@ -4144,7 +4192,7 @@ async def generate_detail_page(
         clothing_type = ((product_row or {}).get("clothing_type")
                          or (product_row or {}).get("clothingType") or "top")
         payload["outfitSelectionsSnapshot"] = await _outfit_generation_snapshot(
-            conn, user_id, project_id, analysis=analysis, product=product_row or {})
+            conn, user_id, project_id, analysis=analysis, product=product_row or {}, settings=request.app.state.settings)
         try:
             generation_storyboard = content_roles.canonicalize_storyboard(storyboard)
         except ValueError as exc:

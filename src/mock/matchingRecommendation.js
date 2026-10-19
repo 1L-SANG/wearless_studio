@@ -516,7 +516,8 @@ export function buildMockOutfitRecommendation(candidates, { status = 'fallback',
   const pools = status === 'unavailable'
     ? Object.fromEntries(Object.keys(candidates).map(role => [role, []])) : candidates;
   const roles = Object.keys(pools);
-  const ranked = roles.reduce((combinations, role) => combinations.flatMap(choice =>
+  const setRoles = roles.filter(role => !['bag', 'accessory'].includes(role));
+  const ranked = setRoles.reduce((combinations, role) => combinations.flatMap(choice =>
     (pools[role].slice(0, 3).length ? pools[role].slice(0, 3) : [null]).map((item, rank) => ({
       slots: { ...choice.slots, [role]: item?.id ?? null }, ranks: [...choice.ranks, rank], score: choice.score + rank,
     }))), [{ slots: {}, ranks: [], score: 0 }]);
@@ -525,7 +526,7 @@ export function buildMockOutfitRecommendation(candidates, { status = 'fallback',
     for (let i = 0; i < a.ranks.length; i++) if (a.ranks[i] !== b.ranks[i]) return a.ranks[i] - b.ranks[i];
     return 0;
   });
-  const hasItems = Object.values(pools).some(items => items.length);
+  const hasItems = setRoles.some(role => pools[role].length);
   const sets = hasItems ? ranked.slice(0, 3).map(({ slots }) => ({ slots, reason: '등록된 아이템으로 코디를 골랐어요.' })) : [];
   const actualStatus = hasItems ? status : 'unavailable';
   return { version: 1, status: actualStatus, model: null, contextKey, sets,

@@ -7,7 +7,7 @@ from app.workers import detail_page_job, editor_image_job
 from conftest import worker_job
 from test_detail_page_fallback import _block, _item, _run
 from test_editor_image_fallback import runtime
-from test_outfit_generation import snapshot
+from test_outfit_generation import accessory_snapshot, snapshot
 from test_editor_generation_record import recording_runtime
 
 
@@ -18,8 +18,10 @@ def resolve_stub(monkeypatch):
         calls.append(deepcopy(snapshot))
         refs = []
         for role in outfit_generation.EXTRA_ROLES:
-            identifier = (snapshot or {}).get("slots", {}).get(role, {}).get("itemId")
-            if identifier:
+            slot = (snapshot or {}).get("slots", {}).get(role) or {}
+            identifiers = ([slot["itemId"], *(slot.get("extraIds", []) if role == "accessory" else [])]
+                           if slot.get("itemId") else [])
+            for identifier in identifiers:
                 refs.append((role, InlineImage("image/png", identifier.encode())))
                 if kwargs.get("resolved_assets") is not None:
                     kwargs["resolved_assets"].append({"role": role, "itemId": identifier,
@@ -28,6 +30,32 @@ def resolve_stub(monkeypatch):
 
     monkeypatch.setattr(outfit_generation, "resolve_images", resolve)
     return calls
+
+
+def test_detail_generation_attaches_and_records_all_three_accessories(monkeypatch):
+    resolve_stub(monkeypatch)
+    selected = accessory_snapshot("hat", "watch", "necklace")
+    result = _run(monkeypatch, [_block()], job_payload={"outfitSelectionsSnapshot": selected})
+    generated = result["generated"]["b1"]
+    assert generated["images"] == [b"PRODUCT", b"hat", b"watch", b"necklace"]
+    assert generated["manifest"].count("OUTFIT ACCESSORY") == 3
+    recipe = result["success"]["cut_assets"][0]["metadata"]["generation"]["recipe"]
+    assert recipe["outfitSelectionsSnapshot"]["slots"]["accessory"] == selected["slots"]["accessory"]
+    assert [row["itemId"] for row in recipe["outfitReferenceAssets"]] == ["hat", "watch", "necklace"]
+
+
+def test_editor_generation_attaches_and_records_all_three_accessories(runtime, monkeypatch):
+    resolve_stub(monkeypatch)
+    selected = accessory_snapshot("hat", "watch", "necklace")
+    asyncio.run(editor_image_job.run_editor_image_job(
+        runtime["app"], worker_job(payload={"mode": "new", "cutType": "horizon",
+            "outfitSelectionsSnapshot": selected}, credits_reserved=19)))
+    generated = runtime["generations"][0]
+    assert generated["images"] == [b"product", b"hat", b"watch", b"necklace"]
+    assert generated["manifest"].count("OUTFIT ACCESSORY") == 3
+    recipe = runtime["success"]["image"]["metadata"]["generation"]["recipe"]
+    assert recipe["outfitSelectionsSnapshot"]["slots"]["accessory"] == selected["slots"]["accessory"]
+    assert [row["itemId"] for row in recipe["outfitReferenceAssets"]] == ["hat", "watch", "necklace"]
 
 
 def test_detail_generation_uses_frozen_outfit_and_records_actual_roles(monkeypatch):

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Info } from 'lucide-react';
 import { api, isMockMode } from '@/lib/api/index.js';
-import { OUTFIT_SLOT_LABELS, complementaryOutfitSlot, outfitSlotsFor } from '@/lib/outfitSelections.js';
+import { OUTFIT_SLOT_LABELS, complementaryOutfitSlot, outfitSlotsFor, selectedOutfitIds } from '@/lib/outfitSelections.js';
 import { buildOutfitBoardLayout, selectProductBoardImage } from '@/lib/outfitPresentation.js';
 import { OutfitRoleIcon, outfitImage, outfitName } from './OutfitCatalog.jsx';
 import styles from './OutfitSelection.module.css';
@@ -68,10 +68,18 @@ export function OutfitBoard({ analysis, product, projectId, onOpenRole, skeleton
     const src = outfitImage(item);
     return [role, { ...item, slot: role, src, name: outfitName(item), cm: garmentDisplayLength(item, role), ar: ratios[src] || item?.ar || (role === 'bottom' ? .52 : role === 'footwear' ? 2.1 : .95) }];
   })), [analysis, complementary, ratios]);
+  const optionalItem = role => {
+    if (!analysis.outfitSelections?.optional?.[role]) return null;
+    if (analysis.outfitRecommendation?.props?.[role]?.status === 'pending') return { slot: role, pending: true };
+    if (role === 'bag') return selected.bag?.id ? selected.bag : null;
+    return selectedOutfitIds(analysis.outfitSelections, role).map(id => {
+      const item = analysis.outfitRecommendation?.candidates?.[role]?.find(candidate => candidate.id === id);
+      return item ? { ...item, slot: role, src: outfitImage(item), name: outfitName(item) } : null;
+    }).filter(Boolean);
+  };
   const kind = analysis.clothingType || 'top';
   const layout = buildOutfitBoardLayout({ clothingType: kind, product: { slot: 'product', src: productSrc, name: product?.name || '내 상품', cm: garmentDisplayLength(analysis, kind), ar: ratios[productSrc] || visuals?.front?.width / visuals?.front?.height || (kind === 'bottom' ? .52 : .85) }, items: { ...selected, footwear: selected.footwear?.id ? selected.footwear : null,
-    bag: analysis.outfitSelections?.optional?.bag ? selected.bag : null,
-    accessory: analysis.outfitSelections?.optional?.accessory ? selected.accessory : null }, maxHeight, width: 276 });
+    bag: optionalItem('bag'), accessory: optionalItem('accessory') }, maxHeight, width: 276 });
   const loaded = (event) => {
     const img = event.currentTarget; const ratio = img.naturalWidth / img.naturalHeight;
     if (ratio > 0) setRatios((prev) => prev[img.getAttribute('src')] === ratio ? prev : { ...prev, [img.getAttribute('src')]: ratio });
@@ -91,10 +99,10 @@ export function OutfitBoard({ analysis, product, projectId, onOpenRole, skeleton
             ? <div key={piece.slot} className={styles.piece} style={box}>{content}</div>
             : <button key={piece.slot} type="button" className={styles.piece} style={box} aria-label={`${label} 바꾸기`} onClick={() => onOpenRole(piece.slot)}>{content}</button>;
         })}
-        {layout.accessories.map((piece) => <button key={piece.slot} type="button"
-          className={styles.boardAccessory} style={{ left: piece.x, top: piece.y, width: piece.width, height: piece.height }}
+        {layout.accessories.map((piece) => <button key={`${piece.slot}-${piece.id || 'pending'}`} type="button"
+          className={`${styles.boardAccessory} ${piece.pending ? styles.boardAccessoryPending : ''}`} aria-busy={!!piece.pending} style={{ left: piece.x, top: piece.y, width: piece.width, height: piece.height }}
           aria-label={`${OUTFIT_SLOT_LABELS[piece.slot]} 바꾸기`} onClick={() => onOpenRole(piece.slot)}>
-          <img src={piece.src} alt={piece.name} />
+          {!piece.pending && <img src={piece.src} alt={piece.name} />}
         </button>)}
       </div>
     </div>

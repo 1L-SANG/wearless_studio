@@ -550,6 +550,22 @@ export const httpAdapter = {
     analysisCache = { projectId, analysis: merged };
     return response;
   },
+  async recommendOutfitProps(projectId, role, { product, analysis, photos, signal } = {}) {
+    if (!['bag', 'accessory'].includes(role)) throw new Error('지원하지 않는 소품이에요.');
+    if (projectId != null) {
+      const response = await http(`/v1/projects/${projectId}/analysis/outfit-recommendations`, {
+        method: 'POST', body: { role }, signal,
+      });
+      return response?.data || response;
+    }
+    const prepared = photos ? { photos } : await preparePublicAnalysis(product, { signal });
+    const analysisContext = Object.fromEntries(['clothingType', 'subCategory', 'customCategory',
+      'targetGenders', 'styleTags', 'fit', 'materials', 'outfitSelections'].map(key => [key, analysis?.[key] ?? null]));
+    const response = await publicHttp('/v1/public/outfit-recommendations', publicAnalysisForm(product,
+      prepared.photos, { role, analysisContext: JSON.stringify(analysisContext),
+        ...(analysis?.outfitRecommendationHandoff ? { handoff: JSON.stringify(analysis.outfitRecommendationHandoff) } : {}) }), { signal });
+    return response?.data || {};
+  },
   async getOutfitRecommendation(projectId, { handoff, signal } = {}) {
     if (projectId) return http(`/v1/projects/${projectId}/analysis/outfit-recommendations`, { signal });
     if (!handoff) return {};

@@ -27,6 +27,7 @@ _CACHE_TTL = 120
 _CACHE_MAX = 128
 _cache = OrderedDict()
 _inflight = {}
+PROP_ROLES = ("bag", "accessory")
 
 
 class OutfitSelectionError(ValueError):
@@ -35,6 +36,10 @@ class OutfitSelectionError(ValueError):
 
 def eligible_slots(clothing_type, sub_category=None):
     return _ROLES.get(clothing_type, ())
+
+
+def clothing_pools(pools):
+    return {role: pool for role, pool in pools.items() if role not in PROP_ROLES}
 
 
 def complementary_slot(clothing_type):
@@ -62,9 +67,13 @@ def valid_item(item, role, clothing_type, genders=None):
     return custom or not genders or item.get("gender") == "unisex" or item.get("gender") in genders
 
 
+def category_key(item):
+    return str((item or {}).get("category") or "").strip().casefold()
+
+
 def normalize_selections(value, clothing_type, *, sub_category=None, legacy_match_items=None,
                          allowed_items=None, strict=False, genders=None, prune_invalid_ai=False):
-    """Keep one real ID per eligible role. Explicit user null is a durable opt-out.
+    """Keep verified role IDs, with up to three accessories. User null is a durable opt-out.
 
     `allowed_items` must come from an owner-scoped repo query. Impossible roles are
     removed on type changes before validating their old IDs.
@@ -101,6 +110,25 @@ def normalize_selections(value, clothing_type, *, sub_category=None, legacy_matc
             else:
                 continue
         result[role] = {"itemId": identifier, "origin": entry["origin"]}
+        if role == "accessory" and identifier:
+            extras = []
+            seen = {identifier}
+            categories = {category_key(rows.get(identifier, {}))} if allowed_items is not None else set()
+            for extra in entry.get("extraIds", []) if isinstance(entry.get("extraIds"), list) else []:
+                if not isinstance(extra, str) or not extra or len(extra) > 128 or extra in seen:
+                    continue
+                item = rows.get(extra)
+                if allowed_items is not None and (not valid_item(item, role, clothing_type, genders)
+                        or category_key(item) in categories):
+                    continue
+                extras.append(extra)
+                seen.add(extra)
+                if item:
+                    categories.add(category_key(item))
+                if len(extras) == 2:
+                    break
+            if extras:
+                result[role]["extraIds"] = extras
     complement = complementary_slot(clothing_type)
     if complement and complement not in raw and legacy_match_items is not None:
         selected = sorted((item for item in legacy_match_items if isinstance(item, dict) and item.get("selected")),
@@ -146,7 +174,9 @@ def apply_set(previous, recommendation, clothing_type, index):
             continue
         if role in selections["optional"] and not selections["optional"][role]:
             continue
-        selections["slots"][role] = {"itemId": sets[index]["slots"].get(role), "origin": "ai"}
+        identifier = (prop_pick(recommendation, role, index) if role in PROP_ROLES
+                      else sets[index]["slots"].get(role))
+        selections["slots"][role] = {"itemId": identifier, "origin": "ai"}
     selections["setIndex"] = index
     return selections
 
@@ -166,12 +196,15 @@ def toggle_optional(previous, recommendation, clothing_type, role, enabled):
         raise OutfitSelectionError("invalid_outfit_optional")
     selections["optional"][role] = enabled
     old = selections["slots"].get(role) or {}
-    if enabled and not old.get("itemId") and old.get("origin") != "user":
-        sets = (recommendation or {}).get("sets") or []
-        index = selections["setIndex"]
-        identifier = sets[index]["slots"].get(role) if index < len(sets) else None
+    if enabled and old.get("origin") != "user":
+        identifier = prop_pick(recommendation, role, selections["setIndex"])
         selections["slots"][role] = {"itemId": identifier, "origin": "ai"}
     return selections
+
+
+def prop_pick(recommendation, role, index):
+    picks = ((recommendation or {}).get("props", {}).get(role) or {}).get("picks") or []
+    return picks[index % len(picks)] if picks else None
 
 
 def selection_snapshot(value, clothing_type):
@@ -180,9 +213,18 @@ def selection_snapshot(value, clothing_type):
             if role not in selections["optional"] or selections["optional"][role]}}
 
 
-def generation_snapshot(analysis, clothing_type, items, *, sub_category=None):
+def generation_snapshot(analysis, clothing_type, items, *, sub_category=None, product=None, candidates_per_role=6):
     selections = normalize_selections((analysis or {}).get("outfitSelections"), clothing_type,
         sub_category=sub_category, legacy_match_items=(analysis or {}).get("matchClothing") or [], strict=True)
+    context = product_context(product or {"clothingType": clothing_type}, analysis or {})
+    for role in PROP_ROLES:
+        old = selections["slots"].get(role) or {}
+        prop = (((analysis or {}).get("outfitRecommendation") or {}).get("props") or {}).get(role) or {}
+        if selections["optional"][role] and old.get("origin") != "user" and (not old.get("itemId") or prop.get("status") == "pending"):
+            picks = prop.get("picks") or deterministic_picks(
+                props_candidates(items, context, role, limit=candidates_per_role), role)
+            identifier = picks[selections["setIndex"] % len(picks)] if picks else None
+            selections["slots"][role] = {"itemId": identifier, "origin": "ai"}
     # Disabled remembered items do not enter validation, generation or asset records.
     snapshot = selection_snapshot(selections, clothing_type)
     validated = normalize_selections(snapshot, clothing_type, allowed_items=items, strict=True,
@@ -303,7 +345,7 @@ def promotion_context_matches(signed, current):
     return True
 
 
-def _diverse_candidates(scored, fixed_item, limit):
+def _diverse_candidates(scored, fixed_item, limit, *, category_cap=False):
     """Greedy score minus 0.25 * maximum tag Jaccard overlap, color cap two.
 
     Reserve a seller's fixed item first; it counts toward its color cap. Unknown
@@ -317,9 +359,11 @@ def _diverse_candidates(scored, fixed_item, limit):
 
     selected = [fixed_item] if fixed_item else []
     counts = Counter(group(item) for item in selected)
+    categories = Counter(category_key(item) for item in selected)
     remaining = [(item, score) for item, score in scored if item is not fixed_item]
     while len(selected) < limit:
-        eligible = [(item, score) for item, score in remaining if counts[group(item)] < 2]
+        eligible = [(item, score) for item, score in remaining if counts[group(item)] < 2
+                    and (not category_cap or categories[category_key(item)] < 2)]
         if not eligible:
             break
 
@@ -333,14 +377,15 @@ def _diverse_candidates(scored, fixed_item, limit):
         item, score = min(eligible, key=priority)
         selected.append(item)
         counts[group(item)] += 1
+        categories[category_key(item)] += 1
         remaining = [(other, value) for other, value in remaining if other is not item]
     return selected
 
 
-def candidate_pools(items, context, selections=None, *, limit=None):
+def candidate_pools(items, context, selections=None, *, limit=None, roles=None, props=False):
     clothing_type = context["clothingType"]
     pools = {}
-    for role in eligible_slots(clothing_type, context.get("subCategory")):
+    for role in roles if roles is not None else eligible_slots(clothing_type, context.get("subCategory")):
         pool = [item for item in items if valid_item(item, role, clothing_type, context.get("targetGenders"))]
         # Existing score combines style affinity and product-color harmony; filtering
         # by each role is already done, so reuse it without the complementary filter.
@@ -359,7 +404,7 @@ def candidate_pools(items, context, selections=None, *, limit=None):
         fixed_item = (next((item for item in ranked if str(item["id"]) == fixed.get("itemId")), None)
                       if fixed.get("origin") == "user" else None)
         ranked = ([fixed_item] + [item for item in ranked if item is not fixed_item]) if fixed_item else ranked
-        pools[role] = _diverse_candidates(scored, fixed_item, limit) if limit is not None else ranked
+        pools[role] = _diverse_candidates(scored, fixed_item, limit, category_cap=props and role == "accessory") if limit is not None else ranked
     return pools
 
 
@@ -391,6 +436,7 @@ def fallback_sets(pools, fixed=None):
     distance from earlier sets. Sum of shortlist ranks and rank tuple break ties.
     Callers use candidate_pools(limit=...) so paid and free paths share selection.
     """
+    pools = clothing_pools(pools)
     if not any(pools.values()):
         return []
     roles = list(pools)
@@ -419,11 +465,15 @@ def fallback_sets(pools, fixed=None):
 
 
 def validate_sets(value, pools, fixed=None, *, require_concept=False, enforce_fixed=False):
+    pools = clothing_pools(pools)
     if not isinstance(value, list) or not 1 <= len(value) <= 3:
         raise OutfitSelectionError("invalid_outfit_response")
     seen, concepts, valid = set(), set(), []
     variable_roles = [role for role, pool in pools.items() if len(pool) >= 2]
     for entry in value:
+        if isinstance(entry, dict) and isinstance(entry.get("slots"), dict) and not require_concept:
+            # Saved v1/v2 sets may contain props, but props is now their only authority.
+            entry = {**entry, "slots": {role: identifier for role, identifier in entry["slots"].items() if role not in PROP_ROLES}}
         if not isinstance(entry, dict) or not isinstance(entry.get("slots"), dict) or set(entry["slots"]) != set(pools):
             raise OutfitSelectionError("invalid_outfit_response")
         slots = entry["slots"]
@@ -453,10 +503,12 @@ def validate_sets(value, pools, fixed=None, *, require_concept=False, enforce_fi
 
 def recommendation_display(recommendation, pools, r2):
     out = deepcopy(recommendation)
-    ids = {role: {entry["slots"].get(role) for entry in out["sets"]} for role in pools}
+    ids = {role: (set((out.get("props", {}).get(role) or {}).get("picks") or []) if role in PROP_ROLES
+                  else {entry["slots"].get(role) for entry in out["sets"]}) for role in pools}
     out["candidates"] = {role: [{**item_to_api(r2, item), "inSets": str(item["id"]) in ids[role]}
                                 for item in pool] for role, pool in pools.items()}
-    out["roleStatus"] = {role: out["status"] if pool else "unavailable" for role, pool in pools.items()}
+    out["roleStatus"] = {role: ((out.get("props", {}).get(role) or {}).get("status", "fallback")
+        if role in PROP_ROLES else out["status"]) if pool else "unavailable" for role, pool in pools.items()}
     return out
 
 
@@ -468,18 +520,41 @@ def prepare_recommendation(settings, r2, product, analysis, source_images, items
     pools = candidate_pools(items, context, selections)
     shortlists = candidate_pools(items, context, selections, limit=settings.outfit_candidates_per_role)
     has_front = slots is None or "Front" in slots
-    status = ("pending" if has_front and settings.gemini_api_key and settings.outfit_recommendation_enabled else "fallback") if any(pools.values()) else "unavailable"
+    status = ("pending" if has_front and settings.gemini_api_key and settings.outfit_recommendation_enabled else "fallback") if any(clothing_pools(pools).values()) else "unavailable"
     recommendation = recommendation_display({"version": VERSION, "status": status,
         "model": settings.model_text_gemini_outfit, "contextKey": key, "sets": fallback_sets(shortlists, selections),
         **({"fallbackReady": True, "pendingSince": time.time()} if status == "pending" else {})}, pools, r2)
+    for role in PROP_ROLES:
+        key_for_role = props_key(settings, product, analysis, source_images, slots, items, role)
+        previous_rec = analysis.get("outfitRecommendation") or {}
+        if (previous_rec.get("propsContextKeys") or {}).get(role) == key_for_role:
+            copy_prop(recommendation, previous_rec, role)
     selections = initial_selections(selections, recommendation, context["clothingType"])
     return {"outfitRecommendation": recommendation,
             **sync_legacy({"matchClothing": recommendation["candidates"].get(complementary_slot(context["clothingType"]), [])}, selections, items, r2)}
 
 
 def _cache_result(key, fields):
-    _cache[key] = (time.monotonic(), deepcopy(fields))
+    result = deepcopy(fields)
+    recommendation = result.get("outfitRecommendation") or {}
+    base_key = recommendation.get("contextKey")
+    if key == base_key and key in _cache:
+        prior = _cache[key][1].get("outfitRecommendation") or {}
+        for role in PROP_ROLES:
+            incoming = (recommendation.get("props") or {}).get(role)
+            previous = (prior.get("props") or {}).get(role)
+            if previous and (incoming is None or incoming.get("status") == "pending"
+                    and previous.get("status") != "pending"
+                    and (recommendation.get("propsContextKeys") or {}).get(role) == (prior.get("propsContextKeys") or {}).get(role)):
+                copy_prop(recommendation, prior, role)
+    _cache[key] = (time.monotonic(), result)
     _cache.move_to_end(key)
+    if base_key and key != base_key and base_key in _cache:
+        base = deepcopy(_cache[base_key][1])
+        for role, prop_key in (recommendation.get("propsContextKeys") or {}).items():
+            if prop_key == key:
+                copy_prop(base["outfitRecommendation"], recommendation, role)
+        _cache_result(base_key, base)
     while len(_cache) > _CACHE_MAX:
         _cache.popitem(last=False)
 
@@ -498,7 +573,7 @@ def refresh_board_urls(fields, items, r2):
     return result
 
 
-def read_fields(analysis, timeout_seconds=12, *, include_internal=False, items=None, r2=None):
+def read_fields(analysis, timeout_seconds=30, *, include_internal=False, items=None, r2=None):
     fields = {key: deepcopy(analysis[key]) for key in ("outfitRecommendation", "outfitSelections", "matchClothing", "matchIds") if key in analysis}
     recommendation = fields.get("outfitRecommendation") or {}
     if (recommendation.get("status") == "pending"
@@ -508,6 +583,10 @@ def read_fields(analysis, timeout_seconds=12, *, include_internal=False, items=N
         recommendation.pop("pendingSince", None)
         recommendation["roleStatus"] = {role: "fallback" if pool else "unavailable"
                                         for role, pool in recommendation.get("candidates", {}).items()}
+    for role, prop in recommendation.get("props", {}).items():
+        deadline = (recommendation.get("propsExpiresAt") or {}).get(role)
+        if prop.get("status") == "pending" and deadline is not None and time.time() >= deadline:
+            prop["status"] = "fallback" if prop.get("picks") else "unavailable"
     if not include_internal:
         for entry in recommendation.get("sets", []):
             entry.pop("concept", None)
@@ -580,7 +659,7 @@ async def recommend(settings, r2, product, analysis, source_images, items, *, sl
 
 async def _recommend_once(settings, r2, context, fixed, source_images, items, key):
     all_pools = candidate_pools(items, context, fixed)
-    pools = candidate_pools(items, context, fixed, limit=settings.outfit_candidates_per_role)
+    pools = clothing_pools(candidate_pools(items, context, fixed, limit=settings.outfit_candidates_per_role))
     sets = fallback_sets(pools, fixed)
     status = "fallback"
     try:
@@ -641,3 +720,133 @@ def verify_handoff(value, secret, *, now=None):
 
 def source_binding_matches(contract, source_images, slots):
     return contract.get("sourceBinding") == _source_binding(source_images, slots)
+
+
+def props_candidates(items, context, role, *, limit):
+    if role not in PROP_ROLES:
+        raise OutfitSelectionError("invalid_outfit_props_role")
+    return candidate_pools(items, context, limit=limit, roles=(role,), props=True)[role]
+
+
+def props_key(settings, product, analysis, source_images, slots, items, role):
+    if role not in PROP_ROLES:
+        raise OutfitSelectionError("invalid_outfit_props_role")
+    relevant = [item for item in items if item.get("clothing_type") == ROLE_TYPES[role]
+                and not item.get("is_custom") and not item.get("owner_user_id")]
+    base = recommendation_key(settings, product, analysis, source_images, slots, relevant, {"slots": {}})
+    return sha256(_canonical({"productKey": base, "role": role,
+        "promptVersion": outfit_recommender.PROPS_PROMPT_VERSION})).hexdigest()
+
+
+def deterministic_picks(pool, role):
+    ordered = list(dict.fromkeys(str(item["id"]) for item in pool))
+    if role == "accessory":
+        by_id = {str(item["id"]): item for item in pool}
+        categories, first, rest = set(), [], []
+        for identifier in ordered:
+            category = category_key(by_id[identifier])
+            (rest if category in categories else first).append(identifier)
+            categories.add(category)
+        ordered = first + rest
+    return ordered[:3]
+
+
+def validate_picks(value, pool, role):
+    identifiers = {str(item["id"]): item for item in pool}
+    if (not isinstance(value, list) or not 1 <= len(value) <= 3
+        or any(not isinstance(identifier, str) or identifier not in identifiers for identifier in value)
+        or len(set(value)) != len(value)):
+        raise OutfitSelectionError("invalid_outfit_props_response")
+    if role == "accessory" and len({category_key(identifiers[i]) for i in value}) < min(
+            len(value), len({category_key(item) for item in pool})):
+        raise OutfitSelectionError("invalid_outfit_props_categories")
+    return list(value)
+
+
+def copy_prop(target, source, role):
+    for field in ("props", "propsContextKeys", "propsExpiresAt"):
+        if role in (source.get(field) or {}):
+            target.setdefault(field, {})[role] = deepcopy(source[field][role])
+
+
+def refreshed_props(recommendation):
+    result = deepcopy(recommendation)
+    for role, key in (result.get("propsContextKeys") or {}).items():
+        cached = read_recommendation(key)
+        if cached:
+            copy_prop(result, cached["outfitRecommendation"], role)
+    return result
+
+
+def validate_props(recommendation, pools):
+    """Revalidate signed/stored props without a provider call, including pending picks."""
+    out = deepcopy(recommendation)
+    for role, prop in out.get("props", {}).items():
+        if role not in PROP_ROLES or not isinstance(prop, dict) or prop.get("status") not in ("pending", "ready", "fallback", "unavailable"):
+            raise OutfitSelectionError("invalid_outfit_props_response")
+        pool = pools.get(role) or []
+        if not pool:
+            out["props"][role] = {"status": "unavailable", "picks": []}
+        else:
+            validate_picks(prop.get("picks"), pool, role)
+    return out
+
+
+def start_props(settings, r2, product, analysis, source_images, items, role, *, slots=None, semaphore=None):
+    context = product_context(product, analysis)
+    key = props_key(settings, product, analysis, source_images, slots, items, role)
+    pool = props_candidates(items, context, role, limit=settings.outfit_candidates_per_role)
+    recommendation = deepcopy(analysis.get("outfitRecommendation"))
+    if not recommendation:
+        recommendation = prepare_recommendation(settings, r2, product, analysis, source_images, items, slots=slots)["outfitRecommendation"]
+    base = read_recommendation(recommendation.get("contextKey"))
+    if base:
+        for other_role in PROP_ROLES:
+            copy_prop(recommendation, base["outfitRecommendation"], other_role)
+    cached = read_recommendation(key)
+    if cached:
+        copy_prop(recommendation, cached["outfitRecommendation"], role)
+        return {"outfitRecommendation": recommendation_display(recommendation, candidate_pools(items, context), r2)}
+    if (recommendation.get("propsContextKeys") or {}).get(role) == key and role in recommendation.get("props", {}):
+        # Persisted pending from an interrupted process becomes free fallback, never a retry.
+        if recommendation["props"][role]["status"] == "pending" and key not in _inflight:
+            recommendation["props"][role]["status"] = "fallback" if pool else "unavailable"
+        return {"outfitRecommendation": recommendation}
+    picks = deterministic_picks(pool, role)
+    pending = bool(pool and settings.outfit_recommendation_enabled and settings.gemini_api_key
+                   and (slots is None or "Front" in slots))
+    recommendation.setdefault("props", {})[role] = {"status": "pending" if pending else "fallback" if pool else "unavailable", "picks": picks}
+    recommendation.setdefault("propsContextKeys", {})[role] = key
+    recommendation.setdefault("propsExpiresAt", {})[role] = time.time() + settings.outfit_props_timeout_seconds
+    recommendation = recommendation_display(recommendation, candidate_pools(items, context), r2)
+    fields = {"outfitRecommendation": recommendation}
+    _cache_result(key, fields)
+    if not pending or key in _inflight:
+        return fields
+
+    async def complete():
+        result = deepcopy(fields)
+        prop = result["outfitRecommendation"]["props"][role]
+        async def evaluate():
+            return await outfit_recommender.recommend_props(settings, r2,
+                [source_images[slots.index("Front") if slots else 0]], {role: pool}, context=context)
+        async def bounded():
+            if semaphore is None:
+                return await evaluate()
+            async with semaphore:
+                return await evaluate()
+        try:
+            try:
+                raw = await asyncio.wait_for(bounded(), timeout=settings.outfit_props_timeout_seconds)
+                outfit_recommender.display_reason(raw.get("reason") if isinstance(raw, dict) else None)
+                prop["picks"] = validate_picks(raw.get("picks"), pool, role)
+                prop["status"] = "ready"
+            except Exception as exc:
+                log.warning("outfit props fallback: %s", type(exc).__name__)
+                prop["status"] = "fallback"
+            _cache_result(key, result)
+            return result
+        finally:
+            _inflight.pop(key, None)
+    _inflight[key] = asyncio.create_task(complete(), name="outfit-props-recommendation")
+    return fields

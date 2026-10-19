@@ -5,6 +5,7 @@ import { applyOutfitSet, syncOutfitLegacySelection } from '../../src/lib/outfitS
 const item = (id, extras = {}) => ({ id, name: id, thumb: `/${id}.png`, isCompatible: true, ...extras });
 const rec = (status = 'ready') => ({ version: 1, contextKey: 'top-1', status, fallbackReady: true,
   sets: [{ slots: { bottom: 'pants-1', footwear: 'shoe-1', bag: 'bag-1' } }, { slots: { bottom: 'pants-2', footwear: 'shoe-2', bag: 'bag-2' } }],
+  props: { bag: { status: 'ready', picks: ['bag-1', 'bag-2'] } },
   candidates: { bottom: [item('pants-1'), item('pants-2')], footwear: [item('shoe-1'), item('shoe-2')], bag: [item('bag-1'), item('bag-2')] }, roleStatus: { accessory: 'unavailable' } });
 const initial = (status) => syncOutfitLegacySelection({ clothingType: 'top', selectedModelId: 'mA',
   matchClothing: [item('pants-1', { clothingType: 'bottom' }), item('pants-2', { clothingType: 'bottom' })], outfitRecommendation: rec(status),
@@ -77,11 +78,11 @@ test('색을 바꿔도 내 옷 자리는 격자의 마지막 칸이다', async (
   assert.equal(byName(tree, 'OutfitTile').length, 0);
 });
 
-test('폴백 화면은 서버의 늦은 세트를 자동 적용하는 outfitSetIndex 명령을 보내지 않는다', async (t) => {
+test('폴백 화면의 명시적 세트 버튼은 화면 선택과 outfitSetIndex 명령을 함께 보낸다', async (t) => {
   const h = await outfitHarness(); t.after(() => h.close()); const { OutfitSelection } = await h.load('/src/features/analysis/OutfitSelection.jsx');
   let patch; const tree = h.render(OutfitSelection, { analysis: initial('fallback'), onChange(value) { patch = value; } });
   nodes(tree).find(node => node.type === 'button' && textOf(node).includes('AI 추천')).props.onClick();
-  assert.equal(patch.outfitSelections.setIndex, 1); assert.equal('outfitSetIndex' in patch, false);
+  assert.equal(patch.outfitSelections.setIndex, 1); assert.equal(patch.outfitSetIndex, 1);
 });
 
 test('늦은 ready가 저장 응답으로 오면 이전 pending 폴링을 적용하지 않는다', async (t) => {

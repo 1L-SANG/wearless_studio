@@ -205,11 +205,12 @@ def build_packet(
     )):
         raise ConfirmedGptRuntimeError("confirmed_gpt_invalid_outfit_images")
     outfit_roles = tuple(role for role, _image_value in outfit_images)
-    if outfit_roles != tuple(role for role in OUTFIT_INPUT_ROLES if role in outfit_roles):
+    from ..services.outfit_generation import valid_roles
+    if not valid_roles(outfit_roles):
         raise ConfirmedGptRuntimeError("confirmed_gpt_outfit_order_mismatch")
     if "inner" in outfit_roles and clothing_type != "outer":
         raise ConfirmedGptRuntimeError("confirmed_gpt_inner_requires_outer_product")
-    extras = {role: _image(value, role) for role, value in outfit_images}
+    extras = tuple((role, _image(value, role)) for role, value in outfit_images)
 
     mannequin = _image(mannequin_image, "mannequin")
     face_sheet = _image(face_direction_sheet, "face_direction_sheet")
@@ -298,7 +299,7 @@ def build_packet(
         InputRole.MODEL_FACE_DIRECTION_SHEET,
         InputRole.MODEL_FULL_BODY_DIRECTION_SHEET,
         InputRole.SOLD_PRODUCT_LABELED_EVIDENCE_GRID,
-        *((InputRole.SELECTED_INNER_EVIDENCE,) if "inner" in extras else ()),
+        *((InputRole.SELECTED_INNER_EVIDENCE,) if "inner" in outfit_roles else ()),
         *((InputRole.MATCHING_GARMENT_EVIDENCE,) if matching_attached else ()),
         *(OUTFIT_INPUT_ROLES[role] for role in outfit_roles if role != "inner"),
         InputRole.SERVICE_EXAMPLE_REFERENCE,
@@ -329,8 +330,8 @@ def build_packet(
     )
     grid = InlineImage("image/png", grid_bytes)
     images = (mannequin, face_sheet, body_sheet, grid,
-              *((extras["inner"],) if "inner" in extras else ()), *matches,
-              *(extras[role] for role in outfit_roles if role != "inner"), example)
+              *(image for role, image in extras if role == "inner"), *matches,
+              *(image for role, image in extras if role != "inner"), example)
     return ConfirmedGptRuntimePacket(
         prompt_input=prompt_input,
         images=images,
