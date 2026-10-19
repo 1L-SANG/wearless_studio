@@ -8,6 +8,7 @@ import React from 'react';
 import { createStoryboardRevisionSync } from '../../src/lib/storyboardRevisionSync.js';
 import { createConflictWorkCopies, restoreWorkCopyOnce } from '../../src/lib/conflictWorkCopy.js';
 import { mergeAnalysisPatch } from '../../src/lib/analysisPatch.js';
+import { assertOutfitAccessoriesSaved } from '../../src/lib/outfitSelections.js';
 import { mergeMatchSelection } from '../../src/lib/api/matchSelection.js';
 import { createMannequinQuoteConfirmation, expectedMannequinQuote } from '../../src/features/mannequin/quoteConfirmation.js';
 import { createMannequinGenerationRunner } from '../../src/features/mannequin/generationRunnerCore.js';
@@ -128,10 +129,10 @@ function analysisAdapter({ cached = { selectedModelId: 'old', brandUseCategory: 
     if (options) saved = mergeAnalysisPatch(saved, options.body);
     return saved;
   };
-  const adapter = new Function('stripFeatureClientFields', 'http', 'cachedAnalysisFor', 'mergeAnalysisPatch', 'isMatchRefresh', 'recommendMatchHttp', 'mergeMatchSelection',
+  const adapter = new Function('stripFeatureClientFields', 'http', 'cachedAnalysisFor', 'mergeAnalysisPatch', 'isMatchRefresh', 'recommendMatchHttp', 'mergeMatchSelection', 'assertOutfitAccessoriesSaved',
     `let analysisCache; return ({ ${body} });`)(stripFeatureClientFields, http, () => cached, mergeAnalysisPatch,
     (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((k) => patch[k] != null),
-    async () => [{ id: 'fresh', selected: false }], mergeMatchSelection);
+    async () => [{ id: 'fresh', selected: false }], mergeMatchSelection, assertOutfitAccessoriesSaved);
   return { adapter, calls, saved: () => saved };
 }
 
