@@ -115,7 +115,7 @@ export function setOutfitSelection(analysis, slot, itemId) {
   return { outfitSelections, ...(slot === complementary && changed ? { matchClothing: synced.matchClothing } : {}) };
 }
 
-export function applyOutfitSet(analysis, index, { preserveUser = false } = {}) {
+export function applyOutfitSet(analysis, index, { preserveUser = false, legacyProps = false } = {}) {
   const set = analysis.outfitRecommendation?.sets?.[index];
   if (!Number.isInteger(index) || !set) return null;
   const outfitSelections = normalizeOutfitSelections(analysis.outfitSelections, analysis.clothingType, analysis.matchClothing, analysis.outfitRecommendation?.candidates);
@@ -124,7 +124,7 @@ export function applyOutfitSet(analysis, index, { preserveUser = false } = {}) {
     if (prior.origin === 'user' && (preserveUser || prior.itemId === null)) continue;
     if (Object.hasOwn(outfitSelections.optional, slot) && !outfitSelections.optional[slot]) continue;
     const picks = analysis.outfitRecommendation?.props?.[slot]?.picks || [];
-    const itemId = ['bag', 'accessory'].includes(slot) ? picks[index % picks.length] ?? null : set.slots[slot] ?? null;
+    const itemId = ['bag', 'accessory'].includes(slot) ? picks[index % picks.length] ?? (legacyProps ? set.slots[slot] : null) ?? null : set.slots[slot] ?? null;
     outfitSelections.slots[slot] = { itemId, origin: 'ai' };
   }
   outfitSelections.setIndex = index;
@@ -132,14 +132,17 @@ export function applyOutfitSet(analysis, index, { preserveUser = false } = {}) {
   return { outfitSelections, outfitSetIndex: index, matchClothing: synced.matchClothing };
 }
 
-export function toggleOutfitOptional(analysis, slot, enabled) {
+export function toggleOutfitOptional(analysis, slot, enabled, { legacyProps = false } = {}) {
   if (!['bag', 'accessory'].includes(slot) || typeof enabled !== 'boolean') return null;
   const outfitSelections = normalizeOutfitSelections(analysis.outfitSelections, analysis.clothingType, analysis.matchClothing, analysis.outfitRecommendation?.candidates);
   outfitSelections.optional[slot] = enabled;
   const prior = outfitSelections.slots[slot];
   if (enabled && prior.origin !== 'user') {
     const picks = analysis.outfitRecommendation?.props?.[slot]?.picks || [];
-    outfitSelections.slots[slot] = { itemId: picks[outfitSelections.setIndex % picks.length] ?? null, origin: 'ai' };
+    const fallback = legacyProps ? prior.itemId
+      ?? analysis.outfitRecommendation?.sets?.[outfitSelections.setIndex]?.slots?.[slot]
+      ?? analysis.outfitRecommendation?.candidates?.[slot]?.find(item => candidateAllowed(item, slot))?.id : null;
+    outfitSelections.slots[slot] = { itemId: picks[outfitSelections.setIndex % picks.length] ?? fallback ?? null, origin: 'ai' };
   }
   return { outfitSelections };
 }
@@ -209,4 +212,14 @@ export function hasOutfitContextChange(current, patch) {
         ? [...source[key]].sort() : source?.[key];
       return JSON.stringify(canonical(value(current))) !== JSON.stringify(canonical(value(patch)));
     });
+}
+
+// Check the raw server echo before optimistic merging can hide an older API's truncation.
+export function assertOutfitAccessoriesSaved(requested, response) {
+  const expected = selectedOutfitIds(requested, 'accessory');
+  if (expected.length < 2) return;
+  const actual = selectedOutfitIds(response?.outfitSelections, 'accessory');
+  if (JSON.stringify(expected) !== JSON.stringify(actual)) {
+    throw Object.assign(new Error('선택한 소품을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'), { code: 'outfit_selection_not_saved' });
+  }
 }

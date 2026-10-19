@@ -11,6 +11,26 @@ export function useOutfitRecommendation({ analysis, projectId, product, onRecomm
   const delivery = useRef(null);
   const propsDelivery = useRef(null);
   const propsRequests = useRef(new Map());
+  const [capabilities, setCapabilities] = useState({ props: false, maxAccessories: 1 });
+  latest.current.capabilities = capabilities;
+  const capabilityRequest = useRef(null);
+  const capabilityController = useRef(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    capabilityController.current = controller;
+    const legacy = { props: false, maxAccessories: 1 };
+    let result;
+    try { result = api.getOutfitCapabilities?.({ signal: controller.signal }) || legacy; }
+    catch { result = legacy; }
+    const receive = value => {
+      const next = { props: value?.props === true, maxAccessories: value?.maxAccessories === 3 ? 3 : 1 };
+      if (!controller.signal.aborted) setCapabilities(next);
+      return next;
+    };
+    if (typeof result?.then !== 'function') receive(result);
+    capabilityRequest.current = Promise.resolve(result).then(receive, () => receive(legacy));
+    return () => controller.abort();
+  }, []);
   useEffect(() => () => { for (const request of propsRequests.current.values()) request.controller.abort(); }, []);
   const selectionKey = JSON.stringify([analysis.outfitSelections,
     (analysis.matchClothing || []).filter(item => item.selected).map(item => item.id)]);
@@ -89,7 +109,7 @@ export function useOutfitRecommendation({ analysis, projectId, product, onRecomm
     }
     let patch = propsPatch;
     if (automaticReady) {
-      patch = applyOutfitSet({ ...current.analysis, ...fields, ...propsPatch }, 0, { preserveUser: true });
+      patch = applyOutfitSet({ ...current.analysis, ...fields, ...propsPatch }, 0, { preserveUser: true, legacyProps: !current.capabilities.props });
       // Persist exactly what is displayed. A server set command would reapply
       // the set and replace user picks, or use a different pending/ready set.
       if (patch) delete patch.outfitSetIndex;
@@ -141,7 +161,7 @@ export function useOutfitRecommendation({ analysis, projectId, product, onRecomm
     const fields = { ...delivered, outfitRecommendation: accepted.recommendation };
     if (fields.outfitRecommendation?.contextKey !== latest.current.analysis.outfitRecommendation?.contextKey) return;
     const merged = { ...latest.current.analysis, ...fields };
-    const patch = applyOutfitSet(merged, 0);
+    const patch = applyOutfitSet(merged, 0, { legacyProps: !latest.current.capabilities.props });
     setState(accepted);
     latest.current.onRecommendation?.((current) => ({ ...current, ...fields }));
     latest.current.onChange(latest.current.onRecommendation ? patch : { ...fields, ...patch });
@@ -156,8 +176,12 @@ export function useOutfitRecommendation({ analysis, projectId, product, onRecomm
   };
   const recommendProps = async role => {
     if (!['bag', 'accessory'].includes(role)) return;
+    const requestedContext = latest.current.analysis.outfitRecommendation?.contextKey;
+    const supported = await capabilityRequest.current;
+    if (!supported?.props || capabilityController.current?.signal.aborted) return;
     const current = latest.current;
     const contextKey = current.analysis.outfitRecommendation?.contextKey;
+    if (contextKey !== requestedContext || !current.analysis.outfitSelections?.optional?.[role]) return;
     const requestKey = `${contextKey}:${role}`;
     if (current.analysis.outfitRecommendation?.props?.[role] || propsRequests.current.has(requestKey)) return;
     const controller = new AbortController();
@@ -169,6 +193,7 @@ export function useOutfitRecommendation({ analysis, projectId, product, onRecomm
       const response = outfitRecommendationPatch(await api.recommendOutfitProps(projectId, role,
         { product, analysis: latest.current.analysis, signal: controller.signal }));
       if (controller.signal.aborted || contextKey !== latest.current.analysis.outfitRecommendation?.contextKey) return;
+      if (!response.outfitRecommendation?.props?.[role]) throw new Error('소품 추천을 확인하지 못했어요.');
       receiveRecommendation(response, true);
     } catch {
       if (contextKey !== latest.current.analysis.outfitRecommendation?.contextKey || controller.signal.aborted) return;
@@ -191,5 +216,5 @@ export function useOutfitRecommendation({ analysis, projectId, product, onRecomm
       }
     } finally { propsRequests.current.delete(requestKey); }
   };
-  return { ...state, acceptLate, markEdited, recommendProps };
+  return { ...state, capabilities, acceptLate, markEdited, recommendProps };
 }

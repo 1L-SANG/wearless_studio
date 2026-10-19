@@ -3,13 +3,15 @@ import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 import { fileURLToPath } from 'node:url';
 import { outfitHarness, drain } from './helpers/outfitHarness.mjs';
-let vite, api, sync;
+let vite, api, sync, adapter, supabase;
 before(async () => {
   vite = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true, include: [] },
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
     server: { middlewareMode: true, watch: null }, appType: 'custom', logLevel: 'silent' });
   ({ api } = await vite.ssrLoadModule('/src/lib/api/index.js'));
   sync = await vite.ssrLoadModule('/src/lib/draftSync.js');
+  ({ httpAdapter: adapter } = await vite.ssrLoadModule('/src/lib/api/httpAdapter.js'));
+  ({ supabase } = await vite.ssrLoadModule('/src/lib/supabase.js'));
 });
 after(async () => { await vite?.close(); });
 test('확정 승격은 후보를 클라이언트 저장에서 제외하고 사진 저장 뒤 서명과 선택을 검증한다', async (t) => {
@@ -68,4 +70,31 @@ for (const timing of ['fast', 'late', 'edited']) test(`${timing} 추천 뒤 확�
   t.after(() => sync.resetDraftSyncSingleFlight());
   await sync.promoteDraftToProject({ product: { colors: [] }, photos: [], analysis: props.analysis });
   assert.deepEqual(confirmations, [displayed, displayed]);
+});
+
+for (const truncation of ['save', 'promotion']) test(`saved multi-accessory draft cannot confirm after ${truncation} loses extras`, async t => {
+  supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test' } } });
+  const choices = { version: 1, optional: { accessory: true }, slots: {
+    accessory: { itemId: 'ear', extraIds: ['neck', 'hat'], origin: 'user' },
+  } };
+  const draft = { product: { colors: [] }, photos: [], analysis: { clothingType: 'top',
+    outfitSelections: choices, outfitRecommendationHandoff: { signature: 'signed' } } };
+  const original = structuredClone(draft), events = [];
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    const promotion = String(url).endsWith(':promote');
+    if (options.method === 'PATCH') events.push('save');
+    if (promotion) events.push('promotion');
+    const outfitSelections = truncation === 'promotion' && !promotion ? choices
+      : { ...choices, slots: { accessory: { itemId: 'ear', origin: 'user' } } };
+    return new Response(JSON.stringify({ clothingType: 'top', outfitSelections, outfitRecommendation: { contextKey: 'saved' } }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } });
+  });
+  for (const [key, value] of Object.entries({ createProject: async () => ({ id: 'multi-draft' }),
+    saveProduct: async () => {}, saveAnalysis: adapter.saveAnalysis.bind(adapter),
+    promoteOutfitRecommendation: adapter.promoteOutfitRecommendation.bind(adapter),
+    patchProject: async () => events.push('confirmed'), getCustomMatchDraft: () => null })) t.mock.method(api, key, value);
+  t.after(() => sync.resetDraftSyncSingleFlight());
+  await assert.rejects(sync.promoteDraftToProject(draft), { code: 'outfit_selection_not_saved', projectId: 'multi-draft' });
+  assert.deepEqual(events, truncation === 'save' ? ['save'] : ['save', 'promotion']);
+  assert.deepEqual(draft, original);
 });

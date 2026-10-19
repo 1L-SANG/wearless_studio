@@ -58,7 +58,7 @@ export function OutfitSelection({ analysis, onChange, onRecommendation, projectI
   const select = (role, id) => {
     if (role === 'model') { onChange({ selectedModelId: id }); return; }
     recommendationState.markEdited();
-    const patch = role === 'accessory' ? toggleOutfitAccessorySelection(current, id)
+    const patch = role === 'accessory' && recommendationState.capabilities.maxAccessories > 1 ? toggleOutfitAccessorySelection(current, id)
       : setOutfitSelection(current, role, id === selectedFor(role) ? null : id);
     if (patch) { clearTimeout(hintTimer.current); setSelectionHint(''); onChange(patch); }
     else if (role === 'accessory') {
@@ -74,7 +74,7 @@ export function OutfitSelection({ analysis, onChange, onRecommendation, projectI
   const toggleOptional = (role) => {
     recommendationState.markEdited();
     const enabled = !enabledFor(role);
-    onChange(toggleOutfitOptional(current, role, enabled));
+    onChange(toggleOutfitOptional(current, role, enabled, { legacyProps: !recommendationState.capabilities.props }));
     setOpen(enabled ? role : null);
     if (enabled && !recommendation?.props?.[role]) void recommendationState.recommendProps(role);
   };
@@ -133,7 +133,7 @@ export function OutfitSelection({ analysis, onChange, onRecommendation, projectI
       <div className={`${styles.listHead} ${stuck ? styles.stuckHead : ''}`}><h3>코디 구성</h3>
         {recommendationState.lateRecommendation ? <button type="button" className={styles.late} onClick={recommendationState.acceptLate}><Sparkles size={16} />AI 코디 보기</button>
           : setCount > 0 && <button type="button" className={styles.recommend} disabled={setCount < 2 || recommendationState.skeleton}
-            onClick={() => { const patch = applyOutfitSet(current, ((analysis.outfitSelections?.setIndex || 0) + 1) % setCount); if (patch) onChange(patch); }}>
+            onClick={() => { const patch = applyOutfitSet(current, ((analysis.outfitSelections?.setIndex || 0) + 1) % setCount, { legacyProps: !recommendationState.capabilities.props }); if (patch) onChange(patch); }}>
             <Sparkles size={16} />AI 추천<span>{Math.min((analysis.outfitSelections?.setIndex || 0) + 1, setCount)} / {setCount}</span>
           </button>}
       </div>

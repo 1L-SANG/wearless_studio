@@ -220,7 +220,8 @@ async def _public_outfit_fields(request, source_images, product, analysis, slots
         except (ValueError, TypeError, KeyError):
             raise _bad_request("invalid_analysis_handoff", "분석 결과를 다시 확인해 주세요.") from None
         fields = outfit.start_props(request.app.state.settings, request.app.state.r2, product,
-            {**analysis, "outfitRecommendation": outfit.refreshed_props(contract["outfitRecommendation"])},
+            {**analysis, "outfitSelections": selections,
+             "outfitRecommendation": outfit.refreshed_props(contract["outfitRecommendation"])},
             source_images, items, role, slots=slots, semaphore=_analysis_semaphore)
         fields["outfitSelections"] = selections
     else:
@@ -231,6 +232,22 @@ async def _public_outfit_fields(request, source_images, product, analysis, slots
     if isinstance(secret, str) and len(secret) >= 16:
         fields[outfit.HANDOFF_KEY] = outfit.issue_handoff(fields, source_images, slots, secret, context=outfit.product_context(product, analysis))
     return {**fields, **outfit.read_fields(fields, request.app.state.settings.outfit_timeout_seconds)}
+
+
+@router.get("/outfit-capabilities", tags=["Public Analysis"])
+async def public_outfit_capabilities():
+    return {"props": True, "maxAccessories": 3}
+
+
+@router.post("/outfit-props-recommendations", tags=["Public Analysis"])
+async def public_recommend_outfit_props(request: Request, images: list[UploadFile] = File(...),
+        slots: list[str] | None = Form(default=None), productContext: str | None = Form(default=None),
+        analysisContext: str | None = Form(default=None), role: str | None = Form(default=None),
+        handoff: str | None = Form(default=None), authenticated_user: str | None = Depends(optional_user)):
+    if role not in outfit.PROP_ROLES:
+        raise _bad_request("invalid_outfit_props_role", "소품 종류를 다시 확인해 주세요.")
+    return await public_recommend_outfit(request, images, slots, productContext, analysisContext,
+                                         role, handoff, authenticated_user)
 
 
 @router.post("/outfit-recommendations/status", tags=["Public Analysis"])

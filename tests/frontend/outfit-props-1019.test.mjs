@@ -213,6 +213,7 @@ for (const rerender of [true, false]) test(`concurrent prop responses preserve c
   const props = { analysis, onRecommendation(fn) { props.analysis = fn(props.analysis); }, onChange(patch) { props.analysis = { ...props.analysis, ...patch }; } };
   let state = h.render(useOutfitRecommendation, props);
   const bag = state.recommendProps('bag'); const accessory = state.recommendProps('accessory');
+  await drain();
   bagResolve(response({ bag: { status: 'ready', picks: ['bag'] } })); await bag;
   if (rerender) h.render(useOutfitRecommendation, props);
   accessoryResolve(response({ accessory: { status: 'ready', picks: ['hat'] }, bag: { status: 'pending', picks: ['bag'] } })); await accessory;

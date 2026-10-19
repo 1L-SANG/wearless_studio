@@ -1728,6 +1728,14 @@ async def _start_project_props(request, project_id, user_id, product, analysis, 
     return outfit.read_fields(fields, request.app.state.settings.outfit_timeout_seconds)
 
 
+@router.post("/projects/{project_id}/analysis/outfit-props-recommendations", tags=["Analysis"])
+async def recommend_outfit_props(request: Request, project_id: str, body: dict = Body(default={}),
+                                 user_id: str = Depends(require_user)):
+    if body.get("role") not in outfit.PROP_ROLES:
+        raise _bad_request("invalid_outfit_props_role", "소품 종류를 다시 확인해 주세요.")
+    return await recommend_outfit(request, project_id, body, user_id)
+
+
 @router.post("/projects/{project_id}/analysis/outfit-recommendations", tags=["Analysis"])
 async def recommend_outfit(request: Request, project_id: str, body: dict = Body(default={}),
                            user_id: str = Depends(require_user)):

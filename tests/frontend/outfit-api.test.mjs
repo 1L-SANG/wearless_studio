@@ -217,10 +217,61 @@ test('소품 추천은 인증 역할 JSON 또는 공개 사진·현재 분석·h
   const calls = capture(t, { data: fields, ...fields });
   await adapter.recommendOutfitProps('props-project', 'bag');
   assert.deepEqual(JSON.parse(calls[0].body), { role: 'bag' });
+  assert.match(calls[0].url, /\/analysis\/outfit-props-recommendations$/);
   await adapter.recommendOutfitProps(null, 'accessory', { product: { colors: [] },
     analysis: { clothingType: 'top', ...fields }, photos: [{ slot: 'Front', blob: new Blob(['photo']) }] });
   assert.equal(calls[1].body.get('role'), 'accessory');
+  assert.match(calls[1].url, /\/public\/outfit-props-recommendations$/);
   assert.deepEqual(JSON.parse(calls[1].body.get('handoff')), fields.outfitRecommendationHandoff);
   assert.deepEqual(JSON.parse(calls[1].body.get('analysisContext')).outfitSelections, fields.outfitSelections);
   assert.deepEqual(calls[1].body.getAll('slots'), ['Front']);
+});
+
+const multiAccessories = { version: 1, optional: { accessory: true }, slots: {
+  accessory: { itemId: 'ear', extraIds: ['neck', 'hat'], origin: 'user' },
+} };
+test('runtime capability read uses a public GET, missing endpoint safely means legacy support', async t => {
+  supabase.auth.getSession = async () => ({ data: { session: null } });
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    calls.push({ url: String(url), ...options });
+    return new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } });
+  });
+  assert.deepEqual(await adapter.getOutfitCapabilities(), { props: false, maxAccessories: 1 });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/v1\/public\/outfit-capabilities$/);
+  assert.equal(calls[0].method, 'GET');
+});
+
+test('capability read forwards abort and does not turn cancellation into enabled support', async t => {
+  supabase.auth.getSession = async () => ({ data: { session: null } });
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(adapter.getOutfitCapabilities({ signal: controller.signal }), { name: 'AbortError' });
+});
+
+test('save rejects an old API that silently strips accessory extras and preserves requested selection', async t => {
+  supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test' } } });
+  const original = structuredClone(multiAccessories);
+  capture(t, { clothingType: 'top', outfitSelections: { ...multiAccessories,
+    slots: { accessory: { itemId: 'ear', origin: 'user' } } } });
+  await assert.rejects(adapter.saveAnalysis('old-api-multi', { outfitSelections: multiAccessories }), { code: 'outfit_selection_not_saved' });
+  assert.deepEqual(multiAccessories, original);
+});
+
+test('promotion rejects old API truncation even after a new node advertised support', async t => {
+  supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test' } } });
+  t.mock.method(globalThis, 'fetch', async (url) => new Response(JSON.stringify(String(url).endsWith('/outfit-capabilities')
+    ? { props: true, maxAccessories: 3 }
+    : { promoted: true, outfitSelections: { ...multiAccessories, slots: { accessory: { itemId: 'ear', origin: 'user' } } } }),
+  { status: 200, headers: { 'Content-Type': 'application/json' } }));
+  assert.deepEqual(await adapter.getOutfitCapabilities(), { props: true, maxAccessories: 3 });
+  await assert.rejects(adapter.promoteOutfitRecommendation('mixed-node', { signature: 'handoff' }, multiAccessories), { code: 'outfit_selection_not_saved' });
+});
+
+test('save and promotion accept all three echoed accessories including disabled remembered choices', async t => {
+  supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test' } } });
+  const choices = { ...multiAccessories, optional: { accessory: false } };
+  capture(t, { clothingType: 'top', outfitSelections: choices });
+  assert.deepEqual((await adapter.saveAnalysis('new-api-multi', { outfitSelections: choices })).outfitSelections, choices);
+  assert.deepEqual((await adapter.promoteOutfitRecommendation('new-api-multi', { signature: 'handoff' }, choices)).outfitSelections, choices);
 });

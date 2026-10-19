@@ -10,7 +10,7 @@ export const drain = async () => { for (let i = 0; i < 20; i++) await Promise.re
 // Actual modules, a small hook renderer and inert DOM boundaries; no browser process.
 export async function outfitHarness(api = {}) {
   const key = `__outfit${Math.random().toString(36).slice(2)}`;
-  const runtime = { api, slots: [], cleanups: [], effects: [], index: 0 };
+  const runtime = { api: { getOutfitCapabilities: () => ({ props: true, maxAccessories: 3 }), ...api }, slots: [], cleanups: [], effects: [], index: 0 };
   globalThis[key] = runtime;
   const access = `globalThis[${JSON.stringify(key)}]`;
   const server = await createServer({ configFile: false, logLevel: 'silent',

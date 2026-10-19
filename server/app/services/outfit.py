@@ -549,8 +549,8 @@ def _cache_result(key, fields):
                 copy_prop(recommendation, prior, role)
     _cache[key] = (time.monotonic(), result)
     _cache.move_to_end(key)
-    if base_key and key != base_key and base_key in _cache:
-        base = deepcopy(_cache[base_key][1])
+    if base_key and key != base_key:
+        base = deepcopy(_cache[base_key][1] if base_key in _cache else result)
         for role, prop_key in (recommendation.get("propsContextKeys") or {}).items():
             if prop_key == key:
                 copy_prop(base["outfitRecommendation"], recommendation, role)
@@ -804,28 +804,35 @@ def start_props(settings, r2, product, analysis, source_images, items, role, *, 
         for other_role in PROP_ROLES:
             copy_prop(recommendation, base["outfitRecommendation"], other_role)
     cached = read_recommendation(key)
+    known = bool(cached or (recommendation.get("propsContextKeys") or {}).get(role) == key
+                 and role in recommendation.get("props", {}))
     if cached:
         copy_prop(recommendation, cached["outfitRecommendation"], role)
-        return {"outfitRecommendation": recommendation_display(recommendation, candidate_pools(items, context), r2)}
-    if (recommendation.get("propsContextKeys") or {}).get(role) == key and role in recommendation.get("props", {}):
+    elif known:
         # Persisted pending from an interrupted process becomes free fallback, never a retry.
         if recommendation["props"][role]["status"] == "pending" and key not in _inflight:
             recommendation["props"][role]["status"] = "fallback" if pool else "unavailable"
-        return {"outfitRecommendation": recommendation}
-    picks = deterministic_picks(pool, role)
-    pending = bool(pool and settings.outfit_recommendation_enabled and settings.gemini_api_key
-                   and (slots is None or "Front" in slots))
-    recommendation.setdefault("props", {})[role] = {"status": "pending" if pending else "fallback" if pool else "unavailable", "picks": picks}
-    recommendation.setdefault("propsContextKeys", {})[role] = key
-    recommendation.setdefault("propsExpiresAt", {})[role] = time.time() + settings.outfit_props_timeout_seconds
+    else:
+        picks = deterministic_picks(pool, role)
+        pending = bool(pool and settings.outfit_recommendation_enabled and settings.gemini_api_key
+                       and (slots is None or "Front" in slots))
+        recommendation.setdefault("props", {})[role] = {"status": "pending" if pending else "fallback" if pool else "unavailable", "picks": picks}
+        recommendation.setdefault("propsContextKeys", {})[role] = key
+        recommendation.setdefault("propsExpiresAt", {})[role] = time.time() + settings.outfit_props_timeout_seconds
     recommendation = recommendation_display(recommendation, candidate_pools(items, context), r2)
     fields = {"outfitRecommendation": recommendation}
-    _cache_result(key, fields)
-    if not pending or key in _inflight:
+    # A signed public handoff can outlive the base cache. Restore the complete result
+    # before merging independent roles, retaining the choices from the current request.
+    selections = normalize_selections(analysis.get("outfitSelections"), context["clothingType"],
+                                     legacy_match_items=analysis.get("matchClothing") or [])
+    cache_fields = {**fields, **sync_legacy(analysis, selections, items, r2)}
+    _cache_result(recommendation["contextKey"], cache_fields)
+    _cache_result(key, cache_fields)
+    if known or recommendation["props"][role]["status"] != "pending" or key in _inflight:
         return fields
 
     async def complete():
-        result = deepcopy(fields)
+        result = deepcopy(cache_fields)
         prop = result["outfitRecommendation"]["props"][role]
         async def evaluate():
             return await outfit_recommender.recommend_props(settings, r2,

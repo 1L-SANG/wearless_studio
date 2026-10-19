@@ -658,6 +658,7 @@ export const api = {
     outfitRun = null;
     outfitPropsRuns.clear();
   },
+  getOutfitCapabilities() { return { props: true, maxAccessories: 3 }; },
   async getOutfitRecommendation() {
     for (const [role, run] of outfitPropsRuns) {
       if (DB.analysis.outfitRecommendation?.props?.[role]?.status === 'pending'
