@@ -248,6 +248,10 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 셋 다 fal이면 sam2는 깨지 않는다. 되돌릴 때는 아래 두 값을 지운다(sam2 기본값, 철거 전까지 즉시 복구).
   SAM_PREPROCESS_PROVIDER: fal
   TONE_MASK_PROVIDER: fal
+  # 코디 보드(#561)의 파는 옷 정돈 사진(보여주기 전용)과 무늬 옷 마네킹컷 정돈 참고(#558), 2026-10-19 켬.
+  # 정돈이 없거나 실패하면 원본 사진을 그대로 쓴다. 되돌릴 때는 아래 두 값을 지운다(기본 off).
+  PRODUCT_TIDY: "on"
+  MANNEQUIN_PATTERN_FLAT_REFERENCE: "on"
   # flat-lay 재렌더 모델. 리포트는 정체성 동률·비용 절반·속도 2배로 flash 를 추천했으나,
   # 디테일 우선으로 pro 를 쓴다(오너 결정 2026-08-15). 비용을 줄이려면 image_light.
   MATCHING_FLATLAY_TIER: image_high
