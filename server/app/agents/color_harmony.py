@@ -183,6 +183,24 @@ _DENIM_CATEGORIES = {"데님팬츠", "데님셔츠", "데님재킷", "데님자�
 _LIGHT_DENIM_NAMES = {"라이트블루", "아이스블루", "lightblue", "iceblue"}
 
 
+def color_name_groups(name: str) -> tuple[str, ...]:
+    """Recognize broad swatches for a newly filled name, without trusting its swatch."""
+    normalized = re.sub(r"[\s_-]+", "", name.casefold())
+    def mentions(term):
+        return (term in normalized if not term.isascii() else
+                normalized == term or re.search(r"(?<![a-z])" + re.escape(term) + r"(?![a-z])", name.casefold()))
+    for shade, names in _SHADE_NAMES.items():
+        if any(mentions(term) for term in names):
+            return _SHADE_GROUPS[shade]
+    labels = {"white": ("화이트", "흰색"), "gray": ("그레이", "회색", "grey"),
+              "black": ("블랙", "검정", "검정색"), "ivory": ("아이보리",),
+              "beige": ("베이지",), "brown": ("브라운", "갈색"), "red": ("레드", "빨강"),
+              "yellow": ("옐로우", "노랑"), "green": ("그린", "초록"),
+              "blue": ("블루", "파랑"), "navy": ("네이비", "남색"),
+              "pink": ("핑크",), "purple": ("퍼플", "보라")}
+    return tuple(group for group, names in labels.items() if any(mentions(term) for term in (group, *names)))
+
+
 def matching_color(group: str | None, name: str | None = None, category: str | None = None) -> str | None:
     """스와치와 모순되지 않는 명시적 색 이름만 세분화한다. 저장 enum은 바꾸지 않는다."""
     group = group.strip().lower() if isinstance(group, str) else None

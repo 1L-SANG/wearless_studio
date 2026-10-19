@@ -310,6 +310,7 @@ def product_context(product, analysis):
             "colors": [{"id": text(color.get("id")), "swatchId": text(color.get("swatchId")), "name": text(color.get("name")),
                         "isBase": bool(color.get("isBase"))} for color in colors],
             "productColor": color_harmony.matching_color(text(base.get("swatchId")) or text(suggested.get("swatchId")),
+                            text(base.get("name")) if base.get("swatchId") else
                             text(base.get("name")) or text(suggested.get("colorName")))}
 
 
@@ -321,19 +322,41 @@ def promotion_context_matches(signed, current):
     for key in ("targetGenders", "styleTags"):
         if signed.get(key) and sorted(signed[key]) != sorted(current.get(key) or []):
             return False
-    if signed.get("productColor") is not None and signed["productColor"] != current.get("productColor"):
-        return False
-    def color_meaning(context):
+    def color_facts(context):
         colors = context.get("colors") or []
         base_index = next((index for index, color in enumerate(colors) if color.get("isBase")), 0)
-        result = []
-        for index, color in enumerate(colors):
-            known = color_harmony.matching_color(color.get("swatchId"), color.get("name"))
-            if known is not None:
-                result.append((known, index == base_index))
-        return sorted(result)
-    known_colors = color_meaning(signed)
-    if known_colors and known_colors != color_meaning(current):
+        return [(str(color.get("swatchId") or "").strip().casefold(),
+                 str(color.get("name") or "").strip().casefold(), index == base_index)
+                for index, color in enumerate(colors)]
+
+    known_colors = [color for color in color_facts(signed) if color[0] or color[1]]
+    current_colors = color_facts(current)
+
+    def compatible(known, actual):
+        swatch, name, base = known
+        current_swatch, current_name, current_base = actual
+        if base != current_base or swatch and swatch != current_swatch or name and name != current_name:
+            return False
+        if swatch and not name and current_name:
+            groups = color_harmony.color_name_groups(current_name)
+            # Free-form labels such as 모카 add no contradictory known fact.
+            # A recognized different color (e.g. 레드 on gray) still conflicts.
+            return not groups or swatch in groups
+        return True
+
+    # Match each signed fact once. IDs may be reassigned and unknown colors may be
+    # filled, but neither may hide a removed known color (including duplicates).
+    assigned = {}
+    def match(index, visited):
+        for candidate, actual in enumerate(current_colors):
+            if candidate in visited or not compatible(known_colors[index], actual):
+                continue
+            visited.add(candidate)
+            if candidate not in assigned or match(assigned[candidate], visited):
+                assigned[candidate] = index
+                return True
+        return False
+    if not all(match(index, set()) for index in range(len(known_colors))):
         return False
     def material_meaning(context):
         return {item["name"].strip().casefold(): item.get("ratio") for item in context.get("materials") or []

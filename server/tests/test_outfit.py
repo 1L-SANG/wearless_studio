@@ -208,7 +208,8 @@ def test_promotion_context_compares_color_fit_materials_without_group_ids():
     same = outfit.product_context({"clothingType": "top", "colors": [{"id": "owned", "swatchId": "black", "name": "블랙", "isBase": True}]},
                                  {"fit": "regular", "materials": [{"name": "코튼", "ratio": 100}]})
     assert outfit.promotion_context_matches(signed, same)
-    assert not outfit.promotion_context_matches(signed, {**same, "productColor": "white"})
+    changed_color = outfit.product_context({"clothingType": "top", "colors": [{"swatchId": "white", "name": "화이트", "isBase": True}]}, {})
+    assert not outfit.promotion_context_matches(signed, {**same, "colors": changed_color["colors"], "productColor": changed_color["productColor"]})
     assert not outfit.promotion_context_matches(signed, {**same, "fit": "slim"})
     assert not outfit.promotion_context_matches(signed, {**same, "materials": [{"name": "폴리에스터", "ratio": 100}]})
 
