@@ -205,27 +205,13 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # wearGeometry 보정에 필요한 진짜 실패 표본을 여기서 모은다 — 지금 확보된 양성은 2건뿐이다.
   MANNEQUIN_BASE_FIDELITY_OBSERVE_REGENERATIONS: "on"
   MANNEQUIN_SPECIALIST_QC: "off"
-  # 내부 SAM2 세그멘테이션 서비스(Copilot Service Connect, 같은 VPC 안에서만 접근).
-  # 이름/포트는 copilot/sam2/manifest.yml 에서 확인한 값이다(name: sam2, port: 8080).
-  # 미설정이면 sam_client 가 비활성 → sam_preprocess 는 skipped, 생성은 RAW 그대로 — 이 서비스가
-  # 죽어도 업로드·분석·마네킹 생성은 전부 그대로 돈다.
-  SAM_SERVICE_URL: http://sam2:8080
-  # 마네킹컷 의류 영역의 색감·밝기 조정. 생성 직후 SAM 마스크를 비동기로 준비한다.
+  # 마네킹컷 의류 영역의 색감·밝기 조정. 생성 직후 fal 마스크를 비동기로 준비한다.
   # 미선언 시 config 기본 off 로 조용히 숨겨지므로 프로덕션 의도를 명시한다.
   MANNEQUIN_TONE_EDITOR: "on"
-  # ── sam2 온디맨드 기동/종료 (2026-08-21, 오너 승인) ──
-  # sam2 는 평소 0대(copilot/sam2/manifest.yml count: 0). 사진 업로드·SamUnavailable 이 켜고,
-  # 30분 유휴면 api 의 reconciler 가 끈다. off 로 바꾸면 자동 기동이 멈추니 sam2 count 도 같이
-  # 되돌릴 것. SAM_ALERT_TOPIC_ARN 은 여기 쓰지 않는다 — addon Output 이 자동 주입한다.
-  # 정본: docs/superpowers/specs/2026-08-21-sam2-on-demand-scaling-design.md
-  SAM_AUTOSCALE: "on"
-  SAM_AUTOSCALE_IDLE_MINUTES: "30"
-  # 콜드스타트 87초 회수(2026-08-27 실측). sam2 는 uvicorn 이 +59.6초에 이미 듣고 있는데
-  # Service Connect 로 호출 가능해지는 건 +146.7초다. 전송이 끊겼을 때만 task 사설 IP
-  # (DescribeTasks 가 +5초, 아직 PROVISIONING 일 때 이미 준다)로 한 번 더 간다.
-  # 따뜻한 경로는 그대로 http://sam2:8080 이고, SAM_AUTOSCALE 이 off 면 효력이 없다.
-  # 정본: server/app/services/sam_endpoint.py
-  SAM_DIRECT_ENDPOINT: "on"
+  # SAM2 철거 진행(2026-10-19). URL과 시크릿 참조를 제거하고 자동 기동과 직결을 끈다.
+  # 자동 기동이 꺼져 유휴 시간 설정도 제거했다. 되돌리기는 이 PR을 되돌린다.
+  SAM_AUTOSCALE: "off"
+  SAM_DIRECT_ENDPOINT: "off"
   # ── opendid(fm-holder) 온디맨드 기동/종료 ──
   # opendid 는 평소 0대(copilot/opendid/manifest.yml count {spot:0}). 등록이 holder 단계
   # (license_pending·vc_pending)에 오면 api 가 깨우고, 30분 유휴면 reconciler 가 끈다.
@@ -234,8 +220,8 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   OPENDID_AUTOSCALE: "on"
   OPENDID_AUTOSCALE_IDLE_MINUTES: "30"
   # ── 커스텀 매칭 의류(내 옷) 파이프라인 (2026-08-16 활성화, PR #129/#131/#143) ──
-  # 셀러가 올린 매칭 의류의 배경을 SAM2 로 제거해 시드 카탈로그와 같은 회색 컷으로 만든다.
-  # 무과금·이미지 생성 없음. SAM 이 죽어도 원본을 그대로 두고 등록·선택은 계속된다(fail-open).
+  # 셀러가 올린 매칭 의류의 배경을 fal로 제거해 시드 카탈로그와 같은 회색 컷으로 만든다.
+  # 누끼가 실패해도 원본을 그대로 두고 등록·선택은 계속된다(fail-open).
   MATCHING_CUTOUT: "on"
   # 누끼본을 정면 flat-lay 로 재렌더한다(스파이크 전략 B — Identity Lock 프롬프트).
   #   full = 카드 썸네일 + **마네킹 생성 입력 grid 의 front 칸**까지 교체.
@@ -706,12 +692,6 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   #   "secret not found" 로 실패한다(앱은 키가 없어도 뜨지만 — 메일은 원장에 failed 로 남고 "메일 미발송"
   #   뱃지·재발송으로 복구 — copilot 이 참조를 먼저 검사한다).
   RESEND_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/RESEND_API_KEY
-  # 내부 SAM2 서비스 호출용 공유 시크릿. sam2 매니페스트가 **같은 파라미터**를 읽으므로
-  # 양쪽이 한 값을 보고, 값은 저장소에 절대 들어오지 않는다. 이미 생성돼 있고 copilot 태그도
-  # 붙어 있다(copilot-application=wearless, copilot-environment=prod).
-  #     copilot-aws secret init --name SAM_INTERNAL_TOKEN
-  #   raw `aws ssm put-parameter` 는 태그가 없어 태스크가 못 읽는다 — sam2 첫 배포가 그걸로 죽었다.
-  SAM_INTERNAL_TOKEN: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/SAM_INTERNAL_TOKEN
   # 카카오 OIDC 인가코드 교환용 Client Secret(app/kakao_oidc.py). 콘솔의 'Client Secret
   # 사용함' 상태와 한 몸이다 — 콘솔에서 재발급하면 이 SSM 값도 같이 갱신해야 한다.
   # 미설정이면 교환이 401 로 죽는다(코드는 값이 없으면 안 보내고 PKCE 로만 간다).

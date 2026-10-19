@@ -15,6 +15,36 @@ async def value(result):
     return result
 
 
+@pytest.mark.parametrize("payload_provider", [None, "sam2"])
+def test_old_tone_job_skips_without_sam2_configuration(monkeypatch, payload_provider):
+    settings = SimpleNamespace(tone_mask_provider="fal", mannequin_tone_editor="on",
+                               fal_key="test", sam_service_url=None, sam_internal_token=None)
+    assert not sam_client.configured(settings)
+    assert worker.fal_api.configured(settings)
+    monkeypatch.setattr(worker, "load_settings", lambda: settings)
+    finished = {}
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("unconfigured SAM2 jobs must skip before reading assets or calling providers")
+
+    async def finalize(conn, **kwargs):
+        finished.update(kwargs)
+
+    monkeypatch.setattr(worker.repo, "get_mannequin_cut_asset", forbidden)
+    monkeypatch.setattr(worker.sam_client, "segment_worn_garment", forbidden)
+    monkeypatch.setattr(worker.tone_mask, "segment_worn_garment", forbidden)
+    monkeypatch.setattr(worker.repo, "finalize_uncharged_job", finalize)
+    payload = {"cutId": "A-1"}
+    if payload_provider:
+        payload["toneMaskProvider"] = payload_provider
+    job = worker_job(payload, credits_reserved=0)
+    asyncio.run(worker.run_editor_garment_mask_job(fake_worker_app(settings), job))
+    assert finished["status"] == "done"
+    assert finished["lease_token"] == job["lease_token"]
+    assert finished["result"] == {"state": "skipped", "reason": "sam_not_configured",
+                                  "cutId": "A-1", "toneMaskProvider": "sam2"}
+
+
 @pytest.mark.parametrize("local_provider,payload_provider,key_provider,expected", [
     ("sam2", "fal", "fal", "fal"),
     ("fal", "sam2", "sam2", "sam2"),
@@ -80,7 +110,9 @@ def test_both_producers_bind_provider_in_payload(monkeypatch, provider):
     assert [job["payload"].get("toneMaskProvider") for job in created] == [provider] * 3
 
 
-@pytest.mark.parametrize("state,algorithm", [("failed", None), ("ready", egm.ALGORITHM_VERSION)])
+@pytest.mark.parametrize("state,algorithm", [
+    ("failed", None), ("ready", egm.ALGORITHM_VERSION), ("skipped", None),
+])
 def test_wrong_provider_completion_recovers_once_then_stops(monkeypatch, state, algorithm):
     monkeypatch.setenv("TONE_MASK_PROVIDER", "fal")
     monkeypatch.setenv("FAL_KEY", "test")
@@ -88,6 +120,8 @@ def test_wrong_provider_completion_recovers_once_then_stops(monkeypatch, state, 
     previous = {"status": "done", "payload": {"cutId": "A-1"},
         "finished_at": datetime.now(timezone.utc) - timedelta(minutes=10),
         "result": {"state": state, "algorithmVersion": algorithm, "code": "no_garment_candidate"}}
+    if state == "skipped":
+        previous["result"] = {"state": "skipped", "reason": "sam_not_configured"}
     created = []
     async def create(conn, **kw):
         created.append(kw)
@@ -107,6 +141,7 @@ def test_wrong_provider_completion_recovers_once_then_stops(monkeypatch, state, 
     previous["result"] = {"state": "ready", "toneMaskProvider": "sam2", "algorithmVersion": egm.ALGORITHM_VERSION}
     previous["payload"]["retry"] = egm.TONE_MASK_MAX_RETRIES
     assert enqueue()[0] is False
+    assert routes._tone_state_with_job({"status": "processing"}, previous)["status"] == "failed"
     assert len(created) == 1
 
 
