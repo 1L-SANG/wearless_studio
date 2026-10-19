@@ -1,6 +1,6 @@
 name: deploy-server
 
-# 메인 FastAPI 서비스 전용 CI/CD. SAM2 모델 서비스는 deploy-sam2.yml 이 독립 소유한다.
+# 메인 FastAPI 서비스 전용 CI/CD. SAM2 철거로 모델 서비스 배포는 중단했다.
 # 프론트는 Vercel 담당(별개).
 on:
     push:
