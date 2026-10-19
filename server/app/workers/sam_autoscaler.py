@@ -1,11 +1,6 @@
-"""sam2 온디맨드 reconciler — 60초마다 want 를 계산해 ECS 실제 대수와 맞춘다(양방향).
+"""Shared reconciler for ECS services and face/angle pods.
 
-진실의 원천은 이 루프 하나다. 업로드 라우트·SamUnavailable 의 `prewarm()` 은 "60초 기다리지
-말고 지금 켜라"는 지름길일 뿐이라, 실패하거나 중복돼도 여기서 60초 안에 수렴한다.
-
-디스패처 스윕에 얹지 않는다 — 디스패처는 워커를 await 하므로 긴 잡이 도는 동안 타이머가 멈춘다.
-디스패처 기동 조건(R2·AI provider)과도 독립이다 — DB 만 있으면 돈다.
-정본: docs/superpowers/specs/2026-08-21-sam2-on-demand-scaling-design.md §5~§8
+Each caller supplies its demand function, idle setting, service name and lock.
 """
 
 from __future__ import annotations
@@ -24,7 +19,6 @@ log = logging.getLogger("wearless.sam_autoscale")
 
 RECONCILE_SECONDS = 60.0
 LONG_RUN_ALERT_HOURS = 3
-LOCK_KEY = "sam_autoscaler"
 #: prewarm 훅의 프로세스 내 디바운스. 사진 6장 연속 업로드가 AWS 를 6번 부르지 않게.
 #: 프로세스 로컬이라 api 2대면 2번 부를 수 있지만 UpdateService 는 같은 값에 no-op 이라 무해.
 PREWARM_DEBOUNCE_SECONDS = 60.0
@@ -32,29 +26,16 @@ PREWARM_DEBOUNCE_SECONDS = 60.0
 ALERT_DEBOUNCE_SECONDS = 600.0
 
 
-async def _sam_demand(repo, conn, settings=None):
-    kinds = sam_autoscale.sam_kinds(settings)
-    snapshot = await repo.sam_demand_snapshot(conn, kinds)
-    if not kinds:
-        # Mixed deployments may still have SAM2 jobs; uploads and old completions
-        # only warrant idle grace while a current provider can create SAM2 work.
-        return sam_autoscale.DemandSnapshot(
-            active_sam_jobs=snapshot.active_sam_jobs,
-            last_sam_finished_at=None, last_upload_at=None)
-    return snapshot
-
-
 class SamAutoscaler:
-    def __init__(self, app, adapter: SamAutoscaleAdapter, *, demand_fn=None,
-                 idle_attr="sam_autoscale_idle_minutes", name="sam2", lock_key=None,
+    def __init__(self, app, adapter: SamAutoscaleAdapter, *, demand_fn,
+                 idle_attr, name, lock_key,
                  capacity_attr=None, max_tasks_attr=None, start_grace_attr=None):
         self.app = app
         self.adapter = adapter
-        self._demand_fn = demand_fn or (
-            lambda repo, conn: _sam_demand(repo, conn, self.app.state.settings))
+        self._demand_fn = demand_fn
         self._idle_attr = idle_attr
         self._name = name
-        self._lock_key = lock_key or LOCK_KEY
+        self._lock_key = lock_key
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
         self._disabled_reason: str | None = None
@@ -67,7 +48,7 @@ class SamAutoscaler:
         # `running==0 이면 건드리지 않는다` 규칙에 걸려 **영원히 안 꺼진다**.
         self._start_grace_attr = start_grace_attr
         self._starting_since: float | None = None
-        # 대수 산출용. 미지정이면 1/1 — sam2·opendid 는 want_running 과 동일하게 굴러간다.
+        # 대수 산출용. 미지정이면 1/1 — opendid 는 want_running 과 동일하게 굴러간다.
         # detail-worker 만 태스크당 잡 N개를 처리하므로 이 둘을 설정 키로 받는다.
         self._capacity_attr = capacity_attr
         self._max_tasks_attr = max_tasks_attr
@@ -105,7 +86,7 @@ class SamAutoscaler:
 
     # ── core ──────────────────────────────────────────────────────────────
     async def _target(self):
-        """sam2 서비스. 못 찾으면 비활성 + 알림 1회 — 요청 경로는 절대 막지 않는다."""
+        """대상 서비스. 못 찾으면 비활성 + 알림 1회 — 요청 경로는 절대 막지 않는다."""
         if not self.adapter.enabled or self._disabled_reason:
             return None
         target = await self.adapter.discover()
@@ -191,7 +172,7 @@ class SamAutoscaler:
     def _track_start(self, state) -> bool:
         """지금 '켜지는 중'인가를 추적하고, 유예를 넘겼는지 돌려준다.
 
-        유예가 설정되지 않은 서비스(sam2·opendid·detail-worker)는 항상 False —
+        유예가 설정되지 않은 서비스(opendid·detail-worker)는 항상 False —
         기존 동작이 한 줄도 바뀌지 않는다.
         """
         starting = state.desired > 0 and state.running == 0
@@ -243,7 +224,7 @@ class SamAutoscaler:
         try:
             await self.adapter.notify(subject, body)
         except Exception:
-            log.exception("sam2 alert failed: %s", subject)
+            log.exception("%s alert failed: %s", self._name, subject)
 
     # ── prewarm hook ──────────────────────────────────────────────────────
     async def prewarm(self) -> None:

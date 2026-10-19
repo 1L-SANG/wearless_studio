@@ -4,9 +4,6 @@ __pycache__
 .pytest_cache
 tests
 scripts
-# SAM2 서비스는 별도 배포 단위다. 메인 API 이미지에 torch/가중치가 따라
-# 들어가지 않도록 소스 자체를 제외한다.
-sam_service
 .omc
 # `.env` 는 **정확히 그 이름 하나만** 막는다. 그래서 `.env.local` 과 `.env.bak.111124`
 # 가 그대로 이미지에 실려 프로덕션까지 올라갔다(2026-08-26, us-east-1). 두 파일에는

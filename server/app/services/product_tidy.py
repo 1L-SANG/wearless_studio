@@ -16,7 +16,8 @@ from PIL import Image
 from app import image_usage, repo
 from app.agents import mannequin
 from app.r2 import derived_key
-from app.services import canonical_reference, qwen_flatlay, sam_client, sam_retry
+from app.services import canonical_reference, qwen_flatlay, sam_retry
+from app.services.segmentation_types import SamUnavailable
 
 log = logging.getLogger(__name__)
 ALGORITHM_VERSION = "product-tidy-v1-qwen"
@@ -203,7 +204,7 @@ async def produce(app, job: dict, *, source: dict, cutout: dict) -> dict:
         except Exception:
             return {**detail, "state": "unavailable", "reason": "asset_record_unavailable"}
         return {**detail, "state": "ready", "assetId": aid}
-    except sam_client.SamUnavailable:
+    except SamUnavailable:
         return {**detail, "state": "unavailable", "reason": "provider_unavailable"}
     except Exception:
         log.exception("product tidy failed project=%s", pid)

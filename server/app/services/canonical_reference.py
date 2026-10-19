@@ -188,8 +188,8 @@ async def list_for_project(conn, *, project_id: str) -> list[dict]:
 async def current_key(conn, *, project_id: str, view: str, source: dict) -> str | None:
     """R2 key of the cutout made from *this exact* photograph. None when absent or stale.
 
-    A key, not bytes: the SAM boundary only ever takes trusted R2 keys (`sam_client`), and the
-    service resolves them with its own credentials. Same staleness rule as `load` — a cutout
+    A key, not bytes: segmentation consumes trusted R2 keys, and the
+    worker resolves them through the app storage client. Same staleness rule as `load` — a cutout
     naming a photograph the product no longer has is a picture of the previous garment.
     """
     for row in await list_for_project(conn, project_id=project_id):   # newest first

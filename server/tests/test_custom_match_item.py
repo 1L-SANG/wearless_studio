@@ -252,7 +252,7 @@ def test_custom_match_post_reports_the_cutout_status_it_is_about_to_start(
     asset_ids = _asset_ids(1)
     _, state, _ = _patch_post(monkeypatch, asset_ids)
     client.app.state.settings = dataclasses.replace(
-        client.app.state.settings, matching_cutout=flag
+        client.app.state.settings, matching_cutout=flag, fal_key="test"
     )
 
     response = client.post(
@@ -279,7 +279,7 @@ def test_custom_match_post_does_not_claim_processing_when_the_queue_is_down(
     asset_ids = _asset_ids(1)
     events, state, _ = _patch_post(monkeypatch, asset_ids, queue_error=True)
     client.app.state.settings = dataclasses.replace(
-        client.app.state.settings, matching_cutout="on"
+        client.app.state.settings, matching_cutout="on", fal_key="test"
     )
 
     response = client.post(

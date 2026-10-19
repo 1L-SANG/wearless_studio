@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 
 from . import fal_api
-from .sam_client import SamUnavailable, SamViewResult, VIEWS
+from .segmentation_types import SamUnavailable, SamViewResult, VIEWS
 
 ALGORITHM_VERSION = "fal-sam3-v1"
 MODEL = fal_api.SAM_MODEL
@@ -72,7 +72,7 @@ def select_mask(candidates: list[tuple[bytes, float]],
 
 
 def to_cutout_png(source: Image.Image, mask: np.ndarray) -> bytes:
-    # sam_service.segmentation.to_cutout_png 와 같은 안쪽 2px feather·PNG 바이트 계약.
+    # 기존 자산과 같은 안쪽 2px feather·PNG 바이트 계약.
     alpha = cv2.GaussianBlur(mask.astype(np.uint8) * 255, (5, 5), 0)
     alpha[~mask] = 0
     rgba = np.dstack((np.array(source.convert("RGB")), alpha))

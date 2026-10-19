@@ -13,7 +13,7 @@ from psycopg import OperationalError, errors
 
 from app import image_usage, repo
 from app.config import load_settings
-from app.services import canonical_reference, fal_cutout, sam_client, sam_retry
+from app.services import canonical_reference, fal_cutout, segmentation_types, sam_retry
 from app.workers import sam_preprocess_job as worker
 from conftest import make_settings, patch_route_db
 
@@ -145,7 +145,7 @@ def env(monkeypatch):
                          head=lambda key: {"size": len(store.objects[key]), "mime": "image/png"}
                          if key in store.objects else None,
                          public_url=lambda key: f"https://images.wearless.kr/{key}")
-    settings = SimpleNamespace(product_tidy="on", sam_preprocess_provider="sam2", r2_bucket="bucket")
+    settings = SimpleNamespace(product_tidy="on", fal_key="test", r2_bucket="bucket")
     app = SimpleNamespace(state=SimpleNamespace(pool=SimpleNamespace(connection=lambda: conn),
                                                r2=r2, settings=settings))
     job = dict(id="job", project_id="p", user_id="u", lease_token="lease", payload={})
@@ -161,8 +161,8 @@ def env(monkeypatch):
         store.latest = {**job, **kw, "kind": "sam_preprocess", "finished_at": datetime.now(timezone.utc),
                         "created_at": datetime.now(timezone.utc)}
 
-    async def segment(_settings, views):
-        return {"Front": sam_client.SamViewResult(
+    async def segment(_settings, r2, views):
+        return {"Front": segmentation_types.SamViewResult(
             view="Front", ready=True, cutout_key="canonical", source_hash=hashlib.sha256(store.objects["raw"]).hexdigest(),
             model_version="sam", algorithm_version="v1", width=32, height=48, byte_size=len(png()), cached=False)}
 
@@ -170,8 +170,8 @@ def env(monkeypatch):
     monkeypatch.setattr(repo, "get_latest_job_generation", latest)
     monkeypatch.setattr(repo, "finalize_uncharged_job", finish)
     monkeypatch.setattr(worker, "load_settings", lambda: settings)
-    monkeypatch.setattr(worker.sam_client, "configured", lambda _: True)
-    monkeypatch.setattr(worker.sam_client, "segment_garment", segment)
+    monkeypatch.setattr(worker.fal_api, "configured", lambda _: True)
+    monkeypatch.setattr(worker.fal_cutout, "segment_garment", segment)
     return SimpleNamespace(store=store, conn=conn, r2=r2, settings=settings, app=app, job=job)
 
 
@@ -246,7 +246,7 @@ def test_tidy_failure_keeps_canonical_and_is_visible(env, monkeypatch, error):
 
 
 def test_outage_retries_without_resegmenting_front_and_has_an_upper_bound(env, monkeypatch):
-    renderer(monkeypatch, env, sam_client.SamUnavailable("fal down"))
+    renderer(monkeypatch, env, segmentation_types.SamUnavailable("fal down"))
     run(env)
     assert sam_retry.job_is_retryable(env.store.latest)
     assert visuals(env)["tidyStatus"] == "processing"
@@ -254,7 +254,7 @@ def test_outage_retries_without_resegmenting_front_and_has_an_upper_bound(env, m
     async def no_segment(*_):
         pytest.fail("already committed front must not be segmented again")
 
-    monkeypatch.setattr(worker.sam_client, "segment_garment", no_segment)
+    monkeypatch.setattr(worker.fal_cutout, "segment_garment", no_segment)
     env.job["payload"] = {"retry": sam_retry.MAX_RETRIES}
     run(env)
     assert not sam_retry.budget_left(env.store.latest)
@@ -453,7 +453,7 @@ def test_required_job_on_off_worker_waits_without_provider_or_source_reads(env, 
         pytest.fail("an incapable worker must release the job before source or provider work")
 
     monkeypatch.setattr(repo, "get_product", forbidden)
-    monkeypatch.setattr(worker.sam_client, "segment_garment", forbidden)
+    monkeypatch.setattr(worker.fal_cutout, "segment_garment", forbidden)
     run(env)
     assert env.store.render_calls == 0
     assert env.store.finalized["product_tidy_capable"] is False
@@ -543,16 +543,16 @@ def test_back_outage_does_not_repeat_a_terminal_tidy_failure(env, monkeypatch):
     renderer(monkeypatch, env, ValueError("mask too small"))
     env.store.assets["back"] = {**env.store.assets["src"], "id": "back", "r2_key": "raw"}
     env.store.product["colors"][0]["images"].append({"slot": "Back", "id": "back"})
-    original_segment = worker.sam_client.segment_garment
+    original_segment = worker.fal_cutout.segment_garment
 
-    async def segment(settings, views):
-        result = await original_segment(settings, views)
+    async def segment(settings, r2, views):
+        result = await original_segment(settings, r2, views)
         if "Front" not in views:
             result.pop("Front", None)
-        result["Back"] = sam_client.SamViewResult(view="Back", ready=False, code="unavailable")
+        result["Back"] = segmentation_types.SamViewResult(view="Back", ready=False, code="unavailable")
         return result
 
-    monkeypatch.setattr(worker.sam_client, "segment_garment", segment)
+    monkeypatch.setattr(worker.fal_cutout, "segment_garment", segment)
     run(env)
     assert env.store.finalized["result"]["state"] == "unavailable"
     terminal = env.store.finalized["result"]["productTidy"]
@@ -651,7 +651,7 @@ def test_same_content_bindings_keep_previous_photo_ids_ready_without_restarting_
 
 
 @pytest.mark.parametrize("error, status", [(ValueError("mask too small"), "failed"),
-                                            (sam_client.SamUnavailable("fal down"), "processing")])
+                                            (segmentation_types.SamUnavailable("fal down"), "processing")])
 def test_reuploaded_canonical_stays_ready_even_when_new_tidy_fails(env, monkeypatch, error, status):
     env.settings.product_tidy = "off"
     run(env)  # Original upload has a canonical, without a tidy.

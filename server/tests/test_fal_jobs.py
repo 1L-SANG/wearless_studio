@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw
 
 from app.services import fal_api, matching_cutout, matching_flatlay
 from app.services import canonical_reference, fal_cutout, sam_retry
-from app.services.sam_client import SamUnavailable
+from app.services.segmentation_types import SamUnavailable
 from app.workers import sam_preprocess_job
 from test_canonical_pipeline import _async, _job, _job_app
 from test_fal_cutout import MemoryR2, png, wire_fal
@@ -24,7 +24,7 @@ def r2_for_jobs():
 
 
 def test_cutout_provider_is_part_of_downstream_source_identity():
-    assert matching_cutout.source_fingerprint(["h"], provider="fal") != matching_cutout.source_fingerprint(["h"])
+    assert matching_cutout.source_fingerprint(["h"], provider="fal") != matching_cutout.source_fingerprint(["h"], provider="sam2")
 
 
 @pytest.mark.parametrize("failure", [None, "unavailable", "no_mask"])
@@ -34,13 +34,11 @@ def test_matching_job_fal_route_retains_existing_fallback(monkeypatch, failure):
         async def empty(*args):
             return {"masks": [], "scores": []}
         monkeypatch.setattr(fal_api, "run_model", empty)
+    real_segment = fal_cutout.segment_garment
     app, r2, calls = _wire_worker(monkeypatch, r2=r2_for_jobs())
-    app.state.settings.matching_cutout_provider = "fal"
+    monkeypatch.setattr(fal_cutout, "segment_garment", real_segment)
     app.state.settings.fal_key = "test"
-    app.state.settings.sam_service_url = None
-    app.state.settings.sam_internal_token = None
     _run(app, _job_dict())
-    assert calls["segment"] == [], "fal path must work without SAM2"
     if failure:
         assert calls["swap"] is None
         assert calls["finalize"][0] == "done"
@@ -51,7 +49,7 @@ def test_matching_job_fal_route_retains_existing_fallback(monkeypatch, failure):
             assert asset["metadata"]["producer"] == "fal-sam3"
             assert asset["metadata"]["algorithmVersion"] == "fal-sam3-v1"
         assert calls["swap"][1] != matching_cutout.derived_asset_id(
-            role="thumb", matching_item_id="custom_x", source_hash=calls["assets"][0]["metadata"]["sourceHash"])
+            role="thumb", matching_item_id="custom_x", source_hash=calls["assets"][0]["metadata"]["sourceHash"], provider="sam2")
 
 
 @pytest.mark.parametrize("failure", [None, "unavailable", "no_mask"])
@@ -64,7 +62,7 @@ def test_product_job_uses_fal_and_existing_canonical_recorder(monkeypatch, failu
     app, finished = _job_app(monkeypatch, configured=False)
     app.state.r2 = r2_for_jobs()
     monkeypatch.setattr(sam_preprocess_job, "load_settings", lambda: SimpleNamespace(
-        sam_preprocess_provider="fal", fal_key="test"))
+        fal_key="test"))
     monkeypatch.setattr(sam_preprocess_job.mannequin, "base_color_images",
                         lambda _p: [("Front", "front"), ("Back", "back"), ("Detail", "detail")])
     monkeypatch.setattr(sam_preprocess_job.repo, "get_asset_for_user",
@@ -145,7 +143,7 @@ def test_qwen_full_job_uses_raw_alpha_and_keeps_cutout_on_failure(monkeypatch, q
     # White canvas corners prove the RGBA cutout, rather than the grey composite, was supplied.
     canvas = Image.open(io.BytesIO(captured["canvas"]))
     assert canvas.getpixel((0, 0)) == (255, 255, 255)
-    fp = matching_cutout.source_fingerprint(["h" + k for k in _job_dict()["payload"]["sourceKeys"]])
+    fp = matching_cutout.source_fingerprint(["h" + k for k in _job_dict()["payload"]["sourceKeys"]], provider="fal")
     qwen_id = matching_flatlay.derived_asset_id(matching_item_id="custom_x", source_hash=fp,
                                                provider="qwen")
     assert qwen_id in metadata[calls["swap"][2]]["sourceAssetIds"]
@@ -158,7 +156,7 @@ def test_product_partial_outage_records_success_and_retries_without_duplicates(m
     r2.objects["back"] = png(Image.new("RGB", (40, 40), (100, 80, 50)))
     app.state.r2 = r2
     monkeypatch.setattr(sam_preprocess_job, "load_settings", lambda: SimpleNamespace(
-        sam_preprocess_provider="fal", fal_key="test"))
+        fal_key="test"))
     monkeypatch.setattr(sam_preprocess_job.mannequin, "base_color_images",
                         lambda _p: [("Front", "source"), ("Back", "back")])
     monkeypatch.setattr(sam_preprocess_job.repo, "get_asset_for_user",

@@ -18,7 +18,8 @@ import logging
 from app import repo
 from app.agents import mannequin
 from app.config import load_settings
-from app.services import canonical_reference, fal_api, fal_cutout, product_tidy, sam_client
+from app.services import canonical_reference, fal_api, fal_cutout, product_tidy
+from app.services.segmentation_types import SamUnavailable
 
 log = logging.getLogger(__name__)
 
@@ -44,11 +45,10 @@ async def run_sam_preprocess_job(app, job: dict) -> None:
             await conn.commit()
         log.info("sam_preprocess job=%s project=%s %s %s", job_id, project_id, status, detail)
 
-    use_fal = getattr(s, "sam_preprocess_provider", "sam2") == "fal"
     if not tidy_enabled and (job.get("payload") or {}).get("productTidyRequired") is True:
         await finish("done", {"state": "pending", "reason": "product_tidy_worker_required"})
         return
-    configured = fal_api.configured(s) if use_fal else sam_client.configured(s)
+    configured = fal_api.configured(s)
     if not configured and not tidy_enabled:
         # Not an error: an environment without SAM configured simply has no canonical path.
         await finish("done", {"state": "skipped", "reason": "sam_not_configured"})
@@ -86,11 +86,8 @@ async def run_sam_preprocess_job(app, job: dict) -> None:
             return
     elif views:
         try:
-            if use_fal:
-                results = await fal_cutout.segment_garment(s, app.state.r2, views)
-            else:
-                results = await sam_client.segment_garment(s, views)
-        except sam_client.SamUnavailable as exc:
+            results = await fal_cutout.segment_garment(s, app.state.r2, views)
+        except SamUnavailable as exc:
             if not front_cutout:
                 await finish("done", {"state": "unavailable", "reason": str(exc)})
                 return
@@ -126,13 +123,9 @@ async def run_sam_preprocess_job(app, job: dict) -> None:
 
     # Front and Back are independent all the way through: a failed Back never discards a
     # recorded Front.
-    # PRODUCT_TIDY=off keeps the original provider-specific unavailable contract.
-    # fal은 뷰별 장애를 반환한다. 성공분은 위에서 커밋하고, 나머지는 기존 푸셔가
-    # 재시도하도록 unavailable을 유지한다. SAM2의 기존 partial/failed 판정은 그대로다.
-    unavailable = (use_fal and "unavailable" in failed.values())
-    if tidy_enabled:
-        unavailable = (unavailable or "unavailable" in failed.values()
-                       or bool(tidy and tidy["state"] == "unavailable"))
+    # Commit successful views, then let the retry pusher recover unavailable views.
+    unavailable = ("unavailable" in failed.values()
+                   or bool(tidy and tidy["state"] == "unavailable"))
     has_result = bool(recorded) or bool(tidy and tidy["state"] == "ready")
     state = ("unavailable" if unavailable
              else "ready" if has_result and not failed

@@ -1,6 +1,6 @@
-"""얼굴 패스 GPU(RunPod 파드) 온디맨드 기동/종료 — sam2 선례의 RunPod 판.
+"""얼굴 패스 GPU(RunPod 파드) 온디맨드 기동/종료 — 공용 reconciler의 RunPod 어댑터.
 
-판정(want)·reconciler 는 sam2 것을 그대로 쓴다(services/sam_autoscale.want_count,
+판정(want)·reconciler 는 공용 코드를 쓴다(services/sam_autoscale.want_count,
 workers/sam_autoscaler.SamAutoscaler). 다른 건 **무엇을 켜고 끄는가** 하나뿐이라
 어댑터만 갈아 끼운다: ECS UpdateService → RunPod pod start/stop.
 

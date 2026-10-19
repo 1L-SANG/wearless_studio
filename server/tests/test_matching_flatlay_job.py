@@ -20,7 +20,7 @@ from app import image_usage
 from app.agents import gemini_image
 from app.services import matching_cutout as mc
 from app.services import matching_flatlay as mf
-from app.services.sam_client import SamViewResult
+from app.services.segmentation_types import SamViewResult
 from app.workers import matching_cutout_job as job
 from test_matching_cutout_job import _cut_png, _job_dict, _run, _wire_worker
 
@@ -82,7 +82,7 @@ def _wire_flatlay(monkeypatch, *, gemini, flag="on", clothing_type="bottom",
 def _fingerprint():
     """_wire_worker 의 가짜 SAM 이 내는 소스 해시로 만든 파생 지문."""
     return mc.source_fingerprint(
-        ["h" + k for k in _job_dict()["payload"]["sourceKeys"]])
+        ["h" + k for k in _job_dict()["payload"]["sourceKeys"]], provider="fal")
 
 
 def _thumb_put(r2):
@@ -111,7 +111,7 @@ def test_flag_off_is_a_complete_no_op(monkeypatch):
     assert calls["meta_lookups"] == [], "플래그 off 면 DB 조회조차 없다"
     thumb_id = mc.derived_asset_id(
         role="thumb", matching_item_id="custom_x",
-        source_hash=mc.source_fingerprint(["h" + k for k in _job_dict()["payload"]["sourceKeys"]]))
+        source_hash=mc.source_fingerprint(["h" + k for k in _job_dict()["payload"]["sourceKeys"]], provider="fal"), provider="fal")
     assert calls["swap"][1] == thumb_id, "누끼 썸네일 그대로"
     assert calls["finalize"][0] == "done"
     assert "flatlay" not in calls["finalize"][1], "결과 payload 도 오늘과 동일"
@@ -130,11 +130,11 @@ def test_no_generation_when_the_cutout_failed(monkeypatch):
     gemini = _FakeGemini(image=_gen_png())
     app, _r2, calls = _wire_flatlay(monkeypatch, gemini=gemini)
 
-    async def not_ready(settings, views):
+    async def not_ready(settings, r2, views):
         (v, _k), = views.items()
         return {v: SamViewResult(view=v, ready=False)}
 
-    monkeypatch.setattr(job.sam_client, "segment_garment", not_ready)
+    monkeypatch.setattr(job.fal_cutout, "segment_garment", not_ready)
     _run(app, _job_dict())
 
     assert gemini.calls == [], "누끼 없는 원본을 재렌더하지 않는다"
@@ -144,14 +144,14 @@ def test_no_generation_when_the_cutout_failed(monkeypatch):
 
 
 def test_no_generation_when_sam_is_unavailable(monkeypatch):
-    from app.services.sam_client import SamUnavailable
+    from app.services.segmentation_types import SamUnavailable
     gemini = _FakeGemini(image=_gen_png())
     app, _r2, calls = _wire_flatlay(monkeypatch, gemini=gemini)
 
-    async def down(settings, views):
+    async def down(settings, r2, views):
         raise SamUnavailable("down")
 
-    monkeypatch.setattr(job.sam_client, "segment_garment", down)
+    monkeypatch.setattr(job.fal_cutout, "segment_garment", down)
     _run(app, _job_dict())
 
     assert gemini.calls == []
@@ -173,7 +173,7 @@ def test_generated_flatlay_becomes_the_card_thumbnail(monkeypatch):
     assert img.format == "JPEG" and max(img.size) == mc.THUMBNAIL_MAX_PX
 
     fingerprint = mc.source_fingerprint(
-        ["h" + k for k in _job_dict()["payload"]["sourceKeys"]])
+        ["h" + k for k in _job_dict()["payload"]["sourceKeys"]], provider="fal")
     flat_id = mf.derived_asset_id(matching_item_id="custom_x", source_hash=fingerprint)
     assert calls["swap"][1] == flat_id
     assert thumb_key.endswith(f"{flat_id}.jpg")
@@ -315,7 +315,7 @@ def test_derived_identity_is_stable_across_reruns(monkeypatch):
     cutout_thumb = mc.derived_asset_id(
         role="thumb", matching_item_id="custom_x",
         source_hash=mc.source_fingerprint(
-            ["h" + k for k in _job_dict()["payload"]["sourceKeys"]]))
+            ["h" + k for k in _job_dict()["payload"]["sourceKeys"]], provider="fal"), provider="fal")
     assert first_calls["swap"][1] != cutout_thumb
 
 
@@ -325,7 +325,7 @@ def _cutout_thumb_id():
     return mc.derived_asset_id(
         role="thumb", matching_item_id="custom_x",
         source_hash=mc.source_fingerprint(
-            ["h" + k for k in _job_dict()["payload"]["sourceKeys"]]))
+            ["h" + k for k in _job_dict()["payload"]["sourceKeys"]], provider="fal"), provider="fal")
 
 
 @pytest.mark.parametrize("failure", [
@@ -480,7 +480,7 @@ def test_model_routing_failure_does_not_discard_a_successful_cutout(monkeypatch)
     assert calls["swap"] is not None, "스왑이 일어나야 한다"
     assert calls["swap"][1] == mc.derived_asset_id(
         role="thumb", matching_item_id="custom_x",
-        source_hash=_fingerprint()), "누끼 썸네일로 폴백"
+        source_hash=_fingerprint(), provider="fal"), "누끼 썸네일로 폴백"
     assert len(r2.puts) == 3, "썸네일과 grid를 유지하고 SAM 보드 PNG도 저장한다"
 
 
@@ -493,7 +493,7 @@ def test_both_thumbnail_candidates_stay_reclaimable_by_delete(monkeypatch):
     """
     fp = _fingerprint()
     flat_id = mf.derived_asset_id(matching_item_id="custom_x", source_hash=fp)
-    cut_id = mc.derived_asset_id(role="thumb", matching_item_id="custom_x", source_hash=fp)
+    cut_id = mc.derived_asset_id(role="thumb", matching_item_id="custom_x", source_hash=fp, provider="fal")
 
     for gemini, live, orphan in ((_FakeGemini(image=_gen_png()), flat_id, cut_id),
                                  (_FakeGemini(error=gemini_image.GeminiError("boom")),

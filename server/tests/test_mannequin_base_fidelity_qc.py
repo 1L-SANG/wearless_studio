@@ -395,7 +395,7 @@ def test_module_touches_no_infrastructure():
     imported |= {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
     for banned in ("boto3", "psycopg", "httpx", "app.r2", "app.repo"):
         assert not any(banned in m for m in imported), imported
-    for banned in ("r2.", "repo.", "put_bytes", "create_job", "sam_client",
+    for banned in ("r2.", "repo.", "put_bytes", "create_job", "fal_cutout", "tone_mask", "fal_api",
                    "segment_garment", "canonical_reference"):
         assert banned not in src
 
@@ -472,7 +472,7 @@ def test_retry_uses_the_single_existing_branch():
 
 def test_base_fidelity_never_generates_or_calls_sam():
     code = _code_only(_func_source("_apply_base_fidelity_qc"))
-    for banned in ("generate_content_image", "sam_client", "segment_garment",
+    for banned in ("generate_content_image", "fal_cutout", "tone_mask", "fal_api", "segment_garment",
                    "_maybe_augment_with_canonical", "reserve_credits"):
         assert banned not in code
 

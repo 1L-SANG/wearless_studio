@@ -13,7 +13,7 @@ import httpx
 from PIL import Image, ImageOps
 
 from app import image_usage
-from app.services.sam_client import SamUnavailable
+from app.services.segmentation_types import SamUnavailable
 
 log = logging.getLogger("wearless.fal")
 SAM_MODEL = "fal-ai/sam-3/image"

@@ -19,7 +19,7 @@ import pytest
 import app.routes as routes
 import app.workers.editor_garment_mask_job as job
 from app.services import editor_garment_mask as egm
-from app.services import sam_client
+from app.services import segmentation_types
 
 from conftest import patch_route_db
 
@@ -28,8 +28,7 @@ from conftest import patch_route_db
 
 class _Settings:
     mannequin_tone_editor = "on"
-    sam_service_url = "http://sam2:8080"
-    sam_internal_token = "t"
+    fal_key = "test"
     base_mannequin_men_asset_id = "base-m"
     base_mannequin_women_asset_id = "base-w"
 
@@ -44,7 +43,7 @@ def _run_outage_job(monkeypatch, *, raise_exc=None, result=None):
     """SAM 이 죽어 있는 동안 마스크 잡 한 번. DB 는 대역, 종결 판단은 진짜."""
     finished = {}
 
-    async def segment(_s, **_kw):
+    async def segment(_s, r2, **_kw):
         if raise_exc is not None:
             raise raise_exc
         return result
@@ -53,8 +52,8 @@ def _run_outage_job(monkeypatch, *, raise_exc=None, result=None):
         finished.update({"status": status, "result": result})
 
     monkeypatch.setattr(job, "load_settings", lambda: _Settings())
-    monkeypatch.setattr(job.sam_client, "configured", lambda _s: True)
-    monkeypatch.setattr(job.sam_client, "segment_worn_garment", segment)
+    monkeypatch.setattr(job.fal_api, "configured", lambda _s: True)
+    monkeypatch.setattr(job.tone_mask, "segment_worn_garment", segment)
     monkeypatch.setattr(job.repo, "finalize_uncharged_job", finalize)
     monkeypatch.setattr(job.repo, "get_mannequin_cut_asset",
                         lambda *_a, **_k: _async({"id": "cut-1", "r2_key": "cuts/a.jpg"}))
@@ -97,7 +96,7 @@ def _run_outage_job(monkeypatch, *, raise_exc=None, result=None):
 def test_a_transient_sam_outage_is_not_a_permanent_verdict(monkeypatch):
     """unavailable 은 done+state 로 끝나며 라우트가 state 로 재시도를 판정한다."""
     finished = _run_outage_job(
-        monkeypatch, raise_exc=sam_client.SamUnavailable("connect timeout"))
+        monkeypatch, raise_exc=segmentation_types.SamUnavailable("connect timeout"))
 
     assert finished["status"] == "done", "error 종결은 이 잡을 영구히 죽인다"
     assert finished["result"]["state"] == "unavailable"
@@ -110,7 +109,7 @@ def test_sam_200_infrastructure_failures_are_retryable(monkeypatch, code):
     """전송은 성공했어도 모델·R2·추론 장애면 영구 판정으로 내리지 않는다."""
     finished = _run_outage_job(
         monkeypatch,
-        result=sam_client.WornGarmentResult(ready=False, code=code, message="temporary"),
+        result=segmentation_types.WornGarmentResult(ready=False, code=code, message="temporary"),
     )
     assert finished["status"] == "done"
     assert finished["result"]["state"] == "unavailable"
@@ -121,7 +120,7 @@ def test_sam_200_infrastructure_failures_are_retryable(monkeypatch, code):
 def test_sam_input_verdicts_are_not_retried(monkeypatch, code):
     finished = _run_outage_job(
         monkeypatch,
-        result=sam_client.WornGarmentResult(ready=False, code=code, message="verdict"),
+        result=segmentation_types.WornGarmentResult(ready=False, code=code, message="verdict"),
     )
     assert finished["result"]["state"] == "failed"
 
@@ -142,7 +141,7 @@ def _terminal_job(state, retry, *, code=None, finished_at=None):
     return {"id": f"job-{state}-{retry}", "status": "done",
             "payload": {"cutId": "A-1", "retry": retry},
             "finished_at": finished_at or datetime.now(timezone.utc) - timedelta(minutes=10),
-            "result": {"state": state, "cutId": "A-1",
+            "result": {"state": state, "toneMaskProvider": "fal", "cutId": "A-1",
                        **({"retryable": True} if state in ("unavailable", "unverified") else {}),
                        **({"code": code} if code else {})}}
 
@@ -305,7 +304,7 @@ def test_upgrade_mask_uses_retry_generations_and_keeps_the_existing_mask(monkeyp
     assert queued is True
     assert [row["idempotency_key"] for row in created] == [
         egm.mask_job_key("p1", "A-1", product_key=product_key, retry=1)]
-    assert created[0]["payload"] == {"cutId": "A-1", "toneMaskProvider": "sam2", "retry": 1}
+    assert created[0]["payload"] == {"cutId": "A-1", "toneMaskProvider": "fal", "retry": 1}
 
 
 # ── ③ 워커 큐잉 직후 디스패처 기상 ─────────────────────────────────────────

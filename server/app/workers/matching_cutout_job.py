@@ -1,12 +1,11 @@
-"""`matching_cutout` — 커스텀 매칭 의류의 배경을 SAM2 로 제거한다.
+"""`matching_cutout` — 커스텀 매칭 의류의 배경을 fal SAM 3로 제거한다.
 
 커스텀 매칭 등록이 커밋된 뒤 백그라운드로 돈다. 셀러 화면에는 이미 원본이 떠 있고,
 이 잡은 그걸 시드 카탈로그 톤(회색 배경 컷)으로 조용히 교체한다. 아무것도 이 잡의
 성공에 걸려 있지 않다 — SAM 미설정·다운·오선택 어떤 경우도 원본을 그대로 두고,
 매칭 등록·선택은 내내 가능하다. 무과금·이미지 생성 없음.
 
-SAM 서비스는 view 를 Front/Back 으로 강제하므로, 각 매칭 원본을 `"Front"` 로 순차
-호출해 우회한다(뷰 이름은 SAM 캐시 키의 일부일 뿐, 매칭에선 의미 없다).
+각 매칭 원본은 `"Front"` 뷰로 순차 처리한다(뷰 이름은 캐시 키의 일부다).
 
 MATCHING_FLATLAY 가 켜져 있으면 누끼 성공 뒤에 카드 썸네일 한 장만 정면 flat-lay 로
 재렌더한다(matching_flatlay). 이미지 호출이 1회 붙지만 과금 정책은 그대로 무과금이고,
@@ -18,8 +17,9 @@ import asyncio
 import logging
 
 from app import repo
-from app.services import fal_api, fal_cutout, garment_grid, matching_cutout, matching_flatlay, sam_client
+from app.services import fal_api, fal_cutout, garment_grid, matching_cutout, matching_flatlay
 from app.r2 import derived_key
+from app.services.segmentation_types import SamUnavailable
 
 log = logging.getLogger("wearless.matching_cutout")
 
@@ -58,7 +58,7 @@ async def run_matching_cutout_job(app, job: dict) -> None:
     # app.state.settings (load_settings() 재호출 아님) — 디스패처가 앱 기동 시 로드한
     # 설정 그대로 써야 테스트·런타임 모두에서 주입된 설정을 실제로 존중한다.
     s = app.state.settings
-    cutout_provider = getattr(s, "matching_cutout_provider", "sam2")
+    cutout_provider = "fal"
     flatlay_provider = getattr(s, "matching_flatlay_provider", "gemini")
     payload = job.get("payload") or {}
     matching_item_id = payload.get("matchingItemId")
@@ -83,7 +83,7 @@ async def run_matching_cutout_job(app, job: dict) -> None:
     if getattr(s, "matching_cutout", "off") != "on":
         await skip(SKIP_DISABLED)
         return
-    if not (fal_api.configured(s) if cutout_provider == "fal" else sam_client.configured(s)):
+    if not fal_api.configured(s):
         await skip(SKIP_SAM)
         return
     if not matching_item_id or not source_keys:
@@ -99,13 +99,10 @@ async def run_matching_cutout_job(app, job: dict) -> None:
         first_rgba = None
         source_hashes: list[str] = []
         for key in source_keys:
-            if cutout_provider == "fal":
-                results = await fal_cutout.segment_garment(s, r2, {"Front": key})
-            else:
-                results = await sam_client.segment_garment(s, {"Front": key})
+            results = await fal_cutout.segment_garment(s, r2, {"Front": key})
             view = results.get("Front")
-            if cutout_provider == "fal" and view is not None and view.code == "unavailable":
-                raise sam_client.SamUnavailable("fal cutout unavailable")
+            if view is not None and view.code == "unavailable":
+                raise SamUnavailable("fal cutout unavailable")
             if view is None or not view.ready or not view.cutout_key:
                 raise _CutoutFailed("no_cutout")
             # 신원의 뿌리는 소스다 — SAM 이 준 소스 해시, 없으면 소스 키.
@@ -285,7 +282,7 @@ async def run_matching_cutout_job(app, job: dict) -> None:
                 # 트랜잭션째 버린다(예외가 커넥션 컨텍스트를 나가며 롤백).
                 raise _CutoutFailed("item_gone")
             await conn.commit()
-    except sam_client.SamUnavailable as exc:
+    except SamUnavailable as exc:
         # done + unavailable — error 가 아니다. error 로 적으면 멱등키가 이 실패 잡에 묶여 그
         # 옷은 영영 누끼가 없다 — 마네킹 생성이 셀러 원본(접힌 사진)을 그대로 입력으로 쓴다
         # (2026-08-21). 다음 세대는 sam_retry_pusher 가 건다. 원본 자산은 여기서도 그대로다.

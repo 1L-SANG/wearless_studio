@@ -1,7 +1,6 @@
-"""sam2 온디맨드 기동/종료 — `want` 판정(순수)과 ECS/SNS 어댑터.
+"""Shared scale-to-zero demand rules and ECS/SNS adapter.
 
-boto3 는 이 파일에만 산다. `SAM_AUTOSCALE=off` 면 클라이언트를 만들지도 않는다.
-정본: docs/superpowers/specs/2026-08-21-sam2-on-demand-scaling-design.md
+Disabled services never create AWS clients.
 """
 
 from __future__ import annotations
@@ -14,23 +13,9 @@ from datetime import datetime, timedelta, timezone
 
 log = logging.getLogger("wearless.sam_autoscale")
 
-#: 수요를 만드는 잡. 셋 중 하나라도 pending/running 이면 켜져 있어야 한다.
-SAM_KINDS = ("sam_preprocess", "matching_cutout", "editor_garment_mask")
-
-
-def provider_for_kind(settings, kind: str) -> str:
-    attr = {"sam_preprocess": "sam_preprocess_provider",
-            "matching_cutout": "matching_cutout_provider",
-            "editor_garment_mask": "tone_mask_provider"}[kind]
-    return getattr(settings, attr, "sam2")
-
-
-def sam_kinds(settings) -> tuple[str, ...]:
-    return tuple(kind for kind in SAM_KINDS if provider_for_kind(settings, kind) == "sam2")
-
 #: 세 태그 모두 정확히 일치해야 한다. 실측(2026-08-21): Copilot 이 ECS 서비스에 이 태그를 단다.
 #: 서비스명에는 랜덤 접미사가 붙어(…-6uWul9L25eM7) 박아 두면 스택 재생성 시 조용히 깨진다.
-#: service 만 바꿔 sam2·opendid 등 다른 scale-to-zero 서비스에 재사용한다(어댑터 인스턴스별).
+#: service 만 바꿔 opendid 등 다른 scale-to-zero 서비스에 재사용한다(어댑터 인스턴스별).
 def _required_tags(service: str, application="wearless", environment="prod") -> dict:
     return {"copilot-application": application, "copilot-environment": environment,
             "copilot-service": service}
@@ -38,9 +23,6 @@ def _required_tags(service: str, application="wearless", environment="prod") -> 
 
 def aws_region() -> str:
     return os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
-
-
-_REQUIRED_TAGS = _required_tags("sam2")  # 하위호환(직접 참조하는 외부 코드 대비)
 
 
 # ── want 판정 (순수) ──────────────────────────────────────────────────────────
@@ -60,12 +42,7 @@ def _utc(dt: datetime | None) -> datetime | None:
 
 def want_running(snap: DemandSnapshot, *, idle_minutes: int,
                  now: datetime | None = None) -> bool:
-    """세 조건 중 하나라도 참이면 1대. 전부 거짓일 때만 0대.
-
-    조건 2(마지막 SAM 잡 종료)는 "어제 컷을 오늘 열어 색감 조정" 경로를 잡는다 — 그 잡은
-    1초 만에 unavailable 로 끝나 60초 뒤엔 active 로 안 보인다. 실패한 잡도 "방금 SAM 이
-    필요했다"는 증거다.
-    """
+    """활성 잡 또는 최근 수요가 있으면 켜고, 유휴 창이 지나면 끈다."""
     if snap.active_sam_jobs > 0:
         return True
     now = now or datetime.now(timezone.utc)
@@ -81,7 +58,7 @@ def want_count(snap: DemandSnapshot, *, idle_minutes: int,
                now: datetime | None = None) -> int:
     """지금 몇 **대** 여야 하는가. want_running 의 대수 확장.
 
-    기본값(1/1)에서는 want_running 과 결과가 같다 — sam2·opendid 는 이 함수로 갈아타도
+    기본값(1/1)에서는 want_running 과 결과가 같다 — opendid 는 이 함수로 갈아타도
     동작이 한 치도 안 바뀐다. detail-worker 만 태스크당 잡을 여러 개 처리하므로
     대기 잡 수를 capacity 로 나눠 대수를 정한다.
 
@@ -119,7 +96,7 @@ class SamAutoscaleAdapter:
     예외는 삼키지 않고 올린다: 훅·reconciler 가 각자 맥락에 맞게 삼킨다.
     """
 
-    def __init__(self, settings, *, service="sam2", enabled_attr="sam_autoscale",
+    def __init__(self, settings, *, service, enabled_attr,
                  topic_attr="sam_alert_topic_arn", ecs=None, sns=None):
         self._settings = settings
         self._service = service
@@ -144,7 +121,7 @@ class SamAutoscaleAdapter:
 
     # ── 탐색 ──
     async def discover(self) -> EcsTarget | None:
-        """태그로 sam2 서비스를 찾는다. 0개·2개 이상이면 None — 임의 선택하지 않는다.
+        """태그로 대상 서비스를 찾는다. 0개·2개 이상이면 None — 임의 선택하지 않는다.
 
         클러스터부터 나열하는 이유: Copilot 이 태스크에 주는 COPILOT_* 환경변수에 클러스터 ARN 이
         **없다**(실측 2026-08-21: SERVICE_NAME·APPLICATION_NAME·ENVIRONMENT_NAME·

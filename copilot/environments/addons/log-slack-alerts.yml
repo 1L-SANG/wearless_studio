@@ -3,7 +3,7 @@
 # CloudWatch Logs SubscriptionFilter 가 ERROR/CRITICAL/Traceback 줄만 골라 Lambda 로 보내고,
 # Lambda 가 Slack Incoming Webhook 으로 **로그 본문 그대로** 던진다.
 #
-# 대상은 api, detail-worker 두 그룹이다. SAM2는 철거 중이며 opendid는 부팅 소음이 심해 제외했다
+# 대상은 api, detail-worker 두 그룹이다. SAM2는 철거됐으며 opendid는 부팅 소음이 심해 제외했다
 # (아래 "opendid 에는 일부러 붙이지 않는다" 블록에 근거와 되돌리는 법).
 #
 # 왜 CloudWatch 알람(SNS→Chatbot)이 아니라 이 구조인가:

@@ -36,7 +36,6 @@ from .workers.fm_sponsorship_vc_reconciler import FmSponsorshipVcReconciler
 from .workers.lora_training_reconciler import LoraTrainingReconciler
 from .workers.test_cut_build_reconciler import TestCutBuildReconciler
 from .workers.sam_retry_pusher import SamRetryPusher
-from .services import sam_client
 from .services.face_autoscale import (
     FaceRenderPodStore,
     RunpodAutoscaleAdapter,
@@ -48,7 +47,6 @@ from .services.angle_autoscale import (
     angle_demand_snapshot,
 )
 from .services.sam_autoscale import SamAutoscaleAdapter
-from .services.sam_endpoint import SamEndpointResolver
 from .workers.sam_autoscaler import SamAutoscaler
 
 DEFAULT_ERROR_CODES = {
@@ -163,7 +161,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         trace_finding_alerts = None
         trace_patrol = None
         sam_retry_pusher = None
-        sam_autoscaler = None
         opendid_autoscaler = None
         detail_worker_autoscaler = None
         face_autoscaler = None
@@ -257,22 +254,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
                 bank_transfer_expirer = BankTransferExpirer(app)
                 await bank_transfer_expirer.start()
-            # sam2 온디맨드 기동/종료(2026-08-21). 디스패처 조건(R2·AI provider)과 **독립** —
-            # DB 만 있으면 돈다. 디스패처 블록 안에 두면 provider 키가 빠진 환경에서 sam2 가
-            # 영영 안 켜진다. off 면 어댑터가 클라이언트를 안 만들고 prewarm 은 즉시 return.
-            # state 에는 off 여도 올려 둔다 — 라우트 훅이 getattr 분기 없이 부를 수 있게.
             if not detail_worker_only:
-                autoscale_adapter = SamAutoscaleAdapter(settings)
-                app.state.sam_autoscaler = SamAutoscaler(app, autoscale_adapter)
-                sam_client.install_prewarm_hook(app.state.sam_autoscaler.prewarm)
-                # 콜드스타트 87초 회수(2026-08-27 실측) — 같은 어댑터의 ECS 탐색을 빌려
-                # task IP 를 찾는다. 플래그 off 면 리졸버가 항상 None 을 돌려주므로
-                # 훅을 걸어 두어도 동작이 달라지지 않는다.
-                app.state.sam_endpoint = SamEndpointResolver(settings, autoscale_adapter)
-                sam_client.install_endpoint_resolver(app.state.sam_endpoint)
-                if autoscale_adapter.enabled:
-                    sam_autoscaler = app.state.sam_autoscaler
-                    await sam_autoscaler.start()
                 # opendid(fm-holder) 온디맨드 — 같은 reconciler/어댑터를 service·demand·lock_key 만 바꿔
                 # 재사용. 수요 = license_pending·vc_pending 등록. wake 는 issue_face_vc 지연 경로가
                 # app.state.opendid_autoscaler.prewarm_soon() 으로 부른다(off 여도 즉시 return).
@@ -298,7 +280,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     idle_attr="detail_worker_autoscale_idle_minutes",
                     name="detail-worker", lock_key="detail_worker_autoscaler",
                     # 이 워커만 태스크당 잡 여러 개를 처리한다. 두 값 모두 기본 1 이라
-                    # env 를 안 주면 sam2·opendid 와 똑같이 0↔1 로만 움직인다.
+                    # env 를 안 주면 opendid 와 똑같이 0↔1 로만 움직인다.
                     capacity_attr="job_concurrency",
                     max_tasks_attr="detail_worker_max_tasks")
                 if detail_adapter.enabled:
@@ -372,10 +354,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     sam_retry_pusher = SamRetryPusher(app)
                     await sam_retry_pusher.start()
         yield
-        sam_client.install_prewarm_hook(None)
-        sam_client.install_endpoint_resolver(None)
-        if sam_autoscaler is not None:
-            await sam_autoscaler.stop()
         if opendid_autoscaler is not None:
             await opendid_autoscaler.stop()
         if detail_worker_autoscaler is not None:

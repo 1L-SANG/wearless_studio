@@ -6,7 +6,7 @@ move. It is produced once, asynchronously, after the cut is already on screen.
 
 Two halves, deliberately separate — the same split canonical references use:
 
-  PRODUCER  `editor_garment_mask` job -> SAM service -> R2 object -> `record()` writes an asset
+  PRODUCER  `editor_garment_mask` job -> fal SAM 3 -> R2 object -> `record()` writes an asset
   CONSUMER  `resolve()` reads asset rows and answers ready / processing / failed
 
 `resolve()` never calls SAM and never enqueues. A missing mask is a normal state (preprocessing
@@ -27,7 +27,6 @@ import uuid
 from psycopg import errors
 
 from app import repo
-from app.config import load_settings
 from app.services import sam_retry
 
 log = logging.getLogger(__name__)
@@ -35,26 +34,16 @@ log = logging.getLogger(__name__)
 #: Marks an asset row as one of ours. Never mixed with `canonical_cutout`: that one is a cutout
 #: of a RAW product photograph, this one is a mask over a generated image.
 MASK_KIND = "editorGarmentMask"
-PRODUCER = "sam2-worn-garment"
+PRODUCER = "fal-sam3-worn-garment"
 # 생성 직후 큐와 기존 컷 lazy backfill 큐가 공유하는 알고리즘 신원. torch 없는 API
 # 모듈에 둬서 두 경로가 같은 멱등키 버전을 사용하게 한다.
-ALGORITHM_VERSION = "editor-worn-garment-sam2-v3"
-FAL_ALGORITHM_VERSION = "editor-worn-garment-fal-sam3-v2"
-FAL_PRODUCER = "fal-sam3-worn-garment"
+ALGORITHM_VERSION = "editor-worn-garment-fal-sam3-v2"
+FAL_ALGORITHM_VERSION = ALGORITHM_VERSION
+FAL_PRODUCER = PRODUCER
 
 
 def algorithm_version(provider: str | None = None) -> str:
-    if provider is None:
-        provider = getattr(load_settings(), "tone_mask_provider", "sam2")
-    return FAL_ALGORITHM_VERSION if provider == "fal" else ALGORITHM_VERSION
-
-
-def job_provider(job: dict) -> str:
-    """The producer owns provider identity; unmarked claimed jobs mean legacy SAM2."""
-    provider = (job.get("payload") or {}).get("toneMaskProvider")
-    if provider in ("sam2", "fal"):
-        return provider
-    return "sam2"
+    return FAL_ALGORITHM_VERSION
 
 
 def job_provider_mismatch(job: dict, *, intended: str) -> bool:
@@ -85,9 +74,7 @@ STATUS_FAILED = "failed"
 # 움직일 수 있는 픽셀도 주상품뿐이다 — 코디 바지 색을 바꿔 발행하면 구매자가 살 수 없는 색을
 # 보여주게 된다.
 #
-# 아래 값은 `sam_service/worn_garment.py` 의 같은 이름 상수와 **반드시 같은 값**이다. API
-# 이미지는 그 모듈(SAM 런타임)을 임포트하지 않는다는 경계 때문에 복제하고, 동일성은 테스트가
-# 고정한다(ALGORITHM_VERSION 이 이미 같은 이유로 복제되어 있다).
+# fal 톤 판정과 API의 픽셀 재검증이 같은 코디 보호 밴드를 사용한다.
 MATCHING_CORE = {"bottom": (0.60, 1.00), "top": (0.00, 0.35)}
 MATCHING_SEPARABLE = {"top": ("bottom",), "outer": ("bottom",), "bottom": ("top",)}
 MATCH_ZONE_MAX = 0.25
@@ -260,7 +247,7 @@ def metadata_for(result, *, cut_id: str, source_asset_id: str, category: str | N
         "sourceCutId": cut_id,
         "sourceAssetId": source_asset_id,
         "sourceHash": result.source_hash,
-        "producer": FAL_PRODUCER if result.algorithm_version == FAL_ALGORITHM_VERSION else PRODUCER,
+        "producer": PRODUCER,
         "modelVersion": result.model_version,
         "algorithmVersion": result.algorithm_version,
         "selectorVersion": result.selector_version,

@@ -13,13 +13,13 @@ from app import image_usage
 from app.agents.image_cost import estimate_cost
 from app.config import load_settings
 from app.services import fal_api
-from app.services.sam_client import SamUnavailable
+from app.services.segmentation_types import SamUnavailable
 from conftest import make_settings
 
 
 @pytest.mark.parametrize("field,value", [
-    ("matching_cutout_provider", "fal"),
-    ("sam_preprocess_provider", "fal"),
+    ("matching_cutout", "on"),
+    ("mannequin_tone_editor", "on"),
     ("matching_flatlay_provider", "qwen"),
 ])
 def test_enabled_provider_requires_nonblank_key(field, value):
@@ -34,8 +34,7 @@ def test_default_providers_do_not_require_fal(monkeypatch):
                  "SAM_PREPROCESS_PROVIDER"):
         monkeypatch.delenv(name, raising=False)
     s = load_settings()
-    assert (s.matching_cutout_provider, s.matching_flatlay_provider,
-            s.sam_preprocess_provider, s.fal_key) == ("sam2", "gemini", "sam2", None)
+    assert (s.matching_flatlay_provider, s.fal_key) == ("gemini", None)
 
 
 def test_provider_environment_is_loaded(monkeypatch):
@@ -44,8 +43,7 @@ def test_provider_environment_is_loaded(monkeypatch):
     monkeypatch.setenv("MATCHING_FLATLAY_PROVIDER", "qwen")
     monkeypatch.setenv("SAM_PREPROCESS_PROVIDER", "fal")
     s = load_settings()
-    assert (s.matching_cutout_provider, s.matching_flatlay_provider,
-            s.sam_preprocess_provider) == ("fal", "qwen", "fal")
+    assert s.matching_flatlay_provider == "qwen"
 
 
 def test_preparation_rotates_scales_and_preserves_alpha():

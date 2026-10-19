@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw
 
 from app import image_usage
 from app.services import fal_api, fal_cutout, matching_flatlay, qwen_flatlay
-from app.services.sam_client import SamUnavailable
+from app.services.segmentation_types import SamUnavailable
 from test_fal_cutout import png
 
 

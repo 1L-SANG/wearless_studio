@@ -172,9 +172,6 @@ class _Repo:
     async def opendid_demand_snapshot(self, conn):
         return self.snap
 
-    async def sam_demand_snapshot(self, conn, kinds):  # 안 불려야 한다(opendid demand 를 써야 함)
-        raise AssertionError("opendid reconciler must not call sam_demand_snapshot")
-
     async def try_advisory_lock(self, conn, key):
         self.lock_keys.append(key)
         return self.lock

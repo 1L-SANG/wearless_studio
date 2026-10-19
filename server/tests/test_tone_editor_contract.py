@@ -168,7 +168,7 @@ def test_existing_cut_lazily_enqueues_the_same_free_mask_job(monkeypatch):
     assert created is True and conn.committed is True
     assert job == {"id": "mask-job"}, "합류한 잡 행이 화면 상태 판정에 필요하다"
     assert captured["kind"] == "editor_garment_mask"
-    assert captured["payload"] == {"cutId": "A-1", "toneMaskProvider": "sam2"}
+    assert captured["payload"] == {"cutId": "A-1", "toneMaskProvider": "fal"}
     assert captured["credits_reserved"] == 0
     assert egm.ALGORITHM_VERSION in captured["idempotency_key"]
 
@@ -202,7 +202,7 @@ def test_mask_metadata_carries_provenance():
     meta = egm.metadata_for(R(), cut_id="A-1", source_asset_id="asset-1",
                             category="top", sub_category="tshirt")
     assert meta["type"] == egm.MASK_KIND == "editorGarmentMask"
-    assert meta["producer"] == "sam2-worn-garment"
+    assert meta["producer"] == "fal-sam3-worn-garment"
     for field in ("sourceCutId", "sourceAssetId", "sourceHash", "modelVersion",
                   "algorithmVersion", "selectorVersion", "grid", "m2m"):
         assert meta[field] is not None

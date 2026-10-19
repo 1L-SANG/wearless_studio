@@ -97,51 +97,6 @@ def test_swapping_the_front_photograph_asks_for_a_fresh_cutout():
 
 # ── 경계: 키만 건넨다 ────────────────────────────────────────────────────────
 
-def test_the_client_sends_the_product_cutout_as_a_key_never_bytes(monkeypatch):
-    """SAM 경계는 신뢰된 R2 키만 받는다 — 바이트도, URL 도 보내지 않는다."""
-    import httpx
-
-    from app.services import sam_client
-
-    sent = {}
-
-    class _Resp:
-        status_code = 200
-
-        @staticmethod
-        def json():
-            return {"status": "ready", "maskKey": "k"}
-
-    class _Client:
-        def __init__(self, **_kw):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_exc):
-            return False
-
-        async def post(self, _url, json=None, **_kw):
-            sent.update(json or {})
-            return _Resp()
-
-    monkeypatch.setattr(httpx, "AsyncClient", _Client)
-
-    class _S:
-        sam_service_url = "http://sam2:8080"
-        sam_internal_token = "t"
-        sam_request_timeout_s = 5.0
-
-    import asyncio
-    asyncio.run(sam_client.segment_worn_garment(
-        _S(), source_key="cuts/a.jpg", base_key="seed/base.png", clothing_type="top",
-        matching_side="bottom", product_key="derived/canonical/front.png"))
-
-    assert sent["productKey"] == "derived/canonical/front.png"
-    assert set(sent) == {"sourceKey", "baseKey", "clothingType", "subCategory",
-                         "matchingSide", "productKey"}
-
 
 # ── 채점: 올린 옷과 닮았는가 ─────────────────────────────────────────────────
 
@@ -150,7 +105,7 @@ import io  # noqa: E402
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
-from sam_service import worn_garment as W  # noqa: E402
+from app.services import tone_mask as W  # noqa: E402
 
 SHAPE = (200, 120)
 TOP_BOX = (46, 96, 36, 84)        # y 0.23~0.48 — 연회색 티셔츠
@@ -231,13 +186,11 @@ def test_the_uploaded_garment_beats_the_evidence_when_the_evidence_is_wrong(monk
     """
     shirt, jeans = _region(TOP_BOX), _region(BOT_BOX)
 
-    monkeypatch.setattr(W, "generate_candidates", lambda *_a, **_k: [jeans, shirt])
-    monkeypatch.setattr(W, "refine", lambda _seg, _rgb, m: m)
     ok, base_buf = cv2.imencode(".png", _cut())
     ok2, gen_buf = cv2.imencode(".png", _cut(TOP_BOX, BOT_BOX))
     assert ok and ok2
 
-    out = W.produce(object(), gen_buf.tobytes(), base_buf.tobytes(), clothing_type="top",
+    out = W.produce(gen_buf.tobytes(), base_buf.tobytes(), candidates=[jeans, shirt], clothing_type="top",
                     matching_side="bottom", product=_cutout_png(SHIRT_BGR))
 
     assert out.selected_rank == 0, "레퍼런스가 있으면 티셔츠가 1등이어야 한다"
@@ -338,13 +291,11 @@ def test_with_the_real_colours_the_product_wins_outright_instead_of_by_fallback(
     shirt, jeans = _region(TOP_BOX), _region(BOT_BOX)
     outfit = shirt | jeans
 
-    monkeypatch.setattr(W, "generate_candidates", lambda *_a, **_k: [outfit, jeans, shirt])
-    monkeypatch.setattr(W, "refine", lambda _seg, _rgb, m: m)
     ok, base_buf = cv2.imencode(".png", _measured_cut(dressed=False))
     ok2, gen_buf = cv2.imencode(".png", _measured_cut())
     assert ok and ok2
 
-    out = W.produce(object(), gen_buf.tobytes(), base_buf.tobytes(), clothing_type="top",
+    out = W.produce(gen_buf.tobytes(), base_buf.tobytes(), candidates=[outfit, jeans, shirt], clothing_type="top",
                     matching_side="bottom", product=_measured_cutout_png())
 
     assert out.selected_rank == 0 and out.vetoed_attempts == 0
@@ -359,26 +310,6 @@ def test_with_the_real_colours_the_product_wins_outright_instead_of_by_fallback(
 # 첫 구현은 요청 본문까지만 테스트했고, 대역 저장소가 키 검증을 하지 않아서 통과했다. 실서버
 # 화이트리스트는 컷아웃 경로를 몰라서 **전량 거절**했고, 엔드포인트가 그 거절을 삼켜
 # product=None 으로 넘어갔다 — B 기능 전체가 실서버에서 한 번도 안 도는 상태였다.
-
-def test_the_service_can_actually_read_the_cutout_it_wrote_itself():
-    """서비스가 스스로 쓴 컷아웃 키가 자기 화이트리스트를 통과해야 한다."""
-    from sam_service.segmentation import cutout_key
-    from sam_service.storage import validate_key
-
-    assert validate_key(cutout_key("a" * 64, "Front"))
-    assert validate_key(cutout_key("b" * 64, "Back"))
-
-
-def test_the_cutout_prefix_did_not_become_a_general_bucket_reader():
-    """넓힌 건 서비스가 만드는 그 경로 하나뿐이다 — 임의 derived 객체는 여전히 거절한다."""
-    from sam_service.storage import SourceRejected, validate_key
-
-    for bad in ("derived/canonical-cutout/../../secrets",
-                "derived/editor-garment-mask/v3/m/ref/" + "a" * 64 + ".png",
-                "derived/canonical-cutout/v/m/Front/not-a-hash.png",
-                "derived/anything-else/v/m/Front/" + "a" * 64 + ".png"):
-        with pytest.raises(SourceRejected):
-            validate_key(bad)
 
 
 # ── 낡은 마스크는 무효화가 아니라 **업그레이드** 한다 (2026-08-18 코덱스 리뷰) ──
@@ -397,7 +328,7 @@ def test_the_cutout_prefix_did_not_become_a_general_bucket_reader():
 
 def _meta(algorithm=None, product_key="ref-1"):
     return {"type": "editorGarmentMask", "sourceCutId": "A-1",
-            "algorithmVersion": algorithm or egm.ALGORITHM_VERSION,
+            "algorithmVersion": algorithm or egm.FAL_ALGORITHM_VERSION,
             "productKey": product_key, "matchGuardVersion": egm.MATCH_GUARD_VERSION}
 
 
@@ -508,11 +439,11 @@ def test_a_cache_hit_does_not_invent_diagnostics():
     0 은 "1등을 거부 없이 골랐고 올린 옷과 하나도 안 닮았다"로 읽힌다. 실제로는 아무것도
     모르는 상태다(2026-08-18 코덱스 리뷰).
     """
-    from app.services import sam_client
+    from app.services import segmentation_types
 
-    cached = sam_client.WornGarmentResult.from_payload(
+    cached = segmentation_types.WornGarmentResult.from_payload(
         {"status": "ready", "maskKey": "k", "cached": True})
-    fresh = sam_client.WornGarmentResult.from_payload(
+    fresh = segmentation_types.WornGarmentResult.from_payload(
         {"status": "ready", "maskKey": "k", "selectedRank": 2, "vetoedAttempts": 3,
          "productMatch": 0.81})
 

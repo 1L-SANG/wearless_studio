@@ -76,7 +76,7 @@ fi
 echo "== 삭제 실행 =="
 
 # 순서가 강제된다. `env delete` 는 그 환경에 서비스가 남아 있으면
-#   ✘ service "api, opendid, sam2" still exist within the environment prod
+#   ✘ service "api, opendid" still exist within the environment prod
 # 로 **거부한다**(2026-08-26 실측). 예전 이 스크립트는 그 실패를 무시하고 다음 단계로
 # 넘어가 ECR·SSM 을 먼저 지웠고, 환경은 남았는데 이미지도 시크릿도 없는 상태가 됐다.
 # 그래서 서비스부터 지우고, 한 단계라도 실패하면 멈춘다.
@@ -84,7 +84,7 @@ echo "== 삭제 실행 =="
 # --env 를 반드시 준다. 빼면 **모든 환경**에서 그 서비스를 지운다 — 지금 서비스 중인
 # us-east-1 이 함께 날아간다.
 echo "-- 1) 서비스 (환경 한정)"
-for n in api sam2 opendid detail-worker; do
+for n in api opendid detail-worker; do
   copilot-aws svc ls --app "$APP" 2>/dev/null | grep -q "^${n}\b" || continue
   echo "   $n"
   copilot-aws svc delete --app "$APP" --name "$n" --env "$OLD_ENV" --yes \
@@ -96,7 +96,7 @@ copilot-aws env delete --app "$APP" --name "$OLD_ENV" --yes \
   || { echo "  STOP: 환경 삭제 실패 — ECR·SSM 은 건드리지 않고 멈춘다"; exit 1; }
 
 echo "-- 3) ECR 리포"
-for r in wearless/api wearless/sam2 wearless/opendid wearless/detail-worker; do
+for r in wearless/api wearless/opendid wearless/detail-worker; do
   aws ecr delete-repository --profile "$PROFILE" --region "$OLD_REGION" \
     --repository-name "$r" --force --query 'repository.repositoryName' --output text 2>/dev/null \
     || echo "  skip $r"

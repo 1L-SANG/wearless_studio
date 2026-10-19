@@ -1,8 +1,6 @@
-"""톤 마스크의 SAM2 비의존 판정 규칙과 fal SAM 3 후보 생성.
+"""fal SAM 3 후보 생성과 톤 마스크 판정 규칙.
 
-판정 상수와 공식은 sam_service.worn_garment 및 segmentation의 복사본이다.
-API 이미지에는 sam_service와 torch가 없으므로 런타임에 그 패키지를 임포트하지 않는다.
-동일성은 test_tone_mask_fal.py에서 고정한다.
+종류별 구역·상품색 유사도·코디 보호·상위 후보 복귀 규칙은 오프라인 픽셀 테스트로 검증한다.
 """
 from __future__ import annotations
 
@@ -18,7 +16,7 @@ import numpy as np
 from PIL import Image
 
 from . import fal_api, fal_cutout
-from .sam_client import SamUnavailable, WornGarmentResult
+from .segmentation_types import SamUnavailable, WornGarmentResult
 
 log = logging.getLogger(__name__)
 MODEL_VERSION = fal_api.SAM_MODEL

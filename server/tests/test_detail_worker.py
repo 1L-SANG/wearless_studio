@@ -109,7 +109,6 @@ def test_detail_worker_lifespan_starts_only_its_dispatcher(monkeypatch):
     monkeypatch.setattr(main, "SamRetryPusher", Forbidden)
     monkeypatch.setattr(main, "SamAutoscaleAdapter", Forbidden)
     monkeypatch.setattr(main, "SamAutoscaler", Forbidden)
-    monkeypatch.setattr(main.sam_client, "install_prewarm_hook", lambda _hook: None)
 
     settings = make_settings(
         database_url="postgresql://test",

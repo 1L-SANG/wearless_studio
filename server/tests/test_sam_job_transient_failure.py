@@ -10,13 +10,12 @@ import asyncio
 
 import app.workers.matching_cutout_job as mcj
 import app.workers.sam_preprocess_job as spj
-from app.services import sam_client, sam_retry
+from app.services import segmentation_types, sam_retry
 
 
 class _Settings:
     matching_cutout = "on"
-    sam_service_url = "http://sam2:8080"
-    sam_internal_token = "t"
+    fal_key = "test"
     r2_bucket = "b"
 
 
@@ -59,14 +58,14 @@ def _capture(monkeypatch, module):
 
 
 async def _outage(*_a, **_k):
-    raise sam_client.SamUnavailable("connection refused")
+    raise segmentation_types.SamUnavailable("connection refused")
 
 
 def test_sam_preprocess_records_an_outage_as_retryable(monkeypatch):
     seen = _capture(monkeypatch, spj)
     monkeypatch.setattr(spj, "load_settings", lambda: _Settings())
-    monkeypatch.setattr(spj.sam_client, "configured", lambda _s: True)
-    monkeypatch.setattr(spj.sam_client, "segment_garment", _outage)
+    monkeypatch.setattr(spj.fal_api, "configured", lambda _s: True)
+    monkeypatch.setattr(spj.fal_cutout, "segment_garment", _outage)
     monkeypatch.setattr(spj.repo, "get_product", lambda *_a, **_k: _async(
         {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}))
     monkeypatch.setattr(spj.repo, "get_asset_for_user", lambda *_a, **_k: _async(
@@ -75,6 +74,7 @@ def test_sam_preprocess_records_an_outage_as_retryable(monkeypatch):
     class _App:
         class state:
             pool = _Pool()
+            r2 = object()
 
     asyncio.run(spj.run_sam_preprocess_job(
         _App(), {"id": "j1", "project_id": "p", "user_id": "u", "lease_token": "t"}))
@@ -85,12 +85,13 @@ def test_sam_preprocess_records_an_outage_as_retryable(monkeypatch):
 
 def test_matching_cutout_records_an_outage_as_retryable(monkeypatch):
     seen = _capture(monkeypatch, mcj)
-    monkeypatch.setattr(mcj.sam_client, "configured", lambda _s: True)
-    monkeypatch.setattr(mcj.sam_client, "segment_garment", _outage)
+    monkeypatch.setattr(mcj.fal_api, "configured", lambda _s: True)
+    monkeypatch.setattr(mcj.fal_cutout, "segment_garment", _outage)
 
     class _App:
         class state:
             pool = _Pool()
+            r2 = object()
             settings = _Settings()
             r2 = None
 
@@ -107,19 +108,20 @@ def test_matching_cutout_records_an_outage_as_retryable(monkeypatch):
 def test_a_real_cutout_verdict_is_still_not_retryable(monkeypatch):
     """판정 실패(누끼가 안 나옴)는 그대로 failed 다 — 다시 돌려도 같은 답이다."""
     seen = _capture(monkeypatch, mcj)
-    monkeypatch.setattr(mcj.sam_client, "configured", lambda _s: True)
+    monkeypatch.setattr(mcj.fal_api, "configured", lambda _s: True)
 
     class _View:
         ready = False
         cutout_key = None
         code = "no_garment_candidate"
 
-    monkeypatch.setattr(mcj.sam_client, "segment_garment",
+    monkeypatch.setattr(mcj.fal_cutout, "segment_garment",
                         lambda *_a, **_k: _async({"Front": _View()}))
 
     class _App:
         class state:
             pool = _Pool()
+            r2 = object()
             settings = _Settings()
             r2 = None
 
