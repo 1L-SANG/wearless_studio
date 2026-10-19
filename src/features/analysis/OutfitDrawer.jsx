@@ -2,12 +2,13 @@ import React, { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Search, Plus } from 'lucide-react';
 import { filterOutfitItems, sortOutfitItems } from '@/lib/outfitPresentation.js';
-import { OutfitColorChips, OutfitTile } from './OutfitCatalog.jsx';
+import { OutfitCategoryChips, OutfitColorChips, OutfitTile } from './OutfitCatalog.jsx';
 import styles from './OutfitSelection.module.css';
 
-export function OutfitDrawer({ role, label, items, selectedId, onSelect, onClose, onUpload, modelCredit }) {
+export function OutfitDrawer({ role, label, items, selectedId, selectedIds = [], selectionHint, onSelect, onClose, onUpload, modelCredit }) {
   const [search, setSearch] = useState('');
   const [color, setColor] = useState('');
+  const [category, setCategory] = useState('');
   const [limit, setLimit] = useState(24);
   const panel = useRef(null);
   const heading = useId();
@@ -35,7 +36,7 @@ export function OutfitDrawer({ role, label, items, selectedId, onSelect, onClose
       if (previous?.isConnected) previous.focus({ preventScroll: true });
     };
   }, []);
-  const filtered = sortOutfitItems(filterOutfitItems(items.filter((item) => !item.isCustom), { role, color, search }), { role, drawer: true });
+  const filtered = sortOutfitItems(filterOutfitItems(items.filter((item) => !item.isCustom), { role, color, search, category }), { role, drawer: true });
   return createPortal(<div className={styles.drawerBackdrop} onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className={styles.drawer} role="dialog" aria-modal="true" aria-labelledby={heading} ref={panel}>
       <header className={styles.drawerHead}><h2 id={heading}>{label} 전체 보기</h2>
@@ -43,9 +44,11 @@ export function OutfitDrawer({ role, label, items, selectedId, onSelect, onClose
         <button type="button" className={styles.close} aria-label="전체 보기 닫기" onClick={onClose}><X size={20} /></button>
       </header>
       <label className={styles.search}><Search size={17} aria-hidden="true" /><span className="sr-only">이름 찾기</span><input value={search} placeholder="이름 찾기" onChange={(event) => { setSearch(event.target.value); setLimit(24); }} /></label>
+      {role === 'accessory' && <OutfitCategoryChips items={items} value={category} onChange={value => { setCategory(value); setLimit(24); }} />}
       {role !== 'model' && <OutfitColorChips role={role} items={items} value={color} drawer onChange={(value) => { setColor(value); setLimit(24); }} />}
       <div className={styles.drawerScroll}>
-        <div className={styles.grid}>{filtered.slice(0, limit).map((item) => <OutfitTile key={item.id} role={role} item={item} selected={selectedId === item.id} onSelect={onSelect} creditLabel={modelCredit?.(item)} />)}</div>
+        <div className={styles.grid}>{filtered.slice(0, limit).map((item) => <OutfitTile key={item.id} role={role} item={item} selected={selectedIds.includes(item.id) || selectedId === item.id} onSelect={onSelect} creditLabel={modelCredit?.(item)} />)}</div>
+        {selectionHint && <p className={styles.selectionHint} role="status">{selectionHint}</p>}
         {!filtered.length && <p className={styles.noResults}>찾는 옷이 없어요.</p>}
         {limit < filtered.length && <button type="button" className={styles.more} onClick={() => setLimit((n) => n + 24)}>24개 더 보기</button>}
       </div>

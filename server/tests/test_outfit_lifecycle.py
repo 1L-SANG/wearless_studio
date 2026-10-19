@@ -49,7 +49,7 @@ def test_authenticated_analysis_commits_pending_before_start_and_preserves_late_
         async def model(*a, **kw):
             assert events.index('save') < events.index('commit')
             events.append('model'); await release.wait()
-            return {'sets': [{'slots': {'bottom': 'b2', 'footwear': None, 'bag': 'bag', 'accessory': None}, 'reason': 'new', 'concept': 'casual'}]}
+            return {'sets': [{'slots': {'bottom': 'b2', 'footwear': None}, 'reason': 'new', 'concept': 'casual'}]}
         async def save(conn, pid, fields, **kwargs):
             saved.update(deepcopy(fields)); return deepcopy(saved)
         monkeypatch.setattr(repo, 'get_product', AsyncMock(side_effect=lambda *a: deepcopy(product)))
@@ -142,7 +142,7 @@ def test_expired_pending_read_returns_fallback_without_restarting(client, make_t
 
 def test_server_optional_toggle_uses_current_set_then_remembers_choice(client, make_token, state, monkeypatch):
     saved, _, _ = state
-    saved['outfitRecommendation'] = {'sets': [{'slots': {'bag': 'bag'}, 'reason': 'one'}]}
+    saved['outfitRecommendation'] = {'sets': [{'slots': {}, 'reason': 'one'}], 'props': {'bag': {'status': 'fallback', 'picks': ['bag']}}}
     saved['outfitSelections'] = {'version': 1, 'slots': {}, 'setIndex': 0, 'optional': {'bag': False, 'accessory': False}}
     call = AsyncMock(); monkeypatch.setattr(outfit.outfit_recommender, 'recommend', call)
     for enabled in [True, False, True]:

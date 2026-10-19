@@ -102,10 +102,11 @@ export function sortOutfitItems(items, { role, selectedId, drawer = false } = {}
   }).map(({ item }) => item);
 }
 
-export function filterOutfitItems(items, { role, color = '', search = '' } = {}) {
+export function filterOutfitItems(items, { role, color = '', search = '', category = '' } = {}) {
   const query = normalizedText(search);
   return (items || []).filter(item => {
     const group = colorGroupForItem(item, role);
+    if (category && item.category !== category) return false;
     if (color && group !== color) return false;
     const label = colorGroupsForRole(role).find(value => value.value === group)?.label;
     return !query || [item.name, item.displayName, item.colorName, group, label].some(value => normalizedText(value).includes(query));
@@ -155,8 +156,16 @@ export function buildOutfitBoardLayout({ clothingType, product, items = {}, maxH
   const shoes = piece('footwear', footwear, shoeCm, 2.1);
   shoes.height = shoes.cm * scale;
   shoes.width = footwear ? shoes.height * shoes.ar : 104;
-  const accessories = ['bag', 'accessory'].filter(slot => itemAt(slot)?.src)
-    .map(slot => ({ ...itemAt(slot), slot, width: 58, height: 58, zIndex: 20 }));
+  const accessoryItems = [itemAt('accessory')].flat().filter(item => item?.src || item?.pending).slice(0, 3);
+  const accessories = [
+    ...(itemAt('bag')?.src || itemAt('bag')?.pending ? [{ ...itemAt('bag'), slot: 'bag' }] : []),
+    ...accessoryItems.map(item => ({ ...item, slot: 'accessory' })),
+  ].map(item => ({ ...item, width: 58, height: 58, zIndex: 20 }));
+  const leftColumn = accessories.some(item => item.slot === 'bag');
+  const rightCount = accessoryItems.length;
+  const columnCount = Number(leftColumn) + Number(rightCount > 0);
+  const circleStackHeight = rightCount * 58;
+  const stackGaps = Math.max(0, rightCount - 1) * gap;
   const rowHeight = row => row.length === 2
     ? Math.max(row[0].height, row[0].height * outerDy + row[1].height) : row[0].height;
   const rowWidth = row => row.length === 2
@@ -166,16 +175,19 @@ export function buildOutfitBoardLayout({ clothingType, product, items = {}, maxH
   const contentHeight = rows.reduce((sum, row) => sum + rowHeight(row), 0) + shoes.height;
   const fit = Math.min(1,
     Math.max(0, canvasHeight - pad * 2 - gap * rows.length) / contentHeight,
-    Math.max(0, canvasWidth - pad * 2) / Math.max(...rows.map(rowWidth), shoes.width, ...accessories.map(item => item.width)),
-    ...(accessories.length ? [Math.max(0, canvasHeight - pad * 2) / 58] : []));
+    Math.max(0, canvasWidth - pad * 2 - columnCount * gap) / (Math.max(...rows.map(rowWidth), shoes.width) + columnCount * 58),
+    ...(accessories.length ? [Math.max(0, canvasHeight - pad * 2 - stackGaps) / Math.max(58, circleStackHeight)] : []));
   for (const item of [...garments, shoes, ...accessories]) { item.width *= fit; item.height *= fit; }
+  const leftInset = leftColumn ? 58 * fit + gap : 0;
+  const rightInset = rightCount ? 58 * fit + gap : 0;
+  const garmentCenter = (pad + leftInset + canvasWidth - pad - rightInset) / 2;
   let y = pad, zIndex = 10;
   for (const row of rows) {
     if (row.length === 2) {
       const [outer, inner] = row;
       const left = Math.min(-outer.width / 2 - outerDx * fit, -inner.width / 2 + outerDx * fit);
       const right = Math.max(outer.width / 2 - outerDx * fit, inner.width / 2 + outerDx * fit);
-      const center = Math.max(pad - left, Math.min(canvasWidth - pad - right, canvasWidth / 2));
+      const center = Math.max(pad + leftInset - left, Math.min(canvasWidth - pad - rightInset - right, garmentCenter));
       Object.assign(outer, { x: center - outer.width / 2 - outerDx * fit, y, zIndex: zIndex - 1 });
       Object.assign(inner, { x: center - inner.width / 2 + outerDx * fit,
         y: y + outer.height * outerDy, zIndex });
@@ -183,16 +195,19 @@ export function buildOutfitBoardLayout({ clothingType, product, items = {}, maxH
       zIndex -= 2;
     } else {
       const item = row[0];
-      Object.assign(item, { x: canvasWidth / 2 - item.width / 2, y, zIndex });
+      Object.assign(item, { x: garmentCenter - item.width / 2, y, zIndex });
       y += item.height + gap;
       zIndex -= 1;
     }
   }
-  Object.assign(shoes, { x: canvasWidth / 2 - shoes.width / 2, y, zIndex: 1 });
-  const height = Math.max(y + shoes.height + pad, ...accessories.map(item => item.height + pad * 2));
+  Object.assign(shoes, { x: garmentCenter - shoes.width / 2, y, zIndex: 1 });
+  const stackHeight = circleStackHeight * fit + stackGaps;
+  const height = Math.max(y + shoes.height + pad, stackHeight + pad * 2, ...accessories.map(item => item.height + pad * 2));
+  let accessoryIndex = 0;
   for (const item of accessories) Object.assign(item, {
     x: item.slot === 'bag' ? pad : canvasWidth - pad - item.width,
-    y: pad + (height - pad * 2 - item.height) * (item.slot === 'bag' ? .45 : .15),
+    y: item.slot === 'bag' ? pad + (height - pad * 2 - item.height) * .45
+      : pad + Math.max(0, height - pad * 2 - stackHeight) * .15 + accessoryIndex++ * (item.height + gap),
   });
   return { pieces: [...garments, shoes], accessories, height, width: canvasWidth };
 }

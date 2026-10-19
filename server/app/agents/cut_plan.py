@@ -311,7 +311,8 @@ def compile_cut_plan(
     signature_background = horizon_background.signature_decision(dict(spec))
     recipe_family, capture_mode, product_variant = _recipe(spec)
     roles = tuple(outfit_roles or spec.get("_outfitRoles") or ())
-    if len(set(roles)) != len(roles) or any(role not in ("inner", "footwear", "bag", "accessory") for role in roles):
+    from ..services.outfit_generation import valid_roles
+    if not valid_roles(roles):
         raise CutPlanError("invalid_outfit_roles")
     if recipe_family == "product":
         roles = ()

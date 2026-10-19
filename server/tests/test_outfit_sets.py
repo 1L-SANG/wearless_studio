@@ -16,13 +16,13 @@ def args():
 
 
 def sets():
-    return [{'slots': {'bottom': 'b1', 'footwear': 's1', 'bag': 'bag', 'accessory': None}, 'reason': '첫 코디', 'concept': 'tonal'},
-            {'slots': {'bottom': 'b2', 'footwear': 's2', 'bag': None, 'accessory': None}, 'reason': '다른 코디', 'concept': 'contrast'}]
+    return [{'slots': {'bottom': 'b1', 'footwear': 's1'}, 'reason': '첫 코디', 'concept': 'tonal'},
+            {'slots': {'bottom': 'b2', 'footwear': 's2'}, 'reason': '다른 코디', 'concept': 'contrast'}]
 
 
 def test_accepts_two_distinct_sets_marks_membership_and_calls_model_once(monkeypatch):
     outfit.clear_cache()
-    model = AsyncMock(return_value={'sets': sets()})
+    model = AsyncMock(return_value={'sets': sets(), 'props': {'bag': {'status': 'fallback', 'picks': ['bag']}}})
     monkeypatch.setattr(outfit.outfit_recommender, 'recommend', model)
     result = asyncio.run(outfit.recommend(*args(), slots=['Front']))
     recommendation = result['outfitRecommendation']
@@ -58,16 +58,16 @@ def test_fallback_sets_are_diverse_and_order_independent():
     second = outfit.fallback_sets(outfit.candidate_pools(list(reversed(items)), context))
     assert first == second
     assert [s['slots'] for s in first] == [
-        {'bottom': 'b1', 'footwear': 's1', 'bag': None, 'accessory': None},
-        {'bottom': 'b2', 'footwear': 's2', 'bag': None, 'accessory': None},
-        {'bottom': 'b1', 'footwear': 's2', 'bag': None, 'accessory': None}]
+        {'bottom': 'b1', 'footwear': 's1'},
+        {'bottom': 'b2', 'footwear': 's2'},
+        {'bottom': 'b1', 'footwear': 's2'}]
 
 
 def test_apply_set_preserves_user_empty_replaces_direct_pick_and_keeps_disabled_memory():
     current = {'version': 1, 'setIndex': 0, 'optional': {'bag': False, 'accessory': True}, 'slots': {
         'bottom': {'itemId': 'mine', 'origin': 'user'}, 'footwear': {'itemId': None, 'origin': 'user'},
         'bag': {'itemId': 'remembered', 'origin': 'user'}, 'accessory': {'itemId': 'old', 'origin': 'user'}}}
-    actual = outfit.apply_set(current, {'sets': sets()}, 'top', 1)
+    actual = outfit.apply_set(current, {'sets': sets(), 'props': {'bag': {'status': 'fallback', 'picks': ['bag']}}}, 'top', 1)
     assert actual['setIndex'] == 1
     assert actual['slots']['bottom'] == {'itemId': 'b2', 'origin': 'ai'}
     assert actual['slots']['footwear'] == {'itemId': None, 'origin': 'user'}
@@ -79,11 +79,11 @@ def test_apply_set_preserves_user_empty_replaces_direct_pick_and_keeps_disabled_
 def test_optional_defaults_toggle_memory_and_snapshot_exclusion():
     selected = outfit.normalize_selections(None, 'top')
     assert selected['optional'] == {'bag': False, 'accessory': False}
-    enabled = outfit.toggle_optional(selected, {'sets': sets()}, 'top', 'bag', True)
+    enabled = outfit.toggle_optional(selected, {'sets': sets(), 'props': {'bag': {'status': 'fallback', 'picks': ['bag']}}}, 'top', 'bag', True)
     assert enabled['slots']['bag']['itemId'] == 'bag'
-    disabled = outfit.toggle_optional(enabled, {'sets': sets()}, 'top', 'bag', False)
+    disabled = outfit.toggle_optional(enabled, {'sets': sets(), 'props': {'bag': {'status': 'fallback', 'picks': ['bag']}}}, 'top', 'bag', False)
     assert disabled['slots']['bag']['itemId'] == 'bag'
-    assert outfit.toggle_optional(disabled, {'sets': sets()[::-1]}, 'top', 'bag', True)['slots']['bag']['itemId'] == 'bag'
+    assert outfit.toggle_optional(disabled, {'sets': sets()[::-1], 'props': {'bag': {'status': 'fallback', 'picks': ['bag']}}}, 'top', 'bag', True)['slots']['bag']['itemId'] == 'bag'
     snapshot = outfit.generation_snapshot({'outfitSelections': disabled}, 'top', [])
     assert 'bag' not in snapshot['slots']
     assert 'bag' not in outfit_generation.from_payload({}, {'outfitSelections': disabled}, 'top')['slots']
@@ -96,7 +96,7 @@ def test_pending_is_immediately_usable_and_repeated_start_joins_one_model(monkey
         release = asyncio.Event()
         async def model(*a, **kw):
             await release.wait()
-            return {'sets': sets()}
+            return {'sets': sets(), 'props': {'bag': {'status': 'fallback', 'picks': ['bag']}}}
         call = AsyncMock(side_effect=model)
         monkeypatch.setattr(outfit.outfit_recommender, 'recommend', call)
         one = outfit.start_recommendation(*args(), slots=['Front'])
@@ -165,7 +165,7 @@ def test_new_context_resets_index_before_optional_current_set_lookup():
     fields = outfit.prepare_recommendation(*values, slots=['Front'])
     assert fields['outfitSelections']['setIndex'] == 0
     toggled = outfit.toggle_optional(fields['outfitSelections'], fields['outfitRecommendation'], 'top', 'bag', True)
-    assert toggled['slots']['bag']['itemId'] == 'bag'
+    assert toggled['slots']['bag']['itemId'] is None  # Starts demand-only props separately.
 
 
 def test_new_context_cache_hit_does_not_restore_previous_context_index():
@@ -182,4 +182,4 @@ def test_new_context_cache_hit_does_not_restore_previous_context_index():
     assert first['outfitSelections']['setIndex'] == 0
     assert cached['outfitSelections']['setIndex'] == 0
     assert cached['outfitSelections']['slots']['bottom']['itemId'] == 'b1'
-    assert outfit.toggle_optional(cached['outfitSelections'], cached['outfitRecommendation'], 'top', 'bag', True)['slots']['bag']['itemId'] == 'bag'
+    assert outfit.toggle_optional(cached['outfitSelections'], cached['outfitRecommendation'], 'top', 'bag', True)['slots']['bag']['itemId'] is None

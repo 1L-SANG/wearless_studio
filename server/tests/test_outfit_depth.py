@@ -94,11 +94,12 @@ def test_pending_and_off_fallback_use_same_diverse_shortlist_and_user_locks():
     fallback = outfit.prepare_recommendation(replace(settings, outfit_recommendation_enabled=False), *values)["outfitRecommendation"]
     assert pending["sets"] == fallback["sets"]
     assert len(pending["candidates"]["bag"]) == 12
-    assert len(pending["sets"]) == 3
+    assert len(pending["sets"]) == 1  # Both clothing roles are fixed; props no longer vary sets.
     for entry in pending["sets"]:
         assert entry["slots"]["bottom"] == "bottom-11"
         assert entry["slots"]["footwear"] is None
-        assert entry["slots"]["bag"] is not None
+        assert "bag" not in entry["slots"]
+        assert "accessory" not in entry["slots"]
 
 
 def test_shortlist_setting_and_prompt_version_invalidate_reuse_key(monkeypatch):
@@ -111,7 +112,7 @@ def test_shortlist_setting_and_prompt_version_invalidate_reuse_key(monkeypatch):
 
 
 def model_set(bottom, *, bag=None, concept="tonal"):
-    return {"slots": {"bottom": bottom, "footwear": None, "bag": bag, "accessory": None},
+    return {"slots": {"bottom": bottom, "footwear": None},
             "reason": "상품의 색과 실루엣을 살린 코디예요.", "concept": concept}
 
 
@@ -240,16 +241,16 @@ def test_offline_dry_run_counts_actual_prepared_request_without_provider(monkeyp
     call = AsyncMock(side_effect=AssertionError("dry-run must not call provider"))
     monkeypatch.setattr(agent, "_call_gemini", call)
     rows = asyncio.run(outfit_dry_run.representative_runs())
-    assert [r["image_count"] for r in rows] == [7, 25, 31]
-    assert [sum(r["candidates_per_role"].values()) for r in rows] == [6, 24, 30]
+    assert [r["image_count"] for r in rows] == [7, 13, 19, 7, 7, 7]
+    assert [sum(r["candidates_per_role"].values()) for r in rows] == [6, 12, 18, 6, 6, 6]
     for measured in rows:
         assert measured["product_image"] == {"width": 384, "height": 512}
         assert measured["candidate_image_sizes"] == [{"width": 256, "height": 256}]
         assert measured["prompt_chars"] == measured["user_prompt_chars"] + measured["system_prompt_chars"]
         assert measured["schema_chars"] > 100
-        assert measured["max_output_tokens"] == 4096
-    largest = asyncio.run(outfit_dry_run.representative_runs(8))[-1]
-    assert largest["image_count"] == 41
+        assert measured["max_output_tokens"] == (1024 if measured["scenario"].startswith("props_") else 4096)
+    largest = asyncio.run(outfit_dry_run.representative_runs(8))[2]
+    assert largest["image_count"] == 25
     call.assert_not_called()
 
 

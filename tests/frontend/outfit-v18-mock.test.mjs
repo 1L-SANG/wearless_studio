@@ -44,7 +44,7 @@ test('v18 fixtures are opt-in and ready produces three complete sets with option
   assert.equal(recommendation.status, 'ready');
   assert.equal(recommendation.sets.length, 3);
   assert.equal(new Set(recommendation.sets.map(set => JSON.stringify(set.slots))).size, 3);
-  for (const role of ['bottom', 'footwear', 'bag', 'accessory']) {
+  for (const role of ['bottom', 'footwear']) {
     assert.equal(recommendation.candidates[role].filter(item => item.inSets).length, 3);
     for (const set of recommendation.sets) assert.ok(recommendation.candidates[role].some(item => item.id === set.slots[role]));
   }
@@ -127,7 +127,7 @@ test('outer QA sets include inner candidates and role sets stay valid for all pr
     const result = await analyze(type);
     assert.deepEqual(Object.keys(result.outfitRecommendation.candidates), roles);
     for (const set of result.outfitRecommendation.sets) {
-      assert.deepEqual(Object.keys(set.slots), roles);
+      assert.deepEqual(Object.keys(set.slots), roles.filter(role => !['bag', 'accessory'].includes(role)));
       assert.ok(Object.values(set.slots).every(Boolean));
     }
     if (type === 'outer') assert.ok(result.outfitSelections.slots.inner.itemId);
@@ -271,4 +271,63 @@ test('customCleanMs query controls 7, 12 and 18 second cleanup even with preserv
     assert.equal(ready.cutoutStatus, 'ready');
     assert.deepEqual(ready.sourceAssetIds, [upload.assetId]);
   }
+});
+
+test('QA props start only on demand, cache picks and expose four accessory categories including hats', async () => {
+  query('?outfitDemo=ready');
+  const initial = await analyze();
+  assert.equal(initial.outfitRecommendation.props?.accessory, undefined);
+  assert.ok(initial.outfitRecommendation.sets.every(set => !('bag' in set.slots) && !('accessory' in set.slots)));
+  const categories = new Set(initial.outfitRecommendation.candidates.accessory.map(item => item.category));
+  assert.ok(categories.size >= 4); assert.ok(categories.has('모자'));
+  const result = await api.recommendOutfitProps(null, 'accessory');
+  assert.equal(result.outfitRecommendation.props.accessory.status, 'ready');
+  assert.equal(result.outfitRecommendation.props.accessory.picks.length, 3);
+  const saved = await api.saveAnalysis(null, { outfitSelections: { ...initial.outfitSelections,
+    optional: { bag: false, accessory: true } } });
+  assert.deepEqual(saved.outfitRecommendation.props.accessory, result.outfitRecommendation.props.accessory);
+  const cached = await api.recommendOutfitProps(null, 'accessory');
+  assert.deepEqual(cached.outfitRecommendation.props.accessory, result.outfitRecommendation.props.accessory);
+});
+
+test('ready QA demo keeps props pending for 1500ms when mock latency is enabled', async t => {
+  const latency = process.env.MOCK_API_LATENCY_SCALE;
+  const isolated = await createServer({ configFile: false, logLevel: 'silent', optimizeDeps: { noDiscovery: true, include: [] },
+    resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
+    server: { middlewareMode: true, hmr: false, watch: null }, appType: 'custom' });
+  t.after(() => isolated.close());
+  let mockApi, fixture;
+  try {
+    process.env.MOCK_API_LATENCY_SCALE = '1';
+    ({ api: mockApi } = await isolated.ssrLoadModule('/src/mock/api.js'));
+    fixture = await isolated.ssrLoadModule('/src/mock/outfitV18Fixtures.js');
+  } finally { if (latency == null) delete process.env.MOCK_API_LATENCY_SCALE; else process.env.MOCK_API_LATENCY_SCALE = latency; }
+  const candidates = fixture.v18FixtureCandidates({ clothingType: 'dress' });
+  const recommendation = fixture.v18FixtureRecommendation(candidates, { status: 'ready', contextKey: 'clock' });
+  mockApi.setOutfitScenario({ fixture: 'v18', status: 'ready' });
+  await mockApi.restoreInputDraft(null, { clothingType: 'dress', matchClothing: [], outfitRecommendation: recommendation });
+  let now = 0; t.mock.method(Date, 'now', () => now);
+  const pending = await mockApi.recommendOutfitProps(null, 'accessory');
+  assert.equal(pending.outfitRecommendation.props.accessory.status, 'pending');
+  assert.equal(pending.outfitRecommendation.props.accessory.picks.length, 3);
+  now = 1499;
+  assert.equal((await mockApi.getOutfitRecommendation(null)).outfitRecommendation.props.accessory.status, 'pending');
+  now = 1500;
+  assert.equal((await mockApi.getOutfitRecommendation(null)).outfitRecommendation.props.accessory.status, 'ready');
+});
+
+test('mock explicit set command saves supplied visible picks even when server recommendation has advanced', async () => {
+  query('?outfitDemo=ready'); const analysis = await analyze();
+  const originalSet = analysis.outfitRecommendation.sets[0];
+  const bottom = analysis.outfitRecommendation.candidates.bottom.find(item => item.id !== originalSet.slots.bottom);
+  const accessories = analysis.outfitRecommendation.candidates.accessory;
+  await api.saveAnalysis(null, { outfitSelections: { ...analysis.outfitSelections, optional: { bag: false, accessory: true },
+    slots: { ...analysis.outfitSelections.slots, accessory: { itemId: accessories[1].id, extraIds: [accessories[0].id, accessories[2].id], origin: 'user' } } } }, { preserveCatalog: true });
+  const exact = { ...analysis.outfitSelections, setIndex: 1, optional: { bag: false, accessory: true }, slots: {
+    ...analysis.outfitSelections.slots, bottom: { itemId: bottom.id, origin: 'ai' },
+    accessory: { itemId: accessories[0].id, origin: 'ai' }, footwear: { itemId: null, origin: 'user' } } };
+  const saved = await api.saveAnalysis(null, { outfitSetIndex: 1, outfitSelections: exact });
+  assert.equal(saved.outfitSelections.slots.bottom.itemId, bottom.id);
+  assert.deepEqual(saved.outfitSelections.slots.accessory, exact.slots.accessory);
+  assert.deepEqual(saved.outfitSelections.slots.footwear, { itemId: null, origin: 'user' });
 });

@@ -24,6 +24,7 @@ on:
             # 셸 계약 테스트(tests/shell/*.test.sh)는 server/tests/test_shell_contracts.py 가 돌린다.
             # 그 .sh 만 바뀐 커밋도 CI 가 돌아야 한다.
             - "tests/shell/**"
+            - "scripts/ci/verify-copilot-rollout.py"
             - "supabase/migrations/**"
             - "copilot/api/manifest.yml"
             - "copilot/api/addons/**"
@@ -51,6 +52,7 @@ on:
             # 셸 계약 테스트(tests/shell/*.test.sh)는 server/tests/test_shell_contracts.py 가 돌린다.
             # 그 .sh 만 바뀐 커밋도 CI 가 돌아야 한다.
             - "tests/shell/**"
+            - "scripts/ci/verify-copilot-rollout.py"
             - "supabase/migrations/**"
             - "copilot/api/manifest.yml"
             - "copilot/api/addons/**"
@@ -155,6 +157,7 @@ jobs:
                         - 'server/face_render_service.py'
                         - 'server/face_esrgan.py'
                         - 'server/scripts/face_render_bundle.sh'
+                        - 'scripts/ci/verify-copilot-rollout.py'
                         - 'copilot/api/manifest.yml'
                         - 'copilot/api/addons/**'
                         - 'copilot/api/overrides/**'
@@ -170,6 +173,7 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v5
+            - uses: astral-sh/setup-uv@v5
 
             - name: AWS 자격증명 (OIDC)
               uses: aws-actions/configure-aws-credentials@v6
@@ -345,11 +349,19 @@ jobs:
                   printf '%s\n' "$GITHUB_SHA" > server/BUILD_SHA
                   echo "BUILD_SHA=$GITHUB_SHA"
 
+            - name: 교체 전 컨테이너 종료 시간 기록
+              run: |
+                  uv run --no-project --with PyYAML==6.0.3 python3 scripts/ci/verify-copilot-rollout.py capture \
+                    --app "$COPILOT_APP" --env "$COPILOT_ENV" --sha "$GITHUB_SHA" \
+                    --state "$RUNNER_TEMP/outfit-props-rollout.json"
+
             - name: 상세 워커 배포 (Spot 0대)
               run: |
+                  set -euo pipefail
                   # --detach + 직접 대기: Copilot v1.34.1 진행 표시가 2026-09-28 부터 끝나지 않을 수 있다
                   # (scripts/ci/wait-copilot-stack.sh 머리 주석).
                   started=$(date -u +%Y-%m-%dT%H:%M:%S)
+                  printf '%s\n' "$started" > "$RUNNER_TEMP/outfit-detail-started"
                   copilot svc deploy \
                     --app "$COPILOT_APP" \
                     --name detail-worker \
@@ -360,6 +372,24 @@ jobs:
 
             - name: 배포 (이미지 빌드→ECR→ECS 롤링)
               run: |
+                  set -euo pipefail
+                  set_ready() {
+                    python3 - "$1" <<'PY'
+                  from pathlib import Path
+                  import re
+                  import sys
+                  path = Path("copilot/api/manifest.yml")
+                  text = path.read_text()
+                  if len(re.findall(r"(?m)^\s*OUTFIT_PROPS_READY\s*:", text)) != 1:
+                      raise SystemExit("OUTFIT_PROPS_READY must appear exactly once")
+                  text, count = re.subn(r"(?m)^  OUTFIT_PROPS_READY:.*$", f'  OUTFIT_PROPS_READY: "{sys.argv[1]}"', text)
+                  if count != 1:
+                      raise SystemExit("OUTFIT_PROPS_READY must be an API variable")
+                  path.write_text(text)
+                  PY
+                  }
+                  # 새 저장 계약을 쓰기 전에 모든 생산자와 소비자를 같은 코드로 교체한다.
+                  set_ready off
                   # --detach + 직접 대기: Copilot v1.34.1 진행 표시가 2026-09-28 부터 끝나지 않을 수 있다
                   # (scripts/ci/wait-copilot-stack.sh 머리 주석).
                   started=$(date -u +%Y-%m-%dT%H:%M:%S)
@@ -370,6 +400,24 @@ jobs:
                     --tag "$GITHUB_SHA" \
                     --detach
                   scripts/ci/wait-copilot-stack.sh "$COPILOT_APP-$COPILOT_ENV-$COPILOT_SVC" "$started"
+                  uv run --no-project --with PyYAML==6.0.3 python3 scripts/ci/verify-copilot-rollout.py verify \
+                    --app "$COPILOT_APP" --env "$COPILOT_ENV" --sha "$GITHUB_SHA" --api-ready off \
+                    --state "$RUNNER_TEMP/outfit-props-rollout.json" --api-started "$started" \
+                    --detail-started "$(cat "$RUNNER_TEMP/outfit-detail-started")"
+
+                  set_ready on
+                  started=$(date -u +%Y-%m-%dT%H:%M:%S)
+                  copilot svc deploy \
+                    --app "$COPILOT_APP" \
+                    --name "$COPILOT_SVC" \
+                    --env "$COPILOT_ENV" \
+                    --tag "$GITHUB_SHA" \
+                    --detach
+                  scripts/ci/wait-copilot-stack.sh "$COPILOT_APP-$COPILOT_ENV-$COPILOT_SVC" "$started"
+                  uv run --no-project --with PyYAML==6.0.3 python3 scripts/ci/verify-copilot-rollout.py verify \
+                    --app "$COPILOT_APP" --env "$COPILOT_ENV" --sha "$GITHUB_SHA" --api-ready on \
+                    --state "$RUNNER_TEMP/outfit-props-rollout.json" --api-started "$started" \
+                    --detail-started "$(cat "$RUNNER_TEMP/outfit-detail-started")"
 
 
             # ALB 헬스체크(/healthz)는 프로세스가 살아 있는지만 본다 — 의존성은 안 본다.

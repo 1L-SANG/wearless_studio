@@ -24,6 +24,13 @@ class OutfitReferenceError(ValueError):
         super().__init__(f"outfit_reference_unavailable:{role}")
 
 
+def valid_roles(roles) -> bool:
+    """Only accessories repeat, up to three, after the other ordered roles."""
+    return (all(role in EXTRA_ROLES for role in roles)
+            and all(roles.count(role) <= (3 if role == "accessory" else 1) for role in EXTRA_ROLES)
+            and tuple(roles) == tuple(role for role in EXTRA_ROLES for _ in range(roles.count(role))))
+
+
 def freeze(value, clothing_type: str) -> dict | None:
     """Keep only IDs and provenance. None denotes a pre-outfit legacy generation."""
     if value is None:
@@ -44,6 +51,13 @@ def freeze(value, clothing_type: str) -> dict | None:
         if (identifier is not None and (not isinstance(identifier, str) or not identifier.strip())) or origin not in ("ai", "user"):
             raise OutfitReferenceError(role)
         slots[role] = {"itemId": identifier, "origin": origin}
+        if role == "accessory" and identifier is not None and "extraIds" in slot:
+            extras = slot["extraIds"]
+            if not isinstance(extras, list) or any(not isinstance(item, str) or not item.strip() for item in extras):
+                raise OutfitReferenceError(role)
+            identifiers = list(dict.fromkeys([identifier, *extras]))[:3]
+            if len(identifiers) > 1:
+                slots[role]["extraIds"] = identifiers[1:]
     return {"version": 1, "slots": slots}
 
 
@@ -94,14 +108,14 @@ async def resolve_images(app, *, snapshot, clothing_type, user_id, project_id,
     selected = freeze(snapshot, clothing_type)
     slots = (selected or {}).get("slots") or {}
     roles = ("inner",) if mannequin_only else EXTRA_ROLES
-    wanted = [(role, slots[role]["itemId"]) for role in roles
-              if slots.get(role, {}).get("itemId")]
+    wanted = [(role, identifier) for role in roles if slots.get(role, {}).get("itemId")
+              for identifier in [slots[role]["itemId"], *(slots[role].get("extraIds", []) if role == "accessory" else [])]]
     complement = matching.complementary_type(clothing_type)
     complement_id = slots.get(complement, {}).get("itemId")
     if not wanted and not complement_id:
         return []
     assets = []
-    expected = {row["role"]: row for row in reference_assets or ()}
+    expected = {(row["role"], row["itemId"]): row for row in reference_assets or ()}
     async with app.state.pool.connection() as conn:
         rows = await repo.list_active_matching_items(conn, user_id, project_id)
         catalog = {str(row["id"]): row for row in rows}
@@ -118,9 +132,8 @@ async def resolve_images(app, *, snapshot, clothing_type, user_id, project_id,
                     or row.get("is_custom") or row.get("owner_user_id")
                     or not row.get("image_asset_id") or not row.get("image_key")):
                 raise OutfitReferenceError(role)
-            binding = expected.get(role)
-            if binding and (binding.get("itemId") != identifier
-                            or binding.get("assetId") != str(row["image_asset_id"])):
+            binding = expected.get((role, identifier))
+            if expected and (not binding or binding.get("assetId") != str(row["image_asset_id"])):
                 raise OutfitReferenceError(role)
             asset = await repo.get_asset_for_user(conn, user_id, row["image_asset_id"])
             if (not asset or asset.get("source") != "seed"
@@ -134,7 +147,8 @@ async def resolve_images(app, *, snapshot, clothing_type, user_id, project_id,
             if not data:
                 raise ValueError("empty outfit image")
             digest = hashlib.sha256(data).hexdigest()
-            if expected.get(role) and expected[role].get("imageSha256") != digest:
+            binding = expected.get((role, identifier))
+            if binding and binding.get("imageSha256") != digest:
                 raise OutfitReferenceError(role)
             images.append((role, await asyncio.to_thread(catalog_image, asset["mime_type"], data)))
             if resolved_assets is not None:

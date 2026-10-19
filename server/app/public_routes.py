@@ -20,7 +20,7 @@ from .auth import optional_user
 from .client_ip import client_ip as _client_ip
 from .r2 import ext_for_mime
 from .services import outfit
-from .routes import MAX_UPLOAD_BYTES
+from .routes import MAX_UPLOAD_BYTES, _require_outfit_props_ready
 from .workers.analyze_job import analyze_image_bytes, analyze_core_image_bytes, extract_image_features
 
 logger = logging.getLogger("wearless.public_analysis")
@@ -191,7 +191,7 @@ def _handoff_unavailable():
     })
 
 
-async def _public_outfit_fields(request, source_images, product, analysis, slots):
+async def _public_outfit_fields(request, source_images, product, analysis, slots, *, role=None, handoff=None):
     items = []
     pool = getattr(request.app.state, "pool", None)
     if pool is not None:
@@ -209,13 +209,48 @@ async def _public_outfit_fields(request, source_images, product, analysis, slots
             genders=outfit.product_context(product, analysis)["targetGenders"], prune_invalid_ai=True)
     except outfit.OutfitSelectionError as exc:
         raise _bad_request(str(exc), "선택한 코디 아이템을 다시 확인해 주세요.") from None
-    fields = outfit.start_recommendation(request.app.state.settings, request.app.state.r2,
-        product, {**analysis, "outfitSelections": selections}, source_images, items,
-        slots=slots, semaphore=_analysis_semaphore)
+    if role is not None:
+        if role not in outfit.PROP_ROLES:
+            raise _bad_request("invalid_outfit_props_role", "소품 종류를 다시 확인해 주세요.")
+        try:
+            contract = outfit.verify_handoff(json.loads(handoff or "null"), request.app.state.settings.r2_secret_access_key)
+            if not outfit.source_binding_matches(contract, source_images, slots) or not outfit.promotion_context_matches(
+                contract["context"], outfit.product_context(product, analysis)):
+                raise outfit.OutfitSelectionError("outfit_context_changed")
+        except (ValueError, TypeError, KeyError):
+            raise _bad_request("invalid_analysis_handoff", "분석 결과를 다시 확인해 주세요.") from None
+        fields = outfit.start_props(request.app.state.settings, request.app.state.r2, product,
+            {**analysis, "outfitSelections": selections,
+             "outfitRecommendation": outfit.refreshed_props(contract["outfitRecommendation"])},
+            source_images, items, role, slots=slots, semaphore=_analysis_semaphore)
+        fields["outfitSelections"] = selections
+    else:
+        fields = outfit.start_recommendation(request.app.state.settings, request.app.state.r2,
+            product, {**analysis, "outfitSelections": selections}, source_images, items,
+            slots=slots, semaphore=_analysis_semaphore)
     secret = request.app.state.settings.r2_secret_access_key
     if isinstance(secret, str) and len(secret) >= 16:
         fields[outfit.HANDOFF_KEY] = outfit.issue_handoff(fields, source_images, slots, secret, context=outfit.product_context(product, analysis))
     return {**fields, **outfit.read_fields(fields, request.app.state.settings.outfit_timeout_seconds)}
+
+
+@router.get("/outfit-capabilities", tags=["Public Analysis"])
+async def public_outfit_capabilities(request: Request):
+    ready = request.app.state.settings.outfit_props_ready
+    return JSONResponse({"props": ready, "maxAccessories": 3 if ready else 1},
+                        headers={"Cache-Control": "no-store"})
+
+
+@router.post("/outfit-props-recommendations", tags=["Public Analysis"])
+async def public_recommend_outfit_props(request: Request, images: list[UploadFile] = File(...),
+        slots: list[str] | None = Form(default=None), productContext: str | None = Form(default=None),
+        analysisContext: str | None = Form(default=None), role: str | None = Form(default=None),
+        handoff: str | None = Form(default=None), authenticated_user: str | None = Depends(optional_user)):
+    if role not in outfit.PROP_ROLES:
+        raise _bad_request("invalid_outfit_props_role", "소품 종류를 다시 확인해 주세요.")
+    _require_outfit_props_ready(request.app.state.settings)
+    return await public_recommend_outfit(request, images, slots, productContext, analysisContext,
+                                         role, handoff, authenticated_user)
 
 
 @router.post("/outfit-recommendations/status", tags=["Public Analysis"])
@@ -243,6 +278,9 @@ async def public_outfit_status(request: Request, body: dict = Body(...)):
         recommendation.pop("fallbackReady", None)
         fields = {"outfitRecommendation": outfit.recommendation_display(recommendation, pools, request.app.state.r2),
                   "outfitSelections": contract["outfitSelections"]}
+    for role in outfit.PROP_ROLES:
+        outfit.copy_prop(fields["outfitRecommendation"], recommendation, role)
+    fields["outfitRecommendation"] = outfit.refreshed_props(fields["outfitRecommendation"])
     fields = outfit.read_fields(fields, request.app.state.settings.outfit_timeout_seconds, include_internal=True,
                                items=items, r2=request.app.state.r2)
     fields[outfit.HANDOFF_KEY] = outfit.issue_bound_handoff(fields, contract["sourceBinding"], secret,
@@ -253,7 +291,8 @@ async def public_outfit_status(request: Request, body: dict = Body(...)):
 @router.post("/outfit-recommendations", tags=["Public Analysis"])
 async def public_recommend_outfit(request: Request, images: list[UploadFile] = File(...),
         slots: list[str] | None = Form(default=None), productContext: str | None = Form(default=None),
-        analysisContext: str | None = Form(default=None), authenticated_user: str | None = Depends(optional_user)):
+        analysisContext: str | None = Form(default=None), role: str | None = Form(default=None),
+        handoff: str | None = Form(default=None), authenticated_user: str | None = Depends(optional_user)):
     if not isinstance(analysisContext, str) or len(analysisContext) > 16384:
         raise _bad_request("invalid_outfit_context", "상품 정보를 다시 확인해 주세요.")
     try:
@@ -266,7 +305,7 @@ async def public_recommend_outfit(request: Request, images: list[UploadFile] = F
     analysis = {key: analysis[key] for key in ("clothingType", "subCategory", "customCategory", "targetGenders", "styleTags", "swatchSuggestions", "fit", "materials", "outfitSelections") if key in analysis}
     async with _public_slot(request, authenticated_user, _analysis_semaphore, "analysis"):
         source_images, product = await _read_analysis_inputs(images, slots, productContext)
-        fields = await _public_outfit_fields(request, source_images, product, analysis, slots)
+        fields = await _public_outfit_fields(request, source_images, product, analysis, slots, role=role, handoff=handoff)
     return JSONResponse({"data": fields})
 
 

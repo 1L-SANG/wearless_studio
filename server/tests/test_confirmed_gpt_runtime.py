@@ -222,6 +222,28 @@ def test_non_outer_packet_cannot_add_an_inner_layer(monkeypatch):
         _build(monkeypatch, outfit_images=(("inner", InlineImage("image/png", b"inner")),))
 
 
+def test_packet_preserves_three_distinct_accessory_images_with_repeated_labels(monkeypatch):
+    extras = tuple((role, InlineImage("image/png", name.encode())) for role, name in (
+        ("inner", "inner"), ("footwear", "shoes"), ("bag", "bag"),
+        ("accessory", "hat"), ("accessory", "watch"), ("accessory", "necklace")))
+    packet = _build(monkeypatch, clothing_type="outer", matches=(InlineImage("image/png", b"bottom"),),
+                    outfit_images=extras)
+    assert len(packet.images) == 12
+    assert [image.data for image in packet.images[4:]] == [
+        b"inner", b"bottom", b"shoes", b"bag", b"hat", b"watch", b"necklace", b"example"]
+    assert packet.manifest.count("OUTFIT ACCESSORY") == 3
+    prompt = compile_confirmed_gpt_prompt(packet.prompt_input)
+    assert prompt.count("SELECTED ACCESSORY EVIDENCE — owns only") == 3
+
+
+@pytest.mark.parametrize("roles", [("accessory",) * 4, ("footwear", "footwear"),
+                                   ("accessory", "bag", "accessory")])
+def test_packet_rejects_more_than_three_accessories_or_noncanonical_roles(monkeypatch, roles):
+    with pytest.raises(confirmed_gpt_runtime.ConfirmedGptRuntimeError):
+        _build(monkeypatch, clothing_type="outer", outfit_images=tuple(
+            (role, InlineImage("image/png", str(i).encode())) for i, role in enumerate(roles)))
+
+
 def _observation_contract(front, *, extra_slot=None, changes=None):
     """Use the real AG-01 validator and byte binding, not a forged persisted fixture."""
     base = _contract(front)

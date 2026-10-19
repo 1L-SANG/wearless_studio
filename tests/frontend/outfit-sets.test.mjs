@@ -5,7 +5,7 @@ import { isGenerationRelevantAnalysisPatch } from '../../src/lib/generationRelev
 const sets = [{ slots: { bottom: 'b1', footwear: 's1', bag: 'bag1', accessory: null }, reason: 'one' },
   { slots: { bottom: 'b2', footwear: 's2', bag: 'bag2', accessory: null }, reason: 'two' }];
 const analysis = () => ({ clothingType: 'top', matchClothing: [{ id: 'b1' }, { id: 'b2' }],
-  modelId: 'chosen-model', outfitRecommendation: { sets, candidates: { bag: [{ id: 'bag1' }, { id: 'bag2' }] } },
+  modelId: 'chosen-model', outfitRecommendation: { sets, props: { bag: { status: 'ready', picks: ['bag1', 'bag2'] } }, candidates: { bag: [{ id: 'bag1' }, { id: 'bag2' }] } },
   outfitSelections: { version: 1, setIndex: 0, optional: { bag: false, accessory: false }, slots: {
     bottom: { itemId: 'mine', origin: 'user' }, footwear: { itemId: null, origin: 'user' },
     bag: { itemId: 'remembered', origin: 'user' } } } });
@@ -22,7 +22,7 @@ test('세트 적용은 직접 선택을 바꾸고 user null과 꺼진 소품 기
   assert.equal('modelId' in patch, false);
 });
 
-test('소품은 기본 꺼짐이며 켜면 현 세트, 다시 켜면 기억한 항목을 사용한다', () => {
+test('소품은 기본 꺼짐이며 켜면 현재 번호의 props 추천을 사용한다', () => {
   const current = analysis(); delete current.outfitSelections;
   assert.deepEqual(outfit.normalizeOutfitSelections(null, 'top').optional, { bag: false, accessory: false });
   const on = { ...current, ...outfit.toggleOutfitOptional(current, 'bag', true) };
@@ -32,7 +32,7 @@ test('소품은 기본 꺼짐이며 켜면 현 세트, 다시 켜면 기억한 �
   assert.equal('bag' in outfit.outfitSelectionIds(off.outfitSelections), false);
   assert.equal(isGenerationRelevantAnalysisPatch({ outfitSelections: off.outfitSelections }, on), true);
   off.outfitSelections.setIndex = 1;
-  assert.equal(outfit.toggleOutfitOptional(off, 'bag', true).outfitSelections.slots.bag.itemId, 'bag1');
+  assert.equal(outfit.toggleOutfitOptional(off, 'bag', true).outfitSelections.slots.bag.itemId, 'bag2');
 });
 
 test('pending 뒤 늦은 AI 응답은 모든 현재 선택과 소품 상태를 보존한다', () => {

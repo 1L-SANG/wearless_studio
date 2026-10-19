@@ -380,8 +380,8 @@ def _outfit_lock(outfit: OutfitLock) -> str:
     if not isinstance(outfit, OutfitLock) or not isinstance(outfit.matching_attached, bool):
         raise ConfirmedGptPromptError("confirmed_gpt_outfit_lock_required")
     selected = outfit.selected_roles
-    if (not isinstance(selected, tuple) or any(role not in _OUTFIT_ROLES for role in selected)
-            or selected != tuple(role for role in _OUTFIT_ROLES if role in selected)):
+    from ..services.outfit_generation import valid_roles
+    if not isinstance(selected, tuple) or not valid_roles(selected):
         raise ConfirmedGptPromptError("confirmed_gpt_invalid_outfit_roles")
     fixed_inner = "none" if outfit.fixed_inner is None else _line(
         outfit.fixed_inner, "fixed_inner"

@@ -227,3 +227,21 @@ for (const [from, to] of [['top', 'bottom'], ['bottom', 'top'], ['outer', 'top']
     assert.equal(result.outfitRecommendation.contextKey, 'new-context');
   });
 }
+
+test('공개 소품 응답은 상태 조회로 합쳐진 인계 서명을 받은 뒤 저장한다', async t => {
+  const analysis = initial(); await mock.restoreInputDraft({ clothingType: 'top', colors: [] }, analysis);
+  const first = { outfitRecommendation: { ...analysis.outfitRecommendation,
+    props: { bag: { status: 'ready', picks: ['bag'] } } }, outfitRecommendationHandoff: { signature: 'bag-only' } };
+  const combined = { outfitRecommendation: { ...first.outfitRecommendation,
+    props: { ...first.outfitRecommendation.props, accessory: { status: 'ready', picks: ['ear'] } } },
+    outfitRecommendationHandoff: { signature: 'combined' } };
+  t.mock.method(remote, 'recommendOutfitProps', async () => first);
+  let statusCalls = 0;
+  t.mock.method(remote, 'getOutfitRecommendation', async (_id, options) => {
+    statusCalls++; assert.equal(options.handoff.signature, 'bag-only'); return combined;
+  });
+  const response = await api.recommendOutfitProps(null, 'bag');
+  assert.equal(statusCalls, 1);
+  assert.equal(response.outfitRecommendationHandoff.signature, 'combined');
+  assert.deepEqual((await mock.getAnalysis(null)).outfitRecommendation.props, combined.outfitRecommendation.props);
+});

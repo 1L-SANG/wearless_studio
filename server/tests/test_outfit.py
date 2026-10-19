@@ -85,7 +85,7 @@ def test_empty_catalog_skips_model_call(monkeypatch):
 
 def test_visual_result_validated_and_user_fixed_slots_kept(monkeypatch):
     outfit.clear_cache()
-    call = AsyncMock(return_value={"sets": [{"slots": {"bottom": "b2", "footwear": None, "bag": "bag", "accessory": None}, "reason": "편안한 조합", "concept": "casual"}]})
+    call = AsyncMock(return_value={"sets": [{"slots": {"bottom": "b2", "footwear": None}, "reason": "편안한 조합", "concept": "casual"}]})
     monkeypatch.setattr(outfit.outfit_recommender, "recommend", call)
     items = [row("b1", "bottom"), row("b2", "bottom"), row("shoe", "shoes"), row("bag", "bag")]
     analysis = {"subCategory": "knit", "outfitSelections": {"version": 1, "slots": {
@@ -132,14 +132,14 @@ def test_stale_ai_patch_cannot_replace_user_selection():
 
 def test_optional_props_are_empty_in_fallback_and_can_be_empty_in_visual_result(monkeypatch):
     outfit.clear_cache()
-    items = [row("bag-optional", "bag"), row("accessory-optional", "accessory")]
+    items = [row("shoe-optional", "shoes"), row("bag-optional", "bag"), row("accessory-optional", "accessory")]
     result = asyncio.run(outfit.recommend(make_settings(), FakeR2(), {"clothingType": "dress"}, {},
                        [(b"optional", "image/png")], items, slots=["Front"]))
     assert result["outfitSelections"]["optional"]["bag"] is False
     assert result["outfitSelections"]["optional"]["accessory"] is False
     outfit.clear_cache()
     monkeypatch.setattr(outfit.outfit_recommender, "recommend", AsyncMock(return_value={
-        "sets": [{"slots": {"footwear": None, "bag": None, "accessory": None}, "reason": "상품을 살리는 간결한 코디", "concept": "minimal"}]}))
+        "sets": [{"slots": {"footwear": "shoe-optional"}, "reason": "상품을 살리는 간결한 코디", "concept": "minimal"}]}))
     result = asyncio.run(outfit.recommend(make_settings(gemini_api_key="mock", outfit_recommendation_enabled=True),
                        FakeR2(), {"clothingType": "dress"}, {}, [(b"optional-ai", "image/png")], items, slots=["Front"]))
     assert result["outfitRecommendation"]["status"] == "ready"
@@ -152,7 +152,7 @@ def test_parallel_same_context_joins_one_call_and_ui_has_full_catalog(monkeypatc
         nonlocal calls
         calls += 1
         await asyncio.sleep(0.01)
-        return {"sets": [{"slots": {"bottom": "a", "footwear": None, "bag": None, "accessory": None}, "reason": "조화로운 코디", "concept": "tonal"}]}
+        return {"sets": [{"slots": {"bottom": "a", "footwear": None}, "reason": "조화로운 코디", "concept": "tonal"}]}
     monkeypatch.setattr(outfit.outfit_recommender, "recommend", model)
     items = [row(letter, "bottom") for letter in ("a", "b", "c", "d")]
     async def run():
@@ -182,7 +182,7 @@ def test_model_call_is_gemini_only_low_4096_with_bounded_image_count(monkeypatch
                 context=context, fixed={"version": 1, "slots": {}}))
     assert call.await_count == 1
     assert call.call_args.args[1] == "gemini-3.8-flash"
-    assert len(call.call_args.args[3]) == 11
+    assert len(call.call_args.args[3]) == 7
     assert call.call_args.kwargs["thinking_level"] == "low"
     assert call.call_args.kwargs["max_output_tokens"] == 4096
     assert "outerwear shirt worn over an inner layer" in call.call_args.args[2]

@@ -24,9 +24,10 @@ from app.agents.vision_llm import _to_gemini_schema
 from app.services import outfit
 
 
-async def measure_request(local_images, source_images, pools, *, context, fixed):
+async def measure_request(local_images, source_images, pools, *, context, fixed, prop_role=None):
     """Only prepares a request; local_images.get_bytes must read local bytes."""
-    request = await agent.build_request(local_images, source_images, pools, context=context, fixed=fixed)
+    request = (await agent.build_props_request(local_images, source_images, pools, context=context) if prop_role
+               else await agent.build_request(local_images, source_images, pools, context=context, fixed=fixed))
     sizes = []
     for image in request["images"]:
         with Image.open(BytesIO(image.data)) as decoded:
@@ -36,7 +37,7 @@ async def measure_request(local_images, source_images, pools, *, context, fixed)
     prompt_chars = len(request["prompt"])
     system_chars = len(request["system_prompt"])
     return {
-        "prompt_version": agent.PROMPT_VERSION,
+        "prompt_version": agent.PROPS_PROMPT_VERSION if prop_role else agent.PROMPT_VERSION,
         "candidates_per_role": {role: len(pool) for role, pool in pools.items()},
         "image_count": len(sizes),
         "product_image": {"width": sizes[0][0], "height": sizes[0][1]},
@@ -46,7 +47,7 @@ async def measure_request(local_images, source_images, pools, *, context, fixed)
         "system_prompt_chars": system_chars,
         "prompt_chars": prompt_chars + system_chars,
         "schema_chars": len(schema_text),
-        "max_output_tokens": agent.MAX_OUTPUT_TOKENS,
+        "max_output_tokens": 1024 if prop_role else agent.MAX_OUTPUT_TOKENS,
     }
 
 
@@ -74,7 +75,7 @@ def _catalog(kinds):
         for index in range(24):
             color_group, color_name = colors[index % len(colors)]
             items.append({"id": str(uuid5(NAMESPACE_URL, f"outfit-dry-run/{kind}/{index}")),
-                "name": f"{color_name} 코디 아이템 {index + 1}", "clothing_type": kind, "category": kind,
+                "name": f"{color_name} 코디 아이템 {index + 1}", "clothing_type": kind, "category": (["귀걸이", "목걸이", "반지", "벨트", "모자", "시계"][index % 6] if kind == "accessory" else kind),
                 "gender": "unisex", "is_active": True, "is_custom": False,
                 "image_asset_id": f"fixture-{kind}-{index}", "image_key": f"fixture/{kind}-{index}.png",
                 "thumb_key": f"fixture/{kind}-{index}-thumb.png", "sort_order": index,
@@ -90,6 +91,9 @@ async def representative_runs(candidates_per_role=6):
         ("top_bottom_only", "top", "knit", ["bottom"]),
         ("top_all_roles", "top", "shirt", ["bottom", "shoes", "bag", "accessory"]),
         ("outer_all_roles", "outer", "jacket", ["inner", "bottom", "shoes", "bag", "accessory"]),
+        ("dress_all_roles", "dress", None, ["shoes", "bag", "accessory"]),
+        ("props_bag", "top", "shirt", ["bag"]),
+        ("props_accessory", "top", "shirt", ["accessory"]),
     ]
     local_images = _LocalImages()
     source = [(_png((768, 1024)), "image/png")]
@@ -100,8 +104,10 @@ async def representative_runs(candidates_per_role=6):
             {"subCategory": subtype, "fit": "regular", "styleTags": ["minimal", "daily"],
              "materials": [{"name": "코튼", "ratio": 100}]})
         fixed = outfit.normalize_selections(None, kind)
-        pools = outfit.candidate_pools(_catalog(kinds), context, fixed, limit=candidates_per_role)
-        measured = await measure_request(local_images, source, pools, context=context, fixed=fixed)
+        prop_role = name.removeprefix("props_") if name.startswith("props_") else None
+        pools = ({prop_role: outfit.props_candidates(_catalog(kinds), context, prop_role, limit=candidates_per_role)}
+                 if prop_role else outfit.clothing_pools(outfit.candidate_pools(_catalog(kinds), context, fixed, limit=candidates_per_role)))
+        measured = await measure_request(local_images, source, pools, context=context, fixed=fixed, prop_role=prop_role)
         results.append({"scenario": name, "fixture_catalog_count": 24 * len(kinds), **measured})
     return results
 

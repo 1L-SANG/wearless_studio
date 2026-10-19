@@ -1241,8 +1241,8 @@ def build_manifest(
     for a in prod_assets:
         lines.append(f"{i}. {_SLOT_LABEL.get(a.get('slot'), 'PRODUCT — view of the garment')}")
         i += 1
-    from ..services.outfit_generation import ROLE_LABELS
-    if len(set(outfit_roles)) != len(outfit_roles) or any(role not in ROLE_LABELS for role in outfit_roles):
+    from ..services.outfit_generation import ROLE_LABELS, valid_roles
+    if not valid_roles(outfit_roles):
         raise ValueError("invalid_outfit_roles")
     if "inner" in outfit_roles:
         lines.append(f"{i}. {ROLE_LABELS['inner']}")
@@ -1257,8 +1257,8 @@ def build_manifest(
         ) else _MATCH_LABEL
         lines.append(f"{i}. {label}")
         i += 1
-    for role in ("footwear", "bag", "accessory"):
-        if role in outfit_roles:
+    for role in outfit_roles:
+        if role != "inner":
             lines.append(f"{i}. {ROLE_LABELS[role]}")
             i += 1
     if has_face:
@@ -1829,6 +1829,10 @@ def base_fingerprint(settings: Settings, cut_spec: dict, product: dict,
         "prompt": hashlib.sha256(request.prompt.encode("utf-8")).hexdigest(),
         "images": [[image.mime, hashlib.sha256(image.data).hexdigest()] for image in images],
     }
+    if request.spec["cutType"] in _WORN_CUTS and cut_spec.get("outfitSelectionsSnapshot") is not None:
+        from ..services.outfit_generation import freeze
+        material["outfitSelectionsSnapshot"] = freeze(
+            cut_spec["outfitSelectionsSnapshot"], request.clothing_type)
     raw = json.dumps(material, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 

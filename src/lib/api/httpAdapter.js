@@ -1,6 +1,6 @@
 import { uploadWardrobeGif, readWardrobeGifs, writeWardrobeGifs, mergeWardrobeGifs } from './gifWardrobe.js';
 import { preparePublicAnalysis, publicAnalysisForm } from './publicAnalysisRequest.js';
-import { hasOutfitContextChange, mergeOutfitAnalysis } from '../outfitSelections.js';
+import { hasOutfitContextChange, mergeOutfitAnalysis, assertOutfitAccessoriesSaved, requireOutfitAccessorySupport } from '../outfitSelections.js';
 import { stripFeatureClientFields } from '../featureRun.js';
 import { stripJpegMetadata } from '../jpegMetadata.js';
 /* =============================================================
@@ -550,6 +550,32 @@ export const httpAdapter = {
     analysisCache = { projectId, analysis: merged };
     return response;
   },
+  async getOutfitCapabilities({ signal } = {}) {
+    if (signal?.aborted) throw signal.reason || new DOMException('Aborted', 'AbortError');
+    try {
+      const result = await http('/v1/public/outfit-capabilities', { requireAuth: false, signal, suppressErrorLog: true });
+      return { props: result?.props === true, maxAccessories: result?.maxAccessories === 3 ? 3 : 1 };
+    } catch (error) {
+      if (signal?.aborted || error?.name === 'AbortError') throw error;
+      return { props: false, maxAccessories: 1 };
+    }
+  },
+  async recommendOutfitProps(projectId, role, { product, analysis, photos, signal } = {}) {
+    if (!['bag', 'accessory'].includes(role)) throw new Error('지원하지 않는 소품이에요.');
+    if (projectId != null) {
+      const response = await http(`/v1/projects/${projectId}/analysis/outfit-props-recommendations`, {
+        method: 'POST', body: { role }, signal,
+      });
+      return response?.data || response;
+    }
+    const prepared = photos ? { photos } : await preparePublicAnalysis(product, { signal });
+    const analysisContext = Object.fromEntries(['clothingType', 'subCategory', 'customCategory',
+      'targetGenders', 'styleTags', 'fit', 'materials', 'outfitSelections'].map(key => [key, analysis?.[key] ?? null]));
+    const response = await publicHttp('/v1/public/outfit-props-recommendations', publicAnalysisForm(product,
+      prepared.photos, { role, analysisContext: JSON.stringify(analysisContext),
+        ...(analysis?.outfitRecommendationHandoff ? { handoff: JSON.stringify(analysis.outfitRecommendationHandoff) } : {}) }), { signal });
+    return response?.data || {};
+  },
   async getOutfitRecommendation(projectId, { handoff, signal } = {}) {
     if (projectId) return http(`/v1/projects/${projectId}/analysis/outfit-recommendations`, { signal });
     if (!handoff) return {};
@@ -562,9 +588,12 @@ export const httpAdapter = {
     return http(`/v1/projects/${projectId}/analysis/outfit-candidates`);
   },
   async promoteOutfitRecommendation(projectId, handoff, outfitSelections) {
-    return http(`/v1/projects/${projectId}/analysis/outfit-recommendations:promote`, {
+    await requireOutfitAccessorySupport(outfitSelections, () => this.getOutfitCapabilities());
+    const response = await http(`/v1/projects/${projectId}/analysis/outfit-recommendations:promote`, {
       method: 'POST', body: { handoff, ...(outfitSelections ? { outfitSelections } : {}) },
     });
+    assertOutfitAccessoriesSaved(outfitSelections, response);
+    return response;
   },
   async mergePublicPoints({ runId, pointsTicket, featureTicket }) {
     const response = await http('/v1/public/analyze/points-merge', { requireAuth: false, method: 'POST', body: { runId, pointsTicket, featureTicket } });
@@ -773,9 +802,11 @@ export const httpAdapter = {
         body.matchClothing || cached?.matchClothing || [], patch.matchClothing, base.clothingType,
       );
     }
+    if (projectId) await requireOutfitAccessorySupport(body.outfitSelections || cached?.outfitSelections, () => this.getOutfitCapabilities());
     const saved = projectId
       ? await http(`/v1/projects/${projectId}/analysis?merge=1`, { method: 'PATCH', body })
       : mergeAnalysisPatch(base, body);
+    assertOutfitAccessoriesSaved(body.outfitSelections || cached?.outfitSelections, saved);
     let savedAnalysis = { ...saved, frontClosure: saved?.frontClosure ?? null };
     if (savedAnalysis.outfitSelections && !savedAnalysis.clothingType) {
       const productType = base?.clothingType || (await http(`/v1/projects/${projectId}/product`))?.clothingType;

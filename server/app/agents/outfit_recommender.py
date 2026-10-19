@@ -11,7 +11,8 @@ from .gemini_image import InlineImage
 from .catalog_image import catalog_image
 from .vision_llm import _call_gemini
 
-PROMPT_VERSION = "outfit_recommendation_v2"
+PROMPT_VERSION = "outfit_recommendation_v3"
+PROPS_PROMPT_VERSION = "outfit_props_v1"
 _PROMPT = Path(__file__).resolve().parents[2] / "prompts" / f"{PROMPT_VERSION}.txt"
 PRODUCT_IMAGE_MAX_EDGE = 512
 CANDIDATE_IMAGE_MAX_EDGE = 256
@@ -35,7 +36,7 @@ _FAMILY_GUIDANCE = {
     "outer": "Keep the selling outerwear dominant. Coordinate its visible opening, inner neckline, hem and bottom volume without changing the product fit.",
     "top": "Treat the selling top as the visible upper garment. Choose a complementary bottom and footwear; do not invent a replacement top or extra outer layer.",
     "bottom": "Keep the selling bottom's waistband, cut, drape and hem legible. Coordinate the top length and footwear weight without altering the product silhouette.",
-    "dress": "Preserve the complete dress silhouette. Do not add a complementary top or bottom; coordinate shoes and only useful optional accessories.",
+    "dress": "Preserve the complete dress silhouette. Do not add a complementary top or bottom; coordinate shoes.",
 }
 _SUBTYPE_GUIDANCE = {
     ("outer", "coat"): "Assess the coat hem, visible trouser length and footwear together; an inner should separate naturally at the opening without becoming the main focal point.",
@@ -99,7 +100,7 @@ def build_prompt(context, pools, fixed):
         _SUBTYPE_GUIDANCE.get((context["clothingType"], subtype), ""),
     ) if part)
     data = {"product": {**context, "subtypeDescription": description, "stylingGuidance": guidance},
-            "fixedSelections": {role: entry for role, entry in fixed["slots"].items() if entry.get("origin") == "user"},
+            "fixedSelections": {role: entry for role, entry in fixed["slots"].items() if role in pools and entry.get("origin") == "user"},
             "candidates": {role: [{key: item.get(key) for key in ("id", "name", "clothing_type", "category",
                            "color_name", "color_group", "style_tags", "fit", "length")} for item in pool]
                            for role, pool in pools.items()}}
@@ -114,13 +115,10 @@ def build_prompt(context, pools, fixed):
 
 async def build_request(r2, source_images, pools, *, context, fixed):
     """Prepare the exact bounded request; also used by the offline dry-run."""
+    pools = {role: pool for role, pool in pools.items() if role not in ("bag", "accessory")}
     if not any(pools.values()):
         raise ValueError("empty_outfit_catalog")
-    images = [await asyncio.to_thread(_image, *source_images[0], PRODUCT_IMAGE_MAX_EDGE)]
-    for role, pool in pools.items():
-        for item in pool:
-            data = await asyncio.to_thread(r2.get_bytes, item["thumb_key"])
-            images.append(await asyncio.to_thread(_image, data, "image/png", CANDIDATE_IMAGE_MAX_EDGE, catalog=True))
+    images = await _request_images(r2, source_images, pools)
     schema = {"type": "object", "additionalProperties": False,
         "properties": {"sets": {"type": "array", "minItems": 1, "maxItems": 3,
             "items": {"type": "object", "additionalProperties": False,
@@ -141,3 +139,39 @@ async def recommend(settings, r2, source_images, pools, *, context, fixed):
         request["images"], request["schema"], settings.outfit_timeout_seconds,
         thinking_level="low", max_output_tokens=MAX_OUTPUT_TOKENS,
         metadata={}, system_prompt=request["system_prompt"])
+
+
+async def _request_images(r2, source_images, pools):
+    async def thumbnail(item):
+        data = await asyncio.to_thread(r2.get_bytes, item["thumb_key"])
+        return await asyncio.to_thread(_image, data, "image/png", CANDIDATE_IMAGE_MAX_EDGE, catalog=True)
+    # gather preserves manifest order even when downloads finish out of order.
+    return list(await asyncio.gather(
+        asyncio.to_thread(_image, *source_images[0], PRODUCT_IMAGE_MAX_EDGE),
+        *(thumbnail(item) for pool in pools.values() for item in pool)))
+
+
+async def build_props_request(r2, source_images, pools, *, context):
+    if len(pools) != 1 or next(iter(pools)) not in ("bag", "accessory") or not any(pools.values()):
+        raise ValueError("invalid_outfit_props_role")
+    role, pool = next(iter(pools.items()))
+    manifest = ["1. PRODUCT original front photograph; preserve its color, detail and fit."]
+    manifest += [f"{i}. CANDIDATE role={role}, id={item['id']}" for i, item in enumerate(pool, 2)]
+    data = {"product": context, "role": role, "candidates": [
+        {key: item.get(key) for key in ("id", "name", "category", "color_name", "color_group", "style_tags", "fit", "length")}
+        for item in pool]}
+    prompt = (_PROMPT.with_name(PROPS_PROMPT_VERSION + ".txt").read_text()
+        + "\nIMAGE MANIFEST\n" + "\n".join(manifest) + "\nPRODUCT DATA JSON\n" + json.dumps(data, ensure_ascii=False))
+    schema = {"type": "object", "additionalProperties": False, "properties": {
+        "picks": {"type": "array", "minItems": 1, "maxItems": 3,
+                  "items": {"type": "string", "enum": [str(item["id"]) for item in pool]}},
+        "reason": {"type": "string", "maxLength": 200}}, "required": ["picks", "reason"]}
+    return {"prompt": prompt, "images": await _request_images(r2, source_images, pools),
+            "schema": schema, "system_prompt": _SYSTEM}
+
+
+async def recommend_props(settings, r2, source_images, pools, *, context):
+    request = await build_props_request(r2, source_images, pools, context=context)
+    return await _call_gemini(settings, settings.model_text_gemini_outfit, request["prompt"],
+        request["images"], request["schema"], settings.outfit_props_timeout_seconds,
+        thinking_level="low", max_output_tokens=1024, metadata={}, system_prompt=request["system_prompt"])
