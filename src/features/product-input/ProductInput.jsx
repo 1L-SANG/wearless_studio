@@ -1,3 +1,4 @@
+import { baseProductPhoto } from '@/lib/draftVisuals.js';
 import { isAnalysisFastEntryEnabled } from '@/lib/analysisFastEntry.js';
 import { createDraftFeatureRun, restoreDraftFeatureRun } from '@/lib/featureRunDraft.js';
 import { getActiveFeatureRun } from '@/lib/featureRun.js';
@@ -535,6 +536,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   });
   const [analysisProjectId, setAnalysisProjectId] = useState(null);
   const composeMode = useAppStore((s) => s.composeMode);
+  const visualsEnabled = useAppStore((s) => s.account?.draftVisualsEnabled === true);
   const [expanded, setExpanded] = useState(false);
   // AG-IC 입력 사진 동일성 경고. 서버가 warn 모드일 때만 내려온다(off 면 undefined).
   // 업로드 순간이 아니라 **생성으로 넘어가는 버튼**에서 한 번 띄운다 — 사진을 고르는 도중에
@@ -559,6 +561,13 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   const [preparingLogin, setPreparingLogin] = useState(false);
   const loginSaveRef = useRef(false);
   const loginDraftRef = useRef(null);
+  const visualsRequestedRef = useRef(false);
+  const draftFront = baseProductPhoto(product);
+  useEffect(() => {
+    if (visualsEnabled && session && visualsRequestedRef.current === session.user?.id && !mobile) {
+      void draftSlot.prepareProductVisuals(product).catch(() => {});
+    }
+  }, [draftFront?.id, draftFront?.src, session?.user?.id, visualsEnabled]);
   const slotEnabled = Boolean(session) || isMockMode;
   const doneBlocked = useDoneGuard(!mobile || slotEnabled);   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const toast = useToast();
@@ -605,6 +614,11 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
     setSlotLock(meta);
     if (!meta) setReclaimChoiceOpen(false);
   }), []);
+
+  useEffect(() => draftSlot.onVisuals?.(() => {
+    if (!session || mobile || session.user?.id !== draftSlot.getUserId() || !latestProductRef.current) return;
+    queueProductDraftSave(latestProductRef.current, latestAnalysisRef.current, latestComposeModeRef.current);
+  }), [session?.user?.id, mobile]);
 
   useEffect(() => {
     if (slotEnabled) draftSlot.activate();
@@ -880,10 +894,14 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
           if (session || isMockMode) {
             const draft = await loadDraft();
             if (!draft?.product) throw new Error('저장된 입력 내용을 다시 불러오지 못했어요. 다시 시도해 주세요.');
+            await draftSlot.settleVisualPreparations();
+            if (!isCurrentRun()) return;
             await draftSlot.flush();
+            if (!isCurrentRun()) return;
+            draft.visuals = draftSlot.getVisualHandoff(draft.product, draft.customMatch?.localId);
             // 프로젝트를 만들기 전에 서버 잠금 안에서 active token을 소비한다. 여기서 409면
             // 작업권을 잃은 기기는 승격 자체를 시작하지 않는다.
-            await draftSlot.remove();
+            await draftSlot.remove({ forPromotion: true });
             // CTA 는 **프로젝트 신원까지만** 기다린다. 사진 업로드·상품 저장은 그 뒤로 계속 돌고,
             // 콘티보드가 그 프라미스를 구독해 진행률을 보여주고 마네킹 생성 전에 정착을 기다린다.
             // 이 대기를 CTA 에 두면 사진 용량에 정비례해 화면이 멈춘다(실측 44~211초, 2026-08-17).
@@ -1119,6 +1137,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
     if (!payload?.product) return false;
     if (mobile && autoSaveIntent) latestLocalUpdatedAtRef.current = payload.updatedAt || autoSaveIntent.draftUpdatedAt;
     const restored = restoreDraftProduct(payload);
+    draftSlot.adoptVisualHandoff?.(payload, restored);
     persistedColorsRef.current = restored.colors || [];
     latestProductRef.current = restored;
     latestAnalysisRef.current = (mobile ? payload.analysis : normalizeAnalysisFit(payload.analysis)) || null;
@@ -1399,6 +1418,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       if (draft?.product) {
         if (mobile && autoSaveIntent) latestLocalUpdatedAtRef.current = draft.updatedAt || autoSaveIntent.draftUpdatedAt;
         const restored = restoreDraftProduct(draft);
+        draftSlot.adoptVisualHandoff?.(draft, restored);
         persistedColorsRef.current = restored.colors || [];
         setProduct(restored);
         useAppStore.getState().restoreComposeMode(draft.composeMode);
@@ -1526,6 +1546,10 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   // AI 분석하기 → analyze inline (skeleton below) → fill analysis form below
   const submit = async () => {
     if (authLoading || mobile) return;
+    if (session && !mobile) {
+      visualsRequestedRef.current = session.user?.id;
+      void draftSlot.prepareProductVisuals(product).catch(() => {});
+    }
     const startedAt = Date.now();
     const analysisGeneration = useAppStore.getState().projectGeneration;
     let featureRun = null;

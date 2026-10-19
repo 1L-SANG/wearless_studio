@@ -766,3 +766,35 @@ partial?: {
 후속 컷은 원본의 `spaceGroupId`와 `spaceVariation`, 배경 설정을 상속하고 같은 연속 세트의 장수에 포함한다. `spaceSetMemberOrder`는 없으며 예비 멤버를 쓰지 않는다. 원본이 세트 밖이면 후속 컷도 세트 밖이다. 세트 교체와 삭제는 원본 ID의 생존을 따르고, 원본의 세트 이탈 이동은 후속 컷을 함께 옮긴다. 후킹 프레임 슬롯 후보에서는 항상 제외한다.
 
 후속 블록의 `similarSourceBlockId`는 같은 콘티의 일반 AI 착용 블록을 가리킨다. 생성예시 사진을 편집하지 않는다. 원본을 성공적으로 생성한 뒤 그 결과 사진으로 후속 컷을 만들며, 모두 최초 원본을 기준으로 한다. 후속 카드의 위치와 ID는 유지하고 상품·예시 설정은 원본에서 상속한다. 일반 복제의 동일 사진 재사용과 달리 후속 컷마다 새로운 사진을 생성·정산한다. 사용자 방향·포즈·표정 선택은 없다. 원본 삭제 시 후속 카드를 함께 삭제하며 되돌리기가 가능하다. 서버는 존재하지 않는 원본, 후속 컷을 원본으로 삼는 관계, 제품·디테일·내 사진 원본을 거절한다. 계획과 생성 실행은 서버 작업 소유이며 에디터 마운트·새로고침으로 새 호출을 만들지 않는다.
+
+### 확정 전 초안 정돈 사진 (WO-10, 2026-10-19)
+
+`DRAFT_VISUALS=on`일 때 로그인한 PC 셀러의 기준 색상 앞면과 내 옷을 프로젝트 생성 전에 준비한다. 비회원과 모바일과 태블릿의 원본 표시 및 PC 이어하기 정책은 유지한다. 기본값은 `off`이며 운영 매니페스트에서 자동으로 켜지 않는다. `on`에는 `FAL_KEY`가 필요하다. 기존 `GET /v1/me/account`는 `draftVisualsEnabled:boolean`을 반환한다. 클라이언트는 현재 계정에서 이 값이 명시적으로 `true`일 때만 준비 POST, 조회 GET, 내 옷 준비 업로드를 시작한다. 필드가 없는 구 서버와 계정 전환 직후에는 off로 취급한다.
+
+- `POST /v1/draft-slot/visuals:prepare`: Bearer 인증과 `X-Draft-Token` 필수. 본문은 `{role:"product"|"custom", sourceAssetIds:[UUID], localId?:string}`. 상품은 서버 기준 색상(`isBase`, 없으면 첫 색상)의 `Front` 한 장, 내 옷은 현재 슬롯의 `customMatch.sources` 순서와 일치해야 한다. 원본은 해당 사용자 소유 `purpose=draft_slot` 업로드다.
+- 준비 응답: `{state:"processing"|"ready"|"failed"|"off", jobId:UUID|null, sourceAssetIds:[UUID]}`. 상품에는 기존 상품 visuals와 같은 `front:{tidyStatus,tidyUrl,cutoutStatus,cutoutUrl,width,height}`가 추가된다. 내 옷에는 `{localId,boardUrl,thumbnailUrl,cutoutStatus}`가 추가된다. 한도 또는 보조 인프라 실패는 `state:"off", reason:"limit"|"unavailable"`로 돌려주며 분석을 막지 않는다.
+- `GET /v1/draft-slot/visuals`: 같은 인증과 작업권 검증을 거쳐 현재 원본에 해당하는 `{state,product:준비응답|null,custom:준비응답|null}`를 반환한다. 잡 생성과 재시도는 하지 않는다. 꺼져 있으면 `{state:"off",product:null,custom:null}`이다. 프론트는 5초마다 조회하며 최대 60회, 누적 오류 3회로 제한한다. 완료, 실패, 꺼짐, 사진과 계정 교체, 화면 이탈 때 중단한다.
+- `POST /v1/draft-slot/visuals:promote`: Bearer 인증 필수. `{jobId,projectId,sourceAssetIds}`로 이미 업로드된 프로젝트 원본의 실제 해시를 검증하고 `{joined:true,jobId}`를 반환한다. 슬롯의 작업권을 이미 소비했으므로 초안 토큰은 받지 않는다. 잡과 프로젝트 모두 같은 사용자 소유여야 한다. 상품 저장 전에 호출한다. 연결에 성공하면 상품 PATCH의 선택 필드 `draftVisualJobId`도 전달한다. 이 필드는 상품에 저장하지 않으며 준비 스위치를 끈 직후의 확정도 진행 중 작업에 합류하게 한다.
+- `POST /v1/projects/{id}/analysis/custom-match-item`의 선택 필드 `draftVisualJobId`는 내 옷 등록 직후 같은 방식으로 연결한다. 확정 전에는 `matching_items`를 생성하지 않는다. 표시 갱신은 `boardUrl`, 썸네일, 상태만 병합하며 선택, 순서, 사용자 편집은 보존한다.
+
+초안 슬롯 payload의 선택 필드는 다음과 같다. `customMatch.sources`에는 blob 대신 서버 원본 참조를 저장한다. `draftVisuals`는 화면에서 결과를 현재 원본과 대조하고 확정 때 연결하는 참조이며, IndexedDB의 `visuals`에도 같은 내용을 보존한다. 로컬 복원은 앞면의 `sourceUrl`과 서버 원본 ID를 재사용해 새 업로드와 중복 정돈을 막는다. 내 옷 참조에는 복원을 위한 `sources`도 보존한다. 서버는 이를 신뢰하지 않고 소유권과 사진 해시를 다시 검증한다. GET 응답은 현재 서버 원본 ID와 대조해 잃어버린 로컬 인계 참조도 복구한다. 확정은 준비 요청을 최대 3초만 기다리고, 시간 초과나 취소 때 준비 POST와 내 옷 업로드를 중단한다. 업로드 URL 발급, R2 전송 직전, 완료 요청마다 최초 사용자와 현재 작업 유효성을 검증한다.
+
+```json
+{
+  "customMatch": {
+    "localId": "local-custom-id",
+    "selected": false,
+    "sources": [{"id": "source-uuid", "src": "https://images.example/original.jpg"}]
+  },
+  "draftVisuals": {
+    "product": {"jobId": "job-uuid", "imageId": "source-uuid", "src": "https://images.example/front.jpg", "sourceUrl": "https://images.example/front.jpg", "sourceAssetIds": ["source-uuid"]},
+    "custom": {"jobId": "custom-job-uuid", "localId": "local-custom-id", "sourceAssetIds": ["source-uuid"]}
+  }
+}
+```
+
+기존 `sam_preprocess`, `matching_cutout` kind를 사용하며 `project_id=NULL`, `payload.mode="draft_visuals"`로 분기한다. 사진 스냅샷과 처리 버전은 잡 payload에, 한도 예약과 승격 목적지는 metadata에 기록한다. 같은 사용자와 역할과 사진 해시와 처리 버전의 요청은 하나의 잡에 합류한다. 새 옷은 사용자당 UTC 하루 20벌, 동시에 2건이며 서비스 전체 일예산은 `DRAFT_VISUALS_DAILY_BUDGET_USD`(기본 5달러)다. 실제 호출보다 보수적인 상한을 예약하고 DB 전역 잠금 안에서 확인과 잡 생성을 함께 수행한다. 캐시 합류는 새 한도를 소비하지 않는다. 워커도 유료 호출 전에 같은 전역 잠금과 잡 행 잠금 안에서 DB의 UTC 실행일 예산을 재검증한다. 전날 미집행 예약은 `metadata.budgetDate`로 실행일에 재예약하고 `paidStarted`와 함께 선커밋한다. 당일 예산이 부족하면 호출 없이 `failed/daily_budget`로 끝내 원본을 표시한다.
+
+유료 실행 시작을 잡 행에 먼저 커밋한다. 응답 유실이나 리스 회수 뒤 같은 유료 요청은 재발행하지 않으며, 초안 모드에서는 제공자의 5xx 응답도 자동 재호출하지 않는다. Qwen 원출력은 후속 마스크 호출 전에 저장한다. 승격 요청과 워커 완료는 같은 잡 행을 `FOR UPDATE`로 잠가 완료 순서와 관계없이 결과를 전달한다. 상품 누끼와 정돈본은 프로젝트 소유의 별도 키로 복사하고, 내 옷은 grid와 썸네일과 보드 PNG를 연결한다. 기존 전역 캐노니컬 파일은 변경하거나 소유 자산 행을 빌려오지 않는다. 상품 저장과 내 옷 등록은 클라이언트 잡 ID가 없어도 소유 사용자, 순서 있는 원본 바이트 해시, 역할, 처리 버전으로 기존 잡을 찾아 연결한다. 준비 후 스위치가 off로 바뀌어도 기존 사용자 작업이 있으면 이 조회를 유지한다. 유료 결과의 `result.state=ready`와 대상별 `applied/deliveryState`는 별도로 보존한다. 복사 실패는 대상의 `deliveryState=pending`을 유지하며 프로젝트 visuals 조회, 매칭 후보 조회, 상품 저장 큐잉에서 모델 호출 없이 전달만 재시도한다. 전달 완료, 유료 작업 진행 중, 또는 보존된 ready 결과의 전달 대기일 때만 프로젝트 앞면 정돈을 생략하고 필요한 뒷면만 처리한다. 실패한 잡의 승격 기록만으로는 앞면을 생략하지 않는다. 연결 실패는 프로젝트 확정을 막지 않는다.
+
+확정의 `DELETE /v1/draft-slot?promote=1`은 기존 토큰 소비 순서를 유지하면서 관련 잡에 30분간 승격 대기 표시를 남긴다. 그 사이 워커가 현재 원본을 잃지 않는다. 일반 삭제에는 이 표시를 남기지 않는다. 7일 회수는 내 옷 원본과 초안 파생 결과까지 포함하고, 활성 잡, 승격 대기와 연결, 현재 슬롯과 프로젝트 참조, 전역 캐노니컬 파일을 보존한다. DB 마이그레이션은 추가하지 않는다. 신규 요청을 켜기 전에 모든 서버와 워커를 교체해야 한다. 실연동과 화면 검사는 샌드박스 밖에서 진행한다.

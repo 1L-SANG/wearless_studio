@@ -17,7 +17,7 @@ import contextlib
 import logging
 
 from app import repo as _repo
-from app.services import sam_retry
+from app.services import draft_visuals, sam_retry
 
 log = logging.getLogger("wearless.sam_retry")
 
@@ -54,6 +54,12 @@ class SamRetryPusher:
             try:
                 async with pool.connection() as conn:
                     pushed = await self._push_once(_repo, conn)
+                    # Ready draft output only needs copying, even after its screen is gone.
+                    try:
+                        async with conn.transaction():
+                            await draft_visuals.retry_project_deliveries(self.app, conn)
+                    except Exception:
+                        log.exception('draft delivery sweep failed')
                     await conn.commit()
                 if pushed and hasattr(self.app.state, "dispatcher"):
                     # 새 세대를 걸었으면 디스패처의 유휴 대기를 깨운다 — 라우트가 잡을 만들 때와
@@ -86,6 +92,8 @@ class SamRetryPusher:
         return pushed
 
     async def _push_one(self, repo, conn, job: dict) -> bool:
+        if (job.get("payload") or {}).get("mode") == "draft_visuals":
+            return False  # An uncertain paid draft request is never reissued.
         if not sam_retry.job_is_retryable(job):
             return False                       # 판정 실패 — 다시 돌려도 같은 답이다
         if not sam_retry.within_revive_window(job):

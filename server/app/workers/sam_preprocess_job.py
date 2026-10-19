@@ -31,11 +31,16 @@ ELIGIBLE_VIEWS = canonical_reference.ELIGIBLE_VIEWS
 
 async def run_sam_preprocess_job(app, job: dict) -> None:
     """Worker entrypoint. Signature matches the other kinds in `_WORKERS`."""
+    if (job.get("payload") or {}).get("mode") == "draft_visuals":
+        from app.services.draft_visuals import run
+        await run(app, job)
+        return
     pool = app.state.pool
     job_id, project_id = job["id"], job["project_id"]
     user_id, lease_token = job["user_id"], job["lease_token"]
     s = load_settings()
-    tidy_enabled = getattr(s, "product_tidy", "off") == "on"
+    tidy_enabled = (getattr(s, "product_tidy", "off") == "on"
+                    and not (job.get("payload") or {}).get("skipDraftFront"))
 
     async def finish(status: str, detail: dict) -> None:
         async with pool.connection() as conn:
@@ -58,6 +63,8 @@ async def run_sam_preprocess_job(app, job: dict) -> None:
         product = await repo.get_product(conn, project_id) or {}
         assets = {}
         for slot, asset_id in mannequin.base_color_images(product):
+            if slot == "Front" and (job.get("payload") or {}).get("skipDraftFront"):
+                continue
             if slot in ELIGIBLE_VIEWS and slot not in assets:
                 row = await repo.get_asset_for_user(conn, user_id, asset_id)
                 if row and row.get("r2_key"):

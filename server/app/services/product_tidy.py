@@ -238,6 +238,12 @@ async def visuals(conn, r2, settings, *, user_id: str, project_id: str, product:
     enabled = getattr(settings, "product_tidy", "off") == "on"
     key = preprocess_key(project_id, product, enabled=enabled)
     job = await repo.get_latest_job_generation(conn, user_id, key) if key else None
+    if getattr(settings, "draft_visuals", "off") == "on":
+        front_ids = [aid for view, aid in mannequin.base_color_images(product) if view == "Front"][:1]
+        draft_job = await repo.get_draft_visual_promotion(conn, user_id, project_id, front_ids, "product") if front_ids else None
+        if draft_job:
+            job = draft_job
+            enabled = True
     processing = active(job)
     front = {"tidyStatus": "processing" if processing else "failed",
              "tidyUrl": None, "cutoutStatus": "processing" if processing else "failed" if job else "none",

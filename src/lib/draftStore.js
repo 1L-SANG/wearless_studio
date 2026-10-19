@@ -165,6 +165,7 @@ export async function saveProductDraft(product, analysis = null, composeMode = '
   if (!current()) return null;
   const { photos, cleanProduct, failed, failedIds, failures } = await collectDraftPhotos(product, fetchPhotoBlob, stored?.photos);
   if (!current()) return null;
+  const visuals = draftSlot.getVisualHandoff(product, customMatch?.localId);
   // 커스텀 매칭(내 옷) blob 도 상품 사진과 같은 등급으로 저장한다. 이게 없으면 비로그인
   // 셀러의 OAuth 리다이렉트(=풀 페이지 리로드)에서 메모리의 blob 이 사라져, 확정 승격이
   // 읽을 게 없어지고 내 옷이 조용히 유실된다(2026-08-15 전수조사).
@@ -177,6 +178,7 @@ export async function saveProductDraft(product, analysis = null, composeMode = '
     updatedAt,
     photos,
     customMatch: customMatch && customMatch.uploads?.length ? customMatch : null,
+    ...(Object.keys(visuals).length ? { visuals } : {}),
   }, KEY) : null);
   if (!current()) return null;
   // 이 탭 세션에 '미동기화 입력 있음' 표시 — 복원은 이 플래그가 있을 때만(=같은 세션) 한다.

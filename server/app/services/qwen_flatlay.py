@@ -249,7 +249,7 @@ def _composite(reference: bytes, rgb: np.ndarray, alpha: np.ndarray,
     return out.getvalue() if transparent else matching_cutout.flatten_on_bg(out.getvalue())
 
 
-async def render(settings, cutout_png: bytes, *, transparent: bool = False) -> bytes:
+async def render(settings, cutout_png: bytes, *, transparent: bool = False, on_generated=None) -> bytes:
     canvas, source_area_fraction = await asyncio.to_thread(prepare_canvas, cutout_png)
     prepared = await asyncio.to_thread(fal_api.prepare_image, canvas)
     # 지시서 3.4의 로컬 실험(run_stage5.py)과 같은 복수 image_urls 필드.
@@ -259,6 +259,8 @@ async def render(settings, cutout_png: bytes, *, transparent: bool = False) -> b
         "seed": 7, "num_images": 1, "output_format": "png",
         "image_size": {"width": 768, "height": 1024}})
     generated = await fal_api.fetch_image(body["images"][0]["url"])
+    if on_generated is not None:
+        await on_generated(generated)
     rgb = await asyncio.to_thread(_decode_rgb, generated)
     height, width = rgb.shape[:2]
     # SAM 3가 옷을 못 찾을 때만 BiRefNet으로 한 번 더 찾는다.

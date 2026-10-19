@@ -1,3 +1,4 @@
+import { baseProductPhoto } from '../draftVisuals.js';
 import { api as base } from '@/mock/api.js';
 import { Placeholder } from '@/mock/placeholders.js';
 import { DB } from '@/mock/db.js';
@@ -20,6 +21,7 @@ const error = (code, message, status = 400) => Object.assign(new Error(message),
 const hasKey = (key) => typeof key === 'string' && !!key.trim();
 const recipeOf = (recipe) => recipe ? Object.fromEntries(RECIPE_FIELDS.map((key) => [key, clone(recipe[key] ?? null)])) : null;
 const states = new WeakMap();
+let draftVisualsScenario = null;
 let productVisualsScenario;
 let productVisualsScenarioVersion = 0;
 function state() {
@@ -177,6 +179,43 @@ function editPlan(projectId, body) {
 
 export const mockAdapter = {
   ...base,
+  setDraftVisualsScenario(scenario) { draftVisualsScenario = scenario ? clone(scenario) : null; },
+  async prepareDraftVisuals(token, body) {
+    if (!draftVisualsScenario) return { state: 'off', jobId: null, sourceAssetIds: body.sourceAssetIds };
+    const slot = await base.getDraftSlot(token, { full: true });
+    if (!slot?.holdsToken) throw error('token_mismatch', '작업권을 다시 확인해 주세요.', 409);
+    const sources = body.role === 'product' ? [baseProductPhoto(slot.payload.product)?.id]
+      : slot.payload.customMatch?.localId === body.localId ? slot.payload.customMatch.sources.map((source) => source.id) : [];
+    if (JSON.stringify(sources) !== JSON.stringify(body.sourceAssetIds)) throw error('source_changed', '사진이 바뀌었어요.', 404);
+    const key = JSON.stringify([body.role, body.sourceAssetIds]);
+    const records = state().draftVisuals ||= new Map();
+    if (!records.has(key)) records.set(key, { ...clone(body), jobId: uid('draft-visual'), startedAt: Date.now() });
+    return this.draftVisualPresentation(records.get(key));
+  },
+  draftVisualPresentation(record) {
+    const scenario = draftVisualsScenario || { status: 'off' };
+    const status = scenario.status === 'processing' && scenario.settleTo
+      && Date.now() - record.startedAt >= (scenario.delayMs ?? 7000) ? scenario.settleTo : scenario.status || 'ready';
+    const url = scenario.tidyUrl || MOCK_TIDY_KNIT;
+    return { state: status, jobId: record.jobId, sourceAssetIds: [...record.sourceAssetIds],
+      ...(record.role === 'product' ? { front: { tidyStatus: status, tidyUrl: status === 'ready' ? url : null,
+        cutoutStatus: status, cutoutUrl: null, width: 768, height: 1024 } }
+        : { localId: record.localId, boardUrl: status === 'ready' ? url : null,
+          thumbnailUrl: status === 'ready' ? url : null, cutoutStatus: status }) };
+  },
+  async getDraftVisuals(token) {
+    if (!draftVisualsScenario) return { state: 'off', product: null, custom: null };
+    const slot = await base.getDraftSlot(token, { full: true });
+    if (!slot?.holdsToken) throw error('token_mismatch', '작업권을 다시 확인해 주세요.', 409);
+    const result = { state: 'ready', product: null, custom: null };
+    for (const record of state().draftVisuals?.values() || []) {
+      const ids = record.role === 'product' ? [baseProductPhoto(slot.payload.product)?.id]
+        : slot.payload.customMatch?.localId === record.localId ? slot.payload.customMatch.sources.map((source) => source.id) : [];
+      if (JSON.stringify(ids) === JSON.stringify(record.sourceAssetIds)) result[record.role] = this.draftVisualPresentation(record);
+    }
+    return result;
+  },
+  async promoteDraftVisuals({ jobId }) { return { joined: true, jobId }; },
   setProductVisualsScenario(scenario) {
     productVisualsScenario = scenario === undefined ? undefined : scenario ? clone(scenario) : null;
     productVisualsScenarioVersion++;

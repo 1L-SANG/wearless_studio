@@ -322,13 +322,24 @@ async function pollJob(
 export async function uploadPhoto(
   projectId,
   { filename, mime, blob, purpose = 'upload' },
-  { signal, accountGeneration = clientEvents.getAccountGeneration() } = {},
+  { signal, expectedUserId, isCurrent = () => true, accountGeneration = clientEvents.getAccountGeneration() } = {},
 ) {
   recordClientAction('upload', accountGeneration);
   blob = await stripJpegMetadata(blob);
   const { assetId, uploadUrl } = await http('/v1/assets/upload-url', {
-    method: 'POST', body: { filename, mime, size: blob.size, projectId, purpose }, signal, accountGeneration,
+    method: 'POST', body: { filename, mime, size: blob.size, projectId, purpose }, signal, accountGeneration, expectedUserId, isCurrent,
   });
+  // The signed URL remains usable after logout. Recheck the actual session and
+  // operation immediately before sending bytes, even if auth events arrive late.
+  const session = expectedUserId !== undefined ? (await supabase.auth.getSession()).data?.session : null;
+  if (expectedUserId !== undefined && session?.user?.id !== expectedUserId) {
+    throw clientEvents.bindGeneration(Object.assign(new Error('로그인 계정이 바뀌었어요.'),
+      { code: 'auth_user_changed', requestNotSent: true }), accountGeneration);
+  }
+  if (!isCurrent() || signal?.aborted) {
+    throw clientEvents.bindGeneration(Object.assign(new Error('이전 업로드 요청이 취소됐어요.'),
+      { code: 'draft_request_cancelled', requestNotSent: true }), accountGeneration);
+  }
   if (isBrowserOffline()) {
     throw clientEvents.bindGeneration(networkError(
       'photo_upload_network',
@@ -357,7 +368,7 @@ export async function uploadPhoto(
     throw clientEvents.bindGeneration(error, accountGeneration);
   }
   await http(`/v1/assets/${assetId}/complete`, {
-    method: 'POST', body: { projectId, mime, filename, purpose }, signal, accountGeneration,
+    method: 'POST', body: { projectId, mime, filename, purpose }, signal, accountGeneration, expectedUserId, isCurrent,
   });
   // complete 응답의 R2 URL은 배포 설정에 따라 만료되는 서명 URL일 수 있다. 에디터 문서에는
   // 현재 R2 위치로 매번 리다이렉트하는 앱의 안정 에셋 경로를 저장해야 재접속 후에도 보인다.
@@ -486,11 +497,21 @@ export const httpAdapter = {
     return http('/v1/draft-slot:takeover', { ...options, method: 'POST', body });
   },
   async deleteDraftSlot(token, options) {
-    return http('/v1/draft-slot', {
+    return http(`/v1/draft-slot${options?.forPromotion ? '?promote=1' : ''}`, {
       ...options,
       method: 'DELETE',
       headers: token ? { 'X-Draft-Token': token } : undefined,
     });
+  },
+  async prepareDraftVisuals(token, body, options) {
+    return http('/v1/draft-slot/visuals:prepare', { ...options, method: 'POST', body,
+      headers: { 'X-Draft-Token': token }, suppressErrorLog: true });
+  },
+  async getDraftVisuals(token, options) {
+    return http('/v1/draft-slot/visuals', { ...options, headers: { 'X-Draft-Token': token }, suppressErrorLog: true });
+  },
+  async promoteDraftVisuals(body, options) {
+    return http('/v1/draft-slot/visuals:promote', { ...options, method: 'POST', body, suppressErrorLog: true });
   },
   async discardDraftSlotPhoto(assetId) {
     return http(`/v1/draft-slot/assets/${assetId}`, { method: 'DELETE' });
@@ -867,9 +888,9 @@ export const httpAdapter = {
       return toMatchItem(it, index >= 0 ? index + 1 : null);
     });
   },
-  async addCustomMatchItem(projectId, { assetIds }, { signal } = {}) {
+  async addCustomMatchItem(projectId, { assetIds, draftVisualJobId }, { signal } = {}) {
     const result = await http(`/v1/projects/${projectId}/analysis/custom-match-item`, {
-      method: 'POST', body: { assetIds }, signal,
+      method: 'POST', body: { assetIds, ...(draftVisualJobId ? { draftVisualJobId } : {}) }, signal,
     });
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const analysis = {

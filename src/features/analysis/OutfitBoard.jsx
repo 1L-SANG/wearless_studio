@@ -1,3 +1,4 @@
+import { baseProductPhoto, startVisualPolling } from '@/lib/draftVisuals.js';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Info } from 'lucide-react';
 import { api, isMockMode } from '@/lib/api/index.js';
@@ -32,34 +33,25 @@ export function garmentDisplayLength(item, role) {
   return DEFAULT_CM[role] || 64;
 }
 
-export function OutfitBoard({ analysis, product, projectId, onOpenRole, skeleton = false }) {
+export function OutfitBoard({ draftVisuals, analysis, product, projectId, onOpenRole, skeleton = false }) {
   const [visuals, setVisuals] = useState(null);
   const [ratios, setRatios] = useState({});
   const [maxHeight, setMaxHeight] = useState(440);
-  const original = product?.colors?.flatMap((c) => c.images || []).find((im) => im.slot === 'front')?.src
-    || product?.colors?.flatMap((c) => c.images || [])[0]?.src || '';
+  const original = baseProductPhoto(product)?.src || '';
+  const sourceKey = JSON.stringify([projectId, original]);
   useEffect(() => {
     setVisuals(null);
     if (!projectId && !isMockMode) return undefined;
-    let canceled = false; let timer;
-    const poll = async () => {
-      try {
-        const result = await api.getProductVisuals(projectId);
-        if (canceled) return;
-        setVisuals(result);
-        if (result?.front?.tidyStatus !== 'processing') return;
-      } catch { if (canceled) return; }
-      timer = setTimeout(poll, 5000);
-    };
-    void poll();
-    return () => { canceled = true; clearTimeout(timer); };
+    return startVisualPolling({ query: () => api.getProductVisuals(projectId), onResult: (result) => setVisuals({ sourceKey, result }),
+      onStop: () => setVisuals(null) });
   }, [projectId, original]);
+  const shownVisuals = !projectId && draftVisuals ? draftVisuals : visuals?.sourceKey === sourceKey ? visuals.result : null;
   useEffect(() => {
     const resize = () => setMaxHeight(Math.max(300, Math.min(718, window.innerHeight - 298)));
     resize(); window.addEventListener('resize', resize);
     return () => window.removeEventListener('resize', resize);
   }, []);
-  const productSrc = selectProductBoardImage(visuals, original);
+  const productSrc = selectProductBoardImage(shownVisuals, original);
   const complementary = complementaryOutfitSlot(analysis.clothingType);
   const selected = useMemo(() => Object.fromEntries(outfitSlotsFor(analysis.clothingType).map((role) => {
     const pool = role === complementary ? analysis.matchClothing : analysis.outfitRecommendation?.candidates?.[role];
@@ -78,7 +70,7 @@ export function OutfitBoard({ analysis, product, projectId, onOpenRole, skeleton
     }).filter(Boolean);
   };
   const kind = analysis.clothingType || 'top';
-  const layout = buildOutfitBoardLayout({ clothingType: kind, product: { slot: 'product', src: productSrc, name: product?.name || '내 상품', cm: garmentDisplayLength(analysis, kind), ar: ratios[productSrc] || visuals?.front?.width / visuals?.front?.height || (kind === 'bottom' ? .52 : .85) }, items: { ...selected, footwear: selected.footwear?.id ? selected.footwear : null,
+  const layout = buildOutfitBoardLayout({ clothingType: kind, product: { slot: 'product', src: productSrc, name: product?.name || '내 상품', cm: garmentDisplayLength(analysis, kind), ar: ratios[productSrc] || shownVisuals?.front?.width / shownVisuals?.front?.height || (kind === 'bottom' ? .52 : .85) }, items: { ...selected, footwear: selected.footwear?.id ? selected.footwear : null,
     bag: optionalItem('bag'), accessory: optionalItem('accessory') }, maxHeight, width: 276 });
   const loaded = (event) => {
     const img = event.currentTarget; const ratio = img.naturalWidth / img.naturalHeight;
@@ -93,7 +85,8 @@ export function OutfitBoard({ analysis, product, projectId, onOpenRole, skeleton
           const item = piece.slot === 'product' ? { src: productSrc, name: product?.name || '내 상품' } : selected[piece.slot];
           const label = piece.slot === 'product' ? '내 상품' : OUTFIT_SLOT_LABELS[piece.slot];
           const unavailable = analysis.outfitRecommendation?.roleStatus?.[piece.slot] === 'unavailable';
-          const content = item?.src ? <img key={item.src} src={item.src} alt={item.name} onLoad={loaded} /> : <span className={styles.ghost}><OutfitRoleIcon role={piece.slot} /><b>{label}</b></span>;
+          const preparing = piece.slot === 'product' && !projectId && draftVisuals?.front?.tidyStatus === 'processing';
+          const content = preparing ? <span className={styles.ghost} role="status"><b>준비 중</b></span> : item?.src ? <img key={item.src} src={item.src} alt={item.name} onLoad={loaded} /> : <span className={styles.ghost}><OutfitRoleIcon role={piece.slot} /><b>{label}</b></span>;
           const box = { left: piece.x, top: piece.y, width: piece.width, height: piece.height, zIndex: piece.zIndex };
           return piece.slot === 'product' || unavailable
             ? <div key={piece.slot} className={styles.piece} style={box}>{content}</div>

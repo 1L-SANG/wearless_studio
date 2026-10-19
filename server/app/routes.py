@@ -57,6 +57,8 @@ from .models import (
     CreditSource,
     CustomMatchItemRequest,
     DraftSlotPutRequest,
+    DraftVisualPrepareRequest,
+    DraftVisualPromoteRequest,
     DraftSlotTakeoverRequest,
     ErrorResponse,
     ExpectedMannequinQuote,
@@ -80,7 +82,7 @@ from .models import (
     SellerConsentIn,
     SellerConsentResponse,
 )
-from .services import product_tidy
+from .services import draft_visuals, product_tidy
 from .r2 import (
     ASSET_CACHE_VERSION,
     IMMUTABLE_CACHE,
@@ -465,7 +467,7 @@ def _draft_slot_images(payload: dict) -> list[dict]:
 
 def _draft_slot_asset_ids(payload: dict) -> set[str]:
     asset_ids: set[str] = set()
-    for image in _draft_slot_images(payload):
+    for image in [*_draft_slot_images(payload), *((payload.get("customMatch") or {}).get("sources") or [])]:
         try:
             asset_ids.add(str(uuid.UUID(str(image.get("id")))))
         except (ValueError, TypeError, AttributeError):
@@ -555,7 +557,8 @@ async def get_account(request: Request, user_id: str = Depends(require_user)):
     # 단일 배포 중 DB에 옛 요금제가 남아 있어도 계정 조회가 500으로 실패하지 않게 한다.
     if row.get("plan") not in get_args(PlanTier):
         row = {**row, "plan": "free"}
-    return {**row, "topup_bonus_enabled": request.app.state.settings.topup_bonus_enabled}
+    return {**row, "topup_bonus_enabled": request.app.state.settings.topup_bonus_enabled,
+            "draft_visuals_enabled": getattr(request.app.state.settings, "draft_visuals", "off") == "on"}
 
 
 def _consent_payload(row: dict | None, *, today=None, signup_credits: int = 0) -> dict:
@@ -1053,13 +1056,26 @@ async def get_product_visuals(
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         product = await repo.get_product(conn, project_id) or {}
+        await _retry_draft_deliveries(request, conn, user_id, project_id)
         return await product_tidy.visuals(
             conn, _r2(request), request.app.state.settings,
             user_id=user_id, project_id=project_id, product=product)
 
 
+async def _retry_draft_deliveries(request, conn, user_id, project_id):
+    try:
+        async with conn.transaction():
+            await draft_visuals.retry_project_deliveries(request.app, conn, user_id=user_id, project_id=project_id)
+        await conn.commit()
+    except Exception:
+        with contextlib.suppress(Exception):
+            await conn.rollback()
+        logger.warning('draft delivery deferred project=%s', project_id, exc_info=True)
+
+
 async def _enqueue_canonical_cutout(conn, *, user_id: str, project_id: str,
-                                    product: dict, tidy_enabled: bool = False) -> bool:
+                                    product: dict, tidy_enabled: bool = False, draft_visuals_enabled: bool = False,
+                                    app=None) -> bool:
     """주상품 사진의 배경 제거 컷아웃(canonical cutout)을 무과금으로 건다.
 
     두 곳에서 부른다. 분석 라우트는 로그인 상태로 시작한 셀러를, 상품 저장 라우트는 게스트로
@@ -1069,10 +1085,28 @@ async def _enqueue_canonical_cutout(conn, *, user_id: str, project_id: str,
 
     호출자가 커밋한다. 실패는 호출자가 삼킨다 — 보조 인프라가 본 기능을 되돌리지 않는다.
     """
+    joined_front = False
+    if draft_visuals_enabled or (app is not None and await repo.has_draft_visual_work(conn, user_id)):
+        front_ids = [aid for view, aid in mannequin.base_color_images(product) if view == "Front"][:1]
+        joined = None
+        if front_ids:
+            joined = (await draft_visuals.join_project(app, conn, user_id=user_id, project_id=project_id,
+                      source_asset_ids=front_ids) if app else
+                      await repo.get_draft_visual_promotion(conn, user_id, project_id, front_ids, "product"))
+        if await draft_visuals.promotion_covers(conn, joined, project_id, front_ids):
+            joined_front = True
+            # Front is already paid for. Only the existing Back pipeline needs a new job.
+            product = deepcopy(product)
+            colors = product.get("colors") or []
+            base = next((c for c in colors if c.get("isBase")), colors[0] if colors else {})
+            base["images"] = [im for im in base.get("images") or [] if im.get("slot") != "Front"]
+            tidy_enabled = False
     key = product_tidy.preprocess_key(project_id, product or {}, enabled=tidy_enabled)
     if not key:
-        return False
+        return joined_front
     payload = {"mode": "canonical_cutout"}
+    if joined_front:
+        payload["skipDraftFront"] = True
     if tidy_enabled:
         payload["productTidyRequired"] = True
     for _ in range(3):
@@ -1113,6 +1147,7 @@ async def save_product(
       - `404 Not Found`: 프로젝트가 존재하지 않거나, 타 사용자의 소유인 경우 발생
     """
     fields = patch.model_dump(exclude_unset=True)
+    draft_visual_job_id = fields.pop("draft_visual_job_id", None)
     # 저장할 수 없는 사진 src(프론트 목 데모의 data: 플레이스홀더, 브라우저 전용 blob:)는
     # 여기서 걷어낸다. 프론트가 이미 막지만, 캐시된 옛 번들을 쓰는 브라우저는 배포 즉시
     # 보호되지 않는다 — 생성의 정본인 product.colors 를 지키는 마지막 문지기(2026-08-17 사고).
@@ -1138,8 +1173,10 @@ async def save_product(
         # 안 되므로 **커밋 뒤에** 별도로 걸고 예외는 삼킨다(analyze 라우트와 같은 규율).
         try:
             if await _enqueue_canonical_cutout(
-                    conn, user_id=user_id, project_id=project_id, product=row or {},
-                    tidy_enabled=getattr(request.app.state.settings, "product_tidy", "off") == "on"):
+                    conn, user_id=user_id, project_id=project_id, product=row or {}, app=request.app,
+                    tidy_enabled=getattr(request.app.state.settings, "product_tidy", "off") == "on",
+                    draft_visuals_enabled=(draft_visual_job_id is not None
+                        or getattr(request.app.state.settings, "draft_visuals", "off") == "on")):
                 await conn.commit()
                 _wake_dispatcher(request)
         except Exception:  # noqa: BLE001 - 전처리 큐잉 실패가 상품 저장을 막지 않는다
@@ -1583,9 +1620,10 @@ async def analyze_product(
         # 인프라가 본 기능을 죽이지 않는다는 건 주석이 아니라 트랜잭션 경계로 지켜야 한다.
         try:
             await _enqueue_canonical_cutout(
-                conn, user_id=user_id, project_id=project_id,
+                conn, user_id=user_id, project_id=project_id, app=request.app,
                 product=await repo.get_product(conn, project_id) or {},
-                tidy_enabled=getattr(request.app.state.settings, "product_tidy", "off") == "on")
+                tidy_enabled=getattr(request.app.state.settings, "product_tidy", "off") == "on",
+                draft_visuals_enabled=getattr(request.app.state.settings, "draft_visuals", "off") == "on")
             await conn.commit()
         except Exception:  # noqa: BLE001 - 전처리 큐잉 실패가 분석을 막지 않는다
             # 정리 코드가 다시 터져서 500 이 되면 위 보장이 무의미하다. rollback 실패까지 삼킨다.
@@ -1929,6 +1967,8 @@ async def match_candidates(
         # 실패 시 cutoutStatus 는 "failed" 쪽으로 폴백해 화면은 원본을 그대로 보여준다.
         has_active_cutout_job = False
         if any(item.get("is_custom") for item in items):
+            await _retry_draft_deliveries(request, conn, user_id, project_id)
+            items = await repo.list_active_matching_items(conn, user_id, project_id)
             try:
                 has_active_cutout_job = await repo.has_active_matching_cutout_job(
                     conn, project_id
@@ -1988,7 +2028,8 @@ async def match_candidates(
 
 
 async def _enqueue_matching_cutout(conn, *, settings, user_id, project_id, matching_item_id,
-                                   source_asset_ids, source_keys, grid_asset_id=None) -> bool:
+                                   source_asset_ids, source_keys, grid_asset_id=None,
+                                   draft_visual_job_id: str | None = None, app=None) -> bool:
     """커스텀 매칭 의류 누끼 잡을 건다. 절대 등록을 막지 않는다.
 
     커밋 뒤에 별도로 돈다 — 큐잉 실패가 방금 성공한 매칭 등록을 되돌리면 본말전도다
@@ -2004,6 +2045,19 @@ async def _enqueue_matching_cutout(conn, *, settings, user_id, project_id, match
     응답·저장 payload 에 굳히지 않는다. 활성 잡 합류(created=False)도 잡은 있는
     것이므로 True 다.
     """
+    try:
+        if (draft_visual_job_id or getattr(settings, "draft_visuals", "off") == "on"
+                or (app is not None and await repo.has_draft_visual_work(conn, user_id))):
+            joined = (await draft_visuals.join_project(app, conn, user_id=user_id, project_id=project_id,
+                      source_asset_ids=source_asset_ids, role='custom', matching_item_id=matching_item_id) if app else
+                      await repo.get_draft_visual_promotion(conn, user_id, project_id, source_asset_ids, "custom"))
+            if await draft_visuals.promotion_covers(conn, joined, project_id, source_asset_ids, matching_item_id):
+                await conn.commit()
+                return True
+    except Exception:
+        with contextlib.suppress(Exception):
+            await conn.rollback()
+        logger.warning("draft custom join unavailable, using project pipeline", exc_info=True)
     if getattr(settings, "matching_cutout", "off") != "on":
         return False
     try:
@@ -2150,10 +2204,24 @@ async def add_custom_match_item(
                 thumbnail_asset_id=asset_ids[0],
             )
             row = await repo.get_custom_matching_item(conn, user_id, project_id)
+            draft_joined = None
+            try:
+                async with conn.transaction():
+                    if (body.draft_visual_job_id is not None
+                            or getattr(request.app.state.settings, 'draft_visuals', 'off') == 'on'
+                            or await repo.has_draft_visual_work(conn, user_id)):
+                        draft_joined = await draft_visuals.join_project(request.app, conn, user_id=user_id,
+                            project_id=project_id, source_asset_ids=asset_ids, role='custom', matching_item_id=row['id'])
+                if draft_joined:
+                    row = await repo.get_custom_matching_item(conn, user_id, project_id)
+            except Exception:
+                logger.warning("draft custom promotion failed, using project pipeline", exc_info=True)
             # 커밋 직후 누끼 잡을 건다(아래) — 그래서 이 응답·저장 payload 의
             # cutoutStatus 는 "곧 도는 잡"을 반영해야 한다. 플래그가 off 면 잡이 아예
             # 없으므로 조회 경로와 같은 값(원본 표시)으로 굳는다.
-            cutout_enabled = request.app.state.settings.matching_cutout == "on"
+            cutout_enabled = (request.app.state.settings.matching_cutout == "on"
+                or body.draft_visual_job_id is not None
+                or await draft_visuals.promotion_covers(conn, draft_joined, project_id, asset_ids, row['id']))
             item = _matching_item_to_api(r2, row, compatible=True,
                                          has_active_cutout_job=cutout_enabled)
             payload = _analysis_with_added_custom(
@@ -2170,6 +2238,8 @@ async def add_custom_match_item(
                 source_asset_ids=asset_ids,
                 source_keys=[a["r2_key"] for a in assets],
                 grid_asset_id=grid_asset_id,
+                app=request.app,
+                draft_visual_job_id=str(body.draft_visual_job_id) if body.draft_visual_job_id else None,
             )
             if cutout_enabled and not queued:
                 # 큐잉이 조용히 실패했다 — 잡 없는 "처리 중"은 아무도 반증할 수 없고
@@ -2239,6 +2309,45 @@ async def remove_custom_match_item(
     if cleanup_assets:
         background_tasks.add_task(_cleanup_custom_match_r2, _r2(request), cleanup_assets)
     return Response(status_code=204)
+
+
+@router.post("/draft-slot/visuals:prepare", tags=["Draft Slot"])
+async def prepare_draft_visuals(request: Request, body: DraftVisualPrepareRequest,
+    x_draft_token: str | None = Header(default=None, alias="X-Draft-Token"),
+    user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        try:
+            result = await draft_visuals.prepare(request.app, conn, user_id=user_id, token=x_draft_token,
+                role=body.role, source_asset_ids=[str(a) for a in body.source_asset_ids], local_id=body.local_id)
+            await conn.commit()
+        except HTTPException:
+            raise
+        except Exception:
+            await conn.rollback()
+            logger.warning("draft visuals preparation unavailable", exc_info=True)
+            return {"state": "off", "reason": "unavailable", "jobId": None,
+                    "sourceAssetIds": [str(a) for a in body.source_asset_ids]}
+    if result.get("state") == "processing":
+        _wake_dispatcher(request)
+    return result
+
+
+@router.get("/draft-slot/visuals", tags=["Draft Slot"])
+async def get_draft_visuals(request: Request,
+    x_draft_token: str | None = Header(default=None, alias="X-Draft-Token"),
+    user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        return await draft_visuals.visuals(request.app, conn, user_id=user_id, token=x_draft_token)
+
+
+@router.post("/draft-slot/visuals:promote", tags=["Draft Slot"])
+async def promote_draft_visuals(request: Request, body: DraftVisualPromoteRequest,
+    user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        result = await draft_visuals.promote(request.app, conn, user_id=user_id, job_id=str(body.job_id),
+            project_id=str(body.project_id), source_asset_ids=[str(a) for a in body.source_asset_ids])
+        await conn.commit()
+        return result
 
 
 # ---------- 숨은 임시저장 슬롯 ----------
@@ -2403,6 +2512,7 @@ async def delete_draft_slot(
     request: Request,
     background_tasks: BackgroundTasks,
     x_draft_token: str | None = Header(default=None, alias="X-Draft-Token"),
+    promote: bool = Query(False),
     user_id: str = Depends(require_user),
 ):
     cleanup_assets: list[dict] = []
@@ -2427,6 +2537,8 @@ async def delete_draft_slot(
                         "meta": _draft_slot_meta(row),
                     },
                 )
+            if promote and getattr(request.app.state.settings, "draft_visuals", "off") == "on":
+                await repo.mark_draft_visual_promotion_pending(conn, user_id, row["payload"])
             # advisory/row lock을 잡은 이 트랜잭션 안에서 active token을 소비한다.
             cleanup_assets = await _remove_draft_slot(conn, user_id, row)
         await conn.commit()
