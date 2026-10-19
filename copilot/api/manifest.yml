@@ -105,6 +105,11 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 액세서리 여러 개와 소품 추천을 받는다. 2026-10-19 첫 도입(#571)은 두 번 나눠 배포했고, 이제 운영 서버가 모두
   # 지원하므로 항상 on이다. off는 액세서리를 1개로 되돌리는 비상 스위치다.
   OUTFIT_PROPS_READY: "on"
+  # 코디 추천과 소품 추천을 Gemini 3.8 Flash로 고른다(ADR-0022). 2026-10-19 오너 승인, 시험 15회 모두 성공.
+  # 상품당 처음 추천 약 $0.02, 소품을 켜면 하나당 약 $0.01. off면 무료 규칙 추천만 쓴다.
+  OUTFIT_RECOMMENDATION: "on"
+  # 소품 추천 시험에서 액세서리가 최대 9.1초 걸려 기본 10초 대신 15초로 둔다.
+  OUTFIT_PROPS_TIMEOUT_SECONDS: "15"
   # 정기결제(빌링). ⚠️ 이 값이 true 인 채로 배포하려면 아래 secrets 3종이 **먼저** SSM 에
   # 있어야 한다(TOSS_BILLING_SECRET_KEY·TOSS_BILLING_KEK·TOSS_WEBHOOK_PATH_SECRET).
   # 없으면 ECS 태스크가 기동조차 못 한다. 런북: docs/runbooks/subscription-billing.md
