@@ -9,7 +9,7 @@ from app.services.sam_autoscale import EcsTarget, SamAutoscaleAdapter, ServiceSt
 from conftest import make_settings
 
 CLUSTER = "arn:aws:ecs:ap-northeast-2:1:cluster/wearless-prod-Cluster-x"
-SAM2 = "arn:aws:ecs:ap-northeast-2:1:service/wearless-prod-Cluster-x/wearless-prod-sam2-Service-y"
+OPENDID = "arn:aws:ecs:ap-northeast-2:1:service/wearless-prod-Cluster-x/wearless-prod-opendid-Service-y"
 API = "arn:aws:ecs:ap-northeast-2:1:service/wearless-prod-Cluster-x/wearless-prod-api-Service-z"
 
 
@@ -24,8 +24,8 @@ class _Ecs:
 
     def __init__(self, services=None, tasks=None):
         self.services = services if services is not None else {
-            SAM2: {"serviceArn": SAM2, "desiredCount": 0, "runningCount": 0,
-                   "pendingCount": 0, "tags": _tags("sam2")},
+            OPENDID: {"serviceArn": OPENDID, "desiredCount": 0, "runningCount": 0,
+                   "pendingCount": 0, "tags": _tags("opendid")},
             API: {"serviceArn": API, "desiredCount": 1, "runningCount": 1,
                   "pendingCount": 0, "tags": _tags("api")},
         }
@@ -65,15 +65,15 @@ class _Sns:
 
 
 def _adapter(ecs=None, sns=None, **over):
-    values = {"sam_autoscale": "on", "sam_alert_topic_arn": "arn:aws:sns:ap-northeast-2:1:t"}
+    values = {"opendid_autoscale": "on", "sam_alert_topic_arn": "arn:aws:sns:ap-northeast-2:1:t"}
     values.update(over)                       # 같은 키를 두 번 넘기면 TypeError — 병합한다
     s = make_settings(**values)
-    return SamAutoscaleAdapter(s, ecs=ecs or _Ecs(), sns=sns or _Sns())
+    return SamAutoscaleAdapter(s, service="opendid", enabled_attr="opendid_autoscale", ecs=ecs or _Ecs(), sns=sns or _Sns())
 
 
 def test_disabled_adapter_never_builds_clients():
-    s = make_settings(sam_autoscale="off")
-    a = SamAutoscaleAdapter(s)
+    s = make_settings(opendid_autoscale="off")
+    a = SamAutoscaleAdapter(s, service="opendid", enabled_attr="opendid_autoscale")
     assert a.enabled is False
     assert asyncio.run(a.discover()) is None
 
@@ -81,32 +81,32 @@ def test_disabled_adapter_never_builds_clients():
 def test_discover_matches_all_three_copilot_tags():
     a = _adapter()
     t = asyncio.run(a.discover())
-    assert t == EcsTarget(cluster_arn=CLUSTER, service_arn=SAM2)
+    assert t == EcsTarget(cluster_arn=CLUSTER, service_arn=OPENDID)
 
 
 def test_discover_refuses_ambiguity():
     ecs = _Ecs()
     ecs.services["dup"] = {"serviceArn": "dup", "desiredCount": 0, "runningCount": 0,
-                           "pendingCount": 0, "tags": _tags("sam2")}
+                           "pendingCount": 0, "tags": _tags("opendid")}
     a = _adapter(ecs=ecs)
     assert asyncio.run(a.discover()) is None
 
 
 def test_discover_refuses_partial_tag_match():
     ecs = _Ecs()
-    ecs.services[SAM2]["tags"] = [{"key": "copilot-service", "value": "sam2"}]   # env/app 없음
+    ecs.services[OPENDID]["tags"] = [{"key": "copilot-service", "value": "opendid"}]   # env/app 없음
     a = _adapter(ecs=ecs)
     assert asyncio.run(a.discover()) is None
 
 
 def test_discover_chunks_describe_services_by_ten():
-    """DescribeServices 는 한 번에 10개까지 — 11번째 서비스의 중복 sam2 를 놓치면 안 된다."""
+    """DescribeServices 는 한 번에 10개까지 — 11번째 서비스의 중복 opendid 를 놓치면 안 된다."""
     ecs = _Ecs()
     for i in range(12):
         ecs.services[f"svc{i}"] = {"serviceArn": f"svc{i}", "desiredCount": 0, "runningCount": 0,
                                    "pendingCount": 0, "tags": _tags("other")}
     ecs.services["dup"] = {"serviceArn": "dup", "desiredCount": 0, "runningCount": 0,
-                           "pendingCount": 0, "tags": _tags("sam2")}
+                           "pendingCount": 0, "tags": _tags("opendid")}
     a = _adapter(ecs=ecs)
     assert asyncio.run(a.discover()) is None, "15개 중 2개 매칭 → 거부"
     assert max(ecs.describe_batches) <= 10
@@ -117,7 +117,7 @@ def test_discover_is_cached_per_process_and_forget_target_retries():
     a = _adapter(ecs=ecs)
     asyncio.run(a.discover())
     ecs.services.clear()                      # 이후 호출은 ECS 를 안 본다
-    assert asyncio.run(a.discover()) == EcsTarget(cluster_arn=CLUSTER, service_arn=SAM2)
+    assert asyncio.run(a.discover()) == EcsTarget(cluster_arn=CLUSTER, service_arn=OPENDID)
     a.forget_target()                         # ServiceNotFound 뒤 — 한 번 더 찾는다
     assert asyncio.run(a.discover()) is None
 
@@ -127,7 +127,7 @@ def test_describe_reports_counts_and_oldest_task_start():
     later = datetime(2026, 8, 21, 4, 0, 0, tzinfo=timezone.utc)
     ecs = _Ecs(tasks=[{"taskArn": "t1", "startedAt": later},
                       {"taskArn": "t2", "startedAt": started}])
-    ecs.services[SAM2].update(desiredCount=1, runningCount=1)
+    ecs.services[OPENDID].update(desiredCount=1, runningCount=1)
     a = _adapter(ecs=ecs)
     t = asyncio.run(a.discover())
     st = asyncio.run(a.describe(t))
@@ -146,14 +146,14 @@ def test_set_desired_calls_update_service_once():
     a = _adapter(ecs=ecs)
     t = asyncio.run(a.discover())
     asyncio.run(a.set_desired(t, 1))
-    assert ecs.updates == [(SAM2, 1)]
+    assert ecs.updates == [(OPENDID, 1)]
 
 
 def test_notify_publishes_to_the_configured_topic():
     sns = _Sns()
     a = _adapter(sns=sns)
-    asyncio.run(a.notify("sam2 test", "hello"))
-    assert sns.published == [("arn:aws:sns:ap-northeast-2:1:t", "sam2 test", "hello")]
+    asyncio.run(a.notify("opendid test", "hello"))
+    assert sns.published == [("arn:aws:sns:ap-northeast-2:1:t", "opendid test", "hello")]
 
 
 def test_notify_is_a_noop_without_a_topic():
@@ -191,13 +191,13 @@ def _task(arn, ip=None, extra_attachments=()):
 def test_task_ips_reads_the_private_ip():
     ecs = _Ecs(tasks=[_task("t1", "10.0.0.205")])
     a = _adapter(ecs=ecs)
-    target = EcsTarget(cluster_arn=CLUSTER, service_arn=SAM2)
+    target = EcsTarget(cluster_arn=CLUSTER, service_arn=OPENDID)
     assert asyncio.run(a.task_ips(target)) == ["10.0.0.205"]
 
 
 def test_task_ips_is_empty_when_the_service_is_at_zero():
     a = _adapter(ecs=_Ecs(tasks=[]))
-    target = EcsTarget(cluster_arn=CLUSTER, service_arn=SAM2)
+    target = EcsTarget(cluster_arn=CLUSTER, service_arn=OPENDID)
     assert asyncio.run(a.task_ips(target)) == []
 
 
@@ -207,5 +207,5 @@ def test_task_ips_ignores_attachments_without_an_ip():
     ecs = _Ecs(tasks=[_task("t1", "10.0.0.7", extra_attachments=(sc,)),
                       _task("t2", None)])
     a = _adapter(ecs=ecs)
-    target = EcsTarget(cluster_arn=CLUSTER, service_arn=SAM2)
+    target = EcsTarget(cluster_arn=CLUSTER, service_arn=OPENDID)
     assert asyncio.run(a.task_ips(target)) == ["10.0.0.7"]

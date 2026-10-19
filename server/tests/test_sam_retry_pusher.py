@@ -7,7 +7,6 @@
 
 import asyncio
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 
 import pytest
 
@@ -147,158 +146,36 @@ def test_poll_interval_follows_the_shortest_backoff():
     assert sam_retry_pusher.POLL_SECONDS == min(sam_retry.BACKOFF_SECONDS)
 
 
-# ── 준비 신호로 백오프 건너뛰기 ─────────────────────────────────────────────────
-#
-# 백오프 사다리(15/60/90/120)는 "sam2 가 언제 살아날지 모른다"를 대신하는 추측이었다.
-# 실측(2026-08-27): sam2 가 +146.7초에 준비됐는데 다음 시도는 사다리 격자에 걸려 있었다.
-# 살아난 걸 확인했으면 더 기다릴 이유가 없다. 예산(MAX_RETRIES=4)은 그대로 지킨다.
-
-class _State:
-    def __init__(self, resolver, **providers):
-        self.sam_endpoint = resolver
-        self.settings = SimpleNamespace(**providers)
-
-
-class _App:
-    def __init__(self, resolver, **providers):
-        self.state = _State(resolver, **providers)
-
-
-class _Resolver:
-    def __init__(self, ready=True, boom=False):
-        self._ready = ready
-        self._boom = boom
-        self.asked = 0
-
-    async def ready(self):
-        self.asked += 1
-        if self._boom:
-            raise RuntimeError("aws down")
-        return self._ready
-
-
 def _fresh(**over):
     """방금 끝난 잡 — 15초 백오프가 아직 안 지났다."""
     return _job(finished_at=datetime.now(timezone.utc) - timedelta(seconds=1), **over)
 
 
-def _push_with(rec, resolver, **providers):
-    pusher = SamRetryPusher(app=_App(resolver, **providers))
-    return asyncio.run(pusher._push_once(rec, None))
-
-
-@pytest.mark.parametrize("kind,matching_provider,preprocess_provider", [
-    ("matching_cutout", "fal", "sam2"),
-    ("sam_preprocess", "sam2", "fal"),
-])
-def test_fal_waits_for_its_backoff_even_when_sam2_is_ready(
-        kind, matching_provider, preprocess_provider):
+@pytest.mark.parametrize("kind", ["matching_cutout", "sam_preprocess"])
+def test_each_cutout_kind_waits_for_backoff(
+        kind):
     job = _job(kind=kind, payload={"retry": 1},
                finished_at=datetime.now(timezone.utc) - timedelta(seconds=16),
                idempotency_key=f"p:{kind}:source:v1:r1")
     rec = _Recorder([job])
-    resolver = _Resolver(ready=True)
 
-    assert _push_with(rec, resolver, matching_cutout_provider=matching_provider,
-                      sam_preprocess_provider=preprocess_provider) == 0
+    assert _push(rec) == 0
     assert rec.created == []
-    assert resolver.asked == 0
 
 
-@pytest.mark.parametrize("kind,matching_provider,preprocess_provider", [
-    ("matching_cutout", "fal", "sam2"),
-    ("sam_preprocess", "sam2", "fal"),
-])
-def test_fal_retries_after_its_backoff_without_probing_sam2(
-        kind, matching_provider, preprocess_provider):
+@pytest.mark.parametrize("kind", ["matching_cutout", "sam_preprocess"])
+def test_each_cutout_kind_retries_after_backoff(
+        kind):
     payload = {"retry": 1, "sourceKeys": ["front", "back"]}
     job = _job(kind=kind, payload=payload,
                finished_at=datetime.now(timezone.utc) - timedelta(seconds=61),
                idempotency_key=f"p:{kind}:source:v1:r1")
     rec = _Recorder([job])
-    resolver = _Resolver(ready=False)
 
-    assert _push_with(rec, resolver, matching_cutout_provider=matching_provider,
-                      sam_preprocess_provider=preprocess_provider) == 1
+    assert _push(rec) == 1
     assert rec.created == [{"kind": kind, "key": f"p:{kind}:source:v1:r2",
                             "payload": {"retry": 2, "sourceKeys": ["front", "back"]},
                             "credits_reserved": 0}]
-    assert resolver.asked == 0
-
-
-@pytest.mark.parametrize("kind,matching_provider,preprocess_provider", [
-    ("matching_cutout", "sam2", "fal"),
-    ("sam_preprocess", "fal", "sam2"),
-])
-def test_sam2_keeps_early_retry_when_the_other_job_kind_uses_fal(
-        kind, matching_provider, preprocess_provider):
-    job = _job(kind=kind, payload={"retry": 1},
-               finished_at=datetime.now(timezone.utc) - timedelta(seconds=16),
-               idempotency_key=f"p:{kind}:source:v1:r1")
-    rec = _Recorder([job])
-    resolver = _Resolver(ready=True)
-
-    assert _push_with(rec, resolver, matching_cutout_provider=matching_provider,
-                      sam_preprocess_provider=preprocess_provider) == 1
-    assert rec.created[0]["payload"]["retry"] == 2
-    assert resolver.asked == 1
-
-
-def test_a_live_sam_skips_the_backoff():
-    rec = _Recorder([_fresh()])
-    resolver = _Resolver(ready=True)
-    assert _push_with(rec, resolver) == 1
-    assert rec.created[0]["payload"]["retry"] == 1
-
-
-def test_a_dead_sam_still_waits_for_the_backoff():
-    rec = _Recorder([_fresh()])
-    assert _push_with(rec, _Resolver(ready=False)) == 0
-    assert rec.created == []
-
-
-def test_readiness_is_asked_once_per_cycle():
-    """후보가 여러 개여도 AWS·HTTP 는 주기당 한 번이다."""
-    jobs = [_fresh(id="j1", idempotency_key="p:matching_cutout:i1:v1"),
-            _fresh(id="j2", idempotency_key="p:matching_cutout:i2:v1")]
-    rec = _Recorder(jobs, latest=None)
-    rec.get_latest_job_generation = lambda conn, user_id, base_key: _latest_for(jobs, base_key)
-    resolver = _Resolver(ready=True)
-    _push_with(rec, resolver)
-    assert resolver.asked == 1
-
-
-async def _latest_for(jobs, base_key):
-    for j in jobs:
-        if j["idempotency_key"] == base_key:
-            return j
-    return None
-
-
-def test_readiness_is_not_asked_when_the_backoff_already_passed():
-    """이미 시도할 때가 된 잡은 신호가 필요 없다 — 조용한 주기엔 호출이 0이다."""
-    rec = _Recorder([_job()])                  # finished_at 이 600초 전
-    resolver = _Resolver(ready=True)
-    assert _push_with(rec, resolver) == 1
-    assert resolver.asked == 0
-
-
-def test_a_broken_readiness_probe_falls_back_to_the_backoff():
-    rec = _Recorder([_fresh()])
-    assert _push_with(rec, _Resolver(boom=True)) == 0
-
-
-def test_no_resolver_behaves_exactly_as_before():
-    """플래그 off·리졸버 미설치. 백오프가 그대로 지배한다."""
-    rec = _Recorder([_fresh()])
-    pusher = SamRetryPusher(app=None)
-    assert asyncio.run(pusher._push_once(rec, None)) == 0
-
-
-def test_the_budget_still_wins_over_a_live_sam():
-    """살아 있다고 예산을 넘겨 쓰면 안 된다 — 285초/4회는 오너 결정이다."""
-    rec = _Recorder([_fresh(payload={"retry": sam_retry.MAX_RETRIES})])
-    assert _push_with(rec, _Resolver(ready=True)) == 0
 
 
 def test_an_old_lease_error_is_not_retried_after_a_long_downtime():
@@ -309,8 +186,7 @@ def test_an_old_lease_error_is_not_retried_after_a_long_downtime():
 
 
 @pytest.mark.parametrize("age, expected", [(1799.999, True), (1800, False), (1800.001, False)])
-@pytest.mark.parametrize("ready", [False, True])
-def test_push_one_respects_the_revive_window_boundary(monkeypatch, age, expected, ready):
+def test_push_one_respects_the_revive_window_boundary(monkeypatch, age, expected):
     class FrozenDatetime(datetime):
         @classmethod
         def now(cls, tz=None):
@@ -319,22 +195,18 @@ def test_push_one_respects_the_revive_window_boundary(monkeypatch, age, expected
     monkeypatch.setattr(sam_retry, "datetime", FrozenDatetime)
     job = _job(finished_at=FrozenDatetime.now() - timedelta(seconds=age))
     rec = _Recorder([job])
-    resolver = _Resolver(ready=ready)
     pusher = SamRetryPusher(app=None)
-    assert asyncio.run(pusher._push_one(rec, None, job, resolver.ready)) is expected
+    assert asyncio.run(pusher._push_one(rec, None, job)) is expected
     assert len(rec.created) == int(expected)
-    assert resolver.asked == 0
 
 
 @pytest.mark.parametrize("finished_at", [None, "not-a-timestamp"])
-def test_push_one_rejects_missing_or_invalid_finish_time_even_with_a_live_sam(finished_at):
+def test_push_one_rejects_missing_or_invalid_finish_time_(finished_at):
     job = _job(finished_at=finished_at)
     rec = _Recorder([job])
-    resolver = _Resolver(ready=True)
     pusher = SamRetryPusher(app=None)
-    assert asyncio.run(pusher._push_one(rec, None, job, resolver.ready)) is False
+    assert asyncio.run(pusher._push_one(rec, None, job)) is False
     assert rec.created == []
-    assert resolver.asked == 0
 
 
 def test_revive_window_parses_iso_strings_and_assumes_utc_when_naive():
@@ -375,14 +247,13 @@ def test_candidate_query_does_not_transfer_unused_job_columns():
         assert unused not in projection
 
 
-def test_product_tidy_waits_for_fal_backoff_even_when_sam2_is_ready():
+def test_product_tidy_waits_for_fal_backoff():
     job = _fresh(kind="sam_preprocess", result={"state": "unavailable",
                  "productTidy": {"state": "unavailable"}}, payload={"retry": 0},
                  idempotency_key="p:sam_preprocess:source")
     rec = _Recorder([job])
-    resolver = _Resolver(ready=True)
-    assert _push_with(rec, resolver, sam_preprocess_provider="sam2") == 0
-    assert rec.created == [] and resolver.asked == 0
+    assert _push(rec) == 0
+    assert rec.created == []
 
 
 def test_product_tidy_uses_existing_retry_generations_and_stops_at_budget():

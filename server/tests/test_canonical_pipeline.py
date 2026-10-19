@@ -15,53 +15,31 @@ import asyncio
 import pytest
 
 from app.services import canonical_reference as cr
-from app.services import sam_client
+from app.services import segmentation_types
 
 
 # ── SAM 클라이언트 ───────────────────────────────────────────────────────────
 
 class _S:
-    def __init__(self, url="http://sam:8080", token="tok", timeout=90.0):
-        self.sam_service_url, self.sam_internal_token = url, token
-        self.sam_request_timeout_s = timeout
-
-
-def test_client_is_inactive_until_both_url_and_token_exist():
-    assert sam_client.configured(_S())
-    assert not sam_client.configured(_S(url=None))
-    assert not sam_client.configured(_S(token=None))
-
-
-def test_unconfigured_client_raises_recoverable_not_crashes():
-    with pytest.raises(sam_client.SamUnavailable):
-        asyncio.run(sam_client.segment_garment(_S(url=None), {"Front": "k"}))
+    def __init__(self, *, configured=True):
+        self.fal_key = "test" if configured else None
 
 
 def test_view_result_requires_a_cutout_key_to_count_as_ready():
     """status=ready 인데 키가 없으면 저장할 것이 없다 — ready 로 취급하면 안 된다."""
-    assert sam_client.SamViewResult.from_payload(
+    assert segmentation_types.SamViewResult.from_payload(
         "Front", {"status": "ready", "cutoutKey": "derived/x.png"}).ready
-    assert not sam_client.SamViewResult.from_payload("Front", {"status": "ready"}).ready
-    assert not sam_client.SamViewResult.from_payload(
+    assert not segmentation_types.SamViewResult.from_payload("Front", {"status": "ready"}).ready
+    assert not segmentation_types.SamViewResult.from_payload(
         "Front", {"status": "failed", "code": "source_unavailable"}).ready
 
 
 def test_client_never_forwards_unknown_views():
     """Detail 은 캐노니컬 대상이 아니다 — 클라이언트에서 걸러진다."""
-    assert sam_client.VIEWS == ("Front", "Back")
+    assert segmentation_types.VIEWS == ("Front", "Back")
 
 
 # ── 캐시 정체성 ──────────────────────────────────────────────────────────────
-
-def test_cutout_identity_covers_source_view_model_and_algorithm():
-    from sam_service.segmentation import ALGORITHM_VERSION, cutout_key
-    base = cutout_key("h1", "Front")
-    assert base != cutout_key("h2", "Front")                       # 소스 교체
-    assert base != cutout_key("h1", "Back")                        # 뷰
-    assert base != cutout_key("h1", "Front", model_version="m2")   # 모델
-    assert base != cutout_key("h1", "Front", algorithm_version="v9")
-    assert cutout_key("h1", "Front") == base                       # 결정적
-    assert ALGORITHM_VERSION == "sam2-grid8-v3"
 
 
 # ── 자산 메타데이터 / 신선도 ─────────────────────────────────────────────────
@@ -71,7 +49,7 @@ def _result(**kw):
              source_hash="h1", model_version="m", algorithm_version="sam2-grid8-v2",
              checksum="c", width=10, height=20, area_frac=0.43, byte_size=99, cached=False)
     d.update(kw)
-    return sam_client.SamViewResult(**d)
+    return segmentation_types.SamViewResult(**d)
 
 
 def test_metadata_records_the_full_provenance_chain():
@@ -247,7 +225,7 @@ def _job_app(monkeypatch, *, configured=True, segment=None):
     from app.workers import sam_preprocess_job as spj
 
     conn = _JobConn()
-    app = types.SimpleNamespace(state=types.SimpleNamespace(pool=_Pool(conn)))
+    app = types.SimpleNamespace(state=types.SimpleNamespace(pool=_Pool(conn), r2=object()))
     finished = {}
 
     async def _finalize(_c, *, job_id, lease_token, status, result, product_tidy_capable=False):
@@ -257,9 +235,9 @@ def _job_app(monkeypatch, *, configured=True, segment=None):
 
     monkeypatch.setattr(spj.repo, "finalize_uncharged_job", _finalize)
     monkeypatch.setattr(spj.repo, "get_product", lambda *_a, **_k: _async({}))
-    monkeypatch.setattr(spj, "load_settings", lambda: _S(url=None) if not configured else _S())
+    monkeypatch.setattr(spj, "load_settings", lambda: _S(configured=configured))
     if segment is not None:
-        monkeypatch.setattr(spj.sam_client, "segment_garment", segment)
+        monkeypatch.setattr(spj.fal_cutout, "segment_garment", segment)
     return app, finished
 
 
@@ -293,7 +271,7 @@ def test_job_reports_unavailable_without_raising_when_sam_is_down(monkeypatch):
     from app.workers import sam_preprocess_job as spj
 
     async def _down(*_a, **_k):
-        raise spj.sam_client.SamUnavailable("connection refused")
+        raise spj.SamUnavailable("connection refused")
 
     app, finished = _job_app(monkeypatch, segment=_down)
     monkeypatch.setattr(spj.mannequin, "base_color_images",
@@ -308,9 +286,9 @@ def test_job_reports_unavailable_without_raising_when_sam_is_down(monkeypatch):
 def test_job_keeps_a_good_front_when_back_fails(monkeypatch):
     from app.workers import sam_preprocess_job as spj
 
-    async def _partial(_s, views):
+    async def _partial(_s, r2, views):
         return {"Front": _result(view="Front"),
-                "Back": sam_client.SamViewResult(view="Back", ready=False,
+                "Back": segmentation_types.SamViewResult(view="Back", ready=False,
                                                  code="segmentation_failed")}
 
     app, finished = _job_app(monkeypatch, segment=_partial)
@@ -332,7 +310,7 @@ def test_job_only_ever_asks_for_front_and_back(monkeypatch):
     from app.workers import sam_preprocess_job as spj
     seen = {}
 
-    async def _capture(_s, views):
+    async def _capture(_s, r2, views):
         seen.update(views)
         return {}
 
@@ -352,7 +330,7 @@ def test_job_sends_only_trusted_r2_keys(monkeypatch):
     from app.workers import sam_preprocess_job as spj
     seen = {}
 
-    async def _capture(_s, views):
+    async def _capture(_s, r2, views):
         seen.update(views)
         return {}
 
@@ -514,20 +492,11 @@ def test_the_loader_never_produces():
     import pathlib
     src = pathlib.Path("app/services/canonical_reference.py").read_text(encoding="utf-8")
     load_fn = src[src.index("async def load("):]
-    for forbidden in ("segment_garment", "create_job", "sam_client", "enqueue"):
+    for forbidden in ("segment_garment", "create_job", "segmentation_types", "enqueue"):
         assert forbidden not in load_fn
 
 
 # ── 아키텍처 경계 ────────────────────────────────────────────────────────────
-
-def test_the_main_app_never_imports_the_sam_service_implementation():
-    import pathlib
-    import re
-    app_dir = pathlib.Path("app")
-    hits = [str(p) for p in app_dir.rglob("*.py")
-            if re.search(r"^\s*(from|import)\s+sam_service\b",
-                         p.read_text(encoding="utf-8", errors="ignore"), re.M)]
-    assert not hits, f"app imports sam_service: {hits}"
 
 
 def test_the_main_app_still_has_no_torch():
@@ -600,7 +569,7 @@ class _SavepointConn:
 
 
 def _ready_result(key="derived/v1/model/abc.png"):
-    return sam_client.SamViewResult.from_payload(
+    return segmentation_types.SamViewResult.from_payload(
         "Front", {"status": "ready", "cutoutKey": key, "byteSize": 10})
 
 

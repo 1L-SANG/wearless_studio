@@ -2677,7 +2677,7 @@ async def _enqueue_editor_garment_mask(pool, s, *, user_id, project_id, cuts,
     """
     if getattr(s, "mannequin_tone_editor", "off") != "on":
         return
-    provider = getattr(s, "tone_mask_provider", "sam2")
+    provider = "fal"
     for cut in cuts:
         cut_id = (cut or {}).get("id")
         if not cut_id:

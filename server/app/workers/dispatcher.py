@@ -12,7 +12,6 @@ import os
 import time
 
 from .. import image_usage, repo
-from ..services import sam_autoscale
 from .analyze_job import run_analyze_job
 from .detail_page_job import run_detail_page_job
 from .editor_image_job import run_editor_image_job
@@ -127,7 +126,7 @@ class JobDispatcher:
         pool = self.app.state.pool
         last_sweep = 0.0
         # 동시 실행 상한. 기본 1 = 지금까지의 직렬 동작 그대로 — 배포만으로는 아무것도
-        # 안 바뀌고 env 한 줄로 켠다(SAM_AUTOSCALE·CUT_OUTPUT_QC_MODE 와 같은 관례).
+        # 안 바뀌고 env 한 줄로 켠다(CUT_OUTPUT_QC_MODE 와 같은 관례).
         limit = max(1, int(getattr(s, "job_concurrency", 1) or 1))
         slots = asyncio.Semaphore(limit)
         while not self._stop.is_set():
@@ -144,9 +143,7 @@ class JobDispatcher:
                     async with pool.connection() as conn:
                         job = await repo.claim_next_job(
                             conn, self.kinds, s.job_worker_id,
-                            product_tidy_capable=getattr(s, "product_tidy", "off") == "on",
-                            sam_providers={kind: sam_autoscale.provider_for_kind(s, kind)
-                                           for kind in ("sam_preprocess", "matching_cutout")})
+                            product_tidy_capable=getattr(s, "product_tidy", "off") == "on")
                         await conn.commit()
                     if job is None:
                         slots.release()

@@ -48,11 +48,12 @@
 
 **톤 에디터는 주상품 위에서만 움직인다.** 마네킹컷은 코디 의류(매칭 의류)를 함께 착장하지만
 파는 옷은 주상품 하나다 — 코디 옷의 색을 바꿔 발행하면 구매자가 살 수 없는 색을 보여준다.
-그래서 `editorGarmentMask`는 두 겹으로 보장된다: ① SAM 서비스가 코디 쪽(top|bottom)을 받아
+그래서 `editorGarmentMask`는 두 겹으로 보장된다: ① fal SAM 3 후보를 고르는 `tone_mask`가 코디 쪽(top|bottom)을 받아
 증거 ROI에서 그 밴드를 빼고 후보 점수에 `matchZone` 벌점을 주고, 최종 마스크가 그 밴드에
-25%를 넘게 걸치면 마스크를 내주지 않는다(`editor-worn-garment-sam2-v2`) ② API가 받은 마스크를
+25%를 넘게 걸치면 마스크를 내주지 않는다(`editor-worn-garment-fal-sam3-v2`) ② API가 받은 마스크를
 픽셀로 다시 재어 같은 판정을 하고, 확인된 마스크에만 `metadata.matchGuardVersion`을 찍는다 —
-SAM 서비스는 별도 배포(`deploy-sam2.yml`)이고 캐시가 있으므로 보장을 배포 순서에 맡기지 않는다.
+기존 R2 마스크도 재사용하므로 코디 보호 검증을 생성 시점에만 맡기지 않는다.
+누끼·톤 마스크는 fal SAM 3 고정이며, SAM2 서비스와 provider 전환 설정은 철거했다.
 코디 쪽 판정은 셀러가 고른 `matching_items.clothing_type` 하나만 읽으며, 라우트와 잡이 같은
 함수(`editor_garment_mask.matching_side_for_project`)를 쓴다. 마스크 없이 종결한 잡은
 `GET .../tone-editor`가 `failed`로 내려 화면이 "준비 중"에 갇히지 않는다.

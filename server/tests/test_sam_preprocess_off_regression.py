@@ -9,18 +9,18 @@ from types import SimpleNamespace
 import pytest
 
 from app import repo
-from app.services import sam_client, sam_retry
+from app.services import segmentation_types, sam_retry
 from app.workers import sam_preprocess_job as worker
 
 
-@pytest.mark.parametrize("provider", ["sam2", "fal"])
 @pytest.mark.parametrize("case", [
     "unconfigured", "no_assets", "outage", "both_ready", "back_failed",
     "back_unavailable", "both_failed", "both_unavailable", "record_collision",
 ])
-def test_off_matches_2cdc98db_finish_recording_and_retry_contract(monkeypatch, provider, case):
+def test_off_matches_2cdc98db_finish_recording_and_retry_contract(monkeypatch, case):
+    provider = "fal"
     events, finalized, records, segmented = [], [], [], []
-    settings = SimpleNamespace(product_tidy="off", sam_preprocess_provider=provider)
+    settings = SimpleNamespace(product_tidy="off")
     job = dict(id="j", project_id="p", user_id="u", lease_token="lease")
 
     class Connection:
@@ -53,7 +53,7 @@ def test_off_matches_2cdc98db_finish_recording_and_retry_contract(monkeypatch, p
         segmented.append(views)
         events.append("segment")
         if case == "outage":
-            raise sam_client.SamUnavailable("provider down")
+            raise segmentation_types.SamUnavailable("provider down")
         out = {}
         for view in ("Front", "Back"):
             code = None
@@ -61,7 +61,7 @@ def test_off_matches_2cdc98db_finish_recording_and_retry_contract(monkeypatch, p
                 code = "no_garment_candidate"
             elif case == "both_unavailable" or (case == "back_unavailable" and view == "Back"):
                 code = "unavailable"
-            out[view] = sam_client.SamViewResult(
+            out[view] = segmentation_types.SamViewResult(
                 view=view, ready=code is None, code=code,
                 cutout_key=f"canonical/{view}.png" if code is None else None,
                 source_hash=f"hash-{view}", cached=view == "Front")
@@ -81,9 +81,7 @@ def test_off_matches_2cdc98db_finish_recording_and_retry_contract(monkeypatch, p
         pytest.fail("off must never enter product tidy lookup or production")
 
     monkeypatch.setattr(worker, "load_settings", lambda: settings)
-    monkeypatch.setattr(worker.sam_client, "configured", lambda _: case != "unconfigured")
     monkeypatch.setattr(worker.fal_api, "configured", lambda _: case != "unconfigured")
-    monkeypatch.setattr(worker.sam_client, "segment_garment", segment)
     monkeypatch.setattr(worker.fal_cutout, "segment_garment", segment)
     monkeypatch.setattr(worker.canonical_reference, "record", record)
     monkeypatch.setattr(worker.product_tidy, "load_front", forbidden)

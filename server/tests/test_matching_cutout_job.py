@@ -23,7 +23,7 @@ def test_flag_defaults_off():
 import asyncio
 import contextlib
 import types
-from app.services.sam_client import SamViewResult
+from app.services.segmentation_types import SamViewResult
 from app.workers import matching_cutout_job as job
 
 
@@ -51,7 +51,7 @@ class _FakeR2:
 
 
 def _settings(**over):
-    base = dict(matching_cutout="on", sam_service_url="http://sam", sam_internal_token="t",
+    base = dict(matching_cutout="on", fal_key="test",
                 r2_bucket="b")
     base.update(over)
     return types.SimpleNamespace(**base)
@@ -84,14 +84,14 @@ def _wire_worker(monkeypatch, *, r2=None, cut_png=None, swap_rows=1,
     calls = {"segment": [], "swap": None, "finalize": None, "assets": [],
              "commits": 0, "item_asset_lookups": [], "savepoints": []}
 
-    async def fake_segment(settings, views):
+    async def fake_segment(settings, r2, views):
         calls["segment"].append(views)
         # cutout_key = 소스키 기반 가짜
         (v, k), = views.items()
         return {v: SamViewResult(view=v, ready=True, cutout_key=f"cut/{k}",
                                  source_hash="h"+k, width=30, height=40)}
 
-    monkeypatch.setattr(job.sam_client, "segment_garment", fake_segment)
+    monkeypatch.setattr(job.fal_cutout, "segment_garment", fake_segment)
 
     async def fake_swap(conn, *, matching_item_id, project_id, thumbnail_asset_id, image_asset_id):
         calls["swap"] = (matching_item_id, thumbnail_asset_id, image_asset_id)
@@ -254,11 +254,11 @@ def test_worker_fails_open_when_asset_swap_raises(monkeypatch):
 def test_worker_marks_failed_when_sam_has_no_cutout(monkeypatch):
     app, _r2, calls = _wire_worker(monkeypatch)
 
-    async def not_ready(settings, views):
+    async def not_ready(settings, r2, views):
         (v, _k), = views.items()
         return {v: SamViewResult(view=v, ready=False)}
 
-    monkeypatch.setattr(job.sam_client, "segment_garment", not_ready)
+    monkeypatch.setattr(job.fal_cutout, "segment_garment", not_ready)
     _run(app, _job_dict())
 
     assert calls["swap"] is None
@@ -285,11 +285,11 @@ def test_worker_skips_when_flag_off(monkeypatch):
 
 
 def test_worker_keeps_original_when_sam_fails(monkeypatch):
-    from app.services.sam_client import SamUnavailable
+    from app.services.segmentation_types import SamUnavailable
     calls = {"swap": False, "finalize": None}
-    async def fake_segment(settings, views):
+    async def fake_segment(settings, r2, views):
         raise SamUnavailable("down")
-    monkeypatch.setattr(job.sam_client, "segment_garment", fake_segment)
+    monkeypatch.setattr(job.fal_cutout, "segment_garment", fake_segment)
     async def fake_swap(conn, **k): calls["swap"] = True
     monkeypatch.setattr(job.repo, "swap_matching_item_assets", fake_swap)
     async def fake_finalize(conn, *, job_id, lease_token, status, result):

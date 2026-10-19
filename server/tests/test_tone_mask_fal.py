@@ -11,11 +11,9 @@ import pytest
 from PIL import Image
 
 from app.services import editor_garment_mask as egm, fal_api, sam_retry
-from app.services.sam_client import SamUnavailable
-from sam_service import worn_garment as W
-from sam_service import segmentation as S
+from app.services.segmentation_types import SamUnavailable
 from conftest import make_settings
-from test_worn_garment_segmentation import _mask, _cut_bytes, SHAPE, PRODUCT_BOX, COORD_BOX
+from test_tone_mask_rules import _mask, _cut_bytes, SHAPE, PRODUCT_BOX, COORD_BOX
 
 
 @pytest.fixture
@@ -70,74 +68,26 @@ def wire_fal(monkeypatch, masks, *, fail=False):
     return calls
 
 
-def test_settings_default_and_required_key(monkeypatch):
-    assert getattr(make_settings(), "tone_mask_provider", None) == "sam2"
-    with pytest.raises(ValueError, match="FAL_KEY"):
-        make_settings(tone_mask_provider="fal", fal_key=" ")
-    monkeypatch.setenv("TONE_MASK_PROVIDER", "fal")
-    monkeypatch.setenv("FAL_KEY", "test")
-    from app.config import load_settings
-    assert load_settings().tone_mask_provider == "fal"
-
-
-def test_rules_and_constants_are_identical(tone):
-    assert tone.ALGORITHM_VERSION == egm.FAL_ALGORITHM_VERSION
-    for name in ("SELECTOR_VERSION", "DEDUPE_IOU", "CATEGORY_ZONE", "CATEGORY_FORBIDDEN",
-                 "HEAD_BAND", "DIFF_ROI", "MATCHING_CORE", "MATCHING_SEPARABLE",
-                 "MATCH_ZONE_MAX", "VETO_FALLBACK_RANKS", "FALLBACK_OUTSIDE_MAX",
-                 "PRODUCT_CHROMA_SIGMA", "PRODUCT_LIGHTNESS_SIGMA", "PRODUCT_ALPHA_MIN",
-                 "PRODUCT_WEIGHT", "MASK_PREFIX"):
-        assert getattr(tone, name) == getattr(W, name), name
-    masks = [_mask(SHAPE, PRODUCT_BOX), _mask(SHAPE, COORD_BOX), np.zeros(SHAPE, bool),
-             np.ones(SHAPE, bool), _mask(SHAPE, (0, 200, 58, 61))]
-    masks[0][50:55, 50:55] = False
-    for mask in masks:
-        assert np.array_equal(tone.fill_holes(mask), S.fill_holes(mask))
-        assert tone.candidate_stats(mask) == S.candidate_stats(mask)
-        assert tone.plausible(tone.candidate_stats(mask)) == S.plausible(S.candidate_stats(mask))
-        assert np.array_equal(tone.tidy(mask), W.tidy(mask))
-    gen, base = (cv2.imdecode(np.frombuffer(b, np.uint8), cv2.IMREAD_COLOR) for b in images())
-    assert np.array_equal(tone.diff_map(base, gen), W.diff_map(base, gen))
-    assert np.array_equal(tone.figure_silhouette(gen), W.figure_silhouette(gen))
-    for category in (None, "top", "outer", "bottom", "dress", "unknown"):
-        assert tone.category_of(category) == W.category_of(category)
-        for side in (None, "top", "bottom"):
-            band = W.matching_core_band(category, side)
-            assert tone.matching_core_band(category, side) == band
-            roi = W.diff_roi(W.category_of(category), band)
-            assert tone.diff_roi(tone.category_of(category), band) == roi
-            evidence = W.evidence_mask(W.diff_map(base, gen), roi)
-            assert np.array_equal(tone.evidence_mask(tone.diff_map(base, gen), roi), evidence)
-            figure = W.figure_silhouette(gen)
-            signature = W.product_signature(images()[0])
-            assert np.array_equal(tone.product_signature(images()[0]), signature)
-            for mask in masks:
-                assert tone.score_candidate(mask, evidence, figure, W.category_of(category),
-                                            band, (gen, signature)) == W.score_candidate(
-                    mask, evidence, figure, W.category_of(category), band, (gen, signature))
-
-
 @pytest.mark.parametrize("case", ["product", "fallback", "matching_only", "background", "empty"])
-def test_same_candidates_select_the_same_mask_as_sam2_without_refine(tone, monkeypatch, case):
+def test_candidate_selection_preserves_product_pixels_and_fallback_guard(tone, monkeypatch, case):
     product, pants = _mask(SHAPE, PRODUCT_BOX), _mask(SHAPE, COORD_BOX)
     candidates = {"product": [pants, product, product],
                   "fallback": [product | pants, _mask(SHAPE, (70, 116, 36, 84))],
                   "matching_only": [pants],
                   "background": [product | pants, _mask(SHAPE, (70, 116, 4, 116))],
                   "empty": []}[case]
-    monkeypatch.setattr(W, "generate_candidates", lambda *a: candidates)
     generated, base = images()
     if case in ("matching_only", "background", "empty"):
-        with pytest.raises(W.NoGarmentCandidate):
-            W.produce(object(), generated, base, clothing_type="top", matching_side="bottom", use_m2m=False)
         with pytest.raises(tone.NoGarmentCandidate):
             tone.produce(generated, base, candidates=candidates, clothing_type="top", matching_side="bottom")
     else:
-        old = W.produce(object(), generated, base, clothing_type="top", matching_side="bottom", use_m2m=False)
-        new = tone.produce(generated, base, candidates=candidates, clothing_type="top", matching_side="bottom")
-        assert new.png == old.png
-        for name in ("selected_score", "selected_rank", "vetoed_attempts", "match_share", "product_match"):
-            assert getattr(new, name) == getattr(old, name)
+        result = tone.produce(generated, base, candidates=candidates, clothing_type="top", matching_side="bottom")
+        chosen = np.array(Image.open(io.BytesIO(result.png))) > 127
+        expected = product if case == "product" else _mask(SHAPE, (70, 116, 36, 84))
+        assert np.array_equal(chosen, expected)
+        assert result.selected_rank == 0
+        assert result.vetoed_attempts == 0
+        assert result.match_share == 0.0
 
 
 def test_top_pick_is_not_held_to_the_fallback_background_ceiling(tone, monkeypatch):
@@ -191,14 +141,13 @@ def test_fal_prompts_png_and_cache(tone, monkeypatch, category, sub, prompt):
 
 @pytest.mark.parametrize("case,state", [("empty", "failed"), ("matching", "failed"),
     ("outage", "unavailable"), ("ready", "ready"), ("reference_outage", "unavailable")])
-@pytest.mark.parametrize("local_provider", ["sam2", "fal"])
-def test_fal_worker_retains_status_and_guard(tone, monkeypatch, case, state, local_provider):
+def test_fal_worker_retains_status_and_guard(tone, monkeypatch, case, state):
     from app.workers import editor_garment_mask_job as worker
     from conftest import fake_worker_app, worker_job
     masks = [] if case == "empty" else [_mask(SHAPE, COORD_BOX if case == "matching" else PRODUCT_BOX)]
     wire_fal(monkeypatch, masks, fail=case == "outage")
-    settings = SimpleNamespace(tone_mask_provider=local_provider, fal_key="test", mannequin_tone_editor="on",
-        sam_service_url=None, sam_internal_token=None, base_mannequin_women_asset_id="base",
+    settings = SimpleNamespace(fal_key="test", mannequin_tone_editor="on",
+        base_mannequin_women_asset_id="base",
         base_mannequin_men_asset_id="base")
     monkeypatch.setattr(worker, "load_settings", lambda: settings)
     async def value(v):
@@ -209,10 +158,6 @@ def test_fal_worker_retains_status_and_guard(tone, monkeypatch, case, state, loc
     monkeypatch.setattr(worker.repo, "get_asset_for_user", lambda *a: value({"r2_key": "base"}))
     monkeypatch.setattr(worker, "_product_reference_key", lambda *a, **kw: value("product"))
     monkeypatch.setattr(egm, "matching_side_for_project", lambda *a, **kw: value("bottom"))
-    async def forbidden(*a, **kw):
-        raise AssertionError("fal must not call or wake SAM2")
-    monkeypatch.setattr(worker.sam_client, "segment_worn_garment", forbidden)
-    monkeypatch.setattr(worker.sam_client, "_fire_prewarm", forbidden)
     finished, recorded = {}, {}
     async def finalize(conn, **kw):
         finished.update(kw)
@@ -239,28 +184,6 @@ def test_fal_worker_retains_status_and_guard(tone, monkeypatch, case, state, loc
         assert finished["result"]["maskAssetId"] == "mask"
     else:
         assert not recorded
-
-
-def test_fal_switch_upgrades_existing_masks_and_changes_job_identity(monkeypatch):
-    old = {"algorithmVersion": egm.ALGORITHM_VERSION, "productKey": "product"}
-    before = egm.mask_job_key("p", "cut", product_key="product")
-    monkeypatch.setenv("TONE_MASK_PROVIDER", "fal")
-    monkeypatch.setenv("FAL_KEY", "test")
-    assert egm.mask_job_key("p", "cut", product_key="product") != before
-    assert egm.mask_upgrade_reason(old, product_key="product") == "algorithm"
-    current = {**old, "algorithmVersion": "editor-worn-garment-fal-sam3-v2"}
-    assert egm.mask_upgrade_reason(current, product_key="product") is None
-
-
-def test_fal_tone_is_excluded_from_autoscaler_demand(monkeypatch):
-    from test_sam_autoscaler import _Adapter, _scaler, _Repo, _quiet, _run, NOW
-    from app.services.sam_autoscale import ServiceState
-    class Repo(_Repo):
-        async def sam_demand_snapshot(self, conn, kinds):
-            assert "editor_garment_mask" not in kinds
-            assert set(kinds) == {"sam_preprocess", "matching_cutout"}
-            return self.snap
-    _run(_scaler(_Adapter(ServiceState(1, 1, 0, NOW)), tone_mask_provider="fal", fal_key="test"), Repo(_quiet()))
 
 
 def test_fal_cache_separates_product_references(tone, monkeypatch):
@@ -326,15 +249,6 @@ def test_fal_failures_keep_retryable_contract(tone, monkeypatch, failure, code):
     assert not r2.puts
 
 
-def test_fal_tone_does_not_probe_sam2_for_early_retry():
-    from app.workers.sam_retry_pusher import SamRetryPusher
-    from test_sam_retry_pusher import _Recorder, _fresh, _Resolver
-    job = _fresh(kind="editor_garment_mask", idempotency_key="p:editor_garment_mask:cut:v1")
-    rec, resolver = _Recorder([job]), _Resolver(ready=True)
-    settings = SimpleNamespace(tone_mask_provider="fal")
-    pusher = SamRetryPusher(SimpleNamespace(state=SimpleNamespace(settings=settings)))
-    assert asyncio.run(pusher._push_one(rec, None, job, resolver.ready)) is False
-    assert resolver.asked == 0 and not rec.created
 
 
 @pytest.mark.parametrize("algorithm,queued", [("editor-worn-garment-sam2-v3", True),
@@ -405,3 +319,61 @@ def test_fal_mask_restores_original_size_after_input_downscaling(tone, monkeypat
         assert image.mode == "L" and image.size == (1200, 2200)
         mask = np.array(image)
         assert mask[600, 600] == 255 and mask[1800, 600] == 0
+
+
+@pytest.mark.parametrize("stats,expected", [
+    ({"areaFrac": .0199}, (False, "too_small")),
+    ({"areaFrac": .02}, (True, "")),
+    ({"areaFrac": .75}, (True, "")),
+    ({"areaFrac": .7501}, (False, "near_full_frame")),
+    ({"areaFrac": .2, "borderTouchFrac": .5501}, (False, "border_dominated")),
+    ({"areaFrac": .2, "aspectHW": 6.01}, (False, "impossible_aspect")),
+    ({"areaFrac": .2, "aspectHW": .119}, (False, "impossible_aspect")),
+])
+def test_candidate_shape_rejection_boundaries(tone, stats, expected):
+    assert tone.plausible(stats) == expected
+
+
+def test_candidate_geometry_is_measured_from_pixels(tone):
+    assert tone.candidate_stats(_mask((20, 30), (4, 16, 10, 20))) == {
+        "areaFrac": .2, "bbox": [10, 4, 10, 12], "bboxFillFrac": 1.0,
+        "borderTouchFrac": 0.0, "components": 1, "aspectHW": 1.2,
+    }
+
+
+def _force_candidate_order(monkeypatch, tone, masks):
+    # Fix only ranking: final matching-band and background vetoes still inspect real pixels.
+    real_score = tone.score_candidate
+    def score(mask, *args):
+        parts = real_score(mask, *args)
+        rank = next(i for i, candidate in enumerate(masks) if np.array_equal(mask, candidate))
+        return {**parts, "score": float(100 - rank)}
+    monkeypatch.setattr(tone, "score_candidate", score)
+
+
+def test_fallback_rejects_matching_and_background_before_serving_product(tone, monkeypatch):
+    product = _mask(SHAPE, PRODUCT_BOX)
+    pants = _mask(SHAPE, COORD_BOX)
+    background = _mask(SHAPE, (70, 116, 4, 116))
+    candidates = [product | pants, background, product]
+    _force_candidate_order(monkeypatch, tone, candidates)
+    generated, base = images()
+    result = tone.produce(generated, base, candidates=candidates,
+                          clothing_type="top", matching_side="bottom")
+    assert result.selected_rank == 2 and result.vetoed_attempts == 1
+    assert np.array_equal(np.array(Image.open(io.BytesIO(result.png))) > 127, product)
+
+
+def test_fallback_never_searches_beyond_the_first_three_candidates(tone, monkeypatch):
+    product = _mask(SHAPE, PRODUCT_BOX)
+    pants = _mask(SHAPE, COORD_BOX)
+    candidates = [product | pants,
+                  _mask(SHAPE, (30, 116, 20, 48)) | pants,
+                  _mask(SHAPE, (40, 116, 72, 100)) | pants,
+                  product]
+    assert len(tone.dedupe(candidates)) == 4
+    _force_candidate_order(monkeypatch, tone, candidates)
+    generated, base = images()
+    with pytest.raises(tone.NoGarmentCandidate):
+        tone.produce(generated, base, candidates=candidates,
+                     clothing_type="top", matching_side="bottom")

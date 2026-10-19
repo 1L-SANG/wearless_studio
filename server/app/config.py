@@ -26,19 +26,10 @@ class Settings:
     r2_face_bucket: str | None = None
     cloudflare_zone_id: str | None = None
     cloudflare_cache_purge_token: str | None = None
-    # 내부 SAM2 세그멘테이션 서비스. 미설정이면 캐노니컬 전처리는 그냥 비활성 —
-    # 없다고 업로드·분석·생성이 막히면 안 되는 보조 인프라다.
-    sam_service_url: str | None = None
-    sam_internal_token: str | None = None
-    # fal 경로는 명시적으로 켤 때만 사용한다. 시크릿 배포는 별도 작업이다.
+    # 누끼와 톤 마스크는 fal SAM 3, 정돈 사진은 Qwen을 사용한다.
     fal_key: str | None = None
-    matching_cutout_provider: str = "sam2"  # sam2 | fal
     matching_flatlay_provider: str = "gemini"  # gemini | qwen
-    sam_preprocess_provider: str = "sam2"  # sam2 | fal
-    tone_mask_provider: str = "sam2"  # sam2 | fal
     product_tidy: str = "off"  # off | on, display only
-    # Front+Back 실측 ~49s(warm, x86_64 Fargate). 90s 는 그 위의 여유다.
-    sam_request_timeout_s: float = 90.0
     # 생성예시 레지스트리의 상대 URL 기준. prod 상대경로는 명시 필수, dev만 dummy 기본값 허용.
     example_asset_base_url: str | None = None
     # ---- AI 에이전트 (Phase 4) ----
@@ -234,15 +225,6 @@ class Settings:
     #: 톤 에디터(색감·밝기). off = 마스크 전처리도, 에디터 API 도 열리지 않는다.
     mannequin_tone_editor: str = "off"
     matching_cutout: str = "off"  # 커스텀 매칭 의류 누끼(배경 제거). off면 잡 안 돎.
-    # sam2 온디맨드 기동/종료(2026-08-21). off 면 ECS/SNS 클라이언트를 만들지도 않는다 —
-    # 로컬·테스트는 AWS 를 모른다. 정본: docs/superpowers/specs/2026-08-21-sam2-on-demand-scaling-design.md
-    sam_autoscale: str = "off"
-    sam_autoscale_idle_minutes: int = 30   # 마지막 수요로부터 이 시간 지나면 0대 (오너 결정)
-    # 콜드스타트 중 Service Connect 등록(+146.7초)을 기다리지 않고 task 사설 IP(+5초에 조회
-    # 가능)로 직접 부른다. 전송 실패 때만 쓰는 폴백이라 따뜻한 경로는 그대로다.
-    # sam_autoscale 이 off 면 ECS 탐색 자체가 없으므로 이 플래그도 효력이 없다.
-    # 정본: server/app/services/sam_endpoint.py
-    sam_direct_endpoint: str = "off"
     detail_worker_autoscale: str = "off"
     detail_worker_autoscale_idle_minutes: int = 10
     #: detail-worker 태스크 대수 상한. 기본 1 = 지금 동작(0↔1). 올리면 대기 잡이
@@ -555,7 +537,7 @@ class Settings:
     angle_runpod_pod_id: str | None = None
     #: 콜드스타트가 얼굴 파드보다 길다 — ComfyUI 설치 + 가중치 내려받기(2026-09-20 실측 ~10분).
     angle_autoscale_start_grace_minutes: int = 20
-    # 얼굴 패스 GPU 온디맨드(services/face_autoscale.py) — sam2 와 같은 판정, RunPod 파드 대상.
+    # 얼굴 패스 GPU 온디맨드(services/face_autoscale.py) — 공용 오토스케일 판정, RunPod 파드 대상.
     # off 면 HTTP 클라이언트를 만들지 않는다. API 키는 서버에만 두고 파드에는 올리지 않는다.
     face_autoscale: str = "off"
     face_autoscale_idle_minutes: int = 30
@@ -641,9 +623,8 @@ class Settings:
     kakao_extra_redirect_uris: tuple[str, ...] = ()
 
     def __post_init__(self):
-        if (self.matching_cutout_provider == "fal"
-                or self.sam_preprocess_provider == "fal"
-                or self.tone_mask_provider == "fal"
+        if (self.matching_cutout == "on"
+                or self.mannequin_tone_editor == "on"
                 or self.matching_flatlay_provider == "qwen"
                 or self.product_tidy == "on"):
             if not (self.fal_key or "").strip():
@@ -834,24 +815,15 @@ def load_settings() -> Settings:
         r2_face_bucket=os.getenv("R2_FACE_BUCKET") or None,
         cloudflare_zone_id=os.getenv("CLOUDFLARE_ZONE_ID") or None,
         cloudflare_cache_purge_token=os.getenv("CLOUDFLARE_CACHE_PURGE_TOKEN") or None,
-        sam_service_url=(os.getenv("SAM_SERVICE_URL") or "").rstrip("/") or None,
-        sam_internal_token=os.getenv("SAM_INTERNAL_TOKEN") or None,
         fal_key=(os.getenv("FAL_KEY") or "").strip() or None,
-        matching_cutout_provider=_flag("MATCHING_CUTOUT_PROVIDER", "sam2", {"sam2", "fal"}),
         matching_flatlay_provider=_flag("MATCHING_FLATLAY_PROVIDER", "gemini", {"gemini", "qwen"}),
-        sam_preprocess_provider=_flag("SAM_PREPROCESS_PROVIDER", "sam2", {"sam2", "fal"}),
-        tone_mask_provider=_flag("TONE_MASK_PROVIDER", "sam2", {"sam2", "fal"}),
         product_tidy=_flag("PRODUCT_TIDY", "off", {"off", "on"}),
-        sam_autoscale=_flag("SAM_AUTOSCALE", "off", {"off", "on"}),
-        sam_direct_endpoint=_flag("SAM_DIRECT_ENDPOINT", "off", {"off", "on"}),
-        sam_autoscale_idle_minutes=_int_env("SAM_AUTOSCALE_IDLE_MINUTES", 30),
         detail_worker_autoscale=_flag("DETAIL_WORKER_AUTOSCALE", "off", {"off", "on"}),
         detail_worker_autoscale_idle_minutes=_int_env("DETAIL_WORKER_AUTOSCALE_IDLE_MINUTES", 10),
         detail_worker_max_tasks=_int_env("DETAIL_WORKER_MAX_TASKS", 1),
         sam_alert_topic_arn=os.getenv("SAM_ALERT_TOPIC_ARN") or None,
         opendid_autoscale=_flag("OPENDID_AUTOSCALE", "off", {"off", "on"}),
         opendid_autoscale_idle_minutes=_int_env("OPENDID_AUTOSCALE_IDLE_MINUTES", 30),
-        sam_request_timeout_s=float(os.getenv("SAM_REQUEST_TIMEOUT_S") or 90.0),
         example_asset_base_url=(os.getenv("EXAMPLE_ASSET_BASE_URL") or "").rstrip("/") or None,
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         vertex_project=os.getenv("VERTEX_PROJECT") or None,

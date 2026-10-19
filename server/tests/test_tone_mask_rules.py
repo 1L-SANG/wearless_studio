@@ -1,36 +1,18 @@
-"""착장 마스크 알고리즘 계약 — Base-Diff 의 역할을 코드로 못 박는다.
-
-이 조사에서 실패한 모든 아키텍처는 하나의 실수를 공유했다: **Base-Diff 로 SAM 을 유도한 것**
-(점·상자·교집합). 그 실수는 리뷰로 막을 수 없다 — 한 줄만 바꿔도 조용히 되살아나기 때문에
-테스트로 막는다.
-
-torch 없이 도는 부분(버전 신원·키·채점·형태 정리)만 다룬다. 모델 추론은 이 파일이 아니라
-16건 코퍼스 검증의 몫이다.
-"""
+"""fal 톤 마스크의 채점·기하·형태 정리 규칙을 합성 픽셀로 검증한다."""
 
 from __future__ import annotations
 
-import inspect
 import io
-import pathlib
 
 import cv2
 import numpy as np
 import pytest
 
-from sam_service import worn_garment as W
-from sam_service.segmentation import ALGORITHM_VERSION as CANONICAL_ALGORITHM
-from sam_service.segmentation import CUTOUT_PREFIX
-
-SAM_DIR = pathlib.Path(__file__).resolve().parents[1] / "sam_service"
+from app.services import tone_mask as W
+CUTOUT_PREFIX = "derived/canonical-cutout"
 
 
 # ── 신원: 캐노니컬과 절대 섞이지 않는다 ──────────────────────────────────────
-
-def test_editor_algorithm_identity_is_separate_from_canonical():
-    assert W.ALGORITHM_VERSION == "editor-worn-garment-sam2-v3"
-    assert W.ALGORITHM_VERSION != CANONICAL_ALGORITHM
-    assert W.MASK_PREFIX != CUTOUT_PREFIX
 
 
 def test_mask_key_encodes_the_full_cache_identity():
@@ -40,55 +22,6 @@ def test_mask_key_encodes_the_full_cache_identity():
     assert CUTOUT_PREFIX not in key
     # 알고리즘이 바뀌면 다른 객체로 떨어져야 한다 — 옛 규칙으로 만든 마스크를 재사용하지 않는다.
     assert W.mask_key("a" * 64, algorithm_version="v1") != key
-
-
-def test_validated_generation_parameters_are_pinned():
-    """16×16·IoU 0.70·중복제거 0.90·M2M — 검증이 통과한 바로 그 설정."""
-    assert W.GRID == 16
-    assert W.MIN_IOU_SCORE == 0.7
-    assert W.DEDUPE_IOU == 0.90
-    assert W.M2M is True
-
-
-def test_canonical_module_is_not_modified_by_this_capability():
-    """캐노니컬 파일이 이 기능을 전혀 모른다는 것이 회귀 없음의 가장 강한 증거다."""
-    src = (SAM_DIR / "segmentation.py").read_text(encoding="utf-8")
-    for token in ("worn_garment", "editor-worn-garment", "input_masks"):
-        assert token not in src, f"segmentation.py 가 {token} 를 알고 있으면 안 된다"
-
-
-# ── Base-Diff 의 역할 (§3) ───────────────────────────────────────────────────
-
-def test_base_diff_never_prompts_sam():
-    """후보 생성 함수는 차분·카테고리·상품을 인자로도 받지 않는다."""
-    sig = inspect.signature(W.generate_candidates)
-    assert set(sig.parameters) == {"segmenter", "rgb", "grid"}
-    src = inspect.getsource(W.generate_candidates)
-    for token in ("diff", "evidence", "category", "input_boxes"):
-        assert token not in src, f"후보 생성에 {token} 가 들어가면 유도 프롬프트다"
-
-
-def test_base_diff_is_never_intersected_with_the_final_mask():
-    """`mask & diff` 는 저대비 밑단을 잘라낸다 — 이전 실험이 그렇게 죽었다."""
-    src = (SAM_DIR / "worn_garment.py").read_text(encoding="utf-8")
-    body = src[src.index("def produce("):]
-    for pattern in ("& evidence", "evidence &", "* evidence", "np.logical_and(mask, evidence"):
-        assert pattern not in body, f"최종 마스크에 {pattern} 이 있으면 안 된다"
-
-
-def test_base_diff_only_feeds_the_scorer():
-    """차분이 등장하는 곳은 채점 하나뿐."""
-    assert "evidence" in inspect.signature(W.score_candidate).parameters
-    produce = inspect.getsource(W.produce)
-    assert "evidence_mask(" in produce and "score_candidate(" in produce
-
-
-def test_refinement_is_mask_to_mask_not_another_prompt():
-    """M2M 의 입력은 후보 자신과 그 무게중심뿐이다."""
-    src = inspect.getsource(W.refine)
-    assert "input_masks" in src
-    for token in ("evidence", "diff", "input_boxes"):
-        assert token not in src
 
 
 # ── 채점 (§11: 일반 축만) ────────────────────────────────────────────────────
@@ -172,14 +105,6 @@ def test_tidy_fills_interior_holes_only():
     assert tidied[5, 5] == False, "바깥으로 자라면 안 된다"  # noqa: E712
 
 
-def test_produce_is_deterministic_for_identical_input():
-    """같은 입력이면 같은 캐시 키 — 재시도가 중복 추론이 되지 않는다."""
-    data = b"same-bytes"
-    assert W.source_fingerprint(data) == W.source_fingerprint(b"same-bytes")
-    assert W.mask_key(W.source_fingerprint(data)) == W.mask_key(W.source_fingerprint(data))
-    assert W.source_fingerprint(b"other") != W.source_fingerprint(data)
-
-
 # ── 코디 의류(매칭 의류)는 조정 대상이 아니다 ─────────────────────────────────
 #
 # 마네킹컷은 주상품과 코디 의류를 함께 입는다. 파는 옷은 주상품 하나뿐이라, 에디터 마스크가
@@ -220,16 +145,6 @@ def test_evidence_roi_excludes_the_matching_garment():
     assert W.diff_roi("top", W.MATCHING_CORE["bottom"]) == (W.DIFF_ROI["top"][0], 0.60)
     # 하의 상품: 코디 상의 밴드는 이미 ROI 밖이라 그대로다.
     assert W.diff_roi("bottom", W.MATCHING_CORE["top"]) == W.DIFF_ROI["bottom"]
-
-
-def test_scoring_is_byte_identical_to_v1_without_a_matching_garment():
-    shape = (100, 60)
-    figure = np.ones(shape, np.uint8)
-    evidence = _mask(shape, (10, 50, 15, 45)).astype(np.uint8)
-    garment = _mask(shape, (10, 50, 15, 45))
-    assert (W.score_candidate(garment, evidence, figure, "top")
-            == W.score_candidate(garment, evidence, figure, "top", ()))
-    assert W.score_candidate(garment, evidence, figure, "top")["matchZone"] == 0
 
 
 def test_the_coordinating_bottom_loses_to_the_product_top():
@@ -294,9 +209,7 @@ def _produce_with(monkeypatch, candidates, **kwargs):
     shape = (200, 120)
     base = _cut_bytes(shape)
     dressed = _cut_bytes(shape, top_box=(24, 116, 36, 84), bottom_box=(124, 192, 42, 78))
-    monkeypatch.setattr(W, "generate_candidates", lambda *_a, **_k: list(candidates))
-    monkeypatch.setattr(W, "refine", lambda _seg, _rgb, mask: mask)
-    return W.produce(object(), dressed, base, clothing_type="top", **kwargs)
+    return W.produce(dressed, base, candidates=candidates, clothing_type="top", **kwargs)
 
 
 def test_produce_refuses_a_mask_that_sits_on_the_coordinating_garment(monkeypatch):
@@ -337,75 +250,3 @@ def test_produce_without_a_coordinating_garment_keeps_v1_behaviour(monkeypatch):
 SHAPE = (200, 120)
 PRODUCT_BOX = (24, 116, 36, 84)
 COORD_BOX = (124, 192, 42, 78)
-
-
-def _produce_trying(monkeypatch, candidates, *, refine_to=None, **kwargs):
-    """`_produce_with` 와 같되 M2M 정제의 결과를 지정할 수 있다(정제가 마스크를 키우는 상황)."""
-    base = _cut_bytes(SHAPE)
-    dressed = _cut_bytes(SHAPE, top_box=PRODUCT_BOX, bottom_box=COORD_BOX)
-    monkeypatch.setattr(W, "generate_candidates", lambda *_a, **_k: list(candidates))
-    monkeypatch.setattr(W, "refine",
-                        lambda _seg, _rgb, mask: (mask if refine_to is None else refine_to))
-    return W.produce(object(), dressed, base, clothing_type="top", **kwargs)
-
-
-def _served(out):
-    from PIL import Image
-    return np.array(Image.open(io.BytesIO(out.png)).convert("L")) > 127
-
-
-def test_refinement_that_spills_onto_the_coordinating_garment_falls_back_to_the_candidate(
-        monkeypatch):
-    """정제가 마스크를 바지까지 키우면 정제 **전** 마스크를 쓴다 — 컷을 통째로 버리지 않는다."""
-    product = _mask(SHAPE, PRODUCT_BOX)
-    spilled = product | _mask(SHAPE, COORD_BOX)
-
-    out = _produce_trying(monkeypatch, [product], refine_to=spilled, matching_side="bottom")
-
-    assert out.match_share <= W.MATCH_ZONE_MAX
-    chosen = _served(out)
-    assert chosen[60, 60] and not chosen[160, 60], "상의는 잡고 바지는 두어야 한다"
-
-
-def test_a_vetoed_winner_hands_over_to_the_next_plausible_candidate(monkeypatch):
-    """1등이 상하의 한 덩어리라 거부되면 2등(허술하지만 상의인) 후보를 쓴다.
-
-    SAM 은 착장 전체를 한 덩어리로 내놓을 때가 잦고, 그 덩어리는 증거를 전부 품어서 점수가
-    높다. 1등이 거부됐다는 이유로 그 컷에서 색감 조정을 통째로 닫을 이유는 없다.
-    """
-    outfit = _mask(SHAPE, PRODUCT_BOX) | _mask(SHAPE, COORD_BOX)
-    partial_top = _mask(SHAPE, (70, 116, 36, 84))         # 가슴 아래만 잡은 상의 — 점수는 낮다
-
-    out = _produce_trying(monkeypatch, [outfit, partial_top], matching_side="bottom")
-
-    assert out.match_share <= W.MATCH_ZONE_MAX
-    chosen = _served(out)
-    assert chosen[100, 60] and not chosen[160, 60], "상의 후보로 내려와야 한다"
-
-
-def test_the_fallback_never_serves_a_mask_made_mostly_of_background(monkeypatch):
-    """내려간 후보라도 배경 덩어리면 내주지 않는다.
-
-    톤 렌더는 마스크가 0이 아닌 픽셀을 전부 물들인다(lib/toneRender.js). 코디 옷을 피하려다
-    배경을 물들이면 막은 의미가 없다 — 그 컷은 차라리 조정 불가로 둔다.
-    첫 구현은 이 후보를 그대로 내줬고, 테스트가 오히려 그걸 옳다고 박아두고 있었다
-    (2026-08-18 코덱스 리뷰).
-    """
-    outfit = _mask(SHAPE, PRODUCT_BOX) | _mask(SHAPE, COORD_BOX)
-    spilled = _mask(SHAPE, (70, 116, 4, 116))             # 몸 밖 51.8% — 대부분 배경
-
-    with pytest.raises(W.NoGarmentCandidate):
-        _produce_trying(monkeypatch, [outfit, spilled], matching_side="bottom")
-
-
-def test_the_top_pick_keeps_serving_exactly_as_it_did(monkeypatch):
-    """품질 문턱은 **새로 생긴 경로**에만 건다.
-
-    1등의 정제 마스크는 v3 이 이미 내주던 것이다. 거기에 새 문턱을 얹으면 오늘 잘 되던 컷이
-    조용히 "지원하지 않아요"가 될 수 있다 — 이 PR 이 고치려던 바로 그 증상이다.
-    """
-    sprawling = _mask(SHAPE, (70, 116, 4, 116))           # 몸 밖 51.8%, 그러나 1등
-
-    out = _produce_trying(monkeypatch, [sprawling])       # 코디 없음 → 거부 자체가 없다
-
-    assert out.selected_rank == 0 and _served(out)[100, 10]

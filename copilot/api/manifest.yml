@@ -208,10 +208,6 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 마네킹컷 의류 영역의 색감·밝기 조정. 생성 직후 fal 마스크를 비동기로 준비한다.
   # 미선언 시 config 기본 off 로 조용히 숨겨지므로 프로덕션 의도를 명시한다.
   MANNEQUIN_TONE_EDITOR: "on"
-  # SAM2 철거 진행(2026-10-19). URL과 시크릿 참조를 제거하고 자동 기동과 직결을 끈다.
-  # 자동 기동이 꺼져 유휴 시간 설정도 제거했다. 되돌리기는 이 PR을 되돌린다.
-  SAM_AUTOSCALE: "off"
-  SAM_DIRECT_ENDPOINT: "off"
   # ── opendid(fm-holder) 온디맨드 기동/종료 ──
   # opendid 는 평소 0대(copilot/opendid/manifest.yml count {spot:0}). 등록이 holder 단계
   # (license_pending·vc_pending)에 오면 api 가 깨우고, 30분 유휴면 reconciler 가 끈다.
@@ -229,13 +225,8 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 접힌 갈색 배럴팬츠 → 갈색 청바지). 이미 만든 1장을 재사용하므로 이미지 호출은 늘지 않고,
   # 재렌더가 실패하면 누끼 썸네일(그 폴백은 셀러 원본)이 그대로 남는다.
   MATCHING_FLATLAY: full
-  # 내 옷 누끼와 정돈의 fal 1단계. 되돌릴 때는 아래 두 값을 지운다.
-  MATCHING_CUTOUT_PROVIDER: fal
+  # 누끼와 톤 마스크는 fal SAM 3 고정. 내 옷 정돈 사진은 Qwen을 쓴다.
   MATCHING_FLATLAY_PROVIDER: qwen
-  # SAM2 전환(2026-10-17): 파는 옷 누끼와 톤 에디터 마스크도 fal SAM 3로 만든다.
-  # 셋 다 fal이면 sam2는 깨지 않는다. 되돌릴 때는 아래 두 값을 지운다(sam2 기본값, 철거 전까지 즉시 복구).
-  SAM_PREPROCESS_PROVIDER: fal
-  TONE_MASK_PROVIDER: fal
   # 코디 보드(#561)의 파는 옷 정돈 사진(보여주기 전용)과 무늬 옷 마네킹컷 정돈 참고(#558), 2026-10-19 켬.
   # 정돈이 없거나 실패하면 원본 사진을 그대로 쓴다. 되돌릴 때는 아래 두 값을 지운다(기본 off).
   PRODUCT_TIDY: "on"

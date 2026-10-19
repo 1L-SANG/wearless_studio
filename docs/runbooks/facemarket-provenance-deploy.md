@@ -57,8 +57,7 @@ aws ssm put-parameter --profile wearless --region us-east-1 \
 ```
 
 `aws ssm put-parameter` 로 직접 올리면 `copilot-application`/`copilot-environment`
-태그가 안 붙어 ECS 태스크가 값을 못 읽는 사고가 이 저장소에 실제로 있었다(2026-07-17,
-`SAM_INTERNAL_TOKEN`). 태그를 위 명령에 `--tags Key=copilot-application,Value=wearless
+태그가 안 붙어 ECS 태스크가 값을 못 읽는 사고가 이 저장소에 실제로 있었다(2026-07-17). 태그를 위 명령에 `--tags Key=copilot-application,Value=wearless
 Key=copilot-environment,Value=use1` 로 직접 챙기거나, `copilot-aws secret init --name
 FM_C2PA_CERT_PEM`(대화형, 태그 자동)을 쓴다.
 

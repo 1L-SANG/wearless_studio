@@ -352,7 +352,7 @@ def test_worker_never_retries_the_provider_itself():
 def test_worker_never_generates_images_or_touches_sam():
     code = _code_only(WORKER_SRC)
     for banned in ("generate_content_image", "GeminiImageClient", "state.gemini",
-                   "sam_client", "segment_garment", "canonical_reference",
+                   "fal_cutout", "tone_mask", "fal_api", "segment_garment", "canonical_reference",
                    "sam_preprocess", "put_bytes", "_save_cut"):
         assert banned not in code, banned
     # gemini_image 는 InlineImage(순수 데이터클래스) 때문에만 등장해야 한다.

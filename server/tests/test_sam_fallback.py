@@ -180,9 +180,9 @@ def test_the_fallback_is_guarded_against_recursion():
     assert "already_used=sam_fallback_used" in RETRY_BRANCH  # 호출부가 상태를 넘긴다
 
 
-def test_the_fallback_never_calls_the_sam_service_at_generation_time():
+def test_the_fallback_only_reads_stored_cutouts_at_generation_time():
     """생성 시점에는 저장된 캐노니컬만 읽는다. SAM 추론은 sam_preprocess 소유다."""
-    for forbidden in ("sam_client", "segment_garment"):
+    for forbidden in ("segmentation_types", "segment_garment"):
         assert forbidden not in MJ
 
 

@@ -12,7 +12,7 @@ from PIL import Image
 
 from app.services import fal_api, fal_cutout
 from app import image_usage
-from app.services.sam_client import SamUnavailable
+from app.services.segmentation_types import SamUnavailable
 
 
 def png(image):

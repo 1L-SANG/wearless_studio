@@ -37,10 +37,6 @@ QC_FLAGS = [
      "mannequin_base_fidelity_observe_regenerations"),
     # 톤 에디터도 미선언이면 API 가 disabled 를 반환하고 UI 가 조용히 사라진다.
     ("MANNEQUIN_TONE_EDITOR", "mannequin_tone_editor"),
-    # SAM2 철거 중에도 자동 기동을 명시적으로 off로 선언한다.
-    ("SAM_AUTOSCALE", "sam_autoscale"),
-    # SAM2 직결 폴백도 명시적으로 off로 선언한다.
-    ("SAM_DIRECT_ENDPOINT", "sam_direct_endpoint"),
     # 마네킹 유료 초안 이어 쓰기(2026-09-23). 오타면 _default_on_flag 가 off 로 눕힌다.
     ("MANNEQUIN_DRAFT_REUSE", "mannequin_draft_reuse"),
 ]
@@ -58,15 +54,6 @@ def test_qc_flags_are_declared(manifest_vars):
     assert not missing, f"매니페스트에 QC 플래그 미선언: {missing}"
 
 
-def test_api_disconnects_sam2_and_keeps_all_three_providers_on_fal():
-    text = MANIFEST.read_text(encoding="utf-8")
-    doc = yaml.safe_load(text)
-    assert "SAM_SERVICE_URL" not in text
-    assert "SAM_INTERNAL_TOKEN" not in text
-    assert doc["variables"]["SAM_AUTOSCALE"] == "off"
-    assert doc["variables"]["SAM_DIRECT_ENDPOINT"] == "off"
-    for name in ("MATCHING_CUTOUT_PROVIDER", "SAM_PREPROCESS_PROVIDER", "TONE_MASK_PROVIDER"):
-        assert doc["variables"][name] == "fal"
 
 
 def test_fal_deployment_moves_every_sam2_job_kind_to_fal(monkeypatch):
@@ -81,10 +68,7 @@ def test_fal_deployment_moves_every_sam2_job_kind_to_fal(monkeypatch):
             monkeypatch.setenv(name, str(doc["variables"][name]))
     monkeypatch.setenv("FAL_KEY", "test-only")
     settings = load_settings()
-    assert settings.matching_cutout_provider == "fal"
     assert settings.matching_flatlay_provider == "qwen"
-    assert settings.sam_preprocess_provider == "fal"
-    assert settings.tone_mask_provider == "fal"
     assert settings.product_tidy == "on"
     assert settings.mannequin_pattern_flat_reference == "on"
 
@@ -166,6 +150,7 @@ def test_manifest_flag_value_survives_loader(env_name, attr, manifest_vars, monk
     """
     raw = str(manifest_vars[env_name])
     monkeypatch.setenv(env_name, raw)
+    monkeypatch.setenv("FAL_KEY", "test")
     # load_settings 는 필수 env 를 요구하므로 최소 세트를 채운다.
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     loaded = getattr(load_settings(), attr)
@@ -255,7 +240,6 @@ def test_loader_silently_falls_back_on_typo(monkeypatch):
 
 WORKFLOW_DIR = pathlib.Path(__file__).resolve().parents[2] / ".github/workflows"
 API_WORKFLOW = WORKFLOW_DIR / "deploy-server.yml"
-SAM_WORKFLOW = WORKFLOW_DIR / "deploy-sam2.yml"
 
 
 def _wf(path: pathlib.Path = API_WORKFLOW) -> dict:
@@ -278,12 +262,7 @@ CHANGE_MATRIX = [
     # api 서비스 오버라이드(LoadBalancers: [] 등) — 바뀌면 api 를 다시 배포해야 반영된다.
     ("copilot/api/overrides/cfn.patches.yml", True),
     ("supabase/migrations/20260812010000_base_fidelity_observe_job_kind.sql", True),
-    ("server/sam_service/segmentation.py", False),
-    ("server/sam_service/requirements.txt", False),
-    ("server/sam_service/Dockerfile", False),
-    ("copilot/sam2/manifest.yml", False),
     (".github/workflows/deploy-server.yml", True),
-    (".github/workflows/deploy-sam2.yml", False),
     # 어느 이미지에도 안 들어가는 것들
     ("server/tests/test_analyze.py", False),
     ("server/scripts/seed_mannequin_base.py", False),
@@ -326,19 +305,10 @@ def test_workflow_triggers_are_service_scoped(event):
     """남겨 둔 SAM2 소스와 매니페스트는 API 파이프라인을 열지 않는다."""
     api_paths = _event_paths(API_WORKFLOW, event)
     assert any(_matches(g, "server/app/routes.py") for g in api_paths)
-    assert not any(_matches(g, "server/sam_service/model.py") for g in api_paths)
     assert any(_matches(g, "copilot/api/manifest.yml") for g in api_paths)
     assert any(_matches(g, "copilot/detail-worker/manifest.yml") for g in api_paths)
-    assert not any(_matches(g, "copilot/sam2/manifest.yml") for g in api_paths)
 
 
-def test_sam_image_has_no_dependency_on_the_api_source():
-    """다음 정리 PR까지 남겨 둔 SAM2 코드도 API와의 의존 경계를 유지한다."""
-    import re
-    root = pathlib.Path(__file__).resolve().parents[1] / "sam_service"
-    bad = [str(f) for f in root.rglob("*.py")
-           if re.search(r"^\s*(from|import)\s+app\b", f.read_text(encoding="utf-8"), re.M)]
-    assert not bad, f"sam_service 가 app/ 을 임포트한다: {bad}"
 
 
 def test_migrations_run_before_the_api_deploy():
@@ -365,7 +335,7 @@ def test_detail_worker_deploys_before_api_stops_claiming_detail_jobs():
 def test_sam_deployment_workflow_is_removed():
     """SAM2가 CI나 수동 실행으로 다시 배포되지 않도록 워크플로를 제거한다."""
     api = _wf(API_WORKFLOW)
-    assert not SAM_WORKFLOW.exists()
+    assert not (WORKFLOW_DIR / "deploy-sam2.yml").exists()
     assert "deploy-sam2" not in api["jobs"]
 
 
@@ -426,6 +396,7 @@ def test_manifest_model_value_survives_loader(env_name, attr, manifest_vars, mon
     """
     raw = str(manifest_vars[env_name])
     monkeypatch.setenv(env_name, raw)
+    monkeypatch.setenv("FAL_KEY", "test")
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     loaded = getattr(load_settings(), attr)
     assert loaded == raw, (
@@ -471,21 +442,9 @@ def _construct_cfn(loader, _suffix, node):
 _CfnLoader.add_multi_constructor("!", _construct_cfn)
 
 
-def test_sam2_manifest_defaults_to_zero_tasks():
-    """온디맨드: 배포가 desiredCount 를 0 으로 둬야 reconciler 가 수요에 맞춰 켠다.
-
-    평문 `0`(launchType)과 `{spot: 0}`(FARGATE_SPOT capacity provider) 둘 다 desiredCount 0
-    을 뜻한다. 서비스가 이미 Spot 으로 떠 있으면 평문 0 은 서비스 교체를 강제해 Service Connect
-    충돌로 배포가 깨지므로 `{spot: 0}` 을 쓴다 — manifest 주석 참고. 어느 형태든 0 대면 통과.
-    """
-    doc = yaml.safe_load(SAM2_MANIFEST.read_text(encoding="utf-8"))
-    count = doc["count"]
-    desired = count.get("spot", count.get("range")) if isinstance(count, dict) else count
-    assert desired == 0
 
 
 def test_api_manifest_omits_unused_sam_idle_minutes_and_shared_topic(manifest_vars):
-    assert "SAM_AUTOSCALE_IDLE_MINUTES" not in manifest_vars
     # 토픽 ARN 은 addon Output 이 SAM_ALERT_TOPIC_ARN 으로 자동 주입한다 — 매니페스트에 박으면
     # 배포가 깨지거나 값이 갈린다(Codex 검토: from_cfn 은 환경 addon Export 용).
     assert "SAM_ALERT_TOPIC_ARN" not in manifest_vars
@@ -512,7 +471,7 @@ def test_autoscale_addon_exists_with_scoped_permissions():
     allowed_services = upd["Condition"]["StringEquals"]["aws:ResourceTag/copilot-service"]
     if isinstance(allowed_services, str):
         allowed_services = [allowed_services]
-    assert set(allowed_services) == {"sam2", "opendid", "detail-worker"}
+    assert set(allowed_services) == {"opendid", "detail-worker"}
     assert "api" not in allowed_services  # api 자기 자신·타 서비스는 막힌다
     # PolicyArn 접미사 Output 은 Copilot 이 task role 에 자동 부착, 일반 Output 은 env 로 주입.
     assert "SamAutoscalePolicyArn" in addon["Outputs"]

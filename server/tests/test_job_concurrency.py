@@ -110,22 +110,6 @@ def test_dispatcher_passes_product_tidy_capability_to_claim(monkeypatch, enabled
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("canonical,matching", [("fal", "sam2"), ("sam2", "fal")])
-def test_dispatcher_passes_its_executing_cutout_providers_to_claim(monkeypatch, canonical, matching):
-    all_done = asyncio.Event()
-    claims = []
-    async def worker(app, job):
-        all_done.set()
-    async def run():
-        _wire(monkeypatch, _queue(1), worker, claim_capabilities=claims)
-        app = _app({"sam_preprocess_provider": canonical, "matching_cutout_provider": matching})
-        dispatcher = JobDispatcher(app, kinds=("mannequin",))
-        await dispatcher.start()
-        await _drain(dispatcher, all_done, timeout=2)
-    asyncio.run(run())
-    assert claims
-    assert claims[0].get("sam_providers") == {
-        "sam_preprocess": canonical, "matching_cutout": matching}
 
 
 # ── 1. 동시 실행 수가 N 을 넘지 않는다 ────────────────────────────────────────

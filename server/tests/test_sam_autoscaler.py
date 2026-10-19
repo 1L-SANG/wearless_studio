@@ -51,7 +51,7 @@ class _Repo:
         self.snap = snap
         self.lock = lock
 
-    async def sam_demand_snapshot(self, conn, kinds):
+    async def demand_snapshot(self, conn):
         return self.snap
 
     async def try_advisory_lock(self, conn, key):
@@ -68,95 +68,19 @@ def _quiet():
 
 
 def _scaler(adapter, **over):
-    values = {"sam_autoscale": "on"}
+    values = {"opendid_autoscale": "on"}
     values.update(over)
     s = make_settings(**values)
     app = type("A", (), {"state": type("S", (), {"settings": s, "pool": None})()})()
-    sc = SamAutoscaler(app, adapter)
+    sc = SamAutoscaler(app, adapter, demand_fn=lambda repo, conn: repo.demand_snapshot(conn),
+                       idle_attr="opendid_autoscale_idle_minutes", name="opendid",
+                       lock_key="opendid_autoscaler")
     sc._now = lambda: NOW
     return sc
 
 
 def _run(sc, repo):
     return asyncio.run(sc.reconcile_once(repo, None))
-
-
-class _DemandCursor:
-    def __init__(self, active=0, finished_at=None):
-        self.queries = []
-        self.active = active
-        self.finished_at = finished_at
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        return False
-
-    async def execute(self, sql, params):
-        self.queries.append((sql, params))
-
-    async def fetchone(self):
-        return {"active_sam_jobs": self.active, "last_sam_finished_at": self.finished_at,
-                "last_upload_at": NOW}
-
-
-def _all_fal_settings():
-    return make_settings(sam_preprocess_provider="fal", matching_cutout_provider="fal",
-                         tone_mask_provider="fal", fal_key="test")
-
-
-@pytest.mark.parametrize("active", [0, 1])
-def test_all_fal_demand_keeps_active_jobs_but_ignores_recent_upload_and_history(active):
-    cursor = _DemandCursor(active=active, finished_at=NOW)
-    conn = SimpleNamespace(cursor=lambda: cursor)
-    snap = asyncio.run(mod._sam_demand(repo_mod, conn, _all_fal_settings()))
-    assert snap == DemandSnapshot(active, None, None)
-    assert want_count(snap, idle_minutes=30, now=NOW) == active
-
-
-@pytest.mark.parametrize("provider_attr", [
-    "sam_preprocess_provider",
-    "matching_cutout_provider",
-    "tone_mask_provider",
-])
-def test_each_sam2_switch_restores_upload_demand_immediately(provider_attr):
-    sc = _scaler(_Adapter(ServiceState(0, 0, 0, None)))
-    sc.app.state.settings = _all_fal_settings()
-    cursor = _DemandCursor()
-    conn = SimpleNamespace(cursor=lambda: cursor)
-
-    async def run():
-        for _ in range(2):
-            sc.app.state.settings = replace(sc.app.state.settings, **{provider_attr: "sam2"})
-            snap = await sc._demand_fn(repo_mod, conn)
-            assert snap == DemandSnapshot(0, None, NOW)
-            assert want_count(snap, idle_minutes=30, now=NOW) == 1
-            sc.app.state.settings = replace(sc.app.state.settings, **{provider_attr: "fal"})
-            assert await sc._demand_fn(repo_mod, conn) == DemandSnapshot(0, None, None)
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("name", ["opendid", "detail-worker"])
-def test_all_fal_keeps_custom_service_demand(name, monkeypatch):
-    async def forbidden(*args):
-        pytest.fail("custom demand must not use the SAM demand function")
-
-    monkeypatch.setattr(mod, "_sam_demand", forbidden)
-    calls = []
-
-    async def demand(repo, conn):
-        calls.append((repo, conn))
-        return _busy()
-
-    adapter = _Adapter(ServiceState(0, 0, 0, None))
-    app = SimpleNamespace(state=SimpleNamespace(settings=_all_fal_settings()))
-    sc = SamAutoscaler(app, adapter, demand_fn=demand, name=name, lock_key=name)
-    repo = _Repo(_quiet())
-    assert _run(sc, repo) == "up"
-    assert calls == [(repo, None)]
-    assert adapter.set_calls == [1]
 
 
 # ── 기본 방향 ──
@@ -215,7 +139,7 @@ def test_it_disables_itself_when_discovery_fails_and_alerts_once():
     sc = _scaler(a)
     assert _run(sc, _Repo(_busy())) == "skip"
     assert _run(sc, _Repo(_busy())) == "skip"
-    assert a.notices == ["sam2 autoscale: service not found"]
+    assert a.notices == ["opendid autoscale: service not found"]
 
 
 def test_service_not_found_on_describe_forgets_the_cached_target():
@@ -236,7 +160,7 @@ def test_it_alerts_once_per_long_run():
     sc = _scaler(a)
     _run(sc, _Repo(_busy()))
     _run(sc, _Repo(_busy()))
-    assert a.notices == ["sam2 autoscale: running over 3h"]
+    assert a.notices == ["opendid autoscale: running over 3h"]
 
 
 def test_long_run_alert_is_keyed_by_task_start_so_a_redeploy_alerts_again():
@@ -247,7 +171,7 @@ def test_long_run_alert_is_keyed_by_task_start_so_a_redeploy_alerts_again():
     _run(sc, _Repo(_busy()))                                      # 알림 1 (first)
     a.state = ServiceState(1, 1, 0, first - timedelta(hours=5))    # 재배포 → 다른 startedAt
     _run(sc, _Repo(_busy()))                                      # 알림 2 (new run)
-    assert a.notices.count("sam2 autoscale: running over 3h") == 2
+    assert a.notices.count("opendid autoscale: running over 3h") == 2
 
 
 def test_long_run_does_not_alert_when_demand_is_gone():
@@ -264,7 +188,7 @@ def test_scale_failure_alerts_and_does_not_raise():
             raise RuntimeError("AccessDenied")
     a = _Boom(ServiceState(0, 0, 0, None))
     assert _run(_scaler(a), _Repo(_busy())) == "skip"
-    assert a.notices == ["sam2 autoscale: scale to 1 failed"]
+    assert a.notices == ["opendid autoscale: scale to 1 failed"]
 
 
 def test_scale_failure_alert_is_debounced_for_ten_minutes():
@@ -275,7 +199,7 @@ def test_scale_failure_alert_is_debounced_for_ten_minutes():
     sc = _scaler(a)
     for _ in range(3):                                            # 60초 간격 3회 → 알림 1회
         _run(sc, _Repo(_busy()))
-    assert a.notices == ["sam2 autoscale: scale to 1 failed"]
+    assert a.notices == ["opendid autoscale: scale to 1 failed"]
 
 
 def test_alert_failure_never_breaks_the_reconcile():
@@ -328,7 +252,7 @@ def test_prewarm_soon_keeps_a_reference_until_done():
 
 def test_disabled_scaler_is_inert():
     a = _Adapter(ServiceState(0, 0, 0, None), enabled=False)
-    sc = _scaler(a, sam_autoscale="off")
+    sc = _scaler(a, opendid_autoscale="off")
     assert _run(sc, _Repo(_busy())) == "skip"
     asyncio.run(sc.prewarm())
     sc.prewarm_soon()

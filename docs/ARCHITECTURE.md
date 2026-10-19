@@ -1,6 +1,6 @@
 # Wearless Studio — 전체 아키텍처 도식
 
-> 작성 2026-09-07. 레포 전수조사 기반(코드가 정본, 문서는 보조).
+> 작성 2026-09-07 · 세그멘테이션 현행화 2026-10-19. 레포 전수조사 기반(코드가 정본, 문서는 보조).
 > 규모: `server/app` 46.8k LOC(Python) · `server/tests` 72.2k LOC(214 파일) · `src` 44.8k LOC(JS/JSX) · `tests/frontend` 109 파일 · 마이그레이션 63개(3.4k LOC) · DB 테이블 67개.
 
 ---
@@ -23,7 +23,6 @@ graph TB
     ALB["ALB<br/>api.wearless.kr"]
     API["api<br/>LB Web Service · count 1<br/>FastAPI + in-process JobDispatcher"]
     DW["detail-worker<br/>Backend · Spot count 0→N<br/>JOB_KINDS=detail_page"]
-    SAM["sam2<br/>Backend · Spot count 0→1<br/>SAM2 세그멘테이션"]
     OD["opendid<br/>Backend · Spot count 0→1<br/>TA+Issuer+CAS+fm-holder 4 JVM"]
   end
 
@@ -36,6 +35,7 @@ graph TB
   end
 
   subgraph Ext["외부 서비스"]
+    FAL["fal SAM 3 · Qwen"]
     GEM["Gemini API<br/>generativelanguage"]
     OAI["OpenAI API<br/>images/edits"]
     CX["OACX 표준인증창<br/>cx.raonsecure.co.kr<br/>(서울 API GW 프록시 경유)"]
@@ -61,17 +61,15 @@ graph TB
   DW --> PG
   API --> R2
   DW --> R2
-  API -->|"Service Connect"| SAM
   API -->|"Service Connect :8100"| OD
   API -->|"ECS UpdateService"| DW
-  API -->|"ECS UpdateService"| SAM
   API -->|"ECS UpdateService"| OD
 
-  SAM --> R2
   OD --> EFS
   OD --> RDS
   OD --> CHAIN
 
+  API --> FAL
   API --> GEM
   API --> OAI
   DW --> GEM
@@ -91,11 +89,11 @@ graph TB
 
 | 성질 | 내용 |
 |---|---|
-| 단일 레포·다중 산출물 | 프론트 3앱 + FastAPI + SAM2 서비스 + OpenDID 스택이 한 레포 |
+| 단일 레포·다중 산출물 | 프론트 3앱 + FastAPI + OpenDID 스택이 한 레포 |
 | 상태 없는 컴퓨트 | ECS 태스크는 전부 stateless. 상태 = Supabase PG + R2 (+ holder만 EFS) |
 | 잡 큐 = DB | 별도 브로커 없음. `jobs` 테이블 `FOR UPDATE SKIP LOCKED` 폴링 |
 | 플래그 지배 | 기능 대부분이 env 플래그 뒤. off면 라우터 자체가 미등록(코드 미노출) |
-| scale-to-zero | detail-worker · sam2 · opendid 는 평소 0대, api 가 수요 보고 깨움 |
+| scale-to-zero | detail-worker · opendid 는 평소 0대, api 가 수요 보고 깨움 |
 
 ---
 
@@ -207,7 +205,7 @@ graph TB
     W6["sam_preprocess · matching_cutout · editor_garment_mask"]
     W7["base_fidelity_observe"]
     W8["fm_model_asset_job"]
-    REC["리컨실러: draft_asset_reclaimer ·<br/>fm_vc_revocation · fm_publication_anchor ·<br/>sam_retry_pusher · sam_autoscaler×3"]
+    REC["리컨실러: draft_asset_reclaimer ·<br/>fm_vc_revocation · fm_publication_anchor ·<br/>sam_retry_pusher · sam_autoscaler(공용)"]
   end
 
   subgraph Agents["AI 에이전트 (app/agents, 52 파일)"]
@@ -217,7 +215,7 @@ graph TB
   end
 
   subgraph Svc["서비스 (app/services, 23 파일)"]
-    SV["sam_client · sam_endpoint · sam_autoscale · sam_retry · sam_fallback<br/>matching · matching_cutout · matching_flatlay · retrieval · embeddings<br/>qc · input_qc · canonical_reference · editor_garment_mask<br/>c2pa_signer · biometric_purge"]
+    SV["segmentation_types · fal_cutout · tone_mask · sam_autoscale · sam_retry · sam_fallback<br/>matching · matching_cutout · matching_flatlay · retrieval · embeddings<br/>qc · input_qc · canonical_reference · editor_garment_mask<br/>c2pa_signer · biometric_purge"]
   end
 
   HTTP --> Core
@@ -305,11 +303,10 @@ sequenceDiagram
 ```mermaid
 graph LR
   L["api lifespan"] --> D1["JobDispatcher"]
-  L --> D2["SamRetryPusher<br/>화면 없는 SAM 잡 재시도"]
+  L --> D2["SamRetryPusher<br/>화면 없는 fal 잡 재시도"]
   L --> D3["DraftAssetReclaimer<br/>draft 자산 회수"]
   L --> D4["FaceVcRevocationReconciler<br/>VC 폐기 큐 드레인"]
   L --> D5["PublicationAnchorReconciler<br/>배포본 온체인 앵커"]
-  L --> D6["SamAutoscaler(sam2)"]
   L --> D7["SamAutoscaler(opendid)"]
   L --> D8["SamAutoscaler(detail-worker)"]
 ```
@@ -414,22 +411,17 @@ graph LR
 - 프리필터는 `matching.py` 것을 재사용 — 재구현 금지(드리프트 방지).
 - torch/transformers는 lazy import + optional group `[embeddings]`.
 
-### 6.1 SAM2 서비스 (`server/sam_service`)
+### 6.1 fal SAM 3 누끼와 톤 마스크
 
-```mermaid
-graph LR
-  API["api"] -->|"POST /segment-garment<br/>HMAC 내부 토큰"| SAM["sam2:8080"]
-  API -->|"POST /segment-worn-garment"| SAM
-  SAM -->|"결정적 키로 PUT"| R2[("R2")]
-  SAM -->|"키만 반환 (바이트 아님)"| API
-  API -.->|"콜드스타트 시 task 사설 IP 직결<br/>SAM_DIRECT_ENDPOINT"| SAM
-```
+`sam_preprocess`와 `matching_cutout`은 `fal_cutout`으로, `editor_garment_mask`는 `tone_mask`로
+fal SAM 3 후보를 처리한다. 공유 결과 타입과 복구 가능한 예외는 `segmentation_types`에 둔다.
+누끼는 Front/Back을 독립 저장하고, 톤 마스크는 종류별 구역·상품색 유사도·코디 영역 25% 제한을 적용한다.
+API도 마스크 픽셀을 재검증해 코디 의류 보호 스탬프를 기록한다.
 
-- **참조로 반환**: 서비스는 PNG를 결정적 R2 키에 쓰고 키만 돌려준다. 앱 DB는 절대 안 건드린다.
-- 키 = 소스 콘텐츠 해시 + view + 모델버전 + 알고리즘버전 → 이미 있으면 ~25초 추론을 건너뛴다(재시도가 싸진다).
-- 앞/뒤 뷰 독립 — 한쪽 실패가 다른 쪽을 버리지 않는다.
-- SAM이 죽어도 업로드·분석·마네킹 생성은 전부 그대로 돈다(`sam_fallback`).
-- 콜드스타트 209초 해부: SC 등록 대기가 87초 → `SAM_DIRECT_ENDPOINT=on` 이 DescribeTasks(+5초)로 얻은 task IP 로 직결.
+세 provider 스위치는 제거했다. `FAL_KEY`가 필요하며, 일시 장애는 `sam_retry`의 제한된 재시도를 따른다.
+실패해도 원본 사진과 생성 컷은 계속 사용할 수 있다. SAM2 운영 서비스는 2026-10-19 철거됐다.
+기존 R2 누끼·마스크는 계속 읽고 `sam_fallback`의 니트 보완도 유지한다.
+`SamAutoscaler`와 ECS/SNS 어댑터는 OpenDID·detail-worker·얼굴·각도 파드가 공유한다.
 
 ---
 
@@ -661,10 +653,8 @@ model-assets/{modelId}/{enrollmentId}/{view}.{ext}              실존 모델 �
 ```mermaid
 graph LR
   PR["PR / push to main"] --> W1["deploy-server.yml<br/>paths: server/** supabase/migrations/** copilot 매니페스트"]
-  PR --> W2["deploy-sam2.yml<br/>paths: server/sam_service/**"]
   PR --> W3["frontend-ci.yml<br/>테스트·빌드 검증만"]
   W1 -->|"AWS OIDC"| CP["copilot svc deploy<br/>app=wearless env=use1"]
-  W2 --> CP
   W3 -.->|"배포는 Vercel 별도"| VC["Vercel"]
   CP --> ECS["ECS Fargate us-east-1"]
 ```
@@ -725,9 +715,8 @@ graph LR
 | **매칭** | `MATCHING_CUTOUT` | `on` |
 | | `MATCHING_FLATLAY` | `full` |
 | | `MATCHING_FLATLAY_TIER` | `image_high` |
-| **오토스케일** | `SAM_AUTOSCALE` / `OPENDID_AUTOSCALE` | `on` · 유휴 30분 |
+| **오토스케일** | `OPENDID_AUTOSCALE` | `on` · 유휴 30분 |
 | | `DETAIL_WORKER_AUTOSCALE` | `on` · 유휴 10분 |
-| | `SAM_DIRECT_ENDPOINT` | `on` |
 | | `JOB_CONCURRENCY` / `DB_POOL_MAX_SIZE` | `1` / `10` |
 
 `config.py` 에 정의된 설정 필드는 **130개 이상**. 전체 목록은 `server/app/config.py` 가 정본.

@@ -9,7 +9,7 @@ That is why this worker reports `skipped`/`failed` states rather than raising, a
 separate job rather than a step inside `mannequin`: a mask failure must never turn a paid,
 successful generation into a red job badge.
 
-No credits, no image generation, no Gemini, no VLM. SAM2 or fal SAM 3 produces candidates.
+No credits, no image generation, no Gemini, no VLM. fal SAM 3 produces candidates.
 """
 
 from __future__ import annotations
@@ -21,7 +21,8 @@ import time
 from app import repo
 from app.agents import mannequin
 from app.config import load_settings
-from app.services import canonical_reference, editor_garment_mask, fal_api, sam_client, tone_mask
+from app.services import canonical_reference, editor_garment_mask, fal_api, tone_mask
+from app.services.segmentation_types import SamUnavailable
 
 log = logging.getLogger("wearless.editor_garment_mask")
 
@@ -75,7 +76,7 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
     s = load_settings()
     payload = job.get("payload") or {}
     cut_id = payload.get("cutId")
-    provider = editor_garment_mask.job_provider(job)
+    provider = "fal"
 
     async def finish(status: str, detail: dict) -> None:
         async with pool.connection() as conn:
@@ -94,7 +95,7 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
     if getattr(s, "mannequin_tone_editor", "off") != "on":
         await skip(SKIP_DISABLED)
         return
-    if not (fal_api.configured(s) if provider == "fal" else sam_client.configured(s)):
+    if not fal_api.configured(s):
         await skip(SKIP_SAM_UNCONFIGURED)
         return
     if not isinstance(cut_id, str) or not cut_id:
@@ -133,14 +134,11 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
         kwargs = dict(source_key=cut["r2_key"], base_key=base_asset["r2_key"],
                       clothing_type=clothing_type, sub_category=analysis.get("subCategory"),
                       matching_side=matching_side, product_key=product_key)
-        if provider == "fal":
-            result = await tone_mask.segment_worn_garment(s, app.state.r2, **kwargs)
-            if result.ready:
-                reference_retry = bool(product_key and not result.product_key)
-                product_key = result.product_key
-        else:
-            result = await sam_client.segment_worn_garment(s, **kwargs)
-    except sam_client.SamUnavailable as exc:
+        result = await tone_mask.segment_worn_garment(s, app.state.r2, **kwargs)
+        if result.ready:
+            reference_retry = bool(product_key and not result.product_key)
+            product_key = result.product_key
+    except SamUnavailable as exc:
         # done + retryable — error 가 아니다. error 잡은 디스패처가 재시도하지 않고(2026-08-18
         # 실측: 재시도 코드가 존재하지 않는다) 멱등키를 문 채 종착이라, 일시 장애 한 번이
         # 그 컷의 톤 에디터를 영구히 닫았다. 재시도는 톤 상태 라우트가 세대 키(:rN)로 몰고

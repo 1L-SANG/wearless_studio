@@ -42,7 +42,7 @@ from .agents.vision_llm import VisionError
 from .services import (canonical_reference, editor_garment_mask, garment_color_measure, garment_grid,
                        input_qc, mannequin_display,
                        mannequin_tone_render, matching, matching_cutout, product_photos,
-                       retrieval, sam_autoscale, sam_retry, outfit, outfit_jobs)
+                       retrieval, sam_retry, outfit, outfit_jobs)
 from .auth import require_user
 from .config import load_settings
 from .db import get_conn
@@ -2495,15 +2495,6 @@ async def create_upload_url(
             if await repo.get_project(conn, user_id, body.project_id) is None:
                 raise _not_found()
 
-    # sam2 온디맨드(2026-08-21): 사진이 올라오는 가장 이른 순간에 "지금 켜라". 실패·중복 전부
-    # 무해 — reconciler 가 60초 안에 덮고, 어댑터가 off 면 즉시 return 한다. 동기 호출이라
-    # 발급 응답을 기다리게 하지 않는다(task 생성·참조 보관은 SamAutoscaler.prewarm_soon 이 한다).
-    scaler = getattr(request.app.state, "sam_autoscaler", None)
-    if scaler is not None:
-        with contextlib.suppress(Exception):   # 훅은 발급 응답을 절대 막지 않는다
-            if sam_autoscale.sam_kinds(request.app.state.settings):
-                scaler.prewarm_soon()
-
     asset_id = str(uuid.uuid4())
     storage_scope = DRAFT_SLOT_STORAGE_KEY if body.purpose == "draft_slot" else body.project_id
     key = upload_key(user_id, storage_scope, asset_id, ext)
@@ -2916,7 +2907,7 @@ def _tone_job_is_retryable(job: dict, *, provider: str | None = None) -> bool:
     실사고)도 되살아난다.
     """
     if provider is None:
-        provider = getattr(load_settings(), "tone_mask_provider", "sam2")
+        provider = "fal"
     return editor_garment_mask.job_provider_mismatch(job, intended=provider) or sam_retry.job_is_retryable(
         job, states=editor_garment_mask.TONE_MASK_RETRYABLE_STATES)
 
@@ -2935,7 +2926,7 @@ async def _enqueue_tone_mask_generations(
     product_key: str | None = None, metadata: dict,
 ) -> tuple[bool, dict | None]:
     """기본·업그레이드 마스크가 공유하는 세대 선택과 백오프."""
-    provider = getattr(load_settings(), "tone_mask_provider", "sam2")
+    provider = "fal"
     base_key = editor_garment_mask.mask_job_key(
         project_id, cut_id, product_key=product_key, provider=provider)
     job = await repo.get_latest_job_generation(conn, user_id, base_key)

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app import routes
-from app.services import editor_garment_mask as egm, sam_client
+from app.services import editor_garment_mask as egm, segmentation_types
 from app.workers import editor_garment_mask_job as worker, mannequin_job
 from conftest import FakePool, fake_worker_app, worker_job
 
@@ -15,77 +15,33 @@ async def value(result):
     return result
 
 
-@pytest.mark.parametrize("payload_provider", [None, "sam2"])
-def test_old_tone_job_skips_without_sam2_configuration(monkeypatch, payload_provider):
-    settings = SimpleNamespace(tone_mask_provider="fal", mannequin_tone_editor="on",
-                               fal_key="test", sam_service_url=None, sam_internal_token=None)
-    assert not sam_client.configured(settings)
-    assert worker.fal_api.configured(settings)
-    monkeypatch.setattr(worker, "load_settings", lambda: settings)
-    finished = {}
-
-    async def forbidden(*args, **kwargs):
-        raise AssertionError("unconfigured SAM2 jobs must skip before reading assets or calling providers")
-
-    async def finalize(conn, **kwargs):
-        finished.update(kwargs)
-
-    monkeypatch.setattr(worker.repo, "get_mannequin_cut_asset", forbidden)
-    monkeypatch.setattr(worker.sam_client, "segment_worn_garment", forbidden)
-    monkeypatch.setattr(worker.tone_mask, "segment_worn_garment", forbidden)
-    monkeypatch.setattr(worker.repo, "finalize_uncharged_job", finalize)
-    payload = {"cutId": "A-1"}
-    if payload_provider:
-        payload["toneMaskProvider"] = payload_provider
-    job = worker_job(payload, credits_reserved=0)
-    asyncio.run(worker.run_editor_garment_mask_job(fake_worker_app(settings), job))
-    assert finished["status"] == "done"
-    assert finished["lease_token"] == job["lease_token"]
-    assert finished["result"] == {"state": "skipped", "reason": "sam_not_configured",
-                                  "cutId": "A-1", "toneMaskProvider": "sam2"}
-
-
-@pytest.mark.parametrize("local_provider,payload_provider,key_provider,expected", [
-    ("sam2", "fal", "fal", "fal"),
-    ("fal", "sam2", "sam2", "sam2"),
-    ("sam2", None, "fal", "sam2"),
-    ("fal", None, "sam2", "sam2"),
-    ("fal", None, None, "sam2"),
-])
-def test_worker_uses_producer_identity_and_legacy_sam2(
-        monkeypatch, local_provider, payload_provider, key_provider, expected):
-    settings = SimpleNamespace(tone_mask_provider=local_provider, mannequin_tone_editor="on",
+@pytest.mark.parametrize("payload_provider", [None, "sam2", "fal"])
+def test_legacy_tone_jobs_run_fal_after_service_removal(monkeypatch, payload_provider):
+    settings = SimpleNamespace(mannequin_tone_editor="on", fal_key="test",
         base_mannequin_women_asset_id="base", base_mannequin_men_asset_id="base")
     monkeypatch.setattr(worker, "load_settings", lambda: settings)
-    monkeypatch.setattr(worker.fal_api, "configured", lambda s: True)
-    monkeypatch.setattr(worker.sam_client, "configured", lambda s: True)
     monkeypatch.setattr(worker.repo, "get_mannequin_cut_asset",
                         lambda *a: value({"id": "cut", "r2_key": "cut"}))
     monkeypatch.setattr(worker.repo, "get_product", lambda *a: value({"clothing_type": "top"}))
     monkeypatch.setattr(worker.repo, "get_analysis", lambda *a: value({}))
     monkeypatch.setattr(worker.repo, "get_asset_for_user", lambda *a: value({"r2_key": "base"}))
     monkeypatch.setattr(egm, "matching_side_for_project", lambda *a, **kw: value(None))
-    calls, finished = [], {}
-    async def segment_sam(s, **kw):
-        calls.append("sam2")
-        return sam_client.WornGarmentResult(ready=False, code="no_garment_candidate")
-    async def segment_fal(s, r2, **kw):
-        calls.append("fal")
-        return sam_client.WornGarmentResult(ready=False, code="no_garment_candidate")
+    finished = {}
+    async def segment(s, r2, **kw):
+        assert kw["source_key"] == "cut" and kw["base_key"] == "base"
+        return segmentation_types.WornGarmentResult(ready=False, code="no_garment_candidate")
     async def finalize(conn, **kw):
         finished.update(kw)
-    monkeypatch.setattr(worker.sam_client, "segment_worn_garment", segment_sam)
-    monkeypatch.setattr(worker.tone_mask, "segment_worn_garment", segment_fal)
+    monkeypatch.setattr(worker.tone_mask, "segment_worn_garment", segment)
     monkeypatch.setattr(worker.repo, "finalize_uncharged_job", finalize)
     payload = {"cutId": "A-1"}
     if payload_provider:
         payload["toneMaskProvider"] = payload_provider
     job = worker_job(payload)
-    if key_provider:
-        job["idempotency_key"] = egm.mask_job_key("p", "A-1", provider=key_provider)
     asyncio.run(worker.run_editor_garment_mask_job(fake_worker_app(settings), job))
-    assert calls == [expected]
-    assert finished["result"].get("toneMaskProvider") == expected
+    assert finished["result"]["state"] == "failed"
+    assert finished["result"]["toneMaskProvider"] == "fal"
+    assert finished["lease_token"] == job["lease_token"]
 
 
 @pytest.mark.parametrize("provider", ["sam2", "fal"])
@@ -107,11 +63,11 @@ def test_both_producers_bind_provider_in_payload(monkeypatch, provider):
             user_id="u", project_id="p", cuts=[{"id": "A-1"}], cut_metadata={"profileGender": "women"})
     asyncio.run(scenario())
     assert len(created) == 3
-    assert [job["payload"].get("toneMaskProvider") for job in created] == [provider] * 3
+    assert [job["payload"].get("toneMaskProvider") for job in created] == ["fal"] * 3
 
 
 @pytest.mark.parametrize("state,algorithm", [
-    ("failed", None), ("ready", egm.ALGORITHM_VERSION), ("skipped", None),
+    ("failed", None), ("ready", "editor-worn-garment-sam2-v3"), ("skipped", None),
 ])
 def test_wrong_provider_completion_recovers_once_then_stops(monkeypatch, state, algorithm):
     monkeypatch.setenv("TONE_MASK_PROVIDER", "fal")
@@ -138,7 +94,7 @@ def test_wrong_provider_completion_recovers_once_then_stops(monkeypatch, state, 
     previous["payload"] = created[0]["payload"]
     previous["result"] = {"state": "failed", "toneMaskProvider": "fal", "code": "no_garment_candidate"}
     assert enqueue()[0] is False
-    previous["result"] = {"state": "ready", "toneMaskProvider": "sam2", "algorithmVersion": egm.ALGORITHM_VERSION}
+    previous["result"] = {"state": "ready", "toneMaskProvider": "sam2", "algorithmVersion": "editor-worn-garment-sam2-v3"}
     previous["payload"]["retry"] = egm.TONE_MASK_MAX_RETRIES
     assert enqueue()[0] is False
     assert routes._tone_state_with_job({"status": "processing"}, previous)["status"] == "failed"
@@ -168,10 +124,10 @@ def test_repeated_provider_switches_reselect_older_rows_without_jobs(client, mak
     monkeypatch.setattr(egm, "find_for_cut", original_find)
     rows = [
         {"id": "fal-mask", "metadata": _meta(algorithm=egm.FAL_ALGORITHM_VERSION, product_key="product")},
-        {"id": "sam-mask", "metadata": _meta(algorithm=egm.ALGORITHM_VERSION, product_key="product")},
+        {"id": "sam-mask", "metadata": _meta(algorithm="editor-worn-garment-sam2-v3", product_key="product")},
     ]
     monkeypatch.setattr(egm, "list_for_project", lambda *a, **kw: value(rows))
-    for provider, mask_id in [("sam2", "sam-mask"), ("fal", "fal-mask"), ("sam2", "sam-mask"), ("fal", "fal-mask")]:
+    for provider, mask_id in [("sam2", "fal-mask"), ("fal", "fal-mask"), ("sam2", "fal-mask"), ("fal", "fal-mask")]:
         monkeypatch.setenv("TONE_MASK_PROVIDER", provider)
         monkeypatch.setenv("FAL_KEY", "test")
         response = client.get("/v1/projects/p1/mannequins/A-1/tone-editor",

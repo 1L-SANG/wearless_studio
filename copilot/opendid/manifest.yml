@@ -1,5 +1,5 @@
 # OpenDID VC 스택 — TA+Issuer+CAS+fm-holder 한 컨테이너(localhost 배선). besu 없음(체인은
-# OmniOne Chain 외부 RPC). sam2 와 동일 패턴: Fargate SPOT + scale-to-zero(count {spot:0}),
+# OmniOne Chain 외부 RPC). Fargate SPOT + scale-to-zero(count {spot:0}),
 # api 가 수요 시 깨우고(SamAutoscaler 확장) 30분 유휴면 끈다. 상태는 컨테이너 밖:
 #   - postgres(tas/issuer/cas) → RDS (addons/rds.yml 로 프로비저닝, 접속정보 secret 주입)
 #   - wallet 파일 → EFS(암호화) 마운트 (/mnt/wallets 에 tas/issuer/cas/wallet.wallet 업로드)

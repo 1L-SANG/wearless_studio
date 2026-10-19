@@ -1,13 +1,7 @@
-"""지금 sam2 가 몇 대여야 하는가 — 세 조건 중 하나라도 참이면 1, 전부 거짓이면 0.
-
-조건 2(마지막 SAM 잡 종료 30분 이내)가 없으면 "어제 만든 컷을 오늘 열어 색감 조정" 경로가
-안 잡힌다: 그 잡은 1초 만에 unavailable 로 끝나 60초 뒤 reconciler 가 볼 땐 pending 도
-running 도 아니다.
-"""
+"""공용 자동 확장 판정: 활성 잡·최근 수요·유휴 시간 경계를 검증한다."""
 
 from datetime import datetime, timedelta, timezone
 
-from app.services import sam_autoscale
 from app.services.sam_autoscale import DemandSnapshot, want_running
 
 NOW = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
@@ -17,9 +11,6 @@ def _ago(minutes):
     return NOW - timedelta(minutes=minutes)
 
 
-def test_sam_kinds_are_the_three_sam_jobs():
-    assert set(sam_autoscale.SAM_KINDS) == {
-        "sam_preprocess", "matching_cutout", "editor_garment_mask"}
 
 
 def test_active_job_wants_running_regardless_of_timestamps():

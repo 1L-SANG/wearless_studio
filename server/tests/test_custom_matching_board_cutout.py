@@ -174,11 +174,11 @@ def test_worker_preserves_grid_bytes_and_ids_while_storing_board(monkeypatch, mo
     assert segment.await_count == (1 if flat_ok else 0)
     assert len(calls["segment"]) == 2
 
-    fingerprint = mc.source_fingerprint(["h" + key for key in _job_dict()["payload"]["sourceKeys"]])
+    fingerprint = mc.source_fingerprint(["h" + key for key in _job_dict()["payload"]["sourceKeys"]], provider="fal")
     grid_fp = mf.flatlay_fingerprint(fingerprint, provider="qwen") if mode in ("full", "failure") else fingerprint
-    grid_id = mc.derived_asset_id(role="grid", matching_item_id="custom_x", source_hash=grid_fp)
+    grid_id = mc.derived_asset_id(role="grid", matching_item_id="custom_x", source_hash=grid_fp, provider="fal")
     thumb_id = (mf.derived_asset_id(matching_item_id="custom_x", source_hash=fingerprint, provider="qwen")
-                if flat_ok else mc.derived_asset_id(role="thumb", matching_item_id="custom_x", source_hash=fingerprint))
+                if flat_ok else mc.derived_asset_id(role="thumb", matching_item_id="custom_x", source_hash=fingerprint, provider="fal"))
     assert calls["swap"] == ("custom_x", thumb_id, grid_id)
     board, = [a for a in calls["assets"] if a["metadata"].get("canonicalType") == "custom_board_cutout"]
     assert board["asset_id"] not in (thumb_id, grid_id)

@@ -19,17 +19,17 @@ from PIL import Image
 from app.routes import _tone_state_with_job
 from app.services import editor_garment_mask as egm
 from app.workers import editor_garment_mask_job as job
-from sam_service import worn_garment as W
+from app.services import tone_mask as W
 
 
 # ── 두 모듈이 같은 밴드를 본다 (값 복제의 유일한 안전장치) ────────────────────
 
-def test_api_and_sam_service_agree_on_the_algorithm_identity():
+def test_api_and_tone_rules_agree_on_the_algorithm_identity():
     """마스크 캐시 신원과 멱등키 버전이 갈리면 같은 컷이 두 규칙 사이를 왕복한다."""
-    assert egm.ALGORITHM_VERSION == W.ALGORITHM_VERSION
+    assert egm.algorithm_version() == W.ALGORITHM_VERSION
 
 
-def test_api_and_sam_service_agree_on_the_matching_band():
+def test_api_and_tone_rules_agree_on_the_matching_band():
     """API 이미지는 SAM 런타임을 임포트하지 않는다 — 그래서 값을 복제하고, 여기서 고정한다."""
     assert egm.MATCHING_CORE == W.MATCHING_CORE
     assert egm.MATCHING_SEPARABLE == W.MATCHING_SEPARABLE
@@ -78,6 +78,7 @@ def test_band_mass_fraction_is_fail_open(png, band):
 
 class _Result:
     ready = True
+    product_key = None
     mask_key = "derived/editor-garment-mask/x/m/abc.png"
     source_hash = "abc"
     model_version = "facebook/sam2.1-hiera-tiny@grid8"
@@ -186,12 +187,12 @@ def _run_job(monkeypatch, *, mask_png, matching_side, clothing_type="top", resul
 
     class _Settings:
         mannequin_tone_editor = "on"
-        sam_service_url = "http://sam2:8080"
+        tone_rules_url = "http://sam2:8080"
         sam_internal_token = "t"
         base_mannequin_men_asset_id = "base-m"
         base_mannequin_women_asset_id = "base-w"
 
-    async def segment(_s, **kwargs):
+    async def segment(_s, r2, **kwargs):
         recorded["request"] = kwargs
         return type("R", (result,), {})()
 
@@ -203,8 +204,8 @@ def _run_job(monkeypatch, *, mask_png, matching_side, clothing_type="top", resul
         return {"id": "mask-asset"}
 
     monkeypatch.setattr(job, "load_settings", lambda: _Settings())
-    monkeypatch.setattr(job.sam_client, "configured", lambda _s: True)
-    monkeypatch.setattr(job.sam_client, "segment_worn_garment", segment)
+    monkeypatch.setattr(job.fal_api, "configured", lambda _s: True)
+    monkeypatch.setattr(job.tone_mask, "segment_worn_garment", segment)
     monkeypatch.setattr(job.repo, "finalize_uncharged_job", finalize)
     monkeypatch.setattr(job.repo, "get_mannequin_cut_asset",
                         lambda *_a, **_k: _async({"id": "cut-1", "r2_key": "cuts/a.jpg"}))
@@ -246,7 +247,6 @@ class _RecordingMask:
     """`editor_garment_mask` 대역 — 밴드 계산·픽셀 판정은 진짜 모듈 함수를 그대로 쓴다."""
 
     MATCH_ZONE_MAX = egm.MATCH_ZONE_MAX
-    job_provider = staticmethod(egm.job_provider)
     matching_core_band = staticmethod(egm.matching_core_band)
     band_mass_fraction = staticmethod(egm.band_mass_fraction)
     matching_side_for_project = staticmethod(egm.matching_side_for_project)
@@ -294,7 +294,7 @@ def test_a_cut_without_a_coordinating_garment_costs_nothing_extra(monkeypatch):
 ])
 def test_a_terminated_mask_job_stops_the_waiting_message(job_status, expected):
     state = {"cutId": "A-1", "status": "processing"}
-    assert _tone_state_with_job(state, {"status": job_status})["status"] == expected
+    assert _tone_state_with_job(state, {"status": job_status, "result": {"toneMaskProvider": "fal"}})["status"] == expected
 
 
 def test_a_ready_cut_is_never_downgraded_by_an_old_job_row():
