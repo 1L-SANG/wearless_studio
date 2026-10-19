@@ -51,6 +51,10 @@ async def _clothing_type(pool, *, matching_item_id: str, user_id: str,
 
 
 async def run_matching_cutout_job(app, job: dict) -> None:
+    if (job.get("payload") or {}).get("mode") == "draft_visuals":
+        from app.services.draft_visuals import run
+        await run(app, job)
+        return
     pool = app.state.pool
     r2 = app.state.r2
     job_id, project_id = job["id"], job["project_id"]

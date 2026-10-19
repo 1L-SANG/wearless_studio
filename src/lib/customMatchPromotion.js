@@ -1,3 +1,4 @@
+import { fetchPhotoBytes } from './photoBytes.js';
 import { matchingIdsForColor } from './colorwayMatching.js';
 import { createPromotionTaskRegistry } from './promotionTaskRegistry.js';
 
@@ -24,12 +25,13 @@ export async function promoteCustomMatch(api, projectId, customDraft) {
     // 보이는 손상은 없다(스토리지 비용만). 삭제 엔드포인트가 생기면 여기서 정리한다.
     const assetIds = await Promise.all(customDraft.uploads.map(async (up) => {
       const uploaded = await api.uploadPhoto(projectId, {
-        filename: up.filename, mime: up.mime, blob: up.blob,
+        filename: up.filename, mime: up.mime, blob: up.blob || await fetchPhotoBytes(up.src),
         purpose: 'custom_match_source',
       });
       return uploaded.assetId;
     }));
-    const result = await api.addCustomMatchItem(projectId, { assetIds });
+    const result = await api.addCustomMatchItem(projectId, { assetIds,
+      ...(customDraft.draftVisualJobId ? { draftVisualJobId: customDraft.draftVisualJobId } : {}) });
     // draft 에서 선택돼 있었으면 승격본(새 서버 id)도 선택 상태로 저장한다 —
     // 아니면 "선택했는데 확정하니 풀려 있음"이 된다.
     //

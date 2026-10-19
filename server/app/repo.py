@@ -318,7 +318,34 @@ async def soft_delete_unreferenced_draft_assets(
             """
             update assets a set deleted_at = now()
             where a.id = any(%s::uuid[]) and a.user_id = %s
-              and a.metadata->>'purpose' = 'draft_slot'
+              and a.metadata->>'purpose' in ('draft_slot','draft_visuals')
+                and a.project_id is null
+                and not exists (
+                  select 1 from jobs j where j.payload->>'mode' = 'draft_visuals'
+                    and j.user_id = a.user_id
+                    and (j.payload->'sourceAssetIds' ? a.id::text
+                         or j.id::text = a.metadata->>'draftVisualJobId'
+                         or exists (select 1 from jsonb_array_elements(j.payload->'references') ref
+                                    where ref->'sourceAssetIds' ? a.id::text))
+                    and (j.status in ('pending','running')
+                         or jsonb_array_length(coalesce(j.metadata->'promotions','[]'::jsonb)) > 0
+                         or (j.metadata->>'promotionPendingUntil')::timestamptz > now())
+                )
+                and not exists (
+                  select 1 from draft_slots ds where ds.user_id = a.user_id and ds.expires_at > now()
+                    and (strpos(ds.payload::text, a.id::text) > 0 or exists (
+                      select 1 from jobs j, jsonb_array_elements(j.payload->'references') ref
+                      where j.id::text = a.metadata->>'draftVisualJobId'
+                        and strpos(ds.payload::text, ref->'sourceAssetIds'->>0) > 0))
+                )
+                and not exists (select 1 from matching_items mi
+                                where mi.image_asset_id = a.id or mi.thumbnail_asset_id = a.id)
+                and not exists (select 1 from mannequin_cuts mc where mc.asset_id = a.id)
+                and not exists (select 1 from wardrobe_images wi where wi.asset_id = a.id)
+                and not exists (select 1 from exports e where e.asset_id = a.id)
+                and not exists (select 1 from projects pr where pr.cover_asset_id = a.id)
+                and not exists (select 1 from profiles pf where pf.avatar_asset_id = a.id)
+
               and not exists (select 1 from matching_items mi
                               where mi.image_asset_id = a.id or mi.thumbnail_asset_id = a.id)
               and not exists (select 1 from mannequin_cuts mc where mc.asset_id = a.id)
@@ -343,7 +370,7 @@ async def soft_delete_unreferenced_draft_assets(
                   case when jsonb_typeof(color->'images') = 'array'
                        then color->'images' else '[]'::jsonb end
                 ) image
-                where ds.user_id = a.user_id and image->>'id' = a.id::text
+                where ds.expires_at > now() and ds.user_id = a.user_id and image->>'id' = a.id::text
               )
               and not exists (
                 select 1 from products prod
@@ -373,7 +400,34 @@ async def reclaim_stale_unreferenced_draft_assets(
               select a.id
               from assets a
               where a.deleted_at is null
-                and a.metadata->>'purpose' = 'draft_slot'
+                and a.metadata->>'purpose' in ('draft_slot','draft_visuals')
+                and a.project_id is null
+                and not exists (
+                  select 1 from jobs j where j.payload->>'mode' = 'draft_visuals'
+                    and j.user_id = a.user_id
+                    and (j.payload->'sourceAssetIds' ? a.id::text
+                         or j.id::text = a.metadata->>'draftVisualJobId'
+                         or exists (select 1 from jsonb_array_elements(j.payload->'references') ref
+                                    where ref->'sourceAssetIds' ? a.id::text))
+                    and (j.status in ('pending','running')
+                         or jsonb_array_length(coalesce(j.metadata->'promotions','[]'::jsonb)) > 0
+                         or (j.metadata->>'promotionPendingUntil')::timestamptz > now())
+                )
+                and not exists (
+                  select 1 from draft_slots ds where ds.user_id = a.user_id and ds.expires_at > now()
+                    and (strpos(ds.payload::text, a.id::text) > 0 or exists (
+                      select 1 from jobs j, jsonb_array_elements(j.payload->'references') ref
+                      where j.id::text = a.metadata->>'draftVisualJobId'
+                        and strpos(ds.payload::text, ref->'sourceAssetIds'->>0) > 0))
+                )
+                and not exists (select 1 from matching_items mi
+                                where mi.image_asset_id = a.id or mi.thumbnail_asset_id = a.id)
+                and not exists (select 1 from mannequin_cuts mc where mc.asset_id = a.id)
+                and not exists (select 1 from wardrobe_images wi where wi.asset_id = a.id)
+                and not exists (select 1 from exports e where e.asset_id = a.id)
+                and not exists (select 1 from projects pr where pr.cover_asset_id = a.id)
+                and not exists (select 1 from profiles pf where pf.avatar_asset_id = a.id)
+
                 and a.created_at < now() - (%s * interval '1 minute')
                 and not exists (
                   select 1 from draft_slots ds
@@ -385,7 +439,7 @@ async def reclaim_stale_unreferenced_draft_assets(
                     case when jsonb_typeof(color->'images') = 'array'
                          then color->'images' else '[]'::jsonb end
                   ) image
-                  where image->>'id' = a.id::text
+                  where ds.expires_at > now() and image->>'id' = a.id::text
                 )
                 and not exists (
                   select 1 from products prod
@@ -1617,13 +1671,14 @@ async def has_active_matching_cutout_job(conn: AsyncConnection, project_id: str)
     from app.services import sam_retry  # repo→services 단방향은 이미 여러 곳에서 쓰는 결
     async with conn.cursor() as cur:
         await cur.execute(
-            "select exists (select 1 from jobs where project_id = %s "
+            "select exists (select 1 from jobs where (project_id = %s "
+            "or (payload->>'mode' = 'draft_visuals' and metadata->'promotions' @> %s::jsonb)) "
             "and kind = 'matching_cutout' "
             "and created_at > now() - (%s * interval '1 minute') "
             "and (status in ('pending', 'running') "
             "     or (status = 'done' and result->>'state' = any(%s) "
             "         and (case when payload->>'retry' ~ '^[0-9]+$' then (payload->>'retry')::int else 0 end) < %s))) as active",
-            (project_id, MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES,
+            (project_id, Json([{'projectId': project_id}]), MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES,
              list(sam_retry.RETRYABLE_STATES), sam_retry.MAX_RETRIES),
         )
         row = await cur.fetchone()
@@ -4601,3 +4656,138 @@ async def list_credit_history(conn: AsyncConnection, user_id: str, limit: int = 
             (user_id, limit),
         )
         return await cur.fetchall()
+
+
+# Draft visuals use existing jobs/assets JSON contracts; no schema changes.
+async def lock_draft_visual_budget(conn):
+    async with conn.cursor() as cur:
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended('draft-visual-budget', 0))")
+
+
+async def find_draft_visual_job(conn, user_id, key):
+    async with conn.cursor() as cur:
+        await cur.execute(f"select {_JOB_COLS} from jobs where user_id = %s "
+                          "and idempotency_key = %s and payload->>'mode' = 'draft_visuals' for update",
+                          (user_id, key))
+        return await cur.fetchone()
+
+
+async def has_draft_visual_work(conn, user_id):
+    async with conn.cursor() as cur:
+        await cur.execute("select exists(select 1 from jobs where user_id = %s "
+                          "and payload->>'mode' = 'draft_visuals') as present", (user_id,))
+        return (await cur.fetchone())['present']
+
+
+async def lock_draft_visual_job(conn, user_id, job_id):
+    async with conn.cursor() as cur:
+        await cur.execute(f"select {_JOB_COLS}, locked_by as lease_token from jobs where id = %s "
+                          "and user_id = %s and payload->>'mode' = 'draft_visuals' for update",
+                          (job_id, user_id))
+        return await cur.fetchone()
+
+
+async def update_draft_visual_job(conn, job_id, *, payload=None, metadata=None):
+    async with conn.cursor() as cur:
+        await cur.execute("update jobs set payload = payload || %s::jsonb, "
+                          "metadata = coalesce(metadata, '{}'::jsonb) || %s::jsonb where id = %s",
+                          (Json(payload or {}), Json(metadata or {}), job_id))
+
+
+async def bind_draft_visual_reference(conn, job_id, reference):
+    async with conn.cursor() as cur:
+        await cur.execute("update jobs set payload = jsonb_set(payload, '{references}', "
+                          "coalesce(payload->'references', '[]'::jsonb) || %s::jsonb) where id = %s "
+                          "and not (coalesce(payload->'references', '[]'::jsonb) @> %s::jsonb)",
+                          (Json([reference]), job_id, Json([reference])))
+
+
+async def draft_visual_usage(conn, user_id, *, exclude_job_id=None):
+    async with conn.cursor() as cur:
+        # The DB clock is sampled after the budget lock, including waits across midnight.
+        await cur.execute("with clock as (select (clock_timestamp() at time zone 'UTC')::date as day) "
+                          "select count(*) filter (where user_id = %s and "
+                          "(created_at at time zone 'UTC')::date = clock.day) as daily, "
+                          "count(*) filter (where user_id = %s and status in ('pending','running')) as active, "
+                          "coalesce(sum((metadata->>'reservedUsd')::numeric) filter (where "
+                          "coalesce(metadata->>'budgetDate', (created_at at time zone 'UTC')::date::text) "
+                          "= clock.day::text and (metadata->>'paidStarted' = 'true' "
+                          "or status in ('pending','running')) and id is distinct from %s::uuid), 0) as reserved, "
+                          "clock.day::text as budget_day from clock left join jobs on "
+                          "payload->>'mode' = 'draft_visuals' group by clock.day",
+                          (user_id, user_id, exclude_job_id))
+        return await cur.fetchone()
+
+
+async def get_draft_visual_reference(conn, user_id, reference):
+    async with conn.cursor() as cur:
+        await cur.execute(f"select {_JOB_COLS} from jobs where user_id = %s "
+                          "and payload->>'mode' = 'draft_visuals' and payload->'references' @> %s::jsonb "
+                          "order by created_at desc limit 1", (user_id, Json([reference])))
+        return await cur.fetchone()
+
+
+async def get_draft_visual_promotion(conn, user_id, project_id, source_ids, role):
+    async with conn.cursor() as cur:
+        await cur.execute(f"select {_JOB_COLS} from jobs where user_id = %s "
+                          "and payload->>'mode' = 'draft_visuals' and payload->>'role' = %s "
+                          "and metadata->'promotions' @> %s::jsonb order by created_at desc limit 1",
+                          (user_id, role, Json([{'projectId': project_id, 'sourceAssetIds': source_ids}])))
+        return await cur.fetchone()
+
+
+async def pending_draft_visual_deliveries(conn, user_id=None, project_id=None, *, max_attempts=3, limit=50):
+    owner_filter = 'and user_id = %s ' if user_id is not None else ''
+    project_filter = "and target->>'projectId' = %s " if project_id is not None else ''
+    params = ([user_id] if user_id is not None else []) + ([project_id] if project_id is not None else [])
+    async with conn.cursor() as cur:
+        await cur.execute(f"select {_JOB_COLS} from jobs where payload->>'mode' = 'draft_visuals' "
+                          f"{owner_filter}and result->>'state' = 'ready' "
+                          "and exists (select 1 from jsonb_array_elements(metadata->'promotions') target "
+                          f"where coalesce(target->>'applied', 'false') != 'true' {project_filter}"
+                          "and coalesce((target->>'deliveryAttempts')::int, 0) < %s) "
+                          "order by id limit %s for update skip locked", (*params, max_attempts, limit))
+        return await cur.fetchall()
+
+
+async def draft_visual_is_current(conn, job):
+    # No slot lock here: preparation locks slot then job, completion only locks job.
+    async with conn.cursor() as cur:
+        await cur.execute("select payload from draft_slots where user_id = %s and expires_at > now()",
+                          (job['user_id'],))
+        slot = await cur.fetchone()
+    from app.services.draft_visuals import current_sources
+    for ref in (job.get('payload') or {}).get('references') or []:
+        if current_sources(slot or {}, ref['role'], ref.get('localId')) == ref['sourceAssetIds']:
+            return True
+    metadata = job.get('metadata') or {}
+    pending = metadata.get('promotionPendingUntil')
+    if pending:
+        from datetime import datetime, timezone
+        try:
+            if datetime.fromisoformat(pending) > datetime.now(timezone.utc):
+                return True
+        except (ValueError, TypeError):
+            pass
+    for target in metadata.get('promotions') or []:
+        if not await get_project(conn, job['user_id'], target['projectId']):
+            continue
+        if (job.get('payload') or {}).get('role') == 'custom':
+            if await get_matching_item_asset(conn, target.get('matchingItemId'), job['user_id'], target['projectId']):
+                return True
+        else:
+            product = await get_product(conn, target['projectId']) or {}
+            current = current_sources({'payload': {'product': product}}, 'product')
+            if not current or current == target['sourceAssetIds']:
+                return True
+    return False
+
+
+async def mark_draft_visual_promotion_pending(conn, user_id, payload):
+    async with conn.cursor() as cur:
+        await cur.execute("update jobs set metadata = metadata || jsonb_build_object("
+                          "'promotionPendingUntil', now() + interval '30 minutes') "
+                          "where user_id = %s and payload->>'mode' = 'draft_visuals' "
+                          "and exists (select 1 from jsonb_array_elements(jobs.payload->'references') ref "
+                          "where (%s::jsonb)::text like '%%' || (ref->'sourceAssetIds'->>0) || '%%')",
+                          (user_id, Json(payload)))

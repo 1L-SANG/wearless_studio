@@ -641,10 +641,11 @@ export const api = {
     if (product) Object.assign(DB.product, clone(product));
     if (analysis) DB.analysis = normalizeAnalysisFit(clone(analysis));
     const custom = DB.analysis.matchClothing?.find((item) => item.isCustom);
-    if (custom && customMatch?.uploads?.length) {
-      const ids = customMatch.uploads.map((upload) => {
+    const restoredUploads = customMatch?.uploads || customMatch?.sources?.map((source) => ({ src: source.src, filename: 'draft-custom.jpg', mime: 'image/jpeg' }));
+    if (custom && restoredUploads?.length) {
+      const ids = restoredUploads.map((upload) => {
         const assetId = uid('asset');
-        customMatchUploads.set(assetId, { ...upload, purpose: 'custom_match_source', url: URL.createObjectURL(upload.blob) });
+        customMatchUploads.set(assetId, { ...upload, purpose: 'custom_match_source', url: upload.blob ? URL.createObjectURL(upload.blob) : upload.src });
         return assetId;
       });
       const url = customMatchUploads.get(ids[0]).url;
@@ -934,7 +935,7 @@ export const api = {
     const uploads = assetIds
       .map((id) => customMatchUploads.get(id))
       .filter(Boolean)
-      .map(({ filename, mime, blob }) => ({ filename, mime, blob }));
+      .map(({ filename, mime, blob, url }) => ({ filename, mime, blob, src: url }));
     if (!uploads.length) return null;
     return { uploads, selected: !!item?.selected, localId: item?.id ?? null };
   },

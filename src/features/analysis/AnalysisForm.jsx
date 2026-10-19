@@ -1,3 +1,7 @@
+import { draftSlot } from '@/lib/draftSlot.js';
+import { isMobileDevice } from '@/lib/deviceClass.js';
+import { mergeDraftCustomVisual } from '@/lib/draftVisuals.js';
+import { useDraftVisuals } from './useDraftVisuals.js';
 import { isAnalysisFastEntryEnabled } from '@/lib/analysisFastEntry.js';
 import { getActiveFeatureRun, isFeatureRunPending } from '@/lib/featureRun.js';
 import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
@@ -706,7 +710,7 @@ export function AnalysisForm({
   matchRefreshRef.current = applyMatchClothingRefresh;
   const hasPendingCutout = (a.matchClothing || []).some((item) => item.cutoutStatus === 'processing');
   useEffect(() => {
-    if (!hasPendingCutout) return undefined;
+    if (!hasPendingCutout || !projectId) return undefined;
     let canceled = false;
     const interval = setInterval(() => {
       api.refreshMatchClothing(projectId)
@@ -804,7 +808,17 @@ export function AnalysisForm({
       },
     };
   };
-  const customUpload = useCustomOutfitUpload({ analysis: a,
+  const draftCustomId = a.matchClothing?.find((item) => item.isCustom)?.id;
+  const draftVisuals = useDraftVisuals({ projectId, product, customId: draftCustomId });
+  const displayAnalysis = mergeDraftCustomVisual(a, draftVisuals.custom);
+  const draftVisualUser = draftSlot.getUserId();
+  useEffect(() => {
+    if (!projectId && draftCustomId && draftVisualUser && !isMobileDevice()) {
+      void draftSlot.prepareCustomVisuals(api.getCustomMatchDraft?.()).catch(() => {});
+    }
+    if (!draftCustomId) draftSlot.clearCustomVisuals();
+  }, [projectId, draftCustomId, draftVisualUser]);
+  const customUpload = useCustomOutfitUpload({ analysis: displayAnalysis,
     onChange: (patch) => onChange({ ...patch, ...(patch.matchClothing ? withMatchSelection(patch.matchClothing) : {}) }),
     onRefresh: applyMatchClothingRefresh });
   const changeOutfit = (patch) => {
@@ -1206,7 +1220,7 @@ export function AnalysisForm({
   );
 
   const outfit = <>
-    <OutfitSelection analysis={a} product={product} projectId={projectId} models={visibleAiModels}
+    <OutfitSelection analysis={displayAnalysis} draftVisuals={draftVisuals.product} product={product} projectId={projectId} models={visibleAiModels}
       modelCredit={(model) => model.tier === 'basic' ? '무료' : outfitModelCredit(extensionModelFee(quotePlan, model.id))}
       onRecommendation={onAnalysisReplace} onChange={changeOutfit}
       onUpload={(event) => { setCustomMatchAnchor(event.currentTarget.getBoundingClientRect()); setCustomMatchOpen(true); }}

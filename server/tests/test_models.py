@@ -77,7 +77,7 @@ def test_account_serializes_to_camel(plan):
     acct = Account(name="한지수", avatar="", credits=24, plan=plan)
     out = acct.model_dump(by_alias=True)
     assert out == {"name": "한지수", "avatar": "", "credits": 24, "plan": plan,
-                   "topupBonusEnabled": False}
+                   "topupBonusEnabled": False, "draftVisualsEnabled": False}
 
 
 @pytest.mark.parametrize("plan", ["basic", "plus"])

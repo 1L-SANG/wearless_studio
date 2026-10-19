@@ -14,6 +14,7 @@ import { create } from 'zustand';
 import { api } from '@/lib/api/index.js';
 import { resetAnalysisCache } from '@/lib/api/httpAdapter.js';
 import { clearDraft } from '@/lib/draftStore.js';
+import { draftSlot } from '@/lib/draftSlot.js';
 import { clearDraftPromotionSession } from '@/lib/draftPromotionSession.js';
 import { forgetDraftSyncProject } from '@/lib/draftSync.js';
 import { clearFlowSession, markProductInfoConfirmed, readFlowSession } from '@/lib/flowSession.js';
@@ -202,6 +203,7 @@ export const useAppStore = create((set, get) => ({
   setAccountIdentity(userId) {
     if (get().accountUserId === userId) return false;
     accountGeneration += 1;
+    draftSlot.setVisualsEnabled(draftSlot.getUserId(), false);
     set({ accountUserId: userId, account: null, accountLoaded: false });
     return true;
   },
@@ -216,6 +218,7 @@ export const useAppStore = create((set, get) => ({
       if (generation !== accountGeneration || sequence < accountLastSuccessfulSequence) return null;
       accountLastSuccessfulSequence = sequence;
       set({ account, accountLoaded: true });
+      draftSlot.setVisualsEnabled(get().accountUserId, account?.draftVisualsEnabled);
       return account;
     } catch (error) {
       if (generation !== accountGeneration || sequence !== accountLoadSequence) return null;

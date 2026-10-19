@@ -33,6 +33,7 @@ class Account(CamelModel):
     credits: int  # = balance - reserved (§6)
     plan: PlanTier
     topup_bonus_enabled: bool = False
+    draft_visuals_enabled: bool = False
 
 
 class MannequinGenerateQuote(CamelModel):
@@ -180,9 +181,22 @@ class DraftSlotTakeoverRequest(CamelModel):
     device_label: str | None = None
 
 
+class DraftVisualPrepareRequest(CamelModel):
+    role: Literal["product", "custom"]
+    source_asset_ids: list[UUID] = Field(min_length=1, max_length=4)
+    local_id: str | None = Field(default=None, max_length=160)
+
+
+class DraftVisualPromoteRequest(CamelModel):
+    job_id: UUID
+    project_id: UUID
+    source_asset_ids: list[UUID] = Field(min_length=1, max_length=4)
+
+
 class CustomMatchItemRequest(CamelModel):
     """POST /analysis/custom-match-item — one garment represented by 1-4 uploads."""
 
+    draft_visual_job_id: UUID | None = None
     asset_ids: list[UUID] = Field(min_length=1, max_length=4)
 
     @field_validator("asset_ids")
@@ -220,6 +234,7 @@ class ProductPatch(CamelModel):
     """saveProduct patch. NOT NULL 컬럼(name·colors·measurements·*_unknown·*_complete)은
     명시적 null 거부(422). clothingType만 null 허용(초안)."""
 
+    draft_visual_job_id: UUID | None = None
     name: str | None = None
     clothing_type: str | None = None
     colors: list[dict] | None = None

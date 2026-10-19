@@ -64,6 +64,10 @@ class _Conn:
     async def rollback(self):
         self.events.append("rollback")
 
+    @contextlib.asynccontextmanager
+    async def transaction(self):
+        yield self
+
 
 class _R2:
     def __init__(self, source_bytes, *, read_error=False, put_error=False):
@@ -185,6 +189,9 @@ def _patch_post(
         state["jobs"].append(kwargs)
         return {"id": f"job-{len(state['jobs'])}"}, True
 
+    async def no_draft_work(conn, user_id):
+        return False
+
     monkeypatch.setattr(routes, "get_conn", fake_conn)
     monkeypatch.setattr(routes, "_r2", lambda request: r2)
     monkeypatch.setattr(routes.repo, "get_project", get_project)
@@ -199,6 +206,7 @@ def _patch_post(
     monkeypatch.setattr(routes.repo, "get_analysis", get_analysis)
     monkeypatch.setattr(routes.repo, "save_analysis", save_analysis)
     monkeypatch.setattr(routes.repo, "create_job", create_job)
+    monkeypatch.setattr(routes.repo, "has_draft_visual_work", no_draft_work)
     return events, state, r2
 
 

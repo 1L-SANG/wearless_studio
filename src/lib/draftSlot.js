@@ -1,3 +1,4 @@
+import { baseProductPhoto, currentDraftVisuals } from './draftVisuals.js';
 import { stripFeatureClientFields } from './featureRun.js';
 import { clientApiFetch, readClientResponse } from './api/clientRequest.js';
 import { isPlaceholderPhotoSrc } from './imageTranscode.js';
@@ -110,6 +111,16 @@ export function createDraftSlotSync({
     ?? (globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2));
   now = now ?? (() => Date.now());
   let api = adapter;
+  let visualRefs = {};
+  let customMatch = null;
+  const visualListeners = new Set();
+  let visualsEnabled = false;
+  const visualPrepares = new Map();
+  const cancelVisualPreparations = () => {
+    for (const controller of visualPrepares.values()) controller.abort();
+    visualPrepares.clear();
+  };
+  const notifyVisuals = () => visualListeners.forEach((listener) => listener());
   let token = readStorage(storage, TOKEN_KEY);
   let syncedAt = readStorage(storage, SYNCED_AT_KEY);
   let serverSyncedAt = readStorage(storage, SERVER_SYNCED_AT_KEY);
@@ -373,16 +384,20 @@ export function createDraftSlotSync({
     // 승격 실패 복구가 폐기된 사진을 담은 초안을 되살리자 2초마다 무한 재시도했다(2026-09-26).
     // 재시도는 업로드(네트워크·서버) 실패에만 건다.
     let sourceUnreadable = false;
+    const uploadIdentity = identityEpoch;
+    const uploadUser = userId;
+    const uploadIsCurrent = () => uploadIdentity === identityEpoch && uploadUser === userId;
     record.promise = clientApiFetch(image.src)
       .then((response) => readClientResponse(response, 'blob'))
       .catch((error) => { sourceUnreadable = true; throw error; })
-      .then((blob) => api.uploadDraftSlotPhoto({
+      .then((blob) => uploadIsCurrent() ? api.uploadDraftSlotPhoto({
         filename: image.name || `${image.id}.jpg`,
         mime: (image.type && image.type.includes('/')) ? image.type : (blob.type || 'image/jpeg'),
         blob,
         purpose: 'draft_slot',
-      }))
+      }, { expectedUserId: uploadUser, isCurrent: uploadIsCurrent }) : null)
       .then(async (uploaded) => {
+        if (!uploaded) return;
         if (uploads.get(image.id) !== record || !shouldKeepUpload(image.id) || locked) {
           await discardUploaded(uploaded);
           if (uploads.get(image.id) === record) uploads.delete(image.id);
@@ -419,7 +434,8 @@ export function createDraftSlotSync({
     for (const [imageId, upload] of uploads) {
       const stale = upload.status === 'uploaded'
         && now() - upload.uploadedAt > UNSYNCED_UPLOAD_MAX_AGE_MS;
-      if (liveIds.has(imageId) && !stale) continue;
+      const live = (product?.colors || []).flatMap((color) => color.images || []).find((image) => image.id === imageId);
+      if (liveIds.has(imageId) && !stale && upload.image?.src === live?.src) continue;
       clearTimer(upload.retryTimer);
       uploads.delete(imageId);
       void discardUploaded(upload);
@@ -456,11 +472,21 @@ export function createDraftSlotSync({
         }),
       })),
     } : snapshot.product;
+    const serializedVisualRefs = { ...visualRefs };
+    const currentFront = baseProductPhoto(snapshot.product);
+    if (serializedVisualRefs.product) {
+      if (serializedVisualRefs.product.imageId === currentFront?.id && serializedVisualRefs.product.src === currentFront?.src) {
+        serializedVisualRefs.product = { ...serializedVisualRefs.product,
+          imageId: baseProductPhoto(product)?.id, src: baseProductPhoto(product)?.src };
+      } else delete serializedVisualRefs.product;
+    }
     return {
       payload: {
         product,
         analysis: stripFeatureClientFields(snapshot.analysis) || null,
         composeMode: snapshot.composeMode === 'extended' ? 'extended' : 'basic',
+        ...(customMatch ? { customMatch } : {}),
+        ...(Object.keys(serializedVisualRefs).length ? { draftVisuals: serializedVisualRefs } : {}),
       },
       photosPending,
       includedUploadIds,
@@ -630,6 +656,178 @@ export function createDraftSlotSync({
   };
 
   return {
+    setVisualsEnabled(expectedUserId, enabled) {
+      if (!userId || expectedUserId !== userId) return;
+      const next = enabled === true;
+      if (visualsEnabled === next) return;
+      visualsEnabled = next;
+      if (!next) cancelVisualPreparations();
+      notifyVisuals();
+    },
+    isVisualsEnabled() { return Boolean(userId) && visualsEnabled; },
+    adoptVisualHandoff(payload, restoredProduct) {
+      if (!userId) return;
+      if (payload?.customMatch?.sources?.length) customMatch = payload.customMatch;
+      const saved = payload?.visuals || payload?.draftVisuals;
+      if (!saved) return;
+      const photo = baseProductPhoto(restoredProduct);
+      const original = baseProductPhoto(payload.product);
+      const front = saved.product;
+      if (front?.jobId && photo && original?.id === front.imageId && photo.id === original.id) {
+        const sourceUrl = front.sourceUrl || (!photo.src?.startsWith('blob:') ? photo.src : null);
+        if (sourceUrl && front.sourceAssetIds?.[0]) {
+          visualRefs.product = { ...front, imageId: photo.id, src: photo.src, sourceUrl };
+          if (photo.src?.startsWith('blob:')) {
+            uploads.set(photo.id, { status: 'synced', image: photo, assetId: front.sourceAssetIds[0],
+              url: sourceUrl, everSynced: true });
+            retainedAssets.add(front.sourceAssetIds[0]);
+          }
+        }
+      }
+      const custom = saved.custom;
+      const sources = custom?.sources || payload.customMatch?.sources;
+      if (custom?.jobId && sources?.length) {
+        visualRefs.custom = { ...custom, sources };
+        customMatch = { localId: custom.localId, sources };
+      }
+      notifyVisuals();
+    },
+    onVisuals(listener) { visualListeners.add(listener); return () => visualListeners.delete(listener); },
+    getVisualHandoff(product = latestSnapshot?.product, customId = customMatch?.localId) {
+      const photo = baseProductPhoto(product);
+      return {
+        ...(visualRefs.product && visualRefs.product.imageId === photo?.id && visualRefs.product?.src === photo?.src
+          ? { product: { ...visualRefs.product } } : {}),
+        ...(visualRefs.custom && visualRefs.custom.localId === customId ? { custom: { ...visualRefs.custom } } : {}),
+      };
+    },
+    getVisualSources(product = latestSnapshot?.product, customId = customMatch?.localId) {
+      const photo = baseProductPhoto(product);
+      const upload = uploads.get(photo?.id);
+      const assetId = upload && upload.image?.src === photo?.src ? upload.assetId
+        : (!photo?.src?.startsWith('blob:') ? photo?.id : null);
+      return {
+        ...(assetId ? { product: { sourceAssetIds: [assetId] } } : {}),
+        ...(customMatch?.localId === customId && customMatch?.sources?.length
+          ? { custom: { localId: customId, sourceAssetIds: customMatch.sources.map((source) => source.id) } } : {}),
+      };
+    },
+    recoverVisualHandoff(result, product, customId) {
+      const current = currentDraftVisuals(result, this.getVisualSources(product, customId));
+      const photo = baseProductPhoto(product);
+      let changed = false;
+      if (current.product?.jobId && (visualRefs.product?.jobId !== current.product.jobId
+          || visualRefs.product?.imageId !== photo.id || visualRefs.product?.src !== photo.src)) {
+        visualRefs.product = { jobId: current.product.jobId, imageId: photo.id, src: photo.src,
+          sourceAssetIds: current.product.sourceAssetIds, sourceUrl: uploads.get(photo.id)?.url || photo.src };
+        changed = true;
+      }
+      if (current.custom?.jobId && (visualRefs.custom?.jobId !== current.custom.jobId
+          || visualRefs.custom?.localId !== customId)) {
+        visualRefs.custom = { jobId: current.custom.jobId, localId: customId,
+          sourceAssetIds: current.custom.sourceAssetIds, sources: customMatch.sources };
+        changed = true;
+      }
+      if (changed) {
+        if (latestSnapshot) queue(latestSnapshot);
+        notifyVisuals();
+      }
+      return current;
+    },
+    settleVisualPreparations({ timeoutMs = 3000, signal } = {}) {
+      if (!visualPrepares.size) return Promise.resolve();
+      return new Promise((resolve) => {
+        let timer;
+        const finish = (cancel = false) => {
+          clearTimer(timer);
+          signal?.removeEventListener('abort', abort);
+          if (cancel) cancelVisualPreparations();
+          resolve();
+        };
+        const abort = () => finish(true);
+        if (signal?.aborted) { abort(); return; }
+        signal?.addEventListener('abort', abort, { once: true });
+        timer = setTimer(abort, timeoutMs);
+        void Promise.allSettled([...visualPrepares.keys()]).then(() => finish());
+      });
+    },
+    prepareProductVisuals(product) {
+      if (!this.isVisualsEnabled()) return Promise.resolve();
+      const controller = new AbortController();
+      const task = this.runProductVisualPreparation(product, controller.signal);
+      visualPrepares.set(task, controller);
+      void task.finally(() => visualPrepares.delete(task)).catch(() => {});
+      return task;
+    },
+    async runProductVisualPreparation(product, signal) {
+      if (!this.isVisualsEnabled() || locked || !api?.prepareDraftVisuals) return;
+      const epoch = identityEpoch;
+      const photo = baseProductPhoto(product);
+      if (!photo) return;
+      if (visualRefs.product?.jobId && visualRefs.product.imageId === photo.id && visualRefs.product.src === photo.src) return;
+      const current = () => epoch === identityEpoch && !locked && visualsEnabled && !signal?.aborted
+        && baseProductPhoto(latestSnapshot?.product)?.id === photo.id
+        && baseProductPhoto(latestSnapshot?.product)?.src === photo.src;
+      if (!latestSnapshot) queue({ product });
+      syncPhotos(product);
+      // Wait only for Front. Other colour uploads never delay analysis or this request.
+      await uploads.get(photo.id)?.promise;
+      if (!current()) return;
+      const upload = uploads.get(photo.id);
+      const assetId = upload?.assetId || (!photo.src?.startsWith('blob:') ? photo.id : null);
+      if (!assetId) return;
+      await this.flush();
+      if (!current() || !token) return;
+      const binding = { imageId: photo.id, src: photo.src, sourceAssetIds: [assetId], sourceUrl: upload?.url || photo.src };
+      const result = await api.prepareDraftVisuals(token, { role: 'product', sourceAssetIds: [assetId] },
+        { expectedUserId: userId, isCurrent: current, signal });
+      if (!current() || !result?.jobId) return;
+      visualRefs.product = { ...binding, jobId: result?.jobId };
+      if (latestSnapshot) queue(latestSnapshot);
+      notifyVisuals();
+    },
+    prepareCustomVisuals(draft) {
+      if (!this.isVisualsEnabled()) return Promise.resolve();
+      const controller = new AbortController();
+      const task = this.runCustomVisualPreparation(draft, controller.signal);
+      visualPrepares.set(task, controller);
+      void task.finally(() => visualPrepares.delete(task)).catch(() => {});
+      return task;
+    },
+    async runCustomVisualPreparation(draft, signal) {
+      if (!this.isVisualsEnabled() || locked || !draft?.uploads?.length || !api?.prepareDraftVisuals) return;
+      if (visualRefs.custom?.jobId && visualRefs.custom.localId === draft.localId) return;
+      const epoch = identityEpoch;
+      const current = () => epoch === identityEpoch && !locked && visualsEnabled && !signal?.aborted
+        && latestSnapshot?.analysis?.matchClothing?.some((item) => item.isCustom && item.id === draft.localId);
+      await this.flush();
+      if (!current() || !token) return;
+      const expectedUserId = userId;
+      const uploaded = await Promise.all(draft.uploads.map(async (up) => api.uploadDraftSlotPhoto({ ...up,
+        blob: up.blob || await fetchPhotoBytes(up.src, { signal }) }, { expectedUserId, isCurrent: current, signal })));
+      if (!current()) {
+        await Promise.allSettled(uploaded.map((up) => api.discardDraftSlotPhoto?.(up.assetId)));
+        return;
+      }
+      customMatch = { localId: draft.localId, selected: draft.selected,
+        sources: uploaded.map((up) => ({ id: up.assetId, src: up.url })) };
+      queue(latestSnapshot);
+      await this.flush();
+      if (!current()) return;
+      const binding = { localId: draft.localId, sourceAssetIds: uploaded.map((up) => up.assetId) };
+      const result = await api.prepareDraftVisuals(token, { role: 'custom', ...binding },
+        { expectedUserId, isCurrent: current, signal });
+      if (!current() || !result?.jobId) return;
+      visualRefs.custom = { ...binding, sources: customMatch.sources, jobId: result?.jobId };
+      queue(latestSnapshot);
+      notifyVisuals();
+    },
+    clearCustomVisuals() {
+      if (!customMatch && !visualRefs.custom) return;
+      customMatch = null; delete visualRefs.custom;
+      if (latestSnapshot) queue(latestSnapshot);
+      notifyVisuals();
+    },
     configure(nextAdapter) { api = nextAdapter; },
     getDiagnosticState() {
       return { photo_pending_count: Math.min(1000, [...uploads.values()].filter((upload) => upload.status !== 'synced').length),
@@ -699,6 +897,7 @@ export function createDraftSlotSync({
     syncPhotos,
     async flush() { await commit(); return putChain; },
     discard() {
+      cancelVisualPreparations();
       requestEpoch += 1;
       clearTimer(timer);
       clearTimer(putRetryTimer);
@@ -739,6 +938,7 @@ export function createDraftSlotSync({
     },
     onPhotosPending(handler) { photosPendingHandler = handler; notifyPhotosPending(); return () => { if (photosPendingHandler === handler) photosPendingHandler = null; }; },
     dispose() {
+      cancelVisualPreparations();
       requestEpoch += 1;
       stopProbe();
       stopScheduledWrites();
@@ -797,6 +997,9 @@ export function createDraftSlotSync({
         return null;
       }
       remotePhotosGone = false;
+      visualRefs = result.payload?.draftVisuals || {};
+      customMatch = result.payload?.customMatch || null;
+      notifyVisuals();
       setToken(result.token);
       setServerSyncedAt(result.meta?.updatedAt);
       clearLock();
@@ -859,7 +1062,7 @@ export function createDraftSlotSync({
         return false;
       }
     },
-    async remove({ isCurrent = () => true } = {}) {
+    async remove({ isCurrent = () => true, forPromotion = false } = {}) {
       const epoch = identityEpoch;
       const expectedUserId = userId;
       const current = () => epoch === identityEpoch && expectedUserId === userId && isCurrent();
@@ -880,7 +1083,7 @@ export function createDraftSlotSync({
         if (!current()) return;
         await waitForUploads();
         if (!current()) return;
-        if (api?.deleteDraftSlot) await api.deleteDraftSlot(deleteToken, { expectedUserId, isCurrent: current });
+        if (api?.deleteDraftSlot) await api.deleteDraftSlot(deleteToken, { expectedUserId, isCurrent: current, forPromotion });
         if (!current()) return;
       } catch (error) {
         if (!current()) return;
@@ -900,6 +1103,7 @@ export function createDraftSlotSync({
       const uploaded = [...uploads.values()];
       for (const upload of uploaded) clearTimer(upload.retryTimer);
       uploads.clear();
+      visualRefs = {}; customMatch = null; cancelVisualPreparations(); notifyVisuals();
       await Promise.allSettled(uploaded.map(discardUploaded));
       if (!current()) return;
       setToken(null);
@@ -915,6 +1119,8 @@ export function createDraftSlotSync({
     },
     resetIdentity({ sameUser = false } = {}) {
       if (!sameUser) identityEpoch += 1;
+      if (!sameUser) visualsEnabled = false;
+      visualRefs = {}; customMatch = null; cancelVisualPreparations(); notifyVisuals();
       stagedPayload = null;
       entryWritesPaused = false;
       remotePhotosGone = false;

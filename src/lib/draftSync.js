@@ -103,10 +103,24 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
     // 같은 탭이면 메모리 저장소가 정본이고, OAuth 리다이렉트로 돌아온 경우엔 그게 비어 있어
     // IndexedDB draft 에 실려 온 blob 이 유일한 소스다(2026-08-15 전수조사 — 비로그인 셀러의
     // 내 옷이 확정에서 조용히 사라지던 경로).
-    const customDraft = api.getCustomMatchDraft?.() ?? draft.customMatch ?? null;
+    const originalCustomDraft = api.getCustomMatchDraft?.() ?? draft.customMatch ?? null;
+    const customDraft = originalCustomDraft && { ...originalCustomDraft,
+      draftVisualJobId: draft.visuals?.custom?.localId === originalCustomDraft.localId
+        ? draft.visuals.custom.jobId : null };
     if (analysis) analysis = stripLocalCustomMatch(analysis);
 
-    await api.saveProduct(projectId, product);
+    const preparedFront = draft.visuals?.product;
+    const front = product.colors?.find((color) => color.isBase) || product.colors?.[0];
+    const sourceId = front?.images?.find((image) => image.slot === 'Front')?.id;
+    let joinedDraftVisualJob = null;
+    if (preparedFront?.jobId && sourceId && api.promoteDraftVisuals) {
+      try {
+        const joined = await api.promoteDraftVisuals({ projectId, jobId: preparedFront.jobId, sourceAssetIds: [sourceId] });
+        if (joined?.joined) joinedDraftVisualJob = preparedFront.jobId;
+      }
+      catch { /* Optional promotion failure keeps the existing project pipeline. */ }
+    }
+    await api.saveProduct(projectId, joinedDraftVisualJob ? { ...product, draftVisualJobId: joinedDraftVisualJob } : product);
     if (draft.analysis?.featureRun) {
       const settled = await settleDraftFeatureRun(draft, projectId, { restoreFeatures });
       featureRun = settled.run;

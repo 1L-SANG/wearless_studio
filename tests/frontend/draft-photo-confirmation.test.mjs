@@ -144,8 +144,8 @@ test('ProductInput uses the tested gate for same-device, guest, and logged-in co
   assert.match(confirm, /await confirmDraftPhotos\(/);
   assert.ok(confirm.indexOf('confirm: async () =>') < confirm.indexOf('if (session || isMockMode)'));
   assert.ok(confirm.indexOf('confirm: async () =>') < confirm.indexOf('await draftSlot.flush()'));
-  assert.ok(confirm.indexOf('await draftSlot.flush()') < confirm.indexOf('await draftSlot.remove()'));
-  assert.ok(confirm.indexOf('await draftSlot.remove()') < confirm.indexOf('promoteDraftToProject(draft'));
+  assert.ok(confirm.indexOf('await draftSlot.flush()') < confirm.indexOf('await draftSlot.remove({ forPromotion: true })'));
+  assert.ok(confirm.indexOf('await draftSlot.remove({ forPromotion: true })') < confirm.indexOf('promoteDraftToProject(draft'));
   assert.match(source, /photoFailure\.canOmit && \([\s\S]*?이 사진을 빼고 계속/);
   assert.match(source, /Modal onClose=\{\(\) => setPhotoFailure\(null\)\}/);
   assert.doesNotMatch(source, /장은 저장되지 않았어요/);

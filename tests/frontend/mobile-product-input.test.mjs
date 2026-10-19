@@ -1,3 +1,4 @@
+import { baseProductPhoto } from '../../src/lib/draftVisuals.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -75,7 +76,11 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
     removeForNewFlow: async () => { calls.push('remove'); },
     saveAll: async (snapshot) => { calls.push(['saveAll', snapshot]); return saveAll ? saveAll(snapshot) : { status: 'saved', photoCount: 2 }; },
   };
+  slot.prepareProductVisuals ||= async () => {};
+  slot.settleVisualPreparations ||= async () => {};
+  slot.getVisualHandoff ||= () => ({});
   const bindings = {
+    baseProductPhoto,
     mergeOutfitSaveResponse, outfitContextKey, syncOutfitLegacySelection,
     isAnalysisFastEntryEnabled: () => fastEntry,
     preparePublicAnalysis: prepare || (async () => ({ photos: [], photoSignature: 'signature' })), analysisPhotoKey: () => 'photos',

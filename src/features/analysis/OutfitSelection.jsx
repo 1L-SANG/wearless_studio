@@ -8,7 +8,7 @@ import { OutfitDrawer } from './OutfitDrawer.jsx';
 import { useOutfitRecommendation } from './useOutfitRecommendation.js';
 import styles from './OutfitSelection.module.css';
 
-export function OutfitSelection({ analysis, onChange, onRecommendation, projectId = null, product, models = [], modelCredit = () => '무료', onUpload, onDeleteCustom, deletingCustom, customUpload }) {
+export function OutfitSelection({ draftVisuals, analysis, onChange, onRecommendation, projectId = null, product, models = [], modelCredit = () => '무료', onUpload, onDeleteCustom, deletingCustom, customUpload }) {
   const [open, setOpen] = useState(null);
   const [drawer, setDrawer] = useState(null);
   const [colors, setColors] = useState({});
@@ -128,7 +128,7 @@ export function OutfitSelection({ analysis, onChange, onRecommendation, projectI
     </section>;
   };
   return <div className={`${styles.outfit} merged-card`}>
-    <OutfitBoard analysis={current} product={product} projectId={projectId} onOpenRole={openRole} skeleton={recommendationState.skeleton} />
+    <OutfitBoard draftVisuals={draftVisuals} analysis={current} product={product} projectId={projectId} onOpenRole={openRole} skeleton={recommendationState.skeleton} />
     <div className={styles.list} ref={listRef}>
       <div className={`${styles.listHead} ${stuck ? styles.stuckHead : ''}`}><h3>코디 구성</h3>
         {recommendationState.lateRecommendation ? <button type="button" className={styles.late} onClick={recommendationState.acceptLate}><Sparkles size={16} />AI 코디 보기</button>

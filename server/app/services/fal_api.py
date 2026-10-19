@@ -54,6 +54,21 @@ def prepare_image(data: bytes) -> PreparedImage:
     return PreparedImage(image, image_input_url(out.getvalue(), mime))
 
 
+# Draft jobs reserve a bounded budget and must never repeat an uncertain POST.
+from contextvars import ContextVar
+from contextlib import contextmanager
+_draft_request_guard = ContextVar('draft_request_guard', default=None)
+
+
+@contextmanager
+def draft_request_scope(guard):
+    token = _draft_request_guard.set(guard)
+    try:
+        yield
+    finally:
+        _draft_request_guard.reset(token)
+
+
 def configured(settings) -> bool:
     return bool((getattr(settings, "fal_key", None) or "").strip())
 
@@ -61,6 +76,9 @@ def configured(settings) -> bool:
 async def run_model(settings, model: str, payload: dict) -> dict:
     if not configured(settings):
         raise SamUnavailable("fal is not configured (FAL_KEY)")
+    guard = _draft_request_guard.get()
+    if guard is not None:
+        await guard()
     # 두 모델의 결과를 fal CDN에 저장하지 않고 data URI로 직접 받는다.
     payload = {**payload, "sync_mode": True}
     size = payload.get("image_size") or {}
@@ -70,7 +88,7 @@ async def run_model(settings, model: str, payload: dict) -> dict:
                 else megapixels * 0.03)
     headers = {"Authorization": f"Key {settings.fal_key.strip()}"}
     async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
-        for attempt in range(2):
+        for attempt in range(1 if guard is not None else 2):
             started = time.monotonic()
             status = None
             try:
@@ -85,7 +103,7 @@ async def run_model(settings, model: str, payload: dict) -> dict:
                 log.info(json.dumps({"provider": "fal", "model": model,
                     "latency_ms": latency_ms, "estimated_cost_usd": estimate,
                     "status": status, "attempt": attempt + 1}))
-            if (status == 429 or 500 <= status < 600) and attempt == 0:
+            if (status == 429 or 500 <= status < 600) and attempt == 0 and guard is None:
                 await asyncio.sleep(1.5)
                 continue
             if not 200 <= status < 300:

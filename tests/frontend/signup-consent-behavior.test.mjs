@@ -156,7 +156,14 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
         if (id === '\0signup-test-toss') return `export const PG_REVIEW_LOGIN_ENABLED=${reviewLogin};`;
         if (id === '\0signup-test-ui') return `export const Modal='Modal';export const Button='Button';export const Icon='Icon';export const useToast=()=>${access}.toast;`;
         if (id === '\0signup-test-css') return 'export default new Proxy({}, {get: (_, key) => key});';
-        if (id === '\0signup-test-draft') return 'export const draftSlot={resetIdentity(){}};';
+        if (id === '\0signup-test-draft') return `
+          const r = ${access};
+          export const draftSlot={
+            resetIdentity(){r.draftUser=null;r.visualsEnabled=false;},
+            setUserId(id){if(r.draftUser!==id)r.visualsEnabled=false;r.draftUser=id;},
+            getUserId(){return r.draftUser;},
+            setVisualsEnabled(id,enabled){if(id===r.draftUser)r.visualsEnabled=enabled===true;}
+          };`;
         if (id === '\0signup-test-origin') return 'export const stampAppOrigin=()=>{};';
         if (id === '\0signup-test-store') return `
           const state={beginProject:async()=>{},setAccountIdentity:()=>false,loadAccount:async(options)=>${access}.accountLoads.push(options)};
@@ -839,4 +846,23 @@ test('R3 delayed consent retry cannot authorize a different account', async (t) 
   assert.equal(h.runtime.auth.session.user.id, 'B');
   assert.equal(h.runtime.auth.sellerConsentReady, false);
   assert.ok(checkbox(h.completion()));
+});
+
+test('draft capability follows the current account and treats missing fields as off', { timeout: 10000 }, async t => {
+  const h = await harness(t, { user: 'A', realAccountStore: true });
+  for (const enabled of [undefined, false, true]) {
+    h.runtime.api.getAccount = async () => ({ id: 'A', plan: 'free', credits: 0, draftVisualsEnabled: enabled });
+    await h.store.getState().loadAccount({ force: true });
+    assert.equal(h.runtime.visualsEnabled, enabled === true);
+  }
+  const oldRequest = deferred();
+  h.runtime.api.getAccount = () => oldRequest.promise;
+  const oldLoad = h.store.getState().loadAccount({ force: true });
+  await h.user('B');
+  assert.equal(h.runtime.visualsEnabled, false);
+  h.runtime.api.getAccount = async () => ({ id: 'B', plan: 'free', credits: 0 });
+  await h.store.getState().loadAccount();
+  oldRequest.resolve({ id: 'A', plan: 'free', credits: 0, draftVisualsEnabled: true });
+  assert.equal(await oldLoad, null);
+  assert.equal(h.runtime.visualsEnabled, false);
 });

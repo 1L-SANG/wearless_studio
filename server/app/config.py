@@ -29,6 +29,8 @@ class Settings:
     # 누끼와 톤 마스크는 fal SAM 3, 정돈 사진은 Qwen을 사용한다.
     fal_key: str | None = None
     matching_flatlay_provider: str = "gemini"  # gemini | qwen
+    draft_visuals: str = "off"  # off | on, authenticated desktop drafts
+    draft_visuals_daily_budget_usd: float = 5.0
     product_tidy: str = "off"  # off | on, display only
     # 생성예시 레지스트리의 상대 URL 기준. prod 상대경로는 명시 필수, dev만 dummy 기본값 허용.
     example_asset_base_url: str | None = None
@@ -626,7 +628,8 @@ class Settings:
         if (self.matching_cutout == "on"
                 or self.mannequin_tone_editor == "on"
                 or self.matching_flatlay_provider == "qwen"
-                or self.product_tidy == "on"):
+                or self.product_tidy == "on"
+                or self.draft_visuals == "on"):
             if not (self.fal_key or "").strip():
                 raise ValueError("fal 또는 Qwen을 쓰려면 FAL_KEY가 필요해요.")
         if self.detail_qc_claude_effort not in {"low", "medium", "high", "xhigh", "max"}:
@@ -817,6 +820,8 @@ def load_settings() -> Settings:
         cloudflare_cache_purge_token=os.getenv("CLOUDFLARE_CACHE_PURGE_TOKEN") or None,
         fal_key=(os.getenv("FAL_KEY") or "").strip() or None,
         matching_flatlay_provider=_flag("MATCHING_FLATLAY_PROVIDER", "gemini", {"gemini", "qwen"}),
+        draft_visuals=_flag("DRAFT_VISUALS", "off", {"off", "on"}),
+        draft_visuals_daily_budget_usd=float(os.getenv("DRAFT_VISUALS_DAILY_BUDGET_USD", "5")),
         product_tidy=_flag("PRODUCT_TIDY", "off", {"off", "on"}),
         detail_worker_autoscale=_flag("DETAIL_WORKER_AUTOSCALE", "off", {"off", "on"}),
         detail_worker_autoscale_idle_minutes=_int_env("DETAIL_WORKER_AUTOSCALE_IDLE_MINUTES", 10),
