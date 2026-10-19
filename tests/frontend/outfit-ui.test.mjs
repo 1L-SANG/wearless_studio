@@ -36,6 +36,21 @@ test('빈 카탈로그에서는 가짜 사진과 선택 버튼을 표시하지 �
   assert.equal(html.includes('aria-pressed'), false);
 });
 
+test('추천 승격 기록 없이 복원해도 저장한 선택과 분석 2단계를 렌더한다', () => {
+  const analysis = { clothingType: 'top', outfitSelections: { version: 1,
+    slots: { bottom: { itemId: 'bottom', origin: 'user' } } },
+    matchClothing: [{ id: 'bottom', name: '저장한 바지', thumb: '/bottom.jpg', selected: true }] };
+  const html = renderToStaticMarkup(React.createElement(OutfitSelection, {
+    analysis, projectId: 'project', onChange() {},
+  }));
+  assert.match(html, /저장한 바지/);
+  assert.match(html, /aria-expanded="false"/);
+  assert.equal(html.includes('사진 업로드를 끝내지 못했어요'), false);
+  assert.equal(html.includes('aria-busy="true"'), false);
+  assert.equal('outfitRecommendation' in analysis, false);
+  assert.equal(analysis.outfitSelections.slots.bottom.itemId, 'bottom');
+});
+
 test('추천 설명은 숨기고 소품은 켜기와 끄기를 제공한다', () => {
   const html = renderToStaticMarkup(React.createElement(OutfitSelection, { analysis: {
     clothingType: 'dress', outfitSelections: { version: 1, optional: { bag: false, accessory: false }, slots: {} },

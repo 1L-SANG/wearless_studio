@@ -26,6 +26,7 @@ import { draftPromotionSession } from '@/lib/draftPromotionSession.js';
 import { startCustomMatchPromotion, stripLocalCustomMatch } from '@/lib/customMatchPromotion.js';
 import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storyboardEntryPrefetch.js';
 import { mannequinQuoteConfirmation } from '@/features/mannequin/quoteConfirmation.js';
+import { clientEvents } from './clientEvents.js';
 
 async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhotoProgress, restoreFeatures = false } = {}) {
   // 서버 createProject 는 명시적 Idempotency-Key 를 지원하지 않는다. 프로젝트를 만든 즉시
@@ -126,7 +127,17 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
       await api.saveAnalysis(projectId, analysis, { recommendOutfit: false });
       featureRun?.committed();
       if (outfitHandoff) {
-        await api.promoteOutfitRecommendation(projectId, outfitHandoff, analysis.outfitSelections);
+        try {
+          await api.promoteOutfitRecommendation(projectId, outfitHandoff, analysis.outfitSelections);
+        } catch (error) {
+          clientEvents.report({ kind: 'save_error', action: 'save', error,
+            messageCode: 'outfit_recommendation_promotion', context: { projectId }, blocking: false });
+          // 생성은 앞서 검증·저장한 선택을 쓴다. 추천 기록 실패는 확정을 막지 않는다.
+          // 구버전 응답이 여러 액세서리를 잃었다면 선택 저장부터 다시 검증한다.
+          if (error?.code === 'outfit_selection_not_saved') {
+            await api.saveAnalysis(projectId, { outfitSelections: analysis.outfitSelections }, { recommendOutfit: false });
+          }
+        }
       }
       if (detailHandoff) {
         // 디테일 추천은 부가 자료라 서명·유효기간 검증 실패(invalid_analysis_handoff)는 확정을 막지

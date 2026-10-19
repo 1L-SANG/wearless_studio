@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 import { fileURLToPath } from 'node:url';
 import { outfitHarness, drain } from './helpers/outfitHarness.mjs';
-let vite, api, sync, adapter, supabase;
+let vite, api, sync, adapter, supabase, promotion, clientEvents, createClientEventCollector;
 before(async () => {
   vite = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true, include: [] },
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
@@ -12,8 +12,75 @@ before(async () => {
   sync = await vite.ssrLoadModule('/src/lib/draftSync.js');
   ({ httpAdapter: adapter } = await vite.ssrLoadModule('/src/lib/api/httpAdapter.js'));
   ({ supabase } = await vite.ssrLoadModule('/src/lib/supabase.js'));
+  promotion = await vite.ssrLoadModule('/src/lib/productPhotoPromotion.js');
+  ({ clientEvents, createClientEventCollector } = await vite.ssrLoadModule('/src/lib/clientEvents.js'));
+  api.promoteConfirmedGptEvidence ??= async () => {};
 });
 after(async () => { await vite?.close(); });
+
+for (const code of ['outfit_context_changed', 'internal_error', 'api_network']) test(`추천 승격 ${code}는 기록하고 사진 완료와 후속 확정을 허용한다`, async t => {
+  const projectId = `optional-${code}`, events = [], reports = [], failures = [], logged = [];
+  const collector = createClientEventCollector({ env: {}, uuid: () => '11111111-1111-4111-8111-111111111111',
+    transport: async (_url, { body }) => { logged.push(JSON.parse(body)); return { ok: true }; } });
+  const choices = { version: 1, slots: { bottom: { itemId: 'bottom', origin: 'user' } } };
+  const error = Object.assign(new Error('추천 승격 실패'), { code, status: code === 'outfit_context_changed' ? 409 : 500 });
+  const replacement = {
+    saveProduct: async () => events.push('product'),
+    saveAnalysis: async (_id, data, options) => {
+      assert.deepEqual(data.outfitSelections, choices);
+      assert.equal(options.recommendOutfit, false);
+      events.push('analysis');
+    },
+    promoteOutfitRecommendation: async () => { events.push('outfit'); throw error; },
+    promoteConfirmedGptEvidence: async () => events.push('evidence'),
+    patchProject: async () => events.push('project'), getCustomMatchDraft: () => null,
+  };
+  for (const [key, value] of Object.entries(replacement)) t.mock.method(api, key, value);
+  t.mock.method(clientEvents, 'report', details => { reports.push(details); return collector.report(details); });
+  const unsubscribe = promotion.onProductPhotoPromotionFailure((...args) => failures.push(args));
+  t.after(() => { unsubscribe(); promotion.clearProductPhotoPromotionTask(projectId); sync.resetDraftSyncSingleFlight(); });
+  const task = promotion.startProductPhotoPromotion(projectId, ({ onPhotoProgress }) => sync.promoteDraftToProject({
+    product: { colors: [] }, photos: [], analysis: { outfitSelections: choices,
+      outfitRecommendationHandoff: { signature: 'signed' }, confirmedGptProductEvidenceHandoff: { signature: 'evidence' } },
+  }, { projectId, onPhotoProgress }));
+  await promotion.productPhotosReady(projectId);
+  assert.equal(task.status, 'settled');
+  assert.equal(task.error, null);
+  assert.deepEqual(failures, []); // The shell's photo-upload toast only subscribes to failures.
+  assert.deepEqual(events, ['product', 'analysis', 'outfit', 'evidence', 'project']);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].error, error);
+  assert.equal(reports[0].error.code, code);
+  assert.equal(reports[0].messageCode, 'outfit_recommendation_promotion');
+  assert.equal(reports[0].blocking, false);
+  assert.equal(reports[0].context.projectId, projectId);
+  assert.equal(logged[0].error_code, code);
+  assert.equal(logged[0].message_code, 'outfit_recommendation_promotion');
+  assert.equal(logged[0].blocking, false);
+});
+
+for (const stage of ['uploadPhoto', 'saveProduct', 'saveAnalysis']) test(`${stage}의 실제 실패는 사진 작업 failed와 기존 오류 안내 경로를 유지한다`, async t => {
+  const projectId = `required-${stage}`, failures = [], reports = [];
+  const error = Object.assign(new Error('필수 저장 실패'), { code: 'api_network' });
+  const replacement = { uploadPhoto: async () => ({ assetId: 'asset', url: '/photo' }),
+    saveProduct: async () => {}, saveAnalysis: async () => {},
+    promoteOutfitRecommendation: async () => assert.fail('failed saves cannot promote'),
+    patchProject: async () => assert.fail('failed saves cannot confirm'), getCustomMatchDraft: () => null };
+  replacement[stage] = async () => { throw error; };
+  for (const [key, value] of Object.entries(replacement)) t.mock.method(api, key, value);
+  t.mock.method(clientEvents, 'report', details => reports.push(details));
+  const unsubscribe = promotion.onProductPhotoPromotionFailure((...args) => failures.push(args));
+  t.after(() => { unsubscribe(); promotion.clearProductPhotoPromotionTask(projectId); sync.resetDraftSyncSingleFlight(); });
+  const task = promotion.startProductPhotoPromotion(projectId, ({ onPhotoProgress }) => sync.promoteDraftToProject({
+    product: { colors: [] }, photos: [{ imageId: `photo-${stage}`, mime: 'image/png', blob: new Blob(['photo']) }],
+    analysis: { outfitRecommendationHandoff: { signature: 'signed' } },
+  }, { projectId, onPhotoProgress }), { recoverDraftSlot: async () => {} });
+  await assert.rejects(promotion.productPhotosReady(projectId), error);
+  assert.equal(task.status, 'failed');
+  assert.equal(task.error, error);
+  assert.deepEqual(failures, [[projectId, error]]);
+  assert.deepEqual(reports, []);
+});
 test('확정 승격은 후보를 클라이언트 저장에서 제외하고 사진 저장 뒤 서명과 선택을 검증한다', async (t) => {
   const events = [], handoff = { signature: 'signed' };
   const choices = { version: 1, slots: { footwear: { itemId: null, origin: 'user' } } };
@@ -72,7 +139,7 @@ for (const timing of ['fast', 'late', 'edited']) test(`${timing} 추천 뒤 확�
   assert.deepEqual(confirmations, [displayed, displayed]);
 });
 
-for (const truncation of ['save', 'promotion']) test(`saved multi-accessory draft cannot confirm after ${truncation} loses extras`, async t => {
+for (const truncation of ['save', 'promotion']) test(`multi-accessory ${truncation} truncation must preserve saved choices before confirmation`, async t => {
   supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test' } } });
   const choices = { version: 1, optional: { accessory: true }, slots: {
     accessory: { itemId: 'ear', extraIds: ['neck', 'hat'], origin: 'user' },
@@ -96,8 +163,13 @@ for (const truncation of ['save', 'promotion']) test(`saved multi-accessory draf
     promoteOutfitRecommendation: adapter.promoteOutfitRecommendation.bind(adapter),
     patchProject: async () => events.push('confirmed'), getCustomMatchDraft: () => null })) t.mock.method(api, key, value);
   t.after(() => sync.resetDraftSyncSingleFlight());
-  await assert.rejects(sync.promoteDraftToProject(draft), { code: 'outfit_selection_not_saved', projectId: 'multi-draft' });
-  assert.deepEqual(events, truncation === 'save' ? ['save'] : ['save', 'promotion']);
+  if (truncation === 'save') {
+    await assert.rejects(sync.promoteDraftToProject(draft), { code: 'outfit_selection_not_saved', projectId: 'multi-draft' });
+    assert.deepEqual(events, ['save']);
+  } else {
+    await sync.promoteDraftToProject(draft);
+    assert.deepEqual(events, ['save', 'promotion', 'save', 'confirmed']);
+  }
   assert.deepEqual(draft, original);
 });
 
