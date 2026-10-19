@@ -22,7 +22,7 @@ from .sam_client import SamUnavailable, WornGarmentResult
 
 log = logging.getLogger(__name__)
 MODEL_VERSION = fal_api.SAM_MODEL
-ALGORITHM_VERSION = "editor-worn-garment-fal-sam3-v1"
+ALGORITHM_VERSION = "editor-worn-garment-fal-sam3-v2"
 # 종류별 단어 하나와 공통 단어 하나, 캐시 미스당 정확히 두 요청. 각 $0.005.
 CATEGORY_PROMPTS = {"top": "top", "outer": "outerwear", "bottom": "pants", "dress": "dress"}
 SKIRT_TERMS = ("skirt", "스커트", "치마")
@@ -499,7 +499,10 @@ def produce(generated: bytes, base: bytes, *, candidates: list[np.ndarray],
         if match_band and share > MATCH_ZONE_MAX:
             refused.append(share)
             continue
-        if outside_figure_frac(mask, figure) <= FALLBACK_OUTSIDE_MAX:
+        # 1등 후보는 배경 문턱에서 뺀다. 운영 SAM2도 1등의 정제 마스크는 이 문턱을 거치지 않았다
+        # (worn_garment.py FALLBACK_OUTSIDE_MAX 주석). figure는 추정치라, 흰 배경 위 연회색 티처럼
+        # 배경과 비슷한 옷을 몸 밖으로 잘못 본다(2026-10-19 운영 재현). 문턱은 대체 후보에만 쓴다.
+        if rank == 0 or outside_figure_frac(mask, figure) <= FALLBACK_OUTSIDE_MAX:
             chosen = (mask, share, score, parts, rank)
             break
     if chosen is None:

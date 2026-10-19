@@ -39,7 +39,7 @@ PRODUCER = "sam2-worn-garment"
 # 생성 직후 큐와 기존 컷 lazy backfill 큐가 공유하는 알고리즘 신원. torch 없는 API
 # 모듈에 둬서 두 경로가 같은 멱등키 버전을 사용하게 한다.
 ALGORITHM_VERSION = "editor-worn-garment-sam2-v3"
-FAL_ALGORITHM_VERSION = "editor-worn-garment-fal-sam3-v1"
+FAL_ALGORITHM_VERSION = "editor-worn-garment-fal-sam3-v2"
 FAL_PRODUCER = "fal-sam3-worn-garment"
 
 

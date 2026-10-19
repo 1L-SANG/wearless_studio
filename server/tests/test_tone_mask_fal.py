@@ -140,6 +140,21 @@ def test_same_candidates_select_the_same_mask_as_sam2_without_refine(tone, monke
             assert getattr(new, name) == getattr(old, name)
 
 
+def test_top_pick_is_not_held_to_the_fallback_background_ceiling(tone, monkeypatch):
+    """2026-10-19 운영 재현: 흰 배경 위 연회색 티를 figure 추정이 놓쳐 1등 후보가 몸 밖 45%로 보였다.
+
+    운영 SAM2는 1등의 정제 마스크를 배경 문턱에서 뺐다(worn_garment.py 622-626). 정제가 없는
+    이식판에서는 1등 후보 자체가 그 자리다.
+    """
+    generated, base = images()
+    product = _mask(SHAPE, PRODUCT_BOX)
+    monkeypatch.setattr(tone, "figure_silhouette", lambda img: np.zeros(img.shape[:2], bool))
+    out = tone.produce(generated, base, candidates=[product], clothing_type="top",
+                       matching_side="bottom")
+    assert out.selected_rank == 0 and out.area_frac > 0
+    # 대체 후보의 문턱은 위 동일성 시험의 "background" 경우가 지킨다.
+
+
 @pytest.mark.parametrize("category,sub,prompt", [("top", None, "top"), ("bottom", "pants", "pants"),
     ("bottom", "skirt", "skirt"), ("dress", None, "dress"), ("outer", None, "outerwear"),
     (None, None, "top")])
@@ -165,7 +180,7 @@ def test_fal_prompts_png_and_cache(tone, monkeypatch, category, sub, prompt):
     with Image.open(io.BytesIO(r2.objects[first.mask_key])) as image:
         assert image.mode == "L" and image.size == (120, 200)
         assert set(np.unique(np.array(image))) <= {0, 255}
-    assert first.algorithm_version == "editor-worn-garment-fal-sam3-v1"
+    assert first.algorithm_version == "editor-worn-garment-fal-sam3-v2"
     assert first.m2m is False and first.grid == 0
     assert second.selected_rank is None and second.product_match is None
     meta = egm.metadata_for(first, cut_id="A-1", source_asset_id="cut", category=category,
@@ -233,7 +248,7 @@ def test_fal_switch_upgrades_existing_masks_and_changes_job_identity(monkeypatch
     monkeypatch.setenv("FAL_KEY", "test")
     assert egm.mask_job_key("p", "cut", product_key="product") != before
     assert egm.mask_upgrade_reason(old, product_key="product") == "algorithm"
-    current = {**old, "algorithmVersion": "editor-worn-garment-fal-sam3-v1"}
+    current = {**old, "algorithmVersion": "editor-worn-garment-fal-sam3-v2"}
     assert egm.mask_upgrade_reason(current, product_key="product") is None
 
 
@@ -323,7 +338,7 @@ def test_fal_tone_does_not_probe_sam2_for_early_retry():
 
 
 @pytest.mark.parametrize("algorithm,queued", [("editor-worn-garment-sam2-v3", True),
-    ("editor-worn-garment-fal-sam3-v1", False)])
+    ("editor-worn-garment-fal-sam3-v2", False)])
 def test_fal_upgrade_keeps_ready_mask_on_screen(client, make_token, monkeypatch, algorithm, queued):
     from test_product_reference_mask import _tone_editor_state, _meta
     monkeypatch.setenv("TONE_MASK_PROVIDER", "fal")
@@ -337,7 +352,7 @@ def test_fal_upgrade_keeps_ready_mask_on_screen(client, make_token, monkeypatch,
     assert response.json()["maskAssetId"] == "mask-1"
     assert bool(jobs) is queued
     if queued:
-        assert "editor-worn-garment-fal-sam3-v1" in jobs[0]["idempotency_key"]
+        assert "editor-worn-garment-fal-sam3-v2" in jobs[0]["idempotency_key"]
         assert jobs[0]["credits_reserved"] == 0
 
 
