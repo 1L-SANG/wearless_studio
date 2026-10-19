@@ -102,7 +102,8 @@ sidecars:
 
 variables:                       # 평문 (민감하지 않음). 시크릿은 아래 secrets 블록.
   APP_ENV: production
-  # API와 상세 워커가 새 저장 계약으로 교체된 뒤 배포 워크플로가 마지막에 켠다.
+  # 액세서리 여러 개와 소품 추천을 받는다. 2026-10-19 첫 도입(#571)은 두 번 나눠 배포했고, 이제 운영 서버가 모두
+  # 지원하므로 항상 on이다. off는 액세서리를 1개로 되돌리는 비상 스위치다.
   OUTFIT_PROPS_READY: "on"
   # 정기결제(빌링). ⚠️ 이 값이 true 인 채로 배포하려면 아래 secrets 3종이 **먼저** SSM 에
   # 있어야 한다(TOSS_BILLING_SECRET_KEY·TOSS_BILLING_KEK·TOSS_WEBHOOK_PATH_SECRET).
