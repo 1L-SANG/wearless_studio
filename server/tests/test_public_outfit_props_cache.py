@@ -17,6 +17,7 @@ from test_outfit_routes import state
 
 
 def test_public_outfit_capabilities_are_read_only_without_auth(client, monkeypatch):
+    client.app.state.settings = replace(client.app.state.settings, outfit_props_ready=True)
     class NoDatabase:
         def connection(self):
             pytest.fail('capability reads must not query the database')
@@ -29,6 +30,7 @@ def test_public_outfit_capabilities_are_read_only_without_auth(client, monkeypat
     response = client.get('/v1/public/outfit-capabilities')
     assert response.status_code == 200, response.text
     assert response.json() == {'props': True, 'maxAccessories': 3}
+    assert response.headers.get('cache-control') == 'no-store'
     initial.assert_not_awaited()
     props.assert_not_awaited()
 
@@ -37,7 +39,8 @@ def test_dedicated_public_props_route_never_runs_initial_recommendation(client, 
     outfit.clear_cache()
     client.app.state.pool = FakePool()
     client.app.state.r2 = FakeR2()
-    client.app.state.settings = replace(client.app.state.settings, r2_secret_access_key='outfit-secret-long-enough')
+    client.app.state.settings = replace(client.app.state.settings, outfit_props_ready=True,
+        r2_secret_access_key='outfit-secret-long-enough')
     monkeypatch.setattr(repo, 'list_curated_matching_items', AsyncMock(return_value=accessories()))
     initial = AsyncMock(side_effect=AssertionError('props must not start the initial provider'))
     monkeypatch.setattr(outfit.outfit_recommender, 'recommend', initial)
@@ -54,6 +57,7 @@ def test_dedicated_public_props_route_never_runs_initial_recommendation(client, 
 
 
 def test_dedicated_project_props_route_preserves_selections(client, make_token, state, monkeypatch):
+    client.app.state.settings = replace(client.app.state.settings, outfit_props_ready=True)
     saved, _, items = state
     items.extend(accessories())
     saved['outfitSelections'] = {'version': 1, 'slots': {'accessory': {'itemId': '5', 'origin': 'user'}}}
@@ -95,7 +99,7 @@ def test_public_props_rehydrate_expired_base_and_merge_same_handoff_requests(cli
     client.app.state.pool = FakePool()
     client.app.state.r2 = FakeR2()
     client.app.state.settings = replace(client.app.state.settings, gemini_api_key='mock',
-        outfit_recommendation_enabled=True, r2_secret_access_key='outfit-secret-long-enough')
+        outfit_recommendation_enabled=True, outfit_props_ready=True, r2_secret_access_key='outfit-secret-long-enough')
     items = [row('bottom', 'bottom'), row('bag', 'bag'), *accessories()]
     monkeypatch.setattr(repo, 'list_curated_matching_items', AsyncMock(return_value=items))
     monkeypatch.setattr(public_routes, '_analysis_semaphore', asyncio.Semaphore(4))

@@ -20,7 +20,7 @@ from .auth import optional_user
 from .client_ip import client_ip as _client_ip
 from .r2 import ext_for_mime
 from .services import outfit
-from .routes import MAX_UPLOAD_BYTES
+from .routes import MAX_UPLOAD_BYTES, _require_outfit_props_ready
 from .workers.analyze_job import analyze_image_bytes, analyze_core_image_bytes, extract_image_features
 
 logger = logging.getLogger("wearless.public_analysis")
@@ -235,8 +235,10 @@ async def _public_outfit_fields(request, source_images, product, analysis, slots
 
 
 @router.get("/outfit-capabilities", tags=["Public Analysis"])
-async def public_outfit_capabilities():
-    return {"props": True, "maxAccessories": 3}
+async def public_outfit_capabilities(request: Request):
+    ready = request.app.state.settings.outfit_props_ready
+    return JSONResponse({"props": ready, "maxAccessories": 3 if ready else 1},
+                        headers={"Cache-Control": "no-store"})
 
 
 @router.post("/outfit-props-recommendations", tags=["Public Analysis"])
@@ -246,6 +248,7 @@ async def public_recommend_outfit_props(request: Request, images: list[UploadFil
         handoff: str | None = Form(default=None), authenticated_user: str | None = Depends(optional_user)):
     if role not in outfit.PROP_ROLES:
         raise _bad_request("invalid_outfit_props_role", "소품 종류를 다시 확인해 주세요.")
+    _require_outfit_props_ready(request.app.state.settings)
     return await public_recommend_outfit(request, images, slots, productContext, analysisContext,
                                          role, handoff, authenticated_user)
 

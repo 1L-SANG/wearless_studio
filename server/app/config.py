@@ -104,6 +104,7 @@ class Settings:
     outfit_timeout_seconds: float = 30.0
     outfit_props_timeout_seconds: float = 10.0
     outfit_recommendation_enabled: bool = False
+    outfit_props_ready: bool = False
     outfit_candidates_per_role: int = 6
     # AG-01 상품 분석만 별도 분기 (2026-08-14 사용자 결정). model_text_gemini 는 게이팅 QC
     # (IMAGE_QC·MANNEQUIN_AXIS_QC·BASE_FIDELITY_QC = enforce)까지 같이 쓰는 값이라, 분석만
@@ -888,6 +889,7 @@ def load_settings() -> Settings:
             os.getenv("MODEL_ROUTING_TEXT_GEMINI_SIMILAR") or "gemini-3.8-flash"),
         model_text_gemini_outfit="gemini-3.8-flash",
         outfit_recommendation_enabled=_flag("OUTFIT_RECOMMENDATION", "off", {"off", "on"}) == "on",
+        outfit_props_ready=_flag("OUTFIT_PROPS_READY", "off", {"off", "on"}) == "on",
         outfit_candidates_per_role=min(8, max(2, _int_env("OUTFIT_CANDIDATES_PER_ROLE", 6))),
         outfit_props_timeout_seconds=min(30.0, max(1.0, _int_env("OUTFIT_PROPS_TIMEOUT_SECONDS", 10))),
         outfit_timeout_seconds=min(30.0, max(1.0, float(os.getenv("OUTFIT_TIMEOUT_SECONDS", "30")))),

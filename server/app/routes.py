@@ -1267,6 +1267,7 @@ async def save_analysis(
                     genders=["women"] if clothing_type == "dress" else analysis.get("targetGenders", previous.get("targetGenders")))
             except outfit.OutfitSelectionError as exc:
                 raise _bad_request(str(exc), "선택한 코디 아이템을 다시 확인해 주세요.") from None
+            _require_outfit_props_ready(request.app.state.settings, selections)
             analysis = {**analysis, **outfit.sync_legacy({**previous, **analysis}, selections, items, request.app.state.r2)}
         row = await repo.save_analysis(conn, project_id, analysis, merge=merge, delete_nulls=merge)
         if items is None and ((row["payload"] or {}).get("outfitRecommendation")
@@ -1641,6 +1642,17 @@ async def analyze_spike(
     return JSONResponse({"observation": obs, "data": distributed})
 
 
+def _require_outfit_props_ready(settings, selections=None):
+    if getattr(settings, "outfit_props_ready", False):
+        return
+    if selections is not None:
+        accessory = (selections.get("slots") or {}).get("accessory") or {}
+        if not accessory.get("itemId") or not accessory.get("extraIds"):
+            return
+    raise HTTPException(status_code=409, detail={"code": "outfit_props_not_ready",
+        "message": "소품 기능을 준비하고 있어요. 잠시 후 다시 시도해 주세요."})
+
+
 async def _outfit_generation_snapshot(conn, user_id, project_id, *, analysis=None, product=None, settings=None):
     analysis = analysis if analysis is not None else await repo.get_analysis(conn, project_id) or {}
     # Empty old projects require no additional product or catalog query.
@@ -1651,10 +1663,12 @@ async def _outfit_generation_snapshot(conn, user_id, project_id, *, analysis=Non
     clothing_type = product.get("clothingType") or product.get("clothing_type") or "top"
     items = await outfit.load_items(conn, user_id, project_id)
     try:
-        return outfit.generation_snapshot(analysis, clothing_type, items, sub_category=analysis.get("subCategory"),
+        snapshot = outfit.generation_snapshot(analysis, clothing_type, items, sub_category=analysis.get("subCategory"),
             product=product, candidates_per_role=settings.outfit_candidates_per_role if settings else 6)
     except outfit.OutfitSelectionError as exc:
         raise _bad_request(str(exc), "선택한 코디 아이템을 다시 확인해 주세요.") from None
+    _require_outfit_props_ready(settings, snapshot)
+    return snapshot
 
 
 async def _outfit_source_images(conn, user_id, project_id, product, r2):
@@ -1733,6 +1747,7 @@ async def recommend_outfit_props(request: Request, project_id: str, body: dict =
                                  user_id: str = Depends(require_user)):
     if body.get("role") not in outfit.PROP_ROLES:
         raise _bad_request("invalid_outfit_props_role", "소품 종류를 다시 확인해 주세요.")
+    _require_outfit_props_ready(request.app.state.settings)
     return await recommend_outfit(request, project_id, body, user_id)
 
 
@@ -1775,6 +1790,7 @@ async def recommend_outfit(request: Request, project_id: str, body: dict = Body(
                             context["clothingType"], allowed_items=items, strict=True, genders=context["targetGenders"], prune_invalid_ai=True)
                     except outfit.OutfitSelectionError as exc:
                         raise _bad_request(str(exc), "선택한 코디 아이템을 다시 확인해 주세요.") from None
+                _require_outfit_props_ready(request.app.state.settings, request_analysis["outfitSelections"])
                 source_images, slots = await _outfit_source_images(conn, user_id, project_id, product, request.app.state.r2)
         if "role" in body:
             return await _start_project_props(request, project_id, user_id, product, analysis, source_images, slots, body["role"])
@@ -1841,6 +1857,7 @@ async def promote_outfit_recommendation(request: Request, project_id: str, body:
                          if entry["origin"] == "user"}
                 value = outfit.merge_selections(value, {"version": 1, "slots": fixed}, context["clothingType"])
             selections = outfit.normalize_selections(value, context["clothingType"], allowed_items=items, strict=True, genders=context["targetGenders"])
+            _require_outfit_props_ready(request.app.state.settings, selections)
             pools = outfit.candidate_pools(items, context)
             recommendation = deepcopy(contract["outfitRecommendation"])
             if recommendation["sets"]:
@@ -4059,6 +4076,13 @@ async def generate_editor_image(
                     raise _bad_request(str(exc), "원래 코디 아이템을 다시 확인해 주세요.") from None
             else:
                 payload["outfitSelectionsSnapshot"] = await _outfit_generation_snapshot(conn, user_id, project_id, analysis=analysis, settings=request.app.state.settings)
+        producer_snapshot = payload.get("outfitSelectionsSnapshot")
+        if payload.get("mode") == "vary" and not s.outfit_props_ready:
+            from .agents import asset_recipe
+            original_id = (payload.get("_similarCut") or {}).get("sourceAssetId") or source_asset_id
+            original = await asset_recipe.resolve_asset_recipes(conn, user_id, project_id, [original_id])
+            producer_snapshot = ((original.get(original_id) or {}).get("recipe") or {}).get("outfitSelectionsSnapshot")
+        _require_outfit_props_ready(s, producer_snapshot or {"slots": {}})
         # 검증·복원한 요청으로 단가를 고른다. 빈 칸은 내부 vary/similar여도 이미지 생성값이다.
         # 워커는 이 예약액을 확정·해제하므로 배포 도중 단가가 바뀌어도 다시 계산하지 않는다.
         cost = s.credit_cost_editor_image

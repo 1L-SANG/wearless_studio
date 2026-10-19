@@ -252,9 +252,16 @@ test('capability read forwards abort and does not turn cancellation into enabled
 test('save rejects an old API that silently strips accessory extras and preserves requested selection', async t => {
   supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test' } } });
   const original = structuredClone(multiAccessories);
-  capture(t, { clothingType: 'top', outfitSelections: { ...multiAccessories,
-    slots: { accessory: { itemId: 'ear', origin: 'user' } } } });
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    calls.push({ url: String(url), ...options });
+    const value = String(url).endsWith('/outfit-capabilities') ? { props: true, maxAccessories: 3 }
+      : { clothingType: 'top', outfitSelections: { ...multiAccessories, slots: { accessory: { itemId: 'ear', origin: 'user' } } } };
+    return new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  });
   await assert.rejects(adapter.saveAnalysis('old-api-multi', { outfitSelections: multiAccessories }), { code: 'outfit_selection_not_saved' });
+  assert.equal(calls.filter(call => call.method === 'PATCH').length, 1);
+  assert.equal(calls.filter(call => call.url.endsWith('/outfit-capabilities')).length, 1);
   assert.deepEqual(multiAccessories, original);
 });
 
@@ -271,7 +278,48 @@ test('promotion rejects old API truncation even after a new node advertised supp
 test('save and promotion accept all three echoed accessories including disabled remembered choices', async t => {
   supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test' } } });
   const choices = { ...multiAccessories, optional: { accessory: false } };
-  capture(t, { clothingType: 'top', outfitSelections: choices });
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    calls.push({ url: String(url), ...options });
+    const value = String(url).endsWith('/outfit-capabilities') ? { props: true, maxAccessories: 3 }
+      : { clothingType: 'top', outfitSelections: choices };
+    return new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  });
   assert.deepEqual((await adapter.saveAnalysis('new-api-multi', { outfitSelections: choices })).outfitSelections, choices);
   assert.deepEqual((await adapter.promoteOutfitRecommendation('new-api-multi', { signature: 'handoff' }, choices)).outfitSelections, choices);
+  assert.equal(calls.filter(call => call.url.endsWith('/outfit-capabilities')).length, 2);
+});
+
+for (const readiness of ['missing', 'warming', 'changed']) for (const operation of ['save', 'promotion']) {
+  test(`multi ${operation} checks fresh ${readiness} readiness before any write`, async t => {
+    supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test' } } });
+    const calls = []; let capabilityReads = 0;
+    const original = structuredClone(multiAccessories);
+    t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+      const path = String(url); calls.push({ path, ...options });
+      const capabilities = path.endsWith('/outfit-capabilities');
+      const earlierReady = capabilities && readiness === 'changed' && capabilityReads++ === 0;
+      const status = capabilities && readiness === 'missing' ? 404 : 200;
+      const value = capabilities ? earlierReady ? { props: true, maxAccessories: 3 } : { props: false, maxAccessories: 1 }
+        : { clothingType: 'top', outfitSelections: multiAccessories, outfitRecommendation: { contextKey: 'saved' } };
+      return new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
+    });
+    if (readiness === 'changed') assert.equal((await adapter.getOutfitCapabilities()).maxAccessories, 3);
+    const request = operation === 'save'
+      ? adapter.saveAnalysis('warming-multi', { outfitSelections: multiAccessories }, { recommendOutfit: false })
+      : adapter.promoteOutfitRecommendation('warming-multi', { signature: 'signed' }, multiAccessories);
+    await assert.rejects(request, { code: 'outfit_selection_not_saved' });
+    assert.equal(calls.filter(call => ['PATCH', 'POST'].includes(call.method)).length, 0);
+    assert.equal(calls.filter(call => call.path.endsWith('/outfit-capabilities')).length, readiness === 'changed' ? 2 : 1);
+    assert.deepEqual(multiAccessories, original);
+  });
+}
+
+test('single accessory save and promotion do not query release readiness', async t => {
+  supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test' } } });
+  const choices = { ...multiAccessories, slots: { accessory: { itemId: 'ear', origin: 'user' } } };
+  const calls = capture(t, { clothingType: 'top', outfitSelections: choices });
+  await adapter.saveAnalysis('single-ready', { outfitSelections: choices }, { recommendOutfit: false });
+  await adapter.promoteOutfitRecommendation('single-ready', { signature: 'signed' }, choices);
+  assert.equal(calls.some(call => call.url.endsWith('/outfit-capabilities')), false);
 });

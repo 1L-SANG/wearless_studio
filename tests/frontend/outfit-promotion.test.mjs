@@ -81,6 +81,8 @@ for (const truncation of ['save', 'promotion']) test(`saved multi-accessory draf
     outfitSelections: choices, outfitRecommendationHandoff: { signature: 'signed' } } };
   const original = structuredClone(draft), events = [];
   t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    if (String(url).endsWith('/outfit-capabilities')) return new Response(JSON.stringify({ props: true, maxAccessories: 3 }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } });
     const promotion = String(url).endsWith(':promote');
     if (options.method === 'PATCH') events.push('save');
     if (promotion) events.push('promotion');
@@ -96,5 +98,30 @@ for (const truncation of ['save', 'promotion']) test(`saved multi-accessory draf
   t.after(() => sync.resetDraftSyncSingleFlight());
   await assert.rejects(sync.promoteDraftToProject(draft), { code: 'outfit_selection_not_saved', projectId: 'multi-draft' });
   assert.deepEqual(events, truncation === 'save' ? ['save'] : ['save', 'promotion']);
+  assert.deepEqual(draft, original);
+});
+
+for (const readiness of ['missing', 'warming']) test(`stale multi draft stays unconfirmed without analysis writes while readiness is ${readiness}`, async t => {
+  supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test' } } });
+  const draft = { product: { colors: [] }, photos: [], analysis: { clothingType: 'top',
+    outfitSelections: { version: 1, optional: { accessory: true }, slots: {
+      accessory: { itemId: 'ear', extraIds: ['neck', 'hat'], origin: 'user' },
+    } }, outfitRecommendationHandoff: { signature: 'signed' } } };
+  const original = structuredClone(draft), events = [];
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    const caps = String(url).endsWith('/outfit-capabilities');
+    if (['PATCH', 'POST'].includes(options.method)) events.push(options.method);
+    const value = caps ? { props: false, maxAccessories: 1 }
+      : { clothingType: 'top', outfitSelections: draft.analysis.outfitSelections, outfitRecommendation: { contextKey: 'saved' } };
+    return new Response(JSON.stringify(value), { status: caps && readiness === 'missing' ? 404 : 200,
+      headers: { 'Content-Type': 'application/json' } });
+  });
+  for (const [key, value] of Object.entries({ createProject: async () => ({ id: 'stale-multi' }),
+    saveProduct: async () => {}, saveAnalysis: adapter.saveAnalysis.bind(adapter),
+    promoteOutfitRecommendation: adapter.promoteOutfitRecommendation.bind(adapter),
+    patchProject: async () => events.push('confirmed'), getCustomMatchDraft: () => null })) t.mock.method(api, key, value);
+  t.after(() => sync.resetDraftSyncSingleFlight());
+  await assert.rejects(sync.promoteDraftToProject(draft), { code: 'outfit_selection_not_saved', projectId: 'stale-multi' });
+  assert.deepEqual(events, []);
   assert.deepEqual(draft, original);
 });

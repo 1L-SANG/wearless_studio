@@ -1,6 +1,6 @@
 import { uploadWardrobeGif, readWardrobeGifs, writeWardrobeGifs, mergeWardrobeGifs } from './gifWardrobe.js';
 import { preparePublicAnalysis, publicAnalysisForm } from './publicAnalysisRequest.js';
-import { hasOutfitContextChange, mergeOutfitAnalysis, assertOutfitAccessoriesSaved } from '../outfitSelections.js';
+import { hasOutfitContextChange, mergeOutfitAnalysis, assertOutfitAccessoriesSaved, requireOutfitAccessorySupport } from '../outfitSelections.js';
 import { stripFeatureClientFields } from '../featureRun.js';
 import { stripJpegMetadata } from '../jpegMetadata.js';
 /* =============================================================
@@ -588,6 +588,7 @@ export const httpAdapter = {
     return http(`/v1/projects/${projectId}/analysis/outfit-candidates`);
   },
   async promoteOutfitRecommendation(projectId, handoff, outfitSelections) {
+    await requireOutfitAccessorySupport(outfitSelections, () => this.getOutfitCapabilities());
     const response = await http(`/v1/projects/${projectId}/analysis/outfit-recommendations:promote`, {
       method: 'POST', body: { handoff, ...(outfitSelections ? { outfitSelections } : {}) },
     });
@@ -801,6 +802,7 @@ export const httpAdapter = {
         body.matchClothing || cached?.matchClothing || [], patch.matchClothing, base.clothingType,
       );
     }
+    if (projectId) await requireOutfitAccessorySupport(body.outfitSelections || cached?.outfitSelections, () => this.getOutfitCapabilities());
     const saved = projectId
       ? await http(`/v1/projects/${projectId}/analysis?merge=1`, { method: 'PATCH', body })
       : mergeAnalysisPatch(base, body);

@@ -214,12 +214,20 @@ export function hasOutfitContextChange(current, patch) {
     });
 }
 
+const outfitSelectionSaveError = () => Object.assign(new Error('선택한 소품을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'), { code: 'outfit_selection_not_saved' });
+
+export async function requireOutfitAccessorySupport(requested, getCapabilities) {
+  if (selectedOutfitIds(requested, 'accessory').length < 2) return;
+  const capabilities = await getCapabilities();
+  if (capabilities?.maxAccessories !== 3) throw outfitSelectionSaveError();
+}
+
 // Check the raw server echo before optimistic merging can hide an older API's truncation.
 export function assertOutfitAccessoriesSaved(requested, response) {
   const expected = selectedOutfitIds(requested, 'accessory');
   if (expected.length < 2) return;
   const actual = selectedOutfitIds(response?.outfitSelections, 'accessory');
   if (JSON.stringify(expected) !== JSON.stringify(actual)) {
-    throw Object.assign(new Error('선택한 소품을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'), { code: 'outfit_selection_not_saved' });
+    throw outfitSelectionSaveError();
   }
 }

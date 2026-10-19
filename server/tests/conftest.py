@@ -92,6 +92,11 @@ def patch_route_db(monkeypatch, routes_module):
             async def no_row(*_args, _empty=empty, **_kwargs):
                 return _empty
             monkeypatch.setattr(routes_module.repo, name, no_row)
+    from app.agents import asset_recipe
+    if getattr(asset_recipe.resolve_asset_recipes, "__module__", None) == asset_recipe.__name__:
+        async def no_recipes(*_args, **_kwargs):
+            return {}
+        monkeypatch.setattr(asset_recipe, "resolve_asset_recipes", no_recipes)
 
 
 class FakePool:
