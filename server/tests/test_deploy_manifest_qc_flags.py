@@ -37,9 +37,9 @@ QC_FLAGS = [
      "mannequin_base_fidelity_observe_regenerations"),
     # 톤 에디터도 미선언이면 API 가 disabled 를 반환하고 UI 가 조용히 사라진다.
     ("MANNEQUIN_TONE_EDITOR", "mannequin_tone_editor"),
-    # sam2 온디맨드(2026-08-21). 미선언이면 reconciler 가 매 주기 skip — sam2 가 영영 안 켜진다.
+    # SAM2 철거 중에도 자동 기동을 명시적으로 off로 선언한다.
     ("SAM_AUTOSCALE", "sam_autoscale"),
-    # 콜드스타트 직결 폴백(2026-08-27). 미선언이면 87초를 그대로 기다린다.
+    # SAM2 직결 폴백도 명시적으로 off로 선언한다.
     ("SAM_DIRECT_ENDPOINT", "sam_direct_endpoint"),
     # 마네킹 유료 초안 이어 쓰기(2026-09-23). 오타면 _default_on_flag 가 off 로 눕힌다.
     ("MANNEQUIN_DRAFT_REUSE", "mannequin_draft_reuse"),
@@ -56,6 +56,17 @@ def test_qc_flags_are_declared(manifest_vars):
     """QC 플래그는 매니페스트에 명시돼야 한다 — 기본값 의존이 무측정 사고의 원인이었다."""
     missing = [name for name, _ in QC_FLAGS if name not in manifest_vars]
     assert not missing, f"매니페스트에 QC 플래그 미선언: {missing}"
+
+
+def test_api_disconnects_sam2_and_keeps_all_three_providers_on_fal():
+    text = MANIFEST.read_text(encoding="utf-8")
+    doc = yaml.safe_load(text)
+    assert "SAM_SERVICE_URL" not in text
+    assert "SAM_INTERNAL_TOKEN" not in text
+    assert doc["variables"]["SAM_AUTOSCALE"] == "off"
+    assert doc["variables"]["SAM_DIRECT_ENDPOINT"] == "off"
+    for name in ("MATCHING_CUTOUT_PROVIDER", "SAM_PREPROCESS_PROVIDER", "TONE_MASK_PROVIDER"):
+        assert doc["variables"][name] == "fal"
 
 
 def test_fal_deployment_moves_every_sam2_job_kind_to_fal(monkeypatch):
@@ -255,32 +266,29 @@ def _step_names(job: str, path: pathlib.Path = API_WORKFLOW) -> list[str]:
     return [s.get("name") or s.get("uses") or "" for s in _wf(path)["jobs"][job]["steps"]]
 
 
-#: (경로 글롭, api 배포, sam2 배포) — 각 이미지가 **실제로 COPY 하는 것**에서 나온 표다.
-#: 두 이미지 모두 context 는 server/ 지만 .dockerignore 가 정반대로 걸려 있어서,
-#: API 는 sam_service 를 제외하고 SAM 은 app/·prompts/·uv.lock 을 제외한다.
+#: (변경 경로, api 배포). 남겨 둔 SAM2 소스와 매니페스트는 배포를 유발하지 않는다.
 CHANGE_MATRIX = [
-    ("server/app/routes.py", True, False),
-    ("server/app/workers/mannequin_job.py", True, False),
-    ("server/prompts/mannequin_generate_v1.txt", True, False),
-    ("server/uv.lock", True, False),
-    ("server/Dockerfile", True, False),
-    ("copilot/api/manifest.yml", True, False),
-    ("copilot/detail-worker/manifest.yml", True, False),
+    ("server/app/routes.py", True),
+    ("server/app/workers/mannequin_job.py", True),
+    ("server/prompts/mannequin_generate_v1.txt", True),
+    ("server/uv.lock", True),
+    ("server/Dockerfile", True),
+    ("copilot/api/manifest.yml", True),
+    ("copilot/detail-worker/manifest.yml", True),
     # api 서비스 오버라이드(LoadBalancers: [] 등) — 바뀌면 api 를 다시 배포해야 반영된다.
-    ("copilot/api/overrides/cfn.patches.yml", True, False),
-    ("supabase/migrations/20260812010000_base_fidelity_observe_job_kind.sql", True, False),
-    ("server/sam_service/segmentation.py", False, True),
-    ("server/sam_service/requirements.txt", False, True),
-    ("server/sam_service/Dockerfile", False, True),
-    ("copilot/sam2/manifest.yml", False, True),
-    # 각 워크플로는 자기 서비스만 소유한다.
-    (".github/workflows/deploy-server.yml", True, False),
-    (".github/workflows/deploy-sam2.yml", False, True),
+    ("copilot/api/overrides/cfn.patches.yml", True),
+    ("supabase/migrations/20260812010000_base_fidelity_observe_job_kind.sql", True),
+    ("server/sam_service/segmentation.py", False),
+    ("server/sam_service/requirements.txt", False),
+    ("server/sam_service/Dockerfile", False),
+    ("copilot/sam2/manifest.yml", False),
+    (".github/workflows/deploy-server.yml", True),
+    (".github/workflows/deploy-sam2.yml", False),
     # 어느 이미지에도 안 들어가는 것들
-    ("server/tests/test_analyze.py", False, False),
-    ("server/scripts/seed_mannequin_base.py", False, False),
-    ("src/App.jsx", False, False),
-    ("tests/frontend/editor-review-gate.test.mjs", False, False),
+    ("server/tests/test_analyze.py", False),
+    ("server/scripts/seed_mannequin_base.py", False),
+    ("src/App.jsx", False),
+    ("tests/frontend/editor-review-gate.test.mjs", False),
 ]
 
 
@@ -299,15 +307,12 @@ def _filters(path: pathlib.Path) -> dict:
     raise AssertionError("changes 잡에서 paths-filter 를 못 찾았다")
 
 
-@pytest.mark.parametrize("path,want_api,want_sam", CHANGE_MATRIX)
-def test_change_matrix_routes_to_the_right_services(path, want_api, want_sam):
-    """서비스별 배포 라우팅. 여기가 틀리면 무관한 변경이 SAM 을 재배포하거나(비용),
-    공유 의존이 빠져 stale 이미지가 남는다(더 나쁨)."""
+@pytest.mark.parametrize("path,want_api", CHANGE_MATRIX)
+def test_change_matrix_routes_to_the_right_services(path, want_api):
+    """API 이미지와 배포 입력의 변경만 API를 재배포한다."""
     api = _filters(API_WORKFLOW)
-    sam = _filters(SAM_WORKFLOW)
     got_api = any(_matches(g, path) for g in api["api"])
-    got_sam = any(_matches(g, path) for g in sam["sam2"])
-    assert (got_api, got_sam) == (want_api, want_sam), f"{path}: api={got_api} sam2={got_sam}"
+    assert got_api == want_api, f"{path}: api={got_api}"
 
 
 def _event_paths(path: pathlib.Path, event: str = "push") -> list[str]:
@@ -316,14 +321,11 @@ def _event_paths(path: pathlib.Path, event: str = "push") -> list[str]:
     return triggers[event]["paths"]
 
 
-def test_workflow_triggers_are_service_scoped():
-    """SAM 소스만 바뀐 커밋은 API 파이프라인을, API 소스만 바뀐 커밋은 SAM 파이프라인을
-    열지 않는다. GitHub `on.paths` 가 잡 그래프 생성 전의 1차 경계다."""
-    api_paths = _event_paths(API_WORKFLOW)
-    sam_paths = _event_paths(SAM_WORKFLOW)
+@pytest.mark.parametrize("event", ["push", "pull_request"])
+def test_workflow_triggers_are_service_scoped(event):
+    """남겨 둔 SAM2 소스와 매니페스트는 API 파이프라인을 열지 않는다."""
+    api_paths = _event_paths(API_WORKFLOW, event)
     assert any(_matches(g, "server/app/routes.py") for g in api_paths)
-    assert not any(_matches(g, "server/app/routes.py") for g in sam_paths)
-    assert any(_matches(g, "server/sam_service/model.py") for g in sam_paths)
     assert not any(_matches(g, "server/sam_service/model.py") for g in api_paths)
     assert any(_matches(g, "copilot/api/manifest.yml") for g in api_paths)
     assert any(_matches(g, "copilot/detail-worker/manifest.yml") for g in api_paths)
@@ -331,10 +333,7 @@ def test_workflow_triggers_are_service_scoped():
 
 
 def test_sam_image_has_no_dependency_on_the_api_source():
-    """SAM 필터가 app/ 을 안 보는 근거 — 실제로 임포트하지 않아야 한다.
-
-    이게 깨지면 `server/app/**` 변경이 SAM 이미지를 stale 하게 만든다(§5 의 위험).
-    """
+    """다음 정리 PR까지 남겨 둔 SAM2 코드도 API와의 의존 경계를 유지한다."""
     import re
     root = pathlib.Path(__file__).resolve().parents[1] / "sam_service"
     bad = [str(f) for f in root.rglob("*.py")
@@ -363,29 +362,22 @@ def test_detail_worker_deploys_before_api_stops_claiming_detail_jobs():
     assert worker < api, steps
 
 
-def test_sam_deployment_is_a_separate_workflow():
-    """무거운 SAM 이미지 빌드·ECS 롤링은 API 배포 그래프에 존재하지 않는다."""
+def test_sam_deployment_workflow_is_removed():
+    """SAM2가 CI나 수동 실행으로 다시 배포되지 않도록 워크플로를 제거한다."""
     api = _wf(API_WORKFLOW)
-    sam = _wf(SAM_WORKFLOW)
+    assert not SAM_WORKFLOW.exists()
     assert "deploy-sam2" not in api["jobs"]
-    assert "deploy-api" not in sam["jobs"]
-    assert "deploy-sam2" in sam["jobs"]
-    assert api["concurrency"]["group"] != sam["concurrency"]["group"]
-    assert "마이그레이션" not in " ".join(_step_names("deploy-sam2", SAM_WORKFLOW))
 
 
-def test_manual_dispatch_forces_each_service_deploy():
-    """수동 실행은 diff 유무와 무관하게 선택한 서비스 하나만 재배포한다."""
+def test_manual_dispatch_forces_api_deploy():
+    """API 수동 실행은 diff 유무와 무관하게 재배포한다."""
     api_cond = _wf(API_WORKFLOW)["jobs"]["deploy-api"]["if"]
-    sam_cond = _wf(SAM_WORKFLOW)["jobs"]["deploy-sam2"]["if"]
     assert "github.event_name == 'workflow_dispatch'" in api_cond
-    assert "github.event_name == 'workflow_dispatch'" in sam_cond
 
 
 def test_deploy_jobs_never_run_on_pull_requests():
     """PR 에서는 test 만 돈다 — 배포 잡이 필수 체크로 걸려 머지를 막는 구성을 피한다."""
     assert "github.event_name != 'pull_request'" in _wf(API_WORKFLOW)["jobs"]["deploy-api"]["if"]
-    assert "github.event_name != 'pull_request'" in _wf(SAM_WORKFLOW)["jobs"]["deploy-sam2"]["if"]
 
 
 def test_migration_step_fails_loudly_without_its_secret():
@@ -492,8 +484,8 @@ def test_sam2_manifest_defaults_to_zero_tasks():
     assert desired == 0
 
 
-def test_api_manifest_declares_idle_minutes_but_not_the_topic(manifest_vars):
-    assert manifest_vars["SAM_AUTOSCALE_IDLE_MINUTES"] == "30"
+def test_api_manifest_omits_unused_sam_idle_minutes_and_shared_topic(manifest_vars):
+    assert "SAM_AUTOSCALE_IDLE_MINUTES" not in manifest_vars
     # 토픽 ARN 은 addon Output 이 SAM_ALERT_TOPIC_ARN 으로 자동 주입한다 — 매니페스트에 박으면
     # 배포가 깨지거나 값이 갈린다(Codex 검토: from_cfn 은 환경 addon Export 용).
     assert "SAM_ALERT_TOPIC_ARN" not in manifest_vars
@@ -569,7 +561,7 @@ def test_api_addon_parameters_are_declared_by_an_addon_template():
 
 def test_workflows_pin_copilot_and_deploy_server_watches_addons():
     root = MANIFEST.parents[2]
-    for wf in ("deploy-sam2.yml", "deploy-server.yml"):
+    for wf in ("deploy-server.yml",):
         text = (root / ".github/workflows" / wf).read_text(encoding="utf-8")
         # 버전 고정. latest 를 쓰면 어느 날 갑자기 CLI 가 올라가 배포가 흔들린다.
         assert "releases/latest/download/copilot-linux" not in text, f"{wf}: Copilot 버전 고정"
@@ -765,7 +757,7 @@ def test_copilot_deploys_detach_and_wait_for_the_stack_themselves():
     UPDATE_COMPLETE 였고, 두 번째는 api 배포 단계가 아예 돌지 못했다. Copilot 은 2026-06-12 지원 종료라
     공식 수정이 없다 → --detach 로 진행 표시를 끄고 스택 완료를 scripts/ci/wait-copilot-stack.sh 로 직접 본다."""
     root = MANIFEST.parents[2]
-    for wf in ("deploy-server.yml", "deploy-sam2.yml"):
+    for wf in ("deploy-server.yml",):
         text = (root / ".github/workflows" / wf).read_text(encoding="utf-8")
         blocks = re.findall(r"copilot svc deploy(?:[^\n]*\\\n)*[^\n]*", text)
         assert blocks, wf

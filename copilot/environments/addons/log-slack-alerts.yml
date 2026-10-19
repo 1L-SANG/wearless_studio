@@ -3,7 +3,7 @@
 # CloudWatch Logs SubscriptionFilter 가 ERROR/CRITICAL/Traceback 줄만 골라 Lambda 로 보내고,
 # Lambda 가 Slack Incoming Webhook 으로 **로그 본문 그대로** 던진다.
 #
-# 대상은 api · detail-worker · sam2 세 그룹이다. opendid 는 부팅 소음이 심해 제외했다
+# 대상은 api, detail-worker 두 그룹이다. SAM2는 철거 중이며 opendid는 부팅 소음이 심해 제외했다
 # (아래 "opendid 에는 일부러 붙이지 않는다" 블록에 근거와 되돌리는 법).
 #
 # 왜 CloudWatch 알람(SNS→Chatbot)이 아니라 이 구조인가:
@@ -351,23 +351,6 @@ Resources:
   # ⚠️ 대가: opendid 쪽 실패는 Slack 에 오지 않는다. VC 발급·폐기 문제는 CloudWatch 에서
   # 직접 보거나, 그 실패를 호출자인 api 가 로그로 남기게 만들어야 한다(api 는 여전히 알림 대상).
   # 되돌리려면 위 Api 블록을 복사해 opendid 로 바꾸고 DENY 에 부팅 줄을 채운다.
-
-  LogSlackAlertPermissionSam2:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !GetAtt LogSlackAlertFunction.Arn
-      Action: lambda:InvokeFunction
-      Principal: !Sub 'logs.${AWS::Region}.amazonaws.com'
-      SourceAccount: !Ref AWS::AccountId
-      SourceArn: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/copilot/${App}-${Env}-sam2:*'
-
-  LogSlackAlertFilterSam2:
-    Type: AWS::Logs::SubscriptionFilter
-    DependsOn: LogSlackAlertPermissionSam2
-    Properties:
-      LogGroupName: !Sub '/copilot/${App}-${Env}-sam2'
-      DestinationArn: !GetAtt LogSlackAlertFunction.Arn
-      FilterPattern: '?" ERROR " ?" CRITICAL " ?"ERROR:" ?"CRITICAL:" ?"Traceback"'
 
 Outputs:
   LogSlackAlertFunctionName:
