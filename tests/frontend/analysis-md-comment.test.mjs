@@ -55,7 +55,7 @@ async function form(initial = '', onChange = () => {}, onNext = async () => {}) 
       if (!previous || deps.some((value, i) => !Object.is(value, previous.deps[i]))) {
         hooks[index] = { deps }; effects.push(effect);
       } },
-    onChange, onNext, confirming: false, setConfirming() {}, onConfirmingChange() {},
+    onChange, onNext, onBeforeConfirm: undefined, confirming: false, setConfirming() {}, onConfirmingChange() {},
     composeModeSaveRef: { current: Promise.resolve() }, mannequinGenerationCost: 0,
   };
   const render = new Function(...Object.keys(bindings), `${code}; return render;`)(...Object.values(bindings));
