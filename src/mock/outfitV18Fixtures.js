@@ -1,5 +1,6 @@
 import { buildMockOutfitRecommendation } from './matchingRecommendation.js';
 import { catalog1018Garments } from './outfitCatalogFixtures.js';
+import { footwearPairSize } from '../lib/outfitPresentation.js';
 
 // Explicit QA catalog, never a source for production or the default mock catalog.
 // Owner-supplied bag/accessory photos are still pending. SVGs below are mock illustrations.
@@ -65,7 +66,7 @@ export function v18FixtureCandidates(analysis) {
         thumb: image, thumbnailUrl: image, imageUrl: image, boardUrl: index % 2 === 0 ? image : null,
         isMockFixture: true, isCompatible: true,
         ...(role === 'accessory' ? { category: ['귀걸이', '목걸이', '안경', '귀걸이', '목걸이', '안경', '모자'][index] } : {}),
-        ...(role === 'footwear' ? { cm: 16, ar: 2.1 } : {}) };
+        ...(role === 'footwear' ? { cm: footwearPairSize(2.1).heightCm, ar: 2.1 } : {}) };
     })]));
   if (analysis.clothingType === 'outer') {
     props.inner = [{ id: 'mock_v18_inner_knit', name: '데모 아이보리 니트', clothingType: 'inner', length: 'regular', gender: 'unisex',

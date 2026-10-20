@@ -128,10 +128,35 @@ export function selectProductBoardImage(visuals, originalSrc) {
   return (front?.tidyStatus === 'ready' && front.tidyUrl) || front?.cutoutUrl || originalSrc || null;
 }
 
+// Use 24cm for a realistic 23–25cm shoe; 18.5cm made shoes about 25–30% too small.
+// The resulting small reduction in product height is accepted to improve proportions.
+export const SHOE_LENGTH_CM = 24;
+export const SHOE_PAIR_WIDTH = 1.36;
+export const SHOE_PAIR_HEIGHT = 1.08;
+export const SHOE_PAIR_MAX_HEIGHT_CM = 30;
+export const MIRROR_REAR_SHOE = false;
+const DEFAULT_SHOE_ASPECT = 2.1;
+
+export function footwearPairSize(aspectRatio = DEFAULT_SHOE_ASPECT) {
+  const ar = positiveNumber(aspectRatio, DEFAULT_SHOE_ASPECT);
+  const height = SHOE_LENGTH_CM / ar * SHOE_PAIR_HEIGHT;
+  const scale = Math.min(1, SHOE_PAIR_MAX_HEIGHT_CM / height);
+  return { widthCm: SHOE_LENGTH_CM * SHOE_PAIR_WIDTH * scale, heightCm: height * scale };
+}
+
+export function shoePairImageLayers() {
+  const size = { width: `${100 / SHOE_PAIR_WIDTH}%`, height: `${100 / SHOE_PAIR_HEIGHT}%` };
+  return [
+    { ...size, left: `${100 * (SHOE_PAIR_WIDTH - 1) / SHOE_PAIR_WIDTH}%`, top: '0%', zIndex: 0,
+      ...(MIRROR_REAR_SHOE ? { transform: 'scaleX(-1)' } : {}) },
+    { ...size, left: '0%', top: `${100 * (SHOE_PAIR_HEIGHT - 1) / SHOE_PAIR_HEIGHT}%`, zIndex: 1 },
+  ];
+}
+
 /** Preserve the v18 proportions, then fit the final rows and circles with one scale. */
 export function buildOutfitBoardLayout({ clothingType, product, items = {}, maxHeight = 440, width = 244 } = {}) {
   const canvasWidth = positiveNumber(width, 244), canvasHeight = positiveNumber(maxHeight, 440);
-  const pad = 10, gap = 10, outerDx = 22, outerDy = 0.3, shoeCm = 16;
+  const pad = 10, gap = 10, outerDx = 22, outerDy = 0.3;
   const itemAt = slot => Array.isArray(items) ? items.find(item => (item.slot || item.role) === slot) : items?.[slot];
   const piece = (slot, item, cm, ar) => ({ ...item, slot, cm: positiveNumber(item?.cm, cm), ar: positiveNumber(item?.ar, ar) });
   const productCm = { top: 64, outer: 80, bottom: 100, dress: 110 }[clothingType] || 64;
@@ -141,8 +166,14 @@ export function buildOutfitBoardLayout({ clothingType, product, items = {}, maxH
   const rows = clothingType === 'outer' ? [[prod, top], [bottom]]
     : clothingType === 'bottom' ? [[top], [prod]] : clothingType === 'dress' ? [[prod]] : [[prod], [bottom]];
   const garments = rows.flat();
+  const footwear = itemAt('footwear') || itemAt('shoes');
+  // A failed measurement keeps the pre-pair single-image geometry and cm budget.
+  const shoeSize = footwear?.measurementFailed
+    ? { widthCm: 16 * positiveNumber(footwear.ar, DEFAULT_SHOE_ASPECT), heightCm: 16 }
+    : footwearPairSize(footwear?.ar);
+  const shoes = { ...footwear, slot: 'footwear', cm: shoeSize.heightCm, ar: shoeSize.widthCm / shoeSize.heightCm };
   const rowCm = row => row.length === 2 ? Math.max(row[0].cm, row[0].cm * outerDy + row[1].cm) : row[0].cm;
-  const sumCm = rows.reduce((sum, row) => sum + rowCm(row), 0) + shoeCm;
+  const sumCm = rows.reduce((sum, row) => sum + rowCm(row), 0) + shoes.cm;
   let scale = Math.min(3.4, Math.max(0, canvasHeight - pad * 2 - gap * rows.length) / sumCm);
   for (const item of garments) scale = Math.min(scale, Math.round(canvasWidth * 0.74) / (item.cm * item.ar));
   scale *= 0.9;
@@ -152,10 +183,8 @@ export function buildOutfitBoardLayout({ clothingType, product, items = {}, maxH
     item.height = item === match ? compressedMatchHeight(bundleCm * scale, bundleCm, item.cm) : item.cm * scale;
     item.width = item.height * item.ar;
   }
-  const footwear = itemAt('footwear') || itemAt('shoes');
-  const shoes = piece('footwear', footwear, shoeCm, 2.1);
   shoes.height = shoes.cm * scale;
-  shoes.width = footwear ? shoes.height * shoes.ar : 104;
+  shoes.width = shoeSize.widthCm * scale;
   const accessoryItems = [itemAt('accessory')].flat().filter(item => item?.src || item?.pending).slice(0, 3);
   const accessories = [
     ...(itemAt('bag')?.src || itemAt('bag')?.pending ? [{ ...itemAt('bag'), slot: 'bag' }] : []),
