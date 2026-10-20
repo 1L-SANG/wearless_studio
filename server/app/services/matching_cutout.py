@@ -45,11 +45,14 @@ def flatten_on_bg(rgba_png: bytes) -> bytes:
 
 
 #: 배경 오채취 판정 임계 — 누끼 전경 평균색이 원본 **배경(테두리)** 색과 채널당 이 값
-#: 이내로 붙으면 "옷이 아니라 배경을 땄다"로 본다. 실측 근거(2026-08-15): 부츠컷 청바지에서
+#: 이내로 붙고 전경이 테두리를 충분히 덮으면 "옷이 아니라 배경을 땄다"로 본다.
+#: 실측 근거(2026-08-15): 부츠컷 청바지에서
 #: SAM 이 다리 사이 흰 문틈을 땄고(areaFrac 0.31 — 넓이로는 정상), 그 전경색이 흰 문 배경과
-#: 사실상 동일했다. 반대로 정상 누끼는 배경과 뚜렷이 다르다(실측 Δ 100+).
+#: 사실상 동일했다. 줄무늬·회색·흰 옷도 평균색이 배경과 비슷하므로 색만으로 거절하지 않는다.
 #: 판정 불가(디코드 실패 등)는 통과 — 이 게이트가 새 실패원이 되면 안 된다.
 CUTOUT_BG_DELTA_MIN = 40
+#: 정상 누끼 30장과 알파 반전 누끼 30장의 테두리 덮임 실험(2026-10-20).
+CUTOUT_BORDER_COVERAGE_MIN = 0.6
 
 
 def cutout_color_agrees(original_bytes: bytes, flattened_png: bytes) -> tuple[bool, dict]:
@@ -58,7 +61,7 @@ def cutout_color_agrees(original_bytes: bytes, flattened_png: bytes) -> tuple[bo
     기준은 원본의 **테두리 밴드 색(=배경)** 이다. 중앙 평균을 기준으로 삼으면 "옷이 프레임
     중앙을 채운다"는 구도 가정에 기대게 되고, 옷이 작게 찍힌 정상 업로드에서 기준색에
     배경이 섞여 멀쩡한 누끼가 거절된다(2026-08-15 리뷰). 실제 실패 모드는 하나다 —
-    SAM 이 배경 조각을 땄다. 그러면 누끼 전경색이 원본 배경색과 거의 같아진다.
+    SAM 이 배경 조각을 땄다. 전경색이 배경색과 비슷하고 테두리 덮임도 높을 때만 거절한다.
     """
     try:
         with Image.open(io.BytesIO(original_bytes)) as o:
@@ -79,13 +82,21 @@ def cutout_color_agrees(original_bytes: bytes, flattened_png: bytes) -> tuple[bo
             # no_foreground 로만 걸리고 색 델타 근거가 안 남는다.
             fg = [p for p in cut.getdata()
                   if max(abs(p[i] - bg[i]) for i in range(3)) > 8]
+            w, h = cut.size
+            b = max(2, min(w, h) // 12)
+            edges = [cut.crop((0, 0, w, b)), cut.crop((0, h - b, w, h)),
+                     cut.crop((0, 0, b, h)), cut.crop((w - b, 0, w, h))]
+            epx = [p for e in edges for p in e.getdata()]
+            border_coverage = sum(max(abs(p[i] - bg[i]) for i in range(3)) > 8
+                                  for p in epx) / len(epx)
             if len(fg) < 32:  # 전경이 사실상 없음 — 빈 누끼도 불일치다
-                return False, {"reason": "no_foreground", "fgCount": len(fg)}
+                return False, {"reason": "no_foreground", "fgCount": len(fg),
+                               "borderCoverage": border_coverage}
             got = tuple(sum(c[i] for c in fg) // len(fg) for i in range(3))
         delta = max(abs(ref[i] - got[i]) for i in range(3))
-        # 배경과 충분히 다르면 옷을 딴 것 — 통과.
-        return delta >= CUTOUT_BG_DELTA_MIN, {
-            "bgColor": ref, "cutoutColor": got, "delta": delta}
+        # 색이 비슷해도 테두리를 덮지 않으면 정상 누끼일 수 있다 — 통과.
+        return delta >= CUTOUT_BG_DELTA_MIN or border_coverage < CUTOUT_BORDER_COVERAGE_MIN, {
+            "bgColor": ref, "cutoutColor": got, "delta": delta, "borderCoverage": border_coverage}
     except Exception:  # noqa: BLE001 - 게이트 자체가 실패원이 되면 안 된다
         return True, {"reason": "gate_error_fail_open"}
 

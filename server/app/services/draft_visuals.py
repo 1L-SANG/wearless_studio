@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import math
 import uuid
 from datetime import datetime, timezone
@@ -462,6 +463,11 @@ async def run(app, job):
                 result['board'] = await store(app, conn, job, 'board', board, meta)
             await conn.commit()
         await finish(result)
-    except Exception:
+    except Exception as exc:
         # Includes uncertain provider POSTs: terminal and excluded from the retry pusher.
+        # Only known codes are safe to log; arbitrary messages can contain source keys or credentials.
+        code = str(exc) if isinstance(exc, ValueError) and str(exc) in (
+            'unsupported_draft_version', 'source_changed', 'cutout_unavailable', 'cutout_color_mismatch') else None
+        logging.getLogger(__name__).warning('draft preparation failed job=%s exception=%s code=%s',
+                                           jid, type(exc).__name__, code)
         await finish({'state': 'failed', 'reason': 'preparation_failed'})

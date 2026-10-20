@@ -121,11 +121,48 @@ def _photo_png(bg, garment, size=(120, 160)):
 
 
 def test_color_gate_rejects_background_grab():
-    """흰 문 배경 + 검정 데님인데 누끼 전경이 흰색 — 배경을 딴 실사고 재현."""
+    """흰 문 배경 조각이 테두리를 덮으면 배경 오채취로 거절한다."""
     ok, m = mc.cutout_color_agrees(
-        _photo_png((246, 246, 244), (24, 26, 30)), _flat_png((246, 246, 244)))
+        _photo_png((246, 246, 244), (24, 26, 30)),
+        _flat_png((246, 246, 244), fg_box=(0, 0, 59, 79)))
     assert ok is False
     assert m["delta"] < mc.CUTOUT_BG_DELTA_MIN
+    assert m["borderCoverage"] == 1
+
+
+def test_color_gate_accepts_similar_color_without_border_coverage():
+    """기존 중앙 흰 조각 사례는 색만 비슷하므로 새 결합 조건에서는 통과한다."""
+    ok, m = mc.cutout_color_agrees(
+        _photo_png((246, 246, 244), (24, 26, 30)), _flat_png((246, 246, 244)))
+    assert ok is True
+    assert m["delta"] < mc.CUTOUT_BG_DELTA_MIN
+    assert m["borderCoverage"] == 0
+
+
+def test_color_gate_accepts_stripes_averaging_to_grey_background():
+    original = Image.new("RGB", (120, 160), (150, 150, 170))
+    cut = Image.new("RGBA", original.size, (0, 0, 0, 0))
+    for x in range(30, 90):
+        color = (50, 50, 90) if (x // 10) % 2 else (250, 250, 250)
+        for y in range(40, 120):
+            original.putpixel((x, y), color)
+            cut.putpixel((x, y), (*color, 255))
+    raw, rgba = io.BytesIO(), io.BytesIO()
+    original.save(raw, "PNG")
+    cut.save(rgba, "PNG")
+    ok, m = mc.cutout_color_agrees(raw.getvalue(), mc.flatten_on_bg(rgba.getvalue()))
+    assert ok is True
+    assert m["delta"] < mc.CUTOUT_BG_DELTA_MIN
+    assert m["borderCoverage"] == 0
+
+
+def test_color_gate_accepts_distinct_color_covering_border():
+    ok, m = mc.cutout_color_agrees(
+        _photo_png((246, 246, 244), (24, 26, 30)),
+        _flat_png((24, 26, 30), fg_box=(0, 0, 59, 79)))
+    assert ok is True
+    assert m["delta"] >= mc.CUTOUT_BG_DELTA_MIN
+    assert m["borderCoverage"] == 1
 
 
 def test_color_gate_accepts_small_garment_on_large_background():
