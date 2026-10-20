@@ -35,7 +35,6 @@ import {
   clearDraftIfCurrent,
   queueProductDraftSave,
   collectDraftPhotos,
-  isDraftStorageUnavailable,
 } from '@/lib/draftStore.js';
 import { isMobileDevice } from '@/lib/deviceClass.js';
 import { rememberMobileGuestSave, clearMobileGuestSave, claimMobileGuestSave } from '@/lib/mobileGuestSave.js';
@@ -103,8 +102,6 @@ import {
 } from './storyboardTransition.js';
 
 draftSlot.configure(api);
-
-const DRAFT_STORAGE_NOTICE = '이 창은 저장이 안 돼 확정할 수 없어요. 일반 창에서 열어 주세요.';
 
 // human-readable file size
 const fmtSize = (b) => b == null ? '' : b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
@@ -524,7 +521,6 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   // 분석 결과 도착 신호 — 화면 전환은 대기 연출(AnalysisProgress)이 잔여 단계를 완주한 뒤
   // onFinished 로 수행한다 (애니메이션 끝 ≈ 전환, 2026-07-13 A안 결정).
   const [analysisReady, setAnalysisReady] = useState(false);
-  const [analysisMemoryOnly, setAnalysisMemoryOnly] = useState(false);
   const [analysis, setAnalysis] = useState(null);
   const handoff = useMobileInputSave(product, initialSavedMeta);
   const mobileReadOnly = mobile && (phase === 'done' || handoff.readOnly);
@@ -620,17 +616,16 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   }), []);
 
   useEffect(() => draftSlot.onVisuals?.(() => {
-    if (analysisMemoryOnly || getActiveFeatureRun()?.isMemoryOnly?.()) return;
     if (!session || mobile || session.user?.id !== draftSlot.getUserId() || !latestProductRef.current) return;
     queueProductDraftSave(latestProductRef.current, latestAnalysisRef.current, latestComposeModeRef.current);
-  }), [session?.user?.id, mobile, analysisMemoryOnly]);
+  }), [session?.user?.id, mobile]);
 
   useEffect(() => {
     if (slotEnabled) draftSlot.activate();
   }, [slotEnabled]);
 
   useEffect(() => {
-    if (!product || analysisMemoryOnly || mobileReadOnly || (mobile && (entryBusy || slotLock || handoff.gone))) return;
+    if (!product || mobileReadOnly || (mobile && (entryBusy || slotLock || handoff.gone))) return;
     if (isAnalysisFastEntryEnabled() && featureSavedAnalysisRef.current !== null && featureSavedAnalysisRef.current === analysis) {
       featureSavedAnalysisRef.current = null;
       return;
@@ -646,7 +641,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
     if (slotEnabled && !(mobile && session && sellerConsentReady === false)) {
       draftSlot.queue({ product, analysis, composeMode, localUpdatedAt });
     }
-  }, [analysis, analysisMemoryOnly, composeMode, product, slotEnabled, mobileReadOnly, mobile, slotLock, handoff.gone, entryBusy, session, sellerConsentReady]);
+  }, [analysis, composeMode, product, slotEnabled, mobileReadOnly, mobile, slotLock, handoff.gone, entryBusy, session, sellerConsentReady]);
 
   useEffect(() => {
     if (!slotEnabled) return;
@@ -826,16 +821,10 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
     }).catch(() => { /* 조회 실패는 경고를 생략한다 — 방해가 안전보다 나쁘다 */ });
     return () => { alive = false; };
   }, [analysisProjectId, phase, mobile]);
-  const canConfirmDraft = () => {
-    if (!analysisMemoryOnly && !isDraftStorageUnavailable()) return true;
-    toast.push(DRAFT_STORAGE_NOTICE, { icon: 'alertCircle', variant: 'error' });
-    return false;
-  };
   // force: 경고 모달에서 '계속 진행'을 누른 경로. setState 는 비동기라 ack 상태를 기다릴 수
   // 없어 인자로 넘긴다. onNext 콜백이 이벤트 객체를 넘겨도 force 는 undefined 라 안전하다.
   const goToStoryboard = async (opts) => {
     if (mobile) return;
-    if (!canConfirmDraft()) return;
     if (opts?.expectedQuote) mannequinQuoteConfirmation.remember('draft', 'generate', opts.expectedQuote);
     const force = opts?.force === true;   // null·이벤트 객체로 불려도 안전하게
     if (redirectingRef.current) return; // 더블클릭/재진입 가드 (blob 추출 await 중)
@@ -983,9 +972,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       }
       draftSlot.resume();
       if (latestSnapshot && isCurrentRun()) draftSlot.queue(latestSnapshot);
-      const message = isDraftStorageUnavailable() ? DRAFT_STORAGE_NOTICE
-        : error?.message || '입력 내용을 서버에 저장하지 못했어요. 잠시 후 다시 시도해 주세요.';
-      toast.push(message, { icon: 'alertCircle', variant: 'error', error: error, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
+      toast.push(error?.message || '입력 내용을 서버에 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alertCircle', variant: 'error', error: error, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
     } finally {
       redirectingRef.current = false;
       if (isCurrentRun()) setFlowPromotionLocked(false);
@@ -1572,13 +1559,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
     try {
       if (!isAnalysisFastEntryEnabled()) {
         queueProductDraftSave(product, analysis, composeMode);
-        try {
-          await flushProductDraftSave();
-          setAnalysisMemoryOnly(false);
-        } catch (error) {
-          if (!isDraftStorageUnavailable()) throw error;
-          setAnalysisMemoryOnly(true);
-        }
+        await flushProductDraftSave();
       }
       // 로그인 여부와 무관하게 확정 전 분석은 publicAnalyze 경로다. 로그인 세션의 Bearer는
       // optional_user 레이트리밋 우선권에만 쓰이며, 보관함 project는 아직 만들지 않는다.
@@ -1599,10 +1580,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
           onAnalysis: (next) => {
             latestAnalysisRef.current = next;
             featureSavedAnalysisRef.current = next;
-            if (mountedRef.current) {
-              setAnalysisMemoryOnly(featureRun.isMemoryOnly());
-              setAnalysis(next);
-            }
+            if (mountedRef.current) setAnalysis(next);
           },
         });
         const runId = crypto.randomUUID();
@@ -1643,8 +1621,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
           || useAppStore.getState().projectGeneration !== analysisGeneration)) return;
       // http 모드에서 분석 실패(네트워크·서버 에러)해도 스피너에 고착되지 않게 — 입력으로 복귀 + 안내.
       setPhase('input');
-      const message = /^feature_/.test(e?.message || '') ? '분석을 완료하지 못했어요. 다시 시도해 주세요.' : e?.message;
-      toast.push(message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'alertCircle', variant: 'error', error: e, kind: 'analysis_error', actionName: 'analyze', messageCode: 'analysis_failed', blocking: true });
+      toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'alertCircle', variant: 'error', error: e, kind: 'analysis_error', actionName: 'analyze', messageCode: 'analysis_failed', blocking: true });
     }
   };
 
@@ -1856,9 +1833,6 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       )}
 
       <div className="af-anchor" />
-      {!mobile && analysisMemoryOnly && phase !== 'input' && (
-        <div className="sp-feature-status" role="status">{DRAFT_STORAGE_NOTICE}</div>
-      )}
       {!mobile && phase === 'analyzing' && (
         <>
           <AnalysisProgress
@@ -1878,7 +1852,6 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
               setAnalysis(resolved);
             }}
             onChange={onAnalysisFormChange}
-            onBeforeConfirm={canConfirmDraft}
             onConfirmingChange={setFlowPromotionLocked}
             onNext={goToStoryboard} />
         </div>

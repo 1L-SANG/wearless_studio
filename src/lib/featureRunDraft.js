@@ -1,7 +1,7 @@
 import { api } from './api/index.js';
 import { createFeatureRun, getActiveFeatureRun, setActiveFeatureRun, stripFeatureClientFields } from './featureRun.js';
 import { analysisPhotoKey, preparePublicAnalysis } from './api/publicAnalysisRequest.js';
-import { loadDraft, queueProductDraftSave, saveFeatureRunDraft, flushProductDraftSave, isDraftStorageUnavailable } from './draftStore.js';
+import { loadDraft, queueProductDraftSave, saveFeatureRunDraft, flushProductDraftSave } from './draftStore.js';
 import { clientEvents } from './clientEvents.js';
 import { invalidateStoryboardEntryPrefetch } from '../features/storyboard/storyboardEntryPrefetch.js';
 import { isAnalysisFastEntryEnabled } from './analysisFastEntry.js';
@@ -30,8 +30,6 @@ export function claimDraftFeatureRun(draft, projectId) {
 export function createDraftFeatureRun({ product, analysis, readProduct, readAnalysis, onAnalysis, onProduct, swatchColors = [], isCurrent = () => true, promotion = false }) {
   let latest = analysis;
   let owner = null;
-  let memoryOnly = false;
-  let draftCheckpointed = !!analysis?.featureRun;
   const accountGeneration = clientEvents.getAccountGeneration(), identityEpoch = draftSlot.getIdentityEpoch();
   const currentRuntime = () => accountGeneration === clientEvents.getAccountGeneration()
     && identityEpoch === draftSlot.getIdentityEpoch();
@@ -52,18 +50,14 @@ export function createDraftFeatureRun({ product, analysis, readProduct, readAnal
       if (!options.isCurrent()) return;
       const current = currentAnalysis() || {};
       latest = { ...current, ...patch };
-      const saved = memoryOnly ? true : await saveFeatureRunDraft(patch, { ...options,
-        matchesDraft: (draft) => (!preparing && !draftCheckpointed && !owner && !promotion)
-          || sameRun(run, draft.analysis?.featureRun)
-          || (draft.analysis?.featureRun?.stage === 'preparing' && draft.analysis.featureRun.runId === run.getRecord()?.runId),
+      const saved = await saveFeatureRunDraft(patch, { ...options,
+        matchesDraft: (draft) => (!owner && !promotion) || sameRun(run, draft.analysis?.featureRun),
       });
-      if (saved === 'unavailable') memoryOnly = true;
       if (!saved) {
         if (!options.isCurrent()) return false;
-        if (!owner && !promotion) throw new Error('다른 작업에서 입력 내용이 바뀌었어요. 다시 분석해 주세요.');
+        if (!owner && !promotion) throw new Error('feature_draft_save_failed');
       }
       if (!options.isCurrent()) return false;
-      draftCheckpointed = true;
       latest = { ...currentAnalysis(), ...patch };
       onAnalysis?.(latest);
       return true;
@@ -79,7 +73,6 @@ export function createDraftFeatureRun({ product, analysis, readProduct, readAnal
       messageCode: code, context: { projectId: run?.getProjectId() }, error: Object.assign(new Error(code), { code }), blocking: false }),
   });
   run.isCurrentRuntime = currentRuntime;
-  run.isMemoryOnly = () => memoryOnly;
   run.hasCoreRequest = () => !!coreRequest || !!preparing;
   const requestCore = (options) => {
     if (run.getRecord()?.coreReceived) return Promise.resolve(currentAnalysis());
@@ -94,11 +87,10 @@ export function createDraftFeatureRun({ product, analysis, readProduct, readAnal
       const source = readProduct?.() || product;
       const nextProduct = { ...source, name: source.name?.trim() || core.suggestedName || '새 상품',
         ...analysisResponseProductPatch(core), colors: autofillColorGroups(source.colors, core.swatchSuggestions, swatchColors) };
-      const saved = memoryOnly ? true : await saveFeatureRunDraft({}, { product: nextProduct, isCurrent: current,
+      const saved = await saveFeatureRunDraft({}, { product: nextProduct, isCurrent: current,
         matchesDraft: (draft) => sameRun(run, draft.analysis?.featureRun) });
       if (!current()) return null;
-      if (saved === 'unavailable') memoryOnly = true;
-      if (!saved) throw new Error('다른 작업에서 입력 내용이 바뀌었어요. 다시 분석해 주세요.');
+      if (!saved) throw new Error('feature_draft_save_failed');
       product = withCurrentImages(nextProduct, readProduct?.() || product);
       const analysis = await run.receiveCore(mergeProductOwnedAnalysisFields(core, nextProduct));
       if (analysis && current()) {
@@ -108,7 +100,7 @@ export function createDraftFeatureRun({ product, analysis, readProduct, readAnal
       return analysis;
     })().catch(async (error) => {
       if (!current()) return null;
-      await run.failCore().catch(() => {});
+      await run.failCore();
       throw error;
     }).finally(() => { coreRequest = null; });
     return coreRequest;
@@ -121,16 +113,12 @@ export function createDraftFeatureRun({ product, analysis, readProduct, readAnal
     queueProductDraftSave(readProduct?.() || product, latest, composeMode);
     onAnalysis?.(latest);
     preparing = (async () => {
-      try { await flushProductDraftSave(); }
-      catch (error) {
-        if (!isDraftStorageUnavailable()) throw error;
-        memoryOnly = true;
-      }
+      await flushProductDraftSave();
       if (!currentRun(record)) return null;
-      const draft = memoryOnly ? null : await loadDraft();
+      const draft = await loadDraft();
       if (!currentRun(record)) return null;
       const source = readProduct?.() || product;
-      const options = await preparePublicAnalysis(source, memoryOnly ? {} : { fetchBlob: async (src) => {
+      const options = await preparePublicAnalysis(source, { fetchBlob: async (src) => {
         const photo = source.colors.flatMap((color) => color.images || []).find((item) => item.src === src);
         const blob = draft?.photos?.find((item) => item.imageId === photo?.id)?.blob;
         if (!blob) throw new Error('feature_photo_missing');
@@ -142,7 +130,7 @@ export function createDraftFeatureRun({ product, analysis, readProduct, readAnal
       return requestCore({ ...options, product: source });
     })().catch(async (error) => {
       if (!currentRun(run.getRecord())) return null;
-      if (!run.getRecord()?.coreFailed) await run.failCore().catch(() => {});
+      if (!run.getRecord()?.coreFailed) await run.failCore();
       throw error;
     }).finally(() => { preparing = null; });
     return preparing;
