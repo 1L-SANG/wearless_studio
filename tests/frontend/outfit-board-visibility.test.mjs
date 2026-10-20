@@ -56,6 +56,7 @@ test('unmeasured pieces reserve their assumed layout, stay hidden on display loa
   const after = render();
   assert.notEqual(shoePiece(after).props.style.visibility, 'hidden');
   assert.ok(pieces(after).filter(node => node !== shoePiece(after)).every(node => node.props.style.visibility === 'hidden'));
+  assert.equal(images(shoePiece(after)).length, 2);
   assert.ok(images(shoePiece(after)).every(img => img.props.style?.height === '200%'));
 });
 
@@ -78,8 +79,11 @@ test('at 1500ms pieces reveal original-ratio contain images and ignore a late de
   assert.ok(images(fallback).every(img => img.props.style === undefined && img.props.className === undefined));
   const product = pieces(fallback).find(node => node.props.style.zIndex === 10);
   assert.ok(Math.abs(product.props.style.width / product.props.style.height - .75) < 1e-9);
-  // 18.5cm / original aspect .75 * pair height 1.08, relative to a 64cm product.
-  assert.ok(Math.abs(shoePiece(fallback).props.style.height / product.props.style.height - .41625) < 1e-9);
+  // Pre-S fallback: one 16cm shoe, relative to a 64cm product.
+  assert.ok(Math.abs(shoePiece(fallback).props.style.height / product.props.style.height - .25) < 1e-9);
+  assert.equal(images(shoePiece(fallback)).length, 1);
+  assert.ok(Math.abs(shoePiece(fallback).props.style.width / shoePiece(fallback).props.style.height - .75) < 1e-9);
+  assert.ok(Math.abs(product.props.style.height - 128) < 1e-9);
   finishDecode(); await lateLoad; await drain();
   assert.deepEqual(pieces(render()).map(node => node.props.style), pieces(fallback).map(node => node.props.style));
   assert.ok(images(render()).every(img => img.props.style === undefined));
@@ -120,6 +124,11 @@ test('failed URLs reveal without waiting for the timeout and stay visible at the
   const failed = render();
   assert.ok(pieces(failed).every(node => node.props.style.visibility !== 'hidden'));
   assert.ok(images(failed).every(img => img.props.style === undefined));
+  assert.equal(images(shoePiece(failed)).length, 1);
+  const product = pieces(failed).find(node => node.props.style.zIndex === 10);
+  assert.ok(Math.abs(shoePiece(failed).props.style.height / product.props.style.height - .25) < 1e-9);
+  assert.ok(Math.abs(shoePiece(failed).props.style.width / shoePiece(failed).props.style.height - .75) < 1e-9);
+  assert.ok(Math.abs(product.props.style.height - 128) < 1e-9);
   remount(h);
   const cached = render();
   assert.deepEqual(pieces(cached).map(node => node.props.style), pieces(failed).map(node => node.props.style));
@@ -141,4 +150,18 @@ test('remounting pending URLs reuses their request and original 1500ms deadline'
   assert.ok(pieces(render()).every(node => node.props.style.visibility !== 'hidden'));
   assert.ok(images(render()).every(img => img.props.style === undefined));
   assert.equal(requests.length, 3);
+});
+
+test('failed shoes with no loaded source ratio use one contain image at 2.1', async t => {
+  const { render, requests } = await setup(t);
+  render();
+  requests.find(img => img.url === '/shoe.png').onerror();
+  await drain();
+  const failed = render();
+  const shoes = shoePiece(failed);
+  assert.equal(images(shoes).length, 1);
+  assert.equal(images(shoes)[0].props.style, undefined);
+  assert.ok(Math.abs(shoes.props.style.width / shoes.props.style.height - 2.1) < 1e-9);
+  const product = pieces(failed).find(node => node.props.style.zIndex === 10);
+  assert.ok(Math.abs(shoes.props.style.height / product.props.style.height - .25) < 1e-9);
 });

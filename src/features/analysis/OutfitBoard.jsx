@@ -68,6 +68,7 @@ export function OutfitBoard({ draftVisuals, analysis, product, projectId, onOpen
     const fallbackAr = role === 'footwear' && measurement === undefined ? 2.1
       : (measurement !== undefined && originalRatio(src)) || item?.ar || (role === 'bottom' ? .52 : role === 'footwear' ? 2.1 : .95);
     return [role, { ...item, slot: role, src, name: outfitName(item),
+      ...(role === 'footwear' ? { measurementFailed: measurement === null } : {}),
       cm: role === 'footwear' ? undefined : garmentDisplayLength(item, role),
       ar: imageBoundsAspectRatio(measurement, fallbackAr) }];
   })), [analysis, complementary, ratios, measurements]);
@@ -118,7 +119,7 @@ export function OutfitBoard({ draftVisuals, analysis, product, projectId, onOpen
           const unavailable = analysis.outfitRecommendation?.roleStatus?.[piece.slot] === 'unavailable';
           const preparing = piece.slot === 'product' && !projectId && draftVisuals?.front?.tidyStatus === 'processing';
           const content = preparing ? <span className={styles.ghost} role="status"><b>준비 중</b></span> : item?.src
-            ? piece.slot === 'footwear' ? shoePairImageLayers().map((layer, index) => image(item, layer, index === 0)) : image(item)
+            ? piece.slot === 'footwear' && !item.measurementFailed ? shoePairImageLayers().map((layer, index) => image(item, layer, index === 0)) : image(item)
             : <span className={styles.ghost}><OutfitRoleIcon role={piece.slot} /><b>{label}</b></span>;
           const box = { left: piece.x, top: piece.y, width: piece.width, height: piece.height, zIndex: piece.zIndex,
             visibility: !preparing && item?.src && measurementFor(item.src) === undefined ? 'hidden' : undefined };

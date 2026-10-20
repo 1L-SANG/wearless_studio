@@ -128,9 +128,9 @@ export function selectProductBoardImage(visuals, originalSrc) {
   return (front?.tidyStatus === 'ready' && front.tidyUrl) || front?.cutoutUrl || originalSrc || null;
 }
 
-// 26cm would make Chelsea boots consume more than the old 16cm shoe budget.
-// 18.5cm also leaves room for pixel rounding when measuring at 256px.
-export const SHOE_LENGTH_CM = 18.5;
+// Use 24cm for a realistic 23–25cm shoe; 18.5cm made shoes about 25–30% too small.
+// The resulting small reduction in product height is accepted to improve proportions.
+export const SHOE_LENGTH_CM = 24;
 export const SHOE_PAIR_WIDTH = 1.36;
 export const SHOE_PAIR_HEIGHT = 1.08;
 export const SHOE_PAIR_MAX_HEIGHT_CM = 30;
@@ -167,7 +167,10 @@ export function buildOutfitBoardLayout({ clothingType, product, items = {}, maxH
     : clothingType === 'bottom' ? [[top], [prod]] : clothingType === 'dress' ? [[prod]] : [[prod], [bottom]];
   const garments = rows.flat();
   const footwear = itemAt('footwear') || itemAt('shoes');
-  const shoeSize = footwearPairSize(footwear?.ar);
+  // A failed measurement keeps the pre-pair single-image geometry and cm budget.
+  const shoeSize = footwear?.measurementFailed
+    ? { widthCm: 16 * positiveNumber(footwear.ar, DEFAULT_SHOE_ASPECT), heightCm: 16 }
+    : footwearPairSize(footwear?.ar);
   const shoes = { ...footwear, slot: 'footwear', cm: shoeSize.heightCm, ar: shoeSize.widthCm / shoeSize.heightCm };
   const rowCm = row => row.length === 2 ? Math.max(row[0].cm, row[0].cm * outerDy + row[1].cm) : row[0].cm;
   const sumCm = rows.reduce((sum, row) => sum + rowCm(row), 0) + shoes.cm;

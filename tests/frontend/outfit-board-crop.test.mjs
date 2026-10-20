@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { outfitHarness, nodes, drain } from './helpers/outfitHarness.mjs';
-import { footwearPairSize } from '../../src/lib/outfitPresentation.js';
 
 const boardProps = () => ({
   analysis: { clothingType: 'top', matchClothing: [{ id: 'bottom', selected: true, thumb: '/bounds-bottom.png' }],
@@ -78,6 +77,8 @@ test('failed measurements keep the displayed image at its original ratio', async
     assert.ok(imageNodes(after).every(img => img.props.style === undefined));
     const product = nodes(after).find(node => node.type === 'div' && node.props?.style?.zIndex === 10);
     const shoes = boardNodes(after)[0];
-    assert.ok(Math.abs(shoes.props.style.height / product.props.style.height - footwearPairSize(.75).heightCm / 64) < 1e-6);
+    assert.equal(imageNodes(shoes).length, 1);
+    assert.ok(Math.abs(shoes.props.style.width / shoes.props.style.height - .75) < 1e-6);
+    assert.ok(Math.abs(shoes.props.style.height / product.props.style.height - 16 / 64) < 1e-6);
   } finally { await h.close(); Object.assign(globalThis, previous); }
 });
