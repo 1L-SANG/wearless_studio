@@ -17,9 +17,6 @@ import { draftStoreFixture, drainDraftTasks } from './helpers/draft-store-fixtur
 import { createProductPhotoPreviewRegistry } from '../../src/features/product-input/productPhotoPreviewRegistry.js';
 import { getBaseSlotUploadRoom, getPendingTileCount, PENDING_TILE_DELAY_MS } from '../../src/features/product-input/pendingTiles.js';
 import { mergeOutfitSaveResponse, outfitContextKey, syncOutfitLegacySelection } from '../../src/lib/outfitSelections.js';
-import { mannequinGenerationTotal, normalizePlanTier } from '../../src/lib/limits.js';
-import { mannequinGenerationCreditShortfall } from '../../src/lib/creditPreflight.js';
-import { confirmDraftPhotos } from '../../src/lib/draftPhotoConfirmation.js';
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 const clean = (source) => source.replace(/^import [\s\S]*?;\n/gm, '').replace(/^export default .*;$/gm, '').replace(/^export /gm, '');
@@ -47,19 +44,6 @@ const actionLabels = (tree) => !tree || typeof tree !== 'object' ? [] : [
   ...(tree.props?.children || []).flat(Infinity).flatMap(actionLabels),
 ];
 
-function confirmButton(props, effects) {
-  const source = read('src/features/analysis/AnalysisForm.jsx');
-  const start = source.indexOf('  const confirmAnalysis = async () =>');
-  const end = source.indexOf('  const [customMatchOpen,', start);
-  const bindings = {
-    confirming: false, onBeforeConfirm: props.onBeforeConfirm, onNext: props.onNext,
-    setConfirming: () => effects.push('confirming'), onConfirmingChange: () => effects.push('lock'),
-    commitMdComment: () => effects.push('mdSave'), composeModeSaveRef: { current: Promise.resolve() },
-    mannequinGenerationCost: 45,
-  };
-  return new Function(...Object.keys(bindings), `${source.slice(start, end)}; return confirmAnalysis;`)(...Object.values(bindings));
-}
-
 function harness({ mobile = true, analysis = null, fastEntry = false, analyze = null, prepare = null, featureFactory = null, restoreFeature = null, saveAll, transcode, photos = product(), doneBlocked = false, persisted = false, stagedDraft = true, initialSavedMeta = null, session = { user: { id: 'seller' } }, authLoading = false, draftStore = null, slotClient = null, previewRegistry = null, autoSaveIntent = null, sellerConsentReady, slotApi, consentRetry } = {}) {
   const calls = [];
   const auth = { session, sellerConsentReady, retrySellerConsent: (userId) => { calls.push(['consent', userId]); return consentRetry ? consentRetry(userId) : Promise.resolve(false); }, loading: authLoading, openLogin: (path) => calls.push(['login', path]) };
@@ -69,7 +53,7 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
   const documentEvents = new EventTarget();
   documentEvents.visibilityState = 'visible';
   documentEvents.querySelector = () => null;
-  let pendingHandler, conflictHandler, visualHandler, featureController, nextImageId = 0;
+  let pendingHandler, conflictHandler, featureController, nextImageId = 0;
   const frames = new Map();
   let active, cursor, effects = [], dirty = false;
   let staged = stagedDraft ? { payload: typeof stagedDraft === 'object' ? stagedDraft : { product: photos, analysis, composeMode: 'basic' } } : null;
@@ -83,12 +67,9 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
     retryFailedUploads() { calls.push('retryUploads'); },
     async checkOwnership() { calls.push('ownership'); },
     configure() {}, onConflict: (handler) => { conflictHandler = handler; return () => {}; },
-    onVisuals: (handler) => { visualHandler = handler; return () => { visualHandler = null; }; },
-    getUserId: () => auth.session?.user?.id || null,
     getIdentityEpoch: () => 0, getToken: () => null, hasStaged: () => Boolean(staged),
     stage(value) { staged = value; }, pauseEntryWrites() {}, resumeEntryWrites() {},
     resetIdentity() { calls.push('reset'); }, activate() {}, queue(snapshot) { calls.push(['queue', snapshot]); },
-    resume() { calls.push('resume'); },
     consumeStaged() { const next = staged; staged = null; return next; },
     get: async () => ({ meta: { photoCount: 2, updatedAt: 'v1' } }),
     getServerSyncedAt: () => 'v1', hasPendingRemoval: () => false,
@@ -101,15 +82,11 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
   const bindings = {
     baseProductPhoto,
     mergeOutfitSaveResponse, outfitContextKey, syncOutfitLegacySelection,
-    mannequinGenerationTotal, normalizePlanTier, confirmDraftPhotos,
-    mannequinGenerationCreditShortfall: (...args) => { calls.push(['creditCheck']); return mannequinGenerationCreditShortfall(...args); },
-    mannequinQuoteConfirmation: { remember() { calls.push(['quote']); } },
     isAnalysisFastEntryEnabled: () => fastEntry,
     preparePublicAnalysis: prepare || (async () => ({ photos: [], photoSignature: 'signature' })), analysisPhotoKey: () => 'photos',
     getActiveFeatureRun: () => featureController,
     createDraftFeatureRun: (options) => {
       featureController = featureFactory(options);
-      featureController.isMemoryOnly ||= () => false;
       featureController.startAnalysis ||= async (options) => {
         await featureController.start(options);
         return featureController.requestCore(options);
@@ -151,7 +128,6 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
     generationWorkWarningKind: () => 'none', restoreDraftProduct: (draft) => draft.product,
     isRemoteAssetPhoto, normalizeAnalysisFit: (value) => value, isAnalysisRunning: () => false,
     queueProductDraftSave: () => {}, flushProductDraftSave: async () => {}, hasPendingDraft: () => false,
-    isDraftStorageUnavailable: () => false,
     ...(draftStore || {}),
     formatDraftRelativeTime: () => '1분 전', formatDraftClock, getBaseSlotUploadRoom, getPendingTileCount, PENDING_TILE_DELAY_MS,
     invalidateStoryboardForProductPhotoEdit() {}, invalidateStoryboardEntryPrefetch() {},
@@ -187,7 +163,6 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
   return { calls, auth, content, doneGuardChecks, location, render, settle, components, documentEvents, slot,
     emitConflict: (meta) => conflictHandler(meta),
     emitPending: (value) => pendingHandler?.(value),
-    emitVisuals: () => visualHandler?.(),
     unmount(name) { frames.get(name)?.forEach((record) => record?.cleanup?.()); frames.delete(name); },
     cleanup() { for (const frame of frames.values()) frame.forEach((record) => record?.cleanup?.()); },
     expand: (tree, name) => render(name, node(tree, name).props),
@@ -1005,107 +980,6 @@ for (const token of ['owned', null]) {
   });
 }
 
-
-for (const fastEntry of [false, true]) test(`메모리 분석은 안내와 결과를 보여주고 편집 결과를 초안에 예약하지 않는다, 빠른 진입 ${fastEntry}`, async (t) => {
-  const snapshots = [];
-  const result = { sellingPoints: ['화면의 분석 결과'], aiSuggestedPoints: ['화면의 분석 결과'] };
-  const h = harness({ mobile: false, fastEntry, analyze: async () => result,
-    draftStore: { isDraftStorageUnavailable: () => true,
-      flushProductDraftSave: async () => { throw new Error('storage blocked'); },
-      queueProductDraftSave: (product, analysis) => snapshots.push({ product, analysis }) },
-    featureFactory: ({ onAnalysis }) => ({ isMemoryOnly: () => true,
-      async startAnalysis() { onAnalysis(result); return result; }, invalidate() {} }),
-  });
-  t.after(() => h.cleanup());
-  let tree = await h.settle();
-  await button(h.expand(tree, 'InputMainAction'), 'AI 분석하기').props.onClick();
-  tree = await h.settle();
-  assert.ok(text(tree).includes('이 창은 저장이 안 돼 확정할 수 없어요. 일반 창에서 열어 주세요.'));
-  node(tree, 'AnalysisProgress').props.onFinished();
-  tree = await h.settle();
-  assert.deepEqual(node(tree, 'AnalysisForm').props.analysis.sellingPoints, ['화면의 분석 결과']);
-  assert.ok(find(tree, (value) => value.props?.role === 'status' && value.props.className === 'sp-feature-status'
-    && text(value) === '이 창은 저장이 안 돼 확정할 수 없어요. 일반 창에서 열어 주세요.'));
-  const localWrites = snapshots.length;
-  const remoteWrites = h.calls.filter((call) => call[0] === 'queue').length;
-  node(tree, 'AnalysisForm').props.onAnalysisReplace({ ...result, sellingPoints: ['셀러가 고친 특징'] });
-  await h.settle();
-  assert.equal(snapshots.length, localWrites);
-  assert.equal(h.calls.filter((call) => call[0] === 'queue').length, remoteWrites);
-  h.emitVisuals();
-  assert.equal(snapshots.length, localWrites);
-});
-
-for (const unavailable of [false, true]) for (const failure of ['flush', 'missing']) test(`확정 실패 안내는 저장소 불가일 때만 일반 창을 안내한다, 불가 ${unavailable}, 실패 ${failure}`, async (t) => {
-  const h = harness({ mobile: false, analysis: { sellingPoints: ['확정할 특징'] }, draftStore: {
-    isDraftStorageUnavailable: () => unavailable,
-    flushProductDraftSave: async () => { if (failure === 'flush') throw new Error('write blocked'); },
-    loadDraft: async () => null,
-  } });
-  t.after(() => h.cleanup());
-  const tree = await h.settle();
-  await node(tree, 'AnalysisForm').props.onNext();
-  const toast = h.calls.find((call) => call[0] === 'toast');
-  assert.equal(toast[1], unavailable ? '이 창은 저장이 안 돼 확정할 수 없어요. 일반 창에서 열어 주세요.'
-    : failure === 'flush' ? 'write blocked' : '저장된 입력 내용을 다시 불러오지 못했어요. 다시 시도해 주세요.');
-  assert.equal(h.calls.some((call) => ['navigate', 'login', 'adopt'].includes(call[0])), false);
-});
-
-for (const source of ['memory', 'storage']) for (const guest of [false, true]) test(`보관 불가 확정 클릭은 저장과 크레딧 처리 전에 즉시 안내한다, 신호 ${source}, 비회원 ${guest}`, async (t) => {
-  const effects = [];
-  const result = { sellingPoints: ['메모리 특징'] };
-  const h = harness({ mobile: false, fastEntry: source === 'memory', analysis: source === 'memory' ? null : result,
-    session: guest ? null : { user: { id: 'seller' } },
-    draftStore: { isDraftStorageUnavailable: () => source === 'storage',
-      queueProductDraftSave: () => effects.push('photoQueue'),
-      flushProductDraftSave: async () => { effects.push('photoSave'); throw new Error('storage blocked'); },
-      loadDraft: async () => { effects.push('photoLoad'); return null; } },
-    featureFactory: ({ onAnalysis }) => ({ isMemoryOnly: () => true,
-      async startAnalysis() { onAnalysis(result); return result; }, invalidate() {} }),
-  });
-  t.after(() => h.cleanup());
-  let tree = await h.settle();
-  if (source === 'memory') {
-    await button(h.expand(tree, 'InputMainAction'), 'AI 분석하기').props.onClick();
-    tree = await h.settle(); node(tree, 'AnalysisProgress').props.onFinished(); tree = await h.settle();
-  }
-  effects.length = 0;
-  const beforeClick = h.calls.length;
-  const click = confirmButton(node(tree, 'AnalysisForm').props, effects);
-  const pending = click();
-  assert.equal(h.calls.slice(beforeClick).find((call) => call[0] === 'toast')?.[1], '이 창은 저장이 안 돼 확정할 수 없어요. 일반 창에서 열어 주세요.');
-  await pending;
-  assert.deepEqual(effects, []);
-  assert.equal(h.calls.some((call) => ['quote', 'creditCheck', 'navigate', 'login', 'adopt'].includes(call[0])), false);
-  await node(tree, 'AnalysisForm').props.onNext({ expectedQuote: { free: false, credits: 45 } });
-  assert.deepEqual(effects, []);
-  assert.equal(h.calls.some((call) => ['quote', 'creditCheck', 'navigate', 'login', 'adopt'].includes(call[0])), false);
-});
-
-test('일반 저장소 확정은 사진 저장 뒤 기존 로그인 경로로 진행한다', async (t) => {
-  let saved = 0;
-  const h = harness({ mobile: false, analysis: { sellingPoints: ['확정할 특징'] }, session: null,
-    draftStore: { flushProductDraftSave: async () => { saved++; return { failed: 0 }; } } });
-  t.after(() => h.cleanup());
-  const tree = await h.settle();
-  await confirmButton(node(tree, 'AnalysisForm').props, [])();
-  assert.equal(saved, 1);
-  assert.ok(h.calls.some((call) => call[0] === 'creditCheck'));
-  assert.ok(h.calls.some((call) => call[0] === 'login' && call[1] === '/create/storyboard'));
-  assert.equal(h.calls.some((call) => call[0] === 'toast'), false);
-});
-
-test('분석 실패의 내부 특징 오류 코드는 한국어 안내로 표시한다', async (t) => {
-  const h = harness({ mobile: false, draftStore: {
-    flushProductDraftSave: async () => { throw new Error('feature_draft_save_failed'); },
-  } });
-  t.after(() => h.cleanup());
-  const tree = await h.settle();
-  await button(h.expand(tree, 'InputMainAction'), 'AI 분석하기').props.onClick();
-  const toast = h.calls.find((call) => call[0] === 'toast');
-  assert.equal(toast[1], '분석을 완료하지 못했어요. 다시 시도해 주세요.');
-  assert.equal(h.calls.includes('analyze'), false);
-});
 
 test('빠른 핵심 저장을 기다리는 동안 옛 분석으로 상품 초안을 예약하지 않는다', async () => {
   let coreResolve, saveResolve;

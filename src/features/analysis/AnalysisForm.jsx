@@ -463,7 +463,7 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose, onUpl
 
 export function AnalysisForm({
   inline, analysis, catalogs, onChange, onNext, projectId = null, onAnalysisReplace, product,
-  onBeforeConfirm, onConfirmingChange,
+  onConfirmingChange,
 }) {
   const a = analysis;
   const toast = useToast();
@@ -595,7 +595,6 @@ export function AnalysisForm({
   };
   const confirmAnalysis = async () => {
     if (confirming) return;
-    if (onBeforeConfirm?.() === false) return;
     setConfirming(true);
     onConfirmingChange?.(true);
     try {
