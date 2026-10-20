@@ -186,7 +186,9 @@ for (const change of ['run', 'identity']) test(`메모리 분석도 ${change} �
 
 for (const change of ['run', 'identity', 'photo']) test(`메모리 핵심 분석도 ${change} 교체 뒤에는 화면에 적용하지 않는다`, async (t) => {
   const f = await setup(t); f.storage.failWrites(new Error('storage blocked'));
-  const starting = f.start(); await drainDraftTasks();
+  const starting = f.start();
+  // CI는 느려서 고정 횟수로 비우면 core 요청 전일 수 있다. 요청이 나갈 때까지 기다린다.
+  for (let i = 0; i < 50 && !f.requests.some(([part]) => part === 'core'); i += 1) await drainDraftTasks();
   assert.equal(f.requests.some(([part]) => part === 'core'), true);
   const before = structuredClone(f.analysis);
   if (change === 'run') f.features.setActiveFeatureRun(null);
