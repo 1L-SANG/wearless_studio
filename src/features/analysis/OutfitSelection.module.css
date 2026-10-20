@@ -16,8 +16,11 @@
 .reference span { font-size: 12px; font-weight: 400; letter-spacing: -.055em; }
 .board { width: 300px; padding: 12px; border-radius: 14px; background: var(--bg-2); box-shadow: var(--elev-card); }
 .boardCanvas { position: relative; margin: 0 auto; }
-.piece { position: absolute; display: grid; place-items: center; padding: 0; border: 0; background: transparent; border-radius: var(--r-3); }
+.piece { position: absolute; display: grid; place-items: center; overflow: hidden; padding: 0; border: 0; background: transparent; border-radius: var(--r-3); }
 .piece img { display: block; width: 100%; height: 100%; object-fit: contain; animation: pictureIn 220ms ease-out; }
+.pieceImage { position: relative; display: block; width: 100%; height: 100%; overflow: hidden; }
+.pieceImage .croppedImage { position: absolute; max-width: none; object-fit: fill; }
+.shoeCopy { position: absolute; }
 .piece:focus-visible { outline-offset: 1px; }
 .ghost { display: grid; place-content: center; justify-items: center; gap: 8px; color: var(--fg-3); font-size: 12px; }
 .ghost svg { width: 30px; height: 30px; }

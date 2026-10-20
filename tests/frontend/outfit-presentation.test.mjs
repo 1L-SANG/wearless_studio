@@ -88,16 +88,18 @@ test('board stacks top and bottom without overlap and keeps product and shoes at
   });
   assert.deepEqual(layout.pieces.map(x => x.slot), ['product', 'bottom', 'footwear']);
   const [product, bottom, shoes] = layout.pieces;
+  const shoeCm = presentation.footwearPairSize(2).heightCm;
+  const scale = (440 - 20 - 20) / (64 + 100 + shoeCm) * .9;
   assert.equal(layout.width, 244);
-  near(product.height, 128);
-  near(product.width, 121.6);
-  near(product.x, 61.2);
+  near(product.height, 64 * scale);
+  near(product.width, product.height * .95);
+  near(product.x, (244 - product.width) / 2);
   assert.equal(product.y, 10);
-  near(bottom.height, 174.9379318309245);
+  near(bottom.height, product.height * (100 / 64) ** .7);
   near(bottom.y - product.y - product.height, 10);
   near(shoes.y - bottom.y - bottom.height, 10);
-  near(shoes.height, 32);
-  near(layout.height, 374.9379318309245);
+  near(shoes.height, shoeCm * scale);
+  near(layout.height, 40 + product.height + bottom.height + shoes.height);
 });
 
 test('outer is behind its offset inner and matching bottom uses the visible product bundle height', () => {

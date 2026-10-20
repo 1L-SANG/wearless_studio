@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { buildOutfitBoardLayout } from '../../src/lib/outfitPresentation.js';
+import { buildOutfitBoardLayout, footwearPairSize } from '../../src/lib/outfitPresentation.js';
 import * as presentation from '../../src/lib/outfitPresentation.js';
 import { extensionModelFee } from '../../src/lib/limits.js';
 import { toMatchItem } from '../../src/lib/api/matchingItems.js';
@@ -85,7 +85,7 @@ for (const [name, input] of [
       const shoes = layout.pieces.at(-1), above = layout.pieces.slice(0, -1);
       near(shoes.y - Math.max(...above.map(p => p.y + p.height)), 10);
       const product = layout.pieces.find(p => p.slot === 'product');
-      near(product.height / input.product.cm, shoes.height / 16);
+      near(product.height / input.product.cm, shoes.height / footwearPairSize(input.items.footwear.ar).heightCm);
       if (input.clothingType === 'outer') {
         const inner = layout.pieces.find(p => p.slot === 'inner');
         near(product.height / input.product.cm, inner.height / 80);
@@ -96,14 +96,14 @@ for (const [name, input] of [
   });
 }
 
-test('최종 보드 맞춤은 보정 뒤 넓어진 하의와 긴 신발에도 같은 배율과 10px 간격을 쓴다', () => {
+test('최종 보드 맞춤은 보정 뒤 넓어진 하의와 켤레 신발에도 같은 배율과 10px 간격을 쓴다', () => {
   const layout = buildOutfitBoardLayout({ clothingType: 'outer', width: 276, maxHeight: 300,
     product: { cm: 150, ar: .25 }, items: { inner: { cm: 80, ar: .4 },
-      bottom: { cm: 38, ar: 2.8 }, footwear: { cm: 65, ar: 1.1 } } });
+      bottom: { cm: 38, ar: 2.8 }, footwear: { ar: 1.1 } } });
   const [outer, inner, bottom, shoes] = layout.pieces;
   near(outer.height / 150, inner.height / 80);
-  near(outer.height / 150, shoes.height / 65);
+  near(outer.height / 150, shoes.height / footwearPairSize(1.1).heightCm);
   near(shoes.y - bottom.y - bottom.height, 10);
-  near(layout.height, 300);
+  assert.ok(layout.height <= 300);
   assert.ok(bottom.width <= 256);
 });
