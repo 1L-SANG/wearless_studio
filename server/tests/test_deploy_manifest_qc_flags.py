@@ -62,7 +62,7 @@ def test_fal_deployment_moves_every_sam2_job_kind_to_fal(monkeypatch):
         "/copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FAL_KEY")
     for name in ("MATCHING_CUTOUT_PROVIDER", "MATCHING_FLATLAY_PROVIDER",
                  "SAM_PREPROCESS_PROVIDER", "TONE_MASK_PROVIDER", "PRODUCT_TIDY",
-                 "MANNEQUIN_PATTERN_FLAT_REFERENCE"):
+                 "MANNEQUIN_PATTERN_FLAT_REFERENCE", "DRAFT_VISUALS"):
         monkeypatch.delenv(name, raising=False)
         if name in doc["variables"]:
             monkeypatch.setenv(name, str(doc["variables"][name]))
@@ -71,6 +71,7 @@ def test_fal_deployment_moves_every_sam2_job_kind_to_fal(monkeypatch):
     assert settings.matching_flatlay_provider == "qwen"
     assert settings.product_tidy == "on"
     assert settings.mannequin_pattern_flat_reference == "on"
+    assert settings.draft_visuals == "on"
 
 
 def test_production_db_pool_leaves_room_during_rolling_deploy(manifest_vars):
