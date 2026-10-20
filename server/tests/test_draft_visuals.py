@@ -155,8 +155,9 @@ def test_prepare_route_budget_storage_failure_is_optional(client, make_token, mo
     assert response.json()['reason'] == 'unavailable'
 
 
-@pytest.mark.parametrize('fail_provider', [False, True])
-def test_worker_and_lease_recovery_never_repeat_paid_calls(monkeypatch, fail_provider):
+@pytest.mark.parametrize('provider_error', [None, RuntimeError('ambiguous provider response'),
+    ValueError('cutout_color_mismatch'), ValueError('private/photo-key token=secret')])
+def test_worker_and_lease_recovery_never_repeat_paid_calls(monkeypatch, caplog, provider_error):
     from contextlib import asynccontextmanager
     from copy import deepcopy
     import hashlib
@@ -204,15 +205,27 @@ def test_worker_and_lease_recovery_never_repeat_paid_calls(monkeypatch, fail_pro
             width=30, height=40, byte_size=len(data), area_frac=.5, cached=False)}
     async def render(settings, cut, *, transparent, on_generated):
         calls['qwen'] += 1
-        if fail_provider: raise RuntimeError('ambiguous provider response')
+        if provider_error: raise provider_error
         await on_generated(tidy)
         return tidy
     monkeypatch.setattr(dv.fal_cutout, 'segment_garment', segment)
     monkeypatch.setattr(dv.qwen_flatlay, 'render', render)
     monkeypatch.setattr(dv.matching_cutout, 'cutout_color_agrees', lambda *_: (True, {}))
     asyncio.run(dv.run(instance, deepcopy(state)))
-    assert state['result']['state'] == ('failed' if fail_provider else 'ready')
-    if not fail_provider:
+    assert state['result']['state'] == ('failed' if provider_error else 'ready')
+    if provider_error:
+        assert state['result'] == {'state': 'failed', 'reason': 'preparation_failed'}
+        records = [r for r in caplog.records if r.name == dv.__name__ and r.levelname == 'WARNING']
+        assert len(records) == 1
+        message = records[0].getMessage()
+        assert f'job={TOKEN}' in message
+        assert f'exception={type(provider_error).__name__}' in message
+        assert records[0].exc_info is None
+        if str(provider_error) == 'cutout_color_mismatch':
+            assert 'code=cutout_color_mismatch' in message
+        else:
+            assert str(provider_error) not in message
+    else:
         result = state['result']
         assert storage[result['tidy']['key']] == tidy
         assert (result['tidy']['width'], result['tidy']['height']) == (768, 1024)
