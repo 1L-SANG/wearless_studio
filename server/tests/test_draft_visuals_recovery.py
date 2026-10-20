@@ -183,6 +183,35 @@ def test_promotion_coverage_rejects_reclaimed_result_assets(recovery, role, appl
     assert asyncio.run(dv.promotion_covers(f.conn, f.job, 'project', [SOURCE], item_id)) is False
 
 
+def test_product_board_is_copied_on_recovered_delivery(recovery):
+    f = recovery
+    f.job['result']['board'] = {'assetId': 'board', 'key': 'board',
+        'metadata': {'canonicalType': 'product_tidy_board', 'width': 341, 'height': 512}}
+    f.assets['board'] = {'id': 'board', 'user_id': UID, 'source': 'derived', 'r2_key': 'board'}
+    f.objects['board'] = b'board-png'
+    f.fail_copy = True
+    asyncio.run(dv.promote(f.app, f.conn, user_id=UID, job_id=TOKEN,
+                         project_id='project', source_asset_ids=[SOURCE]))
+    f.fail_copy = False
+    consume_once(f)
+    assert f.job['metadata']['promotions'][0]['applied'] is True
+    assert sorted(data for key, data in f.objects.items() if '/projects/project/' in key) == [
+        b'board-png', b'cutout', b'tidy']
+    f.provider.assert_not_awaited()
+
+
+def test_reclaimed_product_board_is_not_live_and_get_falls_back_to_full_tidy(recovery):
+    f = recovery
+    f.job['result']['tidy'].update(width=768, height=1024)
+    f.job['result']['board'] = {'assetId': 'board', 'key': 'board', 'width': 341, 'height': 512}
+    assert asyncio.run(dv.result_assets_live(f.conn, f.job)) is False
+    result = asyncio.run(dv.current_presentation(f.app, f.conn, f.job,
+        user_id=UID, role='product', source_asset_ids=[SOURCE]))
+    assert result['front']['tidyUrl'] == 'https://asset.test/tidy'
+    assert (result['front']['width'], result['front']['height']) == (768, 1024)
+    assert 'board' in f.job['result'], 'GET must not mutate the durable result'
+
+
 @pytest.mark.parametrize('failure', ['r2_read', 'job_lookup'])
 def test_join_failure_keeps_product_saved_and_queues_one_preprocess(recovery, client, make_token, monkeypatch, failure):
     f = recovery

@@ -85,6 +85,8 @@ async def fixture(database, monkeypatch, role='product'):
     monkeypatch.setattr(repo, 'get_project', project)
     calls = {'sam': 0, 'qwen': 0}
     cut = png((180, 20, 30), 200)
+    from test_product_tidy import padded_tidy_png
+    tidy = padded_tidy_png()
     async def segment(settings, storage, views):
         calls['sam'] += 1
         r2.objects['canonical/shared.png'] = cut
@@ -94,8 +96,8 @@ async def fixture(database, monkeypatch, role='product'):
             byte_size=len(cut), cached=False)}
     async def render(settings, data, *, transparent, on_generated):
         calls['qwen'] += 1
-        await on_generated(cut)
-        return cut
+        await on_generated(tidy)
+        return tidy
     monkeypatch.setattr(dv.fal_cutout, 'segment_garment', segment)
     monkeypatch.setattr(dv.qwen_flatlay, 'render', render)
     monkeypatch.setattr(dv.matching_cutout, 'cutout_color_agrees', lambda *_: (True, {}))
@@ -162,9 +164,24 @@ def test_completed_and_running_promotions_reuse_paid_outputs(database, monkeypat
             await dv.promote(f.app, conn, user_id=f.uid, job_id=prepared['jobId'], project_id=f.pid,
                 source_asset_ids=[f.dest], matching_item_id=item_id)
             assets = await (await conn.execute('select * from assets where project_id=%s and source=\'derived\'', (f.pid,))).fetchall()
-            assert len(assets) == (3 if item_id else 2)
+            assert len(assets) == 3
             stored = await repo.lock_draft_visual_job(conn, f.uid, job['id'])
             assert stored['metadata']['promotions'][0]['applied'] is True
+            if role == 'product':
+                by_kind = {a['metadata']['canonicalType']: a for a in assets}
+                tidy, board = by_kind['product_tidy'], by_kind['product_tidy_board']
+                assert tidy['metadata']['boardAssetId'] == str(board['id'])
+                assert board['metadata']['tidyAssetId'] == str(tidy['id'])
+                for part, row in [('tidy', tidy), ('board', board)]:
+                    assert f.r2.objects[row['r2_key']] == f.r2.objects[stored['result'][part]['key']]
+                assert (board['metadata']['width'], board['metadata']['height']) == (341, 512)
+                from app.services import product_tidy
+                f.app.state.settings.product_tidy = 'on'
+                front = (await product_tidy.visuals(conn, f.r2, f.app.state.settings,
+                    user_id=f.uid, project_id=f.pid,
+                    product={'colors': [{'images': [{'id': f.dest, 'slot': 'Front'}]}]}))['front']
+                assert front['tidyUrl'] == f.r2.public_url(board['r2_key'])
+                assert (front['width'], front['height']) == (341, 512)
         assert f.calls == {'sam': 1, 'qwen': 1}
     asyncio.run(scenario())
 
@@ -216,6 +233,29 @@ def test_reclaimer_preserves_projects_active_jobs_and_global_canonical(database,
             await conn.execute('delete from draft_slots')
             reclaimed = await repo.reclaim_stale_unreferenced_draft_assets(conn, older_than_minutes=10080)
             assert [row['id'] for row in reclaimed] == [orphan]
+    asyncio.run(scenario())
+
+
+def test_product_board_follows_draft_resume_and_reclamation_lifetime(database, monkeypatch):
+    async def scenario():
+        f = await fixture(database, monkeypatch)
+        await f.prepare()
+        job = await claim(database)
+        await dv.run(f.app, job)
+        async with connection(database) as conn:
+            stored = await repo.lock_draft_visual_job(conn, f.uid, job['id'])
+            board_id = stored['result']['board']['assetId']
+            assert await dv.result_assets_live(conn, stored)
+            await conn.execute("update assets set created_at=now()-interval '8 days'")
+            assert await repo.soft_delete_unreferenced_draft_assets(conn, f.uid, [board_id]) == []
+            assert await repo.reclaim_stale_unreferenced_draft_assets(conn, older_than_minutes=10080) == []
+            resumed = await dv.visuals(f.app, conn, user_id=f.uid, token=f.token)
+            assert resumed['product']['front']['tidyUrl'] == f.r2.public_url(stored['result']['board']['key'])
+            assert (resumed['product']['front']['width'], resumed['product']['front']['height']) == (341, 512)
+            await conn.execute('delete from draft_slots where user_id=%s', (f.uid,))
+            reclaimed = await repo.reclaim_stale_unreferenced_draft_assets(conn, older_than_minutes=10080)
+            assert board_id in {a['id'] for a in reclaimed}
+            assert not await dv.result_assets_live(conn, stored)
     asyncio.run(scenario())
 
 
@@ -314,7 +354,7 @@ def test_failed_delivery_preserves_ready_and_project_read_retries_without_models
         failed = False
         async def flaky_store(app, conn, current, part, data, metadata, **kwargs):
             nonlocal failed
-            if kwargs.get('project_id') and not failed:
+            if kwargs.get('project_id') and part == 'board' and not failed:
                 failed = True
                 if failure == 'db':
                     await conn.execute('select missing_delivery_column from jobs')
@@ -330,6 +370,6 @@ def test_failed_delivery_preserves_ready_and_project_read_retries_without_models
             stored = await repo.lock_draft_visual_job(conn, f.uid, job['id'])
             assert stored['metadata']['promotions'][0]['applied'] is True
             assets = await (await conn.execute("select id from assets where project_id=%s and source='derived'", (f.pid,))).fetchall()
-            assert len(assets) == (3 if item_id else 2)
+            assert len(assets) == 3
         assert f.calls == {'sam': 1, 'qwen': 1}
     asyncio.run(scenario())

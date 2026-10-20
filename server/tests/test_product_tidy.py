@@ -60,7 +60,12 @@ class Cursor:
         if query.startswith("select") and "from assets" in query:
             rows = list(self.store.assets.values())
             if "where id = %s" in query:
-                rows = [r for r in rows if r["id"] == params[0] and r["user_id"] == params[1]]
+                rows = [r for r in rows if r["id"] == params[0] and r["user_id"] == params[1]
+                        and not r.get("deleted_at")]
+                # Match get_asset_for_user's SQL projection, not the backing store.
+                rows = [{key: row.get(key) for key in (
+                    "id", "r2_bucket", "r2_key", "mime_type", "source", "metadata")}
+                    for row in rows]
             elif "canonicaltype" in query:
                 assert "user_id = %s" in query and "sourceassetid" in query
                 if "product_tidy_input" in query:
@@ -175,7 +180,7 @@ def env(monkeypatch):
     return SimpleNamespace(store=store, conn=conn, r2=r2, settings=settings, app=app, job=job)
 
 
-def renderer(monkeypatch, env, error=None):
+def renderer(monkeypatch, env, error=None, output=None):
     from app.services import product_tidy
 
     async def render(settings, cutout, *, transparent=False):
@@ -186,7 +191,7 @@ def renderer(monkeypatch, env, error=None):
         assert image_usage._ctx.get().stage == "product_tidy"
         if error:
             raise error
-        return png()
+        return output if output is not None else png()
 
     monkeypatch.setattr(product_tidy.qwen_flatlay, "render", render)
 
@@ -201,6 +206,57 @@ def visuals(env):
                                            project_id="p", product=env.store.product))["front"]
 
 
+def padded_tidy_png():
+    image = Image.new("RGBA", (768, 1024), (0, 0, 0, 0))
+    image.paste((70, 90, 120, 255), (184, 212, 584, 812))
+    out = io.BytesIO()
+    image.save(out, "PNG")
+    return out.getvalue()
+
+
+def test_board_is_trimmed_while_full_tidy_and_mannequin_reference_keep_the_canvas(env, monkeypatch):
+    from app.agents.gemini_image import InlineImage
+    from app.agents.product_reference import ProductReference
+    from app.workers import mannequin_job
+
+    original = padded_tidy_png()
+    renderer(monkeypatch, env, output=original)
+    run(env)
+    tidy = next(a for a in env.store.assets.values() if a["metadata"].get("canonicalType") == "product_tidy")
+    board = next(a for a in env.store.assets.values() if a["metadata"].get("canonicalType") == "product_tidy_board")
+    assert env.store.objects[tidy["r2_key"]] == original
+    with Image.open(io.BytesIO(env.store.objects[board["r2_key"]])) as image:
+        assert image.size == (341, 512)
+        assert image.getchannel("A").getbbox() == (0, 0, 341, 512)
+    assert visuals(env) == dict(tidyStatus="ready", tidyUrl=env.r2.public_url(board["r2_key"]),
+                               cutoutStatus="ready", cutoutUrl=None, width=341, height=512)
+    env.settings.mannequin_pattern_flat_reference = "on"
+    reference, verdict = asyncio.run(mannequin_job._load_pattern_flat_reference(
+        env.app, job=env.job, product={"name": "바둑판 니트"}, analysis={}, generation_path="fresh",
+        product_refs=[ProductReference("Front", "src", InlineImage("image/png", env.store.objects["raw"]))]))
+    assert verdict == {"status": "used", "assetId": tidy["id"]}
+    assert reference.data == mannequin_job._tidy_on_white(original).data
+    assert env.store.objects[tidy["r2_key"]] == original
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+def test_missing_board_falls_back_to_full_tidy_without_get_side_effects(env, monkeypatch, legacy):
+    renderer(monkeypatch, env, output=padded_tidy_png())
+    run(env)
+    tidy = next(a for a in env.store.assets.values() if a["metadata"].get("canonicalType") == "product_tidy")
+    if legacy:
+        tidy["metadata"].pop("boardAssetId", None)
+    else:
+        env.store.assets.pop(tidy["metadata"]["boardAssetId"])
+    before = copy.deepcopy(env.store.objects), env.store.commits
+    def forbidden(*_):
+        pytest.fail("GET must only read asset metadata")
+    env.r2.get_bytes = env.r2.put_bytes = env.r2.head = forbidden
+    assert visuals(env)["tidyUrl"] == env.r2.public_url(tidy["r2_key"])
+    assert (visuals(env)["width"], visuals(env)["height"]) == (768, 1024)
+    assert (env.store.objects, env.store.commits) == before
+
+
 def test_off_does_not_render_and_visuals_reports_off(env, monkeypatch):
     env.settings.product_tidy = "off"
     renderer(monkeypatch, env)
@@ -209,7 +265,7 @@ def test_off_does_not_render_and_visuals_reports_off(env, monkeypatch):
     assert visuals(env)["tidyStatus"] == "off"
 
 
-def test_success_is_one_transparent_asset_and_retries_reuse_it(env, monkeypatch):
+def test_success_keeps_full_and_board_assets_and_retries_reuse_them(env, monkeypatch):
     renderer(monkeypatch, env)
     env.job["payload"] = {"mode": "canonical_cutout", "productTidyRequired": True}
     run(env)
@@ -218,6 +274,7 @@ def test_success_is_one_transparent_asset_and_retries_reuse_it(env, monkeypatch)
     assert len(tidy) == 1 and env.store.render_calls == 1
     assert env.store.finalized["product_tidy_capable"] is True
     row = tidy[0]
+    board = next(a for a in env.store.assets.values() if a["metadata"].get("canonicalType") == "product_tidy_board")
     assert row["source"] == "derived"
     assert row["r2_key"] == f"users/u/projects/p/derived/{row['id']}.png"
     assert row["metadata"] == {
@@ -225,9 +282,9 @@ def test_success_is_one_transparent_asset_and_retries_reuse_it(env, monkeypatch)
         "sourceHash": hashlib.sha256(env.store.objects["raw"]).hexdigest(),
         "cutoutAssetId": next(a["id"] for a in env.store.assets.values() if a["r2_key"] == "canonical"),
         "producer": "fal-qwen-product-tidy", "algorithmVersion": "product-tidy-v1-qwen",
-        "r2Key": row["r2_key"], "width": 32, "height": 48}
+        "r2Key": row["r2_key"], "width": 32, "height": 48, "boardAssetId": board["id"]}
     assert Image.open(io.BytesIO(env.store.objects[row["r2_key"]])).mode == "RGBA"
-    assert visuals(env) == dict(tidyStatus="ready", tidyUrl=f"https://images.wearless.kr/{row['r2_key']}",
+    assert visuals(env) == dict(tidyStatus="ready", tidyUrl=f"https://images.wearless.kr/{board['r2_key']}",
                                cutoutStatus="ready", cutoutUrl=None, width=32, height=48)
 
 
@@ -329,7 +386,8 @@ def test_identical_photos_from_two_sellers_keep_separate_ready_tidy_results(env,
     assert off["cutoutStatus"] != "ready"
 
 
-def test_temporary_final_db_failure_retries_saved_png_without_another_generation(env, monkeypatch):
+@pytest.mark.parametrize("failed_kind", ["product_tidy", "product_tidy_board"])
+def test_temporary_final_db_failure_retries_saved_png_without_another_generation(env, monkeypatch, failed_kind):
     renderer(monkeypatch, env)
     original = repo.create_asset
     failed = False
@@ -344,7 +402,7 @@ def test_temporary_final_db_failure_retries_saved_png_without_another_generation
 
     async def insert(*args, **kwargs):
         nonlocal failed
-        if not failed and (kwargs.get("metadata") or {}).get("canonicalType") == "product_tidy":
+        if not failed and (kwargs.get("metadata") or {}).get("canonicalType") == failed_kind:
             failed = True
             raise OperationalError("temporary DB outage")
         return await original(*args, **kwargs)
@@ -357,7 +415,28 @@ def test_temporary_final_db_failure_retries_saved_png_without_another_generation
     run(env)
     assert visuals(env)["tidyStatus"] == "ready"
     assert env.store.render_calls == 1
-    assert len(writes) == 1
+    assert len(writes) == len(set(writes)) == 2
+
+
+def test_board_storage_failure_reuses_full_canvas_without_another_generation(env, monkeypatch):
+    original = padded_tidy_png()
+    renderer(monkeypatch, env, output=original)
+    put = env.r2.put_bytes
+    failed = False
+    def fail_board_once(key, data, mime):
+        nonlocal failed
+        if data != original and not failed:
+            failed = True
+            raise OSError("temporary board storage outage")
+        put(key, data, mime)
+    monkeypatch.setattr(env.r2, "put_bytes", fail_board_once)
+    run(env)
+    assert sam_retry.job_is_retryable(env.store.latest)
+    assert original in env.store.objects.values()
+    env.job["payload"] = {"retry": 1}
+    run(env)
+    assert env.store.render_calls == 1
+    assert (visuals(env)["width"], visuals(env)["height"]) == (341, 512)
 
 
 def test_processing_window_expires_and_terminal_failures_do_not_spin(env):
