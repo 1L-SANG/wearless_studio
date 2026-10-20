@@ -150,7 +150,7 @@ for (const mismatch of ['updatedAt', 'photoCount', 'photoType', 'photoId']) test
 test('다른 탭의 실행으로 바뀐 초안에는 핵심 분석 결과를 쓰지 않는다', async (t) => {
   const f = await setup(t);
   const starting = f.start();
-  await drainDraftTasks();
+  for (let i = 0; i < 50 && !f.requests.some(([part]) => part === 'core'); i += 1) await drainDraftTasks();
   assert.equal(f.requests.some(([part]) => part === 'core'), true);
   const replacement = { ...f.storage.saved, analysis: { featureRun: { runId: 'other-tab', photoSignature: 'other-photo' } } };
   f.storage.replaceDraft(replacement); f.resolveCore();
