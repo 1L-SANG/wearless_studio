@@ -59,10 +59,11 @@ def presentation(app, job, *, role, source_asset_ids, local_id=None):
     url = lambda asset: app.state.r2.public_url(asset['key']) if asset else None
     if role == 'product':
         tidy, cutout = result.get('tidy'), result.get('cutout')
-        out['front'] = {'tidyStatus': 'ready' if tidy else state, 'tidyUrl': url(tidy),
+        display = (result.get('board') or tidy) if tidy else None
+        out['front'] = {'tidyStatus': 'ready' if tidy else state, 'tidyUrl': url(display),
                         'cutoutStatus': 'ready' if cutout else state, 'cutoutUrl': url(cutout),
-                        'width': (tidy or cutout or {}).get('width', 0),
-                        'height': (tidy or cutout or {}).get('height', 0)}
+                        'width': (display or cutout or {}).get('width', 0),
+                        'height': (display or cutout or {}).get('height', 0)}
     else:
         out.update(localId=local_id, boardUrl=url(result.get('board')),
                    thumbnailUrl=url(result.get('thumb')), cutoutStatus=state)
@@ -79,7 +80,8 @@ async def current_presentation(app, conn, job, *, user_id, role, source_asset_id
         if not asset:
             continue
         row = await repo.get_asset_for_user(conn, user_id, asset['assetId'])
-        if not row or row.get('source') != 'derived' or row.get('r2_key') != asset.get('key'):
+        if (not row or row.get('source') != 'derived' or row.get('r2_key') != asset.get('key')
+                or row.get('deleted_at')):
             result.pop(part, None)
     if result.get('state') == 'ready' and not result.get('tidy' if role == 'product' else 'board'):
         result['state'] = 'failed'
@@ -170,21 +172,30 @@ async def apply_promotions(app, conn, job, result, *, targets=None):
             if current and current != ids:
                 continue
             project_cutout_id = None
-            for part in ('cutout', 'tidy'):
+            project_board_id = None
+            digest = job['payload']['sources'][0]['hash']
+            tidy_id = product_tidy.asset_id(job['user_id'], pid, digest)
+            for part in ('cutout', 'board', 'tidy'):
                 source = result.get(part)
                 if not source:
                     continue
-                digest = job['payload']['sources'][0]['hash']
-                aid = (product_tidy.asset_id(job['user_id'], pid, digest) if part == 'tidy' else
+                aid = (tidy_id if part == 'tidy' else
+                       product_tidy.board_asset_id(job['user_id'], pid, digest) if part == 'board' else
                        str(uuid.uuid5(uuid.NAMESPACE_URL, f'{job["user_id"]}:{pid}:canonical-front:{digest}:{VERSION}')))
                 data = await asyncio.to_thread(app.state.r2.get_bytes, source['key'])
                 meta = {**source['metadata'], 'sourceAssetId': ids[0], 'sourceAssetIds': ids,
                         'sourceHash': digest, 'view': 'Front'}
                 if part == 'tidy':
                     meta['cutoutAssetId'] = project_cutout_id
+                    if project_board_id:
+                        meta['boardAssetId'] = project_board_id
+                elif part == 'board':
+                    meta.update(tidyAssetId=tidy_id, cutoutAssetId=project_cutout_id)
                 copied = await store(app, conn, job, part, data, meta, project_id=pid, asset_id=aid)
                 if part == 'cutout':
                     project_cutout_id = copied['assetId']
+                elif part == 'board':
+                    project_board_id = copied['assetId']
         else:
             item_id = target.get('matchingItemId')
             if not item_id:
@@ -434,6 +445,10 @@ async def run(app, job):
         async with pool.connection() as conn:
             result = {'state': 'ready', 'cutout': canonical}
             if payload['role'] == 'product':
+                board = await asyncio.to_thread(matching_cutout.encode_board_cutout, tidy_png)
+                board_width, board_height = await asyncio.to_thread(product_tidy._png_size, board)
+                result['board'] = await store(app, conn, job, 'board', board,
+                    {**meta, 'canonicalType': 'product_tidy_board', 'width': board_width, 'height': board_height})
                 result['tidy'] = await store(app, conn, job, 'tidy', tidy_png, meta)
             else:
                 grid_bytes = await asyncio.to_thread(garment_grid.compose_garment_grid,

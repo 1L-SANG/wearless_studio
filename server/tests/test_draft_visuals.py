@@ -75,7 +75,16 @@ def test_visual_response_uses_existing_front_contract():
     result = dv.presentation(app(), {'id': 'job', 'status': 'done', 'result': {'state': 'ready',
         'tidy': {'key': 'tidy', 'width': 768, 'height': 1024}}}, role='product', source_asset_ids=[SOURCE])
     assert result['front']['tidyUrl'] == 'https://asset.test/tidy'
+    assert (result['front']['width'], result['front']['height']) == (768, 1024)
     assert result['sourceAssetIds'] == [SOURCE]
+
+
+def test_product_visual_response_prefers_board_url_and_its_dimensions():
+    result = dv.presentation(app(), {'id': 'job', 'status': 'done', 'result': {'state': 'ready',
+        'tidy': {'key': 'tidy', 'width': 768, 'height': 1024},
+        'board': {'key': 'board', 'width': 341, 'height': 512}}}, role='product', source_asset_ids=[SOURCE])
+    assert result['front']['tidyUrl'] == 'https://asset.test/board'
+    assert (result['front']['width'], result['front']['height']) == (341, 512)
 
 def test_retry_pusher_never_reissues_draft_paid_work():
     from app.workers.sam_retry_pusher import SamRetryPusher
@@ -157,6 +166,8 @@ def test_worker_and_lease_recovery_never_repeat_paid_calls(monkeypatch, fail_pro
     stream = io.BytesIO()
     Image.new('RGBA', (30, 40), (140, 20, 30, 200)).save(stream, 'PNG')
     data = stream.getvalue()
+    from test_product_tidy import padded_tidy_png
+    tidy = padded_tidy_png()
     storage = {'raw': data, 'canonical': data}
     source = {'id': SOURCE, 'key': 'raw', 'hash': hashlib.sha256(data).hexdigest()}
     state = {'id': TOKEN, 'user_id': UID, 'project_id': None, 'lease_token': 'lease-1', 'status': 'running',
@@ -194,13 +205,23 @@ def test_worker_and_lease_recovery_never_repeat_paid_calls(monkeypatch, fail_pro
     async def render(settings, cut, *, transparent, on_generated):
         calls['qwen'] += 1
         if fail_provider: raise RuntimeError('ambiguous provider response')
-        await on_generated(data)
-        return data
+        await on_generated(tidy)
+        return tidy
     monkeypatch.setattr(dv.fal_cutout, 'segment_garment', segment)
     monkeypatch.setattr(dv.qwen_flatlay, 'render', render)
     monkeypatch.setattr(dv.matching_cutout, 'cutout_color_agrees', lambda *_: (True, {}))
     asyncio.run(dv.run(instance, deepcopy(state)))
     assert state['result']['state'] == ('failed' if fail_provider else 'ready')
+    if not fail_provider:
+        result = state['result']
+        assert storage[result['tidy']['key']] == tidy
+        assert (result['tidy']['width'], result['tidy']['height']) == (768, 1024)
+        with Image.open(io.BytesIO(storage[result['board']['key']])) as board:
+            assert board.size == (341, 512)
+            assert board.getchannel('A').getbbox() == (0, 0, 341, 512)
+        assert (result['board']['width'], result['board']['height']) == (341, 512)
+        assert result['board']['metadata']['purpose'] == 'draft_visuals'
+        assert result['board']['metadata']['draftVisualJobId'] == TOKEN
     state.update(status='running', lease_token='lease-2')
     asyncio.run(dv.run(instance, deepcopy(state)))
     assert calls == {'sam': 1, 'qwen': 1}

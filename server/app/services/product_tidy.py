@@ -16,7 +16,7 @@ from PIL import Image
 from app import image_usage, repo
 from app.agents import mannequin
 from app.r2 import derived_key
-from app.services import canonical_reference, qwen_flatlay, sam_retry
+from app.services import canonical_reference, matching_cutout, qwen_flatlay, sam_retry
 from app.services.segmentation_types import SamUnavailable
 
 log = logging.getLogger(__name__)
@@ -35,6 +35,11 @@ def preprocess_key(project_id: str, product: dict, *, enabled: bool) -> str | No
 def asset_id(user_id: str, project_id: str, source_hash: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL,
                          f"{user_id}:{project_id}:{source_hash}:{ALGORITHM_VERSION}"))
+
+
+def board_asset_id(user_id: str, project_id: str, source_hash: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL,
+                         f"{asset_id(user_id, project_id, source_hash)}:board"))
 
 
 def source_is_bound(metadata: dict, source_id: str) -> bool:
@@ -194,8 +199,26 @@ async def produce(app, job: dict, *, source: dict, cutout: dict) -> dict:
                 await asyncio.to_thread(r2.put_bytes, key, image, "image/png")
             except Exception:
                 return {**detail, "state": "unavailable", "reason": "storage_unavailable"}
+        # Keep the full canvas at its existing identity for mannequin references.
+        # Persist it first so a board/storage/DB retry never repeats Qwen.
+        board = await asyncio.to_thread(matching_cutout.encode_board_cutout, image)
+        board_width, board_height = await asyncio.to_thread(_png_size, board)
+        bid = board_asset_id(uid, pid, source["hash"])
+        board_key = derived_key(uid, pid, bid, "png")
+        board_meta = {**metadata, "canonicalType": "product_tidy_board", "tidyAssetId": aid,
+                      "r2Key": board_key, "width": board_width, "height": board_height}
+        metadata["boardAssetId"] = bid
+        try:
+            if not await asyncio.to_thread(r2.head, board_key):
+                await asyncio.to_thread(r2.put_bytes, board_key, board, "image/png")
+        except Exception:
+            return {**detail, "state": "unavailable", "reason": "storage_unavailable"}
         try:
             async with pool.connection() as conn:
+                await repo.create_asset(conn, asset_id=bid, user_id=uid, project_id=pid,
+                                        source="derived", bucket=app.state.settings.r2_bucket,
+                                        key=board_key, mime="image/png", size=len(board),
+                                        original_filename=None, metadata=board_meta)
                 await repo.create_asset(conn, asset_id=aid, user_id=uid, project_id=pid,
                                         source="derived", bucket=app.state.settings.r2_bucket,
                                         key=key, mime="image/png", size=len(image),
@@ -261,6 +284,15 @@ async def visuals(conn, r2, settings, *, user_id: str, project_id: str, product:
                                       source_id=source["id"], source_hash=source["hash"])
         meta = (row or {}).get("metadata") or {}
         if row:
+            if meta.get("boardAssetId"):
+                board = await repo.get_asset_for_user(conn, user_id, meta["boardAssetId"])
+                board_meta = (board or {}).get("metadata") or {}
+                if (board and board.get("source") == "derived"
+                        and board.get("id") == board_asset_id(user_id, project_id, source["hash"])
+                        and board.get("r2_key") and not board.get("deleted_at")
+                        and board_meta.get("canonicalType") == "product_tidy_board"
+                        and board_meta.get("tidyAssetId") == row["id"]):
+                    row, meta = board, board_meta
             front.update(tidyStatus="ready", tidyUrl=r2.public_url(row["r2_key"]),
                          width=meta.get("width") or 0, height=meta.get("height") or 0)
         else:
