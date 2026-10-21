@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  CARE_COPY_LIBRARY,
   CARE_LABEL_SENTENCE,
   DEFAULT_INFO_TEMPLATE,
   FAQ_ITEMS_MAX,
@@ -384,6 +385,90 @@ test('careFamilyFor does not false-match 모달/기모 as knit', () => {
   assert.equal(careFamilyFor([{ name: '모달', ratio: 100 }]), 'poly');
   assert.notEqual(careFamilyFor([{ name: '기모 원단' }]), 'knit');
   assert.equal(careFamilyFor([{ name: '캐시미어' }]), 'knit');
+});
+
+const CARE_CONTEXT_CASES = [
+  ['leather', { clothingType: 'outer', subCategory: 'jacket', productName: '에코 레더 자켓', materials: [{ name: '폴리우레탄', ratio: 100 }] }],
+  ['leather', { clothingType: 'outer', subCategory: 'jacket', productName: '싱글 자켓', materials: [{ name: '폴리우레탄', ratio: 100 }] }],
+  ['cotton', { clothingType: 'top', subCategory: 'tshirt', productName: '스판 티셔츠', materials: [{ name: '면', ratio: 95 }, { name: '폴리우레탄', ratio: 5 }] }],
+  ['suede', { clothingType: 'outer', subCategory: 'jacket', productName: '스웨이드 트러커 자켓', materials: [{ name: '폴리에스터', ratio: 100 }] }],
+  ['padding', { clothingType: 'outer', subCategory: 'padding', productName: '경량 다운 점퍼', materials: [{ name: '나일론', ratio: 100 }] }],
+  ['fleece', { clothingType: 'outer', subCategory: 'jacket', productName: '보아 플리스 집업', materials: [{ name: '폴리에스터', ratio: 100 }] }],
+  ['windbreaker', { clothingType: 'outer', subCategory: 'jacket', productName: '나일론 바람막이', materials: [{ name: '나일론', ratio: 100 }] }],
+  ['tracktop', { clothingType: 'outer', subCategory: 'jacket', productName: '트랙 자켓', materials: [{ name: '폴리에스터', ratio: 100 }] }],
+  ['cotton', { clothingType: 'top', subCategory: 'tshirt', productName: '코튼 저지 티셔츠', materials: [{ name: '면', ratio: 100 }] }],
+  ['denim', { clothingType: 'outer', subCategory: 'jacket', productName: '워싱 트러커 자켓', customCategory: '데님 자켓', materials: [{ name: '면', ratio: 100 }] }],
+  ['denim', { clothingType: 'bottom', subCategory: 'jeans', productName: '와이드 팬츠', materials: [{ name: '면', ratio: 100 }] }],
+  ['knit', { clothingType: 'outer', subCategory: 'cardigan', productName: '라운드 가디건', materials: [{ name: '면', ratio: 100 }] }],
+  ['generic', { clothingType: 'outer', subCategory: 'coat', productName: '울 블렌드 코트', materials: [{ name: '울', ratio: 70 }, { name: '폴리에스터', ratio: 30 }] }],
+  ['cotton', { clothingType: 'top', subCategory: 'shirt', productName: '옥스포드 셔츠', materials: [{ name: '면', ratio: 100 }] }],
+];
+
+for (const [family, ctx] of CARE_CONTEXT_CASES) {
+  test(`care context selects ${family} for ${ctx.productName}`, () => {
+    assert.equal(careFamilyFor(ctx), family);
+    const info = defaultInfoFor('care', ctx);
+    assert.equal(info.family, family, 'default uses garment context');
+    assert.equal(info.text, [...CARE_COPY_LIBRARY[family].lines, CARE_LABEL_SENTENCE].join('\n'));
+    const block = buildInfoBlock('care', {}, ctx, seqId());
+    assert.deepEqual(block.info, info, 'builder fallback uses the same garment context');
+  });
+}
+
+const CARE_REVIEW_REGRESSION_CASES = [
+  ['cotton', { clothingType: 'top', subCategory: 'shirt', productName: '덤블워싱 코튼 반팔 셔츠', materials: [{ name: '면', ratio: 100 }] }],
+  ['denim', { clothingType: 'bottom', subCategory: 'jeans', productName: '덤블워싱 와이드 데님 팬츠', materials: [{ name: '면', ratio: 100 }] }],
+  ['fleece', { clothingType: 'outer', subCategory: 'jacket', productName: '덤블 플리스 자켓', materials: [{ name: '폴리에스터', ratio: 100 }] }],
+  ['windbreaker', { clothingType: 'outer', subCategory: 'windbreaker', productName: '라이트 후드 집업', materials: [{ name: '나일론', ratio: 100 }] }],
+  ['padding', { clothingType: 'outer', subCategory: null, customCategory: '다운 점퍼', productName: '경량 다운 점퍼', materials: [{ name: '나일론', ratio: 100 }] }],
+  ['padding', { clothingType: 'outer', subCategory: null, productName: '구스 다운 점퍼', materials: [{ name: '나일론', ratio: 100 }] }],
+  ['cotton', { clothingType: 'top', subCategory: 'shirt', productName: '톤다운 컬러 셔츠', materials: [{ name: '면', ratio: 100 }] }],
+];
+
+for (const [family, ctx] of CARE_REVIEW_REGRESSION_CASES) {
+  test(`care review regression selects ${family} for ${ctx.productName}`, () => {
+    assert.equal(careFamilyFor(ctx), family);
+  });
+}
+
+test('care context honors PU thresholds and garment signal priority', () => {
+  assert.equal(careFamilyFor({ materials: [{ name: ' PU ', ratio: 50 }] }), 'leather');
+  assert.equal(careFamilyFor({ materials: [{ name: 'polyurethane', ratio: 50 }] }), 'leather');
+  assert.equal(careFamilyFor({ materials: [{ name: '폴리우레탄', ratio: 49 }] }), 'poly');
+  assert.equal(careFamilyFor({ productName: '스웨이드 레더 자켓', materials: [{ name: '폴리우레탄', ratio: 100 }] }), 'suede');
+  assert.equal(careFamilyFor({ subCategory: 'padding', productName: '레더 패딩' }), 'leather');
+  assert.equal(careFamilyFor({ clothingType: 'outer', subCategory: 'knit', materials: [{ name: '울' }] }), 'knit');
+  assert.equal(careFamilyFor({ productName: '코튼 스웨터', materials: [{ name: '면' }] }), 'knit');
+});
+
+test('every care family has one to three lines, no em dashes and a care-label reminder', () => {
+  assert.equal(Object.keys(CARE_COPY_LIBRARY).length, 13);
+  for (const [family, entry] of Object.entries(CARE_COPY_LIBRARY)) {
+    assert.ok(entry.lines.length >= 1 && entry.lines.length <= 3, `${family}: line count`);
+    assert.ok(![entry.label, ...entry.lines].join('\n').includes('\u2014'), `${family}: no em dash`);
+    const info = defaultInfoFor('care', { materials: [{ name: entry.label }] });
+    assert.ok(info.text.includes(CARE_LABEL_SENTENCE), `${family}: default reminder`);
+    const block = buildInfoBlock('care', { family, text: entry.lines.join('\n') }, CTX, seqId());
+    assert.ok(block.info.text.includes(CARE_LABEL_SENTENCE), `${family}: selected family reminder`);
+  }
+});
+
+test('template enriches an old care anchor with padding guidance from context', () => {
+  const doc = baseDoc();
+  const { blocks } = applyInfoTemplate(doc, { ...CTX, subCategory: 'padding' }, seqId());
+  const care = blocks.find((b) => b.kind === 'care');
+  assert.equal(care.id, doc[2].id, 'care anchor is enriched in place');
+  assert.equal(care.info.family, 'padding');
+  assert.ok(care.info.text.includes('압축팩'));
+  assert.ok(care.info.text.includes(CARE_LABEL_SENTENCE));
+});
+
+test('new garment context preserves saved care family and text', () => {
+  const doc = baseDoc();
+  const info = { family: 'cotton', text: `직접 작성한 세탁 안내\n${CARE_LABEL_SENTENCE}` };
+  doc[2] = { ...doc[2], info };
+  const { blocks } = applyInfoTemplate(doc, { ...CTX, subCategory: 'padding' }, seqId());
+  assert.deepEqual(blocks.find((b) => b.kind === 'care').info, info);
 });
 
 test('long unbroken text grows block height (wrap-aware estimation)', () => {
