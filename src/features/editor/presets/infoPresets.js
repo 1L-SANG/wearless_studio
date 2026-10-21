@@ -79,9 +79,9 @@ export function careFamilyFor(materials) {
     if (/스웨이드|스웨드|suede/i.test(allText)) return 'suede';
     if (/레더|가죽|leather|램스킨|lambskin/i.test(allText)
       || matList.some((m) => /폴리우레탄|polyurethane|^\s*pu\s*$/i.test(m?.name || '') && m?.ratio >= 50)) return 'leather';
-    if (subCategory === 'padding' || /패딩|덕다운|구스다운|거위털|오리털|웰론|puffer/i.test(allText)) return 'padding';
-    if (/플리스|후리스|fleece|보아|뽀글이|덤블|쉐르파|sherpa/i.test(allText)) return 'fleece';
-    if (/윈드브레이커|바람막이|windbreaker|아노락|anorak/i.test(allText)) return 'windbreaker';
+    if (subCategory === 'padding' || /패딩|덕\s*다운|구스\s*다운|거위털|오리털|웰론|puffer|다운\s*(점퍼|자켓|재킷|조끼|베스트|코트|파카)/i.test(allText)) return 'padding';
+    if (/플리스|후리스|fleece|보아|뽀글이|덤블(?!\s?워싱)|쉐르파|sherpa/i.test(allText)) return 'fleece';
+    if (subCategory === 'windbreaker' || /윈드브레이커|바람막이|windbreaker|아노락|anorak/i.test(allText)) return 'windbreaker';
     if (/트랙\s?탑|트랙\s?자켓|트랙\s?재킷|track\s?(top|jacket)/i.test(allText)) return 'tracktop';
     if (subCategory === 'jeans' || /데님|denim|청자켓|청재킷|청바지|진\s?자켓|jean/i.test(allText)) return 'denim';
     if (subCategory === 'knit' || subCategory === 'cardigan' || /니트|가디건|스웨터|knit|cardigan|sweater/i.test(nameText)) return 'knit';

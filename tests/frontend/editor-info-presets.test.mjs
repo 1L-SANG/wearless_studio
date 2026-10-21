@@ -415,6 +415,22 @@ for (const [family, ctx] of CARE_CONTEXT_CASES) {
   });
 }
 
+const CARE_REVIEW_REGRESSION_CASES = [
+  ['cotton', { clothingType: 'top', subCategory: 'shirt', productName: '덤블워싱 코튼 반팔 셔츠', materials: [{ name: '면', ratio: 100 }] }],
+  ['denim', { clothingType: 'bottom', subCategory: 'jeans', productName: '덤블워싱 와이드 데님 팬츠', materials: [{ name: '면', ratio: 100 }] }],
+  ['fleece', { clothingType: 'outer', subCategory: 'jacket', productName: '덤블 플리스 자켓', materials: [{ name: '폴리에스터', ratio: 100 }] }],
+  ['windbreaker', { clothingType: 'outer', subCategory: 'windbreaker', productName: '라이트 후드 집업', materials: [{ name: '나일론', ratio: 100 }] }],
+  ['padding', { clothingType: 'outer', subCategory: null, customCategory: '다운 점퍼', productName: '경량 다운 점퍼', materials: [{ name: '나일론', ratio: 100 }] }],
+  ['padding', { clothingType: 'outer', subCategory: null, productName: '구스 다운 점퍼', materials: [{ name: '나일론', ratio: 100 }] }],
+  ['cotton', { clothingType: 'top', subCategory: 'shirt', productName: '톤다운 컬러 셔츠', materials: [{ name: '면', ratio: 100 }] }],
+];
+
+for (const [family, ctx] of CARE_REVIEW_REGRESSION_CASES) {
+  test(`care review regression selects ${family} for ${ctx.productName}`, () => {
+    assert.equal(careFamilyFor(ctx), family);
+  });
+}
+
 test('care context honors PU thresholds and garment signal priority', () => {
   assert.equal(careFamilyFor({ materials: [{ name: ' PU ', ratio: 50 }] }), 'leather');
   assert.equal(careFamilyFor({ materials: [{ name: 'polyurethane', ratio: 50 }] }), 'leather');
