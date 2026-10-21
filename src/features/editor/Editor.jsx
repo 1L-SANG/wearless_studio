@@ -1038,6 +1038,8 @@ function buildInfoCtx({ productName, clothingType, catalogs, product, analysis, 
   return {
     productName,
     clothingType,
+    subCategory: analysis?.subCategory,
+    customCategory: analysis?.customCategory,
     measurementSchema: catalogs?.measurementSchema,
     measurementLabels: catalogs?.measurementLabels,
     measurements: product?.measurements,

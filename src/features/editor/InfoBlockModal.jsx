@@ -204,7 +204,7 @@ function CareForm({ info, setInfo, ctx }) {
   const pickFamily = (family) => setInfo((f) => ({ ...f, family, text: [...CARE_COPY_LIBRARY[family].lines, CARE_LABEL_SENTENCE].join('\n') }));
   return (
     <>
-      <Field label="소재 유형" hint="고르면 표준 관리 문구로 다시 채워요. 아래에서 자유롭게 수정하세요.">
+      <Field label="옷·소재 유형" hint="고르면 표준 관리 문구로 다시 채워요. 아래에서 자유롭게 수정하세요.">
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {Object.entries(CARE_COPY_LIBRARY).filter(([k]) => k !== 'generic').map(([key, v]) => (
             <Chip key={key} on={info.family === key} onClick={() => pickFamily(key)}>{v.label}</Chip>

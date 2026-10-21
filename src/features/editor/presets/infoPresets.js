@@ -54,15 +54,40 @@ export const CARE_LABEL_SENTENCE = '세탁 전 실제 상품의 케어라벨을 
    지어내지 않는다). 마지막 케어라벨 문장은 어떤 경로로도 빠지지 않는다. ---- */
 export const CARE_COPY_LIBRARY = {
   cotton: { label: '면', lines: ['면 소재 특성상 세탁 후 약간의 수축이 생길 수 있어요.', '단독 찬물 세탁을 권장하며, 건조기 사용은 피해주세요.', '프린트가 있다면 뒤집어서 세탁해주세요.'] },
-  knit: { label: '울·니트', lines: ['니트 소재는 드라이클리닝 또는 울 전용 세제 손세탁을 권장해요.', '비틀어 짜지 말고 눌러서 물기를 제거한 뒤 뉘어서 건조해주세요.', '보풀은 소재 특성으로 불량이 아니에요.'] },
+  knit: { label: '니트·가디건', lines: ['뜨거운 물은 피하고, 중성세제로 손세탁하거나 드라이클리닝해주세요.', '젖은 채 걸어두면 늘어나니 평평하게 눕혀 말리고, 접어서 보관해주세요.', '보풀은 소재 특성으로 불량이 아니에요.'] },
   acrylic: { label: '아크릴', lines: ['아크릴 소재는 30도 이하 미지근한 물에 단독 세탁을 권장해요.', '건조기 사용 시 수축·변형이 생길 수 있으니 자연 건조해주세요.'] },
   poly: { label: '폴리·나일론', lines: ['찬물 단독 세탁 또는 세탁망 사용을 권장해요.', '다림질이 필요하면 낮은 온도로 천을 덧대어주세요.'] },
-  denim: { label: '데님', lines: ['데님 특성상 초기 세탁 시 물빠짐이 있을 수 있어 단독 세탁해주세요.', '뒤집어서 세탁하면 색 유지에 도움이 돼요.'] },
+  denim: { label: '데님', lines: ['데님 특성상 물빠짐으로 다른 옷에 이염될 수 있어 단독 세탁해주세요.', '잦은 세탁은 피하고, 뒤집어서 세탁하면 색 유지에 도움이 돼요.', '직사광선을 피해 보관해주세요.'] },
+  leather: { label: '레더', lines: ['물세탁은 피하고, 오염은 마른 천이나 가죽 전용 클리너로 가볍게 닦아주세요.', '비에 젖으면 마른 천으로 물기를 닦고 그늘에서 말려주세요.', '비닐 커버는 습기가 차니 통기성 있는 커버를 씌워 보관해주세요.'] },
+  suede: { label: '스웨이드', lines: ['가죽 크림 대신 스웨이드 전용 브러시로 결을 따라 부드럽게 빗어주세요.', '물과 습기에 약하니 젖지 않게 주의하고, 습기가 적은 곳에 보관해주세요.'] },
+  padding: { label: '패딩', lines: ['세탁 후에는 평평하게 눕혀서 말려주세요.', '압축팩에 오래 두면 충전재 복원력이 떨어지니 넉넉하게 보관해주세요.'] },
+  fleece: { label: '플리스', lines: ['겉면 마찰을 줄이도록 뒤집어서 세탁해주세요.', '직사광선을 피해 그늘에서 말려주세요.', '뭉친 털은 의류용 브러시로 가볍게 빗어 정리해주세요.'] },
+  windbreaker: { label: '바람막이', lines: ['미지근한 물에 가볍게 세탁해주세요.', '직사광선에 오래 두면 변색될 수 있어 그늘에서 말려주세요.'] },
+  tracktop: { label: '트랙탑', lines: ['섬유유연제는 원단 기능을 떨어뜨릴 수 있어 사용하지 말아주세요.', '뒤집어서 세탁해주세요.', '소매와 밑단 시보리는 접힌 채로 두지 말고 펴서 보관해주세요.'] },
   functional: { label: '기능성', lines: ['기능성 원단은 섬유유연제 사용 시 기능이 저하될 수 있어요.', '찬물 세탁 후 자연 건조를 권장해요.'] },
   generic: { label: '일반', lines: ['소재와 상품 특성에 따라 관리 방법이 달라질 수 있어요.'] },
 };
 
+// 옷 종류 신호를 소재보다 먼저 본다. 규칙 기반이며 AI 아님(PRD §10.14).
 export function careFamilyFor(materials) {
+  if (materials && !Array.isArray(materials) && typeof materials === 'object') {
+    const { clothingType, subCategory, customCategory, productName } = materials;
+    const matList = materials.materials || [];
+    const nameText = [productName, customCategory].join(' ');
+    const matText = matList.map((m) => (m && m.name) || '').join(' ');
+    const allText = nameText + ' ' + matText;
+    if (/스웨이드|스웨드|suede/i.test(allText)) return 'suede';
+    if (/레더|가죽|leather|램스킨|lambskin/i.test(allText)
+      || matList.some((m) => /폴리우레탄|polyurethane|^\s*pu\s*$/i.test(m?.name || '') && m?.ratio >= 50)) return 'leather';
+    if (subCategory === 'padding' || /패딩|덕다운|구스다운|거위털|오리털|웰론|puffer/i.test(allText)) return 'padding';
+    if (/플리스|후리스|fleece|보아|뽀글이|덤블|쉐르파|sherpa/i.test(allText)) return 'fleece';
+    if (/윈드브레이커|바람막이|windbreaker|아노락|anorak/i.test(allText)) return 'windbreaker';
+    if (/트랙\s?탑|트랙\s?자켓|트랙\s?재킷|track\s?(top|jacket)/i.test(allText)) return 'tracktop';
+    if (subCategory === 'jeans' || /데님|denim|청자켓|청재킷|청바지|진\s?자켓|jean/i.test(allText)) return 'denim';
+    if (subCategory === 'knit' || subCategory === 'cardigan' || /니트|가디건|스웨터|knit|cardigan|sweater/i.test(nameText)) return 'knit';
+    if (clothingType === 'outer' && /울|wool|니트|캐시미어|앙고라|모헤어|양모/i.test(matText)) return 'generic';
+    return careFamilyFor(matList);
+  }
   const names = (materials || []).map((m) => (m && m.name) || '').join(' ');
   if (/면|코튼|cotton/i.test(names)) return 'cotton';
   // '모' 단독 매칭 금지 — '모달'(레이온)·'기모'가 니트로 오분류되고 poly 분기가 죽는다(리뷰 확정 결함)
@@ -165,7 +190,7 @@ export function defaultInfoFor(type, ctx = {}) {
         f.key === 'care' ? '케어라벨 참조' : '' })) };
     }
     case 'care': {
-      const family = careFamilyFor(ctx.materials);
+      const family = careFamilyFor(ctx);
       const lines = [...CARE_COPY_LIBRARY[family].lines, CARE_LABEL_SENTENCE];
       return { family, text: lines.join('\n') };
     }
@@ -273,7 +298,7 @@ function buildCare(info, ctx, idFn) {
     t(60, 56, 500, 40, '세탁 안내', { size: 24, ...HEAD }),
     t(60, 104, 880, bodyH, lines.join('\n'), { size: 15, color: '#0e0d14', lineHeight: 26, list: 'bullet' }),
   ];
-  return { id: idFn('b'), name: '세탁 안내', kind: 'care', auto: true, bg: '#f5f5f5', h: 104 + bodyH + 50, info: { family: info.family || careFamilyFor(ctx.materials), text }, elements: els };
+  return { id: idFn('b'), name: '세탁 안내', kind: 'care', auto: true, bg: '#f5f5f5', h: 104 + bodyH + 50, info: { family: info.family || careFamilyFor(ctx), text }, elements: els };
 }
 
 function buildPolicy(info, ctx, idFn) {
