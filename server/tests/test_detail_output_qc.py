@@ -6,6 +6,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import logging
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -236,6 +237,51 @@ def test_claude_failure_never_falls_back_to_gpt(monkeypatch, failed):
     assert result["decision"] == "UNKNOWN" and result["unknownCause"] == "provider_error"
     assert result["retryAfterSeconds"] == 3
     assert calls == (["core"] if failed == "core" else ["core", "specialist"])
+
+
+@pytest.mark.parametrize("stage", ["core", "specialist"])
+@pytest.mark.parametrize("provider", ["claude", "gpt"])
+@pytest.mark.parametrize("with_diagnostics", [False, True])
+def test_judge_failure_logs_safe_diagnostics_without_changing_result(
+    monkeypatch, caplog, stage, provider, with_diagnostics,
+):
+    from app.agents import detail_output_qc as qc
+
+    diagnostics = dict(status_code=400, provider_error_type="invalid_request_error",
+                       provider_error_message="Unsupported image format.",
+                       provider_request_id="req-diagnostic") if with_diagnostics else {}
+    error = qc.vision_llm.VisionError("private exception text", unknown_cause="invalid_input", **diagnostics)
+
+    async def judge(*args, **kwargs):
+        current = "core" if is_core_call(qc, args) else "specialist"
+        if current == stage:
+            raise error
+        return primary_response(qc, response(qc))
+
+    monkeypatch.setattr(qc.vision_llm, f"_call_{provider}", judge)
+    model = "claude-sonnet-5-5" if provider == "claude" else "gpt-5.4-2026-03-05"
+    config = settings(model_detail_core=model, model_detail_specialist=model,
+                      anthropic_api_key="test-claude-key", detail_qc_claude_effort="xhigh")
+    with caplog.at_level(logging.WARNING, logger="app.agents.detail_output_qc"):
+        result = asyncio.run(qc.verdict(config, [picture()], picture("blue")))
+    assert result["decision"] == "UNKNOWN" and result["unknownCause"] == "invalid_input"
+    assert result["errorCode"] == ("judge_unavailable_or_invalid" if stage == "core"
+                                   else "specialist_unavailable_or_invalid")
+    assert result["specialist"]["status"] == ("NOT_RUN" if stage == "core" else "UNKNOWN")
+    if stage == "specialist":
+        assert result["specialist"]["errorCode"] == "VisionError"
+    records = [record for record in caplog.records if record.name == "app.agents.detail_output_qc"]
+    assert len(records) == 1
+    text = records[0].getMessage()
+    fields = ("status=400", "error_type=invalid_request_error", "request_id=req-diagnostic",
+              "message=Unsupported image format.") if with_diagnostics else (
+                  "status=None", "error_type=None", "request_id=None", "message=None")
+    for field in (f"stage={stage}", f"provider={provider}", f"requested_model={model}",
+                  "error=VisionError", "unknown_cause=invalid_input", *fields):
+        assert field in text
+    assert all(value not in text for value in ("private exception text", config.anthropic_api_key,
+               config.openai_api_key, qc.build_prompt(1, None, "front")))
+    assert records[0].exc_info is None
 
 
 def test_claude_judgment_still_requires_complete_valid_server_gates(monkeypatch):

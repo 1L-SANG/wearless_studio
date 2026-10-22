@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import math
 from io import BytesIO
 from pathlib import Path
@@ -20,6 +21,8 @@ from ..openai_key_fallback import has_openai_api_key
 from . import vision_llm
 from .gemini_image import InlineImage
 
+
+logger = logging.getLogger(__name__)
 
 POLICY_VERSION = "detail-output-qc-v6"
 GATES = (
@@ -416,7 +419,11 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
             # when the specialist is unavailable or uncertain.
             core_failure = {**out, "decision": "FAIL", "gates": gates}
     except Exception as exc:
-        # Do not log provider exception text: it can include sensitive request data.
+        # Log only allowlisted provider diagnostic fields, never exception text.
+        logger.warning("detail QC stage=core provider=%s requested_model=%s error=%s unknown_cause=%s status=%s error_type=%s request_id=%s message=%s",
+                       out["provider"], out["requestedModel"], type(exc).__name__, _failure_cause(exc),
+                       getattr(exc, "status_code", None), getattr(exc, "provider_error_type", None),
+                       getattr(exc, "provider_request_id", None), getattr(exc, "provider_error_message", None))
         out.update(returnedModel=metadata.get("returned_model"), usage=metadata.get("usage"),
                    sentImageHashes=metadata.get("sent_image_hashes", []))
         return _unknown(out, "judge_unavailable_or_invalid", _failure_cause(exc),
@@ -465,6 +472,10 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
                           usage=specialist_metadata.get("usage"), sentImageHashes=specialist_metadata.get("sent_image_hashes", []),
                           errorCode=type(exc).__name__)
         cause = "invalid_response" if isinstance(exc, (ValueError, TypeError)) else _failure_cause(exc)
+        logger.warning("detail QC stage=specialist provider=%s requested_model=%s error=%s unknown_cause=%s status=%s error_type=%s request_id=%s message=%s",
+                       specialist["provider"], specialist["requestedModel"], type(exc).__name__, cause,
+                       getattr(exc, "status_code", None), getattr(exc, "provider_error_type", None),
+                       getattr(exc, "provider_request_id", None), getattr(exc, "provider_error_message", None))
         return core_failure or _unknown(out, "specialist_unavailable_or_invalid", cause,
                                        retry_after_seconds=getattr(exc, "retry_after_seconds", None))
 

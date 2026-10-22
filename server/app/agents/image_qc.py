@@ -417,8 +417,10 @@ async def verdict(
         except (vision_llm.VisionError, httpx.HTTPError, asyncio.TimeoutError, ValueError, OSError) as exc:
             cause = ("timeout" if isinstance(exc, (asyncio.TimeoutError, httpx.TimeoutException))
                      else "invalid_input" if isinstance(exc, (ValueError, OSError)) else "provider_error")
-            logger.warning("image QC error=%s unknown_cause=%s elapsed_seconds=%.2f",
-                           type(exc).__name__, getattr(exc, "unknown_cause", cause), time.monotonic() - started)
+            logger.warning("image QC error=%s unknown_cause=%s elapsed_seconds=%.2f status=%s error_type=%s request_id=%s message=%s",
+                           type(exc).__name__, getattr(exc, "unknown_cause", cause), time.monotonic() - started,
+                           getattr(exc, "status_code", None), getattr(exc, "provider_error_type", None),
+                           getattr(exc, "provider_request_id", None), getattr(exc, "provider_error_message", None))
     if raw is None:
         raw, _provider = await analyze_with_fallback(
             settings, prompt, images, schema, timeout_seconds=settings.background_ai_timeout_seconds,

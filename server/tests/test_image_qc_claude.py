@@ -226,6 +226,29 @@ def test_claude_wall_timeout_cancels_call_and_falls_back(monkeypatch):
     assert out["mismatches"] == ["wrong logo"]
 
 
+def test_claude_failure_logs_only_allowed_diagnostics(monkeypatch, caplog):
+    error = vision_llm.VisionError("private exception text", unknown_cause="invalid_input",
+        status_code=400, provider_error_type="invalid_request_error",
+        provider_error_message="Unsupported image format.", provider_request_id="req-diagnostic")
+    monkeypatch.setattr(vision_llm, "_call_claude", AsyncMock(side_effect=error))
+    monkeypatch.setattr(iq, "analyze_with_fallback", AsyncMock(return_value=(RAW, "gpt")))
+    settings = _settings()
+    with caplog.at_level(logging.WARNING, logger="app.agents.image_qc"):
+        out = asyncio.run(iq.verdict(settings, [_image()], _image(),
+                                   before_image=_image(), edit_goal="private edit goal"))
+    records = [record for record in caplog.records if record.name == "app.agents.image_qc"]
+    assert len(records) == 1
+    text = records[0].getMessage()
+    for field in ("error=VisionError", "unknown_cause=invalid_input", "elapsed_seconds=",
+                  "status=400", "error_type=invalid_request_error", "request_id=req-diagnostic",
+                  "message=Unsupported image format."):
+        assert field in text
+    assert all(value not in text for value in ("private exception text", "private edit goal",
+               settings.anthropic_api_key, iq.build_prompt(1)))
+    assert records[0].exc_info is None
+    assert out["verdict"] == "retry"
+
+
 @pytest.mark.parametrize("error", [ValueError("sensitive request"), OSError("sensitive request")])
 def test_shrink_failure_falls_back_with_originals(monkeypatch, caplog, error):
     def invalid_image(*args, **kwargs):
