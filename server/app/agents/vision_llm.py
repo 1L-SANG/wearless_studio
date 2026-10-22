@@ -185,11 +185,15 @@ class VisionError(RuntimeError):
     """분석 LLM 호출/파싱 실패 — 워커·라우트가 한국어 error 봉투로 매핑."""
 
     def __init__(self, message, *, unknown_cause="provider_error", retry_after_seconds=None,
-                 status_code=None):
+                 status_code=None, provider_error_type=None, provider_error_message=None,
+                 provider_request_id=None):
         super().__init__(message)
         self.unknown_cause = unknown_cause
         self.retry_after_seconds = retry_after_seconds
         self.status_code = status_code
+        self.provider_error_type = provider_error_type
+        self.provider_error_message = provider_error_message
+        self.provider_request_id = provider_request_id
 
 
 def _breaker_failure_reason(error):
@@ -483,7 +487,8 @@ async def _call_claude(settings: Settings, model: str, prompt: str,
     try:
         body = await run_cpu_bound(_claude_body, model, prompt, images, schema, effort, system_prompt, max_tokens, metadata)
     except (ValueError, TypeError, OSError) as exc:
-        raise VisionError("Claude 요청 입력이 잘못됐어요.", unknown_cause="invalid_input") from exc
+        raise VisionError("Claude 요청 입력이 잘못됐어요.", unknown_cause="invalid_input",
+                          provider_error_type=f"local:{type(exc).__name__}") from exc
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             res = await client.post(_CLAUDE_URL, json=body, headers={
@@ -500,7 +505,26 @@ async def _call_claude(settings: Settings, model: str, prompt: str,
                  else "invalid_input")
         retry_after = (_retry_after_seconds(res.headers.get("Retry-After"))
                        if res.status_code in {429, 529} else None)
-        raise VisionError(f"Claude HTTP {res.status_code}", unknown_cause=cause, retry_after_seconds=retry_after)
+        error_type = error_message = request_id = None
+        try:
+            header = res.headers.get("request-id")
+            if isinstance(header, str):
+                request_id = header
+        except Exception:
+            pass  # Diagnostics must never replace the original HTTP failure.
+        try:
+            data = res.json()
+            error = data.get("error") if isinstance(data, dict) and data.get("type") == "error" else None
+            if isinstance(error, dict):
+                if isinstance(error.get("type"), str):
+                    error_type = error["type"]
+                if isinstance(error.get("message"), str):
+                    error_message = " ".join(error["message"].split())[:200]
+        except Exception:
+            pass  # Only allowlisted provider fields may reach the caller's logs.
+        raise VisionError(f"Claude HTTP {res.status_code}", unknown_cause=cause, retry_after_seconds=retry_after,
+                          status_code=res.status_code, provider_error_type=error_type,
+                          provider_error_message=error_message, provider_request_id=request_id)
     return await run_cpu_bound(_parse_claude_response, res, metadata, model)
 
 

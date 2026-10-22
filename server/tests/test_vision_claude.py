@@ -239,6 +239,74 @@ def test_http_error_mapping_does_not_expose_response_body(monkeypatch, status, c
     assert "test-claude-key" not in str(exc.value) and "judge this" not in str(exc.value)
 
 
+@pytest.mark.parametrize("message,expected", [
+    ("  Unsupported\n\t image   format.  ", "Unsupported image format."),
+    ("x" * 300, "x" * 200),
+])
+def test_http_error_carries_bounded_provider_diagnostics(monkeypatch, message, expected):
+    fake_client(monkeypatch, {"type": "error", "error": {
+        "type": "invalid_request_error", "message": message}},
+        status=400, headers={"request-id": "req-diagnostic"})
+    with pytest.raises(vision_llm.VisionError) as caught:
+        call()
+    error = caught.value
+    assert error.status_code == 400
+    assert error.unknown_cause == "invalid_input"
+    assert error.retry_after_seconds is None
+    assert error.provider_error_type == "invalid_request_error"
+    assert error.provider_error_message == expected
+    assert error.provider_request_id == "req-diagnostic"
+
+
+@pytest.mark.parametrize("raw_body", [
+    b"", b"<html>bad gateway</html>", b"null", b"[]", b"{}",
+    b'{"error":{"type":"invalid_request_error","message":"ignored"}}',
+    b'{"type":"message","error":{"type":"ignored","message":"ignored"}}',
+    b'{"type":"error","error":"ignored"}',
+    b'{"type":"error","error":{"type":123,"message":["ignored"]}}',
+])
+def test_malformed_http_error_keeps_original_failure_without_diagnostics(monkeypatch, raw_body):
+    fake_client(monkeypatch, status=400, raw_body=raw_body)
+    with pytest.raises(vision_llm.VisionError) as caught:
+        call()
+    error = caught.value
+    assert error.status_code == 400 and error.unknown_cause == "invalid_input"
+    assert error.provider_error_type is None
+    assert error.provider_error_message is None
+    assert error.provider_request_id is None
+
+
+def test_diagnostic_parsing_exception_does_not_replace_http_failure(monkeypatch):
+    fake_client(monkeypatch, status=400, headers={"request-id": "req-diagnostic"})
+
+    def broken_json(self):
+        raise RuntimeError("diagnostic parsing failed")
+
+    monkeypatch.setattr(httpx.Response, "json", broken_json)
+    with pytest.raises(vision_llm.VisionError) as caught:
+        call()
+    error = caught.value
+    assert error.status_code == 400 and error.unknown_cause == "invalid_input"
+    assert error.provider_error_type is error.provider_error_message is None
+    assert error.provider_request_id == "req-diagnostic"
+
+
+@pytest.mark.parametrize("exception_type", [ValueError, TypeError, OSError])
+def test_local_body_failure_records_only_exception_type(monkeypatch, exception_type):
+    seen = fake_client(monkeypatch)
+
+    def broken_body(*args):
+        raise exception_type("private input")
+
+    monkeypatch.setattr(vision_llm, "_claude_body", broken_body)
+    with pytest.raises(vision_llm.VisionError) as caught:
+        call()
+    error = caught.value
+    assert error.provider_error_type == f"local:{exception_type.__name__}"
+    assert error.unknown_cause == "invalid_input" and seen == []
+    assert error.status_code is error.provider_error_message is error.provider_request_id is None
+
+
 @pytest.mark.parametrize("error,cause", [
     (httpx.ConnectError("sensitive network error"), "provider_error"),
     (httpx.ReadTimeout("sensitive network error"), "timeout"),
