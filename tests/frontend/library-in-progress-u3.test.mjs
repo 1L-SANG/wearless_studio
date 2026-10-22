@@ -303,10 +303,11 @@ test('M11 actual editor conflict callback keeps local draft and undo, then resto
 });
 
 test('U3 editor error download label is 다운로드 and remains disabled while no finished page exists', async () => {
-  const start = editorSource.indexOf('<Button variant="primary" size="sm" icon="download" disabled={genActive}');
+  const start = editorSource.indexOf('<Button variant="primary" size="sm" icon="download"');
+  assert.ok(start >= 0, 'extract the actual editor download button');
   const jsx = editorSource.slice(start, editorSource.indexOf('</Button>', start) + '</Button>'.length);
   const { code } = await transformWithEsbuild(`function header() { return (${jsx}); }`, 'Header.jsx', { jsx: 'transform' });
-  const header = new Function('React', 'Button', 'genActive', 'genFailed', 'setDownload', `${code}; return header;`);
+  const header = new Function('React', 'Button', 'genActive', 'genFailed', 'setDownload', `const pubCapturing = false; ${code}; return header;`);
   const error = header(React, 'button', true, true, () => {})();
   assert.equal(error.props.children, '다운로드'); assert.equal(error.props.disabled, true);
   assert.equal(header(React, 'button', true, false, () => {})().props.children, '생성 중…');

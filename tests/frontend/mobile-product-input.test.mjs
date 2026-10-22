@@ -165,9 +165,10 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
     copyHandoffAddress: async (pushToast) => pushToast('주소를 복사했어요'),
     p: new Proxy({}, { get: (_, key) => key }),
     s: new Proxy({}, { get: (_, key) => key }),
+    publicationStyles: new Proxy({}, { get: (_, key) => key }),
   };
   for (const name of ['Button', 'Modal', 'Icon', 'IconButton', 'ErrorState', 'UploadPendingTile', 'PageHead',
-    'ResumeChoiceModal', 'WizardCTA', 'DoneGuardModal', 'CreditShortfallModal', 'AnalysisForm', 'AnalysisProgress', 'AnalysisSkeleton']) bindings[name] = name;
+    'ResumeChoiceModal', 'WizardCTA', 'DoneGuardModal', 'CreditShortfallModal', 'AnalysisForm', 'AnalysisProgress', 'AnalysisSkeleton', 'PublicationsPanel']) bindings[name] = name;
   const components = new Function(...Object.keys(bindings), `${code}; return { ProductInputRoute, HandoffStatusPage, MobileDraftDialog, MobileDraftStatus, DraftProductRow, Library, ProductInput, ProductInputHeading, ProductInputPlaceholder, ColorImageGroup, AddDrop, InputMainAction, MobileSaveModal, MobileSaveStatus, MobileAnalyzedNotice, EditingRightsLock, DraftEntryDialog, HangTag, AddressCopyChip };`)(...Object.values(bindings));
   function render(name = 'ProductInput', props = {}) {
     if (!frames.has(name)) frames.set(name, []);

@@ -92,6 +92,7 @@ class ProjectSummary(CamelModel):
     cover: str  # 대표 이미지 URL (없으면 '')
     clothing_type: str | None
     block_count: int
+    publication_count: int = 0
     status: ProjectStatus
     updated_at: datetime
 

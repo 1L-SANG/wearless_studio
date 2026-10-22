@@ -285,7 +285,55 @@ function checkMannequinQuote(expected, cost) {
   }
 }
 
+const publicationBlobs = new Map();
+DB.detailPublications ||= [];
+
 export const api = {
+  async createDetailPublication(projectId, { preset, width, productName, files }) {
+    const publicationId = uid('pub');
+    const version = Math.max(0, ...DB.detailPublications.filter((item) => item.projectId === projectId).map((item) => item.version)) + 1;
+    const row = { publicationId, projectId, preset, width, productName, version, status: 'pending',
+      files: clone(files), createdAt: new Date().toISOString() };
+    DB.detailPublications.push(row);
+    return { publicationId, version, uploads: files.map(({ index }) => ({ index,
+      uploadUrl: `https://images.example.test/pub/mock/${publicationId}/${String(index).padStart(2, '0')}.jpg`,
+      uploadToken: `${publicationId}:${index}`,
+    })) };
+  },
+  async transferDetailPublication(url, options = {}) {
+    if (options.method === 'PUT') { publicationBlobs.set(url, options.body); return { ok: true }; }
+    const blob = publicationBlobs.get(url);
+    return { ok: !!blob, blob: async () => blob };
+  },
+  async completeDetailPublication(publicationId, { uploads }) {
+    const row = DB.detailPublications.find((item) => item.publicationId === publicationId && item.status !== 'deleted');
+    if (!row) throw Object.assign(new Error('게시를 찾지 못했어요.'), { status: 404 });
+    if (row.status === 'ready') return clone(row);
+    const missing = row.files.filter((file) => !uploads.some((upload) => upload.index === file.index && upload.uploadToken === `${publicationId}:${file.index}`)
+      || !publicationBlobs.has(`https://images.example.test/pub/mock/${publicationId}/${String(file.index).padStart(2, '0')}.jpg`)).map((file) => file.index);
+    if (missing.length) throw Object.assign(new Error('일부 이미지를 다시 올려 주세요.'), { status: 409, code: 'files_missing', missing });
+    row.files = row.files.map(({ index, width, height, byteSize }) => {
+      const url = `https://images.example.test/pub/mock/${publicationId}/${String(index).padStart(2, '0')}.jpg`;
+      return { index, width, height, bytes: byteSize, url, previewUrl: URL.createObjectURL(publicationBlobs.get(url)) };
+    });
+    row.status = 'ready';
+    row.sliceCount = row.files.length;
+    row.totalBytes = row.files.reduce((sum, file) => sum + file.bytes, 0);
+    const expiry = new Date(row.createdAt); expiry.setMonth(expiry.getMonth() + 6);
+    row.expiresAt = DB.account.plan === 'free' ? expiry.toISOString() : null;
+    return clone(row);
+  },
+  async listDetailPublications(projectId) {
+    return { items: clone(DB.detailPublications.filter((item) => item.projectId === projectId && item.status === 'ready').sort((a, b) => b.version - a.version)) };
+  },
+  async deleteDetailPublication(publicationId) {
+    const row = DB.detailPublications.find((item) => item.publicationId === publicationId);
+    if (row) {
+      row.status = 'deleted';
+      row.files.forEach((file) => { publicationBlobs.delete(file.url); if (file.previewUrl) URL.revokeObjectURL(file.previewUrl); });
+    }
+    return null;
+  },
   reportClientEvent: acceptMockClientEvent,
   /* ---- project (계약 §2, ADR-0001) ---- */
   // 새 제작 시작 — draft 전체를 재시드해 이전 세션의 변형이 새 생성에 새지 않게 한다.
@@ -1321,7 +1369,9 @@ export const api = {
   async getLibrary({ forceEmpty = false, forceError = false } = {}) {
     await wait(420);
     if (forceError) throw new Error('보관함을 불러오지 못했어요.');
-    return forceEmpty ? [] : clone(DB.library);
+    return forceEmpty ? [] : clone(DB.library.map((item) => ({ ...item,
+      publicationCount: DB.detailPublications.filter((publication) => publication.projectId === item.id && publication.status === 'ready').length,
+    })));
   },
   async getInProgressLibrary({ forceEmpty = false, forceError = false } = {}) {
     await wait(140);

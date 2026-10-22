@@ -40,6 +40,7 @@ ProjectSummary {                   // 보관함 카드 (구 LibraryItem)
   cover: string                    // 대표 이미지 (파생: 첫 에디터 블록 이미지)
   clothingType: ClothingType | null // 초안은 상품 미입력 → null 가능 (보관함 카드 표시는 라벨 파생)
   blockCount: number               // 구 blocks (배열과 혼동 방지 위해 개명)
+  publicationCount: number         // 소유자의 ready 게시 수. 0이면 카드에서 숨김
   status: ProjectStatus
   updatedAt: string                // ISO — '2시간 전'은 표시 파생
 }
@@ -727,6 +728,27 @@ generation: {
 새 컷은 `recipeFrom='self'`다. 비슷한 컷과 같은 부위 다시 촬영은 공용 `asset_recipe.resolve_asset_recipes`가 원본 설정을 찾으면 상속하고 `recipeFrom='anchor'`로 남기며, 못 찾으면 `recipe=null`이다. 직접 올린 자산은 `assets.source='upload'`로 판정하고 새 기록을 쓰지 않는다. 색상과 열림 편집은 `origin='editor_color'` 또는 `origin='editor_closure'`, `autoSelected=false`, 고른 원본의 `sourceAssetId`, `recipeFrom='anchor'`를 남긴다. 원본 레시피의 바꾼 필드만 고치며 레시피가 없으면 모든 필드를 `null`로 두고 바꾼 값만 채운다. 색상 결과의 의류 그룹은 목표 색이고 열림과 비슷한 컷은 원본의 의류 색 그룹을 물려받는다. 상세페이지의 `page` 기록은 후속 작업으로 미룬다.
 
 ---
+
+## § 게시(detail publication)
+
+| 필드(DB) | 의미 |
+| --- | --- |
+| `id`, `user_id`, `project_id` | 게시·소유자·프로젝트 UUID. 프로젝트 삭제 시 `project_id`만 null로 바뀌고 게시 이미지는 유지한다. |
+| `version`, `status` | 프로젝트 안의 불변 순번(프로젝트와 복합 unique), `pending`·`ready`·`deleted`. |
+| `preset`, `width` | `smartstore`·`coupang`·`high` 폭 프리셋과 렌더 폭(px). |
+| `slice_count`, `total_bytes` | 조각 수와 전체 바이트. |
+| `product_name`, `editor_revision` | 게시 시점의 상품명과 에디터 리비전. |
+| `files` | `{index,r2_key,bytes,width,height,asset_id}` 배열. 조각은 `assets`에도 `source='export'`, `visibility='public'`, `metadata.publication_id`로 등록한다. |
+| `expires_at` | 보관 만료 시각. 구독 중이면 null. |
+| `created_at`, `ready_at`, `deleted_at` | 생성·게시 완료·삭제 완료 시각. |
+
+상태 전이는 `pending → ready → deleted`이며 30분 동안 완료되지 않은 `pending`도 `deleted`로 정리한다. 재게시는 새 버전을 만들고 기존 게시를 바꾸지 않는다.
+
+`deleted`이면서 `deleted_at=null`이면 이미지와 CDN 정리가 아직 끝나지 않은 삭제 의도다. 만료 정리는 게시별 현재 구독 확인과 삭제 의도 저장을 프로필 갱신과 같은 잠금으로 처리한다. 그 전에 재구독이 끝나면 보존하고, 삭제 의도가 먼저 확정된 버전은 이후 재구독으로 복구하지 않는다. 저장소 정리에 실패해도 행과 삭제 의도를 유지해 재시도한다. 유효한 업로드 주소의 늦은 전송을 정리할 수 있도록 명시적 삭제와 탈퇴는 정리 표시를 잠시 보존한다.
+
+R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Cache-Control: public, max-age=31536000, immutable`을 고정한다.
+
+만료 규칙은 `profiles.plan`을 기준으로 한다. free가 아니면 `expires_at=null`, 처음부터 free면 `created_at+6개월`, 구독 종료를 처음 관찰한 free 게시면 관찰 시각+6개월이다. 이미 정해진 free 만료일은 유지하고 삭제 의도 확정 전에 재구독하면 null로 되돌린다. 워커는 하루 한 번 만료일을 계산하고 한 시간마다 정리한다. 탈퇴 시에는 즉시 삭제를 시도하고 실패는 재시도한다.
 
 ## 7. 현행 코드와의 갭 (마이그레이션 TODO)
 

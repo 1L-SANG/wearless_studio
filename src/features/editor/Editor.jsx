@@ -81,6 +81,8 @@ import { failedCutPresentation } from '@/lib/cutFailureMessages.js';
 import { detailPageCompletionMessage } from '@/lib/detailPageJobEvents.js';
 import { GenDonePreview } from '@/features/editor/GenDonePreview.jsx';
 import { EditorDownloadModal } from '@/features/editor/EditorDownloadModal.jsx';
+import { EditorPublishModal } from './EditorPublishModal.jsx';
+import { publishDetailPage, buildPublicationHtml, buildPublicationUrlList, downloadPublicationZip } from './detailPublish.js';
 import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, isPhotoSlotElement, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, reorderElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
 import { CONTENT_ROLES, SECTION_ROLES, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
@@ -1112,6 +1114,18 @@ export function Editor() {
   const [dlProg, setDlProg] = useState(null); // 처리 단계와 현재 블록 수
   const [dlError, setDlError] = useState('');
   const [dlOriginalError, setDlOriginalError] = useState(null);
+  const [publish, setPublish] = useState(false);
+  const [pubBusy, setPubBusy] = useState(false);
+  const [pubCapturing, setPubCapturing] = useState(false);
+  const [pubProg, setPubProg] = useState(null);
+  const [pubError, setPubError] = useState('');
+  const [pubResult, setPubResult] = useState(null);
+  const [pubSettings, setPubSettings] = useState({ preset: 'smartstore' });
+  const [publicationInfo, setPublicationInfo] = useState({ scope: null, count: 0, disabled: true });
+  const pubRequestRef = useRef(0);
+  const pubCaptureRef = useRef(false);
+  const pubScopeRef = useRef(null);
+  const realModelBlocked = isRealModelSelection(analysis?.selectedModelId);
   /* ---- 에디터 통합 대기(editor_wait_dev_spec v2) — 생성이 도는 동안 같은 캔버스에서 편집.
      잡 수명·이벤트는 store.detailPageJob 소유, 여기는 구독·채움·완료 병합만. ---- */
   const dpJob = useAppStore((s) => s.detailPageJob);
@@ -1182,7 +1196,26 @@ export function Editor() {
   const [genFinalizeError, setGenFinalizeError] = useState('');
   // 자동저장이 실패한 상태 — {kind, message}. null 이면 정상 저장 중이다.
   const [saveError, setSaveError] = useState(null);
-  const { openLogin } = useAuth();
+  const { openLogin, session } = useAuth();
+  const pubScope = `${projectId}:${session?.user?.id || ''}`;
+  pubScopeRef.current = pubScope;
+  useEffect(() => {
+    let cancelled = false;
+    const accountGeneration = clientEvents.getAccountGeneration();
+    const isCurrent = () => !cancelled && pubScopeRef.current === pubScope
+      && accountGeneration === clientEvents.getAccountGeneration();
+    setPublish(false);
+    setPubBusy(false);
+    setPubError('');
+    setPubResult(null);
+    setPublicationInfo({ scope: pubScope, count: 0, disabled: true });
+    api.listDetailPublications(projectId).then((response) => {
+      if (isCurrent()) setPublicationInfo({ scope: pubScope, count: response.items.length, disabled: !!response.disabled });
+    }).catch(() => {
+      if (isCurrent()) setPublicationInfo({ scope: pubScope, count: 0, disabled: false });
+    });
+    return () => { cancelled = true; pubRequestRef.current++; };
+  }, [projectId, pubScope]);
   const editorConflictPending = useRef(false);
   const backupLatestEditorDraft = useCallback((source = latestBlocks.current, { reportFailure = true } = {}) => {
     if (!Array.isArray(source)) return false;
@@ -1300,10 +1333,10 @@ export function Editor() {
     product, analysis, clothingType, colorOpts, handlers: canvasAiHandlers });
 
   useLayoutEffect(() => {
-    if (!download) return;
+    if (!download && !publish) return;
     const nodes = [...(canvasRef.current?.querySelectorAll('.canvas-block') || [])];
     setDlBlockHeights(nodes.map(exportNodeHeight));
-  }, [download, blocks]);
+  }, [download, publish, blocks]);
   const dlEstimatedHeights = useMemo(() => {
     if (dlBlockHeights.length) return dlBlockHeights;
     // .canvas-block 은 세로 padding 50px씩을 갖는다. DOM 측정 전 첫 모달 프레임의 폴백이다.
@@ -1313,6 +1346,9 @@ export function Editor() {
     () => buildExportSummary(dlEstimatedHeights, dlSettings),
     [dlEstimatedHeights, dlSettings],
   );
+  const pubSummary = useMemo(() => buildExportSummary(dlEstimatedHeights, {
+    ...pubSettings, format: 'jpeg', delivery: 'split',
+  }), [dlEstimatedHeights, pubSettings]);
   useEffect(() => {
     if (!download || dlBusy || dlSettings.delivery !== 'single' || !dlSummary.fallbackReason) return;
     setDlSettings((current) => ({ ...current, delivery: 'split' }));
@@ -2232,7 +2268,7 @@ export function Editor() {
   };
   const downloadBlock = async (block, idx, mode = 'zip') => {
     const accountGeneration = clientEvents.getAccountGeneration();
-    if (dlBusy) return;
+    if (dlBusy || pubCaptureRef.current) return;
     if (genActive) { toast.push('생성 중인 페이지는 저장할 수 없어요. 완료 후 받아주세요.', { icon: 'x' }); return; }
     const node = canvasRef.current?.querySelector(`.canvas-block[data-blockid="${block.id}"]`);
     if (!node) { toast.push('블록을 찾지 못했어요. 다시 시도해 주세요.', { icon: 'x' }); return; }
@@ -2262,7 +2298,7 @@ export function Editor() {
   };
   const runDownload = async () => {
     const accountGeneration = clientEvents.getAccountGeneration();
-    if (dlBusy) return;
+    if (dlBusy || pubCaptureRef.current) return;
     const nodes = [...(canvasRef.current?.querySelectorAll('.canvas-block') || [])];
     if (!nodes.length) { setDlError('저장할 블록이 없어요. 상세페이지에 블록을 추가해 주세요.'); return; }
     setDlError('');
@@ -2286,6 +2322,69 @@ export function Editor() {
       setDlBusy(false);
       setDlProg(null);
     }
+  };
+  const runPublish = async () => {
+    if (pubBusy || dlBusy || genActive || realModelBlocked || pubCaptureRef.current) return;
+    const token = ++pubRequestRef.current;
+    const accountGeneration = clientEvents.getAccountGeneration();
+    const isCurrent = () => token === pubRequestRef.current && pubScope === pubScopeRef.current
+      && accountGeneration === clientEvents.getAccountGeneration();
+    const nodes = [...(canvasRef.current?.querySelectorAll('.canvas-block') || [])];
+    if (!nodes.length) { setPubError('올릴 블록이 없어요. 상세페이지에 블록을 추가해 주세요.'); return; }
+    setPubError('');
+    setPubResult(null);
+    setPubBusy(true);
+    pubCaptureRef.current = token;
+    setPubCapturing(true);
+    setPubProg({ done: 0, total: nodes.length, stage: 'capture' });
+    try {
+      const result = await publishDetailPage(nodes, { projectId, productName, preset: pubSettings.preset }, {
+        assertCurrent: () => { if (!isCurrent()) throw new Error('게시하는 상품이 바뀌었어요. 다시 열어 주세요.'); },
+        onRendered: () => {
+          if (pubCaptureRef.current === token) { pubCaptureRef.current = false; setPubCapturing(false); }
+        },
+        onProgress: (done, total, stage) => { if (isCurrent()) setPubProg({ done, total, stage }); },
+      });
+      if (isCurrent()) {
+        setPubResult({ ...result, previousCount: publicationInfo.count });
+        setPublicationInfo((current) => ({ ...current, count: current.count + 1 }));
+      }
+    } catch (error) {
+      if (isCurrent()) setPubError(error);
+    } finally {
+      if (pubCaptureRef.current === token) { pubCaptureRef.current = false; setPubCapturing(false); }
+      if (isCurrent()) { setPubBusy(false); setPubProg(null); }
+    }
+  };
+  const copyPublication = async (text) => {
+    const accountGeneration = clientEvents.getAccountGeneration();
+    const isCurrent = () => pubScope === pubScopeRef.current && accountGeneration === clientEvents.getAccountGeneration();
+    try {
+      await navigator.clipboard.writeText(text);
+      if (isCurrent()) toast.push('복사했어요');
+    } catch {
+      if (!isCurrent()) return;
+      setPubResult((current) => current && { ...current, showHtml: true });
+      toast.push('복사하지 못했어요. 텍스트를 길게 눌러 복사해 주세요');
+    }
+  };
+  const receivePublicationZip = async () => {
+    if (pubBusy) return;
+    const scope = pubScope;
+    const accountGeneration = clientEvents.getAccountGeneration();
+    const isCurrent = () => scope === pubScopeRef.current && accountGeneration === clientEvents.getAccountGeneration();
+    setPubBusy(true);
+    setPubProg({ stage: 'zip' });
+    try {
+      const blob = await downloadPublicationZip(pubResult?.files || pubError.files, productName, {});
+      if (!isCurrent()) return;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url; link.download = `${productName.replace(/[\\/:*?"<>|]/g, ' ').trim() || '상세페이지'}.zip`;
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    } catch (error) { if (isCurrent()) setPubError(error); }
+    finally { if (isCurrent()) setPubBusy(false); }
   };
   const layerEl = (dir) => setBlocks((bs) => bs.map((b) => {
     const i = b.elements.findIndex((e) => e.id === selEl); if (i < 0) return b;
@@ -3710,8 +3809,12 @@ export function Editor() {
           </button>
           <Button variant="ghost" size="sm" icon="eye" onClick={() => setPreview(true)}>미리보기</Button>
           <Button variant="ghost" size="sm" icon="save" onClick={save}>저장</Button>
-          <Button variant="primary" size="sm" icon="download" disabled={genActive}
+          <Button variant="primary" size="sm" icon="download" disabled={genActive || pubCapturing}
             onClick={() => { setDlNotice(''); setDlError(''); setDownload(true); }}>{genActive && !genFailed ? '생성 중…' : '다운로드'}</Button>
+          {publicationInfo.scope === pubScope && !publicationInfo.disabled && <span title={realModelBlocked ? '실존 모델 컷은 다운로드로 받아 몰에 직접 올려 주세요' : undefined}>
+            <Button variant="ghost" size="sm" icon="upload" disabled={genActive || realModelBlocked || pubBusy || dlBusy || pubCapturing}
+              onClick={() => { setPubResult(null); setPubError(''); setPubProg(null); setPublish(true); }}>몰에 올리기</Button>
+          </span>}
         </div>
       </div>
 
@@ -4047,6 +4150,17 @@ export function Editor() {
             ))}
           </div>
         </div>
+      )}
+
+      {publish && (
+        <Modal onClose={() => { if (!pubBusy) setPublish(false); }} wide>
+          <EditorPublishModal settings={pubSettings} summary={pubSummary} busy={pubBusy}
+            progress={pubProg} error={pubError} result={pubResult}
+            previousCount={pubResult?.previousCount ?? publicationInfo.count} realModelBlocked={realModelBlocked}
+            onChange={setPubSettings} onCancel={() => { if (!pubBusy) setPublish(false); }} onPublish={runPublish}
+            onCopyHtml={() => copyPublication(pubResult.html || buildPublicationHtml(pubResult.files, { productName, width: pubSummary.width }))}
+            onCopyUrls={() => copyPublication(buildPublicationUrlList(pubResult.files))} onDownloadZip={receivePublicationZip} />
+        </Modal>
       )}
 
       {/* download modal */}

@@ -825,6 +825,9 @@ async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
                 prod.clothing_type,
                 case when jsonb_typeof(pr.editor_blocks) = 'array'
                      then jsonb_array_length(pr.editor_blocks) else 0 end as block_count,
+                (select count(*) from detail_publications dp
+                 where dp.project_id = pr.id and dp.user_id = pr.user_id
+                   and dp.status = 'ready') as publication_count,
                 pr.status,
                 pr.updated_at
             from projects pr
@@ -1065,8 +1068,10 @@ async def create_asset(
     size: int | None,
     original_filename: str | None,
     metadata: dict | None = None,
+    visibility: str = "private",
 ) -> dict:
     """업로드 검증 후 asset 행 확정. complete 재호출(멱등)이면 기존 행 반환."""
+    visibility_sql = {"private": "'private'", "public": "'public'"}[visibility]
     cols = "id::text as id, r2_key, mime_type, byte_size"
     async with conn.cursor() as cur:
         await cur.execute(
@@ -1074,7 +1079,7 @@ async def create_asset(
             insert into assets
               (id, user_id, project_id, source, visibility, r2_bucket, r2_key,
                mime_type, byte_size, original_filename, metadata)
-            values (%s, %s, %s, %s, 'private', %s, %s, %s, %s, %s, %s)
+            values (%s, %s, %s, %s, {visibility_sql}, %s, %s, %s, %s, %s, %s)
             on conflict (id) do nothing
             returning {cols}
             """,
@@ -1091,6 +1096,174 @@ async def create_asset(
             )
             row = await cur.fetchone()
         return row
+
+
+_DETAIL_PUBLICATION_COLS = (
+    "id::text as id, user_id::text as user_id, project_id::text as project_id, "
+    "version, status, preset, width, slice_count, total_bytes, product_name, "
+    "editor_revision, files, expires_at, created_at, ready_at, deleted_at"
+)
+
+
+async def project_uses_real_model(conn, *, user_id, project_id) -> bool:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select 1 as present from fm_output_records r
+                 join jobs j on j.id = r.job_id
+                where j.project_id = %s and r.seller_id = %s limit 1""",
+            (project_id, user_id),
+        )
+        return await cur.fetchone() is not None
+
+
+async def count_detail_publications_last_hour(conn, user_id) -> int:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select count(*) as count from detail_publications
+                where user_id = %s and created_at >= now() - interval '1 hour'""",
+            (user_id,),
+        )
+        return (await cur.fetchone())["count"]
+
+
+async def create_detail_publication(conn, *, user_id, project_id, preset, width,
+                                    product_name, editor_revision, files) -> dict:
+    async with conn.cursor() as cur:
+        # The project fence protects max+1 even for callers outside the HTTP route.
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                          (f"detail-publication-project:{project_id}",))
+        await cur.execute(
+            f"""insert into detail_publications
+                (user_id, project_id, version, preset, width, product_name, editor_revision, files)
+                values (%s, %s, (select coalesce(max(version), 0) + 1
+                                  from detail_publications where project_id = %s),
+                        %s, %s, %s, %s, %s)
+                returning {_DETAIL_PUBLICATION_COLS}""",
+            (user_id, project_id, project_id, preset, width, product_name, editor_revision, Json(files)),
+        )
+        return await cur.fetchone()
+
+
+async def get_detail_publication(conn, *, user_id, publication_id) -> dict | None:
+    try:
+        uuid.UUID(publication_id)
+    except (ValueError, TypeError):
+        return None
+    async with conn.cursor() as cur:
+        # Hold this through asset inserts and ready transition: concurrent complete is atomic.
+        await cur.execute(
+            f"select {_DETAIL_PUBLICATION_COLS} from detail_publications "
+            "where id = %s and user_id = %s for update",
+            (publication_id, user_id),
+        )
+        return await cur.fetchone()
+
+
+async def mark_detail_publication_ready(conn, *, publication_id, files, total_bytes, expires_at) -> dict:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""update detail_publications set status = 'ready', files = %s,
+                       slice_count = %s, total_bytes = %s,
+                       expires_at = %s, ready_at = now()
+                 where id = %s and status = 'pending' returning {_DETAIL_PUBLICATION_COLS}""",
+            (Json(files), len(files), total_bytes, expires_at, publication_id),
+        )
+        return await cur.fetchone()
+
+
+async def list_detail_publications(conn, *, user_id, project_id) -> list[dict]:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"select {_DETAIL_PUBLICATION_COLS} from detail_publications "
+            "where user_id = %s and project_id = %s and status = 'ready' order by created_at desc, version desc",
+            (user_id, project_id),
+        )
+        return await cur.fetchall()
+
+
+async def soft_delete_detail_publication(conn, *, user_id, publication_id) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""update detail_publications set status = 'deleted', deleted_at = null
+                 where id = %s and user_id = %s returning {_DETAIL_PUBLICATION_COLS}""",
+            (publication_id, user_id),
+        )
+        return await cur.fetchone()
+
+
+async def recompute_detail_publication_expiry(conn, *, now) -> int:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """update detail_publications d
+                  set expires_at = case when p.plan <> 'free' then null
+                                        else coalesce(d.expires_at, %(now)s + interval '6 months') end
+                 from profiles p
+                where p.user_id = d.user_id and d.status = 'ready'
+                  and d.expires_at is distinct from
+                      case when p.plan <> 'free' then null
+                           else coalesce(d.expires_at, %(now)s + interval '6 months') end""",
+            {"now": now},
+        )
+        return cur.rowcount
+
+
+async def list_expired_detail_publications(conn, *, now, limit=100) -> list[dict]:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""select {_DETAIL_PUBLICATION_COLS} from detail_publications
+                 where (status = 'ready' and expires_at <= %s
+                        and not exists (select 1 from profiles p
+                                         where p.user_id = detail_publications.user_id
+                                           and p.plan <> 'free'))
+                    or (status = 'deleted' and deleted_at is null)
+                 order by expires_at nulls first, created_at limit %s""",
+            (now, limit),
+        )
+        return await cur.fetchall()
+
+
+async def list_stale_pending_detail_publications(conn, *, older_than_minutes=30) -> list[dict]:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""select {_DETAIL_PUBLICATION_COLS} from detail_publications
+                 where status = 'pending'
+                   and (created_at < now() - (%s * interval '1 minute') or expires_at <= now())
+                 order by created_at limit 100""",
+            (older_than_minutes,),
+        )
+        return await cur.fetchall()
+
+
+async def claim_detail_publication_deletion(conn, *, user_id, publication_id, now) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""update detail_publications set status = 'deleted'
+                 where id = %s and user_id = %s and deleted_at is null
+                   and ((status = 'ready' and expires_at <= %s
+                         and not exists (select 1 from profiles p
+                                          where p.user_id = detail_publications.user_id
+                                            and p.plan <> 'free'))
+                        or (status = 'pending' and created_at < %s - interval '30 minutes')
+                        or status = 'deleted')
+                 returning {_DETAIL_PUBLICATION_COLS}""",
+            (publication_id, user_id, now, now),
+        )
+        return await cur.fetchone()
+
+
+async def finalize_detail_publication_deletion(conn, *, publication_id) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """update assets set deleted_at = coalesce(deleted_at, now())
+                where metadata->>'publication_id' = %s""",
+            (publication_id,),
+        )
+        await cur.execute(
+            """update detail_publications set status = 'deleted',
+                       deleted_at = coalesce(deleted_at, now())
+                 where id = %s""",
+            (publication_id,),
+        )
 
 
 _PRODUCT_COLS = (
