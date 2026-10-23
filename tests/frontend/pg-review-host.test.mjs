@@ -22,6 +22,7 @@ import {
   PG_REVIEW_HOST,
   sellerRootTarget,
 } from '../../src/lib/host.js';
+import { generalPaymentReviewOrder } from '../../src/lib/generalPaymentReview.js';
 
 test('심사 호스트는 정확히 toss.wearless.kr 하나다', () => {
   assert.equal(PG_REVIEW_HOST, 'toss.wearless.kr');
@@ -92,7 +93,7 @@ after(async () => {
 
 /* 호스트 판정은 모듈을 읽는 순간 한 번 정해지는 상수다. 그래서 호스트마다 모듈 그래프를
    비우고 새 window 로 다시 읽는다. */
-async function loadAs(hostname) {
+async function loadAs(hostname, { extraPlans = [] } = {}) {
   globalThis.window = { location: { hostname, search: '', origin: `https://${hostname}` } };
   await vite?.close();
   vite = await createHarnessServer();
@@ -100,7 +101,7 @@ async function loadAs(hostname) {
   const { Pricing } = await vite.ssrLoadModule('/src/features/pricing/Pricing.jsx');
   ({ runtime } = await vite.ssrLoadModule('virtual:pricing-runtime'));
   const { api } = await vite.ssrLoadModule('/src/mock/api.js');
-  const plans = await api.getPricingPlans();
+  const plans = [...await api.getPricingPlans(), ...extraPlans];
 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(['pricingPlans'], plans);
@@ -141,8 +142,37 @@ test('일반결제 심사 호스트는 단건 크레딧 두 상품과 토스 결
   assert.match(html, /₩26,000/);
   assert.equal((html.match(/>충전하기<\/button>/g) || []).length, 2);
   assert.doesNotMatch(html, /Starter|Seller|Pro|정기 구독|매월 자동 결제|계좌이체/);
-  assert.match(html, /1회 결제 · 소멸 없음/);
+  assert.match(html, /1회 결제 · 결제 완료 즉시 지급 · 구매일부터 12개월 사용/);
+  assert.match(html, /지급일부터 12개월 뒤 남은 수량이 소멸해요/);
+  assert.match(html, /다른 사람에게 양도하거나 현금으로 전환할 수 없어요/);
   assert.match(html, /결제하면 .*이용약관.*환불 정책/);
+});
+
+test('일반결제 심사 호스트는 승인한 두 SKU와 정확한 가격만 허용한다', async () => {
+  const { html } = await loadAs('pay.wearless.kr', { extraPlans: [
+    { id: 'legacy', code: 'topup_legacy', kind: 'topup', name: '옛 충전', credits: 50,
+      price: 3000, billingPeriod: 'once', sortOrder: 1 },
+    { id: 'wrong-price', code: 'topup_100', kind: 'topup', name: '가격이 바뀐 100 크레딧',
+      credits: 100, price: 6000, billingPeriod: 'once', sortOrder: 2 },
+  ] });
+  assert.equal((html.match(/>충전하기<\/button>/g) || []).length, 2);
+  assert.doesNotMatch(html, /옛 충전|가격이 바뀐|₩3,000|₩6,000/);
+});
+
+test('시크릿 발급 전 확인 주문은 고정 상품으로만 결제창 입력값을 만든다', () => {
+  const order = generalPaymentReviewOrder('topup_100', 'review-user');
+  assert.match(order.orderId, /^wl-review-/);
+  assert.ok(order.orderId.length >= 6 && order.orderId.length <= 64);
+  assert.deepEqual({ ...order, orderId: '<random>' }, {
+    orderId: '<random>', amount: 5500, credits: 100, bonusCredits: 0, totalCredits: 100,
+    orderName: '100 크레딧', customerKey: 'review-user',
+  });
+  assert.equal(generalPaymentReviewOrder('topup_legacy', 'review-user'), null);
+  assert.equal(generalPaymentReviewOrder('topup_100', ''), null);
+  const pricing = readFileSync(new URL('../../src/features/pricing/Pricing.jsx', import.meta.url), 'utf8');
+  assert.match(pricing, /IS_GENERAL_PAYMENT_REVIEW_HOST && e\?\.code === 'payment_not_configured'/);
+  assert.match(pricing, /generalPaymentReviewOrder\(planCode, session\.user\.id\)/);
+  assert.match(pricing, /payment\.requestPayment\(\{/);
 });
 
 test('ai.wearless.kr 은 계좌이체 그대로다', async () => {

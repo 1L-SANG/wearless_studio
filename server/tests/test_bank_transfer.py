@@ -225,14 +225,16 @@ class Cursor:
             self._set([{"id": pid}])
         elif q.startswith("insert into credit_sources"):
             sid = s.next_id("src")
-            if "period_end" in q:
+            if "'subscription'" in q:
                 s.sources[sid] = {"id": sid, "user_id": p[0], "plan_id": p[1], "initial": p[2],
                                   "remaining": p[3], "status": "active", "type": "subscription",
                                   "period_end": p[4], "payment_id": None}
             else:
                 s.sources[sid] = {"id": sid, "user_id": p[0], "plan_id": p[1], "initial": p[2],
                                   "remaining": p[3], "status": "active", "type": "topup",
-                                  "period_end": None, "payment_id": p[4]}
+                                  "period_end": (s.now + timedelta(days=365)
+                                                 if "interval '1 year'" in q else None),
+                                  "payment_id": p[4]}
             self._set([{"id": sid}])
         elif q.startswith("update credit_sources set payment_id"):
             s.sources[p[1]]["payment_id"] = p[0]

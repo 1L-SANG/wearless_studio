@@ -128,7 +128,7 @@ export function sellerRootTarget(hostname) {
    신분증이 한국 IP·실도메인을 요구한다) 폰 QA 는 LAN IP 를 쓴다. 그 호스트들은 localhost
    목록 밖이라, 호스트명으로 추정하면 개발 서버를 떠나 프로덕션으로 튕겨 QA 자체가 불가능해진다.
    그래서 dev 빌드는 무조건 면제하고, 그 밖에는 **알려진 프로덕션 호스트일 때만** 건다. */
-const PRODUCTION_DOCUMENT_HOSTS = [
+export const PRODUCTION_DOCUMENT_HOSTS = [
   'ai.wearless.kr', 'facemarket.wearless.kr', 'admin.wearless.kr',
   PG_REVIEW_HOST, GENERAL_PAYMENT_REVIEW_HOST,
 ];

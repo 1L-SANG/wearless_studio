@@ -45,7 +45,7 @@ const slot = (meta = {}) => ({ meta: { hasContent: true, deviceLabel: 'Android C
 
 // 실제 라우트와 훅을 실행하고 브라우저, 저장소 경계만 메모리로 대체한다.
 function harness({ remote = slot(), confirmed = true, local = null, localReader = null, localPendingReader = null, loading = false, withAuth = false, authUser = 'seller', sessionResult = null, storedSession = null, resetGate = null, resetError = null,
-  syncedAt = null, serverSyncedAt = null, syncedUserId = null, otherTab = false, token = null, savedFlow = {}, takeover = null, slotClient = null, mobile = false, mock = false, facemarket = false, guestSave = null, pendingLocal, returnIntent = '/create/storyboard' } = {}) {
+  syncedAt = null, serverSyncedAt = null, syncedUserId = null, otherTab = false, token = null, savedFlow = {}, takeover = null, slotClient = null, mobile = false, mock = false, facemarket = false, guestSave = null, pendingLocal, returnIntent = '/create/storyboard', hostname = 'ai.wearless.kr' } = {}) {
   const calls = [];
   const resetOwners = [];
   const windowEvents = new EventTarget();
@@ -206,7 +206,7 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
     applyDraftPayload: () => false, persistedColorsRef: {}, isAnalysisRunning: () => false, restoreDraftProduct,
     setProduct: (value) => products.push(value), loadAttempt: 0,
   };
-  windowEvents.location = { search: '', pathname: '/create/input' };
+  windowEvents.location = { search: '', pathname: '/create/input', hostname };
   windowEvents.scrollTo = () => {};
   documentEvents.querySelector = () => null;
   const queryClient = { clear() {} };
@@ -604,6 +604,16 @@ test('mobile RootRedirect waits for auth bootstrap before navigating', async () 
   h.auth.loading = false;
   assert.equal((await h.settle('RootRedirect')).props.to, '/create/input');
 });
+
+for (const mobile of [false, true]) {
+  test(`pay host RootRedirect opens only the one-time products on mobile=${mobile}`, async () => {
+    const h = harness({ mobile, hostname: 'pay.wearless.kr', returnIntent: '/create/storyboard',
+      local: { product: { name: 'guest' } } });
+    const tree = await h.settle('RootRedirect');
+    assert.equal(tree.props.to, '/pricing?tab=topup');
+    assert.deepEqual(h.calls, ['forget']);
+  });
+}
 
 for (const mobile of [false, true]) {
   test(`M8 seller nav uses device policy and library account menu navigates without deletion (mobile=${mobile})`, async () => {

@@ -3,6 +3,7 @@
 import asyncio
 import copy
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 import pytest
 
@@ -72,6 +73,17 @@ class CreditCursor(Cursor):
         elif q.startswith("insert into credit_ledger") and "'grant_topup'" in q:
             await super().execute(sql, params)
             s.ledger[-1].update(action="grant_topup", credits=p[2], metadata=p[6].obj)
+        elif q.startswith("insert into credit_ledger") and "'expire_topup'" in q:
+            s.ledger.append({"user": p[0], "source": p[1], "action": "expire_topup",
+                             "delta": p[2], "balance_after": p[3],
+                             "available_after": p[4], "metadata": p[5].obj})
+        elif (q.startswith("select id::text as id, remaining_credits from credit_sources")
+              and "source_type = 'topup'" in q and "period_end <= now()" in q):
+            due = [b for b in s.sources.values() if b["user_id"] == p[0]
+                   and b["type"] == "topup" and b["status"] == "active"
+                   and b["remaining"] > 0 and b.get("period_end") is not None
+                   and b["period_end"] <= s.now]
+            self._set([{"id": b["id"], "remaining_credits": b["remaining"]} for b in due])
         elif q.startswith("select id::text as id, remaining_credits from credit_sources") and "order by" in q:
             priority = {"subscription": 0, "free": 1, "topup": 2}
             if "case source_type" in q:
@@ -94,6 +106,8 @@ class CreditCursor(Cursor):
                             "remaining_credits": b["remaining"], "within_window": True}])
         elif q.startswith("update credit_sources set status = 'pending_refund'"):
             s.sources[p[0]]["status"] = "pending_refund"
+        elif q.startswith("update credit_sources set status = 'expired'"):
+            s.sources[p[0]].update(status="expired", remaining=0)
         elif q.startswith("insert into refund_requests"):
             rid = s.next_id("refund")
             s.refunds.append({"id": rid, "source": p[1]})
@@ -251,6 +265,7 @@ def test_topup_bonus_is_one_bucket_with_snapshot_metadata_and_idempotency(credit
     asyncio.run(scenario())
     bucket = next(iter(credits_store.sources.values()))
     assert (bucket["initial"], bucket["remaining"]) == (550, 550)
+    assert bucket["period_end"] == credits_store.now + timedelta(days=365)
     assert len(credits_store.sources) == len(credits_store.ledger) == len(credits_store.payments) == 1
     assert credits_store.payments[0]["amount"] == 25000
     assert credits_store.ledger[0]["metadata"] == {
@@ -278,3 +293,33 @@ def test_subscription_expiration_preserves_free_and_topup(credits_store):
     assert result["expired"] == 10
     assert credits_store.accounts[USER]["balance"] == 150
     assert next(iter(credits_store.sources.values()))["status"] == "active"
+
+
+def test_due_topups_expire_but_legacy_and_future_purchases_remain(credits_store):
+    credits_store.accounts[USER]["balance"] = 100
+    credits_store.sources = {
+        "due": {"id": "due", "type": "topup", "user_id": USER, "status": "active",
+                "remaining": 30, "initial": 30, "period_end": credits_store.now - timedelta(seconds=1)},
+        "future": {"id": "future", "type": "topup", "user_id": USER, "status": "active",
+                   "remaining": 40, "initial": 40, "period_end": credits_store.now + timedelta(days=1)},
+        "legacy": {"id": "legacy", "type": "topup", "user_id": USER, "status": "active",
+                   "remaining": 30, "initial": 30, "period_end": None},
+    }
+    result = asyncio.run(repo.expire_due_topup_buckets(credits_store, user_id=USER))
+    assert result == {"expired": 30, "available": 70, "deferred": False}
+    assert credits_store.accounts[USER]["balance"] == 70
+    assert credits_store.sources["due"]["status"] == "expired"
+    assert credits_store.sources["future"]["status"] == "active"
+    assert credits_store.sources["legacy"]["status"] == "active"
+    assert credits_store.ledger[-1]["action"] == "expire_topup"
+
+
+def test_due_topup_expiration_waits_for_running_credit_job(credits_store):
+    credits_store.accounts[USER] = {"balance": 30, "reserved": 10}
+    credits_store.sources = {
+        "due": {"id": "due", "type": "topup", "user_id": USER, "status": "active",
+                "remaining": 30, "initial": 30, "period_end": credits_store.now - timedelta(seconds=1)},
+    }
+    result = asyncio.run(repo.expire_due_topup_buckets(credits_store, user_id=USER))
+    assert result == {"expired": 0, "available": 20, "deferred": True}
+    assert credits_store.sources["due"]["status"] == "active"

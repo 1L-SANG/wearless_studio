@@ -13,6 +13,7 @@
    일반결제 키로 떨어진다. 서버의 fallback 규칙과 같은 모양이다. */
 
 import { IS_GENERAL_PAYMENT_REVIEW_HOST, IS_PG_REVIEW_HOST } from './host.js';
+export { GENERAL_PAYMENT_REVIEW_PRODUCTS, isGeneralPaymentReviewProduct } from './generalPaymentProducts.js';
 
 /** 1회 충전(requestPayment) 용 — 일반결제 MID 의 클라이언트 키. */
 export const TOSS_CLIENT_KEY = import.meta.env.VITE_TOSS_CLIENT_KEY;

@@ -57,7 +57,7 @@ test('충전 상품은 일반결제 심사 호스트에서만 연다', () => {
   // 2026-09-22: 계좌이체(BANK_TRANSFER_ENABLED)가 켜져 있으면 충전도 팔 수 있어 충전 구역이 보인다.
   // 2026-09-24: 탭 대신 구독 카드 아래 구역. 두 스위치가 모두 꺼지면 충전 상품을 아예 고르지 않는다.
   assert.match(PRICING, /const topupVisible = TOPUP_ENABLED \|\| bankTransfer;/);
-  assert.match(PRICING, /const topups = topupVisible \? plans\.filter\(\(p\) => p\.kind === 'topup'\) : \[\];/);
+  assert.match(PRICING, /const topups = topupVisible \? plans\.filter\(\(p\) => p\.kind === 'topup'[\s\S]+isGeneralPaymentReviewProduct\(p\)\)\) : \[\];/);
   assert.match(PRICING, /\{ready && topups\.length > 0 && \(/);
 });
 

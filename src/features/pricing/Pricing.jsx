@@ -22,7 +22,9 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
 import { BANK_TRANSFER_ENABLED, SUBSCRIPTION_PRODUCTS_ENABLED, SUBSCRIPTION_TRANSFER_ENABLED, TOPUP_ENABLED,
-  TOSS_BILLING_CLIENT_KEY, TOSS_CLIENT_KEY } from '@/lib/tossKeys.js';
+  TOSS_BILLING_CLIENT_KEY, TOSS_CLIENT_KEY, isGeneralPaymentReviewProduct } from '@/lib/tossKeys.js';
+import { IS_GENERAL_PAYMENT_REVIEW_HOST } from '@/lib/host.js';
+import { generalPaymentReviewOrder } from '@/lib/generalPaymentReview.js';
 import { BankTransferModal } from './BankTransferModal.jsx';
 import { topupBonusCredits } from '@/lib/limits.js';
 import { CopyButton, PIcon, TransferDeadline, num, won } from './bankTransferParts.jsx';
@@ -118,7 +120,18 @@ export function Pricing() {
     setPayError('');
     setBuying(planCode);
     try {
-      const order = await api.createTossCheckout(planCode);
+      let order;
+      try {
+        order = await api.createTossCheckout(planCode);
+      } catch (e) {
+        // 계약 단계에는 일반결제 테스트 클라이언트 키만 있고 승인용 시크릿 키는 아직 없다.
+        // pay 호스트에서 payment_not_configured 일 때만 고정 상품 테스트 주문으로 결제창을
+        // 연다. 성공 복귀의 서버 confirm·크레딧 지급 가드는 그대로라 무료 적립은 불가능하다.
+        order = IS_GENERAL_PAYMENT_REVIEW_HOST && e?.code === 'payment_not_configured'
+          ? generalPaymentReviewOrder(planCode, session.user.id)
+          : null;
+        if (!order) throw e;
+      }
       const { loadTossPayments } = await import('@tosspayments/tosspayments-sdk');
       const toss = await loadTossPayments(TOSS_CLIENT_KEY);
       const payment = toss.payment({ customerKey: order.customerKey });
@@ -178,7 +191,8 @@ export function Pricing() {
   // 토스 모드에서는 일반결제 계약 전이면(TOPUP_ENABLED=false) 구역 자체를 숨긴다.
   const topupVisible = TOPUP_ENABLED || bankTransfer;
   const subs = SUBSCRIPTION_PRODUCTS_ENABLED ? plans.filter((p) => p.kind === 'subscription') : [];
-  const topups = topupVisible ? plans.filter((p) => p.kind === 'topup') : [];
+  const topups = topupVisible ? plans.filter((p) => p.kind === 'topup'
+    && (!IS_GENERAL_PAYMENT_REVIEW_HOST || isGeneralPaymentReviewProduct(p))) : [];
   // 부족분이 있으면 그걸 채우는 가장 작은 팩, 어느 팩으로도 못 채우면 가장 큰 팩.
   const recommendedCode = entry.need > 0 && topups.length
     ? ([...topups].sort((a, b) => a.credits - b.credits).find((p) => p.credits >= entry.need)
@@ -360,7 +374,7 @@ export function Pricing() {
         <section id="topup" ref={topupRef} className={s.topupSection} aria-labelledby="topup-title">
           <div className={s.topupHead}>
             <h2 id="topup-title" className={s.topupTitle}>크레딧 충전</h2>
-            <span className={s.topupMeta}>1회 결제 · 소멸 없음</span>
+            <span className={s.topupMeta}>1회 결제 · 결제 완료 즉시 지급 · 구매일부터 12개월 사용</span>
           </div>
           {topupBonusEnabled && <p className={`${s.topupMeta} ${s.topupBonusNotice}`}>Seller는 충전할 때마다 <span className={s.bonusRate}>5%,</span> Pro는 10%를 더 드려요.</p>}
           {entry.need > 0 && (
@@ -409,6 +423,9 @@ export function Pricing() {
               );
             })}
           </div>
+          <p className={s.purchaseConsent}>
+            추가구매 크레딧은 지급일부터 12개월 뒤 남은 수량이 소멸해요. 계정에서만 사용할 수 있고 다른 사람에게 양도하거나 현금으로 전환할 수 없어요.
+          </p>
         </section>
       )}
 

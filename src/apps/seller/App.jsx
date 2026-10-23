@@ -729,8 +729,10 @@ function RootRedirect() {
   // (facemarket 쪽 FacemarketRoot 는 이미 try/catch 라 랜딩이 멀쩡히 떴다 — 매출이 도는
   //  셀러 도메인만 죽는 반쪽 하드닝이었다.) 못 읽으면 null → target 이 기본 경로로 떨어진다.
   const [returnIntent] = useState(readPostLogin);
-  // facemarket 루트는 FacemarketRoot 가 가져갔다 — 여기 오는 건 ai 도메인뿐이다.
-  const target = returnIntent || sellerRootTarget(window.location?.hostname);
+  // 일반결제 심사 호스트는 이전 탭의 복귀 목표가 남아 있어도 단건 상품으로 고정한다.
+  // facemarket 루트는 FacemarketRoot 가 가져갔다 — 그 밖의 셀러 호스트만 여기 온다.
+  const hostTarget = sellerRootTarget(window.location?.hostname);
+  const target = hostTarget === '/create/input' ? (returnIntent || hostTarget) : hostTarget;
   const [phase, setPhase] = useState('init');   // init | syncing | done
   const [dest, setDest] = useState(null);
   const [destState, setDestState] = useState(null);
@@ -739,7 +741,7 @@ function RootRedirect() {
     if (mobile) {
       if (loading) return;
       forgetPostLogin();
-      setDest('/create/input');
+      setDest(target === '/pricing?tab=topup' ? target : '/create/input');
       setPhase('done');
       return;
     }
