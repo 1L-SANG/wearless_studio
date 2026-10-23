@@ -34,7 +34,7 @@ import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
 import { Generating } from '@/features/generating/Generating.jsx';
 import { LazyEditor } from '@/features/editor/lazyEditor.js';
 import { forgetPostLogin, readPostLogin, useAuth } from '@/features/auth/AuthProvider.jsx';
-import { IS_FACEMARKET, domainRouteRedirect, redirectToOwnDocumentHost } from '@/lib/host.js';
+import { IS_FACEMARKET, domainRouteRedirect, redirectToOwnDocumentHost, sellerRootTarget } from '@/lib/host.js';
 import { RequireAuth } from '../guards.jsx';
 import { SignupCompletion } from '@/features/auth/SignupCompletion.jsx';
 import { KakaoCallback } from '@/features/auth/KakaoCallback.jsx';
@@ -730,7 +730,7 @@ function RootRedirect() {
   //  셀러 도메인만 죽는 반쪽 하드닝이었다.) 못 읽으면 null → target 이 기본 경로로 떨어진다.
   const [returnIntent] = useState(readPostLogin);
   // facemarket 루트는 FacemarketRoot 가 가져갔다 — 여기 오는 건 ai 도메인뿐이다.
-  const target = returnIntent || '/create/input';
+  const target = returnIntent || sellerRootTarget(window.location?.hostname);
   const [phase, setPhase] = useState('init');   // init | syncing | done
   const [dest, setDest] = useState(null);
   const [destState, setDestState] = useState(null);

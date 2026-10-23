@@ -21,7 +21,7 @@ import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
-import { BANK_TRANSFER_ENABLED, SUBSCRIPTION_TRANSFER_ENABLED, TOPUP_ENABLED,
+import { BANK_TRANSFER_ENABLED, SUBSCRIPTION_PRODUCTS_ENABLED, SUBSCRIPTION_TRANSFER_ENABLED, TOPUP_ENABLED,
   TOSS_BILLING_CLIENT_KEY, TOSS_CLIENT_KEY } from '@/lib/tossKeys.js';
 import { BankTransferModal } from './BankTransferModal.jsx';
 import { topupBonusCredits } from '@/lib/limits.js';
@@ -177,7 +177,7 @@ export function Pricing() {
   // 충전 팩은 구독 카드 아래 '크레딧 충전' 구역에 둔다(오너 9/24: 두 종류뿐이라 탭을 나눌 이유가 없다).
   // 토스 모드에서는 일반결제 계약 전이면(TOPUP_ENABLED=false) 구역 자체를 숨긴다.
   const topupVisible = TOPUP_ENABLED || bankTransfer;
-  const subs = plans.filter((p) => p.kind === 'subscription');
+  const subs = SUBSCRIPTION_PRODUCTS_ENABLED ? plans.filter((p) => p.kind === 'subscription') : [];
   const topups = topupVisible ? plans.filter((p) => p.kind === 'topup') : [];
   // 부족분이 있으면 그걸 채우는 가장 작은 팩, 어느 팩으로도 못 채우면 가장 큰 팩.
   const recommendedCode = entry.need > 0 && topups.length
@@ -195,7 +195,7 @@ export function Pricing() {
   return (
     <div className="wizard wide">
       <div className={s.head}>
-        <h1 className={s.title}>요금제</h1>
+        <h1 className={s.title}>{SUBSCRIPTION_PRODUCTS_ENABLED ? '요금제' : '크레딧 추가 구매'}</h1>
         {/* 제목 오른쪽 상태 배지 — 시안 C(오너 9/24). 숫자를 따로 키우지 않고 한 문장으로. */}
         {bankTransfer && (bankInfo && bankInfo.enabled === false ? (
           // 서버에 계좌 정보가 없으면 버튼이 전부 잠긴다. 회색 버튼만 두면 막다른 길이라 이유와 문의처를 적는다.
@@ -414,7 +414,7 @@ export function Pricing() {
 
       {ready && (subs.length > 0 || topups.length > 0) && (
         <>
-          {!bankTransfer && (
+          {!bankTransfer && subs.length > 0 && (
             <p className={s.purchaseConsent}>
               매월 자동 결제되고 언제든 해지할 수 있어요. 해지해도 결제한 기간까지 쓸 수 있어요. 부가세 포함.
             </p>

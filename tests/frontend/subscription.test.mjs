@@ -51,8 +51,9 @@ test('구독 관리는 결제수단 종류를 구분해 표시한다', () => {
 /* 충전은 일반결제라 계약 전까지 라이브에서 실패한다(2026-09-10 토스 확인: 자동결제 MID 로
    단건 결제 대체도 불가). 누르면 실패할 버튼을 남기면 사용자가 결제 실패를 겪는다.
    서버 라우트는 살려 두고 화면만 닫는다 — 계약이 생기면 플래그만 켜면 된다. */
-test('충전 탭은 계약 전까지 닫아 둔다', () => {
-  assert.match(KEYS, /TOPUP_ENABLED = false/);
+test('충전 상품은 일반결제 심사 호스트에서만 연다', () => {
+  assert.match(KEYS, /TOPUP_ENABLED = IS_GENERAL_PAYMENT_REVIEW_HOST/);
+  assert.match(KEYS, /SUBSCRIPTION_PRODUCTS_ENABLED = !IS_GENERAL_PAYMENT_REVIEW_HOST/);
   // 2026-09-22: 계좌이체(BANK_TRANSFER_ENABLED)가 켜져 있으면 충전도 팔 수 있어 충전 구역이 보인다.
   // 2026-09-24: 탭 대신 구독 카드 아래 구역. 두 스위치가 모두 꺼지면 충전 상품을 아예 고르지 않는다.
   assert.match(PRICING, /const topupVisible = TOPUP_ENABLED \|\| bankTransfer;/);

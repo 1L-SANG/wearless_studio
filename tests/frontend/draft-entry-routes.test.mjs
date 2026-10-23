@@ -185,6 +185,7 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
     } },
     useNavigate: () => navigate,
     isMockMode: mock, IS_FACEMARKET: facemarket, isMobileDevice: () => mobile,
+    sellerRootTarget: (hostname) => hostname === 'pay.wearless.kr' ? '/pricing?tab=topup' : '/create/input',
     hasPendingDraft: localPendingReader || (() => pendingLocal === undefined ? Boolean(local) : typeof pendingLocal === 'function' ? pendingLocal() : pendingLocal), loadDraft: localReader || (async () => local), flushProductDraftSave: async () => entryFlush,
     Navigate: 'Navigate', Outlet: 'Outlet',
     readPostLogin: () => returnIntent, forgetPostLogin: () => calls.push('forget'),
