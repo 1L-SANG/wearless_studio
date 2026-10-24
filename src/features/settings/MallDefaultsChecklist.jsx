@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
@@ -56,6 +56,11 @@ function MallDefaultsSection({ section, defaults, onSaved, onDone }) {
   const [failure, setFailure] = useState('');
   const [busy, setBusy] = useState(false);
   const formRef = useRef(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const field = (name, label, money = false) => <Field key={name} section={section} name={name} label={label} money={money} values={values} onChange={setValues} errors={errors} />;
   const radios = (name, label, options) => <RadioGroup name={name} label={label} options={options} values={values} onChange={setValues} />;
   const save = async (event) => {
@@ -78,9 +83,12 @@ function MallDefaultsSection({ section, defaults, onSaved, onDone }) {
     }
     const payload = { [section]: fields, ...(section === 'disclosure' ? { taxType: values.taxType, productOrigin: values.productOrigin } : {}) };
     setBusy(true); setFailure('');
-    try { onSaved?.(await api.saveZigzagDefaults(payload)); onDone(); }
-    catch (error) { setFailure(error.message || '저장하지 못했어요. 잠시 뒤 다시 시도해 주세요'); }
-    finally { setBusy(false); }
+    try {
+      onSaved?.(await api.saveZigzagDefaults(payload));
+      if (mountedRef.current) onDone();
+    }
+    catch (error) { if (mountedRef.current) setFailure(error.message || '저장하지 못했어요. 잠시 뒤 다시 시도해 주세요'); }
+    finally { if (mountedRef.current) setBusy(false); }
   };
   return <form ref={formRef} onSubmit={save} noValidate className={styles.sectionForm}>
     <fieldset disabled={busy} className={styles.formFields}>

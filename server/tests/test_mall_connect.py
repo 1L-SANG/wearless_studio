@@ -1,5 +1,6 @@
 """HTTP and real repository contracts, with in-memory SQL and httpx transports."""
 
+import asyncio
 import contextlib
 import copy
 import importlib
@@ -132,7 +133,7 @@ class FakePool:
 def env(monkeypatch):
     mall = module()
     store = {"connections": [], "defaults": {}, "attempts": {}, "sql": [], "remote": 0}
-    def respond(request):
+    async def respond(request):
         store["remote"] += 1
         authorization = request.headers["Authorization"]
         if "access-key=bad" in authorization:
@@ -141,6 +142,8 @@ def env(monkeypatch):
             return httpx.Response(200, json={"errors": [{"message": "permission denied"}]})
         if "shop_shipping_address_list" in request.content.decode():
             return httpx.Response(200, json={"data": {"shop_shipping_address_list": {"item_list": [{"id": "a1", "name": "창고", "address": "서울", "address_detail": "", "postcode": "12345", "is_default": True}]}}})
+        if pause := store.get("pause_shop"):
+            await pause(authorization)
         shop_id = "s2" if "access-key=other-shop" in authorization else "s1"
         return httpx.Response(200, json={"data": {"shop": {"shop_id": shop_id, "shop_name": "데일리 니트 스토어", "allowed_brand_list": [], "site_country_list": []}}})
     client_class = mall.ZigzagClient
@@ -219,6 +222,64 @@ def test_rotate_replaces_on_success(env):
     assert [r["status"] for r in store["connections"]] == ["revoked", "connected"]
 
 
+def test_rotate_requires_an_existing_connection(env):
+    client, store = env
+    response = client.post("/v1/malls/zigzag/rotate", json=KEYS)
+    assert response.status_code == 409 and response.json()["error"]["code"] == "connection_changed"
+    assert store["connections"] == [] and store["remote"] == 0
+
+
+@pytest.mark.parametrize("change, expected_hint, pending_key", [
+    ("disconnect", None, "stale-fixture-87654321"),
+    ("reconnect", "22223333", "stale-fixture-87654321"),
+    ("rotate", "22223333", "stale-fixture-87654321"),
+    ("disconnect", None, "other-shop-fixture-87654321"),
+])
+def test_stale_rotation_cannot_restore_or_replace_a_changed_connection(env, change, expected_hint, pending_key):
+    client, store = env
+    assert connect(client).status_code == 200
+    original_id = store["connections"][0]["id"]
+
+    async def scenario():
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def pause(authorization):
+            if f"access-key={pending_key}" in authorization:
+                entered.set()
+                await release.wait()
+
+        store["pause_shop"] = pause
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=client.app), base_url="http://test") as browser:
+            pending = asyncio.create_task(browser.post("/v1/malls/zigzag/rotate", json={**KEYS, "accessKey": pending_key}))
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=2)
+                if change in {"disconnect", "reconnect"}:
+                    assert (await browser.delete("/v1/malls/zigzag")).status_code == 204
+                if change in {"reconnect", "rotate"}:
+                    endpoint = "connect" if change == "reconnect" else "rotate"
+                    response = await browser.post(f"/v1/malls/zigzag/{endpoint}", json={**KEYS, "accessKey": "winner-fixture-22223333"})
+                    assert response.status_code == 200
+            finally:
+                release.set()
+            response = await asyncio.wait_for(pending, timeout=2)
+            assert response.status_code == 409
+            assert response.json()["error"]["code"] == "connection_changed"
+            current = (await browser.get("/v1/malls")).json()["items"][0]
+            assert current["status"] == ("none" if change == "disconnect" else "connected")
+            assert current["keyHint"] == expected_hint
+
+    asyncio.run(scenario())
+    assert store["connections"][0]["status"] == "revoked"
+    assert store["connections"][0]["access_key_enc"] is None
+    assert store["connections"][0]["secret_key_enc"] is None
+    active = [row for row in store["connections"] if row["status"] == "connected"]
+    if change == "disconnect":
+        assert active == []
+    else:
+        assert len(active) == 1 and active[0]["id"] != original_id
+        assert active[0]["access_key_enc"] == b"encrypted:winner-fixture-22223333"
+
+
 def test_connect_to_other_shop_clears_saved_addresses(env):
     client, store = env
     connect(client)
@@ -281,7 +342,8 @@ def test_defaults_partial_save_tracks_completed_items(env):
 
 def test_rate_limited(env):
     client, store = env
-    for i in range(10):
+    assert connect(client).status_code == 200
+    for i in range(9):
         endpoint = "connect" if i % 2 == 0 else "rotate"
         assert client.post(f"/v1/malls/zigzag/{endpoint}", json={**KEYS, "accessKey": "bad-fixture"}).status_code == 400
     response = connect(client)

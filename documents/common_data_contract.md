@@ -740,11 +740,16 @@ generation: {
 | `product_name`, `editor_revision` | 게시 시점의 상품명과 에디터 리비전. |
 | `files` | `{index,r2_key,bytes,width,height,asset_id}` 배열. 조각은 `assets`에도 `source='export'`, `visibility='public'`, `metadata.publication_id`로 등록한다. |
 | `expires_at` | 보관 만료 시각. 구독 중이면 null. |
-| `created_at`, `ready_at`, `deleted_at` | 생성·게시 완료·삭제 완료 시각. |
+| `created_at`, `ready_at`, `deleted_at` | 생성, 게시 완료, 업로드 대기 시간이 지난 뒤 이미지와 CDN 정리를 확인한 시각. 이후 재정리가 필요하면 `deleted_at`을 다시 null로 바꾼다. |
+| `cleanup_after`, `cleanup_generation` | 다음 삭제 정리 시각과 정리 시도 순번. 순번이 최신인 요청만 정리 완료를 기록한다. |
 
 상태 전이는 `pending → ready → deleted`이며 30분 동안 완료되지 않은 `pending`도 `deleted`로 정리한다. 재게시는 새 버전을 만들고 기존 게시를 바꾸지 않는다.
 
-`deleted`이면서 `deleted_at=null`이면 이미지와 CDN 정리가 아직 끝나지 않은 삭제 의도다. 만료 정리는 게시별 현재 구독 확인과 삭제 의도 저장을 프로필 갱신과 같은 잠금으로 처리한다. 그 전에 재구독이 끝나면 보존하고, 삭제 의도가 먼저 확정된 버전은 이후 재구독으로 복구하지 않는다. 저장소 정리에 실패해도 행과 삭제 의도를 유지해 재시도한다. 유효한 업로드 주소의 늦은 전송을 정리할 수 있도록 명시적 삭제와 탈퇴는 정리 표시를 잠시 보존한다.
+`deleted`이면서 `deleted_at=null`이면 이미지와 CDN 정리를 다시 확인해야 하는 삭제 의도다. 만료 정리는 게시 행을 잠근 뒤 별도 SQL 문으로 현재 프로필을 읽고 공유 잠금을 잡는다. 재구독이 그 전에 커밋됐으면 보존하고, 삭제 의도가 먼저 확정된 버전은 이후 재구독으로 복구하지 않는다. 하루 한 번 만료일을 계산할 때도 게시, 프로필 순서로 잠그고 처음 잠근 게시만 갱신한다. 저장소 정리에 실패해도 행과 삭제 의도를 유지해 재시도한다.
+
+명시적 삭제와 탈퇴는 이미지와 CDN을 즉시 지운다. `cleanup_after`의 첫 값은 모든 업로드 주소를 발급한 뒤의 시각에 주소 유효 시간 5분과 전송 여유 1시간을 더해 저장한다. 생성 시각은 잠금 대기보다 빠를 수 있으므로 이 계산에 쓰지 않는다. 이 시각이 지난 첫 정리는 이미지가 없어도 CDN을 다시 지운 뒤 `deleted_at`을 기록한다. 1시간은 운영상 여유이며 저장소가 전송 완료를 보장하는 상한은 아니다. 삭제 기록을 계속 보존하고 성공 후 다음 확인을 하루 뒤로 예약하므로 더 늦게 끝난 업로드도 다시 회수한다.
+
+이미 정리를 확인한 게시의 재확인은 HEAD로 존재 여부를 보고, 이미지가 다시 생긴 경우에만 삭제와 CDN 정리를 한다. 삭제 전에 재시도 의도와 새 순번을 저장하고, 완료 시 같은 순번인지 확인한다. 다른 요청의 CDN 정리 실패를 오래된 완료 응답이 덮어쓰지 않는다. 한 번의 시간별 실행은 새 만료, 삭제 재확인, 미완료 게시를 각각 최대 100건 처리한다. 각 목록의 한도는 분리하며 삭제 재확인은 예정 시각 순으로 처리하고 성공한 건은 뒤로 보낸다. 삭제 재확인은 워커당 하루 최대 2,400건으로, 밀린 건이 많거나 저장소 오류가 지속되면 하루보다 늦어질 수 있다. 정상 상태에서도 게시 조각마다 주기적인 HEAD 비용이 들며, 이미지가 다시 생기면 삭제와 CDN 비용도 발생한다.
 
 R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Cache-Control: public, max-age=31536000, immutable`을 고정한다.
 
@@ -767,6 +772,8 @@ R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Ca
 | `mall_defaults.completed_items` | `defaults.completedItems` | 완료한 `shipping`, `returns`, `addresses`, `disclosure` |
 
 연결은 새 키로 스토어 조회를 마친 뒤 저장한다. 인증정보 변경은 검증이 성공한 경우에만 기존 연결을 `revoked`로 바꾸고 새 `connected` 행을 같은 트랜잭션에 만든다. 실패하면 기존 연결을 유지한다. 연결할 스토어가 `mall_defaults.shop_id`와 다르면 `addresses`를 비우고 완료 항목에서 제외한 뒤 스토어 ID를 갱신한다. 다른 기본 설정과 같은 스토어의 재연결 설정은 유지한다. 인증정보 변경에서 기존 연결과 스토어가 다르면 400 `shop_mismatch`로 거절한다. 연결 해제와 탈퇴는 암호문을 즉시 지우고 `revoked`로 바꾸며 기본 설정을 보존한다. 응답과 로그에 키 원문을 넣지 않는다.
+
+인증정보 변경은 외부 검증을 시작하기 전에 현재 연결 ID를 기록한다. 저장할 때 연결 해제와 같은 잠금 안에서 그 연결이 여전히 활성 상태인지 확인한다. 연결이 없거나 해제되거나 다른 연결로 교체됐다면 409 `connection_changed`로 거절하며, 늦게 끝난 변경 요청이 연결을 다시 만들지 않는다.
 
 `GET /v1/malls`는 `{items:[{mall,status,shopName,keyHint,permissions,connectedAt,lastRegisteredAt,defaults}]}`이며 `defaults`는 저장된 값과 `completedItems`, `total:4`를 포함한다. 저장된 값이 없으면 각 묶음은 빈 객체다. `POST /v1/malls/zigzag/connect`, `POST .../rotate`의 입력은 `{accessKey,secretKey}`이며 앞뒤 공백 제거 후 각각 1~256자다. 두 동작을 합쳐 사용자당 시간당 10회로 제한한다. `DELETE /v1/malls/zigzag`는 기본 설정을 지우지 않는다.
 

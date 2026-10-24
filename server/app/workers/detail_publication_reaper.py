@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from .. import repo
-from ..detail_publications import delete_publication_objects
+from ..detail_publications import delete_publication_objects, publication_files
 
 
 log = logging.getLogger("wearless.detail_publication_reaper")
@@ -66,9 +66,24 @@ class DetailPublicationReaper:
                     await conn.commit()
                 if row is None:
                     continue
-                await delete_publication_objects(self.app.state.r2, row)
+                needs_cleanup = row["deleted_at"] is None
+                if not needs_cleanup:
+                    # Already-purged tombstones need only HEAD while objects stay absent.
+                    for file in publication_files(row):
+                        if await asyncio.to_thread(self.app.state.r2.head, file["r2_key"]) is not None:
+                            needs_cleanup = True
+                            break
+                    if needs_cleanup:
+                        # Persist intent before DELETE: CDN failure must retry even if HEAD is absent.
+                        async with self.app.state.pool.connection() as conn:
+                            row = await repo.soft_delete_detail_publication(
+                                conn, user_id=row["user_id"], publication_id=row["id"])
+                            await conn.commit()
+                if needs_cleanup:
+                    await delete_publication_objects(self.app.state.r2, row)
                 async with self.app.state.pool.connection() as conn:
-                    await repo.finalize_detail_publication_deletion(conn, publication_id=row["id"])
+                    await repo.finalize_detail_publication_deletion(
+                        conn, publication_id=row["id"], cleanup_generation=row["cleanup_generation"])
                     await conn.commit()
             except Exception:
                 log.exception("detail publication cleanup deferred: %s", candidate["id"])

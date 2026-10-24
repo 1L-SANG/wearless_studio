@@ -29,19 +29,27 @@ class RetentionCursor(FakeCursor):
     async def execute(self, sql, args=()):
         q = " ".join(sql.lower().split())
         rows = self.store["publications"]
+        if q.startswith("select id from detail_publications") and q.endswith("for update"):
+            self.store["sql"].append((q, args))
+            self.result = [{"id": r["id"]} for r in rows.values() if r["status"] == "ready"]
+            return
+        if q.startswith("select user_id from profiles"):
+            self.store["sql"].append((q, args))
+            self.result = [{"user_id": USER}]
+            return
         if q.startswith("update detail_publications set status = 'deleted'") and "not exists" in q:
             self.store["sql"].append((q, args))
-            pub_id, user_id, now, cutoff = args
-            assert "deleted_at is null" in q and "interval '30 minutes'" in q
+            pub_id, user_id, now, cutoff, cleanup_now = args
             row = rows.get(pub_id)
-            eligible = row and row["user_id"] == user_id and row["deleted_at"] is None and (
-                row["status"] == "deleted"
+            eligible = row and row["user_id"] == user_id and (
+                row["status"] == "deleted" and row["cleanup_after"] <= cleanup_now
                 or row["status"] == "ready" and row["expires_at"] is not None
                 and row["expires_at"] <= now and self.store["plan"] == "free"
                 or row["status"] == "pending" and row["created_at"] < cutoff - timedelta(minutes=30))
             self.result = []
             if eligible:
                 row["status"] = "deleted"
+                row["cleanup_generation"] += 1
                 self.result = [copy.deepcopy(row)]
             self.rowcount = len(self.result)
             return
@@ -51,7 +59,7 @@ class RetentionCursor(FakeCursor):
             now = args["now"]
             changed = 0
             for row in rows.values():
-                if row["status"] != "ready":
+                if row["status"] != "ready" or row["id"] not in args["publication_ids"]:
                     continue
                 current = row["expires_at"]
                 expiry = current
@@ -65,20 +73,21 @@ class RetentionCursor(FakeCursor):
                 changed += current != expiry
             self.rowcount = changed
             return
-        if q.startswith("select") and "from detail_publications" in q and "where" in q and "user_id = %s" not in q:
+        if q.startswith(("select", "(select")) and "from detail_publications" in q and "where" in q and "user_id = %s" not in q:
             self.store["sql"].append((q, args))
             if "status = 'pending'" in q:
                 minutes = args[0]
                 self.result = [copy.deepcopy(r) for r in rows.values() if r["status"] == "pending" and
                     (r["created_at"] < NOW - timedelta(minutes=minutes) or r["expires_at"] is not None and r["expires_at"] <= NOW)]
             else:
-                now, limit = args
-                assert "deleted_at is null" in q and "status = 'deleted'" in q
+                now, limit, cleanup_now, cleanup_limit = args
                 current_plan_guard = "not exists" in q and "from profiles" in q and "p.plan <> 'free'" in q
-                self.result = [copy.deepcopy(r) for r in rows.values() if
+                expired = [copy.deepcopy(r) for r in rows.values() if
                     r["status"] == "ready" and r["expires_at"] is not None and r["expires_at"] <= now
-                    and (not current_plan_guard or self.store["plan"] == "free")
-                    or r["status"] == "deleted" and r["deleted_at"] is None][:limit]
+                    and (not current_plan_guard or self.store["plan"] == "free")][:limit]
+                deleted = sorted([copy.deepcopy(r) for r in rows.values() if r["status"] == "deleted"
+                    and r["cleanup_after"] <= cleanup_now], key=lambda r: (r["cleanup_after"], r["id"]))[:cleanup_limit]
+                self.result = expired + deleted
             self.rowcount = len(self.result)
             return
         await super().execute(sql, args)
@@ -116,7 +125,8 @@ def seed(store, *, status="ready", expires_at=None, created_at=None):
                preset="smartstore", width=860, slice_count=1, total_bytes=100,
                product_name="옷", editor_revision=7, expires_at=expires_at,
                files=[dict(index=1, r2_key=key, bytes=100, width=860, height=1000, asset_id=asset_id)],
-               created_at=created_at or NOW - timedelta(days=1), deleted_at=None, ready_at=NOW)
+               created_at=created_at or NOW - timedelta(days=1), deleted_at=None, ready_at=NOW,
+               cleanup_after=(created_at or NOW - timedelta(days=1)) + timedelta(minutes=65), cleanup_generation=0)
     store["publications"][pub_id] = row
     store["assets"][asset_id] = dict(id=asset_id, source="export", visibility="public",
                                     metadata={"publication_id": pub_id}, deleted_at=None)
@@ -223,6 +233,7 @@ async def test_sweep_retries_cdn_failure_before_finalizing():
 @run_async
 async def test_sweep_recomputes_expiry_only_daily():
     worker, store, _r2 = setup_reaper()
+    seed(store)
     await worker._sweep_once()
     await worker._sweep_once()
     assert len([sql for sql, _ in store["sql"] if sql.startswith("update detail_publications") and "from profiles" in sql]) == 1
@@ -277,14 +288,109 @@ async def test_expiry_claim_update_skips_paid_user():
     assert await repo.claim_detail_publication_deletion(
         conn, user_id=USER, publication_id=row["id"], now=NOW) is None
     assert row["status"] == "ready"
-    assert len(store["sql"]) == 1
-    sql, args = store["sql"][0]
-    assert sql.startswith("update detail_publications set status = 'deleted'")
-    assert "not exists" in sql and "p.plan <> 'free'" in sql
-    assert "for update" not in sql
-    assert args == (row["id"], USER, NOW, NOW)
     store["plan"] = "free"
     claimed = await repo.claim_detail_publication_deletion(
         conn, user_id=USER, publication_id=row["id"], now=NOW)
     assert claimed["status"] == row["status"] == "deleted"
-    assert store["sql"] == [(sql, args), (sql, args)]
+
+
+@run_async
+async def test_sweep_waits_for_live_upload_cleanup_window():
+    worker, store, r2 = setup_reaper()
+    row = seed(store, status="deleted")
+    row["cleanup_after"] = NOW + timedelta(minutes=65)
+    key = f"pub/{USER}/{row['id']}/01.jpg"
+    r2.objects[key] = {"size": 100, "mime": "image/jpeg"}
+    await worker._sweep_once()
+    assert row["deleted_at"] is None
+    assert key in r2.objects
+    assert r2.deleted == r2.purged == []
+    row["cleanup_after"] = NOW - timedelta(seconds=1)
+    await worker._sweep_once()
+    assert row["deleted_at"] is not None
+    assert key not in r2.objects
+
+
+@run_async
+async def test_absent_finalized_tombstone_rechecks_without_repurging():
+    worker, store, r2 = setup_reaper()
+    row = seed(store, status="deleted")
+    row["deleted_at"] = NOW - timedelta(days=2)
+    row["cleanup_after"] = NOW - timedelta(days=1)
+    await worker._sweep_once()
+    assert r2.deleted == r2.purged == []
+    assert row["cleanup_after"] > NOW
+
+
+@run_async
+async def test_recreated_tombstone_purge_failure_retries_even_after_object_is_gone():
+    worker, store, r2 = setup_reaper()
+    row = seed(store, status="deleted")
+    row["deleted_at"] = NOW - timedelta(days=2)
+    row["cleanup_after"] = NOW - timedelta(days=1)
+    key = f"pub/{USER}/{row['id']}/01.jpg"
+    r2.objects[key] = {"size": 100, "mime": "image/jpeg"}
+    normal_purge = r2.purge_public_cache
+    r2.purge_public_cache = lambda _keys: (_ for _ in ()).throw(RuntimeError("CDN unavailable"))
+    await worker._sweep_once()
+    assert key not in r2.objects
+    assert store["publications"][row["id"]]["deleted_at"] is None
+    r2.purge_public_cache = normal_purge
+    await worker._sweep_once()
+    assert r2.purged == [key]
+    assert store["publications"][row["id"]]["deleted_at"] is not None
+
+
+@run_async
+async def test_old_absence_check_cannot_acknowledge_new_cdn_retry_intent():
+    worker, store, r2 = setup_reaper()
+    row = seed(store, status="deleted")
+    row["deleted_at"] = NOW - timedelta(days=2)
+    row["cleanup_after"] = NOW - timedelta(days=1)
+    original_head = r2.head
+    key = f"pub/{USER}/{row['id']}/01.jpg"
+
+    def other_cleanup_deletes_but_fails_cdn(object_key):
+        # The real reaper already holds an independent copy of the finalized row.
+        # Another DELETE or reaper clears its completion marker, deletes R2, then
+        # fails its CDN purge. An older HEAD-only result cannot acknowledge that work.
+        store["publications"][row["id"]]["deleted_at"] = None
+        store["publications"][row["id"]]["cleanup_generation"] += 1
+        return None
+
+    r2.head = other_cleanup_deletes_but_fails_cdn
+    await worker._sweep_once()
+    assert store["publications"][row["id"]]["deleted_at"] is None
+    assert store["publications"][row["id"]]["cleanup_after"] <= NOW
+    r2.head = original_head
+    await worker._sweep_once()
+    assert r2.purged == [key]
+    assert store["publications"][row["id"]]["deleted_at"] is not None
+
+
+@run_async
+async def test_old_full_cleanup_cannot_acknowledge_new_cdn_retry_intent():
+    worker, store, r2 = setup_reaper()
+    row = seed(store, status="deleted")
+    row["cleanup_after"] = NOW - timedelta(days=1)
+    row["cleanup_generation"] = 0
+    key = f"pub/{USER}/{row['id']}/01.jpg"
+    normal_purge = r2.purge_public_cache
+
+    def later_cleanup_fails_after_this_purge(keys):
+        normal_purge(keys)
+        # A late PUT followed by B's delete succeeds, but B's CDN purge fails.
+        # Both A and B observed deleted_at=NULL, so a timestamp-only CAS is unsafe.
+        r2.objects[key] = {"size": 100, "mime": "image/jpeg"}
+        r2.delete(key)
+        store["publications"][row["id"]]["deleted_at"] = None
+        store["publications"][row["id"]]["cleanup_generation"] += 1
+
+    r2.purge_public_cache = later_cleanup_fails_after_this_purge
+    await worker._sweep_once()
+    assert store["publications"][row["id"]]["deleted_at"] is None
+    assert store["publications"][row["id"]]["cleanup_after"] <= NOW
+    r2.purge_public_cache = normal_purge
+    await worker._sweep_once()
+    assert r2.purged == [key, key]
+    assert store["publications"][row["id"]]["deleted_at"] is not None

@@ -107,9 +107,12 @@ async def _verify_and_save(request, body, user_id, *, rotate=False):
     # Commit the attempt before the external request so failed verification also consumes a slot.
     async with get_conn(request) as conn:
         allowed = await repo.claim_mall_connection_attempt(conn, user_id=user_id)
+        previous = await repo.get_mall_connection(conn, user_id=user_id, mall="zigzag") if rotate and allowed else None
         await conn.commit()
     if not allowed:
         raise _error("rate_limited", "한 시간에 10번까지 확인할 수 있어요. 잠시 뒤 다시 시도해 주세요", 429)
+    if rotate and not previous:
+        raise _error("connection_changed", "연결 정보가 바뀌었어요. 현재 연결을 확인한 뒤 다시 시도해 주세요", 409)
     access_key, secret_key = body.access_key.get_secret_value(), body.secret_key.get_secret_value()
     try:
         shop = await _client(request, access_key, secret_key).shop()
@@ -117,14 +120,16 @@ async def _verify_and_save(request, body, user_id, *, rotate=False):
         code = classify_error(exc)
         raise _error(code, ERROR_COPY[code]) from None
     async with get_conn(request) as conn:
-        if rotate:
-            previous = await repo.get_mall_connection(conn, user_id=user_id, mall="zigzag")
-            if previous and previous["shop_id"] != shop["shop_id"]:
-                raise _error("shop_mismatch", "다른 스토어의 인증키예요. 스토어를 바꾸려면 연결을 해제한 뒤 다시 연결해 주세요")
         hint = access_key[-8:] if len(access_key) > 8 else None
-        row = await repo.upsert_mall_connection(conn, user_id=user_id, mall="zigzag", shop_id=shop["shop_id"],
-            shop_name=shop["shop_name"], key_hint=hint, access_key=access_key, secret_key=secret_key,
-            permissions=["상품 조회와 등록"], kek=kek)
+        try:
+            row = await repo.upsert_mall_connection(conn, user_id=user_id, mall="zigzag", shop_id=shop["shop_id"],
+                shop_name=shop["shop_name"], key_hint=hint, access_key=access_key, secret_key=secret_key,
+                permissions=["상품 조회와 등록"], kek=kek,
+                expected_connection_id=previous["id"] if rotate else None)
+        except repo.MallShopMismatch:
+            raise _error("shop_mismatch", "다른 스토어의 인증키예요. 스토어를 바꾸려면 연결을 해제한 뒤 다시 연결해 주세요") from None
+        if row is None:
+            raise _error("connection_changed", "연결 정보가 바뀌었어요. 현재 연결을 확인한 뒤 다시 시도해 주세요", 409)
     return _connection_result(row)
 
 

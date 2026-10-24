@@ -115,7 +115,8 @@ class FakeCursor:
                        status="pending", preset=preset, width=width, product_name=product_name,
                        editor_revision=revision if revision is not None else 7, files=copy.deepcopy(files),
                        slice_count=0, total_bytes=0, expires_at=None,
-                       created_at=datetime(2026, 1, 31, 12, tzinfo=timezone.utc), ready_at=None, deleted_at=None)
+                       created_at=datetime(2026, 1, 31, 12, tzinfo=timezone.utc), ready_at=None, deleted_at=None,
+                       cleanup_after=datetime.now(timezone.utc) + timedelta(minutes=65), cleanup_generation=0)
             rows[pub_id] = row
             self.result = [copy.deepcopy(row)]
         elif "from detail_publications" in q and q.startswith("select"):
@@ -124,8 +125,7 @@ class FakeCursor:
                 self.result = [copy.deepcopy(r) for r in rows.values() if r["user_id"] == user_id and r["project_id"] == project_id and r["status"] == "ready"]
                 self.result.sort(key=lambda r: r["version"], reverse=True)
             elif "where user_id = %s" in q:
-                self.result = [copy.deepcopy(r) for r in rows.values() if r["user_id"] == args[0] and
-                    (r["status"] in ("ready", "pending") or r["status"] == "deleted" and r["deleted_at"] is None)]
+                self.result = [copy.deepcopy(r) for r in rows.values() if r["user_id"] == args[0]]
             elif "where id = %s" in q:
                 pub_id, user_id = args
                 row = rows.get(pub_id)
@@ -153,13 +153,20 @@ class FakeCursor:
         elif q.startswith("update detail_publications") and "status = 'deleted'" in q:
             if "deleted_at = coalesce" in q:
                 row = rows[args[0]]
-                row.update(status="deleted", deleted_at=row["deleted_at"] or NOW)
+                now = datetime.now(timezone.utc)
+                if (row["status"] == "deleted" and row["cleanup_after"] <= now
+                        and row["cleanup_generation"] == args[1]):
+                    row.update(deleted_at=row["deleted_at"] or now, cleanup_after=now + timedelta(days=1))
                 return
             pub_id, user_id = args
             row = rows.get(pub_id)
             if row and row["user_id"] == user_id:
-                row.update(status="deleted", deleted_at=None)
+                row.update(status="deleted", deleted_at=None,
+                           cleanup_generation=row["cleanup_generation"] + 1)
                 self.result = [copy.deepcopy(row)]
+        elif q.startswith("update detail_publications set cleanup_after"):
+            cleanup_after, pub_id = args
+            rows[pub_id]["cleanup_after"] = cleanup_after
         elif q.startswith("update assets"):
             for row in self.store["assets"].values():
                 if row["metadata"]["publication_id"] == args[0]:
@@ -316,7 +323,7 @@ def test_create_returns_presigned_uploads(publication_client):
     assert second["version"] == 2
     assert store["publications"][created["publicationId"]]["editor_revision"] == 7
     locks = [args[0] for sql, args in store["sql"] if "pg_advisory_xact_lock" in sql]
-    assert locks == [f"detail-publication-project:{PROJECT}"] * 2
+    assert locks == [f"detail-publication-user:{USER}", f"detail-publication-project:{PROJECT}"] * 2
 
 
 def test_create_signs_each_declared_upload_size(publication_client):
@@ -474,7 +481,7 @@ def test_delete_soft_deletes_and_calls_r2_delete(publication_client):
     response = client.delete(f"/v1/detail-publications/{created['publicationId']}")
     assert response.status_code == 204
     assert store["publications"][created["publicationId"]]["status"] == "deleted"
-    assert store["publications"][created["publicationId"]]["deleted_at"] is not None
+    assert store["publications"][created["publicationId"]]["deleted_at"] is None
     assert all(asset.get("deleted_at") is not None for asset in store["assets"].values())
     assert r2.deleted == r2.purged == [f"pub/{USER}/{created['publicationId']}/01.jpg", f"pub/{USER}/{created['publicationId']}/02.jpg"]
     assert client.get(f"/v1/projects/{PROJECT}/detail-publications").json() == {"items": []}
@@ -490,16 +497,17 @@ def test_delete_failure_remains_retryable(publication_client):
     assert row["status"] == "deleted" and row["deleted_at"] is None
 
 
-def test_delete_finalized_publication_skips_storage(publication_client):
+def test_repeat_delete_reclaims_recreated_publication(publication_client):
     client, store, r2, _app = publication_client
     created = uploaded(publication_client)
     url = f"/v1/detail-publications/{created['publicationId']}"
     assert client.delete(url).status_code == 204
-    deleted_at = store["publications"][created["publicationId"]]["deleted_at"]
-    assert deleted_at is not None
+    key = f"pub/{USER}/{created['publicationId']}/01.jpg"
+    r2.objects[key] = {"size": 100, "mime": "image/jpeg"}
     assert client.delete(url).status_code == 204
-    assert len(r2.deleted) == len(r2.purged) == 2
-    assert store["publications"][created["publicationId"]]["deleted_at"] == deleted_at
+    assert key not in r2.objects
+    assert len(r2.deleted) == len(r2.purged) == 4
+    assert store["publications"][created["publicationId"]]["deleted_at"] is None
 
 
 def test_publication_files_raises_value_error():
@@ -532,7 +540,7 @@ def test_account_purge_skips_invalid_files_and_continues(publication_client, cap
     assert asyncio.run(publication_module().purge_user_detail_publications(
         app, FakeConn(store), user_id=USER)) == 1
     assert store["publications"][bad["publicationId"]]["deleted_at"] is None
-    assert store["publications"][good["publicationId"]]["deleted_at"] is not None
+    assert store["publications"][good["publicationId"]]["deleted_at"] is None
     assert len(r2.deleted) == len(r2.purged) == 2
     assert f"account publication cleanup deferred: {bad['publicationId']}" in caplog.text
 
@@ -566,7 +574,7 @@ def test_purge_user_detail_publications_deletes_all(publication_client):
     count = asyncio.run(dp.purge_user_detail_publications(app, FakeConn(store), user_id=USER))
     assert count == 2
     assert all(store["publications"][p["publicationId"]]["status"] == "deleted" and
-               store["publications"][p["publicationId"]]["deleted_at"] is not None for p in (ready, pending))
+               store["publications"][p["publicationId"]]["deleted_at"] is None for p in (ready, pending))
     assert foreign["status"] == "ready"
     assert sorted(r2.deleted) == sorted(r2.purged) == sorted(
         f"pub/{USER}/{p['publicationId']}/{i:02d}.jpg" for p in (ready, pending) for i in (1, 2))
@@ -588,6 +596,9 @@ def test_failed_account_purge_survives_paid_plan_recompute():
     r2.fail_delete = False
     asyncio.run(worker._sweep_once())
     assert store["publications"][ready["id"]]["deleted_at"] is not None
+    assert store["publications"][pending["id"]]["deleted_at"] is None
+    store["publications"][pending["id"]]["cleanup_after"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+    asyncio.run(worker._sweep_once())
     assert store["publications"][pending["id"]]["deleted_at"] is not None
     assert len(r2.deleted) == len(r2.purged) == 2
 
@@ -665,17 +676,19 @@ def test_account_purge_cleans_publications_without_face_storage(publication_clie
 
 
 @pytest.mark.parametrize("operation", ["delete", "account_delete"])
-def test_explicit_deletion_is_finalized_once(publication_client, operation):
+def test_explicit_deletion_schedules_recheck_after_success(publication_client, operation):
     dp = publication_module()
     client, store, r2, app = publication_client
     created = uploaded(publication_client)
     complete_publication(client, created)
+    store["publications"][created["publicationId"]]["cleanup_after"] = datetime.now(timezone.utc) - timedelta(seconds=1)
     if operation == "delete":
         assert client.delete(f"/v1/detail-publications/{created['publicationId']}").status_code == 204
     else:
         assert asyncio.run(dp.purge_user_detail_publications(app, FakeConn(store), user_id=USER)) == 1
     row = store["publications"][created["publicationId"]]
     assert row["status"] == "deleted" and row["deleted_at"] is not None
+    assert row["cleanup_after"] > datetime.now(timezone.utc)
     key = f"pub/{USER}/{created['publicationId']}/01.jpg"
     from test_detail_publication_reaper import setup_reaper
     worker, worker_store, _ = setup_reaper()
@@ -685,3 +698,59 @@ def test_explicit_deletion_is_finalized_once(publication_client, operation):
     assert key not in r2.objects
     assert row["deleted_at"] is not None
     assert r2.deleted.count(key) == r2.purged.count(key) == 1
+
+
+@pytest.mark.parametrize("operation", ["delete", "account_delete"])
+def test_live_upload_keeps_deletion_retryable_until_cleanup_window(publication_client, operation):
+    dp = publication_module()
+    client, store, r2, app = publication_client
+    created = uploaded(publication_client)
+    assert complete_publication(client, created).status_code == 200
+    publication_id = created["publicationId"]
+    if operation == "delete":
+        assert client.delete(f"/v1/detail-publications/{publication_id}").status_code == 204
+    else:
+        assert asyncio.run(dp.purge_user_detail_publications(app, FakeConn(store), user_id=USER)) == 1
+    row = store["publications"][publication_id]
+    assert row["status"] == "deleted"
+    assert row["deleted_at"] is None
+    assert not r2.objects
+    assert r2.deleted == r2.purged
+
+
+def test_reaper_reclaims_upload_recreated_after_first_completed_cleanup(publication_client):
+    from test_detail_publication_reaper import setup_reaper
+    client, store, r2, _app = publication_client
+    created = uploaded(publication_client)
+    publication_id = created["publicationId"]
+    assert client.delete(f"/v1/detail-publications/{publication_id}").status_code == 204
+    row = store["publications"][publication_id]
+    # A transfer accepted before URL expiry can finish after an earlier cleanup.
+    row["deleted_at"] = datetime.now(timezone.utc) - timedelta(days=2)
+    row["cleanup_after"] = datetime.now(timezone.utc) - timedelta(days=1)
+    key = f"pub/{USER}/{publication_id}/01.jpg"
+    r2.objects[key] = {"size": 100, "mime": "image/jpeg"}
+    worker, worker_store, _ = setup_reaper()
+    worker_store.update(store)
+    worker.app.state.r2 = r2
+    asyncio.run(worker._sweep_once())
+    assert key not in r2.objects
+    assert r2.deleted.count(key) == r2.purged.count(key) == 2
+
+
+def test_cleanup_window_uses_latest_url_issuance_after_lock_wait(publication_client, monkeypatch):
+    from types import SimpleNamespace
+    dp = publication_module()
+    client, store, r2, _app = publication_client
+    clock = {"now": datetime(2026, 10, 25, tzinfo=timezone.utc).timestamp()}
+    monkeypatch.setattr(dp, "time", SimpleNamespace(time=lambda: clock["now"]))
+    original = r2.presigned_put
+
+    def slow_sign(*args, **kwargs):
+        clock["now"] += 120
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(r2, "presigned_put", slow_sign)
+    created = create_publication(client).json()
+    row = store["publications"][created["publicationId"]]
+    assert row["cleanup_after"] == datetime(2026, 10, 25, 1, 9, tzinfo=timezone.utc)

@@ -80,3 +80,71 @@ test('checklist progress counts completed sections', async () => {
       Button: ({ children }) => React.createElement('button', null, children) });
   assert.match(renderToStaticMarkup(full.render(all.MallDefaultsChecklist, { defaults: saved })), /기본 설정 끝/);
 });
+
+const walk = (node) => [node, ...React.Children.toArray(node?.props?.children).flatMap(walk)];
+
+for (const target of ['returns', 'shipping']) {
+  test(`late shipping save preserves the newly opened ${target} form and its draft`, async () => {
+    const { completedItems, validateDefaults } = await logic();
+    const parent = hooks(), original = hooks(), current = hooks();
+    let active = parent, finishSave;
+    const response = new Promise((resolve) => { finishSave = resolve; });
+    const changes = [];
+    const { MallDefaultsChecklist, MallDefaultsSection } = await componentModule(
+      'src/features/settings/MallDefaultsChecklist.jsx', ['MallDefaultsChecklist', 'MallDefaultsSection'], {
+        useState: (...args) => active.useState(...args),
+        useRef: (...args) => active.useRef(...args),
+        useEffect: (...args) => active.useEffect(...args),
+        completedItems, validateDefaults, styles: {}, Icon: () => null, Button: 'button',
+        api: { saveZigzagDefaults: () => response },
+      });
+    const props = { defaults: saved, onSaved: (value) => changes.push(value) };
+    const renderParent = () => { active = parent; return parent.render(MallDefaultsChecklist, props); };
+    const toggle = (section) => walk(renderParent()).find((node) => node.props?.['aria-controls'] === `mall-section-${section}`).props.onClick();
+    const activeForm = () => walk(renderParent()).find((node) => node.type === MallDefaultsSection);
+    const renderForm = (runtime, form) => { active = runtime; return runtime.render(form.type, form.props); };
+
+    toggle('shipping');
+    const previousForm = activeForm();
+    const previousTree = renderForm(original, previousForm);
+    const cleanups = original.flushEffects();
+    const saving = previousTree.props.onSubmit({ preventDefault() {} });
+    for (const cleanup of cleanups) if (typeof cleanup === 'function') cleanup();
+    toggle('returns');
+    if (target === 'shipping') toggle('shipping');
+
+    const nextForm = activeForm();
+    assert.equal(nextForm.props.section, target);
+    let nextTree = renderForm(current, nextForm);
+    current.flushEffects();
+    const name = target === 'returns' ? 'partialFee' : 'baseFee';
+    const field = walk(nextTree).find((node) => node.props?.name === name);
+    field.props.onChange({ ...field.props.values, [name]: '7777' });
+    nextTree = renderForm(current, nextForm);
+    assert.equal(walk(nextTree).find((node) => node.props?.name === name).props.values[name], '7777');
+
+    finishSave({ shipping: saved.shipping });
+    await saving;
+    assert.deepEqual(changes, [{ shipping: saved.shipping }], 'the successful save still updates shared defaults');
+    assert.equal(activeForm()?.props.section, target, 'the old save must not close a replacement form');
+    nextTree = renderForm(current, activeForm());
+    assert.equal(walk(nextTree).find((node) => node.props?.name === name).props.values[name], '7777');
+  });
+}
+
+test('a save in the current form still updates defaults and closes that form', async () => {
+  const { validateDefaults } = await logic();
+  const runtime = hooks(), changes = [];
+  let closed = false;
+  const { MallDefaultsSection } = await componentModule('src/features/settings/MallDefaultsChecklist.jsx', ['MallDefaultsSection'], {
+    ...runtime, validateDefaults, styles: {}, Button: 'button', Icon: () => null,
+    api: { saveZigzagDefaults: async () => ({ returns: saved.returns }) },
+  });
+  const props = { section: 'returns', defaults: saved,
+    onSaved: (value) => changes.push(value), onDone: () => { closed = true; } };
+  const tree = runtime.render(MallDefaultsSection, props);
+  runtime.flushEffects();
+  await tree.props.onSubmit({ preventDefault() {} });
+  assert.deepEqual(changes, [{ returns: saved.returns }]);
+  assert.equal(closed, true);
+});

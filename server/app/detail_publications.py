@@ -11,7 +11,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
@@ -29,6 +29,7 @@ MAX_FILES = 40
 MAX_FILE_BYTES = 3 * 1024 * 1024
 MAX_TOTAL_BYTES = 60 * 1024 * 1024
 UPLOAD_TTL = 300
+UPLOAD_TRANSFER_GRACE = 3600
 RATE_LIMIT_PER_HOUR = 20
 CACHE_CONTROL = "public, max-age=31536000, immutable"
 
@@ -187,6 +188,11 @@ async def create_publication(request: Request, project_id: str, body: CreatePubl
                                                          byte_size=f["bytes"]),
                             "uploadToken": make_file_token(secret, user_id=user_id, publication_id=row["id"],
                                 index=f["index"], key=key, byte_size=f["bytes"], expires_at=time.time() + UPLOAD_TTL)})
+        # Signatures are issued after lock waits, so created_at cannot bound their expiry.
+        await repo.set_detail_publication_cleanup_after(
+            conn, publication_id=row["id"],
+            cleanup_after=datetime.fromtimestamp(time.time() + UPLOAD_TTL + UPLOAD_TRANSFER_GRACE,
+                                                 timezone.utc))
         await conn.commit()
     return {"publicationId": row["id"], "version": row["version"], "uploads": uploads}
 
@@ -278,19 +284,19 @@ async def purge_user_detail_publications(app, conn, *, user_id) -> int:
         await cur.execute(
             """select id::text as id, user_id::text as user_id, files, status
                  from detail_publications where user_id = %s
-                  and (status in ('ready', 'pending') or (status = 'deleted' and deleted_at is null))
-                 for update""",
+                 order by id for update""",
             (user_id,),
         )
         rows = await cur.fetchall()
-    for row in rows:
-        await repo.soft_delete_detail_publication(conn, user_id=user_id, publication_id=row["id"])
+    rows = [await repo.soft_delete_detail_publication(conn, user_id=user_id, publication_id=row["id"])
+            for row in rows]
     await conn.commit()
     deleted = 0
     for row in rows:
         try:
             await delete_publication_objects(app.state.r2, row)
-            await repo.finalize_detail_publication_deletion(conn, publication_id=row["id"])
+            await repo.finalize_detail_publication_deletion(
+                conn, publication_id=row["id"], cleanup_generation=row["cleanup_generation"])
             await conn.commit()
             deleted += 1
         except Exception:
@@ -307,14 +313,13 @@ async def delete_publication(request: Request, publication_id: str, user_id: str
         row = await repo.get_detail_publication(conn, user_id=user_id, publication_id=publication_id)
         if row is None:
             raise _error("publication_not_found", "게시한 상세페이지를 찾을 수 없어요.", 404)
-        if row["deleted_at"] is not None:
-            return Response(status_code=204)
         row = await repo.soft_delete_detail_publication(conn, user_id=user_id, publication_id=publication_id)
         await conn.commit()
     try:
         await delete_publication_objects(r2, row)
         async with get_conn(request) as conn:
-            await repo.finalize_detail_publication_deletion(conn, publication_id=publication_id)
+            await repo.finalize_detail_publication_deletion(
+                conn, publication_id=publication_id, cleanup_generation=row["cleanup_generation"])
             await conn.commit()
     except ValueError as exc:
         raise _error("invalid_files", str(exc)) from None

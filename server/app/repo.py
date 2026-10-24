@@ -24,6 +24,10 @@ _MALL_CONNECTION_COLS = """id::text, user_id::text, mall, status, shop_id, shop_
     key_hint, permissions, connected_at, last_registered_at, revoked_at"""
 
 
+class MallShopMismatch(Exception):
+    """A rotation must keep the store belonging to its original active connection."""
+
+
 async def get_mall_connection(conn, *, user_id, mall) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute(f"select {_MALL_CONNECTION_COLS} from mall_connections "
@@ -41,10 +45,17 @@ async def get_mall_connection_keys(conn, *, user_id, mall, kek) -> tuple | None:
 
 
 async def upsert_mall_connection(conn, *, user_id, mall, shop_id, shop_name, key_hint,
-                                 access_key, secret_key, permissions, kek) -> dict:
+                                 access_key, secret_key, permissions, kek, expected_connection_id=None) -> dict | None:
     async with conn.transaction():
         async with conn.cursor() as cur:
             await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:{mall}",))
+        if expected_connection_id is not None:
+            # Replacements insert a new row, so its ID also identifies the verified key revision.
+            previous = await get_mall_connection(conn, user_id=user_id, mall=mall)
+            if not previous or previous["id"] != expected_connection_id:
+                return None
+            if previous["shop_id"] != shop_id:
+                raise MallShopMismatch()
         await revoke_mall_connection(conn, user_id=user_id, mall=mall)
         async with conn.cursor() as cur:
             await cur.execute(f"""insert into mall_connections
@@ -1218,7 +1229,7 @@ async def create_asset(
 _DETAIL_PUBLICATION_COLS = (
     "id::text as id, user_id::text as user_id, project_id::text as project_id, "
     "version, status, preset, width, slice_count, total_bytes, product_name, "
-    "editor_revision, files, expires_at, created_at, ready_at, deleted_at"
+    "editor_revision, files, expires_at, created_at, ready_at, deleted_at, cleanup_after, cleanup_generation"
 )
 
 
@@ -1235,6 +1246,9 @@ async def project_uses_real_model(conn, *, user_id, project_id) -> bool:
 
 async def count_detail_publications_last_hour(conn, user_id) -> int:
     async with conn.cursor() as cur:
+        # Keep the account fence through the route's insert and commit, across projects.
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                          (f"detail-publication-user:{user_id}",))
         await cur.execute(
             """select count(*) as count from detail_publications
                 where user_id = %s and created_at >= now() - interval '1 hour'""",
@@ -1276,6 +1290,12 @@ async def get_detail_publication(conn, *, user_id, publication_id) -> dict | Non
         return await cur.fetchone()
 
 
+async def set_detail_publication_cleanup_after(conn, *, publication_id, cleanup_after) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute("update detail_publications set cleanup_after = %s where id = %s",
+                          (cleanup_after, publication_id))
+
+
 async def mark_detail_publication_ready(conn, *, publication_id, files, total_bytes, expires_at) -> dict:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -1301,7 +1321,8 @@ async def list_detail_publications(conn, *, user_id, project_id) -> list[dict]:
 async def soft_delete_detail_publication(conn, *, user_id, publication_id) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute(
-            f"""update detail_publications set status = 'deleted', deleted_at = null
+            f"""update detail_publications set status = 'deleted', deleted_at = null,
+                       cleanup_generation = cleanup_generation + 1
                  where id = %s and user_id = %s returning {_DETAIL_PUBLICATION_COLS}""",
             (publication_id, user_id),
         )
@@ -1310,16 +1331,26 @@ async def soft_delete_detail_publication(conn, *, user_id, publication_id) -> di
 
 async def recompute_detail_publication_expiry(conn, *, now) -> int:
     async with conn.cursor() as cur:
+        # Match deletion claims: publication rows first, then fresh locked profiles.
+        await cur.execute("select id from detail_publications where status = 'ready' order by id for update")
+        publication_ids = [row["id"] for row in await cur.fetchall()]
+        if not publication_ids:
+            return 0
+        await cur.execute(
+            """select user_id from profiles where user_id in
+                   (select user_id from detail_publications where id = any(%s::uuid[]))
+                 order by user_id for share""", (publication_ids,))
+        await cur.fetchall()
         await cur.execute(
             """update detail_publications d
                   set expires_at = case when p.plan <> 'free' then null
                                         else coalesce(d.expires_at, %(now)s + interval '6 months') end
                  from profiles p
-                where p.user_id = d.user_id and d.status = 'ready'
+                where p.user_id = d.user_id and d.id = any(%(publication_ids)s::uuid[]) and d.status = 'ready'
                   and d.expires_at is distinct from
                       case when p.plan <> 'free' then null
                            else coalesce(d.expires_at, %(now)s + interval '6 months') end""",
-            {"now": now},
+            {"now": now, "publication_ids": publication_ids},
         )
         return cur.rowcount
 
@@ -1327,14 +1358,18 @@ async def recompute_detail_publication_expiry(conn, *, now) -> int:
 async def list_expired_detail_publications(conn, *, now, limit=100) -> list[dict]:
     async with conn.cursor() as cur:
         await cur.execute(
-            f"""select {_DETAIL_PUBLICATION_COLS} from detail_publications
-                 where (status = 'ready' and expires_at <= %s
+            # Independent budgets keep recurring tombstones out of the expiry queue.
+            f"""(select {_DETAIL_PUBLICATION_COLS} from detail_publications
+                 where status = 'ready' and expires_at <= %s
                         and not exists (select 1 from profiles p
                                          where p.user_id = detail_publications.user_id
-                                           and p.plan <> 'free'))
-                    or (status = 'deleted' and deleted_at is null)
-                 order by expires_at nulls first, created_at limit %s""",
-            (now, limit),
+                                           and p.plan <> 'free')
+                 order by expires_at, id limit %s)
+                union all
+                (select {_DETAIL_PUBLICATION_COLS} from detail_publications
+                 where status = 'deleted' and cleanup_after <= %s
+                 order by cleanup_after, id limit %s)""",
+            (now, limit, now, limit),
         )
         return await cur.fetchall()
 
@@ -1352,23 +1387,30 @@ async def list_stale_pending_detail_publications(conn, *, older_than_minutes=30)
 
 
 async def claim_detail_publication_deletion(conn, *, user_id, publication_id, now) -> dict | None:
+    # Lock the publication first, then read/lock the plan in a fresh statement.
+    # A renewal committed while waiting for the publication must be visible here.
+    if await get_detail_publication(conn, user_id=user_id, publication_id=publication_id) is None:
+        return None
     async with conn.cursor() as cur:
+        await cur.execute("select plan from profiles where user_id = %s for share", (user_id,))
+        await cur.fetchone()
         await cur.execute(
-            f"""update detail_publications set status = 'deleted'
-                 where id = %s and user_id = %s and deleted_at is null
+            f"""update detail_publications set status = 'deleted',
+                       cleanup_generation = cleanup_generation + 1
+                 where id = %s and user_id = %s
                    and ((status = 'ready' and expires_at <= %s
                          and not exists (select 1 from profiles p
                                           where p.user_id = detail_publications.user_id
                                             and p.plan <> 'free'))
                         or (status = 'pending' and created_at < %s - interval '30 minutes')
-                        or status = 'deleted')
+                        or (status = 'deleted' and cleanup_after <= %s))
                  returning {_DETAIL_PUBLICATION_COLS}""",
-            (publication_id, user_id, now, now),
+            (publication_id, user_id, now, now, now),
         )
         return await cur.fetchone()
 
 
-async def finalize_detail_publication_deletion(conn, *, publication_id) -> None:
+async def finalize_detail_publication_deletion(conn, *, publication_id, cleanup_generation) -> None:
     async with conn.cursor() as cur:
         await cur.execute(
             """update assets set deleted_at = coalesce(deleted_at, now())
@@ -1377,9 +1419,11 @@ async def finalize_detail_publication_deletion(conn, *, publication_id) -> None:
         )
         await cur.execute(
             """update detail_publications set status = 'deleted',
-                       deleted_at = coalesce(deleted_at, now())
-                 where id = %s""",
-            (publication_id,),
+                       deleted_at = coalesce(deleted_at, clock_timestamp()),
+                       cleanup_after = clock_timestamp() + interval '1 day'
+                 where id = %s and status = 'deleted' and cleanup_after <= clock_timestamp()
+                   and cleanup_generation = %s""",
+            (publication_id, cleanup_generation),
         )
 
 
