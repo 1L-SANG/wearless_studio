@@ -85,7 +85,7 @@
 html[data-entry="landing"] #seller-boot-bg { display: block; }
 .wl-orb-root {
   position: absolute; inset: 0; z-index: 0; display: flex; align-items: center; justify-content: center;
-  opacity: var(--wl-app-orb-opacity); transition: opacity 200ms;
+  opacity: calc(var(--wl-app-orb-opacity) * .75); transition: opacity 200ms;
 }
 .wl-orb {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
