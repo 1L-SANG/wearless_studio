@@ -1,0 +1,13 @@
+.split { position: relative; display: inline-flex; align-items: stretch; }
+.split .main { height: 34px; border-radius: 8px 0 0 8px; }
+.split .caret { height: 34px; width: 34px; padding: 0; border-radius: 0 8px 8px 0; box-shadow: inset 1px 0 var(--ring-strong); }
+.menu { position: absolute; top: calc(100% + 8px); right: 0; z-index: 200; width: min(320px, calc(100vw - 32px)); padding: 6px; background: var(--bg-1); color: var(--fg-1); border-radius: var(--r-4); box-shadow: var(--elev-card), 0 0 0 1px var(--ring); }
+.item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 10px; border: 0; border-radius: var(--r-2); background: transparent; color: var(--fg-1); font: inherit; font-size: 15px; text-align: left; cursor: pointer; }
+.item:hover:not(:disabled), .item:focus-visible { background: var(--bg-2); }
+.item:focus-visible, .caret:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.item:disabled { color: var(--fg-2-read); cursor: default; }
+.label { flex: 1; }
+.go .label { text-decoration: underline; text-underline-offset: 3px; }
+.logo { width: 24px; height: 24px; border-radius: var(--r-2); flex: 0 0 24px; }
+.badge { color: var(--fg-2-read); font-size: 13px; white-space: nowrap; }
+.gif { margin-top: 6px; box-shadow: 0 -1px var(--ring); border-radius: 0 0 var(--r-2) var(--r-2); }

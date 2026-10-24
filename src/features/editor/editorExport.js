@@ -434,7 +434,7 @@ async function captureBlockCanvas(blockNode, pixelRatio, fontEmbedCSS, imageCach
   }
 }
 
-async function captureBlockCanvasSlices(
+export async function captureBlockCanvasSlices(
   blockNode,
   pixelRatio,
   fontEmbedCSS,

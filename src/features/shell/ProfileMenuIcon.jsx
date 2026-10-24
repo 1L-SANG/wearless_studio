@@ -5,6 +5,9 @@ export function ProfileMenuIcon({ name }) {
       <circle cx="12" cy="7" r="4.5" />
       <path d="M3.5 20c0-4.1 3.8-7 8.5-7s8.5 2.9 8.5 7v.5a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1Z" />
     </>,
+    store: <>
+      <path d="M3 10h18l-2-7H5l-2 7ZM4 10v11h16V10M9 21v-7h6v7M8 3l-1 7M16 3l1 7" />
+    </>,
     pricing: <>
       <rect className="profile-menu-icon-card-back" x="5" y="3" width="17" height="13" rx="2.5" />
       <rect className="profile-menu-icon-card-front" x="2" y="7" width="18" height="14" rx="2.5" />

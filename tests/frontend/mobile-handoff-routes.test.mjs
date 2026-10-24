@@ -58,7 +58,7 @@ function harness(mobile, pathname, entry = null) {
     bindings[name] = () => { calls.push(['mount', name]); return React.createElement(Outlet); };
   }
   for (const name of ['RootRedirect', 'LegalRedirect', 'Pricing', 'CreditsHistory', 'PaymentSuccess', 'PaymentFail',
-    'SubscriptionManage', 'SubscriptionSuccess', 'SubscriptionFail', 'Library', 'ProductInputRoute', 'Mannequin',
+    'SubscriptionManage', 'SubscriptionSuccess', 'SubscriptionFail', 'MallConnections', 'Library', 'ProductInputRoute', 'Mannequin',
     'Storyboard', 'Generating', 'LazyEditor', 'PublicVerify', 'PublicVerifyPublication', 'KakaoCallback', 'NotFound']) {
     bindings[name] = () => { calls.push(['mount', name]); return React.createElement('div', null, name); };
   }

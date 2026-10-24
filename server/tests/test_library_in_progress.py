@@ -229,7 +229,8 @@ def test_route_selects_only_new_view_and_preserves_existing_list_shape(client, m
         assert set(row) == {"id", "title", "cover", "updatedAt", "step", "latestMannequinJob", "latestDetailPageJob"}
     else:
         progress.assert_not_awaited()
-        assert set(row) == {"id", "title", "cover", "updatedAt", "clothingType", "blockCount", "status"}
+        assert set(row) == {"id", "title", "cover", "updatedAt", "clothingType", "blockCount", "publicationCount", "status"}
+        assert row["publicationCount"] == 0
 
 
 @pytest.mark.parametrize("jobs", [

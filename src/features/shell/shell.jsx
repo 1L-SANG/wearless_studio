@@ -5,6 +5,7 @@
    React Router (prototype used props + a single App state machine).
    ============================================================= */
 import { useState, useEffect, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { Icon, Modal, Button, useToast } from '@/components/ui.jsx';
@@ -199,8 +200,10 @@ export function ResumeChoiceModal({ onResume, onNew, onClose, sources = null, on
    두 페이지 본문은 크레딧 에이전트 소유 — 여기선 라우트 이동만 한다. */
 function ProfileMenu() {
   const { session, signOut } = useAuth();
-  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  const { data: malls } = useQuery({ queryKey: ['mall-connections', session?.user?.id],
+    queryFn: () => api.listMalls(), enabled: open && !IS_FACEMARKET && !!session?.user?.id, retry: false, staleTime: 30000 });
+  const navigate = useNavigate();
   const ref = useRef(null);
 
   useEffect(() => {
@@ -249,6 +252,10 @@ function ProfileMenu() {
               <ProfileMenuIcon name="model" />모델 등록
             </button>
           )}
+          {!IS_FACEMARKET && malls && !malls.disabled && <button className="profile-item" role="menuitem"
+            onClick={() => { setOpen(false); navigate('/settings/malls'); }}>
+            <ProfileMenuIcon name="store" />쇼핑몰 연결
+          </button>}
           <button className="profile-item" role="menuitem"
             onClick={() => { setOpen(false); navigate('/pricing'); }}>
             <ProfileMenuIcon name="pricing" />요금제 관리

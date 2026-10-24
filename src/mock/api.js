@@ -1,6 +1,7 @@
 import { uploadWardrobeGif, mergeWardrobeGifs } from '../lib/api/gifWardrobe.js';
 import { inheritSimilarCutRecipes } from '@/lib/storyboardSimilarCuts.js';
 import { acceptMockClientEvent } from './clientEvents.js';
+import { completedItems } from '../lib/mallDefaults.js';
 /* =============================================================
    mock/api.js — the ONLY data access screens are allowed to use.
    Signatures/shapes follow documents/common_data_contract.md §6.
@@ -285,7 +286,92 @@ function checkMannequinQuote(expected, cost) {
   }
 }
 
+const publicationBlobs = new Map();
+DB.detailPublications ||= [];
+
 export const api = {
+  async listMalls() {
+    return { items: [{ mall: 'zigzag', status: 'none', ...clone(DB.mallConnections.zigzag || {}),
+      defaults: { shipping: {}, returns: {}, addresses: {}, disclosure: {}, taxType: 'TAX', productOrigin: 'domestic',
+        completedItems: [], ...clone(DB.mallDefaults.zigzag || {}), total: 4 } },
+    { mall: 'ably', status: 'unavailable' }, { mall: 'smartstore', status: 'unavailable' }] };
+  },
+  async connectZigzag({ accessKey, secretKey }) {
+    const key = String(accessKey || '').trim();
+    const secret = String(secretKey || '').trim();
+    if (!key || !secret || key.startsWith('bad')) {
+      throw Object.assign(new Error('인증키가 맞지 않아요. 파트너센터에서 다시 복사해 주세요'), { code: 'invalid_key', status: 400 });
+    }
+    if (key.startsWith('noperm')) {
+      throw Object.assign(new Error('상품 등록 권한이 없는 키예요. 상품과 주문 API 권한을 켜 주세요'), { code: 'missing_permission', status: 400 });
+    }
+    // Mock state keeps only safe display data, never raw credentials.
+    DB.mallConnections.zigzag = { mall: 'zigzag', status: 'connected', shopName: '데일리 니트 스토어',
+      keyHint: key.length > 8 && key.slice(-8) !== secret ? key.slice(-8) : null,
+      permissions: ['상품 조회와 등록'], connectedAt: new Date().toISOString(), lastRegisteredAt: null };
+    return clone(DB.mallConnections.zigzag);
+  },
+  async rotateZigzag(keys) { return api.connectZigzag(keys); },
+  async disconnectZigzag() { delete DB.mallConnections.zigzag; },
+  async listZigzagAddresses() {
+    if (!DB.mallConnections.zigzag) throw Object.assign(new Error('먼저 지그재그를 연결해 주세요'), { code: 'not_connected', status: 404 });
+    return [{ id: 'mock-shipping', name: '성수 창고', address: '서울 성동구 성수이로', postcode: '04790', is_default: true }];
+  },
+  async saveZigzagDefaults(payload) {
+    const previous = DB.mallDefaults.zigzag || {};
+    const next = { taxType: 'TAX', productOrigin: 'domestic', ...previous, ...payload };
+    for (const section of ['shipping', 'returns', 'addresses', 'disclosure']) {
+      next[section] = { ...previous[section], ...payload[section] };
+    }
+    next.completedItems = completedItems(next);
+    DB.mallDefaults.zigzag = clone(next);
+    return { ...clone(next), total: 4 };
+  },
+  async createDetailPublication(projectId, { preset, width, productName, files }) {
+    const publicationId = uid('pub');
+    const version = Math.max(0, ...DB.detailPublications.filter((item) => item.projectId === projectId).map((item) => item.version)) + 1;
+    const row = { publicationId, projectId, preset, width, productName, version, status: 'pending',
+      files: clone(files), createdAt: new Date().toISOString() };
+    DB.detailPublications.push(row);
+    return { publicationId, version, uploads: files.map(({ index }) => ({ index,
+      uploadUrl: `https://images.example.test/pub/mock/${publicationId}/${String(index).padStart(2, '0')}.jpg`,
+      uploadToken: `${publicationId}:${index}`,
+    })) };
+  },
+  async transferDetailPublication(url, options = {}) {
+    if (options.method === 'PUT') { publicationBlobs.set(url, options.body); return { ok: true }; }
+    const blob = publicationBlobs.get(url);
+    return { ok: !!blob, blob: async () => blob };
+  },
+  async completeDetailPublication(publicationId, { uploads }) {
+    const row = DB.detailPublications.find((item) => item.publicationId === publicationId && item.status !== 'deleted');
+    if (!row) throw Object.assign(new Error('게시를 찾지 못했어요.'), { status: 404 });
+    if (row.status === 'ready') return clone(row);
+    const missing = row.files.filter((file) => !uploads.some((upload) => upload.index === file.index && upload.uploadToken === `${publicationId}:${file.index}`)
+      || !publicationBlobs.has(`https://images.example.test/pub/mock/${publicationId}/${String(file.index).padStart(2, '0')}.jpg`)).map((file) => file.index);
+    if (missing.length) throw Object.assign(new Error('일부 이미지를 다시 올려 주세요.'), { status: 409, code: 'files_missing', missing });
+    row.files = row.files.map(({ index, width, height, byteSize }) => {
+      const url = `https://images.example.test/pub/mock/${publicationId}/${String(index).padStart(2, '0')}.jpg`;
+      return { index, width, height, bytes: byteSize, url, previewUrl: URL.createObjectURL(publicationBlobs.get(url)) };
+    });
+    row.status = 'ready';
+    row.sliceCount = row.files.length;
+    row.totalBytes = row.files.reduce((sum, file) => sum + file.bytes, 0);
+    const expiry = new Date(row.createdAt); expiry.setMonth(expiry.getMonth() + 6);
+    row.expiresAt = DB.account.plan === 'free' ? expiry.toISOString() : null;
+    return clone(row);
+  },
+  async listDetailPublications(projectId) {
+    return { items: clone(DB.detailPublications.filter((item) => item.projectId === projectId && item.status === 'ready').sort((a, b) => b.version - a.version)) };
+  },
+  async deleteDetailPublication(publicationId) {
+    const row = DB.detailPublications.find((item) => item.publicationId === publicationId);
+    if (row) {
+      row.status = 'deleted';
+      row.files.forEach((file) => { publicationBlobs.delete(file.url); if (file.previewUrl) URL.revokeObjectURL(file.previewUrl); });
+    }
+    return null;
+  },
   reportClientEvent: acceptMockClientEvent,
   /* ---- project (계약 §2, ADR-0001) ---- */
   // 새 제작 시작 — draft 전체를 재시드해 이전 세션의 변형이 새 생성에 새지 않게 한다.
@@ -1321,7 +1407,9 @@ export const api = {
   async getLibrary({ forceEmpty = false, forceError = false } = {}) {
     await wait(420);
     if (forceError) throw new Error('보관함을 불러오지 못했어요.');
-    return forceEmpty ? [] : clone(DB.library);
+    return forceEmpty ? [] : clone(DB.library.map((item) => ({ ...item,
+      publicationCount: DB.detailPublications.filter((publication) => publication.projectId === item.id && publication.status === 'ready').length,
+    })));
   },
   async getInProgressLibrary({ forceEmpty = false, forceError = false } = {}) {
     await wait(140);

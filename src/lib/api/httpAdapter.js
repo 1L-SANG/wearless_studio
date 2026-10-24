@@ -1,4 +1,6 @@
 import { uploadWardrobeGif, readWardrobeGifs, writeWardrobeGifs, mergeWardrobeGifs } from './gifWardrobe.js';
+import { createDetailPublication, completeDetailPublication, listDetailPublications, deleteDetailPublication } from './detailPublications.js';
+import { listMalls, connectZigzag, rotateZigzag, disconnectZigzag, listZigzagAddresses, saveZigzagDefaults } from './malls.js';
 import { preparePublicAnalysis, publicAnalysisForm } from './publicAnalysisRequest.js';
 import { hasOutfitContextChange, mergeOutfitAnalysis, assertOutfitAccessoriesSaved, requireOutfitAccessorySupport } from '../outfitSelections.js';
 import { stripFeatureClientFields } from '../featureRun.js';
@@ -178,11 +180,13 @@ export async function http(path, {
     let message = '요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.';
     let code;
     let meta;
+    let missing;
     try {
       const payload = await res.json();
       if (payload?.error?.message) message = payload.error.message;
       if (payload?.error?.code) code = payload.error.code;
       if (payload?.error?.meta) meta = absolutizeAssetUrls(payload.error.meta);
+      if (Array.isArray(payload?.error?.missing)) missing = payload.error.missing;
     } catch { /* 비 JSON 응답 — 기본 메시지 유지 */ }
     if (!suppressErrorLog) console.error(`API ${res.status} ${path}`); // 기술 세부는 콘솔로만
     // 기기 게이트 거절(승인 대기·회수·미등록). 화면마다 403 을 해석하게 하지 않고 RequireDevice 가
@@ -199,6 +203,7 @@ export async function http(path, {
     err.status = res.status;
     if (code) err.code = code;
     if (meta) err.meta = meta;
+    if (missing) err.missing = missing;
     throw attachResponseError(err, res);
   }
   if (res.status === 204) return null;
@@ -480,6 +485,11 @@ async function recommendMatchHttp(projectId, analysis, current, { defaultSelecti
 // 선택 토글 머지 — id 단위 selected/selOrder 반영 후 1..max 재부여(mock 정규화와 동일 규칙).
 
 export const httpAdapter = {
+  listMalls, connectZigzag, rotateZigzag, disconnectZigzag, listZigzagAddresses, saveZigzagDefaults,
+  createDetailPublication,
+  completeDetailPublication,
+  listDetailPublications,
+  deleteDetailPublication,
   uploadPhoto,
   async uploadDraftSlotPhoto(photo, options) {
     return uploadPhoto(null, { ...photo, purpose: 'draft_slot' }, options);
