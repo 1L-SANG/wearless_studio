@@ -214,7 +214,7 @@ export function Library() {
               <div className="lib-info"><div className="t">{it.title}</div>
                 <div className={`m ${publicationStyles.cardMetadata}`}><span>블록 {it.blockCount}</span><span>·</span><span>{timeAgo(it)}</span>
                   {it.publicationCount > 0 && <button type="button" className={publicationStyles.cardCount}
-                    onClick={(event) => { event.stopPropagation(); setPublicationProject({ ...it, userId: userRef.current }); }}>게시 {it.publicationCount}개</button>}
+                    onClick={(event) => { event.stopPropagation(); setPublicationProject({ ...it, userId: userRef.current }); }}>코드 {it.publicationCount}개</button>}
                 </div></div>
             </div>
           ))}

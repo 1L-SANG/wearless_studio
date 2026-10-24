@@ -52,6 +52,12 @@ function harness({ items = [row()], list, remove = async () => {}, library = fal
     html: () => renderToStaticMarkup(render()), changeUser: (value) => { user = value; },
     unmount: () => effects.forEach((effect) => effect.cleanup?.()) };
 }
+test('publication panel loading and empty copy uses paste-code wording', async () => {
+  const h = harness({ items: [] });
+  assert.match(h.html(), /붙여넣을 코드를 불러오는 중이에요/);
+  await h.ready();
+  assert.match(h.html(), /만든 코드가 없어요/);
+});
 test('renders expiry warning within 14 days', async (t) => {
   t.mock.method(Date, 'now', () => Date.parse('2026-10-23T00:00:00Z'));
   const h = harness({ items: [row({ expiresAt: '2026-11-06T00:00:00Z' })] }); await h.ready();
@@ -118,7 +124,7 @@ test('late panel lists cannot leak into another project or account', async () =>
 });
 test('library publication count has a keyboard action separate from project open', async () => {
   const h = harness({ library: true }); const tree = await h.ready();
-  const count = findAll(tree, (node) => node.type === 'button' && React.Children.toArray(node.props.children).join('') === '게시 2개')[0];
+  const count = findAll(tree, (node) => node.type === 'button' && React.Children.toArray(node.props.children).join('') === '코드 2개')[0];
   assert.ok(count); let stopped = false; count.props.onClick({ stopPropagation: () => { stopped = true; } });
   assert.equal(stopped, true); assert.equal(h.calls.some((call) => Array.isArray(call) && call[0] === 'navigate'), false);
   assert.equal(findAll(h.render(), (node) => node.type === 'aside').length, 1);
@@ -144,7 +150,7 @@ test('account changes immediately hide manual HTML and deletion confirmation', a
 });
 test('library does not reopen a previous panel after switching accounts back', async () => {
   const h = harness({ library: true }); await h.ready();
-  findAll(h.render(), (node) => node.type === 'button' && React.Children.toArray(node.props.children).join('') === '게시 2개')[0].props.onClick({ stopPropagation() {} });
+  findAll(h.render(), (node) => node.type === 'button' && React.Children.toArray(node.props.children).join('') === '코드 2개')[0].props.onClick({ stopPropagation() {} });
   assert.equal(findAll(h.render(), (node) => node.type === 'aside').length, 1);
   h.changeUser('another'); h.render(); h.changeUser('u');
   assert.equal(findAll(h.render(), (node) => node.type === 'aside').length, 0);

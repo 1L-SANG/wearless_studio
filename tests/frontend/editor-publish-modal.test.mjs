@@ -51,7 +51,7 @@ test('publish modal cannot close while busy', () => {
 test('real model shows blocked notice', () => {
   const html = render({ realModelBlocked: true });
   assert.match(html, /실존 모델 컷은 다운로드로 받아 몰에 직접 올려 주세요/);
-  assert.match(buttons(html).find((value) => value.includes('올리기')), /disabled/);
+  assert.match(buttons(html).find((value) => value.includes('코드 만들기')), /disabled/);
 });
 test('failed publication offers local ZIP and rejected clipboard leaves selectable HTML', () => {
   assert.match(render({ error: Object.assign(new Error('지금은 올리지 못했어요. 대신 ZIP으로 받아 두세요'), { files: [new Blob(['image'])] }) }), /ZIP 받기/);

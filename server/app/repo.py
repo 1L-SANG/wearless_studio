@@ -20,6 +20,123 @@ FACEMARKET_CLOSED_BATCH_STATUSES = ("draining", "applying", "reconciling", "fail
 FACEMARKET_CUTOVER_JOB_KINDS = ("detail_page", "editor_image", "fm_model_asset_build")
 
 
+_MALL_CONNECTION_COLS = """id::text, user_id::text, mall, status, shop_id, shop_name,
+    key_hint, permissions, connected_at, last_registered_at, revoked_at"""
+
+
+async def get_mall_connection(conn, *, user_id, mall) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(f"select {_MALL_CONNECTION_COLS} from mall_connections "
+                          "where user_id = %s and mall = %s and status = 'connected'", (user_id, mall))
+        return await cur.fetchone()
+
+
+async def get_mall_connection_keys(conn, *, user_id, mall, kek) -> tuple | None:
+    async with conn.cursor() as cur:
+        await cur.execute("""select public.wl_billing_decrypt(access_key_enc, %s) as access_key,
+            public.wl_billing_decrypt(secret_key_enc, %s) as secret_key from mall_connections
+            where user_id = %s and mall = %s and status = 'connected'""", (kek, kek, user_id, mall))
+        row = await cur.fetchone()
+        return (row["access_key"], row["secret_key"]) if row else None
+
+
+async def upsert_mall_connection(conn, *, user_id, mall, shop_id, shop_name, key_hint,
+                                 access_key, secret_key, permissions, kek) -> dict:
+    async with conn.transaction():
+        async with conn.cursor() as cur:
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:{mall}",))
+        await revoke_mall_connection(conn, user_id=user_id, mall=mall)
+        async with conn.cursor() as cur:
+            await cur.execute(f"""insert into mall_connections
+                (user_id, mall, shop_id, shop_name, key_hint, access_key_enc, secret_key_enc, permissions)
+                values (%s, %s, %s, %s, %s, public.wl_billing_encrypt(%s, %s), public.wl_billing_encrypt(%s, %s), %s)
+                returning {_MALL_CONNECTION_COLS}""",
+                (user_id, mall, shop_id, shop_name, key_hint, access_key, kek, secret_key, kek, permissions))
+            row = await cur.fetchone()
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall-defaults:{user_id}:{mall}",))
+            await cur.execute("""insert into mall_defaults (user_id, mall, shop_id) values (%s, %s, %s)
+                on conflict (user_id, mall) do update set shop_id = excluded.shop_id, addresses = '{}',
+                  completed_items = array_remove(mall_defaults.completed_items, 'addresses'), updated_at = now()
+                where mall_defaults.shop_id is distinct from excluded.shop_id""", (user_id, mall, shop_id))
+            return row
+
+
+async def revoke_mall_connection(conn, *, user_id, mall) -> bool:
+    async with conn.cursor() as cur:
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:{mall}",))
+        await cur.execute("""update mall_connections set status = 'revoked', revoked_at = now(),
+            updated_at = now(), access_key_enc = null, secret_key_enc = null
+            where user_id = %s and mall = %s and status = 'connected'""", (user_id, mall))
+        return cur.rowcount > 0
+
+
+async def revoke_all_mall_connections(conn, user_id):
+    async with conn.cursor() as cur:
+        await cur.execute("""update mall_connections set status = 'revoked', revoked_at = now(),
+            updated_at = now(), access_key_enc = null, secret_key_enc = null
+            where user_id = %s""", (user_id,))
+
+
+async def claim_mall_connection_attempt(conn, *, user_id) -> bool:
+    """Share a sliding hourly limit across API processes using the existing short-lived counter table."""
+    key = f"mall-connect:{user_id}"
+    async with conn.cursor() as cur:
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (key,))
+        await cur.execute("""select coalesce(sum(request_count), 0) as count from client_event_rate_limits
+            where scope = 'user' and key = %s and window_start > clock_timestamp() - interval '1 hour'""", (key,))
+        if (await cur.fetchone())["count"] >= 10:
+            return False
+        await cur.execute("""insert into client_event_rate_limits (scope, key, window_start, request_count)
+            values ('user', %s, clock_timestamp(), 1)""", (key,))
+        return True
+
+
+async def get_mall_defaults(conn, *, user_id, mall) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute("""select shop_id, shipping, returns, addresses, disclosure, tax_type, product_origin,
+            completed_items from mall_defaults where user_id = %s and mall = %s""", (user_id, mall))
+        return await cur.fetchone()
+
+
+def _completed_mall_defaults(values):
+    complete = []
+    shipping = values["shipping"]
+    money = lambda value: type(value) is int and value >= 0
+    if (shipping.get("feeType") in ("FREE", "CHARGED", "CONDITIONAL_FREE")
+            and all(money(shipping.get(key)) for key in ("jejuFee", "isolatedFee"))
+            and (shipping["feeType"] == "FREE" or money(shipping.get("baseFee")))
+            and (shipping["feeType"] != "CONDITIONAL_FREE" or money(shipping.get("conditionalAmount")))):
+        complete.append("shipping")
+    if all(money(values["returns"].get(key)) for key in ("partialFee", "totalFee", "exchangeFee")):
+        complete.append("returns")
+    if all(str(values["addresses"].get(key) or "").strip() for key in ("shippingAddressId", "returnAddressId")):
+        complete.append("addresses")
+    if all(str(values["disclosure"].get(key) or "").strip() for key in ("country", "manufacturer", "asManager", "phone")):
+        complete.append("disclosure")
+    return complete
+
+
+async def upsert_mall_defaults(conn, *, user_id, mall, payload) -> dict:
+    async with conn.transaction():
+        async with conn.cursor() as cur:
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall-defaults:{user_id}:{mall}",))
+        previous = await get_mall_defaults(conn, user_id=user_id, mall=mall) or {}
+        values = {key: {**(previous.get(key) or {}), **(payload.get(key) or {})}
+                  for key in ("shipping", "returns", "addresses", "disclosure")}
+        async with conn.cursor() as cur:
+            await cur.execute("""insert into mall_defaults
+                (user_id, mall, shipping, returns, addresses, disclosure, tax_type, product_origin, completed_items)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                on conflict (user_id, mall) do update set shipping = excluded.shipping, returns = excluded.returns,
+                  addresses = excluded.addresses, disclosure = excluded.disclosure, tax_type = excluded.tax_type,
+                  product_origin = excluded.product_origin, completed_items = excluded.completed_items, updated_at = now()
+                returning shipping, returns, addresses, disclosure, tax_type, product_origin, completed_items""",
+                (user_id, mall, *(Json(values[key]) for key in ("shipping", "returns", "addresses", "disclosure")),
+                 payload.get("taxType", previous.get("tax_type", "TAX")),
+                 payload.get("productOrigin", previous.get("product_origin", "domestic")), _completed_mall_defaults(values)))
+            return await cur.fetchone()
+
+
 class CreditError(Exception):
     """크레딧 도메인 에러 — 라우트가 code/status로 HTTP 매핑(토스트 가능한 한국어 message)."""
 

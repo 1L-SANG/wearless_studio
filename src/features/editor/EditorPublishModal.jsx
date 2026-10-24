@@ -8,11 +8,12 @@ export function EditorPublishModal({ settings, summary, busy, progress, error, r
   realModelBlocked, onChange, onCancel, onPublish, onCopyHtml, onCopyUrls, onDownloadZip }) {
   const done = Math.max(0, Math.min(progress?.done || 0, progress?.total || 0));
   return (
-    <div className={shared.modal}>
+    <div className={`${shared.modal} ${styles.publish}`}>
       <header className={shared.header}>
-        <h3 className={shared.title}>몰에 올리기</h3>
+        <h3 className={shared.title}>붙여넣을 코드 만들기</h3>
       </header>
       {result ? <>
+        <p className={styles.resultMessage}>코드를 만들었어요. 쇼핑몰 HTML 입력칸에 붙여 넣어 주세요</p>
         <div className={styles.thumbnails} aria-label="게시한 이미지 조각">
           {result.files.map((file, i) => <img key={file.index} src={file.previewUrl || file.url} alt={`상세 ${i + 1}`} />)}
         </div>
@@ -38,15 +39,15 @@ export function EditorPublishModal({ settings, summary, busy, progress, error, r
         <div className={shared.groups}>
           <fieldset className={shared.group}>
             <legend>이미지 크기</legend>
-            <div className={shared.optionGrid}>
+            <div className={`${shared.optionGrid} ${styles.options}`}>
               {PUBLISH_PRESETS.map((preset) => <RadioCard key={preset.id} name="publish-preset"
                 option={{ ...preset, title: preset.label }} checked={settings.preset === preset.id}
                 disabled={busy || realModelBlocked} onChange={(preset) => onChange({ preset })} />)}
             </div>
-            <p className={shared.helper}>지그재그, 에이블리, 스마트스토어 모두 860이면 충분해요.</p>
+            <p className={`${shared.helper} ${styles.helper}`}>지그재그, 에이블리, 스마트스토어 모두 860이면 충분해요.</p>
           </fieldset>
         </div>
-        <section className={shared.summary} aria-label="게시 요약" aria-live="polite">
+        <section className={`${shared.summary} ${styles.summary}`} aria-label="게시 요약" aria-live="polite">
           <h4>게시 요약</h4>
           <dl><div><dt>조각 수</dt><dd>약 {summary.fileCount}개</dd></div>
             <div><dt>예상 용량</dt><dd>약 {(summary.approxBytes / 1048576).toFixed(1)}MB</dd></div></dl>
@@ -63,7 +64,7 @@ export function EditorPublishModal({ settings, summary, busy, progress, error, r
       </div>}
       {!result && <footer className={shared.footer}><div className={`modal-actions ${shared.actions}`}>
         <Button variant="ghost" disabled={busy} onClick={onCancel}>취소</Button>
-        <Button variant="primary" icon="upload" disabled={busy || realModelBlocked} onClick={onPublish}>{error ? '다시 시도' : '올리기'}</Button>
+        <Button variant="primary" icon="link" disabled={busy || realModelBlocked} onClick={onPublish}>{error ? '다시 시도' : '코드 만들기'}</Button>
       </div></footer>}
     </div>
   );

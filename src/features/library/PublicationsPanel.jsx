@@ -85,9 +85,9 @@ export function PublicationsPanel({ projectId, productName, onClose }) {
   return (
     <Modal onClose={() => { if (!busy && !confirm) onClose(); }} wide>
       <div className={styles.panel}>
-        <h3 className={styles.title}>게시한 상세페이지</h3>
-        {loading && <p role="status">게시 목록을 불러오는 중이에요</p>}
-        {!loading && !error && items.length === 0 && <p className={styles.notice}>게시한 상세페이지가 없어요</p>}
+        <h3 className={styles.title}>붙여넣을 코드</h3>
+        {loading && <p role="status">붙여넣을 코드를 불러오는 중이에요</p>}
+        {!loading && !error && items.length === 0 && <p className={styles.notice}>만든 코드가 없어요</p>}
         {error && <div role="alert" className={styles.error}><p>{error}</p>
           {!items.length && <div className="modal-actions"><Button disabled={busy} onClick={() => setAttempt((value) => value + 1)}>다시 불러오기</Button></div>}
         </div>}

@@ -1,0 +1,318 @@
+"""HTTP and real repository contracts, with in-memory SQL and httpx transports."""
+
+import contextlib
+import copy
+import importlib
+import importlib.util
+from datetime import datetime, timezone
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+from app.auth import require_user
+from app.main import create_app
+from conftest import make_settings
+
+
+USER = "11111111-1111-4111-8111-111111111111"
+OTHER = "22222222-2222-4222-8222-222222222222"
+KEYS = {"accessKey": "local-fixture-access-12345678", "secretKey": "local-fixture-secret-abcdefgh"}
+NOW = datetime(2026, 10, 24, tzinfo=timezone.utc)
+
+
+def module():
+    assert importlib.util.find_spec("app.mall_connect"), "mall router is missing"
+    return importlib.import_module("app.mall_connect")
+
+
+class FakeCursor:
+    def __init__(self, store):
+        self.store = store
+        self.result = []
+        self.rowcount = 0
+
+    async def __aenter__(self): return self
+    async def __aexit__(self, *_): return False
+
+    async def execute(self, sql, args=()):
+        q = " ".join(sql.lower().split())
+        self.store["sql"].append(q)
+        self.result = []
+        if "pg_advisory_xact_lock" in q:
+            return
+        if "client_event_rate_limits" in q:
+            if q.startswith("select"):
+                self.result = [{"count": self.store["attempts"].get(args[0], 0)}]
+            elif q.startswith("insert"):
+                self.store["attempts"][args[0]] = self.store["attempts"].get(args[0], 0) + 1
+            return
+        if q.startswith("insert into mall_connections"):
+            assert q.count("public.wl_billing_encrypt") == 2
+            user, mall, shop_id, shop_name, hint, ak, kek1, sk, kek2, permissions = args
+            assert kek1 == kek2 == "mall-test-kek"
+            row = dict(id=str(len(self.store["connections"]) + 1), user_id=user, mall=mall, status="connected",
+                       shop_id=shop_id, shop_name=shop_name, key_hint=hint, permissions=permissions,
+                       access_key_enc=b"encrypted:" + ak.encode(), secret_key_enc=b"encrypted:" + sk.encode(),
+                       connected_at=NOW, last_registered_at=None, revoked_at=None)
+            self.store["connections"].append(row)
+            self.result = [self.safe(row)]
+        elif q.startswith("update mall_connections"):
+            user, mall = args
+            self.rowcount = 0
+            for row in self.store["connections"]:
+                if row["user_id"] == user and row["mall"] == mall and row["status"] == "connected":
+                    row.update(status="revoked", revoked_at=NOW, access_key_enc=None, secret_key_enc=None)
+                    self.rowcount += 1
+        elif "from mall_connections" in q:
+            if "wl_billing_decrypt" in q:
+                kek1, kek2, user, mall = args
+                assert kek1 == kek2 == "mall-test-kek"
+            else:
+                user, mall = args
+            row = next((r for r in self.store["connections"] if r["user_id"] == user and r["mall"] == mall and r["status"] == "connected"), None)
+            if row:
+                if "wl_billing_decrypt" in q:
+                    self.result = [{"access_key": row["access_key_enc"].decode().removeprefix("encrypted:"), "secret_key": row["secret_key_enc"].decode().removeprefix("encrypted:")}]
+                else:
+                    assert "access_key_enc" not in q and "secret_key_enc" not in q
+                    self.result = [self.safe(row)]
+        elif q.startswith("insert into mall_defaults"):
+            if len(args) == 3:
+                assert "addresses = '{}'" in q and "array_remove(mall_defaults.completed_items, 'addresses')" in q
+                assert "where mall_defaults.shop_id is distinct from excluded.shop_id" in q
+                user, mall, shop_id = args
+                row = self.store["defaults"].setdefault((user, mall), dict(
+                    shipping={}, returns={}, addresses={}, disclosure={}, tax_type="TAX", product_origin="domestic", completed_items=[]))
+                if row.get("shop_id") != shop_id:
+                    row.update(shop_id=shop_id, addresses={}, completed_items=[s for s in row["completed_items"] if s != "addresses"])
+                return
+            user, mall, shipping, returns, addresses, disclosure, tax, origin, completed = args
+            row = dict(user_id=user, mall=mall, shipping=shipping.obj, returns=returns.obj, addresses=addresses.obj,
+                       disclosure=disclosure.obj, tax_type=tax, product_origin=origin, completed_items=completed,
+                       shop_id=self.store["defaults"].get((user, mall), {}).get("shop_id"))
+            self.store["defaults"][(user, mall)] = copy.deepcopy(row)
+            self.result = [copy.deepcopy(row)]
+        elif "from mall_defaults" in q:
+            row = self.store["defaults"].get(tuple(args))
+            self.result = [copy.deepcopy(row)] if row else []
+        else:
+            raise AssertionError(f"Unsupported mall SQL: {q}")
+
+    @staticmethod
+    def safe(row):
+        return {k: copy.deepcopy(v) for k, v in row.items() if not k.endswith("_enc")}
+
+    async def fetchone(self): return self.result[0] if self.result else None
+
+
+class FakeConn:
+    def __init__(self, store): self.store = store
+    def cursor(self): return FakeCursor(self.store)
+    async def commit(self): pass
+
+    @contextlib.asynccontextmanager
+    async def transaction(self):
+        before = copy.deepcopy(self.store)
+        try:
+            yield
+        except Exception:
+            self.store.clear()
+            self.store.update(before)
+            raise
+
+
+class FakePool:
+    def __init__(self, store): self.store = store
+    @contextlib.asynccontextmanager
+    async def connection(self): yield FakeConn(self.store)
+
+
+@pytest.fixture
+def env(monkeypatch):
+    mall = module()
+    store = {"connections": [], "defaults": {}, "attempts": {}, "sql": [], "remote": 0}
+    def respond(request):
+        store["remote"] += 1
+        authorization = request.headers["Authorization"]
+        if "access-key=bad" in authorization:
+            return httpx.Response(401)
+        if "access-key=noperm" in authorization:
+            return httpx.Response(200, json={"errors": [{"message": "permission denied"}]})
+        if "shop_shipping_address_list" in request.content.decode():
+            return httpx.Response(200, json={"data": {"shop_shipping_address_list": {"item_list": [{"id": "a1", "name": "창고", "address": "서울", "address_detail": "", "postcode": "12345", "is_default": True}]}}})
+        shop_id = "s2" if "access-key=other-shop" in authorization else "s1"
+        return httpx.Response(200, json={"data": {"shop": {"shop_id": shop_id, "shop_name": "데일리 니트 스토어", "allowed_brand_list": [], "site_country_list": []}}})
+    client_class = mall.ZigzagClient
+    monkeypatch.setattr(mall, "ZigzagClient", lambda *args, **kwargs:
+        client_class(*args, **{**kwargs, "transport": httpx.MockTransport(respond)}))
+    app = create_app(make_settings(mall_connect_enabled=True, mall_keys_kek="mall-test-kek"))
+    app.state.pool = FakePool(store)
+    app.dependency_overrides[require_user] = lambda: USER
+    return TestClient(app), store
+
+
+def connect(client, keys=None):
+    return client.post("/v1/malls/zigzag/connect", json=keys or KEYS)
+
+
+def test_connect_success_stores_encrypted_and_returns_hint(env):
+    client, store = env
+    response = connect(client, {k: f"  {v}  " for k, v in KEYS.items()})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["shopName"] == "데일리 니트 스토어" and body["keyHint"] == "12345678"
+    row = store["connections"][0]
+    assert row["access_key_enc"] != KEYS["accessKey"].encode()
+    assert row["secret_key_enc"] != KEYS["secretKey"].encode()
+    assert any("wl_billing_encrypt" in q for q in store["sql"])
+    assert body["permissions"] == ["상품 조회와 등록"]
+
+
+def test_connect_invalid_key_400_with_seller_copy(env):
+    client, store = env
+    response = connect(client, {**KEYS, "accessKey": "bad-fixture"})
+    assert response.status_code == 400
+    assert response.json()["error"] == {"code": "invalid_key", "message": module().ERROR_COPY["invalid_key"]}
+    assert store["connections"] == []
+
+
+def test_connect_response_never_contains_keys(env, caplog):
+    client, _ = env
+    responses = [connect(client), client.get("/v1/malls"),
+                 connect(client, {**KEYS, "secretKey": KEYS["secretKey"] * 30}),
+                 connect(client, {**KEYS, "accessKey": {"private": KEYS["accessKey"]}})]
+    assert [r.status_code for r in responses] == [200, 200, 422, 422]
+    for response in responses:
+        assert all(value not in response.text for value in KEYS.values())
+        assert "access_key_enc" not in response.text and "secret_key_enc" not in response.text
+    assert all(value not in caplog.text for value in KEYS.values())
+
+
+@pytest.mark.parametrize("credentials, hint", [
+    ({"accessKey": "short123", "secretKey": "local-fixture-secret"}, None),
+    ({"accessKey": "local-fixture-tail1234", "secretKey": "tail1234"}, "tail1234"),
+])
+def test_key_hint_uses_access_key_suffix_only_when_longer_than_eight(env, credentials, hint):
+    client, _ = env
+    response = connect(client, credentials)
+    assert response.status_code == 200
+    assert response.json()["keyHint"] == hint
+    assert client.get("/v1/malls").json()["items"][0]["keyHint"] == hint
+
+
+def test_rotate_keeps_existing_connection_on_failure(env):
+    client, store = env
+    connect(client)
+    before = copy.deepcopy(store["connections"])
+    response = client.post("/v1/malls/zigzag/rotate", json={**KEYS, "accessKey": "bad-new-fixture"})
+    assert response.status_code == 400
+    assert store["connections"] == before
+    assert client.get("/v1/malls").json()["items"][0]["status"] == "connected"
+
+
+def test_rotate_replaces_on_success(env):
+    client, store = env
+    connect(client)
+    response = client.post("/v1/malls/zigzag/rotate", json={**KEYS, "accessKey": "new-fixture-87654321"})
+    assert response.status_code == 200 and response.json()["keyHint"] == "87654321"
+    assert [r["status"] for r in store["connections"]] == ["revoked", "connected"]
+
+
+def test_connect_to_other_shop_clears_saved_addresses(env):
+    client, store = env
+    connect(client)
+    saved = {"shipping": {"feeType": "FREE", "jejuFee": 0, "isolatedFee": 0},
+             "returns": {"partialFee": 3000, "totalFee": 6000, "exchangeFee": 6000},
+             "addresses": {"shippingAddressId": "a1", "returnAddressId": "a1"},
+             "disclosure": {"country": "한국", "manufacturer": "니트", "asManager": "담당", "phone": "02-123-4567"}}
+    assert client.put("/v1/malls/zigzag/defaults", json=saved).status_code == 200
+    assert client.delete("/v1/malls/zigzag").status_code == 204
+    assert connect(client, {**KEYS, "accessKey": "other-shop-fixture-87654321"}).status_code == 200
+    defaults = client.get("/v1/malls").json()["items"][0]["defaults"]
+    assert defaults["addresses"] == {}
+    assert defaults["completedItems"] == ["shipping", "returns", "disclosure"]
+    assert all(defaults[section] == saved[section] for section in ("shipping", "returns", "disclosure"))
+    assert store["defaults"][(USER, "zigzag")]["shop_id"] == "s2"
+
+
+def test_rotate_rejects_other_shop_key(env):
+    client, store = env
+    connect(client)
+    before = copy.deepcopy(store)
+    response = client.post("/v1/malls/zigzag/rotate", json={**KEYS, "accessKey": "other-shop-fixture-87654321"})
+    assert response.status_code == 400
+    assert response.json()["error"] == {"code": "shop_mismatch", "message": "다른 스토어의 인증키예요. 스토어를 바꾸려면 연결을 해제한 뒤 다시 연결해 주세요"}
+    assert store["connections"] == before["connections"] and store["defaults"] == before["defaults"]
+
+
+def test_revoke_keeps_defaults(env):
+    client, store = env
+    connect(client)
+    assert client.put("/v1/malls/zigzag/defaults", json={"returns": {"partialFee": 3000, "totalFee": 6000, "exchangeFee": 6000},
+        "addresses": {"shippingAddressId": "a1", "returnAddressId": "a1"}}).status_code == 200
+    before = copy.deepcopy(store["defaults"])
+    assert client.delete("/v1/malls/zigzag").status_code == 204
+    assert store["defaults"] == before
+    connect(client)
+    defaults = client.get("/v1/malls").json()["items"][0]["defaults"]
+    assert defaults["completedItems"] == ["returns", "addresses"] and defaults["returns"]["totalFee"] == 6000
+    assert store["defaults"] == before
+
+
+def test_addresses_requires_connection(env):
+    client, _ = env
+    response = client.get("/v1/malls/zigzag/addresses")
+    assert response.status_code == 404 and response.json()["error"]["code"] == "not_connected"
+    connect(client)
+    assert client.get("/v1/malls/zigzag/addresses").json()[0]["id"] == "a1"
+
+
+def test_defaults_partial_save_tracks_completed_items(env):
+    client, _ = env
+    first = client.put("/v1/malls/zigzag/defaults", json={"shipping": {"feeType": "CONDITIONAL_FREE", "baseFee": 3000}})
+    assert first.status_code == 200 and first.json()["completedItems"] == []
+    second = client.put("/v1/malls/zigzag/defaults", json={"shipping": {"jejuFee": 0, "isolatedFee": 0, "conditionalAmount": 50000}})
+    assert second.status_code == 200 and second.json()["completedItems"] == ["shipping"]
+    assert second.json()["shipping"]["baseFee"] == 3000
+    invalid = client.put("/v1/malls/zigzag/defaults", json={"returns": {"totalFee": -1}})
+    assert invalid.status_code == 422
+
+
+def test_rate_limited(env):
+    client, store = env
+    for i in range(10):
+        endpoint = "connect" if i % 2 == 0 else "rotate"
+        assert client.post(f"/v1/malls/zigzag/{endpoint}", json={**KEYS, "accessKey": "bad-fixture"}).status_code == 400
+    response = connect(client)
+    assert response.status_code == 429 and response.json()["error"]["code"] == "rate_limited"
+    assert store["remote"] == 10
+
+
+def test_routes_absent_when_flag_off():
+    app = create_app(make_settings(mall_connect_enabled=False))
+    assert not any(getattr(r, "path", "").startswith("/v1/malls") for r in app.routes)
+    assert TestClient(app).get("/v1/malls").status_code == 404
+
+
+def test_connection_is_owner_scoped(env):
+    client, _ = env
+    connect(client)
+    client.app.dependency_overrides[require_user] = lambda: OTHER
+    assert client.get("/v1/malls").json()["items"][0]["status"] == "none"
+    assert client.get("/v1/malls/zigzag/addresses").status_code == 404
+    assert client.delete("/v1/malls/zigzag").status_code == 204
+    client.app.dependency_overrides[require_user] = lambda: USER
+    assert client.get("/v1/malls").json()["items"][0]["status"] == "connected"
+
+
+def test_connect_requires_separate_kek(env):
+    client, store = env
+    client.app.state.settings = make_settings(mall_connect_enabled=True, toss_billing_kek="not-for-malls")
+    assert connect(client).status_code == 503
+    assert store["connections"] == [] and store["remote"] == 0
+
+
+def test_mall_routes_require_authentication():
+    client = TestClient(create_app(make_settings(mall_connect_enabled=True)))
+    assert client.get("/v1/malls").status_code == 401

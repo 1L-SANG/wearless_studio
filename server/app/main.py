@@ -590,6 +590,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        if request.url.path.startswith("/v1/malls/"):
+            # Validation details include the rejected input, which can contain credentials.
+            request.state.error_code = "validation_error"
+            return JSONResponse(status_code=422, content={"error": {
+                "code": "validation_error", "message": "입력한 내용을 다시 확인해 주세요",
+            }}, headers={"Cache-Control": "no-store"})
         # 계좌 입력 오류에는 원문 body가 포함될 수 있어 상세 입력을 반환하지 않아요.
         if request.url.path.rstrip("/") == "/v1/facemarket/payout-account":
             request.state.error_code = "invalid_payout_account"
@@ -676,6 +682,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(client_events_router)
     app.include_router(v1_router)
+    if settings.mall_connect_enabled:
+        from .mall_connect import router as mall_connect_router
+
+        app.include_router(mall_connect_router)
     if settings.detail_publish_enabled:
         from .detail_publications import router as detail_publications_router
 

@@ -11,7 +11,8 @@ import { clientEvents } from '@/lib/clientEvents.js';
    ============================================================= */
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { flushSync } from 'react-dom';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import Moveable from 'react-moveable';
 import QRCode from 'qrcode';
 import { api, isMockMode } from '@/lib/api/index.js';
@@ -82,6 +83,7 @@ import { detailPageCompletionMessage } from '@/lib/detailPageJobEvents.js';
 import { GenDonePreview } from '@/features/editor/GenDonePreview.jsx';
 import { EditorDownloadModal } from '@/features/editor/EditorDownloadModal.jsx';
 import { EditorPublishModal } from './EditorPublishModal.jsx';
+import { ExportSplitButton, buildExportMenuItems } from './ExportMenu.jsx';
 import { publishDetailPage, buildPublicationHtml, buildPublicationUrlList, downloadPublicationZip } from './detailPublish.js';
 import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, isPhotoSlotElement, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, reorderElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
@@ -1110,6 +1112,9 @@ export function Editor() {
   // 블록 강조 표시 여부 — 캔버스 빈 곳을 클릭하면 꺼진다. selBlock 자체는 삽입 대상으로 계속 쓰므로 건드리지 않는다.
   const [blockFocused, setBlockFocused] = useState(false);
   const [download, setDownload] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const exportAnchorRef = useRef(null);
+  const location = useLocation();
   const [dlBusy, setDlBusy] = useState(false); // 내보내기 진행 중 퀵바와 모달의 공용 잠금
   const [dlProg, setDlProg] = useState(null); // 처리 단계와 현재 블록 수
   const [dlError, setDlError] = useState('');
@@ -1197,6 +1202,8 @@ export function Editor() {
   // 자동저장이 실패한 상태 — {kind, message}. null 이면 정상 저장 중이다.
   const [saveError, setSaveError] = useState(null);
   const { openLogin, session } = useAuth();
+  const { data: mallInfo } = useQuery({ queryKey: ['mall-connections', session?.user?.id],
+    queryFn: () => api.listMalls(), enabled: !!session?.user?.id, retry: false, staleTime: 30000 });
   const pubScope = `${projectId}:${session?.user?.id || ''}`;
   pubScopeRef.current = pubScope;
   useEffect(() => {
@@ -3809,12 +3816,18 @@ export function Editor() {
           </button>
           <Button variant="ghost" size="sm" icon="eye" onClick={() => setPreview(true)}>미리보기</Button>
           <Button variant="ghost" size="sm" icon="save" onClick={save}>저장</Button>
-          <Button variant="primary" size="sm" icon="download" disabled={genActive || pubCapturing}
-            onClick={() => { setDlNotice(''); setDlError(''); setDownload(true); }}>{genActive && !genFailed ? '생성 중…' : '다운로드'}</Button>
-          {publicationInfo.scope === pubScope && !publicationInfo.disabled && <span title={realModelBlocked ? '실존 모델 컷은 다운로드로 받아 몰에 직접 올려 주세요' : undefined}>
-            <Button variant="ghost" size="sm" icon="upload" disabled={genActive || realModelBlocked || pubBusy || dlBusy || pubCapturing}
-              onClick={() => { setPubResult(null); setPubError(''); setPubProg(null); setPublish(true); }}>몰에 올리기</Button>
-          </span>}
+          <ExportSplitButton open={exportMenuOpen} onToggle={() => setExportMenuOpen((value) => !value)}
+            onClose={() => setExportMenuOpen(false)} anchorRef={exportAnchorRef}
+            disabled={genActive || pubBusy || dlBusy || pubCapturing}
+            label={genActive && !genFailed ? '생성 중…' : '다운로드'}
+            onDownload={() => { setDlNotice(''); setDlError(''); setDownload(true); }}
+            items={buildExportMenuItems({ malls: mallInfo || { disabled: true },
+              publishEnabled: publicationInfo.scope === pubScope && !publicationInfo.disabled, gifCount: gifImages.length,
+              onDownload: () => { setDlNotice(''); setDlError(''); setDownload(true); },
+              onPublish: () => { setPubResult(null); setPubError(''); setPubProg(null); setPublish(true); },
+              onConnect: () => navigate('/settings/malls', { state: { returnTo: location.pathname } }),
+              onGifs: () => receiveGifs(),
+            }).map((item) => item.id === 'paste' ? { ...item, disabled: realModelBlocked, badge: realModelBlocked ? '다운로드만 가능' : undefined } : item)} />
         </div>
       </div>
 

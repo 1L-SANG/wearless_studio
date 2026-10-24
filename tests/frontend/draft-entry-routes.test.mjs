@@ -194,6 +194,7 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
     DRAFT_SYNC_TIMEOUT_MS: 20000, setTimeout() {},
     ProductInput: 'ProductInput', ProductInputPlaceholder: 'ProductInputPlaceholder', Modal: 'Modal', Button: 'Button', Icon: 'Icon',
     Stepper: 'Stepper', ProfileMenuIcon: 'ProfileMenuIcon',
+    useQuery: () => ({ data: { items: [], disabled: true } }),
     p: new Proxy({}, { get: (_, key) => key }),
     s: new Proxy({}, { get: (_, key) => key }),
     window: windowEvents, document: documentEvents, Link: 'Link', STEPPER_STEPS: [],

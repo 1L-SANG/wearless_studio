@@ -457,6 +457,10 @@ class Settings:
     # ---- 상세페이지 게시 (기본 off, FaceMarket 공증과 독립) ----
     detail_publish_enabled: bool = False
     detail_publish_token_secret: str | None = None
+    mall_connect_enabled: bool = False
+    mall_keys_kek: str | None = None
+    zigzag_openapi_url: str = "https://openapi.zigzag.kr/1/graphql"
+    zigzag_hmac_algorithm: str = "sha1"
     # ---- FaceMarket Chain (선택과제2, OmniOne Chain Free-Gas BESU) — record-only 정산 ----
     # 넷 다 있어야 온체인 recorder 활성(app.state.fm_chain). 하나라도 없으면 disabled(정산 no-op).
     # private_key = 컨트랙트 owner(배포자) 키 = recordSettlement 서명 주체. secret 등급, env only.
@@ -1118,6 +1122,10 @@ def load_settings() -> Settings:
         ),
         detail_publish_enabled=os.getenv("DETAIL_PUBLISH_ENABLED", "false").lower() == "true",
         detail_publish_token_secret=os.getenv("DETAIL_PUBLISH_TOKEN_SECRET") or None,
+        mall_connect_enabled=os.getenv("MALL_CONNECT_ENABLED", "false").lower() == "true",
+        mall_keys_kek=os.getenv("MALL_KEYS_KEK") or None,
+        zigzag_openapi_url=os.getenv("ZIGZAG_OPENAPI_URL", "https://openapi.zigzag.kr/1/graphql"),
+        zigzag_hmac_algorithm=_flag("ZIGZAG_HMAC_ALGORITHM", "sha1", {"sha1", "sha256"}),
         fm_c2pa_cert_pem=os.getenv("FM_C2PA_CERT_PEM") or None,
         fm_c2pa_key_pem=os.getenv("FM_C2PA_KEY_PEM") or None,
         fm_provenance_address=os.getenv("FM_PROVENANCE_ADDRESS") or None,

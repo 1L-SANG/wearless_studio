@@ -750,6 +750,38 @@ R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Ca
 
 만료 규칙은 `profiles.plan`을 기준으로 한다. free가 아니면 `expires_at=null`, 처음부터 free면 `created_at+6개월`, 구독 종료를 처음 관찰한 free 게시면 관찰 시각+6개월이다. 이미 정해진 free 만료일은 유지하고 삭제 의도 확정 전에 재구독하면 null로 되돌린다. 워커는 하루 한 번 만료일을 계산하고 한 시간마다 정리한다. 탈퇴 시에는 즉시 삭제를 시도하고 실패는 재시도한다.
 
+## § 쇼핑몰 연결
+
+`MALL_CONNECT_ENABLED` 기본값은 false이며 꺼져 있으면 `/v1/malls` 라우트와 몰 메뉴를 제공하지 않는다. 에이블리와 스마트스토어는 `unavailable` 표시만 제공한다.
+
+| 저장 필드 | HTTP 필드 | 의미 |
+|---|---|---|
+| `mall` | `mall` | `zigzag`, `ably`, `smartstore` |
+| `status` | `status` | 저장은 `connected`, `revoked`. 활성 연결이 없으면 응답은 `none` |
+| `shop_id`, `shop_name` | `shopName` | 인증키로 조회한 스토어. ID는 서버에서만 사용 |
+| `key_hint` | `keyHint` | Access Key 끝자리 최대 8자. 원문 전체가 될 만큼 짧으면 null |
+| `access_key_enc`, `secret_key_enc` | 제공하지 않음 | 전용 `MALL_KEYS_KEK`와 `pgp_sym_encrypt`로 암호화 |
+| `permissions` | `permissions` | 셀러용 권한 문구 배열 |
+| `connected_at`, `last_registered_at` | `connectedAt`, `lastRegisteredAt` | ISO 8601 또는 null |
+| `mall_defaults.shop_id` | 제공하지 않음 | 주소 기본값이 속한 스토어 ID |
+| `mall_defaults.completed_items` | `defaults.completedItems` | 완료한 `shipping`, `returns`, `addresses`, `disclosure` |
+
+연결은 새 키로 스토어 조회를 마친 뒤 저장한다. 인증정보 변경은 검증이 성공한 경우에만 기존 연결을 `revoked`로 바꾸고 새 `connected` 행을 같은 트랜잭션에 만든다. 실패하면 기존 연결을 유지한다. 연결할 스토어가 `mall_defaults.shop_id`와 다르면 `addresses`를 비우고 완료 항목에서 제외한 뒤 스토어 ID를 갱신한다. 다른 기본 설정과 같은 스토어의 재연결 설정은 유지한다. 인증정보 변경에서 기존 연결과 스토어가 다르면 400 `shop_mismatch`로 거절한다. 연결 해제와 탈퇴는 암호문을 즉시 지우고 `revoked`로 바꾸며 기본 설정을 보존한다. 응답과 로그에 키 원문을 넣지 않는다.
+
+`GET /v1/malls`는 `{items:[{mall,status,shopName,keyHint,permissions,connectedAt,lastRegisteredAt,defaults}]}`이며 `defaults`는 저장된 값과 `completedItems`, `total:4`를 포함한다. 저장된 값이 없으면 각 묶음은 빈 객체다. `POST /v1/malls/zigzag/connect`, `POST .../rotate`의 입력은 `{accessKey,secretKey}`이며 앞뒤 공백 제거 후 각각 1~256자다. 두 동작을 합쳐 사용자당 시간당 10회로 제한한다. `DELETE /v1/malls/zigzag`는 기본 설정을 지우지 않는다.
+
+`GET /v1/malls/zigzag/addresses`는 `{id,name,address,postcode,is_default}[]`를 반환한다. `PUT /v1/malls/zigzag/defaults`는 아래 값을 부분 저장하고 누적 저장값으로 완료 항목을 계산한다.
+
+| 묶음 | 필드 |
+|---|---|
+| `shipping` | `feeType:FREE\|CHARGED\|CONDITIONAL_FREE`, `baseFee`, `jejuFee`, `isolatedFee`, `conditionalAmount` |
+| `returns` | `partialFee`, `totalFee`, `exchangeFee` |
+| `addresses` | `shippingAddressId`, `returnAddressId` |
+| `disclosure` | `country`, `manufacturer`, `asManager`, `phone` |
+| 공통 선택 | `taxType:TAX\|FREE` 기본 TAX, `productOrigin:domestic\|imported` 기본 domestic |
+
+금액은 0 이상 정수다. 조건부 무료는 `conditionalAmount`가 필수다. 배송비의 무료 정책은 `baseFee` 없이 완료할 수 있다. 전화번호는 숫자와 하이픈만 허용한다. 오류는 `{error:{code,message}}`이며 연결 오류 코드는 `invalid_key`, `missing_permission`, `unreachable`, `unknown`이다. 원격 오류 원문은 응답에 포함하지 않는다.
+
 ## 7. 현행 코드와의 갭 (마이그레이션 TODO)
 
 → **루트 `TODOS.md` §1로 이관.** 코드가 이 계약을 아직 못 따라간 항목(✅ 완료 기록 + 🔶 남음 + 🆕 신규)은 작업 때마다 각 설계 문서를 고치지 않고 TODOS.md 한곳에서 추적한다.

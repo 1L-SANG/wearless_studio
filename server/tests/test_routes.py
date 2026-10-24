@@ -24,6 +24,54 @@ def _auth(make_token):
     return {"Authorization": f"Bearer {make_token()}"}
 
 
+def test_delete_account_revokes_mall_connections(client, make_token, monkeypatch):
+    import contextlib
+    import sqlite3
+    from app import client_events
+
+    class Conn:
+        def __init__(self):
+            self.db = sqlite3.connect(":memory:", check_same_thread=False)
+            self.db.executescript("""
+                create table mall_connections(user_id text, mall text, status text,
+                    access_key_enc blob, secret_key_enc blob, revoked_at text, updated_at text);
+                insert into mall_connections values
+                    ('user-1', 'zigzag', 'connected', x'01', x'02', null, null),
+                    ('user-1', 'ably', 'connected', x'03', x'04', null, null),
+                    ('user-1', 'zigzag', 'revoked', x'05', x'06', null, null),
+                    ('other', 'zigzag', 'connected', x'07', x'08', null, null);
+                create table mall_defaults(user_id text, addresses text);
+                insert into mall_defaults values ('user-1', '{"shippingAddressId":"a1"}');
+                create table personalization_profiles(id text, user_id text, status text, created_at text);
+            """)
+        def cursor(self): return self
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): return False
+        async def execute(self, sql, args=()):
+            self.result = self.db.execute(sql.replace("%s", "?").replace("now()", "CURRENT_TIMESTAMP").replace("id::text", "id").replace("for update", ""), args)
+        async def fetchone(self): return self.result.fetchone()
+        async def commit(self): self.db.commit()
+
+    conn = Conn()
+    @contextlib.asynccontextmanager
+    async def connection(_): yield conn
+    monkeypatch.setattr(routes, "get_conn", connection)
+    monkeypatch.setattr(client_events, "delete_user_events", AsyncMock())
+    monkeypatch.setattr(routes.personalization, "_start_purge", AsyncMock(return_value="purge-job"))
+    monkeypatch.setattr(routes, "_wake_dispatcher", lambda _: None)
+    try:
+        response = client.delete("/v1/me/account", headers=_auth(make_token))
+        assert response.status_code == 202, response.text
+        assert response.json() == {"jobId": "purge-job", "status": "purging"}
+        rows = conn.db.execute("select status, access_key_enc, secret_key_enc, revoked_at from mall_connections where user_id = 'user-1'").fetchall()
+        assert len(rows) == 3
+        assert all(status == "revoked" and ak is None and sk is None and revoked for status, ak, sk, revoked in rows)
+        assert conn.db.execute("select status, access_key_enc, secret_key_enc from mall_connections where user_id = 'other'").fetchone() == ("connected", b"\x07", b"\x08")
+        assert conn.db.execute("select addresses from mall_defaults").fetchall() == [('{"shippingAddressId":"a1"}',)]
+    finally:
+        conn.db.close()
+
+
 def test_library_exposes_publication_count(client, make_token, monkeypatch):
     patch_route_db(monkeypatch, routes)
     monkeypatch.setattr(routes.repo, "list_library", AsyncMock(return_value=[{

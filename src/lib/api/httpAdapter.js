@@ -1,5 +1,6 @@
 import { uploadWardrobeGif, readWardrobeGifs, writeWardrobeGifs, mergeWardrobeGifs } from './gifWardrobe.js';
 import { createDetailPublication, completeDetailPublication, listDetailPublications, deleteDetailPublication } from './detailPublications.js';
+import { listMalls, connectZigzag, rotateZigzag, disconnectZigzag, listZigzagAddresses, saveZigzagDefaults } from './malls.js';
 import { preparePublicAnalysis, publicAnalysisForm } from './publicAnalysisRequest.js';
 import { hasOutfitContextChange, mergeOutfitAnalysis, assertOutfitAccessoriesSaved, requireOutfitAccessorySupport } from '../outfitSelections.js';
 import { stripFeatureClientFields } from '../featureRun.js';
@@ -484,6 +485,7 @@ async function recommendMatchHttp(projectId, analysis, current, { defaultSelecti
 // 선택 토글 머지 — id 단위 selected/selOrder 반영 후 1..max 재부여(mock 정규화와 동일 규칙).
 
 export const httpAdapter = {
+  listMalls, connectZigzag, rotateZigzag, disconnectZigzag, listZigzagAddresses, saveZigzagDefaults,
   createDetailPublication,
   completeDetailPublication,
   listDetailPublications,
