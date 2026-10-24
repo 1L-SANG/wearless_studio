@@ -24,7 +24,8 @@ import { Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
 import { BANK_TRANSFER_ENABLED, SUBSCRIPTION_PRODUCTS_ENABLED, SUBSCRIPTION_TRANSFER_ENABLED, TOPUP_ENABLED,
   TOSS_BILLING_CLIENT_KEY, TOSS_CLIENT_KEY, isGeneralPaymentReviewProduct } from '@/lib/tossKeys.js';
 import { IS_GENERAL_PAYMENT_REVIEW_HOST } from '@/lib/host.js';
-import { generalPaymentReviewOrder } from '@/lib/generalPaymentReview.js';
+import { requestTossCardPayment, resolveTopupCheckout } from '@/lib/generalPaymentReview.js';
+import { TOPUP_VALIDITY_EFFECTIVE_DATE_KO } from '@/lib/topupPolicy.js';
 import { BankTransferModal } from './BankTransferModal.jsx';
 import { topupBonusCredits } from '@/lib/limits.js';
 import { CopyButton, PIcon, TransferDeadline, num, won } from './bankTransferParts.jsx';
@@ -120,28 +121,16 @@ export function Pricing() {
     setPayError('');
     setBuying(planCode);
     try {
-      let order;
-      try {
-        order = await api.createTossCheckout(planCode);
-      } catch (e) {
-        // 계약 단계에는 일반결제 테스트 클라이언트 키만 있고 승인용 시크릿 키는 아직 없다.
-        // pay 호스트에서 payment_not_configured 일 때만 고정 상품 테스트 주문으로 결제창을
-        // 연다. 성공 복귀의 서버 confirm·크레딧 지급 가드는 그대로라 무료 적립은 불가능하다.
-        order = IS_GENERAL_PAYMENT_REVIEW_HOST && e?.code === 'payment_not_configured'
-          ? generalPaymentReviewOrder(planCode, session.user.id)
-          : null;
-        if (!order) throw e;
-      }
+      // 계약 단계에는 일반결제 테스트 클라이언트 키만 있고 승인용 시크릿 키는 아직 없다.
+      // pay 호스트에서 payment_not_configured 일 때만 고정 상품 테스트 주문으로 결제창을
+      // 연다. 성공 복귀의 서버 confirm·크레딧 지급 가드는 그대로라 무료 적립은 불가능하다.
+      const order = await resolveTopupCheckout({
+        createCheckout: (code) => api.createTossCheckout(code), planCode,
+        customerKey: session.user.id, isReviewHost: IS_GENERAL_PAYMENT_REVIEW_HOST,
+      });
       const { loadTossPayments } = await import('@tosspayments/tosspayments-sdk');
-      const toss = await loadTossPayments(TOSS_CLIENT_KEY);
-      const payment = toss.payment({ customerKey: order.customerKey });
-      await payment.requestPayment({
-        method: 'CARD',
-        amount: { currency: 'KRW', value: order.amount },
-        orderId: order.orderId,
-        orderName: order.orderName,
-        successUrl: `${window.location.origin}/payments/success`,
-        failUrl: `${window.location.origin}/payments/fail`,
+      await requestTossCardPayment({
+        loadTossPayments, clientKey: TOSS_CLIENT_KEY, order, origin: window.location.origin,
       });
     } catch (e) {
       // 사용자가 결제창을 닫은 경우도 여기로 온다 — 조용히 버튼만 되돌린다.
@@ -374,7 +363,7 @@ export function Pricing() {
         <section id="topup" ref={topupRef} className={s.topupSection} aria-labelledby="topup-title">
           <div className={s.topupHead}>
             <h2 id="topup-title" className={s.topupTitle}>크레딧 충전</h2>
-            <span className={s.topupMeta}>1회 결제 · 결제 완료 즉시 지급 · 구매일부터 12개월 사용</span>
+            <span className={s.topupMeta}>1회 결제 · 결제 완료 즉시 지급 · {TOPUP_VALIDITY_EFFECTIVE_DATE_KO} 결제건부터 12개월 사용</span>
           </div>
           {topupBonusEnabled && <p className={`${s.topupMeta} ${s.topupBonusNotice}`}>Seller는 충전할 때마다 <span className={s.bonusRate}>5%,</span> Pro는 10%를 더 드려요.</p>}
           {entry.need > 0 && (
@@ -424,7 +413,7 @@ export function Pricing() {
             })}
           </div>
           <p className={s.purchaseConsent}>
-            추가구매 크레딧은 지급일부터 12개월 뒤 남은 수량이 소멸해요. 계정에서만 사용할 수 있고 다른 사람에게 양도하거나 현금으로 전환할 수 없어요.
+            {TOPUP_VALIDITY_EFFECTIVE_DATE_KO} 이후 결제한 추가구매 크레딧은 결제일부터 12개월 뒤 남은 수량이 소멸해요. 그 전 결제건은 기존 조건을 유지해요. 크레딧은 계정에서만 사용할 수 있고 다른 사람에게 양도하거나 현금으로 전환할 수 없어요.
           </p>
         </section>
       )}

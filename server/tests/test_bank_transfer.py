@@ -232,9 +232,9 @@ class Cursor:
             else:
                 s.sources[sid] = {"id": sid, "user_id": p[0], "plan_id": p[1], "initial": p[2],
                                   "remaining": p[3], "status": "active", "type": "topup",
-                                  "period_end": (s.now + timedelta(days=365)
+                                  "period_end": (p[4] + timedelta(days=365)
                                                  if "interval '1 year'" in q else None),
-                                  "payment_id": p[4]}
+                                  "payment_id": p[5] if "interval '1 year'" in q else p[4]}
             self._set([{"id": sid}])
         elif q.startswith("update credit_sources set payment_id"):
             s.sources[p[1]]["payment_id"] = p[0]
@@ -580,6 +580,15 @@ def test_confirm_topup_grants_snapshot_and_is_idempotent(client, store, make_tok
     assert again.json()["creditSourceId"] == "src-1" and again.json()["available"] == 280
     assert len(store.ledger) == len(store.payments) == 1 and len(store.audits) == 1
     assert store.notifications.count(("user", "seller@example.com", "topup_finish", None)) == 1
+
+
+def test_confirm_topup_uses_actual_paid_date_for_validity(client, store, make_token):
+    create(client, make_token, planCode="topup_finish")
+    rid = _uuidify(store)[0]
+    response = confirm(client, make_token, rid, paidAt="2026-11-24T00:00:00+09:00")
+    assert response.status_code == 200, response.text
+    source = next(iter(store.sources.values()))
+    assert source["period_end"] == datetime(2027, 11, 23, 15, 0, tzinfo=timezone.utc)
 
 
 def test_confirm_preserves_pro_bonus_after_downgrade_once(client, store, make_token):

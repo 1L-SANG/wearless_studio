@@ -22,7 +22,9 @@ import {
   PG_REVIEW_HOST,
   sellerRootTarget,
 } from '../../src/lib/host.js';
-import { generalPaymentReviewOrder } from '../../src/lib/generalPaymentReview.js';
+import { generalPaymentReviewOrder, requestTossCardPayment,
+  resolveTopupCheckout } from '../../src/lib/generalPaymentReview.js';
+import { TOPUP_VALIDITY_EFFECTIVE_DATE } from '../../src/lib/topupPolicy.js';
 
 test('심사 호스트는 정확히 toss.wearless.kr 하나다', () => {
   assert.equal(PG_REVIEW_HOST, 'toss.wearless.kr');
@@ -142,8 +144,8 @@ test('일반결제 심사 호스트는 단건 크레딧 두 상품과 토스 결
   assert.match(html, /₩26,000/);
   assert.equal((html.match(/>충전하기<\/button>/g) || []).length, 2);
   assert.doesNotMatch(html, /Starter|Seller|Pro|정기 구독|매월 자동 결제|계좌이체/);
-  assert.match(html, /1회 결제 · 결제 완료 즉시 지급 · 구매일부터 12개월 사용/);
-  assert.match(html, /지급일부터 12개월 뒤 남은 수량이 소멸해요/);
+  assert.match(html, /1회 결제 · 결제 완료 즉시 지급 · 2026년 11월 23일 결제건부터 12개월 사용/);
+  assert.match(html, /결제일부터 12개월 뒤 남은 수량이 소멸해요/);
   assert.match(html, /다른 사람에게 양도하거나 현금으로 전환할 수 없어요/);
   assert.match(html, /결제하면 .*이용약관.*환불 정책/);
 });
@@ -159,7 +161,7 @@ test('일반결제 심사 호스트는 승인한 두 SKU와 정확한 가격만 
   assert.doesNotMatch(html, /옛 충전|가격이 바뀐|₩3,000|₩6,000/);
 });
 
-test('시크릿 발급 전 확인 주문은 고정 상품으로만 결제창 입력값을 만든다', () => {
+test('시크릿 발급 전 확인 주문은 고정 상품으로만 결제창 입력값을 만든다', async () => {
   const order = generalPaymentReviewOrder('topup_100', 'review-user');
   assert.match(order.orderId, /^wl-review-/);
   assert.ok(order.orderId.length >= 6 && order.orderId.length <= 64);
@@ -169,10 +171,33 @@ test('시크릿 발급 전 확인 주문은 고정 상품으로만 결제창 입
   });
   assert.equal(generalPaymentReviewOrder('topup_legacy', 'review-user'), null);
   assert.equal(generalPaymentReviewOrder('topup_100', ''), null);
-  const pricing = readFileSync(new URL('../../src/features/pricing/Pricing.jsx', import.meta.url), 'utf8');
-  assert.match(pricing, /IS_GENERAL_PAYMENT_REVIEW_HOST && e\?\.code === 'payment_not_configured'/);
-  assert.match(pricing, /generalPaymentReviewOrder\(planCode, session\.user\.id\)/);
-  assert.match(pricing, /payment\.requestPayment\(\{/);
+  const unavailable = Object.assign(new Error('not configured'), { code: 'payment_not_configured' });
+  const fallback = await resolveTopupCheckout({
+    createCheckout: async () => { throw unavailable; }, planCode: 'topup_100',
+    customerKey: 'review-user', isReviewHost: true,
+  });
+  assert.equal(fallback.amount, 5500);
+  await assert.rejects(resolveTopupCheckout({
+    createCheckout: async () => { throw unavailable; }, planCode: 'topup_100',
+    customerKey: 'review-user', isReviewHost: false,
+  }), (error) => error === unavailable);
+
+  const calls = [];
+  await requestTossCardPayment({
+    clientKey: 'test_ck_example', order: fallback, origin: 'https://pay.wearless.kr',
+    loadTossPayments: async (key) => ({ payment: ({ customerKey }) => ({
+      requestPayment: async (request) => calls.push({ key, customerKey, request }),
+    }) }),
+  });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0], {
+    key: 'test_ck_example', customerKey: 'review-user', request: {
+      method: 'CARD', amount: { currency: 'KRW', value: 5500 },
+      orderId: fallback.orderId, orderName: '100 크레딧',
+      successUrl: 'https://pay.wearless.kr/payments/success',
+      failUrl: 'https://pay.wearless.kr/payments/fail',
+    },
+  });
 });
 
 test('ai.wearless.kr 은 계좌이체 그대로다', async () => {
@@ -196,4 +221,14 @@ test('두 심사 호스트는 검색 노출을 막는다', () => {
     .filter((condition) => condition.type === 'host')
     .map((condition) => condition.value);
   assert.deepEqual(noindexHosts.sort(), ['pay.wearless.kr', 'toss.wearless.kr']);
+});
+
+test('추가구매 유효기간 시행일은 화면·서버·공개 법무문서가 같다', () => {
+  assert.equal(TOPUP_VALIDITY_EFFECTIVE_DATE, '2026-11-23');
+  const serverPolicy = readFileSync(new URL('../../server/app/topup_policy.py', import.meta.url), 'utf8');
+  assert.match(serverPolicy, /TOPUP_VALIDITY_EFFECTIVE_DATE = date\(2026, 11, 23\)/);
+  const manifest = JSON.parse(readFileSync(new URL('../../public/legal/manifest.json', import.meta.url), 'utf8'));
+  for (const slug of ['terms-seller', 'refund']) {
+    assert.equal(manifest.find((item) => item.slug === slug)?.effectiveDate, '2026-11-23', slug);
+  }
 });

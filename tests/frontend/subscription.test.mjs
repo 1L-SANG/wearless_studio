@@ -9,6 +9,7 @@ const SUB = readFileSync('src/features/subscription/Subscription.jsx', 'utf8');
 const PRICING = readFileSync('src/features/pricing/Pricing.jsx', 'utf8');
 const API = readFileSync('src/lib/api/httpAdapter.js', 'utf8');
 const APP = readFileSync('src/apps/seller/App.jsx', 'utf8');
+const GENERAL_PAYMENT = readFileSync('src/lib/generalPaymentReview.js', 'utf8');
 
 test('해지 확인창이 소멸 예정 크레딧과 날짜를 보여준다', () => {
   assert.match(SUB, /expiring\.credits/);
@@ -124,7 +125,8 @@ test('빌링 인증(requestBillingAuth)은 빌링 클라이언트 키로만 부�
     assert.match(src, /loadTossPayments\(TOSS_BILLING_CLIENT_KEY\)/, name);
   }
   // 충전 경로는 그대로 일반결제 키를 쓴다
-  assert.match(PRICING, /loadTossPayments\(TOSS_CLIENT_KEY\)/);
+  assert.match(PRICING, /clientKey: TOSS_CLIENT_KEY/);
+  assert.match(GENERAL_PAYMENT, /loadTossPayments\(clientKey\)/);
 });
 
 test('클라이언트 키를 컴포넌트에서 직접 읽지 않는다', () => {

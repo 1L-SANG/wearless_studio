@@ -25,6 +25,11 @@ class TopupExpirer(_PeriodicWorker):
                     expired += result["expired"]
                 await conn.commit()
                 users += 1
+        except BaseException:
+            # SQL 오류 뒤 트랜잭션이 aborted 상태면 session advisory unlock도 실패한다.
+            # 먼저 rollback해 연결을 정상화한 뒤 finally에서 락을 푼다.
+            await conn.rollback()
+            raise
         finally:
             async with conn.cursor() as cur:
                 await cur.execute("select pg_advisory_unlock(%s, %s)", _LOCK_KEY)

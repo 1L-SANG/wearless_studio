@@ -3,7 +3,7 @@
 import asyncio
 import copy
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -78,12 +78,16 @@ class CreditCursor(Cursor):
                              "delta": p[2], "balance_after": p[3],
                              "available_after": p[4], "metadata": p[5].obj})
         elif (q.startswith("select id::text as id, remaining_credits from credit_sources")
-              and "source_type = 'topup'" in q and "period_end <= now()" in q):
+              and "source_type = 'topup'" in q and "period_end <= %s" in q):
             due = [b for b in s.sources.values() if b["user_id"] == p[0]
                    and b["type"] == "topup" and b["status"] == "active"
                    and b["remaining"] > 0 and b.get("period_end") is not None
-                   and b["period_end"] <= s.now]
+                   and b["period_end"] <= p[1]]
             self._set([{"id": b["id"], "remaining_credits": b["remaining"]} for b in due])
+        elif q.startswith("select coalesce(sum(remaining_credits), 0) as s from credit_sources"):
+            total = sum(b["remaining"] for b in s.sources.values()
+                        if b["user_id"] == p[0] and b["status"] == "active")
+            self._set([{"s": total}])
         elif q.startswith("select id::text as id, remaining_credits from credit_sources") and "order by" in q:
             priority = {"subscription": 0, "free": 1, "topup": 2}
             if "case source_type" in q:
@@ -99,6 +103,8 @@ class CreditCursor(Cursor):
             s.ledger.append({"source": p[3], "delta": p[5]})
         elif q.startswith("update credit_accounts set balance") and "reserved =" in q:
             s.accounts[p[2]].update(balance=p[0], reserved=p[1])
+        elif q.startswith("update credit_accounts set reserved = reserved +"):
+            s.accounts[p[1]]["reserved"] += p[0]
         elif q.startswith("select id::text as id, source_type"):
             b = s.sources.get(p[0])
             if b and b["user_id"] == p[1]:
@@ -256,16 +262,18 @@ def test_topup_bonus_is_one_bucket_with_snapshot_metadata_and_idempotency(credit
         first = await repo.purchase_topup(
             credits_store, user_id=USER, plan_code="topup_finish", snapshot=snapshot,
             idempotency_key="order-1", metadata={"orderId": "order-1"},
+            purchased_at="2026-11-24T00:00:00+09:00",
         )
         again = await repo.purchase_topup(
             credits_store, user_id=USER, plan_code="topup_finish",
             snapshot={**snapshot, "bonusCredits": 0}, idempotency_key="order-1",
+            purchased_at="2026-11-24T00:00:00+09:00",
         )
         assert first["credits"] == again["credits"] == 550
     asyncio.run(scenario())
     bucket = next(iter(credits_store.sources.values()))
     assert (bucket["initial"], bucket["remaining"]) == (550, 550)
-    assert bucket["period_end"] == credits_store.now + timedelta(days=365)
+    assert bucket["period_end"] == datetime(2027, 11, 23, 15, 0, tzinfo=timezone.utc)
     assert len(credits_store.sources) == len(credits_store.ledger) == len(credits_store.payments) == 1
     assert credits_store.payments[0]["amount"] == 25000
     assert credits_store.ledger[0]["metadata"] == {
@@ -305,7 +313,8 @@ def test_due_topups_expire_but_legacy_and_future_purchases_remain(credits_store)
         "legacy": {"id": "legacy", "type": "topup", "user_id": USER, "status": "active",
                    "remaining": 30, "initial": 30, "period_end": None},
     }
-    result = asyncio.run(repo.expire_due_topup_buckets(credits_store, user_id=USER))
+    result = asyncio.run(repo.expire_due_topup_buckets(
+        credits_store, user_id=USER, now=credits_store.now))
     assert result == {"expired": 30, "available": 70, "deferred": False}
     assert credits_store.accounts[USER]["balance"] == 70
     assert credits_store.sources["due"]["status"] == "expired"
@@ -320,6 +329,43 @@ def test_due_topup_expiration_waits_for_running_credit_job(credits_store):
         "due": {"id": "due", "type": "topup", "user_id": USER, "status": "active",
                 "remaining": 30, "initial": 30, "period_end": credits_store.now - timedelta(seconds=1)},
     }
-    result = asyncio.run(repo.expire_due_topup_buckets(credits_store, user_id=USER))
+    result = asyncio.run(repo.expire_due_topup_buckets(
+        credits_store, user_id=USER, now=credits_store.now))
     assert result == {"expired": 0, "available": 20, "deferred": True}
     assert credits_store.sources["due"]["status"] == "active"
+
+
+def test_reservation_expires_due_topups_before_checking_available_balance(credits_store):
+    credits_store.accounts[USER] = {"balance": 30, "reserved": 0}
+    credits_store.sources = {
+        "due": {"id": "due", "type": "topup", "user_id": USER, "status": "active",
+                "remaining": 30, "initial": 30, "period_end": credits_store.now - timedelta(seconds=1)},
+    }
+    assert asyncio.run(repo.reserve_credits(credits_store, USER, 1)) is None
+    assert credits_store.sources["due"]["status"] == "expired"
+    assert credits_store.accounts[USER]["balance"] == 0
+
+
+def test_reservation_created_before_expiry_can_settle_after_deadline(credits_store):
+    credits_store.accounts[USER] = {"balance": 30, "reserved": 10}
+    credits_store.sources = {
+        "crossed": {"id": "crossed", "type": "topup", "user_id": USER, "status": "active",
+                    "remaining": 30, "initial": 30,
+                    "period_end": credits_store.now - timedelta(seconds=1)},
+    }
+    available = asyncio.run(repo._consume_buckets(
+        credits_store, user_id=USER, project_id="p1", job_id="j1", reserved=10,
+        charge=10, action_key="detail_page", metadata={},
+    ))
+    assert available == 20
+    assert credits_store.sources["crossed"]["remaining"] == 20
+    assert credits_store.accounts[USER] == {"balance": 20, "reserved": 0}
+
+
+def test_topup_paid_before_policy_cutoff_keeps_legacy_unlimited_bucket(credits_store):
+    result = asyncio.run(repo.purchase_topup(
+        credits_store, user_id=USER, plan_code="topup_finish",
+        snapshot={"credits": 100, "price": 5500}, purchased_at="2026-11-22T23:59:59+09:00",
+    ))
+    assert result["credits"] == 100
+    assert next(iter(credits_store.sources.values()))["period_end"] is None

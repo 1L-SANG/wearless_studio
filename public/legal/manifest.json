@@ -4,7 +4,7 @@
     "app": "seller",
     "title": "Wearless 이용약관",
     "version": "v1.4",
-    "effectiveDate": "2026-10-23",
+    "effectiveDate": "2026-11-23",
     "source": "10_wearless_terms_of_service_v1.md"
   },
   {
@@ -20,7 +20,7 @@
     "app": "seller",
     "title": "Wearless 환불 정책",
     "version": "v1.3",
-    "effectiveDate": "2026-10-23",
+    "effectiveDate": "2026-11-23",
     "source": "12_wearless_refund_policy_v1.md"
   },
   {

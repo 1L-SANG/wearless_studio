@@ -290,7 +290,7 @@ test('크레딧 충전 구역은 100·500 크레딧 두 팩만 보여준다', ()
   assert.match(html, /₩26,000/);
   assert.match(html, /크레딧당 55\.0원/);
   assert.match(html, /크레딧당 52\.0원/);
-  assert.match(html, /1회 결제 · 결제 완료 즉시 지급 · 구매일부터 12개월 사용/);
+  assert.match(html, /1회 결제 · 결제 완료 즉시 지급 · 2026년 11월 23일 결제건부터 12개월 사용/);
   // 부족분이 없으면 추천도, 부족 안내 줄도 없다
   assert.doesNotMatch(html, />추천</);
   assert.doesNotMatch(html, /크레딧이 부족해요/);

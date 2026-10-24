@@ -27,3 +27,30 @@ export function generalPaymentReviewOrder(planCode, customerKey) {
     customerKey,
   };
 }
+
+export async function resolveTopupCheckout({
+  createCheckout, planCode, customerKey, isReviewHost,
+}) {
+  try {
+    return await createCheckout(planCode);
+  } catch (error) {
+    const reviewOrder = isReviewHost && error?.code === 'payment_not_configured'
+      ? generalPaymentReviewOrder(planCode, customerKey)
+      : null;
+    if (!reviewOrder) throw error;
+    return reviewOrder;
+  }
+}
+
+export async function requestTossCardPayment({ loadTossPayments, clientKey, order, origin }) {
+  const toss = await loadTossPayments(clientKey);
+  const payment = toss.payment({ customerKey: order.customerKey });
+  return payment.requestPayment({
+    method: 'CARD',
+    amount: { currency: 'KRW', value: order.amount },
+    orderId: order.orderId,
+    orderName: order.orderName,
+    successUrl: `${origin}/payments/success`,
+    failUrl: `${origin}/payments/fail`,
+  });
+}

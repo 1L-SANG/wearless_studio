@@ -120,10 +120,10 @@ def test_privacy_revision_does_not_force_reconsent():
 
 
 def test_existing_v13_consent_is_valid_until_v14_effective_date():
-    assert legal_versions.terms_consent_required("v1.3", today=date(2026, 10, 22)) is False
-    assert legal_versions.terms_consent_required("v1.3", today=date(2026, 10, 23)) is True
-    assert routes._consent_payload(_row(terms="v1.3"), today=date(2026, 10, 22))["needsConsent"] is False
-    assert routes._consent_payload(_row(terms="v1.3"), today=date(2026, 10, 23))["needsConsent"] is True
+    assert legal_versions.terms_consent_required("v1.3", today=date(2026, 11, 22)) is False
+    assert legal_versions.terms_consent_required("v1.3", today=date(2026, 11, 23)) is True
+    assert routes._consent_payload(_row(terms="v1.3"), today=date(2026, 11, 22))["needsConsent"] is False
+    assert routes._consent_payload(_row(terms="v1.3"), today=date(2026, 11, 23))["needsConsent"] is True
 
 
 def test_new_and_older_consents_still_require_the_published_version_before_effective_date():
