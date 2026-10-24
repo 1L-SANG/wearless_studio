@@ -99,6 +99,22 @@ export function isPgReviewHost(hostname) {
 export const IS_PG_REVIEW_HOST =
   typeof window !== 'undefined' && isPgReviewHost(window.location?.hostname);
 
+/* pay.wearless.kr — 일반 단건결제 MID 카드사 심사 전용 셀러 호스트.
+   정기결제 심사 호스트와 상품·결제수단을 섞지 않는다. 이 호스트는 1회성 추가구매
+   크레딧과 일반결제창만 노출한다(lib/tossKeys.js). */
+export const GENERAL_PAYMENT_REVIEW_HOST = 'pay.wearless.kr';
+
+export function isGeneralPaymentReviewHost(hostname) {
+  return (hostname || '').toLowerCase() === GENERAL_PAYMENT_REVIEW_HOST;
+}
+
+export const IS_GENERAL_PAYMENT_REVIEW_HOST =
+  typeof window !== 'undefined' && isGeneralPaymentReviewHost(window.location?.hostname);
+
+export function sellerRootTarget(hostname) {
+  return isGeneralPaymentReviewHost(hostname) ? '/pricing?tab=topup' : '/create/input';
+}
+
 /* 진입 문서 ↔ 호스트 불일치 가드.
 
    Vercel 은 **파일이 실제로 있는 경로**에 rewrite 를 태우지 않는다. 그래서 셀러 도메인에서
@@ -112,7 +128,10 @@ export const IS_PG_REVIEW_HOST =
    신분증이 한국 IP·실도메인을 요구한다) 폰 QA 는 LAN IP 를 쓴다. 그 호스트들은 localhost
    목록 밖이라, 호스트명으로 추정하면 개발 서버를 떠나 프로덕션으로 튕겨 QA 자체가 불가능해진다.
    그래서 dev 빌드는 무조건 면제하고, 그 밖에는 **알려진 프로덕션 호스트일 때만** 건다. */
-const PRODUCTION_DOCUMENT_HOSTS = ['ai.wearless.kr', 'facemarket.wearless.kr', 'admin.wearless.kr'];
+export const PRODUCTION_DOCUMENT_HOSTS = [
+  'ai.wearless.kr', 'facemarket.wearless.kr', 'admin.wearless.kr',
+  PG_REVIEW_HOST, GENERAL_PAYMENT_REVIEW_HOST,
+];
 
 export function redirectToOwnDocumentHost(expected) {
   // 훅이 아니다 — 렌더 중 한 번 호출해 "이 문서가 남의 호스트에서 열렸는가"만 답한다.

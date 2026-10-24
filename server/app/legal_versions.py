@@ -9,12 +9,12 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 # 공개된 최신 개정본. 신규 회원은 이 버전에 동의한다.
-SELLER_TERMS_VERSION = "v1.3"
+SELLER_TERMS_VERSION = "v1.4"
 SELLER_PRIVACY_VERSION = "v1.2"
 # 처리방침 개정은 동의가 아니라 고지 대상이다. 예전 판에 동의한 셀러에게 재동의를 받지 않는다.
 ACCEPTED_SELLER_PRIVACY_VERSIONS = frozenset({"v1.1", "v1.2"})  # 개정 때 이전 판을 지우지 말고 더한다
-PREVIOUS_SELLER_TERMS_VERSION = "v1.2"
-SELLER_TERMS_EFFECTIVE_DATE = date(2026, 10, 6)
+PREVIOUS_SELLER_TERMS_VERSION = "v1.3"
+SELLER_TERMS_EFFECTIVE_DATE = date(2026, 11, 23)
 _SEOUL = ZoneInfo("Asia/Seoul")
 
 # 선택 의류 협찬 동의(04 동의서 E-2). 2026-09-23 시행. required_versions()나 등록 게이트에 연결하지 않아요
@@ -66,7 +66,7 @@ def required_versions() -> dict[str, str]:
 
 
 def terms_consent_required(accepted_version: str | None, *, today: date | None = None) -> bool:
-    """기존 v1.2 회원은 공지기간 동안 유지하고 시행일부터 v1.3 재동의를 받는다."""
+    """기존 v1.3 회원은 시행일까지 유지하고 시행일부터 v1.4 재동의를 받는다."""
     if accepted_version == SELLER_TERMS_VERSION:
         return False
     if accepted_version != PREVIOUS_SELLER_TERMS_VERSION:

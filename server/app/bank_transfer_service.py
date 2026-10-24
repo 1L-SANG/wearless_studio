@@ -408,6 +408,7 @@ async def confirm_request(
             metadata={"request_id": req["id"], "granted_by": actor_user_id,
                       "payer_name": req["payer_name"], "amount_krw": req["amount"],
                       "paid_at": paid_at},
+            purchased_at=paid_at,
             snapshot={"credits": req["credits"], "price": req["amount"],
                       "bonusCredits": req.get("bonus_credits") or 0,
                       "bonusPercent": req.get("bonus_percent") or 0,

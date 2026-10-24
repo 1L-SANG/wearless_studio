@@ -1234,6 +1234,7 @@ async def admin_grant_credits(
                 metadata={"granted_by": actor_user_id, "payer_name": body.payer_name,
                           "amount_krw": body.amount_krw, "paid_at": body.paid_at,
                           "note": body.note},
+                purchased_at=body.paid_at,
                 snapshot=snapshot,
             )
         except repo.CreditError as e:

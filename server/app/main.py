@@ -168,6 +168,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         subscription_biller = None
         subscription_expirer = None
         bank_transfer_expirer = None
+        topup_expirer = None
         client_alerts = None
         if pool is not None:
             await pool.open()
@@ -254,6 +255,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
                 bank_transfer_expirer = BankTransferExpirer(app)
                 await bank_transfer_expirer.start()
+                from .workers.topup_expirer import TopupExpirer
+
+                topup_expirer = TopupExpirer(app)
+                await topup_expirer.start()
             if not detail_worker_only:
                 # opendid(fm-holder) 온디맨드 — 같은 reconciler/어댑터를 service·demand·lock_key 만 바꿔
                 # 재사용. 수요 = license_pending·vc_pending 등록. wake 는 issue_face_vc 지연 경로가
@@ -368,6 +373,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await subscription_expirer.stop()
         if bank_transfer_expirer is not None:
             await bank_transfer_expirer.stop()
+        if topup_expirer is not None:
+            await topup_expirer.stop()
         if client_alerts is not None:
             await client_alerts.stop()
         if draft_asset_reclaimer is not None:

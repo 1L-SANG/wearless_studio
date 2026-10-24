@@ -12,15 +12,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { PRODUCTION_DOCUMENT_HOSTS } from '../../src/lib/host.js';
 
 const root = new URL('../../', import.meta.url);
 const read = (name) => readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
 
 function productionDocumentHosts() {
-  const source = read('src/lib/host.js');
-  const match = source.match(/PRODUCTION_DOCUMENT_HOSTS\s*=\s*\[([^\]]+)\]/);
-  assert.ok(match, 'host.js 에서 PRODUCTION_DOCUMENT_HOSTS 를 찾지 못했다');
-  return [...match[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  return PRODUCTION_DOCUMENT_HOSTS;
 }
 
 function corsOrigins() {
@@ -42,6 +40,11 @@ test('프로덕션 문서 호스트가 전부 CORS 허용 오리진에 있다', 
 
 test('호스트 목록이 비어 있지 않다', () => {
   // 정규식이 조용히 빈 배열을 만들면 위 테스트가 아무것도 검사하지 않고 통과한다.
-  assert.ok(productionDocumentHosts().length >= 3);
+  assert.ok(productionDocumentHosts().length >= 5);
   assert.ok(corsOrigins().length >= 3);
+});
+
+test('두 토스 심사 호스트도 CORS 회귀 검사 대상이다', () => {
+  assert.ok(productionDocumentHosts().includes('toss.wearless.kr'));
+  assert.ok(productionDocumentHosts().includes('pay.wearless.kr'));
 });

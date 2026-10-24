@@ -301,6 +301,8 @@ class _SqlConn:
                     if isinstance(result.get(key), str):
                         result[key] = json.loads(result[key])
                 return result
+            async def fetchall(self):
+                return [dict(row) for row in self.cur.fetchall()]
         return Cursor()
 
 
@@ -319,14 +321,18 @@ def _wire_sql_regenerate(monkeypatch, *, plan, done_count, balance, running=Fals
         create table mannequin_job_requests(user_id text, project_id text,
             idempotency_key text unique, job_id text);
         create table credit_accounts(user_id text, balance integer, reserved integer);
-        create table credit_sources(user_id text, remaining_credits integer, status text);
+        create table credit_sources(
+            id text primary key default (lower(hex(randomblob(16)))), user_id text,
+            source_type text default 'topup', remaining_credits integer, status text,
+            period_end text, created_at text default current_timestamp);
         create table credit_ledger(id integer primary key, user_id text, project_id text,
             job_id text, action_key text, delta integer, balance_after integer,
             available_after integer, idempotency_key text unique, metadata text);
     ''')
     conn.db.execute('insert into profiles values (?, ?)', ('user-1', plan))
     conn.db.execute('insert into credit_accounts values (?, ?, 0)', ('user-1', balance))
-    conn.db.execute("insert into credit_sources values (?, ?, 'active')", ('user-1', balance))
+    conn.db.execute("insert into credit_sources(user_id, remaining_credits, status) values (?, ?, 'active')",
+                    ('user-1', balance))
     for i in range(done_count):
         conn.db.execute("insert into jobs(id,user_id,project_id,kind,status,metadata) "
                         "values (?, 'user-1', 'p1', 'mannequin', 'done', '{}')", (f'done-{i}',))
@@ -503,7 +509,10 @@ def test_zero_reserve_records_idempotent_ledger_without_balance_change():
     conn = _SqlConn()
     conn.db.executescript('''
         create table credit_accounts(user_id text, balance integer, reserved integer);
-        create table credit_sources(user_id text, remaining_credits integer, status text);
+        create table credit_sources(
+            id text primary key default (lower(hex(randomblob(16)))), user_id text,
+            source_type text default 'topup', remaining_credits integer, status text,
+            period_end text, created_at text default current_timestamp);
         create table credit_ledger(id integer primary key, user_id text, project_id text,
             job_id text, action_key text, delta integer, balance_after integer,
             available_after integer, idempotency_key text unique, metadata text);

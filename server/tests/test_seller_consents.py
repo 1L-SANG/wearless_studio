@@ -119,11 +119,11 @@ def test_privacy_revision_does_not_force_reconsent():
     assert legal_versions.required_versions()["privacy"] == "v1.2"
 
 
-def test_existing_v12_consent_is_valid_until_v13_effective_date():
-    assert legal_versions.terms_consent_required("v1.2", today=date(2026, 10, 5)) is False
-    assert legal_versions.terms_consent_required("v1.2", today=date(2026, 10, 6)) is True
-    assert routes._consent_payload(_row(terms="v1.2"), today=date(2026, 10, 5))["needsConsent"] is False
-    assert routes._consent_payload(_row(terms="v1.2"), today=date(2026, 10, 6))["needsConsent"] is True
+def test_existing_v13_consent_is_valid_until_v14_effective_date():
+    assert legal_versions.terms_consent_required("v1.3", today=date(2026, 11, 22)) is False
+    assert legal_versions.terms_consent_required("v1.3", today=date(2026, 11, 23)) is True
+    assert routes._consent_payload(_row(terms="v1.3"), today=date(2026, 11, 22))["needsConsent"] is False
+    assert routes._consent_payload(_row(terms="v1.3"), today=date(2026, 11, 23))["needsConsent"] is True
 
 
 def test_new_and_older_consents_still_require_the_published_version_before_effective_date():
@@ -131,5 +131,6 @@ def test_new_and_older_consents_still_require_the_published_version_before_effec
     assert legal_versions.terms_consent_required(None, today=before) is True
     assert legal_versions.terms_consent_required("v0.9", today=before) is True
     assert legal_versions.terms_consent_required("v1.1", today=before) is True
-    assert legal_versions.terms_consent_required("v1.2", today=before) is False
+    assert legal_versions.terms_consent_required("v1.2", today=before) is True
     assert legal_versions.terms_consent_required("v1.3", today=before) is False
+    assert legal_versions.terms_consent_required("v1.4", today=before) is False

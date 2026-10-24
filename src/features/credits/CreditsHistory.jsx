@@ -21,6 +21,7 @@ const ACTION_LABEL = {
   grant_signup: '가입 크레딧',
   grant_topup: '추가 구매',
   expire_subscription: '구독 크레딧 만료',
+  expire_topup: '추가구매 크레딧 만료',
   refund_request: '환불 요청',
   refund_approved: '환불 승인',
   refund_rejected: '환불 거부',
