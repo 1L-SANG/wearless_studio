@@ -1,5 +1,4 @@
 # Toss Payment Cutover Implementation Plan
-
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 운영 앱의 월간 구독을 토스 카드 자동결제로 열면서 일반결제 심사와 기존 수동 계좌이체 이용권을 안전하게 분리한다.
@@ -311,4 +310,3 @@ MID `wearlen6s9` 회신 메일에 검증된 결제경로 PPT를 첨부한다. �
 - [ ] **Step 9: 심사용 로그인과 계정 종료**
 
 두 심사 호스트가 모두 제거된 뒤 `PG_REVIEW_LOGIN_ENABLED`를 완전히 끄고 QA 테스트계정을 비활성화하며 세션을 회수한다. 구글·카카오 로그인과 로컬 QA 이메일 로그인은 유지한다.
-
