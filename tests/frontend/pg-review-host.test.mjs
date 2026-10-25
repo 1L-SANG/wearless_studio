@@ -200,16 +200,24 @@ test('시크릿 발급 전 확인 주문은 고정 상품으로만 결제창 입
   });
 });
 
-test('ai.wearless.kr 은 계좌이체 그대로다', async () => {
+test('ai.wearless.kr 은 토스 카드 구독만 열고 충전과 계좌이체 신규 판매를 숨긴다', async () => {
   const { tossKeys, html } = await loadAs('ai.wearless.kr');
-  assert.equal(tossKeys.BANK_TRANSFER_ENABLED, true);
+  assert.equal(tossKeys.BANK_TRANSFER_ENABLED, false);
   assert.equal(tossKeys.TOPUP_ENABLED, false);
   assert.equal(tossKeys.SUBSCRIPTION_PRODUCTS_ENABLED, true);
-  assert.equal((html.match(/계좌이체로 시작하기/g) || []).length, 3);
-  assert.doesNotMatch(html, /구매하기/);
-  assert.doesNotMatch(html, /매월 자동 결제되고|해지해도 결제한 기간까지 쓸 수 있어요|부가세 포함/);
+  assert.equal((html.match(/>구매하기<\/button>/g) || []).length, 3);
+  assert.doesNotMatch(html, /계좌이체로 시작하기|계좌이체로 충전하기|크레딧 충전/);
+  assert.match(html, /매월 자동 결제되고 언제든 해지할 수 있어요/);
+  assert.match(html, /해지해도 결제한 기간까지 쓸 수 있어요/);
+  assert.match(html, /부가세 포함/);
   assert.doesNotMatch(html, /상세페이지 1개의 제작|평균적으로|250크레딧|컷수에 따라/);
-  assert.match(html, /<a href="https:\/\/wearless\.kr\/refund">결제·환불 조건<\/a>/);
+  assert.doesNotMatch(html, /결제·환불 조건/);
+});
+
+test('이메일 심사 로그인은 두 심사 호스트에서만 열린다', async () => {
+  assert.equal((await loadAs('ai.wearless.kr')).tossKeys.PG_REVIEW_LOGIN_ENABLED, false);
+  assert.equal((await loadAs('toss.wearless.kr')).tossKeys.PG_REVIEW_LOGIN_ENABLED, true);
+  assert.equal((await loadAs('pay.wearless.kr')).tossKeys.PG_REVIEW_LOGIN_ENABLED, true);
 });
 
 test('두 심사 호스트는 검색 노출을 막는다', () => {

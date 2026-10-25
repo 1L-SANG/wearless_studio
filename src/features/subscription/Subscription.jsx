@@ -21,13 +21,17 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { seoulDate } from '@/lib/datetime.js';
 import { Button, Icon, Skeleton, ErrorState } from '@/components/ui.jsx';
-import { BANK_TRANSFER_ENABLED, SUBSCRIPTION_TRANSFER_ENABLED, TOSS_BILLING_CLIENT_KEY }
+import { SUBSCRIPTION_TRANSFER_ENABLED, TOSS_BILLING_CLIENT_KEY }
   from '@/lib/tossKeys.js';
 import s from './Subscription.module.css';
 import { paymentResultErrorCopy } from '../payments/paymentResultCopy.js';
 
 // 결제수단 등록/교체는 자동결제 MID 의 클라이언트 키로 해야 한다 — lib/tossKeys.js 참고.
 const num = (n) => Number(n || 0).toLocaleString('ko-KR');
+
+export function shouldLoadManualEntitlement(session) {
+  return Boolean(session);
+}
 
 const STATUS_LABEL = {
   active: '이용 중',
@@ -159,7 +163,7 @@ export function SubscriptionManage() {
   const { data: manual } = useQuery({
     queryKey: ['manualEntitlement'],
     queryFn: () => api.getManualEntitlement(),
-    enabled: BANK_TRANSFER_ENABLED,
+    enabled: shouldLoadManualEntitlement(session),
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['subscription'] });

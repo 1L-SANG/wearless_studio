@@ -9,7 +9,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { createServer } from 'vite';
 
-let vite, Pricing, SubscriptionManage, AdminBankTransfers, BankTransferModal, runtime, api, plans, tossKeys, DB;
+let vite, Pricing, SubscriptionManage, AdminBankTransfers, BankTransferModal, runtime, api, plans, tossKeys, DB,
+  shouldLoadBankTransferHistory, shouldLoadBankInfo, shouldLoadManualEntitlement;
 before(async () => {
   vite = await createServer({
     optimizeDeps: { noDiscovery: true, include: [] },
@@ -19,6 +20,7 @@ before(async () => {
     server: { middlewareMode: true, watch: null, ws: false },
     appType: 'custom',
     esbuild: { jsx: 'automatic' },
+    define: { 'import.meta.env.VITE_BANK_TRANSFER_ENABLED': JSON.stringify('true') },
     ssr: { noExternal: ['react-dom'] },
     plugins: [{
       name: 'bank-transfer-test-harness',
@@ -53,9 +55,11 @@ before(async () => {
     }],
   });
   ({ runtime } = await vite.ssrLoadModule('virtual:bt-runtime'));
-  ({ Pricing } = await vite.ssrLoadModule('/src/features/pricing/Pricing.jsx'));
+  ({ Pricing, shouldLoadBankTransferHistory, shouldLoadBankInfo } =
+    await vite.ssrLoadModule('/src/features/pricing/Pricing.jsx'));
   ({ BankTransferModal } = await vite.ssrLoadModule('/src/features/pricing/BankTransferModal.jsx'));
-  ({ SubscriptionManage } = await vite.ssrLoadModule('/src/features/subscription/Subscription.jsx'));
+  ({ SubscriptionManage, shouldLoadManualEntitlement } =
+    await vite.ssrLoadModule('/src/features/subscription/Subscription.jsx'));
   ({ AdminBankTransfers } = await vite.ssrLoadModule('/src/features/admin/AdminBankTransfers.jsx'));
   ({ api } = await vite.ssrLoadModule('/src/mock/api.js'));
   ({ DB } = await vite.ssrLoadModule('/src/mock/db.js'));
@@ -86,6 +90,24 @@ function renderPricing({ loggedIn = true, currentPlan = 'free', info = INFO, ope
 
 test('스위치가 켜져 있다', () => {
   assert.equal(tossKeys.BANK_TRANSFER_ENABLED, true);
+});
+
+test('신규 판매가 꺼져도 로그인 사용자는 기존 계좌이체 신청을 조회한다', () => {
+  assert.equal(shouldLoadBankTransferHistory(null), false);
+  assert.equal(shouldLoadBankTransferHistory({ user: { id: 'u1' } }), true);
+});
+
+test('신규 판매가 꺼져도 열린 신청이 있으면 입금 계좌를 다시 불러온다', () => {
+  const session = { user: { id: 'u1' } };
+  assert.equal(shouldLoadBankInfo({ session, salesEnabled: false, openRequests: { open: [] } }), false);
+  assert.equal(shouldLoadBankInfo({ session, salesEnabled: false, openRequests: { open: [OPEN_SUB] } }), true);
+  assert.equal(shouldLoadBankInfo({ session, salesEnabled: true, openRequests: { open: [] } }), true);
+  assert.equal(shouldLoadBankInfo({ session: null, salesEnabled: true, openRequests: { open: [OPEN_SUB] } }), false);
+});
+
+test('신규 판매가 꺼져도 로그인 사용자의 수동 이용권을 조회한다', () => {
+  assert.equal(shouldLoadManualEntitlement(null), false);
+  assert.equal(shouldLoadManualEntitlement({ user: { id: 'u1' } }), true);
 });
 
 test('로그인 사용자에게 구독 카드는 계좌이체 CTA 를, 아래에 크레딧 충전 구역을 보여준다', () => {
