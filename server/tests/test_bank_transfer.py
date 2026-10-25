@@ -7,8 +7,10 @@
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
 from app import bank_transfer, bank_transfer_admin, bank_transfer_notify, bank_transfer_service as service
@@ -374,6 +376,46 @@ def test_info_disabled_without_account(store, keypair, make_token):
     assert res.status_code == 503
     assert res.json()["error"]["code"] == "bank_transfer_unavailable"
     assert not store.requests
+
+
+def test_production_manifest_disables_new_bank_transfer_sales():
+    manifest_path = Path(__file__).resolve().parents[2] / "copilot/api/manifest.yml"
+    variables = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))["variables"]
+    assert variables.get("BANK_TRANSFER_ENABLED") == "false"
+
+
+def test_disabled_sales_preserve_existing_request_and_entitlement_paths(
+        client, store, make_token):
+    assert create(client, make_token, planCode="seller").status_code == 200
+    assert create(client, make_token, planCode="topup_finish").status_code == 200
+    ids = _uuidify(store)
+    subscription_id = next(rid for rid in ids if store.requests[rid]["plan_code"] == "seller")
+    topup_id = next(rid for rid in ids if store.requests[rid]["plan_code"] == "topup_finish")
+    assert subscription_id and topup_id
+
+    client.app.state.settings = replace(client.app.state.settings, bank_transfer_enabled=False)
+
+    assert client.get("/v1/bank-transfer/info", headers=auth_headers(make_token)).json() == {
+        "enabled": False,
+    }
+    unavailable = create(client, make_token, planCode="starter")
+    assert unavailable.status_code == 503
+    assert unavailable.json()["error"]["code"] == "bank_transfer_unavailable"
+
+    opened = client.get(
+        "/v1/bank-transfer/requests/open", headers=auth_headers(make_token)).json()["open"]
+    assert {request["id"] for request in opened} == {subscription_id, topup_id}
+
+    canceled = client.post(
+        f"/v1/bank-transfer/requests/{topup_id}/cancel", headers=auth_headers(make_token))
+    assert canceled.status_code == 200
+    confirmed = confirm(client, make_token, subscription_id)
+    assert confirmed.status_code == 200
+
+    entitlement = client.get(
+        "/v1/bank-transfer/entitlement", headers=auth_headers(make_token)).json()
+    assert entitlement["active"] is True
+    assert entitlement["planCode"] == "seller"
 
 
 # ---------------------------------------------------------------- 신청
