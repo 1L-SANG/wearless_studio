@@ -37,6 +37,14 @@ const STANDARD_PAGE_CREDITS = 254;
 // 충전 팩 크레딧당 가격 — 가격표와 같은 원 단위 한 자리.
 const perCredit = (p) => (Number(p.price) / Number(p.credits)).toFixed(1);
 
+export function shouldLoadBankTransferHistory(session) {
+  return Boolean(session);
+}
+
+export function shouldLoadBankInfo({ session, salesEnabled, openRequests }) {
+  return Boolean(session) && (salesEnabled || Boolean(openRequests?.open?.length));
+}
+
 // 크레딧 부족 창(features/credits/CreditShortfallModal)이 /pricing?tab=topup&need=N 으로 보낸다.
 // 그러면 아래 '크레딧 충전' 구역으로 내려가고, 부족분을 채우는 가장 작은 팩에 '추천'을 붙인다.
 // SSR 테스트에는 window 가 없으니 그때는 기본값으로.
@@ -81,19 +89,19 @@ export function Pricing() {
   const { session, openLogin } = useAuth();
   const qc = useQueryClient();
   // 계좌이체(무통장입금) — PG 심사 전 결제 경로(lib/tossKeys.js BANK_TRANSFER_ENABLED).
-  // 켜져 있으면 결제창 대신 신청 창을 연다. 계좌 정보와 열린 신청은 서버가 준다.
+  // 판매를 꺼도 과거 신청의 상태·취소·입금 계좌는 신청이 닫힐 때까지 보여준다.
   const bankTransfer = BANK_TRANSFER_ENABLED;
   const [transferPlan, setTransferPlan] = useState(null);   // 신청 창을 연 상품
-  const { data: bankInfo } = useQuery({
-    queryKey: ['bankTransferInfo'],
-    queryFn: () => api.getBankTransferInfo(),
-    enabled: bankTransfer && Boolean(session),
-    staleTime: 5 * 60 * 1000,
-  });
   const { data: openRequests } = useQuery({
     queryKey: ['bankTransferOpen'],
     queryFn: () => api.getOpenBankTransferRequests(),
-    enabled: bankTransfer && Boolean(session),
+    enabled: shouldLoadBankTransferHistory(session),
+  });
+  const { data: bankInfo } = useQuery({
+    queryKey: ['bankTransferInfo'],
+    queryFn: () => api.getBankTransferInfo(),
+    enabled: shouldLoadBankInfo({ session, salesEnabled: bankTransfer, openRequests }),
+    staleTime: 5 * 60 * 1000,
   });
   const invalidateOpen = () => qc.invalidateQueries({ queryKey: ['bankTransferOpen'] });
   const cancelTransfer = useMutation({

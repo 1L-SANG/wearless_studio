@@ -47,10 +47,12 @@ export const SUBSCRIPTION_PRODUCTS_ENABLED = !IS_GENERAL_PAYMENT_REVIEW_HOST;
    입금하고 관리자가 확인해 지급한다(충전 팩 + 구독 플랜 1개월 이용권). 켜져 있으면 요금제
    버튼이 토스 결제창 대신 신청 창을 열고, 충전 탭도 보인다(계좌이체로는 충전을 팔 수 있다).
    토스가 열리면 false 로 바꾼다. 코드는 남긴다. 계좌 정보는 서버(/v1/bank-transfer/info)가 준다.
-   두 심사 전용 호스트에서는 끈다. toss.wearless.kr은 정기결제창, pay.wearless.kr은
-   일반결제창을 심사하고 ai.wearless.kr 손님은 계속 계좌이체다. */
-export const BANK_TRANSFER_ENABLED = !(IS_PG_REVIEW_HOST || IS_GENERAL_PAYMENT_REVIEW_HOST);
+   두 심사 전용 호스트에서는 항상 끈다. 운영에서도 명시적으로 true 를 넣었을 때만 열어
+   환경변수 누락이 계좌이체 재오픈으로 이어지지 않게 한다. 기존 신청·수동 이용권 조회는
+   이 판매 스위치와 별개로 유지한다(Pricing·Subscription). */
+export const BANK_TRANSFER_ENABLED = import.meta.env.VITE_BANK_TRANSFER_ENABLED === 'true'
+  && !(IS_PG_REVIEW_HOST || IS_GENERAL_PAYMENT_REVIEW_HOST);
 
 // 토스 심사용 임시 이메일 로그인. 심사 종료 후 false로 바꾸고 재배포한다.
 // 화면 노출만 제어한다. 사용한 심사 계정과 세션도 별도로 비활성화해야 한다.
-export const PG_REVIEW_LOGIN_ENABLED = true;
+export const PG_REVIEW_LOGIN_ENABLED = IS_PG_REVIEW_HOST || IS_GENERAL_PAYMENT_REVIEW_HOST;
