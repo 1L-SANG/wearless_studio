@@ -2,7 +2,7 @@
 
 셀러 앱의 로그인창 하단의 **'이메일로 로그인하기'** 를 누르면 이메일과 비밀번호로 로그인할 수 있다. 진입은 `https://ai.wearless.kr/pricing`에서 `로그인하고 시작하기`를 누른다. 기존 Supabase 인증과 세션을 사용하며 이메일 회원가입이나 비밀번호 재설정 기능은 추가하지 않는다.
 
-표시 설정은 `src/lib/tossKeys.js`의 `PG_REVIEW_LOGIN_ENABLED` 한 곳에 있다. 현재 `true`이며 코드 배포 후 노출된다. FaceMarket과 관리자 로그인에는 심사용 항목이 노출되지 않는다. 로컬 Supabase를 사용하는 QA 로그인은 별도로 유지한다.
+표시 설정은 `src/lib/tossKeys.js`의 `PG_REVIEW_LOGIN_ENABLED` 한 곳에 있다. 심사 전용 `toss.wearless.kr`과 `pay.wearless.kr`에서만 켜고 운영 `ai.wearless.kr`에는 노출하지 않는다. FaceMarket과 관리자 로그인에는 심사용 항목이 노출되지 않는다. 로컬 Supabase를 사용하는 QA 로그인은 별도로 유지한다.
 
 심사 전에 일반 셀러 권한의 이메일·비밀번호 계정을 Supabase에 준비하고, 이메일 확인이 완료된 계정으로 실제 로그인과 요금제 진입을 검증한다. 계정 생성과 운영 배포는 이 코드 변경에 포함되지 않는다. 계정 정보는 소스나 공개 환경변수에 넣지 않는다.
 
@@ -22,9 +22,20 @@
 
 ## 심사 종료 후
 
-0. 심사 호스트를 내린다: Vercel 도메인과 Cloudflare 레코드를 지우고, `copilot/api/manifest.yml`의 `CORS_ORIGINS`에서 `https://toss.wearless.kr`을 뺀다. ai도 토스로 돌아간다면 `BANK_TRANSFER_ENABLED`를 `false`로 바꾼다.
-1. `PG_REVIEW_LOGIN_ENABLED`를 `false`로 바꾸고 재배포한다. 일반 서비스에는 구글·카카오 로그인만 남는다.
-2. 심사용 계정을 비활성화하고 세션을 회수한다. 표시 설정은 로그인창만 숨기며 계정이나 Supabase 인증 자체를 비활성화하지 않는다.
-3. 코드까지 정리할 때는 심사용 표시 설정과 조건을 제거하고 `EMAIL_LOGIN_ENABLED`를 `IS_LOCAL_SUPABASE`로 되돌린다. 로컬 QA 폼과 기존 소셜 로그인은 유지한다.
+0. 전 카드사 승인 뒤 상점관리자에서 `bill_wearlau5j`의 홈페이지를 `https://ai.wearless.kr/pricing`으로 변경 신청한다.
+1. URL 변경 승인을 확인한 뒤 Vercel 도메인과 Cloudflare 레코드를 지우고, `copilot/api/manifest.yml`의 `CORS_ORIGINS`에서 `https://toss.wearless.kr`을 뺀다.
+2. 일반결제 심사 호스트 `pay.wearless.kr`이 남아 있으면 `PG_REVIEW_LOGIN_ENABLED`와 심사용 계정을 유지한다. 운영 ai에는 호스트 분기로 이메일 로그인이 보이지 않는다.
+3. 일반결제 심사와 URL 변경까지 모두 끝난 뒤 `PG_REVIEW_LOGIN_ENABLED`를 완전히 끄고, 심사용 계정을 비활성화하며 세션을 회수한다.
+4. 코드까지 정리할 때는 심사용 표시 설정과 조건을 제거하고 `EMAIL_LOGIN_ENABLED`를 `IS_LOCAL_SUPABASE`로 되돌린다. 로컬 QA 폼과 기존 소셜 로그인은 유지한다.
+
+## 운영 구독 전환 중 심사 호스트 유지 (2026-10-25)
+
+`ai.wearless.kr`의 신규 판매 경로를 토스 카드로 바꾸더라도 `toss.wearless.kr`은 카드사 심사가 끝날 때까지 그대로 둔다. 같은 프런트 번들을 쓰므로 운영 플래그 변경 뒤에도 다음 조건을 각각 확인한다.
+
+- `ai.wearless.kr/pricing`: 월간 구독 3종과 카드 `구매하기`, 수동 계좌이체와 추가구매 크레딧 없음
+- `toss.wearless.kr/pricing`: 기존 월간 정기결제 심사 화면 유지
+- `pay.wearless.kr/pricing?tab=topup`: 일반결제 크레딧 2종과 테스트 결제창 유지
+
+정기결제 심사가 끝나도 일반결제 심사가 진행 중이면 테스트계정 비밀번호를 바꾸거나 계정을 비활성화하지 않는다.
 
 화면 기준: 'Wearless가 처음이라면? 회원가입' 과 같은 링크 문구 한 줄로 두고, 누르면 그 자리에 폼이 펼쳐진다. `Login.module.css`의 글자, 여백, 버튼 토큰을 재사용하고 입력 라벨, 자동완성, 키보드 포커스와 오류 안내를 제공한다. 랜딩(wearless.kr)의 로그인 모달도 같은 화면이다.
