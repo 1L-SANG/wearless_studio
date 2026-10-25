@@ -42,3 +42,12 @@ def test_detail_publications_migration_has_retention_indexes():
 
 def test_detail_publications_migration_timestamp_is_unique():
     assert list((ROOT / "supabase/migrations").glob("20261023120000*.sql")) == [MIGRATION]
+
+
+def test_detail_publication_cleanup_bounded_migration_allows_null_schedule():
+    migrations = list((ROOT / "supabase/migrations").glob("20261025*_detail_publication_cleanup_bounded.sql"))
+    assert len(migrations) == 1
+    sql = " ".join(migrations[0].read_text(encoding="utf-8").split()).lower()
+    assert "alter table public.detail_publications alter column cleanup_after drop not null;" in sql
+    assert "comment on column public.detail_publications.cleanup_after" in sql
+    assert "null이면 더 이상 재확인하지 않는다" in sql

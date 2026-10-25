@@ -11,6 +11,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from app import repo
 from test_detail_publications import FakeConn, FakeCursor, FakeR2, USER, PROJECT
 
@@ -42,7 +44,7 @@ class RetentionCursor(FakeCursor):
             pub_id, user_id, now, cutoff, cleanup_now = args
             row = rows.get(pub_id)
             eligible = row and row["user_id"] == user_id and (
-                row["status"] == "deleted" and row["cleanup_after"] <= cleanup_now
+                row["status"] == "deleted" and row["cleanup_after"] is not None and row["cleanup_after"] <= cleanup_now
                 or row["status"] == "ready" and row["expires_at"] is not None
                 and row["expires_at"] <= now and self.store["plan"] == "free"
                 or row["status"] == "pending" and row["created_at"] < cutoff - timedelta(minutes=30))
@@ -86,7 +88,8 @@ class RetentionCursor(FakeCursor):
                     r["status"] == "ready" and r["expires_at"] is not None and r["expires_at"] <= now
                     and (not current_plan_guard or self.store["plan"] == "free")][:limit]
                 deleted = sorted([copy.deepcopy(r) for r in rows.values() if r["status"] == "deleted"
-                    and r["cleanup_after"] <= cleanup_now], key=lambda r: (r["cleanup_after"], r["id"]))[:cleanup_limit]
+                    and r["cleanup_after"] is not None and r["cleanup_after"] <= cleanup_now],
+                    key=lambda r: (r["cleanup_after"], r["id"]))[:cleanup_limit]
                 self.result = expired + deleted
             self.rowcount = len(self.result)
             return
@@ -311,15 +314,74 @@ async def test_sweep_waits_for_live_upload_cleanup_window():
     assert key not in r2.objects
 
 
+@pytest.fixture
+def cleanup_clock(monkeypatch):
+    class Clock(datetime):
+        current = NOW
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current.astimezone(tz)
+
+    monkeypatch.setattr(importlib.import_module("app.workers.detail_publication_reaper"), "datetime", Clock)
+    monkeypatch.setattr(importlib.import_module("test_detail_publications"), "datetime", Clock)
+    return Clock
+
+
 @run_async
-async def test_absent_finalized_tombstone_rechecks_without_repurging():
+async def test_second_successful_recheck_stops_scheduling(cleanup_clock):
     worker, store, r2 = setup_reaper()
     row = seed(store, status="deleted")
-    row["deleted_at"] = NOW - timedelta(days=2)
-    row["cleanup_after"] = NOW - timedelta(days=1)
+    key = row["files"][0]["r2_key"]
     await worker._sweep_once()
-    assert r2.deleted == r2.purged == []
-    assert row["cleanup_after"] > NOW
+    assert row["deleted_at"] == NOW
+    assert row["cleanup_after"] == NOW + timedelta(days=1)
+    assert r2.deleted == r2.purged == [key]
+    assert r2.headed == []
+
+    cleanup_clock.current += timedelta(days=1)
+    await worker._sweep_once()
+    assert row["deleted_at"] == NOW
+    assert row["cleanup_after"] is None
+    assert r2.headed == [key]
+    assert r2.deleted == r2.purged == [key]
+
+    cleanup_clock.current += timedelta(days=2)
+    conn = RetentionConn(store)
+    assert await repo.list_expired_detail_publications(conn, now=cleanup_clock.current) == []
+    assert await repo.claim_detail_publication_deletion(
+        conn, user_id=USER, publication_id=row["id"], now=cleanup_clock.current) is None
+    await worker._sweep_once()
+    assert r2.headed == [key]
+    assert r2.deleted == r2.purged == [key]
+
+
+@run_async
+async def test_recreated_object_on_recheck_schedules_one_more_recheck(cleanup_clock):
+    worker, store, r2 = setup_reaper()
+    row = seed(store, status="deleted")
+    key = row["files"][0]["r2_key"]
+    await worker._sweep_once()
+    assert row["cleanup_after"] == NOW + timedelta(days=1)
+    first_generation = row["cleanup_generation"]
+
+    r2.objects[key] = {"size": 100, "mime": "image/jpeg"}
+    cleanup_clock.current += timedelta(days=1)
+    await worker._sweep_once()
+    assert key not in r2.objects
+    assert r2.deleted == r2.purged == [key, key]
+    assert row["deleted_at"] == NOW + timedelta(days=1)
+    assert row["cleanup_generation"] == first_generation + 2
+    assert row["cleanup_after"] == NOW + timedelta(days=2)
+
+    cleanup_clock.current += timedelta(days=1)
+    await worker._sweep_once()
+    assert row["cleanup_after"] is None
+    assert r2.headed == [key, key]
+    cleanup_clock.current += timedelta(days=1)
+    await worker._sweep_once()
+    assert r2.headed == [key, key]
+    assert r2.deleted == r2.purged == [key, key]
 
 
 @run_async

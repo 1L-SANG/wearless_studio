@@ -57,7 +57,7 @@ def publication_db():
         admin.execute("create table assets (metadata jsonb, deleted_at timestamptz)")
         # Run the forward migration itself, when present, against the isolated table.
         for migration in sorted((Path(__file__).resolve().parents[2] / "supabase/migrations").glob(
-                "*_detail_publication_cleanup_schedule.sql")):
+                "*_detail_publication_cleanup_*.sql")):
             admin.execute(migration.read_text().replace("public.", schema + "."))
 
         async def connection():
@@ -240,6 +240,36 @@ def test_only_due_finalized_tombstones_are_rechecked(publication_db):
         async with await connect() as conn:
             rows = await repo.list_expired_detail_publications(conn, now=datetime.now(timezone.utc))
             assert [row["id"] for row in rows] == [due]
+
+    asyncio.run(run())
+
+
+def test_successful_recheck_clears_cleanup_schedule(publication_db):
+    admin, connect = publication_db
+    user_id = str(uuid.uuid4())
+    publication_id = seed_publication(admin, user_id=user_id, status="deleted")
+    admin.execute("update detail_publications set cleanup_after = now() - interval '1 day'")
+
+    async def run():
+        async with await connect() as conn:
+            await repo.finalize_detail_publication_deletion(
+                conn, publication_id=publication_id, cleanup_generation=0)
+            await conn.commit()
+            first = admin.execute("select deleted_at, cleanup_after from detail_publications").fetchone()
+            assert first["deleted_at"] is not None
+            assert timedelta(days=1) <= first["cleanup_after"] - first["deleted_at"] <= timedelta(days=1, seconds=1)
+            admin.execute("update detail_publications set cleanup_after = now() - interval '1 second'")
+            claimed = await repo.claim_detail_publication_deletion(
+                conn, user_id=user_id, publication_id=publication_id, now=datetime.now(timezone.utc))
+            await repo.finalize_detail_publication_deletion(
+                conn, publication_id=publication_id, cleanup_generation=claimed["cleanup_generation"])
+            await conn.commit()
+            completed = admin.execute("select deleted_at, cleanup_after from detail_publications").fetchone()
+            assert completed == {"deleted_at": first["deleted_at"], "cleanup_after": None}
+            later = datetime.now(timezone.utc) + timedelta(days=2)
+            assert await repo.list_expired_detail_publications(conn, now=later) == []
+            assert await repo.claim_detail_publication_deletion(
+                conn, user_id=user_id, publication_id=publication_id, now=later) is None
 
     asyncio.run(run())
 

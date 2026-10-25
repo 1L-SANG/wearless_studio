@@ -154,9 +154,12 @@ class FakeCursor:
             if "deleted_at = coalesce" in q:
                 row = rows[args[0]]
                 now = datetime.now(timezone.utc)
-                if (row["status"] == "deleted" and row["cleanup_after"] <= now
+                if (row["status"] == "deleted" and row["cleanup_after"] is not None and row["cleanup_after"] <= now
                         and row["cleanup_generation"] == args[1]):
-                    row.update(deleted_at=row["deleted_at"] or now, cleanup_after=now + timedelta(days=1))
+                    cleanup_after = now + timedelta(days=1)
+                    if "case when deleted_at is null" in q and row["deleted_at"] is not None:
+                        cleanup_after = None
+                    row.update(deleted_at=row["deleted_at"] or now, cleanup_after=cleanup_after)
                 return
             pub_id, user_id = args
             row = rows.get(pub_id)
@@ -203,6 +206,7 @@ class FakeR2:
         self.objects = {}
         self.deleted = []
         self.purged = []
+        self.headed = []
         self.copied = []
         self.fail_delete = False
         self.put_sizes = []
@@ -213,6 +217,7 @@ class FakeR2:
         return "https://upload.test/" + key
 
     def head(self, key):
+        self.headed.append(key)
         return self.objects.get(key)
 
     def copy_with_cache(self, key, mime, cache):
@@ -497,17 +502,27 @@ def test_delete_failure_remains_retryable(publication_client):
     assert row["status"] == "deleted" and row["deleted_at"] is None
 
 
-def test_repeat_delete_reclaims_recreated_publication(publication_client):
+@pytest.mark.parametrize("cleanup_state", ["completed", "live_upload", "failed_cleanup"])
+def test_repeat_delete_returns_204_without_storage_calls(publication_client, cleanup_state):
     client, store, r2, _app = publication_client
     created = uploaded(publication_client)
+    row = store["publications"][created["publicationId"]]
+    if cleanup_state != "live_upload":
+        row["cleanup_after"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+    r2.fail_delete = cleanup_state == "failed_cleanup"
     url = f"/v1/detail-publications/{created['publicationId']}"
     assert client.delete(url).status_code == 204
+    assert row["status"] == "deleted"
+    assert (row["deleted_at"] is not None) == (cleanup_state == "completed")
+    first_row = copy.deepcopy(row)
+    first_counts = (len(r2.deleted), len(r2.purged), len(r2.headed))
+    r2.fail_delete = False
     key = f"pub/{USER}/{created['publicationId']}/01.jpg"
     r2.objects[key] = {"size": 100, "mime": "image/jpeg"}
     assert client.delete(url).status_code == 204
-    assert key not in r2.objects
-    assert len(r2.deleted) == len(r2.purged) == 4
-    assert store["publications"][created["publicationId"]]["deleted_at"] is None
+    assert key in r2.objects
+    assert (len(r2.deleted), len(r2.purged), len(r2.headed)) == first_counts
+    assert row == first_row
 
 
 def test_publication_files_raises_value_error():

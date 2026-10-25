@@ -1420,7 +1420,8 @@ async def finalize_detail_publication_deletion(conn, *, publication_id, cleanup_
         await cur.execute(
             """update detail_publications set status = 'deleted',
                        deleted_at = coalesce(deleted_at, clock_timestamp()),
-                       cleanup_after = clock_timestamp() + interval '1 day'
+                       cleanup_after = case when deleted_at is null
+                                            then clock_timestamp() + interval '1 day' else null end
                  where id = %s and status = 'deleted' and cleanup_after <= clock_timestamp()
                    and cleanup_generation = %s""",
             (publication_id, cleanup_generation),

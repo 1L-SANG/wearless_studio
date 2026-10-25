@@ -313,6 +313,8 @@ async def delete_publication(request: Request, publication_id: str, user_id: str
         row = await repo.get_detail_publication(conn, user_id=user_id, publication_id=publication_id)
         if row is None:
             raise _error("publication_not_found", "게시한 상세페이지를 찾을 수 없어요.", 404)
+        if row["status"] == "deleted":
+            return Response(status_code=204)
         row = await repo.soft_delete_detail_publication(conn, user_id=user_id, publication_id=publication_id)
         await conn.commit()
     try:
