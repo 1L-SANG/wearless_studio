@@ -842,7 +842,13 @@ R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Ca
 | `GET /v1/projects/{project_id}/mall-registrations` | 살아 있는 본인 프로젝트를 확인하고 본인의 `mall_register` 잡 최신 5건을 `{items:[등록 조회 응답]}`으로 반환한다. |
 | `GET /v1/malls/cafe24/categories` | 현재 연결로 100건씩 최대 3페이지를 조회하고 `use_display='F'`를 제외해 `{categoryNo,depth,name,fullName}[]`를 반환한다. 사용자와 연결 ID별로 프로세스 메모리에 10분 캐시한다. 캐시 사용 전에도 현재 연결과 만료, 허용 몰을 검사한다. |
 
-접수 준비 전에는 503 `cafe24_unconfigured`, 폐쇄 계정이나 프로젝트, 게시, 자산을 찾지 못하면 각 404, 실존 모델이면 403 `real_model_not_allowed`, 게시 이미지가 잘못됐으면 400 `invalid_files`다. 연결이 없으면 404 `not_connected`, refresh가 만료됐거나 허용 몰에서 제외되면 각각 409 `reconnect_required`, `cafe24_not_allowed`, 횟수 초과는 429 `rate_limited`다. 오류 봉투는 `{error:{code,message}}`이며 활성 등록 충돌에는 `jobId`도 포함한다. 실제 상품 생성 워커와 등록 여부 재확인 라우트는 후속 Task 범위다.
+접수 준비 전에는 503 `cafe24_unconfigured`, 폐쇄 계정이나 프로젝트, 게시, 자산을 찾지 못하면 각 404, 실존 모델이면 403 `real_model_not_allowed`, 게시 이미지가 잘못됐으면 400 `invalid_files`다. 연결이 없으면 404 `not_connected`, refresh가 만료됐거나 허용 몰에서 제외되면 각각 409 `reconnect_required`, `cafe24_not_allowed`, 횟수 초과는 429 `rate_limited`다. 오류 봉투는 `{error:{code,message}}`이며 활성 등록 충돌에는 `jobId`도 포함한다. 등록 여부 재확인 라우트는 후속 Task 범위다.
+
+등록 워커는 게시 이미지를 카페24에 복사하고 가격 설정을 조회한 뒤 상품을 생성한다. 이미지 분할과 체크포인트는 워커가 담당하며 한 배치는 최대 8장, base64 합계 20MB다. 저장된 URL만큼 건너뛰고 재개한다. 이미지 업로드의 429는 `Retry-After`를 최대 60초로 제한해 세 번 재시도하고, 5xx와 연결 실패는 1초, 2초, 4초 뒤 재시도한다. 가격 설정 조회가 실패하면 상품 생성 전에 중단한다. 각 외부 호출과 재시도 직전에 lease, 등록 설정과 비밀값 준비 여부, 현재 허용 몰, 계정 폐쇄, 접수한 연결 ID와 몰, refresh 만료, 취소 여부를 재검증한다. 모든 DB 쓰기는 같은 running lease로 보호하며 lease 상실 뒤에는 호출과 쓰기를 중단한다.
+
+생성 요청 직전에 `metadata.create={sentAt,attempt,leaseToken}`을 먼저 커밋한다. `sentAt`이 있으면 재시작 시 상품을 다시 생성하지 않고 자체상품코드로 한 번 조회해 복구한다. 401로 거절된 요청만 토큰 갱신 후 새 attempt로 다시 보낼 수 있다. 불명확한 응답도 조회로만 복구하며 정확히 한 상품이면 상품 번호를 저장하고, 여러 개면 `duplicate_suspected`, 없거나 조회 실패면 `unknown`으로 끝낸다. 상품 번호가 이미 저장됐으면 조회 없이 마무리한다. 대표 이미지는 긴 변 2000px 이하 JPEG로 올리며 실패해도 생성 완료와 경고를 남긴다. 마지막 등록 시각은 접수한 연결 ID가 아직 connected일 때만 갱신한다.
+
+종료 우선순위는 저장된 `productNo`의 `created`, 400·422 거절 기록 `rejectedAt`의 `failed`, 전송 기록 `sentAt`의 `unknown` 또는 `duplicate_suspected`, 전송 전 오류의 `failed` 순이다. `created`, `unknown`, `duplicate_suspected`는 done, `failed`만 error이며 오류는 자체 코드와 셀러 문구만 저장한다. 공용 lease 복구는 첫 만료에 재큐하고 두 번째에 error로 끝내지만, 등록 조회는 metadata로 결과를 판정하므로 `sentAt`이 있는 미확인 등록은 계속 `verifiable=true`다.
 
 ## 7. 현행 코드와의 갭 (마이그레이션 TODO)
 
