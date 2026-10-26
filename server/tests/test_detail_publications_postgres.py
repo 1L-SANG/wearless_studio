@@ -46,18 +46,17 @@ def publication_db():
         admin.execute(sql.SQL("create schema {} ").format(sql.Identifier(schema)))
         admin.execute(sql.SQL("set search_path to {} ").format(sql.Identifier(schema)))
         admin.execute("create table profiles (user_id uuid primary key, plan text not null)")
-        admin.execute("""create table detail_publications (
-            id uuid primary key default gen_random_uuid(), user_id uuid not null,
-            project_id uuid, version integer not null, status text not null default 'pending',
-            preset text not null, width integer not null, slice_count integer not null default 0,
-            total_bytes bigint not null default 0, product_name text not null default '',
-            editor_revision integer, files jsonb not null default '[]'::jsonb,
-            expires_at timestamptz, created_at timestamptz not null default now(),
-            ready_at timestamptz, deleted_at timestamptz, unique (project_id, version))""")
+        migrations = Path(__file__).resolve().parents[2] / "supabase/migrations"
+        original = (migrations / "20261023120000_detail_publications.sql").read_text()
+        admin.execute(original.replace("references auth.users(id) on delete cascade", "")
+                      .replace("references public.projects(id) on delete set null", "")
+                      .replace("public.", schema + "."))
+        # Reproduce the public schema's default client grants before the corrective migration.
+        admin.execute("grant all on detail_publications to anon, authenticated")
         admin.execute("create table assets (metadata jsonb, deleted_at timestamptz)")
         # Run the forward migration itself, when present, against the isolated table.
-        for migration in sorted((Path(__file__).resolve().parents[2] / "supabase/migrations").glob(
-                "*_detail_publication_cleanup_*.sql")):
+        for migration in sorted([*migrations.glob("*_detail_publication_cleanup_*.sql"),
+                                 *migrations.glob("*_detail_publications_server_write_only.sql")]):
             admin.execute(migration.read_text().replace("public.", schema + "."))
 
         async def connection():
@@ -89,6 +88,22 @@ def seed_publication(admin, *, user_id, project_id=None, status="ready", version
             values (%s, %s, %s, %s, 'smartstore', 860, now() - interval '1 day', now())
             returning id::text as id""",
         (user_id, project_id or str(uuid.uuid4()), version, status)).fetchone()["id"]
+
+
+def test_detail_publications_clients_can_only_select_own_rows(publication_db):
+    admin, _ = publication_db
+    privileges = {"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"}
+    for role, allowed in (("anon", set()), ("authenticated", {"SELECT"}), ("service_role", privileges)):
+        for privilege in sorted(privileges):
+            row = admin.execute("select has_table_privilege(%s, 'detail_publications', %s) as allowed",
+                                (role, privilege)).fetchone()
+            assert row["allowed"] is (privilege in allowed), (role, privilege)
+    policies = admin.execute("""select policyname, cmd, roles, qual from pg_policies
+        where schemaname = current_schema() and tablename = 'detail_publications'""").fetchall()
+    assert len(policies) == 1
+    assert policies[0]["policyname"] == "detail_publications_owner_select"
+    assert policies[0]["cmd"] == "SELECT" and policies[0]["roles"] == ["authenticated"]
+    assert "auth.uid()" in policies[0]["qual"] and "user_id" in policies[0]["qual"]
 
 
 def test_renewal_committed_while_expiry_claim_waits_for_publication_preserves_it(publication_db):

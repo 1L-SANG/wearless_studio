@@ -731,6 +731,8 @@ generation: {
 
 ## § 게시(detail publication)
 
+행 쓰기는 서버만 한다. 클라이언트 역할은 본인 행 조회만 가능하다.
+
 | 필드(DB) | 의미 |
 | --- | --- |
 | `id`, `user_id`, `project_id` | 게시·소유자·프로젝트 UUID. 프로젝트 삭제 시 `project_id`만 null로 바뀌고 게시 이미지는 유지한다. |

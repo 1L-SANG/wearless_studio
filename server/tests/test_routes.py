@@ -48,6 +48,8 @@ def test_delete_account_revokes_mall_connections(client, make_token, monkeypatch
         async def __aenter__(self): return self
         async def __aexit__(self, *_): return False
         async def execute(self, sql, args=()):
+            if "pg_advisory_xact_lock" in sql:
+                return
             self.result = self.db.execute(sql.replace("%s", "?").replace("now()", "CURRENT_TIMESTAMP").replace("id::text", "id").replace("for update", ""), args)
         async def fetchone(self): return self.result.fetchone()
         async def commit(self): self.db.commit()

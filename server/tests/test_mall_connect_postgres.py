@@ -57,6 +57,8 @@ def mall_pg(monkeypatch):
                               .replace("references auth.users(id) on delete cascade", ""))
         admin.execute("""create table client_event_rate_limits (
             scope text, key text, window_start timestamptz, request_count integer)""")
+        admin.execute("""create table jobs (
+            user_id uuid, kind text, status text, payload jsonb, result jsonb)""")
         client_class = mall_connect.ZigzagClient
 
         def respond(_request):
@@ -119,3 +121,53 @@ def test_rotation_checks_original_connection_after_waiting_for_the_write_lock(ma
     assert len(rows) == (1 if change == "disconnect" else 2)
     assert rows[0]["status"] == "revoked"
     assert rows[0]["access_key_enc"] is None and rows[0]["secret_key_enc"] is None
+
+
+@pytest.mark.parametrize("first_action", ["revoke", "connect"])
+def test_account_revoke_and_connect_serialize_on_account_lock(mall_pg, first_action):
+    _, admin, pool = mall_pg
+
+    async def save(conn):
+        return await repo.upsert_mall_connection(conn, user_id=USER, mall="zigzag", shop_id="s1",
+            shop_name="테스트 스토어", key_hint="12345678", access_key=KEYS["accessKey"],
+            secret_key=KEYS["secretKey"], permissions=["상품 조회와 등록"], kek="mall-test-kek")
+
+    async def close(conn):
+        await repo.revoke_all_mall_connections(conn, USER)
+        await conn.execute("""insert into jobs (user_id, kind, status, payload)
+            values (%s, 'personalization_purge', 'pending', '{"reason":"account_delete"}')""", (USER,))
+
+    async def scenario():
+        async with pool.connection() as first, pool.connection() as second:
+            # Keep the nested upsert transaction's locks until the caller commits.
+            await first.execute("select 1")
+            await (close(first) if first_action == "revoke" else save(first))
+            pending = asyncio.create_task(save(second) if first_action == "revoke" else close(second))
+            try:
+                async def wait_for_account_lock():
+                    while not admin.execute("""select exists (
+                        select 1 from pg_locks where pid = %s and locktype = 'advisory'
+                          and not granted and %s = any(pg_blocking_pids(pid))
+                    ) as waiting""", (second.info.backend_pid, first.info.backend_pid)).fetchone()["waiting"]:
+                        if pending.done():
+                            pytest.fail("account operation completed without waiting for the shared advisory lock")
+                        await asyncio.sleep(0.01)
+
+                await asyncio.wait_for(wait_for_account_lock(), timeout=5)
+                await first.commit()
+                if first_action == "revoke":
+                    with pytest.raises(repo.MallAccountClosed):
+                        await asyncio.wait_for(pending, timeout=5)
+                else:
+                    await asyncio.wait_for(pending, timeout=5)
+                await second.commit()
+            finally:
+                if not pending.done():
+                    pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
+
+    asyncio.run(scenario())
+    rows = admin.execute("select status, access_key_enc, secret_key_enc from mall_connections").fetchall()
+    assert len(rows) == (0 if first_action == "revoke" else 1)
+    assert all(row["status"] == "revoked" and row["access_key_enc"] is None and row["secret_key_enc"] is None
+               for row in rows)

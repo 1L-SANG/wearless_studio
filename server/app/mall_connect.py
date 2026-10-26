@@ -126,6 +126,8 @@ async def _verify_and_save(request, body, user_id, *, rotate=False):
                 shop_name=shop["shop_name"], key_hint=hint, access_key=access_key, secret_key=secret_key,
                 permissions=["상품 조회와 등록"], kek=kek,
                 expected_connection_id=previous["id"] if rotate else None)
+        except repo.MallAccountClosed:
+            raise _error("account_closed", "계정 삭제가 완료되어 사용할 수 없습니다.", 404) from None
         except repo.MallShopMismatch:
             raise _error("shop_mismatch", "다른 스토어의 인증키예요. 스토어를 바꾸려면 연결을 해제한 뒤 다시 연결해 주세요") from None
         if row is None:

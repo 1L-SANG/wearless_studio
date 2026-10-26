@@ -44,6 +44,23 @@ def test_detail_publications_migration_timestamp_is_unique():
     assert list((ROOT / "supabase/migrations").glob("20261023120000*.sql")) == [MIGRATION]
 
 
+def test_detail_publications_server_write_only_migration_revokes_client_writes():
+    migrations = list((ROOT / "supabase/migrations").glob(
+        "20261026*_detail_publications_server_write_only.sql"))
+    assert len(migrations) == 1
+    migration = migrations[0]
+    assert list(migration.parent.glob(migration.name[:14] + "*.sql")) == [migration]
+    sql = re.sub(r"--[^\n]*", " ", migration.read_text(encoding="utf-8"))
+    statements = [statement.strip().lower() for statement in " ".join(sql.split()).split(";") if statement.strip()]
+    assert statements == [
+        "drop policy if exists detail_publications_owner_insert on public.detail_publications",
+        "drop policy if exists detail_publications_owner_update on public.detail_publications",
+        "revoke all on public.detail_publications from anon, authenticated",
+        "grant select on public.detail_publications to authenticated",
+        "grant all on public.detail_publications to service_role",
+    ]
+
+
 def test_detail_publication_cleanup_bounded_migration_allows_null_schedule():
     migrations = list((ROOT / "supabase/migrations").glob("20261025*_detail_publication_cleanup_bounded.sql"))
     assert len(migrations) == 1

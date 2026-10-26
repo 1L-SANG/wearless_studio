@@ -10,7 +10,9 @@ from datetime import datetime, timezone
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from unittest.mock import AsyncMock
 
+from app import client_events, routes
 from app.auth import require_user
 from app.main import create_app
 from conftest import make_settings
@@ -42,6 +44,11 @@ class FakeCursor:
         self.result = []
         if "pg_advisory_xact_lock" in q:
             return
+        if "from jobs" in q and "as closed" in q:
+            self.result = [{"closed": args[0] in self.store["closed_accounts"]}]
+            return
+        if "from personalization_profiles" in q:
+            return
         if "client_event_rate_limits" in q:
             if q.startswith("select"):
                 self.result = [{"count": self.store["attempts"].get(args[0], 0)}]
@@ -59,10 +66,10 @@ class FakeCursor:
             self.store["connections"].append(row)
             self.result = [self.safe(row)]
         elif q.startswith("update mall_connections"):
-            user, mall = args
+            user, *malls = args
             self.rowcount = 0
             for row in self.store["connections"]:
-                if row["user_id"] == user and row["mall"] == mall and row["status"] == "connected":
+                if row["user_id"] == user and (not malls or row["mall"] == malls[0]) and (not malls or row["status"] == "connected"):
                     row.update(status="revoked", revoked_at=NOW, access_key_enc=None, secret_key_enc=None)
                     self.rowcount += 1
         elif "from mall_connections" in q:
@@ -132,7 +139,7 @@ class FakePool:
 @pytest.fixture
 def env(monkeypatch):
     mall = module()
-    store = {"connections": [], "defaults": {}, "attempts": {}, "sql": [], "remote": 0}
+    store = {"connections": [], "defaults": {}, "attempts": {}, "sql": [], "remote": 0, "closed_accounts": set()}
     async def respond(request):
         store["remote"] += 1
         authorization = request.headers["Authorization"]
@@ -227,6 +234,49 @@ def test_rotate_requires_an_existing_connection(env):
     response = client.post("/v1/malls/zigzag/rotate", json=KEYS)
     assert response.status_code == 409 and response.json()["error"]["code"] == "connection_changed"
     assert store["connections"] == [] and store["remote"] == 0
+
+
+@pytest.mark.parametrize("endpoint", ["connect", "rotate"])
+def test_connect_after_account_delete_stores_nothing(env, monkeypatch, endpoint):
+    client, store = env
+    if endpoint == "rotate":
+        assert connect(client).status_code == 200
+
+    async def start_purge(conn, user_id, profile, *, reason):
+        assert reason == "account_delete" and profile is None
+        conn.store["closed_accounts"].add(user_id)
+        return "purge-job"
+
+    monkeypatch.setattr(client_events, "delete_user_events", AsyncMock())
+    monkeypatch.setattr(routes.personalization, "_start_purge", start_purge)
+    monkeypatch.setattr(routes, "_wake_dispatcher", lambda _: None)
+
+    async def scenario():
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def pause(_authorization):
+            entered.set()
+            await release.wait()
+
+        store["pause_shop"] = pause
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=client.app), base_url="http://test") as browser:
+            pending = asyncio.create_task(browser.post(f"/v1/malls/zigzag/{endpoint}", json=KEYS))
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=2)
+                assert (await browser.delete("/v1/me/account")).status_code == 202
+                defaults = copy.deepcopy(store["defaults"])
+            finally:
+                release.set()
+            response = await asyncio.wait_for(pending, timeout=2)
+            assert response.status_code == 404
+            assert response.json()["error"] == {
+                "code": "account_closed", "message": "계정 삭제가 완료되어 사용할 수 없습니다."}
+            assert store["defaults"] == defaults
+
+    asyncio.run(scenario())
+    assert len(store["connections"]) == (1 if endpoint == "rotate" else 0)
+    assert all(row["status"] == "revoked" and row["access_key_enc"] is None and row["secret_key_enc"] is None
+               for row in store["connections"])
 
 
 @pytest.mark.parametrize("change, expected_hint, pending_key", [

@@ -30,6 +30,10 @@ class MallShopMismatch(Exception):
     """A rotation must keep the store belonging to its original active connection."""
 
 
+class MallAccountClosed(Exception):
+    """An account-delete purge prevents saving new mall credentials."""
+
+
 async def get_mall_connection(conn, *, user_id, mall) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute(f"select {_MALL_CONNECTION_COLS} from mall_connections "
@@ -49,6 +53,10 @@ async def get_mall_connection_keys(conn, *, user_id, mall, kek) -> tuple | None:
 async def upsert_mall_connection(conn, *, user_id, mall, shop_id, shop_name, key_hint,
                                  access_key, secret_key, permissions, kek, expected_connection_id=None) -> dict | None:
     async with conn.transaction():
+        async with conn.cursor() as cur:
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall-account:{user_id}",))
+        if await user_account_purge_closed(conn, user_id):
+            raise MallAccountClosed()
         async with conn.cursor() as cur:
             await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:{mall}",))
         if expected_connection_id is not None:
@@ -85,6 +93,7 @@ async def revoke_mall_connection(conn, *, user_id, mall) -> bool:
 
 async def revoke_all_mall_connections(conn, user_id):
     async with conn.cursor() as cur:
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall-account:{user_id}",))
         await cur.execute("""update mall_connections set status = 'revoked', revoked_at = now(),
             updated_at = now(), access_key_enc = null, secret_key_enc = null
             where user_id = %s""", (user_id,))
