@@ -34,7 +34,7 @@ after(() => vite?.close());
 const payload = (patch = {}) => ({ projectId: 'project-local', publicationId: 'publication-local',
   requestKey: randomUUID(), productName: '니트', price: 39000, ...patch });
 const registrationFields = ['jobId', 'status', 'progress', 'outcome', 'productNo', 'productUrl',
-  'imageCount', 'thumbnail', 'code', 'errorMessage', 'externalCode', 'verifiable', 'warnings', 'createdAt', 'finishedAt'];
+  'mallId', 'publicationId', 'imageCount', 'thumbnail', 'code', 'errorMessage', 'externalCode', 'verifiable', 'warnings', 'createdAt', 'finishedAt'];
 const connectionFields = ['mall', 'status', 'shopName', 'mallId', 'permissions', 'connectedAt', 'lastRegisteredAt', 'tokenExpiresAt'];
 const fieldsMatch = (value, fields) => assert.deepEqual(Object.keys(value).sort(), [...fields].sort());
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status });
@@ -119,10 +119,12 @@ test('registration routes and request key match contract', async (t) => {
     categoryNo: 27, thumbnailAssetId: 'asset-local' });
   const accepted = { jobId: randomUUID(), status: 'queued', externalCode: 'wl0123456789abcdef' };
   const detail = { jobId: accepted.jobId, status: 'done', outcome: 'unknown', verifiable: true,
-    code: null, errorMessage: null, warnings: [] };
+    mallId: 'myshop', publicationId: 'publication-local', progress: 100, productNo: null, productUrl: null,
+    imageCount: 2, thumbnail: null, externalCode: accepted.externalCode,
+    code: null, errorMessage: null, warnings: [], createdAt: '2026-10-26T00:00:00Z', finishedAt: '2026-10-26T00:00:01Z' };
   const categories = [{ categoryNo: 27, depth: 2, name: '니트', fullName: ['상의', '니트'] }];
   const replies = [accepted, detail, detail, { found: false, checkedAt: '2026-10-26T00:00:00Z', message: '아직 확인되지 않았어요' },
-    { ...detail, outcome: 'created', verifiable: false }, { items: [detail] }, categories];
+    { ...detail, outcome: 'created', verifiable: false }, { items: [detail], recovery: detail }, categories];
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     calls.push({ url: String(url), options });
     return options.method === 'DELETE' ? new Response(null, { status: 204 }) : json(replies.shift());
@@ -132,7 +134,7 @@ test('registration routes and request key match contract', async (t) => {
   assert.deepEqual(await adapter.getCafe24Registration(accepted.jobId), detail);
   assert.equal((await adapter.verifyCafe24Registration(accepted.jobId)).found, false);
   assert.equal((await adapter.verifyCafe24Registration(accepted.jobId)).outcome, 'created');
-  assert.deepEqual(await adapter.listMallRegistrations(request.projectId), { items: [detail] });
+  assert.deepEqual(await adapter.listMallRegistrations(request.projectId), { items: [detail], recovery: detail });
   assert.deepEqual(await adapter.listCafe24Categories(), categories);
   await adapter.disconnectCafe24();
   const route = `/v1/malls/cafe24/registrations/${accepted.jobId}`;
@@ -270,7 +272,8 @@ test('listing fields match server contract', async (t) => {
   for (let index = 0; index < 6; index += 1) recent.push(await finish(t, payload()));
   await finish(t, payload({ projectId: 'other-project' }));
   const listing = await mock.listMallRegistrations('project-local');
-  fieldsMatch(listing, ['items']);
+  fieldsMatch(listing, ['items', 'recovery']);
+  assert.equal(listing.recovery, null);
   assert.deepEqual(listing.items.map((item) => item.jobId), recent.slice(-5).reverse().map((item) => item.jobId));
   for (const item of listing.items) {
     fieldsMatch(item, registrationFields);
@@ -278,11 +281,52 @@ test('listing fields match server contract', async (t) => {
   }
   listing.items[0].warnings.push('mutated');
   assert.deepEqual((await mock.getCafe24Registration(listing.items[0].jobId)).warnings, []);
-  assert.deepEqual(await mock.listMallRegistrations('empty-project'), { items: [] });
+  assert.deepEqual(await mock.listMallRegistrations('empty-project'), { items: [], recovery: null });
   const connections = await mock.listMalls();
   for (const status of ['none', 'connected', 'reconnect_required', 'unavailable']) {
     const cafe24 = { ...connections.items.find((item) => item.mall === 'cafe24'), status };
     t.mock.method(globalThis, 'fetch', async () => json({ items: [cafe24] }));
     assert.deepEqual(await adapter.listMalls(), { items: [cafe24] });
   }
+});
+
+test('recovery finds an older unresolved registration for the current mall beyond recent five', async (t) => {
+  clock(t);
+  await mock.startCafe24Install({ mallId: 'myshop' });
+  const unresolved = await finish(t, payload({ productName: 'unknown 니트' }));
+  for (let index = 0; index < 6; index++) await finish(t, payload());
+  await mock.startCafe24Install({ mallId: 'othershop' });
+  const otherMall = await finish(t, payload({ productName: 'unknown 다른 몰' }));
+  await mock.startCafe24Install({ mallId: 'myshop' });
+  const listing = await mock.listMallRegistrations('project-local');
+  assert.equal(listing.items.length, 5);
+  assert.equal(listing.items[0].jobId, otherMall.jobId);
+  assert.equal(listing.items.some((item) => item.jobId === unresolved.jobId), false);
+  assert.equal(listing.recovery?.jobId, unresolved.jobId);
+  assert.equal(listing.recovery.mallId, 'myshop');
+  assert.equal(listing.recovery.publicationId, 'publication-local');
+  listing.recovery.warnings.push('mutated');
+  assert.deepEqual((await mock.getCafe24Registration(unresolved.jobId)).warnings, []);
+  db.mallConnections.cafe24.status = 'reconnect_required';
+  assert.equal((await mock.listMallRegistrations('project-local')).recovery.jobId, unresolved.jobId);
+  await mock.disconnectCafe24();
+  assert.equal((await mock.listMallRegistrations('project-local')).recovery, null);
+});
+
+test('recovery includes pending running and duplicate suspected but excludes definitive outcomes', async (t) => {
+  clock(t);
+  await mock.startCafe24Install({ mallId: 'myshop' });
+  const accepted = await mock.createCafe24Registration(payload());
+  assert.equal((await mock.listMallRegistrations('project-local')).recovery?.jobId, accepted.jobId);
+  db.mallRegistrations[0].view.status = 'running';
+  assert.equal((await mock.listMallRegistrations('project-local')).recovery?.jobId, accepted.jobId);
+  t.mock.timers.tick(2000); await Promise.resolve();
+  assert.equal((await mock.listMallRegistrations('project-local')).recovery, null);
+  await finish(t, payload({ price: 999 }));
+  assert.equal((await mock.listMallRegistrations('project-local')).recovery, null);
+  const uncertain = await finish(t, payload({ productName: 'unknown 니트' }));
+  db.mallRegistrations.at(-1).view.outcome = 'duplicate_suspected';
+  assert.equal((await mock.listMallRegistrations('project-local')).recovery?.jobId, uncertain.jobId);
+  await finish(t, payload({ projectId: 'other-project', productName: 'unknown 다른 프로젝트' }));
+  assert.equal((await mock.listMallRegistrations('project-local')).recovery?.jobId, uncertain.jobId);
 });

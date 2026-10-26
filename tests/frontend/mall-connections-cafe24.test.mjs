@@ -8,11 +8,12 @@ const Button = ({ children, ...props }) => React.createElement('button', props, 
 const connection = { mall: 'cafe24', status: 'connected', mallId: 'myshop', shopName: '니트 스토어', permissions: ['상품 조회와 등록'] };
 const html = renderToStaticMarkup;
 const rowOf = (tree) => React.Children.toArray(tree.props.children)[0];
-async function load(runtime = hooks(), api = {}) {
+async function load(runtime = hooks(), api = {}, bindings = {}) {
   return componentModule('src/features/settings/MallConnections.jsx',
-    ['MallConnectionRow', 'Cafe24Connection', 'MallActionDialog', 'MallIdField'], {
+    ['MallConnections', 'MallConnectionRow', 'Cafe24Connection', 'MallActionDialog', 'MallIdField'], {
       ...runtime, api, Button, Icon: () => null, Modal: ({ children }) => children,
       styles: {}, seoulDate: () => '2026.10.26', ExportMenu: () => null, MallDefaultsChecklist: () => null,
+      ...bindings,
     });
 }
 
@@ -92,7 +93,60 @@ test('callback result query shows seller copy and clears query', async () => {
     globalThis.window.location.href = 'https://app.test/settings/malls?mall=cafe24&result=connected';
     const connectedRuntime = hooks(); const module = await load(connectedRuntime);
     connectedRuntime.render(module.Cafe24Connection, props); connectedRuntime.flushEffects();
-    assert.equal(rowOf(connectedRuntime.render(module.Cafe24Connection, props)).props.state, 'connected'); assert.equal(changed, 1);
+    assert.equal(rowOf(connectedRuntime.render(module.Cafe24Connection, props)).props.state, 'none'); assert.equal(changed, 1);
+  } finally { globalThis.window = previous; }
+});
+
+test('successful install callback follows refreshed connection status', async () => {
+  const previous = globalThis.window; let changed = 0;
+  globalThis.window = { location: { href: 'https://app.test/settings/malls?mall=cafe24&result=connected' },
+    history: { replaceState() {} }, sessionStorage: { getItem: () => 'myshop' } };
+  try {
+    const runtime = hooks(), { Cafe24Connection, MallConnectionRow } = await load(runtime);
+    const props = { connection, onChanged: () => changed++ };
+    runtime.render(Cafe24Connection, props); runtime.flushEffects();
+    assert.equal(changed, 1);
+    assert.equal(rowOf(runtime.render(Cafe24Connection, props)).props.state, 'connected');
+    for (const status of ['none', 'reconnect_required']) {
+      props.connection = { ...connection, status };
+      const row = rowOf(runtime.render(Cafe24Connection, props));
+      assert.equal(row.props.state, status);
+      assert.ok(html(React.createElement(MallConnectionRow, row.props)).includes(status === 'none' ? '연결하기' : '다시 연결'));
+    }
+  } finally { globalThis.window = previous; }
+});
+
+test('account switch gives Cafe24 a fresh form and ignores the old install response', async () => {
+  const previous = globalThis.window;
+  let userId = 'account-one', finishInstall, assigned = 0;
+  globalThis.window = { location: { href: 'https://app.test/settings/malls', assign: () => assigned++ },
+    sessionStorage: { setItem() {} } };
+  try {
+    const parent = hooks();
+    const { MallConnections, Cafe24Connection } = await load(parent, {}, {
+      useAuth: () => ({ session: { user: { id: userId } } }), useLocation: () => ({ search: '' }),
+      useQueryClient: () => ({}), useQuery: () => ({ data: { items: [{ mall: 'cafe24', status: 'none' }] } }),
+    });
+    const walk = (node) => [node, ...React.Children.toArray(node?.props?.children).flatMap(walk)];
+    const first = walk(parent.render(MallConnections)).find((node) => node.type === Cafe24Connection);
+    const oldRuntime = hooks(), old = await load(oldRuntime, {
+      startCafe24Install: () => new Promise((resolve) => { finishInstall = resolve; }),
+    });
+    let oldRow = rowOf(oldRuntime.render(old.Cafe24Connection, first.props));
+    const cleanups = oldRuntime.flushEffects();
+    oldRow.props.onConnect(); oldRow = rowOf(oldRuntime.render(old.Cafe24Connection, first.props));
+    oldRow.props.onChange('old-account-shop'); oldRow = rowOf(oldRuntime.render(old.Cafe24Connection, first.props));
+    const pending = oldRow.props.onSubmit({ preventDefault() {} });
+    userId = 'account-two';
+    const next = walk(parent.render(MallConnections)).find((node) => node.type === Cafe24Connection);
+    assert.notEqual(next.key, first.key);
+    assert.notEqual(next.props.storageKey, first.props.storageKey);
+    cleanups.forEach((cleanup) => cleanup?.());
+    const freshRuntime = hooks(), fresh = await load(freshRuntime);
+    const freshRow = rowOf(freshRuntime.render(fresh.Cafe24Connection, next.props));
+    assert.equal(freshRow.props.state, 'none'); assert.equal(freshRow.props.children.props.value, '');
+    finishInstall({ startUrl: '/old-account-install' }); await pending;
+    assert.equal(assigned, 0);
   } finally { globalThis.window = previous; }
 });
 

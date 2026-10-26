@@ -10,13 +10,13 @@ import pytest
 from psycopg.types.json import Json
 
 from app import mall_connect, repo
-from test_mall_cafe24_register_routes import BASE, BODY, PROJECT, PUBLICATION, publication_row
-from test_mall_connect import USER
+from test_mall_cafe24_register_routes import BASE, BODY, PROJECT, PROJECT2, PUBLICATION, publication_row
+from test_mall_connect import OTHER, USER
 from test_mall_connect_postgres import mall_pg
 
 
-@pytest.mark.parametrize("same_key", [False, True])
-def test_two_submissions_same_project_join_one_active_job(mall_pg, monkeypatch, same_key):
+@pytest.fixture
+def register_pg(mall_pg, monkeypatch):
     app, admin, pool = mall_pg
     admin.execute("""alter table jobs
         add column id uuid primary key default gen_random_uuid(),
@@ -56,6 +56,15 @@ def test_two_submissions_same_project_join_one_active_job(mall_pg, monkeypatch, 
     app.state.settings = replace(app.state.settings, detail_publish_enabled=True, cafe24_enabled=True,
         cafe24_client_id="fixture-client", cafe24_client_secret="fixture-private")
     monkeypatch.setattr(mall_connect, "Cafe24Client", lambda *a, **kw: pytest.fail("registration must not call Cafe24"))
+    return app, admin, pool
+
+
+@pytest.mark.parametrize("same_key,used_slots", [(False, 0), (True, 0), (True, 9)])
+def test_two_submissions_same_project_join_one_active_job(register_pg, monkeypatch, same_key, used_slots):
+    app, admin, pool = register_pg
+    if used_slots:
+        admin.execute("""insert into client_event_rate_limits (scope, key, window_start, request_count)
+            values ('user', %s, clock_timestamp(), %s)""", (f"mall-register:{USER}", used_slots))
 
     async def scenario():
         first_key = str(uuid.uuid4())
@@ -107,5 +116,91 @@ def test_two_submissions_same_project_join_one_active_job(mall_pg, monkeypatch, 
                         task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
         assert admin.execute("select count(*) as n from jobs where kind = 'mall_register'").fetchone()["n"] == 1
+        expected_slots = used_slots + (1 if same_key else 2)
+        assert admin.execute("select sum(request_count) as n from client_event_rate_limits where key = %s",
+                             (f"mall-register:{USER}",)).fetchone()["n"] == expected_slots
+
+    asyncio.run(scenario())
+
+
+def test_registration_limit_rolls_back_unaccepted_job_before_dispatch(register_pg):
+    app, admin, _ = register_pg
+    admin.execute("""insert into client_event_rate_limits (scope, key, window_start, request_count)
+        values ('user', %s, clock_timestamp(), 10)""", (f"mall-register:{USER}",))
+
+    class Dispatcher:
+        def wake(self):
+            pytest.fail("a quota-rejected job must not reach the worker")
+
+    app.state.dispatcher = Dispatcher()
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(BASE, json=BODY)
+            assert response.status_code == 429 and response.json()["error"]["code"] == "rate_limited"
+        assert admin.execute("select count(*) as n from jobs").fetchone()["n"] == 0
+        assert admin.execute("select sum(request_count) as n from client_event_rate_limits").fetchone()["n"] == 10
+
+    asyncio.run(scenario())
+
+
+def test_recovery_searches_all_owned_current_store_history_with_outcome_priority(register_pg):
+    app, admin, _ = register_pg
+    original_id = str(uuid.uuid4())
+    payload = {"mall": "cafe24", "mallId": "myshop", "publicationId": PUBLICATION}
+    admin.execute("""insert into jobs (id, user_id, project_id, kind, status, payload, metadata, created_at)
+        values (%s, %s, %s, 'mall_register', 'error', %s, '{"create":{"sentAt":"now"}}', now() - interval '1 day')""",
+        (original_id, USER, PROJECT, Json(payload)))
+    # The newest confirmed and rejected records cannot hide an older unresolved create.
+    for metadata in [{"productNo": i + 1, "create": {"sentAt": "now"}} for i in range(6)] + [
+            {"rejectedAt": "later", "create": {"sentAt": "now"}}, {}]:
+        admin.execute("""insert into jobs (user_id, project_id, kind, status, payload, metadata, result)
+            values (%s, %s, 'mall_register', 'done', %s, %s, '{"outcome":"unknown"}')""",
+            (USER, PROJECT, Json(payload), Json(metadata)))
+    other_store = str(uuid.uuid4())
+    for user, project, kind, mall, job_id in [(OTHER, PROJECT, "mall_register", "myshop", str(uuid.uuid4())),
+            (USER, PROJECT2, "mall_register", "myshop", str(uuid.uuid4())),
+            (USER, PROJECT, "export", "myshop", str(uuid.uuid4())),
+            (USER, PROJECT, "mall_register", "another-store", other_store)]:
+        admin.execute("""insert into jobs (id, user_id, project_id, kind, status, payload, metadata)
+            values (%s, %s, %s, %s, 'error', %s, '{"create":{"sentAt":"now"}}')""",
+            (job_id, user, project, kind, Json({**payload, "mallId": mall})))
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            data = (await client.get(f"/v1/projects/{PROJECT}/mall-registrations")).json()
+            assert len(data["items"]) == 5 and original_id not in [row["jobId"] for row in data["items"]]
+            assert data["recovery"]["jobId"] == original_id
+            assert data["recovery"]["mallId"] == "myshop" and data["recovery"]["publicationId"] == PUBLICATION
+            admin.execute("update mall_connections set shop_id = 'another-store', refresh_expires_at = now()")
+            assert (await client.get(f"/v1/projects/{PROJECT}/mall-registrations")).json()["recovery"]["jobId"] == other_store
+            admin.execute("update mall_connections set status = 'revoked'")
+            assert (await client.get(f"/v1/projects/{PROJECT}/mall-registrations")).json()["recovery"] is None
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status,metadata,recover", [
+    ("pending", {"productNo": 42}, True), ("running", {}, True),
+    ("done", {"create": {"sentAt": "now"}}, True), ("cancelled", {"create": {"sentAt": "now"}}, True),
+    ("error", {"create": {"sentAt": "now"}, "productNo": None, "rejectedAt": None}, True),
+    ("error", {"create": {"sentAt": "now"}, "productNo": 0, "rejectedAt": ""}, True),
+    ("error", {"create": {"sentAt": "now"}, "productNo": False, "rejectedAt": []}, True),
+    ("error", {"create": {"sentAt": "now"}, "productNo": {}, "rejectedAt": False}, True),
+    ("error", {}, False), ("error", {"create": {"sentAt": None}}, False),
+    ("error", {"create": {"sentAt": ""}}, False),
+    ("error", {"create": {"sentAt": "now"}, "productNo": 42}, False),
+    ("error", {"create": {"sentAt": "now"}, "rejectedAt": "later"}, False),
+])
+def test_recovery_repository_matches_metadata_outcome_precedence(register_pg, status, metadata, recover):
+    _, admin, pool = register_pg
+    admin.execute("""insert into jobs (user_id, project_id, kind, status, payload, metadata)
+        values (%s, %s, 'mall_register', %s, '{"mall":"cafe24","mallId":"myshop"}', %s)""",
+        (USER, PROJECT, status, Json(metadata)))
+
+    async def scenario():
+        async with pool.connection() as conn:
+            row = await repo.get_project_mall_registration_recovery(conn, user_id=USER, project_id=PROJECT, mall_id="myshop")
+            assert (row is not None) is recover
 
     asyncio.run(scenario())

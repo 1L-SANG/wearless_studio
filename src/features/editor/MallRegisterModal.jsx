@@ -50,16 +50,30 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
   const prepareRun = useRef(0);
   const categoryRun = useRef(0);
   const dialogRef = useRef(null);
-  const scope = useRef({ projectId, accountGeneration: clientEvents.getAccountGeneration() });
-  const isCurrent = () => active.current && projectId === scope.current.projectId
+  const scope = useRef({ projectId, mallId: connection?.mallId, accountGeneration: clientEvents.getAccountGeneration() });
+  const connectionChanged = useRef(false);
+  if (connection?.mallId !== scope.current.mallId) connectionChanged.current = true;
+  const isCurrent = () => active.current && !connectionChanged.current && projectId === scope.current.projectId
     && scope.current.accountGeneration === clientEvents.getAccountGeneration();
   const busy = ['publishing', 'submitting', 'polling', 'verifying'].includes(phase);
 
   const prepare = async () => {
+    if (!isCurrent()) return;
     const run = ++prepareRun.current;
     const isCurrentRun = () => run === prepareRun.current && isCurrent();
     setPhase('preparing'); setError('');
     try {
+      const history = await api.listMallRegistrations(projectId);
+      if (!isCurrentRun()) return;
+      if (!history || !Object.hasOwn(history, 'recovery')) throw new Error('등록 내역을 확인하지 못했어요. 다시 불러와 주세요');
+      const recovery = history.recovery;
+      if (recovery) {
+        if (!recovery.jobId || recovery.mallId !== connection.mallId) throw new Error('등록 내역의 쇼핑몰을 확인하지 못했어요. 다시 불러와 주세요');
+        request.current = { jobId: recovery.jobId };
+        setProgress(recovery.progress || 0);
+        if (!applyDetail(recovery)) await poll();
+        return;
+      }
       await waitForSave();
       if (!isCurrentRun()) return;
       const revision = await api.peekEditorRevision(projectId);
@@ -71,7 +85,7 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
       const response = await api.listDetailPublications(projectId);
       if (!isCurrentRun()) return;
       if (response.disabled) throw new Error('상세페이지 게시를 준비하고 있어요');
-      const current = [...response.items].filter((item) => item.status === 'ready' && revision != null && item.editorRevision === revision)
+      const current = [...response.items].filter((item) => revision != null && item.editorRevision === revision)
         .sort((a, b) => (b.version || 0) - (a.version || 0) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')))[0];
       let ready = current;
       if (!ready) {
@@ -86,6 +100,7 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
     }
   };
   const loadCategories = async () => {
+    if (!isCurrent()) return;
     const run = ++categoryRun.current;
     const isCurrentRun = () => run === categoryRun.current && isCurrent();
     setCategoryError('');
@@ -97,6 +112,10 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
     prepare(); loadCategories();
     return () => { active.current = false; };
   }, [projectId]);
+  useEffect(() => {
+    if (!connectionChanged.current) return;
+    setResult(null); setNotice(''); setError('카페24 연결이 바뀌었어요. 등록 창을 다시 열어 주세요'); setPhase('connection_changed');
+  }, [connection?.mallId]);
   useEffect(() => {
     const previous = typeof document !== 'undefined' ? document.activeElement : null;
     return () => { (anchorRef?.current || previous)?.focus(); };
@@ -137,7 +156,7 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
     }
   };
   const submit = async () => {
-    if (locked.current || !['ready', 'submit_error'].includes(phase)) return;
+    if (!isCurrent() || locked.current || !['ready', 'submit_error'].includes(phase)) return;
     if (!request.current && (!validMoney(price) || !name.trim() || name.trim().length > 100 || supplyPrice !== '' && !validMoney(supplyPrice, 0))) return;
     locked.current = true; setPhase('submitting'); setError('');
     if (!request.current) request.current = { requestKey: crypto.randomUUID(), input: {
@@ -161,12 +180,12 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
     } finally { locked.current = false; }
   };
   const resume = async () => {
-    if (locked.current) return;
+    if (!isCurrent() || locked.current) return;
     locked.current = true;
     try { await poll(); } finally { locked.current = false; }
   };
   const verify = async () => {
-    if (locked.current || !request.current?.jobId) return;
+    if (!isCurrent() || locked.current || !request.current?.jobId) return;
     locked.current = true; setPhase('verifying'); setError('');
     let response, verifyError;
     try { response = await api.verifyCafe24Registration(request.current.jobId); }
@@ -198,14 +217,14 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
   const outcome = result?.outcome;
   const title = outcome === 'created' ? '등록 완료' : outcome === 'failed' ? '등록하지 못했어요'
     : outcome === 'duplicate_suspected' ? '카페24 관리자에서 확인해 주세요' : outcome === 'unknown' ? '등록 여부를 확인하고 있어요' : '확인하고 등록해요';
-  const adminUrl = `https://${connection.mallId}.cafe24.com/admin`;
+  const adminUrl = `https://${connection?.mallId}.cafe24.com/admin`;
   const selectedImage = assets.find((asset) => asset.assetId === thumbnailAssetId);
   const form = ['preparing', 'publishing', 'prepare_error', 'ready'].includes(phase);
   const valid = validMoney(price) && !!name.trim() && name.trim().length <= 100 && (supplyPrice === '' || validMoney(supplyPrice, 0));
   return <Modal onClose={onClose}>
     <div className={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="cafe24-register-title" ref={dialogRef} tabIndex={-1} onKeyDown={onKeyDown}>
       <header className={styles.header}>
-        <span className={styles.eyebrow}>카페24 · {connection.shopName}</span>
+        <span className={styles.eyebrow}>카페24 · {connection?.shopName}</span>
         <h2 id="cafe24-register-title">{title}</h2>
         {form && <p>판매가만 넣으면 돼요</p>}
         {phase === 'publishing' && <p role="status">지금 상세페이지를 먼저 게시해요</p>}

@@ -2597,6 +2597,16 @@ async def get_job_request_identity(conn: AsyncConnection, *, user_id: str, job_i
         return await cur.fetchone()
 
 
+async def get_job_by_request_key(conn: AsyncConnection, *, user_id: str, kind: str,
+                                 idempotency_key: str) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"select {_JOB_COLS} from jobs where idempotency_key = %s and user_id = %s and kind = %s",
+            (idempotency_key, user_id, kind),
+        )
+        return await cur.fetchone()
+
+
 async def list_project_jobs_by_kind(
     conn: AsyncConnection, *, user_id: str, project_id: str, kind: str = "mall_register", limit: int = 5,
 ) -> list[dict]:
@@ -2607,6 +2617,26 @@ async def list_project_jobs_by_kind(
             (user_id, project_id, kind, limit),
         )
         return await cur.fetchall()
+
+
+async def get_project_mall_registration_recovery(conn: AsyncConnection, *, user_id: str,
+                                                project_id: str, mall_id: str) -> dict | None:
+    async with conn.cursor() as cur:
+        # Match derive_outcome's metadata precedence across all history, rather
+        # than allowing the newest five confirmed jobs to hide an unresolved POST.
+        await cur.execute(
+            f"""select {_JOB_COLS} from jobs
+                where user_id = %s and project_id = %s and kind = 'mall_register'
+                  and payload->>'mall' = 'cafe24' and payload->>'mallId' = %s
+                  and (status in ('pending', 'running') or (
+                    status in ('done', 'error', 'cancelled')
+                    and coalesce(metadata->'productNo', 'null'::jsonb) in ('null', 'false', '0', '\"\"', '[]', '{{}}')
+                    and coalesce(metadata->'rejectedAt', 'null'::jsonb) in ('null', 'false', '0', '\"\"', '[]', '{{}}')
+                    and coalesce(metadata->'create'->'sentAt', 'null'::jsonb) not in ('null', 'false', '0', '\"\"', '[]', '{{}}')
+                  )) order by created_at desc, id desc limit 1""",
+            (user_id, project_id, mall_id),
+        )
+        return await cur.fetchone()
 
 
 def _similar_cut_record(value: object) -> dict | None:

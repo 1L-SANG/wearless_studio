@@ -90,8 +90,17 @@ class RegisterCursor(TokenCursor):
             assert "user_id = %s" in q
             jobs = self.store["jobs"]
             if "where idempotency_key" in q:
-                key, user = args
-                rows = [r for r in jobs if r["idempotency_key"] == key and r["user_id"] == user]
+                key, user, *kinds = args
+                rows = [r for r in jobs if r["idempotency_key"] == key and r["user_id"] == user
+                        and (not kinds or r["kind"] == kinds[0])]
+            elif "payload->>'mallid'" in q:
+                user, pid, mall_id = args
+                rows = [r for r in jobs if (r["user_id"], r["project_id"], r["kind"]) == (user, pid, "mall_register")
+                        and r["payload"].get("mall") == "cafe24" and r["payload"].get("mallId") == mall_id
+                        and (r["status"] in ("pending", "running") or (r["status"] in ("done", "error", "cancelled")
+                             and not r["metadata"].get("productNo") and not r["metadata"].get("rejectedAt")
+                             and (r["metadata"].get("create") or {}).get("sentAt")))]
+                rows = sorted(rows, key=lambda r: (r["created_at"], r["id"]), reverse=True)[:1]
             elif "where id = %s" in q:
                 jid, user = args
                 rows = [r for r in jobs if r["id"] == jid and r["user_id"] == user]
@@ -263,8 +272,68 @@ def test_same_request_retry_returns_original_job_using_actual_repo_projection(en
     assert retry.status_code == 200, retry.text
     assert retry.json()["jobId"] == first.json()["jobId"]
     assert retry.json()["status"] == status
-    assert len(store["jobs"]) == 1 and store["identity_reads"] == 1 and store["wakes"] == 1
+    assert len(store["jobs"]) == 1 and store["wakes"] == 1
+    assert store["attempts"] == {f"mall-register:{USER}": 1}
     assert "idempotency_key" not in repo._JOB_COLS
+
+
+@pytest.mark.parametrize("change", ["quota", "publication", "connection", "project", "mall", "real_model", "thumbnail"])
+def test_accepted_request_replay_survives_changed_resources_without_new_quota(env, change):
+    client, store = env
+    first = submit(client, thumbnailAssetId=ASSET)
+    assert first.status_code == 202, first.text
+    job = store["jobs"][0]
+    job.update(status="done", metadata={"productNo": 42}, result={"outcome": "created"})
+    store["attempts"][f"mall-register:{USER}"] = 10
+    if change == "publication": store["publications"].clear()
+    if change == "connection": store["connections"][0]["status"] = "revoked"
+    if change == "project": store["projects"][0]["deleted_at"] = datetime.now(timezone.utc)
+    if change == "mall": store["connections"][0]["shop_id"] = "another-store"
+    if change == "real_model": store["real_models"].add((PROJECT, USER))
+    if change == "thumbnail": store["assets"][0]["deleted_at"] = datetime.now(timezone.utc)
+    retry = submit(client, thumbnailAssetId=ASSET, supplyPrice=39000)
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["jobId"] == first.json()["jobId"]
+    assert retry.json()["productNo"] == 42 and retry.json()["outcome"] == "created"
+    assert store["attempts"] == {f"mall-register:{USER}": 10}
+    assert len(store["jobs"]) == 1 and store["wakes"] == 1
+
+
+def test_accepted_request_replay_still_denies_closed_account_and_disabled_feature(env):
+    client, store = env
+    assert submit(client).status_code == 202
+    store["closed_accounts"].add(USER)
+    assert_error(submit(client), 404, "account_closed")
+    store["closed_accounts"].clear()
+    client.app.state.settings = replace(client.app.state.settings, cafe24_enabled=False)
+    assert_error(submit(client), 503, "cafe24_unconfigured")
+    assert store["attempts"] == {f"mall-register:{USER}": 1}
+
+
+@pytest.mark.parametrize("field,value", [("price", 40000), ("productName", "다른 상품"),
+    ("projectId", PROJECT2), ("publicationId", str(uuid.UUID(int=99))), ("supplyPrice", 0),
+    ("display", "F"), ("selling", "F"), ("taxType", "B"), ("categoryNo", 27),
+    ("thumbnailAssetId", ASSET)])
+def test_reused_key_changed_input_is_409_even_after_resources_removed_and_quota_full(env, field, value):
+    client, store = env
+    assert submit(client).status_code == 202
+    store["publications"].clear()
+    store["connections"].clear()
+    store["projects"].clear()
+    store["attempts"][f"mall-register:{USER}"] = 10
+    assert_error(submit(client, **{field: value}), 409, "idempotency_key_reused")
+    assert len(store["jobs"]) == 1 and store["attempts"] == {f"mall-register:{USER}": 10}
+
+
+@pytest.mark.parametrize("change", ["owner", "kind"])
+def test_accepted_key_lookup_never_replays_other_owner_or_kind(env, change):
+    client, store = env
+    assert submit(client).status_code == 202
+    job = store["jobs"][0]
+    job["user_id" if change == "owner" else "kind"] = OTHER if change == "owner" else "export"
+    store["projects"].clear()
+    assert_error(submit(client), 404, "project_not_found")
+    assert store["attempts"] == {f"mall-register:{USER}": 1}
 
 
 @pytest.mark.parametrize("change", [dict(price=40000), dict(productName="다른 상품"), dict(projectId=PROJECT2)])
@@ -346,6 +415,46 @@ def test_registration_get_and_list_are_owner_scoped_and_kind_checked(env):
     assert submit(client).status_code == 401
 
 
+@pytest.mark.parametrize("status,result", [("pending", None), ("running", None),
+    ("done", {"outcome": "unknown"}), ("error", {"outcome": "duplicate_suspected"}),
+    ("cancelled", {"outcome": "unknown"})])
+def test_registration_list_recovers_current_store_unresolved_beyond_latest_five(env, status, result):
+    client, store = env
+    assert submit(client).status_code == 202
+    original = store["jobs"][0]
+    original.update(status=status, metadata={"create": {"sentAt": "2026-10-27T00:00:00Z"}}, result=result)
+    for i in range(6):
+        recent = copy.deepcopy(original)
+        recent.update(id=str(uuid.uuid4()), status="done", metadata={"productNo": i + 100},
+                      created_at=original["created_at"] + timedelta(seconds=i + 1))
+        store["jobs"].append(recent)
+    for changes in (dict(user_id=OTHER), dict(kind="export"), dict(project_id=PROJECT2),
+                    dict(payload={**original["payload"], "mallId": "another-store"})):
+        store["jobs"].append({**copy.deepcopy(original), "id": str(uuid.uuid4()),
+                              "created_at": original["created_at"] + timedelta(minutes=1), **changes})
+    response = client.get(f"/v1/projects/{PROJECT}/mall-registrations")
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert len(data["items"]) == 5 and original["id"] not in [row["jobId"] for row in data["items"]]
+    assert data["recovery"]["jobId"] == original["id"] and data["recovery"]["status"] == status
+    assert data["recovery"]["mallId"] == "myshop" and data["recovery"]["publicationId"] == PUBLICATION
+    store["connections"][0]["refresh_expires_at"] = datetime.now(timezone.utc) - timedelta(days=1)
+    assert client.get(f"/v1/projects/{PROJECT}/mall-registrations").json()["recovery"]["jobId"] == original["id"]
+    store["connections"].clear()
+    assert client.get(f"/v1/projects/{PROJECT}/mall-registrations").json()["recovery"] is None
+
+
+@pytest.mark.parametrize("metadata", [{}, {"productNo": 42, "create": {"sentAt": "now"}},
+    {"rejectedAt": "later", "create": {"sentAt": "now"}}])
+def test_registration_list_does_not_recover_confirmed_or_failed_terminal_jobs(env, metadata):
+    client, store = env
+    assert submit(client).status_code == 202
+    store["jobs"][0].update(status="error", metadata=metadata, result={"outcome": "unknown"})
+    response = client.get(f"/v1/projects/{PROJECT}/mall-registrations")
+    assert response.status_code == 200, response.text
+    assert response.json()["recovery"] is None
+
+
 @pytest.mark.parametrize("metadata,result,outcome,verifiable", [
     ({}, None, "failed", False),
     ({"create": {"sentAt": "now"}}, None, "unknown", True),
@@ -370,7 +479,9 @@ def test_registration_view_derives_outcome_from_metadata_when_result_missing(env
     assert view["errorMessage"] == (job["error_message"] if outcome == "failed" else None)
     assert view["warnings"] == (["마무리 확인이 늦어졌어요. 상품은 만들어졌어요"] if outcome == "created" else [])
     assert set(view) == {"jobId", "status", "progress", "outcome", "productNo", "productUrl", "imageCount", "thumbnail",
-                         "code", "errorMessage", "externalCode", "verifiable", "warnings", "createdAt", "finishedAt"}
+                         "code", "errorMessage", "externalCode", "verifiable", "warnings", "createdAt", "finishedAt",
+                         "mallId", "publicationId"}
+    assert view["mallId"] == "myshop" and view["publicationId"] == PUBLICATION
 
 
 def test_categories_route_pages_three_times_filters_hidden_and_caches(env, monkeypatch):

@@ -402,6 +402,7 @@ export const api = {
     const externalCode = `wl${jobId.replaceAll('-', '').slice(0, 16)}`;
     const row = { payload: clone(input), mallId: connection.mallId, verifyCount: 0,
       view: { jobId, status: 'pending', progress: 0, outcome: 'failed', productNo: null, productUrl: null,
+        mallId: connection.mallId, publicationId: input.publicationId,
         imageCount: 0, thumbnail: null, code: null, errorMessage: null, externalCode, verifiable: false,
         warnings: [], createdAt: new Date().toISOString(), finishedAt: null } };
     DB.mallRegistrations.push(row);
@@ -438,8 +439,12 @@ export const api = {
     return clone(row.view);
   },
   async listMallRegistrations(projectId) {
-    return { items: DB.mallRegistrations.filter((row) => row.payload.projectId === projectId).slice(-5).reverse()
-      .map((row) => clone(row.view)) };
+    const rows = DB.mallRegistrations.filter((row) => row.payload.projectId === projectId).reverse();
+    const connection = DB.mallConnections.cafe24;
+    const recovery = connection && rows.find((row) => row.mallId === connection.mallId
+      && (['pending', 'running'].includes(row.view.status)
+        || ['done', 'error', 'cancelled'].includes(row.view.status) && ['unknown', 'duplicate_suspected'].includes(row.view.outcome)));
+    return { items: rows.slice(0, 5).map((row) => clone(row.view)), recovery: recovery ? clone(recovery.view) : null };
   },
   async createDetailPublication(projectId, { preset, width, productName = '', files }) {
     const publicationId = uid('pub');

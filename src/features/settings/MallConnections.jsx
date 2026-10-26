@@ -211,7 +211,7 @@ export function Cafe24Connection({ connection, onChanged, returnTo, unavailable 
     if (url.searchParams.get('mall') !== 'cafe24' || !url.searchParams.has('result')) return;
     const result = url.searchParams.get('result');
     try { setMallId(window.sessionStorage.getItem(storageKey) || connection?.mallId || ''); } catch { /* Storage may be unavailable. */ }
-    if (result === 'connected') { setState('connected'); onChanged?.(); }
+    if (result === 'connected') { onChanged?.(); }
     else { setState('failed'); setError(CAFE24_INSTALL_COPY[result] || CAFE24_INSTALL_COPY.token_exchange_failed); }
     url.searchParams.delete('result'); url.searchParams.delete('mall');
     window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);

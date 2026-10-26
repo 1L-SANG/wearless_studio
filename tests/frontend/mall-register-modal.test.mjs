@@ -10,12 +10,17 @@ const walk = (node) => [node, ...React.Children.toArray(node?.props?.children).f
 const byName = (tree, name) => walk(tree).find((node) => node.props?.name === name);
 const button = (tree, label) => walk(tree).find((node) => node.props?.onClick && renderToStaticMarkup(node).includes(label));
 const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
-const publication = { publicationId: 'pub-current', status: 'ready', editorRevision: 4, productName: '니트', files: [{ index: 1 }] };
-async function setup({ api: overrides = {}, strictEffects = false, ...extra } = {}) {
+const publication = { publicationId: 'pub-current', editorRevision: 4, productName: '니트', files: [{ index: 1 }] };
+const registration = (patch = {}) => ({ jobId: 'job-one', status: 'done', progress: 100, outcome: 'unknown',
+  mallId: 'myshop', publicationId: 'pub-current', productNo: null, productUrl: null, imageCount: 1,
+  thumbnail: null, code: null, errorMessage: null, externalCode: 'wl1234567890123456', verifiable: true,
+  warnings: [], createdAt: '2026-10-26T00:00:00Z', finishedAt: '2026-10-26T00:00:01Z', ...patch });
+async function setup({ api: overrides = {}, strictEffects = false, getAccountGeneration = () => 0, uuid = randomUUID, ...extra } = {}) {
   const runtime = hooks(), calls = [];
   const api = {
     getEditorBlocks: async () => [],
     peekEditorRevision: async () => { calls.push('revision'); return 4; }, editorRevisionOf: () => 4,
+    listMallRegistrations: async () => ({ items: [], recovery: null }),
     listDetailPublications: async () => ({ items: [publication] }), listCafe24Categories: async () => [{ categoryNo: 10, fullName: '의류 > 상의' }],
     createCafe24Registration: async (payload) => { calls.push(payload); return { jobId: 'job-one' }; },
     pollJob: async () => {}, getCafe24Registration: async () => ({ outcome: 'created', productNo: 123, thumbnail: 'none' }),
@@ -25,7 +30,7 @@ async function setup({ api: overrides = {}, strictEffects = false, ...extra } = 
     ...runtime, useEffect: (effect, deps) => runtime.useEffect(strictEffects ? () => { effect()?.(); return effect(); } : effect, deps),
     api, styles: {}, Button: ({ children, ...props }) => React.createElement('button', props, children),
     Icon: () => null, Modal: ({ children }) => children, Link: ({ to, children, ...props }) => React.createElement('a', { href: to, ...props }, children),
-    clientEvents: { getAccountGeneration: () => 0 }, crypto: { randomUUID },
+    clientEvents: { getAccountGeneration }, crypto: { randomUUID: uuid },
   });
   const props = { projectId: 'project-one', productName: '니트', connection: { shopName: '스토어', mallId: 'myshop' },
     waitForSave: async () => { calls.push('save'); }, onPublish: async () => { calls.push('publish'); return publication; },
@@ -51,17 +56,177 @@ test('register button disabled until price entered', async () => {
   blocked.price(); assert.equal(button(blocked.render(), '카페24에 상품 등록').props.disabled, true);
 });
 
+test('server-shaped publication for the saved revision is reused without publishing', async () => {
+  const ui = await setup();
+  ui.price(); await ui.confirm();
+  assert.equal(ui.calls.includes('publish'), false);
+  assert.equal(ui.calls.find((entry) => entry?.requestKey).publicationId, 'pub-current');
+});
+
+test('reopening unresolved registration restores its job before saving or publishing', async () => {
+  for (const outcome of ['unknown', 'duplicate_suspected']) {
+    let durable = null, creates = 0, keys = 0, saved = 0, published = 0, verified = 0;
+    const options = { uuid: () => { keys++; return randomUUID(); }, waitForSave: async () => { saved++; },
+      onPublish: async () => { published++; return publication; }, api: {
+        listMallRegistrations: async () => ({ items: durable ? [durable] : [], recovery: durable }),
+        createCafe24Registration: async () => { creates++; durable = registration({ outcome }); return { jobId: 'job-one' }; },
+        getCafe24Registration: async () => durable,
+        verifyCafe24Registration: async (jobId) => { assert.equal(jobId, 'job-one'); verified++; return { found: false }; },
+      } };
+    const first = await setup(options); first.price(); await first.confirm(); first.props.onClose(); first.unmount();
+    const reopened = await setup(options);
+    assert.ok(!button(reopened.render(), '카페24에 상품 등록'), outcome);
+    assert.equal(creates, 1); assert.equal(keys, 1); assert.equal(saved, 1); assert.equal(published, 0);
+    assert.equal(verified, 0, 'opening a recovered job must not call Cafe24 verification automatically');
+    await button(reopened.render(), '다시 확인').props.onClick();
+    assert.equal(verified, 1); assert.equal(creates, 1); assert.equal(keys, 1);
+  }
+});
+
+test('pending history resumes polling before capture or a new create', async () => {
+  let finishPoll, detailLoads = 0;
+  const ui = await setup({ api: {
+    listMallRegistrations: async () => ({ items: [], recovery: registration({ status: 'pending', progress: 0, outcome: 'failed', verifiable: false, finishedAt: null }) }),
+    pollJob: (jobId) => { assert.equal(jobId, 'job-one'); return new Promise((resolve) => { finishPoll = resolve; }); },
+    getCafe24Registration: async () => { detailLoads++; return registration({ outcome: 'created', productNo: 123, verifiable: false }); },
+  } });
+  assert.ok(!button(ui.render(), '카페24에 상품 등록'));
+  assert.match(renderToStaticMarkup(ui.render()), /상품 등록 진행률/);
+  assert.deepEqual(ui.calls, []);
+  finishPoll(); await settle();
+  assert.equal(detailLoads, 1); assert.match(renderToStaticMarkup(ui.render()), /등록 완료/);
+  assert.deepEqual(ui.calls, []);
+});
+
+test('history failure blocks new registration until a successful retry', async () => {
+  let histories = 0;
+  const ui = await setup({ api: { listMallRegistrations: async () => {
+    if (++histories === 1) throw new Error('등록 내역을 불러오지 못했어요');
+    return { items: [], recovery: null };
+  } } });
+  assert.match(renderToStaticMarkup(ui.render()), /등록 내역을 불러오지 못했어요/);
+  assert.deepEqual(ui.calls, []);
+  ui.price(); assert.equal(button(ui.render(), '카페24에 상품 등록').props.disabled, true);
+  await button(ui.render(), '다시 불러오기').props.onClick();
+  ui.price(); await ui.confirm();
+  assert.equal(histories, 2); assert.equal(ui.calls.filter((entry) => entry?.requestKey).length, 1);
+});
+
+test('completed history permits a new registration', async () => {
+  for (const outcome of ['created', 'failed']) {
+    const ui = await setup({ api: { listMallRegistrations: async () => ({
+      items: [registration({ outcome, verifiable: false, productNo: outcome === 'created' ? 123 : null })], recovery: null,
+    }) } });
+    ui.price(); await ui.confirm();
+    assert.equal(ui.calls.filter((entry) => entry?.requestKey).length, 1, outcome);
+    assert.equal(ui.calls.includes('publish'), false);
+  }
+});
+
+test('history recovery can refer to an older publication outside the recent five', async () => {
+  const ui = await setup({ api: { listMallRegistrations: async () => ({
+    items: Array.from({ length: 5 }, (_, index) => registration({ jobId: `recent-${index}`, outcome: 'created', verifiable: false, productNo: index + 1 })),
+    recovery: registration({ jobId: 'older-unknown', publicationId: 'older-publication' }),
+  }) } });
+  assert.match(renderToStaticMarkup(ui.render()), /지금 다시 등록하면 같은 상품이 두 번 생길 수 있어요/);
+  assert.ok(!button(ui.render(), '카페24에 상품 등록'));
+  assert.deepEqual(ui.calls, []);
+});
+
+test('history answers from a previous account or closed modal cannot resume or publish', async () => {
+  for (const change of ['account', 'close']) {
+    let generation = 0, resolveHistory, polls = 0;
+    const ui = await setup({ getAccountGeneration: () => generation, api: {
+      listMallRegistrations: () => new Promise((resolve) => { resolveHistory = resolve; }),
+      pollJob: async () => { polls++; },
+    } });
+    assert.equal(typeof resolveHistory, 'function', 'opening the modal must load registration history');
+    if (change === 'account') generation++; else ui.unmount();
+    resolveHistory({ items: [], recovery: registration({ status: 'running', outcome: 'failed', verifiable: false, finishedAt: null }) });
+    await settle();
+    assert.equal(polls, 0, change); assert.deepEqual(ui.calls, []);
+    assert.doesNotMatch(renderToStaticMarkup(ui.render()), /등록 완료|등록 여부를 확인하고 있어요/);
+  }
+});
+
+test('project navigation keeps an old history answer out of the new modal', async () => {
+  let resolveOldHistory, oldPolls = 0;
+  const old = await setup({ api: {
+    listMallRegistrations: () => new Promise((resolve) => { resolveOldHistory = resolve; }),
+    pollJob: async () => { oldPolls++; },
+  } });
+  old.unmount();
+  const current = await setup({ projectId: 'project-two' });
+  resolveOldHistory({ items: [], recovery: registration({ status: 'running', outcome: 'failed', verifiable: false, finishedAt: null }) });
+  await settle();
+  current.price(); await current.confirm();
+  assert.equal(oldPolls, 0); assert.deepEqual(old.calls, []);
+  assert.equal(current.calls.find((entry) => entry?.requestKey).projectId, 'project-two');
+});
+
+test('mall changes while open block old history save and submit continuations until reopen', async (t) => {
+  for (const stage of ['history', 'save', 'ready']) await t.test(stage, async () => {
+    let release, keys = 0;
+    const ui = await setup({ uuid: () => { keys++; return randomUUID(); },
+      ...(stage === 'save' ? { waitForSave: () => new Promise((resolve) => { release = resolve; }) } : {}),
+      api: stage === 'history' ? { listMallRegistrations: () => new Promise((resolve) => { release = resolve; }) } : {} });
+    if (stage === 'ready') ui.price();
+    const staleConfirm = stage === 'ready' ? button(ui.render(), '카페24에 상품 등록').props.onClick : null;
+    ui.props.connection = { mallId: 'newshop', shopName: '새 스토어' };
+    ui.render(); ui.runtime.flushEffects();
+    if (stage === 'history') release({ items: [], recovery: registration() });
+    if (stage === 'save') release();
+    if (staleConfirm) await staleConfirm();
+    await settle();
+    const markup = renderToStaticMarkup(ui.render());
+    assert.match(markup, /카페24 연결이 바뀌었어요. 등록 창을 다시 열어 주세요/, stage);
+    assert.ok(!button(ui.render(), '카페24에 상품 등록'), stage);
+    assert.equal(ui.calls.includes('publish'), false, stage);
+    assert.equal(ui.calls.some((entry) => entry?.requestKey), false, stage);
+    assert.equal(keys, 0, stage);
+    if (stage !== 'ready') assert.deepEqual(ui.calls, [], stage);
+    if (stage === 'ready') {
+      ui.props.connection = { mallId: 'myshop', shopName: '스토어' };
+      ui.render(); ui.runtime.flushEffects(); await staleConfirm();
+      assert.equal(keys, 0); assert.equal(ui.calls.some((entry) => entry?.requestKey), false);
+      assert.match(renderToStaticMarkup(ui.render()), /등록 창을 다시 열어 주세요/);
+    }
+  });
+});
+
+test('Strict Effects ignores an earlier recovery answer after the latest history allows a new form', async () => {
+  let histories = 0, resolveOldHistory;
+  const ui = await setup({ strictEffects: true, api: {
+    listMallRegistrations: () => ++histories === 1 ? new Promise((resolve) => { resolveOldHistory = resolve; })
+      : Promise.resolve({ items: [], recovery: null }),
+  } });
+  ui.price(); assert.equal(button(ui.render(), '카페24에 상품 등록').props.disabled, false);
+  resolveOldHistory({ items: [], recovery: registration() }); await settle();
+  assert.equal(histories, 2);
+  assert.equal(button(ui.render(), '카페24에 상품 등록').props.disabled, false);
+  assert.doesNotMatch(renderToStaticMarkup(ui.render()), /지금 다시 등록하면 같은 상품이 두 번 생길 수 있어요/);
+});
+
+test('missing recovery contract or another mall in recovery blocks a new create', async () => {
+  for (const history of [{ items: [] }, { items: [], recovery: registration({ mallId: 'other-shop' }) }]) {
+    const ui = await setup({ api: { listMallRegistrations: async () => history } });
+    assert.match(renderToStaticMarkup(ui.render()), /role="alert"/);
+    assert.deepEqual(ui.calls, []);
+    ui.price(); assert.equal(button(ui.render(), '카페24에 상품 등록').props.disabled, true);
+  }
+});
+
 test('stale prepare run never sets error or phase after a newer run becomes ready', async () => {
-  let saves = 0, categoryLoads = 0, rejectSave, resolveCategories;
+  let histories = 0, categoryLoads = 0, rejectHistory, resolveCategories;
   const ui = await setup({ strictEffects: true,
-    waitForSave: () => ++saves === 1 ? new Promise((_, reject) => { rejectSave = reject; }) : Promise.resolve(),
-    api: { listCafe24Categories: () => ++categoryLoads === 1
+    api: { listMallRegistrations: () => ++histories === 1 ? new Promise((_, reject) => { rejectHistory = reject; }) : Promise.resolve({ items: [], recovery: null }),
+      listCafe24Categories: () => ++categoryLoads === 1
       ? new Promise((resolve) => { resolveCategories = resolve; })
       : Promise.resolve([{ categoryNo: 20, fullName: '최신 카테고리' }]) },
   });
-  assert.equal(saves, 2);
+  assert.equal(histories, 2);
   ui.price(); assert.equal(button(ui.render(), '카페24에 상품 등록').props.disabled, false);
-  rejectSave(new Error('편집 내용이 바뀌었어요. 다시 열어 주세요'));
+  rejectHistory(new Error('편집 내용이 바뀌었어요. 다시 열어 주세요'));
   resolveCategories([{ categoryNo: 10, fullName: '이전 카테고리' }]);
   await settle();
   const tree = ui.render(), markup = renderToStaticMarkup(tree);
