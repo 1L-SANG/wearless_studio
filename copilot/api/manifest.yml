@@ -664,6 +664,12 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   #     copilot-aws secret init --name TOSS_SECRET_KEY
   #   raw `aws ssm put-parameter` 로 만들면 copilot 태그가 없어 태스크가 못 읽는다(2026-07-17 실경험).
   TOSS_SECRET_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/TOSS_SECRET_KEY
+  # 몰에 붙여넣기 업로드 토큰 서명키와 쇼핑몰 인증키 암호화 키(KEK, 결제 KEK와 별도).
+  # ★ SSM 값 없이 이 두 줄이 배포되면 ECS 태스크가 기동에 실패하고 롤백된다. 머지 전에 반드시
+  #   .scratch/mall-upload-research-20261023/ops/init_publish_secrets.sh 로 두 값을 만들고 copilot 태그를 확인한다.
+  #   MALL_KEYS_KEK는 바꾸면 저장된 몰 인증키를 못 읽으니 회전 금지. 플래그는 variables의 *_ENABLED로 따로 켠다.
+  DETAIL_PUBLISH_TOKEN_SECRET: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/DETAIL_PUBLISH_TOKEN_SECRET
+  MALL_KEYS_KEK: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/MALL_KEYS_KEK
   # 정기결제(빌링) — 계획서 docs/plans/2026-09-09-toss-billing-subscription.md.
   # ⚠️ 자동결제는 별도 계약 MID 라 일반결제와 시크릿 키가 다를 수 있다. 개발자센터 API 키
   #    메뉴에서 '자동결제로 계약된 MID' 를 고른 뒤의 키를 넣는다. 비우면 TOSS_SECRET_KEY 로
