@@ -41,17 +41,17 @@ test('split button renders main and caret with aria', async () => {
 test('menu lists fixed order and shows mall items as 준비 중 when connect api is disabled', async () => {
   const { buildExportMenuItems } = await load();
   assert.deepEqual(buildExportMenuItems(options()).map((item) => item.label),
-    ['이미지로 다운로드', '몰에 붙여넣기', '지그재그 연결하기', '에이블리에 상품 등록', 'GIF 따로 받기']);
+    ['이미지로 다운로드', '몰에 붙여넣기', '지그재그 연결하기', '카페24 연결하기', '에이블리에 상품 등록', 'GIF 따로 받기']);
   const disabled = buildExportMenuItems(options({ malls: { items: [], disabled: true } }));
   assert.deepEqual(disabled.map((item) => item.label),
-    ['이미지로 다운로드', '몰에 붙여넣기', '지그재그에 상품 등록', '에이블리에 상품 등록', 'GIF 따로 받기']);
+    ['이미지로 다운로드', '몰에 붙여넣기', '지그재그에 상품 등록', '카페24에 상품 등록', '에이블리에 상품 등록', 'GIF 따로 받기']);
   assert.deepEqual(disabled.filter((item) => ['zigzag', 'ably'].includes(item.id))
     .map(({ id, label, kind, disabled, badge }) => ({ id, label, kind, disabled, badge })), [
     { id: 'zigzag', label: '지그재그에 상품 등록', kind: 'action', disabled: true, badge: '준비 중' },
     { id: 'ably', label: '에이블리에 상품 등록', kind: 'action', disabled: true, badge: '준비 중' },
   ]);
   assert.deepEqual(buildExportMenuItems(options({ malls: { disabled: true }, publishEnabled: false, gifCount: 0 })).map((item) => item.label),
-    ['이미지로 다운로드', '지그재그에 상품 등록', '에이블리에 상품 등록']);
+    ['이미지로 다운로드', '지그재그에 상품 등록', '카페24에 상품 등록', '에이블리에 상품 등록']);
 });
 
 test('zigzag item is connect link when not connected and disabled badge when connected', async () => {
@@ -184,4 +184,26 @@ test('publish modal copy renamed', () => {
   const html = markup(React.createElement(Publish, props));
   assert.match(html, /붙여넣을 코드 만들기/); assert.match(html, /코드 만들기<\/button>/);
   assert.match(markup(React.createElement(Publish, { ...props, result: { files: [] } })), /코드를 만들었어요. 쇼핑몰 HTML 입력칸에 붙여 넣어 주세요/);
+});
+
+
+test('menu order includes cafe24 between zigzag and ably', async () => {
+  const { buildExportMenuItems } = await load();
+  assert.deepEqual(buildExportMenuItems(options()).map((item) => item.id), ['download', 'paste', 'zigzag', 'cafe24', 'ably', 'gif']);
+});
+
+test('cafe24 item is connect link, register action, reconnect link, or ready badge by status and while loading', async () => {
+  const { buildExportMenuItems } = await load();
+  let registered = 0, connected = 0;
+  const item = (malls) => buildExportMenuItems(options({ malls, onRegisterCafe24: () => registered++, onConnect: () => connected++ })).find((entry) => entry.id === 'cafe24');
+  for (const [status, label, kind] of [['none', '카페24 연결하기', 'go'], ['connected', '카페24에 상품 등록', 'action'], ['reconnect_required', '카페24 다시 연결하기', 'go']]) {
+    const entry = item({ items: [{ mall: 'cafe24', status }] });
+    assert.equal(entry.label, label); assert.equal(entry.kind, kind); assert.ok(!entry.disabled); entry.onSelect();
+  }
+  assert.equal(registered, 1); assert.equal(connected, 2);
+  for (const malls of [undefined, { disabled: true }, { loading: true }, { items: [{ mall: 'cafe24', status: 'unavailable' }] }]) {
+    const entry = item(malls); assert.equal(entry.disabled, true); assert.equal(entry.badge, '준비 중');
+  }
+  const publicationDisabled = buildExportMenuItems(options({ publishEnabled: false, malls: { items: [{ mall: 'cafe24', status: 'connected' }] } })).find((entry) => entry.id === 'cafe24');
+  assert.equal(publicationDisabled.disabled, true); assert.equal(publicationDisabled.badge, '준비 중');
 });

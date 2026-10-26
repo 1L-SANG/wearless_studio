@@ -179,6 +179,17 @@ function editPlan(projectId, body) {
 
 export const mockAdapter = {
   ...base,
+  async pollJob(jobId, { onProgress, intervalMs = 1200, timeoutMs = 90000 } = {}) {
+    const start = Date.now();
+    for (;;) {
+      const job = await base.getCafe24Registration(jobId);
+      onProgress?.(job.progress);
+      if (job.status === 'done') return job;
+      if (['error', 'cancelled'].includes(job.status)) throw Object.assign(new Error(job.errorMessage || '등록 상태를 확인해 주세요'), { code: job.code, jobId });
+      if (Date.now() - start > timeoutMs) throw Object.assign(new Error('아직 진행 중이에요'), { code: 'job_timeout', jobId });
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  },
   setDraftVisualsScenario(scenario) { draftVisualsScenario = scenario ? clone(scenario) : null; },
   async prepareDraftVisuals(token, body) {
     if (!draftVisualsScenario) return { state: 'off', jobId: null, sourceAssetIds: body.sourceAssetIds };

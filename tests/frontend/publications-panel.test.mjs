@@ -26,7 +26,7 @@ const findAll = (tree, predicate) => !tree || typeof tree !== 'object' ? [] : [
 ];
 const Modal = ({ children }) => React.createElement('section', null, children);
 const styles = new Proxy({}, { get: (_target, key) => key });
-function harness({ items = [row()], list, remove = async () => {}, library = false } = {}) {
+function harness({ items = [row()], registrations = [], listRegistrations, list, remove = async () => {}, library = false } = {}) {
   const states = [], refs = [], effects = [], toasts = [], calls = [], props = { projectId: 'p', productName: '셔츠', onClose: () => calls.push('close') };
   let si, ri, ei, queued, tree, user = 'u';
   const useAppStore = (selector) => selector({ adoptProject: (id) => calls.push(['adopt', id]) });
@@ -39,7 +39,8 @@ function harness({ items = [row()], list, remove = async () => {}, library = fal
       if (!old || !deps || deps.some((value, j) => value !== old.deps?.[j])) queued.push(() => { old?.cleanup?.(); effects[i] = { deps, cleanup: setup() }; }); },
     useAuth: () => ({ session: { user: { id: user } } }), useToast: () => ({ push: (text) => toasts.push(text) }),
     clientEvents: { getAccountGeneration: () => user },
-    api: { listDetailPublications: list || (async () => ({ items })), deleteDetailPublication: async (id) => { calls.push(['delete', id]); await remove(id); } },
+    api: { listMallRegistrations: listRegistrations || (async () => ({ items: registrations })),
+      listDetailPublications: list || (async () => ({ items })), deleteDetailPublication: async (id) => { calls.push(['delete', id]); await remove(id); } },
     buildPublicationHtml: () => '<div>상세</div>', downloadPublicationZip: async () => new Blob(['zip']),
     PublicationsPanel: 'aside', useNavigate: () => (path) => calls.push(['navigate', path]), isMobileDevice: () => false,
     authorizeFlowContinuation() {}, Skeleton: 'div', ErrorState: 'div', tagStyles: {}, HangTag: 'div',
@@ -98,6 +99,10 @@ test('expiry and error colors outrank shared modal paragraph styles', () => {
 });
 test('renders subscription keep label when expiresAt null', async () => {
   const h = harness(); await h.ready(); assert.match(h.html(), /구독 중 보관/);
+  const registered = harness({ registrations: [{ outcome: 'created', status: 'error', productNo: 123, productUrl: 'https://myshop.cafe24.com/product/123', finishedAt: '2026-10-26T00:00:00Z' }] });
+  await registered.ready(); assert.match(registered.html(), /마지막 등록 카페24 · 상품 123 · 2026.10.26/);
+  assert.match(registered.html(), /자사몰에서 보기 ›/);
+  registered.changeUser('another'); assert.doesNotMatch(renderToStaticMarkup(registered.render()), /마지막 등록 카페24/);
 });
 test('delete confirm copy present', async () => {
   const h = harness(); await h.ready();

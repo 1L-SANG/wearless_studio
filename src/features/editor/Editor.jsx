@@ -83,6 +83,8 @@ import { detailPageCompletionMessage } from '@/lib/detailPageJobEvents.js';
 import { GenDonePreview } from '@/features/editor/GenDonePreview.jsx';
 import { EditorDownloadModal } from '@/features/editor/EditorDownloadModal.jsx';
 import { EditorPublishModal } from './EditorPublishModal.jsx';
+import { MallRegisterModal } from './MallRegisterModal.jsx';
+import { extractEditorAssetId } from '@/lib/editorAssetInfo.js';
 import { ExportSplitButton, buildExportMenuItems } from './ExportMenu.jsx';
 import { publishDetailPage, buildPublicationHtml, buildPublicationUrlList, downloadPublicationZip } from './detailPublish.js';
 import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, isPhotoSlotElement, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, reorderElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
@@ -1120,6 +1122,7 @@ export function Editor() {
   const [dlError, setDlError] = useState('');
   const [dlOriginalError, setDlOriginalError] = useState(null);
   const [publish, setPublish] = useState(false);
+  const [registerCafe24, setRegisterCafe24] = useState(false);
   const [pubBusy, setPubBusy] = useState(false);
   const [pubCapturing, setPubCapturing] = useState(false);
   const [pubProg, setPubProg] = useState(null);
@@ -1212,6 +1215,7 @@ export function Editor() {
     const isCurrent = () => !cancelled && pubScopeRef.current === pubScope
       && accountGeneration === clientEvents.getAccountGeneration();
     setPublish(false);
+    setRegisterCafe24(false);
     setPubBusy(false);
     setPubError('');
     setPubResult(null);
@@ -2363,6 +2367,55 @@ export function Editor() {
       if (isCurrent()) { setPubBusy(false); setPubProg(null); }
     }
   };
+  const waitForCafe24Save = async () => {
+    if (saveError || genActiveRef.current || editorConflictPending.current) throw new Error('에디터에서 저장을 마친 뒤 다시 열어 주세요');
+    clearTimeout(saveTimer.current);
+    const source = latestBlocks.current;
+    if (!source) throw new Error('상세페이지를 불러온 뒤 다시 열어 주세요');
+    const ticket = saveGuard.current.begin(source);
+    try {
+      // The adapter waits for any in-flight autosave before saving this snapshot.
+      await api.saveEditorBlocks(projectId, persistable(source));
+    } catch (error) {
+      if (isEditorConflict(error)) reloadAfterEditorConflict();
+      else if (saveGuard.current.isNewest(ticket)) {
+        const backedUp = backupLatestEditorDraft(latestBlocks.current);
+        setSaveError({ ...classifyEditorLoadError(error), backedUp, error });
+      }
+      throw new Error('에디터에서 저장을 마친 뒤 다시 열어 주세요');
+    }
+    if (!saveGuard.current.isCurrent(ticket, latestBlocks.current)) throw new Error('편집 내용이 바뀌었어요. 다시 열어 주세요');
+    clearEditorWaitDraft(projectId); pendingGenerationDraft.current = false; setSaveError(null);
+  };
+  const publishForCafe24 = async (assertModalCurrent) => {
+    if (realModelBlocked || genActiveRef.current || dlBusy || pubCaptureRef.current) throw new Error('지금은 상세페이지를 게시할 수 없어요');
+    const token = ++pubRequestRef.current;
+    const accountGeneration = clientEvents.getAccountGeneration();
+    const isCurrent = () => token === pubRequestRef.current && pubScope === pubScopeRef.current
+      && accountGeneration === clientEvents.getAccountGeneration();
+    const nodes = [...(canvasRef.current?.querySelectorAll('.canvas-block') || [])];
+    if (!nodes.length) throw new Error('올릴 블록이 없어요. 상세페이지에 블록을 추가해 주세요');
+    pubCaptureRef.current = token; setPubCapturing(true); setPubBusy(true);
+    try {
+      const result = await publishDetailPage(nodes, { projectId, productName, preset: 'smartstore' }, {
+        assertCurrent: () => {
+          assertModalCurrent?.();
+          if (!isCurrent()) throw new Error('게시하는 상품이 바뀌었어요. 다시 열어 주세요');
+        },
+      });
+      if (isCurrent()) setPublicationInfo((current) => ({ ...current, count: current.count + 1 }));
+      return result;
+    } finally {
+      if (pubCaptureRef.current === token) { pubCaptureRef.current = false; setPubCapturing(false); }
+      if (isCurrent()) setPubBusy(false);
+    }
+  };
+  const cafe24Assets = [...new Map([
+    ...(blocks || []).flatMap((block) => (block.elements || []).filter((element) => element.type === 'image')),
+    ...Object.values(wardrobe || {}).flat(),
+  ].filter((image) => !isGifImage(image)).map((image) => ({
+    assetId: image.assetId || extractEditorAssetId(image.src), src: image.src,
+  })).filter((image) => image.assetId && image.src).map((image) => [image.assetId, image])).values()];
   const copyPublication = async (text) => {
     const accountGeneration = clientEvents.getAccountGeneration();
     const isCurrent = () => pubScope === pubScopeRef.current && accountGeneration === clientEvents.getAccountGeneration();
@@ -3826,8 +3879,14 @@ export function Editor() {
               onDownload: () => { setDlNotice(''); setDlError(''); setDownload(true); },
               onPublish: () => { setPubResult(null); setPubError(''); setPubProg(null); setPublish(true); },
               onConnect: () => navigate('/settings/malls', { state: { returnTo: location.pathname } }),
+              onRegisterCafe24: () => {
+                if (realModelBlocked) return;
+                flushSync(() => document.activeElement?.blur());
+                setRegisterCafe24(true);
+              },
               onGifs: () => receiveGifs(),
-            }).map((item) => item.id === 'paste' ? { ...item, disabled: realModelBlocked, badge: realModelBlocked ? '다운로드만 가능' : undefined } : item)} />
+            }).map((item) => item.id === 'paste' || item.id === 'cafe24' && item.kind === 'action' && !item.disabled
+              ? { ...item, disabled: realModelBlocked, badge: realModelBlocked ? '다운로드만 가능' : undefined } : item)} />
         </div>
       </div>
 
@@ -4197,6 +4256,11 @@ export function Editor() {
           />
         </Modal>
       )}
+
+      {registerCafe24 && <MallRegisterModal key={pubScope} projectId={projectId} productName={productName}
+        connection={mallInfo?.items?.find((item) => item.mall === 'cafe24')} assets={cafe24Assets}
+        waitForSave={waitForCafe24Save} onPublish={publishForCafe24} anchorRef={exportAnchorRef}
+        onClose={() => setRegisterCafe24(false)} />}
 
       {backWarn && (
         <Modal onClose={() => setBackWarn(false)}>

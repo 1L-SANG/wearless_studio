@@ -146,7 +146,7 @@ test('disabled connect api hides profile link and shows export mall items as 준
   assert.doesNotMatch(await profile(false, false), /쇼핑몰 연결/);
   const { buildExportMenuItems } = await componentModule('src/features/editor/ExportMenu.jsx', ['buildExportMenuItems'], {});
   const items = buildExportMenuItems({ malls: { disabled: true }, publishEnabled: true, gifCount: 0 });
-  assert.deepEqual(items.map((item) => item.id), ['download', 'paste', 'zigzag', 'ably']);
+  assert.deepEqual(items.map((item) => item.id), ['download', 'paste', 'zigzag', 'cafe24', 'ably']);
   for (const item of items.filter((item) => ['zigzag', 'ably'].includes(item.id))) {
     assert.equal(item.disabled, true);
     assert.equal(item.badge, '준비 중');

@@ -763,7 +763,7 @@ R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Ca
 
 ## § 쇼핑몰 연결
 
-`MALL_CONNECT_ENABLED` 기본값은 false이며 꺼져 있으면 `/v1/malls` 라우트와 프로필의 쇼핑몰 연결 메뉴를 제공하지 않는다. 연결 API가 꺼져 있으면 메뉴의 지그재그·에이블리 항목은 '준비 중'으로 비활성 표시한다. 에이블리와 스마트스토어는 `unavailable` 표시만 제공한다.
+`MALL_CONNECT_ENABLED` 기본값은 false이며 꺼져 있으면 `/v1/malls` 라우트와 프로필의 쇼핑몰 연결 메뉴를 제공하지 않는다. 연결 API가 꺼져 있으면 메뉴의 지그재그, 카페24, 에이블리 항목은 '준비 중'으로 비활성 표시한다. 에이블리와 스마트스토어는 `unavailable` 표시만 제공한다.
 
 | 저장 필드 | HTTP 필드 | 의미 |
 |---|---|---|
@@ -800,6 +800,20 @@ R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Ca
 카페24 연결 응답에는 `mallId`(`shop_id`)와 `tokenExpiresAt`을 포함한다. 연결 세대는 해당 사용자와 몰의 가장 최근 행(`created_at desc, id desc`)의 `id:status`이고 행이 없으면 `none`이다.
 
 `GET /v1/malls`의 `{items:[...]}` 봉투와 지그재그 항목은 유지한다. 카페24 항목은 `mall`, `status`, `shopName`, `mallId`, `permissions`, `connectedAt`, `lastRegisteredAt`, `tokenExpiresAt`을 제공한다. 준비 전에는 `unavailable`, 활성 행이 없으면 `none`, refresh 만료 또는 영속 무효화 뒤에는 `reconnect_required`, 그 외에는 `connected`다.
+
+화면 상태와 HTTP 연결 상태는 구분한다. 지그재그 줄은 기존 `none`, `editing`, `verifying`, `connected`, `failed` 다섯 상태를 유지한다.
+
+| 카페24 화면 상태 | 표시와 동작 |
+|---|---|
+| `none` | 자사몰 관리자 로그인 안내, 연결하기 버튼 |
+| `editing` | 몰 아이디 입력, 카페24에서 앱 설치, 접기. 붙여 넣은 URL의 프로토콜, 도메인 접미사와 경로를 제거하고 소문자로 정규화 |
+| `starting` | 설치 시작 중, 입력과 버튼 비활성. 접수는 한 번만 보내고 같은 탭에서 설치 주소로 이동 |
+| `connected` | 스토어 이름, 몰 아이디, 권한, 연결한 날과 마지막 등록. 관리 메뉴에는 연결 해제만 제공 |
+| `failed` | 입력을 유지하고 결과 코드의 셀러 문구 표시. 결과 쿼리를 읽은 뒤 history.replaceState로 mall과 result만 제거 |
+| `reconnect_required` | 다시 설치 안내, 다시 연결을 누르면 응답의 mallId로 입력칸 복원 |
+| `unavailable` | 준비 중. 연결 목록 로딩 또는 API 비활성도 같은 표시 |
+
+에디터 메뉴의 카페24 항목은 지그재그와 에이블리 사이에 둔다. 연결 없음은 설정 이동, 연결됨은 상품 등록 모달, 재연결 필요는 설정 이동이며, 목록 로딩과 API 비활성 또는 게시 비활성은 준비 중이다. 등록 모달은 저장 완료를 기다리고 현재 에디터 리비전을 읽은 뒤 같은 리비전의 ready 게시를 찾으며, 없으면 먼저 게시한다. 판매가는 필수이고 공급가는 접힌 기본값이며 대표 이미지는 없이 등록할 수 있다. 확인할 때 만든 requestKey와 확정 입력은 접수 재시도에 그대로 쓰며, 접수 뒤에는 같은 jobId만 조회한다. 폴링 제한은 10분이고 성공, 실패, 시간 초과 뒤 모두 등록 상세를 조회한다. job_timeout은 실패로 표시하지 않고 jobId와 requestKey를 유지해 상태 확인 버튼을 제공한다. 결과가 unknown 또는 duplicate_suspected이면 확인만 제공하고 자동 재등록하지 않는다. 보관함 패널에는 프로젝트의 마지막 등록 결과를 한 줄로 표시한다.
 
 카페24 호출 직전에 고정한 `connection_id`로 토큰을 읽고, access 만료 여유가 5분 이하면 갱신한다. `mall:{user}:cafe24` 잠금 안에서 행과 만료 여유를 다시 검사해 동시 요청이 한 번만 회전하도록 한다. 갱신 중에는 예외적으로 외부 호출의 최대 8초 동안 몰 잠금을 유지하며, 새 access와 refresh 암호문 및 만료 시각을 커밋한 뒤에만 반환한다. `invalid_grant`이면 refresh 만료 표시와 두 암호문 삭제를 커밋해 재설치를 요구한다. 회전 응답이나 DB 커밋을 잃으면 다음 갱신의 `invalid_grant`로 같은 상태가 된다.
 

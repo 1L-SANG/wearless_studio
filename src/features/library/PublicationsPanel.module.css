@@ -5,6 +5,10 @@
   color: var(--fg-1);
 }
 
+.panel .lastRegistration { margin-top: var(--sp-12); color: var(--fg-2-read); font-size: 13px; line-height: 1.6; }
+.lastRegistration a { color: var(--fg-1); text-decoration: underline; text-underline-offset: 3px; }
+.lastRegistration a:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+
 .title {
   font-family: var(--font-display);
   font-size: 22px;

@@ -16,6 +16,8 @@ export function PublicationsPanel({ projectId, productName, onClose }) {
   scopeRef.current = scope;
   const requestRef = useRef(0);
   const [data, setData] = useState({ scope: null, items: [] });
+  const [registrations, setRegistrations] = useState({ scope: null, items: [] });
+  const [registrationError, setRegistrationError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
@@ -29,6 +31,12 @@ export function PublicationsPanel({ projectId, productName, onClose }) {
     const isCurrent = () => token === requestRef.current && scope === scopeRef.current
       && accountGeneration === clientEvents.getAccountGeneration();
     setLoading(true); setError(''); setBusy(false); setConfirm(null); setManualHtml('');
+    setRegistrationError('');
+    api.listMallRegistrations(projectId).then((response) => {
+      if (isCurrent()) setRegistrations({ scope, items: response.items });
+    }).catch((failure) => {
+      if (isCurrent() && failure.status !== 404) setRegistrationError('마지막 등록을 불러오지 못했어요');
+    });
     api.listDetailPublications(projectId).then((response) => {
       if (isCurrent()) setData({ scope, items: response.items });
     }).catch((error) => { if (isCurrent()) setError(error.message || '게시 목록을 불러오지 못했어요.'); })
@@ -82,10 +90,19 @@ export function PublicationsPanel({ projectId, productName, onClose }) {
     finally { if (isCurrent()) setBusy(false); }
   };
 
+  const lastRegistration = registrations.scope === scope ? registrations.items[0] : null;
+  const lastRegistrationLabel = lastRegistration && (['pending', 'running', 'queued'].includes(lastRegistration.status) ? '등록 중'
+    : lastRegistration.outcome === 'created' ? `상품 ${lastRegistration.productNo}`
+    : ['unknown', 'duplicate_suspected'].includes(lastRegistration.outcome) ? '등록 여부 확인 필요' : '등록하지 못했어요');
   return (
     <Modal onClose={() => { if (!busy && !confirm) onClose(); }} wide>
       <div className={styles.panel}>
         <h3 className={styles.title}>붙여넣을 코드</h3>
+        {lastRegistration && <p className={styles.lastRegistration}>마지막 등록 카페24 · {lastRegistrationLabel} · {dateLabel(lastRegistration.finishedAt || lastRegistration.createdAt)}
+          {lastRegistration.outcome === 'created' && lastRegistration.productUrl
+            && <> · <a href={lastRegistration.productUrl} target="_blank" rel="noopener noreferrer">자사몰에서 보기 ›</a></>}
+        </p>}
+        {registrationError && <p className={styles.lastRegistration} role="status">{registrationError}</p>}
         {loading && <p role="status">붙여넣을 코드를 불러오는 중이에요</p>}
         {!loading && !error && items.length === 0 && <p className={styles.notice}>만든 코드가 없어요</p>}
         {error && <div role="alert" className={styles.error}><p>{error}</p>

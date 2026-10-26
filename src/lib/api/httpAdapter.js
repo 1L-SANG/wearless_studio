@@ -491,6 +491,7 @@ async function recommendMatchHttp(projectId, analysis, current, { defaultSelecti
 // 선택 토글 머지 — id 단위 selected/selOrder 반영 후 1..max 재부여(mock 정규화와 동일 규칙).
 
 export const httpAdapter = {
+  pollJob,
   listMalls, connectZigzag, rotateZigzag, disconnectZigzag, listZigzagAddresses, saveZigzagDefaults,
   startCafe24Install, disconnectCafe24, listCafe24Categories, createCafe24Registration,
   getCafe24Registration, verifyCafe24Registration, listMallRegistrations,

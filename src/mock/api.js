@@ -309,13 +309,23 @@ function setCafe24Product(row, thumbnail) {
     productUrl: `https://${row.mallId}.cafe24.com/product/detail.html?product_no=${productNo}` });
 }
 
+
+// 목 전용: 카페24 앱 설치는 페이지 전체 이동이라 메모리 DB가 초기화된다. 실서버의 DB처럼 연결 상태만 세션 저장소에 잠시 보존한다.
+const MOCK_CAFE24_KEY = 'wl-mock-cafe24-connection';
+function persistMockCafe24(connection) {
+  try { connection ? sessionStorage.setItem(MOCK_CAFE24_KEY, JSON.stringify(connection)) : sessionStorage.removeItem(MOCK_CAFE24_KEY); } catch { /* 저장소 없음 */ }
+}
+function restoreMockCafe24() {
+  try { const raw = sessionStorage.getItem(MOCK_CAFE24_KEY); if (!raw) return null; DB.mallConnections.cafe24 = JSON.parse(raw); return DB.mallConnections.cafe24; } catch { return null; }
+}
+
 export const api = {
   async listMalls() {
     return { items: [{ mall: 'zigzag', status: 'none', ...clone(DB.mallConnections.zigzag || {}),
       defaults: { shipping: {}, returns: {}, addresses: {}, disclosure: {}, taxType: 'TAX', productOrigin: 'domestic',
         completedItems: [], ...clone(DB.mallDefaults.zigzag || {}), total: 4 } },
     { mall: 'cafe24', status: 'none', shopName: null, mallId: null, permissions: [], connectedAt: null,
-      lastRegisteredAt: null, tokenExpiresAt: null, ...clone(DB.mallConnections.cafe24 || {}) },
+      lastRegisteredAt: null, tokenExpiresAt: null, ...clone(DB.mallConnections.cafe24 || restoreMockCafe24() || {}) },
     { mall: 'ably', status: 'unavailable' }, { mall: 'smartstore', status: 'unavailable' }] };
   },
   async connectZigzag({ accessKey, secretKey }) {
@@ -361,9 +371,10 @@ export const api = {
     DB.mallConnections.cafe24 = { mall: 'cafe24', status: 'connected', shopName: '데일리 자사몰', mallId: normalized,
       permissions: ['상품 조회와 등록', '쇼핑몰 정보 조회', '상품 분류 조회'], connectedAt: new Date().toISOString(),
       lastRegisteredAt: null, tokenExpiresAt: new Date(Date.now() + (2 * 60 * 60 - 60) * 1000).toISOString() };
+    persistMockCafe24(DB.mallConnections.cafe24);
     return { startUrl: `${globalThis.location?.origin || 'http://localhost'}/settings/malls?mall=cafe24&result=connected` };
   },
-  async disconnectCafe24() { delete DB.mallConnections.cafe24; },
+  async disconnectCafe24() { delete DB.mallConnections.cafe24; persistMockCafe24(null); },
   async listCafe24Categories() {
     cafe24Connection();
     return [{ categoryNo: 1, depth: 1, name: '상의', fullName: ['상의'] },
