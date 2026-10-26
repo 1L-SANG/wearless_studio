@@ -724,6 +724,7 @@ export function buildDraft() {
 export const DB = {
   mallConnections: {},
   mallDefaults: {},
+  mallRegistrations: [],
   config: { signupCredits: 0 },
   account, catalogs, models, matchClothing, genSteps, library,
   ...buildDraft(),

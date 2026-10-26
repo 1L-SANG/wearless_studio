@@ -289,11 +289,33 @@ function checkMannequinQuote(expected, cost) {
 const publicationBlobs = new Map();
 DB.detailPublications ||= [];
 
+const cafe24Error = (code, message, status = 400) => Object.assign(new Error(message), { code, status });
+function cafe24Connection() {
+  const connection = DB.mallConnections.cafe24;
+  if (!connection) throw cafe24Error('not_connected', '먼저 카페24를 연결해 주세요', 404);
+  if (connection.status === 'reconnect_required') {
+    throw cafe24Error('reconnect_required', '카페24 연결이 끊겼어요. 쇼핑몰 연결에서 다시 설치해 주세요', 409);
+  }
+  return connection;
+}
+function cafe24Registration(jobId) {
+  const row = DB.mallRegistrations.find((item) => item.view.jobId === jobId);
+  if (!row) throw cafe24Error('registration_not_found', '등록 내역을 찾을 수 없어요.', 404);
+  return row;
+}
+function setCafe24Product(row, thumbnail) {
+  const productNo = Number.parseInt(row.view.jobId.replaceAll('-', '').slice(0, 8), 16) + 1;
+  Object.assign(row.view, { outcome: 'created', productNo, verifiable: false, thumbnail, code: null,
+    productUrl: `https://${row.mallId}.cafe24.com/product/detail.html?product_no=${productNo}` });
+}
+
 export const api = {
   async listMalls() {
     return { items: [{ mall: 'zigzag', status: 'none', ...clone(DB.mallConnections.zigzag || {}),
       defaults: { shipping: {}, returns: {}, addresses: {}, disclosure: {}, taxType: 'TAX', productOrigin: 'domestic',
         completedItems: [], ...clone(DB.mallDefaults.zigzag || {}), total: 4 } },
+    { mall: 'cafe24', status: 'none', shopName: null, mallId: null, permissions: [], connectedAt: null,
+      lastRegisteredAt: null, tokenExpiresAt: null, ...clone(DB.mallConnections.cafe24 || {}) },
     { mall: 'ably', status: 'unavailable' }, { mall: 'smartstore', status: 'unavailable' }] };
   },
   async connectZigzag({ accessKey, secretKey }) {
@@ -326,6 +348,87 @@ export const api = {
     next.completedItems = completedItems(next);
     DB.mallDefaults.zigzag = clone(next);
     return { ...clone(next), total: 4 };
+  },
+  async startCafe24Install({ mallId }) {
+    const normalized = String(mallId ?? '').trim().toLowerCase().replace(/^https?:\/\//, '')
+      .split(/[/?#]/, 1)[0].replace(/\.(cafe24|cafe24api)\.com$/, '');
+    if (!/^[a-z0-9][a-z0-9_-]{1,29}$/.test(normalized) || normalized.startsWith('bad')) {
+      throw cafe24Error('invalid_mall_id', '몰 아이디를 확인해 주세요');
+    }
+    if (normalized.startsWith('closed')) {
+      throw cafe24Error('cafe24_not_allowed', '지금은 시범 운영 중이라 등록된 몰만 연결할 수 있어요', 403);
+    }
+    DB.mallConnections.cafe24 = { mall: 'cafe24', status: 'connected', shopName: '데일리 자사몰', mallId: normalized,
+      permissions: ['상품 조회와 등록', '쇼핑몰 정보 조회', '상품 분류 조회'], connectedAt: new Date().toISOString(),
+      lastRegisteredAt: null, tokenExpiresAt: new Date(Date.now() + (2 * 60 * 60 - 60) * 1000).toISOString() };
+    return { startUrl: `${globalThis.location?.origin || 'http://localhost'}/settings/malls?mall=cafe24&result=connected` };
+  },
+  async disconnectCafe24() { delete DB.mallConnections.cafe24; },
+  async listCafe24Categories() {
+    cafe24Connection();
+    return [{ categoryNo: 1, depth: 1, name: '상의', fullName: ['상의'] },
+      { categoryNo: 27, depth: 2, name: '니트', fullName: ['상의', '니트'] }];
+  },
+  async createCafe24Registration(payload) {
+    const connection = cafe24Connection();
+    // Keep only contract input, never arbitrary credentials or tokens supplied by a caller.
+    const input = { projectId: payload.projectId, publicationId: payload.publicationId, requestKey: payload.requestKey,
+      productName: payload.productName, price: payload.price, supplyPrice: payload.supplyPrice ?? payload.price,
+      display: payload.display ?? 'T', selling: payload.selling ?? 'T', taxType: payload.taxType ?? 'A',
+      categoryNo: payload.categoryNo ?? null, thumbnailAssetId: payload.thumbnailAssetId ?? null };
+    const existing = DB.mallRegistrations.find((row) => row.payload.requestKey === input.requestKey);
+    if (existing) {
+      if (JSON.stringify(existing.payload) !== JSON.stringify(input) || existing.mallId !== connection.mallId) {
+        throw cafe24Error('idempotency_key_reused', '같은 요청 번호에 다른 입력을 사용할 수 없어요. 입력을 확인해 주세요', 409);
+      }
+      return clone(existing.view);
+    }
+    const active = DB.mallRegistrations.find((row) => row.payload.projectId === input.projectId
+      && ['pending', 'running'].includes(row.view.status));
+    if (active) throw Object.assign(cafe24Error('registration_in_progress', '이 프로젝트의 상품을 등록하고 있어요', 409),
+      { jobId: active.view.jobId });
+    const jobId = globalThis.crypto.randomUUID();
+    const externalCode = `wl${jobId.replaceAll('-', '').slice(0, 16)}`;
+    const row = { payload: clone(input), mallId: connection.mallId, verifyCount: 0,
+      view: { jobId, status: 'pending', progress: 0, outcome: 'failed', productNo: null, productUrl: null,
+        imageCount: 0, thumbnail: null, code: null, errorMessage: null, externalCode, verifiable: false,
+        warnings: [], createdAt: new Date().toISOString(), finishedAt: null } };
+    DB.mallRegistrations.push(row);
+    const imageCount = DB.detailPublications.find((item) => item.publicationId === input.publicationId)?.files?.length || 0;
+    void wait(2000).then(() => {
+      Object.assign(row.view, { status: 'done', progress: 100, imageCount, finishedAt: new Date().toISOString() });
+      if (input.price === 999) {
+        Object.assign(row.view, { status: 'error', outcome: 'failed', code: 'invalid_request',
+          errorMessage: '카페24가 입력을 받지 않았어요. 판매가와 상품명을 확인해 주세요' });
+      } else if (input.productName.startsWith('unknown')) {
+        Object.assign(row.view, { outcome: 'unknown', verifiable: true });
+      } else {
+        setCafe24Product(row, input.thumbnailAssetId ? 'ok' : 'none');
+        if (DB.mallConnections.cafe24 === connection) connection.lastRegisteredAt = row.view.finishedAt;
+      }
+    });
+    return { jobId, status: 'queued', externalCode };
+  },
+  async getCafe24Registration(jobId) { return clone(cafe24Registration(jobId).view); },
+  async verifyCafe24Registration(jobId) {
+    const row = cafe24Registration(jobId);
+    if (!['done', 'error'].includes(row.view.status) || !row.view.verifiable) {
+      throw cafe24Error('not_verifiable', '등록 여부를 다시 확인할 수 없는 상태예요', 409);
+    }
+    const connection = cafe24Connection();
+    if (connection.mallId !== row.mallId) {
+      throw cafe24Error('connection_changed', '연결이 바뀌어 확인할 수 없어요. 카페24 관리자에서 상품 목록을 확인해 주세요', 409);
+    }
+    row.verifyCount += 1;
+    if (row.verifyCount === 1) return { found: false, checkedAt: new Date().toISOString(),
+      message: '아직 확인되지 않았어요. 잠시 뒤 다시 확인하거나 카페24 관리자 상품 목록을 봐 주세요' };
+    setCafe24Product(row, 'skipped');
+    row.view.warnings.push('대표 이미지는 카페24 관리자에서 넣어 주세요');
+    return clone(row.view);
+  },
+  async listMallRegistrations(projectId) {
+    return { items: DB.mallRegistrations.filter((row) => row.payload.projectId === projectId).slice(-5).reverse()
+      .map((row) => clone(row.view)) };
   },
   async createDetailPublication(projectId, { preset, width, productName = '', files }) {
     const publicationId = uid('pub');
@@ -1263,6 +1366,12 @@ export const api = {
         result: null, errorMessage: latest.status === 'error' ? '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.'
           : latest.status === 'cancelled' ? '다시 만들 수 있어요.' : null,
       };
+    }
+    const registration = DB.mallRegistrations.find((row) => row.view.jobId === jobId)?.view;
+    if (registration) {
+      const { status, progress, errorMessage, outcome, productNo, productUrl, imageCount, thumbnail, code, externalCode, warnings } = registration;
+      return clone({ id: jobId, status, progress, errorMessage,
+        result: ['done', 'error'].includes(status) ? { outcome, productNo, productUrl, imageCount, thumbnail, code, externalCode, warnings } : null });
     }
     return { id: jobId, status: ewSim?.status || 'done', progress: ewSim?.progress ?? 100,
       result: ewSim?.result || null, errorMessage: null };
