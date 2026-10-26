@@ -160,3 +160,75 @@ def test_reclaimed_job_fence_blocks_stale_worker_create(worker_pg, monkeypatch):
     asyncio.run(scenario())
     assert admin.execute("select count(*) as n from job_events").fetchone()["n"] == 0
     assert admin.execute("select last_registered_at from mall_connections").fetchone()["last_registered_at"] is None
+
+
+@pytest.mark.parametrize("status", ["done", "error"])
+def test_verify_and_late_worker_finalize_do_not_clobber_product_no(worker_pg, monkeypatch, status):
+    from app import mall_connect
+    from app.auth import require_user
+
+    app, admin, pool = worker_pg
+    app.dependency_overrides[require_user] = lambda: USER
+    admin.execute("""update jobs set status = %s, metadata = %s, result = %s,
+        finished_at = now(), locked_by = null, locked_at = null where id = %s""",
+        (status, Json({"create": {"sentAt": "2026-10-26T00:00:00+00:00"}}),
+         Json({"outcome": "unknown", "productNo": None}), JOB))
+    calls = []
+
+    class Client:
+        async def find_products_by_custom_code(self, token, code):
+            calls.append(code)
+            assert code == "wl" + JOB.replace("-", "")[:16]
+            return [42]
+
+    async def with_token(app, *, user_id, connection_id, fn):
+        assert (user_id, connection_id) == (USER, CONNECTION)
+        return await fn("fixture-token")
+
+    monkeypatch.setattr(mall_connect, "_cafe24_client", lambda *_: Client())
+    monkeypatch.setattr(mall_connect, "call_with_token", with_token)
+
+    async def scenario():
+        patch_ready, resume = asyncio.Event(), asyncio.Event()
+        patch = repo.set_job_result_patch
+
+        async def pause_result_patch(conn, **kwargs):
+            updated = await patch(conn, **kwargs)
+            patch_ready.set()
+            await resume.wait()
+            return updated
+
+        monkeypatch.setattr(repo, "set_job_result_patch", pause_result_patch)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            verifying = asyncio.create_task(client.post(f"/v1/malls/cafe24/registrations/{JOB}/verify"))
+            try:
+                await asyncio.wait_for(patch_ready.wait(), timeout=5)
+                # A different DB connection carries the expired worker's stale lease and unknown result.
+                async with pool.connection() as late:
+                    assert not await repo.finalize_uncharged_job(late, job_id=JOB, lease_token=LEASE,
+                        status="done", result={"outcome": "unknown", "productNo": None})
+                    await late.commit()
+                resume.set()
+                response = await asyncio.wait_for(verifying, timeout=5)
+            finally:
+                resume.set()
+                if not verifying.done():
+                    verifying.cancel()
+                await asyncio.gather(verifying, return_exceptions=True)
+            assert response.status_code == 200, response.text
+            assert response.json()["productNo"] == 42
+            async with pool.connection() as late:
+                assert not await repo.finalize_uncharged_job(late, job_id=JOB, lease_token=LEASE,
+                    status="error", result={"outcome": "failed"}, error_message="늦은 워커")
+                assert not await patch(late, job_id=JOB, user_id="99999999-9999-4999-8999-999999999999",
+                                       expect_status=("done", "error"), patch={"productNo": 999})
+                assert not await patch(late, job_id=JOB, user_id=USER,
+                                       expect_status=("running",), patch={"productNo": 999})
+                await late.commit()
+
+    asyncio.run(scenario())
+    saved = admin.execute("select status, metadata, result from jobs where id = %s", (JOB,)).fetchone()
+    assert saved["status"] == status
+    assert saved["metadata"]["productNo"] == saved["result"]["productNo"] == 42
+    assert saved["result"]["outcome"] == "created" and len(calls) == 1
+    assert admin.execute("select count(*) as n from job_events").fetchone()["n"] == 0

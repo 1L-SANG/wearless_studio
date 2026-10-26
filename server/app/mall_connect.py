@@ -346,6 +346,96 @@ async def get_cafe24_registration(request: Request, response: Response, job_id: 
     return registration_view(row)
 
 
+async def _verify_connection(conn, user_id, payload):
+    connection = await repo.get_mall_connection(conn, user_id=user_id, mall="cafe24")
+    message = "연결이 바뀌어 확인할 수 없어요. 카페24 관리자에서 상품 목록을 확인해 주세요"
+    if (not connection or connection["id"] != payload["connectionId"]
+            or connection["shop_id"] != payload["mallId"]):
+        raise _error("connection_changed", message, 409)
+    if not connection.get("refresh_expires_at") or connection["refresh_expires_at"] <= datetime.now(timezone.utc):
+        raise _error("reconnect_required", message, 409)
+
+
+@router.post("/cafe24/registrations/{job_id}/verify")
+async def verify_cafe24_registration(request: Request, response: Response, job_id: str,
+                                     user_id: str = Depends(require_user)):
+    settings = _require_cafe24(request)
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        job_id = str(uuid.UUID(job_id))
+    except ValueError:
+        raise _error("registration_not_found", "등록 내역을 찾을 수 없어요.", 404) from None
+    async with get_conn(request) as conn:
+        job = await repo.get_job(conn, user_id, job_id)
+        if not job or job["kind"] != "mall_register":
+            raise _error("registration_not_found", "등록 내역을 찾을 수 없어요.", 404)
+        if job["status"] not in ("done", "error") or not registration_view(job)["verifiable"]:
+            raise _error("not_verifiable", "등록 여부를 다시 확인할 수 없는 상태예요", 409)
+        await _assert_account_open(conn, user_id)
+        payload = job["payload"]
+        await _verify_connection(conn, user_id, payload)
+        key = f"mall-verify:{user_id}"
+        async with conn.cursor() as cur:
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (key,))
+            await cur.execute("""select coalesce(sum(request_count), 0) as count from client_event_rate_limits
+                where scope = 'user' and key = %s and window_start > clock_timestamp() - interval '1 minute'""", (key,))
+            if (await cur.fetchone())["count"] >= 6:
+                raise _error("rate_limited", "1분에 6번까지 확인할 수 있어요. 잠시 뒤 다시 시도해 주세요", 429)
+            await cur.execute("""insert into client_event_rate_limits (scope, key, window_start, request_count)
+                values ('user', %s, clock_timestamp(), 1)""", (key,))
+        await conn.commit()
+    external_code = registration_view(job)["externalCode"]
+    client = _cafe24_client(settings, payload["mallId"])
+    try:
+        products = await call_with_token(request.app, user_id=user_id, connection_id=payload["connectionId"],
+            fn=lambda token: client.find_products_by_custom_code(token, external_code))
+    except Exception as exc:
+        code = classify_cafe24_error(exc)
+        if isinstance(exc, (ConnectionChanged, ReconnectRequired)):
+            raise _error(code, "연결이 바뀌어 확인할 수 없어요. 카페24 관리자에서 상품 목록을 확인해 주세요", 409) from None
+        raise _error(code, CAFE24_ERROR_COPY[code], 429 if code == "rate_limited" else 400) from None
+    async with get_conn(request) as conn:
+        # Serialize disconnect and concurrent verifies only while saving, never across the remote lookup.
+        async with conn.cursor() as cur:
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:cafe24",))
+            await cur.execute("select id from jobs where id = %s and user_id = %s for update", (job_id, user_id))
+        job = await repo.get_job(conn, user_id, job_id)
+        if not job or job["kind"] != "mall_register":
+            raise _error("registration_not_found", "등록 내역을 찾을 수 없어요.", 404)
+        await _verify_connection(conn, user_id, payload)
+        if job["status"] not in ("done", "error"):
+            raise _error("not_verifiable", "등록 여부를 다시 확인할 수 없는 상태예요", 409)
+        if derive_outcome(job) == "created":
+            return registration_view(job)
+        if not registration_view(job)["verifiable"]:
+            raise _error("not_verifiable", "등록 여부를 다시 확인할 수 없는 상태예요", 409)
+        checked_at = datetime.now(timezone.utc).isoformat()
+        if not products:
+            return {"found": False, "checkedAt": checked_at,
+                    "message": "아직 확인되지 않았어요. 잠시 뒤 다시 확인하거나 카페24 관리자 상품 목록을 봐 주세요"}
+        warnings = list((job.get("result") or {}).get("warnings") or (job.get("metadata") or {}).get("warnings") or [])
+        if len(products) == 1:
+            product_no = products[0]
+            if not await repo.set_job_metadata_patch(conn, job_id=job_id, patch={"productNo": product_no},
+                                                     user_id=user_id, expect_status=("done", "error")):
+                raise _error("not_verifiable", "등록 여부를 다시 확인할 수 없는 상태예요", 409)
+            warnings.append("대표 이미지는 카페24 관리자에서 넣어 주세요")
+            patch = dict(outcome="created", productNo=product_no, thumbnail="skipped", code=None,
+                productUrl=f'https://{payload["mallId"]}.cafe24.com/product/detail.html?product_no={product_no}',
+                verifiedAt=checked_at, warnings=warnings)
+        else:
+            message = "같은 코드의 상품이 여러 개예요. 카페24 관리자에서 확인해 주세요"
+            if message not in warnings:
+                warnings.append(message)
+            patch = dict(outcome="duplicate_suspected", warnings=warnings)
+        if not await repo.set_job_result_patch(conn, job_id=job_id, patch=patch,
+                                               user_id=user_id, expect_status=("done", "error")):
+            raise _error("not_verifiable", "등록 여부를 다시 확인할 수 없는 상태예요", 409)
+        job = await repo.get_job(conn, user_id, job_id)
+        await conn.commit()
+    return registration_view(job)
+
+
 @project_router.get("/{project_id}/mall-registrations")
 async def list_mall_registrations(request: Request, response: Response, project_id: str,
                                   user_id: str = Depends(require_user)):
