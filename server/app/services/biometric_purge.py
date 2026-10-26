@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 from dataclasses import dataclass
 from typing import Literal
 
@@ -1138,6 +1139,16 @@ async def purge_biometric_scope(
     source_job_id: str | None = None,
 ) -> PurgeResult:
     _validate_scope_args(user_id=user_id, batch_id=batch_id, reason=reason)
+    # Detail publishing uses public R2 alone; biometric storage can be unconfigured.
+    # Persist its independent cleanup intent even when biometric validation later fails.
+    if reason == "account_delete" and user_id is not None:
+        try:
+            from ..detail_publications import purge_user_detail_publications
+
+            async with app.state.pool.connection() as conn:
+                await purge_user_detail_publications(app, conn, user_id=user_id)
+        except Exception:
+            logging.getLogger("wearless.biometric_purge").exception("account publication cleanup deferred")
     clients = _require_storage(app)
     pool = app.state.pool
     db_failed = False

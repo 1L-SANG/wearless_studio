@@ -187,11 +187,15 @@ class R2Client:
             ),
         )
 
-    def presigned_put(self, key: str, mime: str, expires: int = 300) -> str:
+    def presigned_put(self, key: str, mime: str, expires: int = 300, *,
+                      byte_size: int | None = None) -> str:
         """브라우저가 직접 PUT 할 short-lived URL. ContentType 고정(업로드 시 동일 헤더 필요)."""
+        params = {"Bucket": self._bucket, "Key": key, "ContentType": mime}
+        if byte_size is not None:
+            params["ContentLength"] = byte_size
         return self._s3.generate_presigned_url(
             "put_object",
-            Params={"Bucket": self._bucket, "Key": key, "ContentType": mime},
+            Params=params,
             ExpiresIn=expires,
         )
 
@@ -228,6 +232,17 @@ class R2Client:
             Key=destination_key,
             CopySource={"Bucket": self._bucket, "Key": source_key},
             ContentType=mime,
+            MetadataDirective="REPLACE",
+        )
+
+    def copy_with_cache(self, key: str, mime: str, cache: str) -> None:
+        """Fix browser-uploaded object headers without proxying its bytes."""
+        self._s3.copy_object(
+            Bucket=self._bucket,
+            Key=key,
+            CopySource={"Bucket": self._bucket, "Key": key},
+            ContentType=mime,
+            CacheControl=cache,
             MetadataDirective="REPLACE",
         )
 

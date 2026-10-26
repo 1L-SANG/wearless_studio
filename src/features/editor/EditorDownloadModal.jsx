@@ -4,6 +4,7 @@ import {
   normalizeExportSettings,
 } from '@/features/editor/editorExport.js';
 import styles from './EditorDownloadModal.module.css';
+import { RadioCard } from './ExportRadioCard.jsx';
 
 const FORMAT_OPTIONS = [
   { id: 'jpeg', title: 'JPG', desc: '가볍게, 품질 90' },
@@ -25,26 +26,6 @@ const PROGRESS_TITLES = {
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0MB';
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
-}
-
-function RadioCard({ name, option, checked, disabled, onChange }) {
-  return (
-    <label className={`${styles.option}${checked ? ` ${styles.selected}` : ''}${disabled ? ` ${styles.disabled}` : ''}`}>
-      <input
-        type="radio"
-        name={name}
-        value={option.id}
-        checked={checked}
-        disabled={disabled}
-        onChange={() => onChange(option.id)}
-      />
-      <span className={styles.optionText}>
-        <span className={styles.optionTitle}>{option.title}</span>
-        {option.width && <span className={styles.optionSize}>{option.width.toLocaleString('ko-KR')}px</span>}
-        {option.desc && <span className={styles.optionDesc}>{option.desc}</span>}
-      </span>
-    </label>
-  );
 }
 
 export function EditorDownloadModal({

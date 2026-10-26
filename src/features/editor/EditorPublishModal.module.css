@@ -1,0 +1,81 @@
+.publish { font-size: 15px; }
+.publish fieldset legend, .publish .summary h4, .publish .summary dt { font-size: 14px; font-weight: 600; }
+.publish .summary dt { color: var(--fg-2-read); }
+.publish .summary dd { font-size: 15px; }
+.options label > span > span:first-child { font-size: 14px; font-weight: 600; }
+.options label > span > span:not(:first-child) { color: var(--fg-2-read); font-size: 13px; font-weight: 400; }
+.publish p.helper { color: var(--fg-2-read); font-size: 13px; }
+
+.thumbnails {
+  display: flex;
+  gap: var(--sp-8);
+  margin-block: var(--sp-16);
+  overflow-x: auto;
+  padding: var(--sp-4);
+}
+
+.thumbnails img {
+  flex: none;
+  width: 96px;
+  height: 160px;
+  object-fit: contain;
+  object-position: top;
+  background: var(--bg-2);
+  border-radius: var(--r-4);
+  box-shadow: 0 0 0 1px var(--ring);
+}
+
+.actions {
+  flex-wrap: wrap;
+}
+
+.resultMessage {
+  margin-top: var(--sp-16);
+  color: var(--fg-1);
+  font-size: 15px;
+  line-height: 1.6;
+  text-wrap: balance;
+}
+
+.notice,
+.instructions {
+  margin-top: var(--sp-16);
+  color: var(--fg-2-read);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.instructions summary {
+  min-height: var(--cta-height);
+  padding-block: var(--sp-12);
+  cursor: pointer;
+  color: var(--fg-1);
+}
+
+.instructions p {
+  margin-top: var(--sp-8);
+}
+
+.copyLabel {
+  display: block;
+  margin-top: var(--sp-16);
+  color: var(--fg-2-read);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.copyText {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 140px;
+  margin-top: var(--sp-8);
+  padding: var(--sp-12);
+  border: 0;
+  border-radius: var(--r-4);
+  box-shadow: inset 0 0 0 1px var(--ring-strong);
+  background: var(--bg-2);
+  color: var(--fg-1);
+  font-size: 16px;
+  resize: vertical;
+}

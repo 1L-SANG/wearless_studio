@@ -22,6 +22,143 @@ FACEMARKET_CLOSED_BATCH_STATUSES = ("draining", "applying", "reconciling", "fail
 FACEMARKET_CUTOVER_JOB_KINDS = ("detail_page", "editor_image", "fm_model_asset_build")
 
 
+_MALL_CONNECTION_COLS = """id::text, user_id::text, mall, status, shop_id, shop_name,
+    key_hint, permissions, connected_at, last_registered_at, revoked_at"""
+
+
+class MallShopMismatch(Exception):
+    """A rotation must keep the store belonging to its original active connection."""
+
+
+class MallAccountClosed(Exception):
+    """An account-delete purge prevents saving new mall credentials."""
+
+
+async def get_mall_connection(conn, *, user_id, mall) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(f"select {_MALL_CONNECTION_COLS} from mall_connections "
+                          "where user_id = %s and mall = %s and status = 'connected'", (user_id, mall))
+        return await cur.fetchone()
+
+
+async def get_mall_connection_keys(conn, *, user_id, mall, kek) -> tuple | None:
+    async with conn.cursor() as cur:
+        await cur.execute("""select public.wl_billing_decrypt(access_key_enc, %s) as access_key,
+            public.wl_billing_decrypt(secret_key_enc, %s) as secret_key from mall_connections
+            where user_id = %s and mall = %s and status = 'connected'""", (kek, kek, user_id, mall))
+        row = await cur.fetchone()
+        return (row["access_key"], row["secret_key"]) if row else None
+
+
+async def upsert_mall_connection(conn, *, user_id, mall, shop_id, shop_name, key_hint,
+                                 access_key, secret_key, permissions, kek, expected_connection_id=None) -> dict | None:
+    async with conn.transaction():
+        async with conn.cursor() as cur:
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall-account:{user_id}",))
+        if await user_account_purge_closed(conn, user_id):
+            raise MallAccountClosed()
+        async with conn.cursor() as cur:
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:{mall}",))
+        if expected_connection_id is not None:
+            # Replacements insert a new row, so its ID also identifies the verified key revision.
+            previous = await get_mall_connection(conn, user_id=user_id, mall=mall)
+            if not previous or previous["id"] != expected_connection_id:
+                return None
+            if previous["shop_id"] != shop_id:
+                raise MallShopMismatch()
+        await revoke_mall_connection(conn, user_id=user_id, mall=mall)
+        async with conn.cursor() as cur:
+            await cur.execute(f"""insert into mall_connections
+                (user_id, mall, shop_id, shop_name, key_hint, access_key_enc, secret_key_enc, permissions)
+                values (%s, %s, %s, %s, %s, public.wl_billing_encrypt(%s, %s), public.wl_billing_encrypt(%s, %s), %s)
+                returning {_MALL_CONNECTION_COLS}""",
+                (user_id, mall, shop_id, shop_name, key_hint, access_key, kek, secret_key, kek, permissions))
+            row = await cur.fetchone()
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall-defaults:{user_id}:{mall}",))
+            await cur.execute("""insert into mall_defaults (user_id, mall, shop_id) values (%s, %s, %s)
+                on conflict (user_id, mall) do update set shop_id = excluded.shop_id, addresses = '{}',
+                  completed_items = array_remove(mall_defaults.completed_items, 'addresses'), updated_at = now()
+                where mall_defaults.shop_id is distinct from excluded.shop_id""", (user_id, mall, shop_id))
+            return row
+
+
+async def revoke_mall_connection(conn, *, user_id, mall) -> bool:
+    async with conn.cursor() as cur:
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:{mall}",))
+        await cur.execute("""update mall_connections set status = 'revoked', revoked_at = now(),
+            updated_at = now(), access_key_enc = null, secret_key_enc = null
+            where user_id = %s and mall = %s and status = 'connected'""", (user_id, mall))
+        return cur.rowcount > 0
+
+
+async def revoke_all_mall_connections(conn, user_id):
+    async with conn.cursor() as cur:
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall-account:{user_id}",))
+        await cur.execute("""update mall_connections set status = 'revoked', revoked_at = now(),
+            updated_at = now(), access_key_enc = null, secret_key_enc = null
+            where user_id = %s""", (user_id,))
+
+
+async def claim_mall_connection_attempt(conn, *, user_id) -> bool:
+    """Share a sliding hourly limit across API processes using the existing short-lived counter table."""
+    key = f"mall-connect:{user_id}"
+    async with conn.cursor() as cur:
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (key,))
+        await cur.execute("""select coalesce(sum(request_count), 0) as count from client_event_rate_limits
+            where scope = 'user' and key = %s and window_start > clock_timestamp() - interval '1 hour'""", (key,))
+        if (await cur.fetchone())["count"] >= 10:
+            return False
+        await cur.execute("""insert into client_event_rate_limits (scope, key, window_start, request_count)
+            values ('user', %s, clock_timestamp(), 1)""", (key,))
+        return True
+
+
+async def get_mall_defaults(conn, *, user_id, mall) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute("""select shop_id, shipping, returns, addresses, disclosure, tax_type, product_origin,
+            completed_items from mall_defaults where user_id = %s and mall = %s""", (user_id, mall))
+        return await cur.fetchone()
+
+
+def _completed_mall_defaults(values):
+    complete = []
+    shipping = values["shipping"]
+    money = lambda value: type(value) is int and value >= 0
+    if (shipping.get("feeType") in ("FREE", "CHARGED", "CONDITIONAL_FREE")
+            and all(money(shipping.get(key)) for key in ("jejuFee", "isolatedFee"))
+            and (shipping["feeType"] == "FREE" or money(shipping.get("baseFee")))
+            and (shipping["feeType"] != "CONDITIONAL_FREE" or money(shipping.get("conditionalAmount")))):
+        complete.append("shipping")
+    if all(money(values["returns"].get(key)) for key in ("partialFee", "totalFee", "exchangeFee")):
+        complete.append("returns")
+    if all(str(values["addresses"].get(key) or "").strip() for key in ("shippingAddressId", "returnAddressId")):
+        complete.append("addresses")
+    if all(str(values["disclosure"].get(key) or "").strip() for key in ("country", "manufacturer", "asManager", "phone")):
+        complete.append("disclosure")
+    return complete
+
+
+async def upsert_mall_defaults(conn, *, user_id, mall, payload) -> dict:
+    async with conn.transaction():
+        async with conn.cursor() as cur:
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall-defaults:{user_id}:{mall}",))
+        previous = await get_mall_defaults(conn, user_id=user_id, mall=mall) or {}
+        values = {key: {**(previous.get(key) or {}), **(payload.get(key) or {})}
+                  for key in ("shipping", "returns", "addresses", "disclosure")}
+        async with conn.cursor() as cur:
+            await cur.execute("""insert into mall_defaults
+                (user_id, mall, shipping, returns, addresses, disclosure, tax_type, product_origin, completed_items)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                on conflict (user_id, mall) do update set shipping = excluded.shipping, returns = excluded.returns,
+                  addresses = excluded.addresses, disclosure = excluded.disclosure, tax_type = excluded.tax_type,
+                  product_origin = excluded.product_origin, completed_items = excluded.completed_items, updated_at = now()
+                returning shipping, returns, addresses, disclosure, tax_type, product_origin, completed_items""",
+                (user_id, mall, *(Json(values[key]) for key in ("shipping", "returns", "addresses", "disclosure")),
+                 payload.get("taxType", previous.get("tax_type", "TAX")),
+                 payload.get("productOrigin", previous.get("product_origin", "domestic")), _completed_mall_defaults(values)))
+            return await cur.fetchone()
+
+
 class CreditError(Exception):
     """크레딧 도메인 에러 — 라우트가 code/status로 HTTP 매핑(토스트 가능한 한국어 message)."""
 
@@ -827,6 +964,9 @@ async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
                 prod.clothing_type,
                 case when jsonb_typeof(pr.editor_blocks) = 'array'
                      then jsonb_array_length(pr.editor_blocks) else 0 end as block_count,
+                (select count(*) from detail_publications dp
+                 where dp.project_id = pr.id and dp.user_id = pr.user_id
+                   and dp.status = 'ready') as publication_count,
                 pr.status,
                 pr.updated_at
             from projects pr
@@ -1067,8 +1207,10 @@ async def create_asset(
     size: int | None,
     original_filename: str | None,
     metadata: dict | None = None,
+    visibility: str = "private",
 ) -> dict:
     """업로드 검증 후 asset 행 확정. complete 재호출(멱등)이면 기존 행 반환."""
+    visibility_sql = {"private": "'private'", "public": "'public'"}[visibility]
     cols = "id::text as id, r2_key, mime_type, byte_size"
     async with conn.cursor() as cur:
         await cur.execute(
@@ -1076,7 +1218,7 @@ async def create_asset(
             insert into assets
               (id, user_id, project_id, source, visibility, r2_bucket, r2_key,
                mime_type, byte_size, original_filename, metadata)
-            values (%s, %s, %s, %s, 'private', %s, %s, %s, %s, %s, %s)
+            values (%s, %s, %s, %s, {visibility_sql}, %s, %s, %s, %s, %s, %s)
             on conflict (id) do nothing
             returning {cols}
             """,
@@ -1093,6 +1235,208 @@ async def create_asset(
             )
             row = await cur.fetchone()
         return row
+
+
+_DETAIL_PUBLICATION_COLS = (
+    "id::text as id, user_id::text as user_id, project_id::text as project_id, "
+    "version, status, preset, width, slice_count, total_bytes, product_name, "
+    "editor_revision, files, expires_at, created_at, ready_at, deleted_at, cleanup_after, cleanup_generation"
+)
+
+
+async def project_uses_real_model(conn, *, user_id, project_id) -> bool:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select 1 as present from fm_output_records r
+                 join jobs j on j.id = r.job_id
+                where j.project_id = %s and r.seller_id = %s limit 1""",
+            (project_id, user_id),
+        )
+        return await cur.fetchone() is not None
+
+
+async def count_detail_publications_last_hour(conn, user_id) -> int:
+    async with conn.cursor() as cur:
+        # Keep the account fence through the route's insert and commit, across projects.
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                          (f"detail-publication-user:{user_id}",))
+        await cur.execute(
+            """select count(*) as count from detail_publications
+                where user_id = %s and created_at >= now() - interval '1 hour'""",
+            (user_id,),
+        )
+        return (await cur.fetchone())["count"]
+
+
+async def create_detail_publication(conn, *, user_id, project_id, preset, width,
+                                    product_name, editor_revision, files) -> dict:
+    async with conn.cursor() as cur:
+        # The project fence protects max+1 even for callers outside the HTTP route.
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                          (f"detail-publication-project:{project_id}",))
+        await cur.execute(
+            f"""insert into detail_publications
+                (user_id, project_id, version, preset, width, product_name, editor_revision, files)
+                values (%s, %s, (select coalesce(max(version), 0) + 1
+                                  from detail_publications where project_id = %s),
+                        %s, %s, %s, %s, %s)
+                returning {_DETAIL_PUBLICATION_COLS}""",
+            (user_id, project_id, project_id, preset, width, product_name, editor_revision, Json(files)),
+        )
+        return await cur.fetchone()
+
+
+async def get_detail_publication(conn, *, user_id, publication_id) -> dict | None:
+    try:
+        uuid.UUID(publication_id)
+    except (ValueError, TypeError):
+        return None
+    async with conn.cursor() as cur:
+        # Hold this through asset inserts and ready transition: concurrent complete is atomic.
+        await cur.execute(
+            f"select {_DETAIL_PUBLICATION_COLS} from detail_publications "
+            "where id = %s and user_id = %s for update",
+            (publication_id, user_id),
+        )
+        return await cur.fetchone()
+
+
+async def set_detail_publication_cleanup_after(conn, *, publication_id, cleanup_after) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute("update detail_publications set cleanup_after = %s where id = %s",
+                          (cleanup_after, publication_id))
+
+
+async def mark_detail_publication_ready(conn, *, publication_id, files, total_bytes, expires_at) -> dict:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""update detail_publications set status = 'ready', files = %s,
+                       slice_count = %s, total_bytes = %s,
+                       expires_at = %s, ready_at = now()
+                 where id = %s and status = 'pending' returning {_DETAIL_PUBLICATION_COLS}""",
+            (Json(files), len(files), total_bytes, expires_at, publication_id),
+        )
+        return await cur.fetchone()
+
+
+async def list_detail_publications(conn, *, user_id, project_id) -> list[dict]:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"select {_DETAIL_PUBLICATION_COLS} from detail_publications "
+            "where user_id = %s and project_id = %s and status = 'ready' order by created_at desc, version desc",
+            (user_id, project_id),
+        )
+        return await cur.fetchall()
+
+
+async def soft_delete_detail_publication(conn, *, user_id, publication_id) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""update detail_publications set status = 'deleted', deleted_at = null,
+                       cleanup_generation = cleanup_generation + 1
+                 where id = %s and user_id = %s returning {_DETAIL_PUBLICATION_COLS}""",
+            (publication_id, user_id),
+        )
+        return await cur.fetchone()
+
+
+async def recompute_detail_publication_expiry(conn, *, now) -> int:
+    async with conn.cursor() as cur:
+        # Match deletion claims: publication rows first, then fresh locked profiles.
+        await cur.execute("select id from detail_publications where status = 'ready' order by id for update")
+        publication_ids = [row["id"] for row in await cur.fetchall()]
+        if not publication_ids:
+            return 0
+        await cur.execute(
+            """select user_id from profiles where user_id in
+                   (select user_id from detail_publications where id = any(%s::uuid[]))
+                 order by user_id for share""", (publication_ids,))
+        await cur.fetchall()
+        await cur.execute(
+            """update detail_publications d
+                  set expires_at = case when p.plan <> 'free' then null
+                                        else coalesce(d.expires_at, %(now)s + interval '6 months') end
+                 from profiles p
+                where p.user_id = d.user_id and d.id = any(%(publication_ids)s::uuid[]) and d.status = 'ready'
+                  and d.expires_at is distinct from
+                      case when p.plan <> 'free' then null
+                           else coalesce(d.expires_at, %(now)s + interval '6 months') end""",
+            {"now": now, "publication_ids": publication_ids},
+        )
+        return cur.rowcount
+
+
+async def list_expired_detail_publications(conn, *, now, limit=100) -> list[dict]:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            # Independent budgets keep recurring tombstones out of the expiry queue.
+            f"""(select {_DETAIL_PUBLICATION_COLS} from detail_publications
+                 where status = 'ready' and expires_at <= %s
+                        and not exists (select 1 from profiles p
+                                         where p.user_id = detail_publications.user_id
+                                           and p.plan <> 'free')
+                 order by expires_at, id limit %s)
+                union all
+                (select {_DETAIL_PUBLICATION_COLS} from detail_publications
+                 where status = 'deleted' and cleanup_after <= %s
+                 order by cleanup_after, id limit %s)""",
+            (now, limit, now, limit),
+        )
+        return await cur.fetchall()
+
+
+async def list_stale_pending_detail_publications(conn, *, older_than_minutes=30) -> list[dict]:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""select {_DETAIL_PUBLICATION_COLS} from detail_publications
+                 where status = 'pending'
+                   and (created_at < now() - (%s * interval '1 minute') or expires_at <= now())
+                 order by created_at limit 100""",
+            (older_than_minutes,),
+        )
+        return await cur.fetchall()
+
+
+async def claim_detail_publication_deletion(conn, *, user_id, publication_id, now) -> dict | None:
+    # Lock the publication first, then read/lock the plan in a fresh statement.
+    # A renewal committed while waiting for the publication must be visible here.
+    if await get_detail_publication(conn, user_id=user_id, publication_id=publication_id) is None:
+        return None
+    async with conn.cursor() as cur:
+        await cur.execute("select plan from profiles where user_id = %s for share", (user_id,))
+        await cur.fetchone()
+        await cur.execute(
+            f"""update detail_publications set status = 'deleted',
+                       cleanup_generation = cleanup_generation + 1
+                 where id = %s and user_id = %s
+                   and ((status = 'ready' and expires_at <= %s
+                         and not exists (select 1 from profiles p
+                                          where p.user_id = detail_publications.user_id
+                                            and p.plan <> 'free'))
+                        or (status = 'pending' and created_at < %s - interval '30 minutes')
+                        or (status = 'deleted' and cleanup_after <= %s))
+                 returning {_DETAIL_PUBLICATION_COLS}""",
+            (publication_id, user_id, now, now, now),
+        )
+        return await cur.fetchone()
+
+
+async def finalize_detail_publication_deletion(conn, *, publication_id, cleanup_generation) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """update assets set deleted_at = coalesce(deleted_at, now())
+                where metadata->>'publication_id' = %s""",
+            (publication_id,),
+        )
+        await cur.execute(
+            """update detail_publications set status = 'deleted',
+                       deleted_at = coalesce(deleted_at, clock_timestamp()),
+                       cleanup_after = case when deleted_at is null
+                                            then clock_timestamp() + interval '1 day' else null end
+                 where id = %s and status = 'deleted' and cleanup_after <= clock_timestamp()
+                   and cleanup_generation = %s""",
+            (publication_id, cleanup_generation),
+        )
 
 
 _PRODUCT_COLS = (

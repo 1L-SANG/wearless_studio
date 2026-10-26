@@ -15,6 +15,8 @@ import tagStyles from '@/components/NotFound.module.css';
 import { isMobileDevice } from '@/lib/deviceClass.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { authorizeFlowContinuation } from '@/lib/flowSession.js';
+import { PublicationsPanel } from './PublicationsPanel.jsx';
+import publicationStyles from './PublicationsPanel.module.css';
 
 const STAGES = { storyboard: '콘티', mannequin: '마네킹', editor: '에디터' };
 const stageOf = (step) => ['generating', 'failed'].includes(step) ? 'editor' : step;
@@ -32,6 +34,8 @@ export function Library() {
   userRef.current = session?.user?.id || null;
   useEffect(() => () => { entryToken.current += 1; openingRef.current = false; }, []);
   const [openingId, setOpeningId] = useState(null);
+  const [publicationProject, setPublicationProject] = useState(null);
+  useEffect(() => { setPublicationProject(null); }, [session?.user?.id]);
   const adoptProject = useAppStore((s) => s.adoptProject);
   // 서버 project(보관함 행)는 AI 분석 시작 때 생성 — '새 상세페이지' 클릭만으로 빈 행 생성 방지.
   // (과거엔 진행 중 마네킹 job 이 있으면 강제로 그 화면으로 보냈다 — 콘티가 마네킹보다 먼저
@@ -208,12 +212,17 @@ export function Library() {
             <div className="lib-card" key={it.id} onClick={() => onOpen(it)}>
               <div className="lib-cover"><img src={it.cover || undefined} alt={it.title} /><div className="st">{statusPill(it.status)}</div></div>
               <div className="lib-info"><div className="t">{it.title}</div>
-                <div className="m"><span>블록 {it.blockCount}</span><span>·</span><span>{timeAgo(it)}</span></div></div>
+                <div className={`m ${publicationStyles.cardMetadata}`}><span>블록 {it.blockCount}</span><span>·</span><span>{timeAgo(it)}</span>
+                  {it.publicationCount > 0 && <button type="button" className={publicationStyles.cardCount}
+                    onClick={(event) => { event.stopPropagation(); setPublicationProject({ ...it, userId: userRef.current }); }}>코드 {it.publicationCount}개</button>}
+                </div></div>
             </div>
           ))}
         </div>
       )}
       </section>}
+      {publicationProject && publicationProject.userId === userRef.current && <PublicationsPanel projectId={publicationProject.id}
+        productName={publicationProject.title} onClose={() => { setPublicationProject(null); void refetch(); }} />}
     </div>
   );
 }

@@ -150,6 +150,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         dispatcher = None
         draft_asset_reclaimer = None
+        detail_publication_reaper = None
         vc_revocation_reconciler = None
         license_revoke_alert_reconciler = None
         enrollment_completed_alert_reconciler = None
@@ -236,6 +237,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not detail_worker_only and app.state.r2 is not None:
                 draft_asset_reclaimer = DraftAssetReclaimer(app)
                 await draft_asset_reclaimer.start()
+                if settings.detail_publish_enabled:
+                    from .workers.detail_publication_reaper import DetailPublicationReaper
+
+                    detail_publication_reaper = DetailPublicationReaper(app)
+                    await detail_publication_reaper.start()
             # 정기결제 청구·만료 — 계획서 docs/plans/2026-09-09-toss-billing-subscription.md.
             # detail-worker 태스크에서는 돌리지 않는다(청구는 API 태스크의 일이고, 두 곳에서
             # 돌면 advisory lock 경합만 는다). 중복 실행은 락이 막지만 애초에 안 거는 게 낫다.
@@ -379,6 +385,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await client_alerts.stop()
         if draft_asset_reclaimer is not None:
             await draft_asset_reclaimer.stop()
+        if detail_publication_reaper is not None:
+            await detail_publication_reaper.stop()
         if sam_retry_pusher is not None:
             await sam_retry_pusher.stop()      # 디스패처보다 먼저 — 새 잡을 더 걸지 않게
         if dispatcher is not None:
@@ -589,6 +597,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        if request.url.path.startswith("/v1/malls/"):
+            # Validation details include the rejected input, which can contain credentials.
+            request.state.error_code = "validation_error"
+            return JSONResponse(status_code=422, content={"error": {
+                "code": "validation_error", "message": "입력한 내용을 다시 확인해 주세요",
+            }}, headers={"Cache-Control": "no-store"})
         # 계좌 입력 오류에는 원문 body가 포함될 수 있어 상세 입력을 반환하지 않아요.
         if request.url.path.rstrip("/") == "/v1/facemarket/payout-account":
             request.state.error_code = "invalid_payout_account"
@@ -675,6 +689,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(client_events_router)
     app.include_router(v1_router)
+    if settings.mall_connect_enabled:
+        from .mall_connect import router as mall_connect_router
+
+        app.include_router(mall_connect_router)
+    if settings.detail_publish_enabled:
+        from .detail_publications import router as detail_publications_router
+
+        app.include_router(detail_publications_router)
 
     from .public_routes import router as public_router
 

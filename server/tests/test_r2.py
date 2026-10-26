@@ -9,6 +9,39 @@ from botocore.exceptions import ClientError, ConnectTimeoutError, EndpointConnec
 from app.r2 import R2Client, ai_key, ext_for_mime, upload_key
 
 
+def offline_presign_client():
+    import boto3
+    from botocore.config import Config
+    client = object.__new__(R2Client)
+    client._bucket = "images"
+    client._s3 = boto3.client("s3", endpoint_url="https://r2.example.test",
+        aws_access_key_id="test-key", aws_secret_access_key="test-secret",
+        region_name="auto", config=Config(signature_version="s3v4"))
+    return client
+
+
+def test_presigned_put_signs_exact_content_length(monkeypatch):
+    from urllib.parse import parse_qs, urlsplit
+    client = offline_presign_client()
+    calls = []
+    original = client._s3.generate_presigned_url
+
+    def capture(*args, **kwargs):
+        calls.append(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(client._s3, "generate_presigned_url", capture)
+    url = client.presigned_put("pub/u/p/01.jpg", "image/jpeg", byte_size=123)
+    assert calls[0]["Params"]["ContentLength"] == 123
+    assert parse_qs(urlsplit(url).query)["X-Amz-SignedHeaders"] == ["content-length;content-type;host"]
+
+
+def test_presigned_put_preserves_legacy_callers_without_length():
+    from urllib.parse import parse_qs, urlsplit
+    url = offline_presign_client().presigned_put("legacy.jpg", "image/jpeg", expires=300)
+    assert parse_qs(urlsplit(url).query)["X-Amz-SignedHeaders"] == ["content-type;host"]
+
+
 def test_ext_for_mime_whitelist():
     assert ext_for_mime("image/png") == "png"
     assert ext_for_mime("image/jpeg") == "jpg"

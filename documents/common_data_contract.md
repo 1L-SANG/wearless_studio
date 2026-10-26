@@ -40,6 +40,7 @@ ProjectSummary {                   // 보관함 카드 (구 LibraryItem)
   cover: string                    // 대표 이미지 (파생: 첫 에디터 블록 이미지)
   clothingType: ClothingType | null // 초안은 상품 미입력 → null 가능 (보관함 카드 표시는 라벨 파생)
   blockCount: number               // 구 blocks (배열과 혼동 방지 위해 개명)
+  publicationCount: number         // 소유자의 ready 게시 수. 0이면 카드에서 숨김
   status: ProjectStatus
   updatedAt: string                // ISO — '2시간 전'은 표시 파생
 }
@@ -727,6 +728,70 @@ generation: {
 새 컷은 `recipeFrom='self'`다. 비슷한 컷과 같은 부위 다시 촬영은 공용 `asset_recipe.resolve_asset_recipes`가 원본 설정을 찾으면 상속하고 `recipeFrom='anchor'`로 남기며, 못 찾으면 `recipe=null`이다. 직접 올린 자산은 `assets.source='upload'`로 판정하고 새 기록을 쓰지 않는다. 색상과 열림 편집은 `origin='editor_color'` 또는 `origin='editor_closure'`, `autoSelected=false`, 고른 원본의 `sourceAssetId`, `recipeFrom='anchor'`를 남긴다. 원본 레시피의 바꾼 필드만 고치며 레시피가 없으면 모든 필드를 `null`로 두고 바꾼 값만 채운다. 색상 결과의 의류 그룹은 목표 색이고 열림과 비슷한 컷은 원본의 의류 색 그룹을 물려받는다. 상세페이지의 `page` 기록은 후속 작업으로 미룬다.
 
 ---
+
+## § 게시(detail publication)
+
+행 쓰기는 서버만 한다. 클라이언트 역할은 본인 행 조회만 가능하다.
+
+| 필드(DB) | 의미 |
+| --- | --- |
+| `id`, `user_id`, `project_id` | 게시·소유자·프로젝트 UUID. 프로젝트 삭제 시 `project_id`만 null로 바뀌고 게시 이미지는 유지한다. |
+| `version`, `status` | 프로젝트 안의 불변 순번(프로젝트와 복합 unique), `pending`·`ready`·`deleted`. |
+| `preset`, `width` | `smartstore`·`coupang`·`high` 폭 프리셋과 렌더 폭(px). |
+| `slice_count`, `total_bytes` | 조각 수와 전체 바이트. |
+| `product_name`, `editor_revision` | 게시 시점의 상품명과 에디터 리비전. |
+| `files` | `{index,r2_key,bytes,width,height,asset_id}` 배열. 조각은 `assets`에도 `source='export'`, `visibility='public'`, `metadata.publication_id`로 등록한다. |
+| `expires_at` | 보관 만료 시각. 구독 중이면 null. |
+| `created_at`, `ready_at`, `deleted_at` | 생성, 게시 완료, 업로드 대기 시간이 지난 뒤 이미지와 CDN 정리를 확인한 시각. 이후 재정리가 필요하면 `deleted_at`을 다시 null로 바꾼다. |
+| `cleanup_after`, `cleanup_generation` | 다음 삭제 정리 시각과 정리 시도 순번. `cleanup_after`가 null이면 재확인이 끝난다. 순번이 최신인 요청만 정리 완료를 기록한다. |
+
+상태 전이는 `pending → ready → deleted`이며 30분 동안 완료되지 않은 `pending`도 `deleted`로 정리한다. 재게시는 새 버전을 만들고 기존 게시를 바꾸지 않는다.
+
+`deleted`이면서 `deleted_at=null`이면 이미지와 CDN 정리를 다시 확인해야 하는 삭제 의도다. 만료 정리는 게시 행을 잠근 뒤 별도 SQL 문으로 현재 프로필을 읽고 공유 잠금을 잡는다. 재구독이 그 전에 커밋됐으면 보존하고, 삭제 의도가 먼저 확정된 버전은 이후 재구독으로 복구하지 않는다. 하루 한 번 만료일을 계산할 때도 게시, 프로필 순서로 잠그고 처음 잠근 게시만 갱신한다. 저장소 정리에 실패해도 행과 삭제 의도를 유지해 재시도한다.
+
+명시적 삭제와 탈퇴는 이미지와 CDN을 즉시 지운다. 이미 `deleted`인 게시의 반복 삭제 요청은 저장소 호출 없이 204로 응답하며, 정리 미완 건은 워커가 재시도한다.
+
+`cleanup_after`의 첫 값은 모든 업로드 주소를 발급한 뒤의 시각에 주소 유효 시간 5분과 전송 여유 1시간을 더해 저장한다. 생성 시각은 잠금 대기보다 빠를 수 있으므로 이 계산에 쓰지 않는다. 이 시각이 지난 첫 정리는 이미지가 없어도 CDN을 다시 지운 뒤 `deleted_at`을 기록하고 하루 뒤 재확인을 한 번 예약한다. 1시간은 운영상 여유이며 저장소가 전송 완료를 보장하는 상한은 아니다. 재확인은 HEAD로 존재 여부만 보고, 이미지가 없으면 `cleanup_after`를 null로 두고 끝낸다. 이미지가 다시 생겼으면 삭제와 CDN 정리 후 다시 하루 뒤 재확인을 한 번 예약한다. 삭제 기록은 계속 보존한다.
+
+재정리할 때는 삭제 전에 재시도 의도와 새 순번을 저장하고, 완료 시 같은 순번인지 확인한다. 다른 요청의 CDN 정리 실패를 오래된 완료 응답이 덮어쓰지 않는다. 한 번의 시간별 실행은 새 만료, 삭제 재확인, 미완료 게시를 각각 최대 100건 처리한다. 각 목록의 한도는 분리하며 삭제 재확인은 예정 시각 순으로 처리한다. 밀린 건이 많거나 저장소 오류가 지속되면 하루보다 늦어질 수 있다.
+
+R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Cache-Control: public, max-age=31536000, immutable`을 고정한다.
+
+만료 규칙은 `profiles.plan`을 기준으로 한다. free가 아니면 `expires_at=null`, 처음부터 free면 `created_at+6개월`, 구독 종료를 처음 관찰한 free 게시면 관찰 시각+6개월이다. 이미 정해진 free 만료일은 유지하고 삭제 의도 확정 전에 재구독하면 null로 되돌린다. 워커는 하루 한 번 만료일을 계산하고 한 시간마다 정리한다. 탈퇴 시에는 즉시 삭제를 시도하고 실패는 재시도한다.
+
+## § 쇼핑몰 연결
+
+`MALL_CONNECT_ENABLED` 기본값은 false이며 꺼져 있으면 `/v1/malls` 라우트와 몰 메뉴를 제공하지 않는다. 에이블리와 스마트스토어는 `unavailable` 표시만 제공한다.
+
+| 저장 필드 | HTTP 필드 | 의미 |
+|---|---|---|
+| `mall` | `mall` | `zigzag`, `ably`, `smartstore` |
+| `status` | `status` | 저장은 `connected`, `revoked`. 활성 연결이 없으면 응답은 `none` |
+| `shop_id`, `shop_name` | `shopName` | 인증키로 조회한 스토어. ID는 서버에서만 사용 |
+| `key_hint` | `keyHint` | Access Key 끝자리 최대 8자. 원문 전체가 될 만큼 짧으면 null |
+| `access_key_enc`, `secret_key_enc` | 제공하지 않음 | 전용 `MALL_KEYS_KEK`와 `pgp_sym_encrypt`로 암호화 |
+| `permissions` | `permissions` | 셀러용 권한 문구 배열 |
+| `connected_at`, `last_registered_at` | `connectedAt`, `lastRegisteredAt` | ISO 8601 또는 null |
+| `mall_defaults.shop_id` | 제공하지 않음 | 주소 기본값이 속한 스토어 ID |
+| `mall_defaults.completed_items` | `defaults.completedItems` | 완료한 `shipping`, `returns`, `addresses`, `disclosure` |
+
+연결은 새 키로 스토어 조회를 마친 뒤 저장한다. 인증정보 변경은 검증이 성공한 경우에만 기존 연결을 `revoked`로 바꾸고 새 `connected` 행을 같은 트랜잭션에 만든다. 실패하면 기존 연결을 유지한다. 연결할 스토어가 `mall_defaults.shop_id`와 다르면 `addresses`를 비우고 완료 항목에서 제외한 뒤 스토어 ID를 갱신한다. 다른 기본 설정과 같은 스토어의 재연결 설정은 유지한다. 인증정보 변경에서 기존 연결과 스토어가 다르면 400 `shop_mismatch`로 거절한다. 연결 해제와 탈퇴는 암호문을 즉시 지우고 `revoked`로 바꾸며 기본 설정을 보존한다. 응답과 로그에 키 원문을 넣지 않는다.
+
+인증정보 변경은 외부 검증을 시작하기 전에 현재 연결 ID를 기록한다. 저장할 때 연결 해제와 같은 잠금 안에서 그 연결이 여전히 활성 상태인지 확인한다. 연결이 없거나 해제되거나 다른 연결로 교체됐다면 409 `connection_changed`로 거절하며, 늦게 끝난 변경 요청이 연결을 다시 만들지 않는다.
+
+`GET /v1/malls`는 `{items:[{mall,status,shopName,keyHint,permissions,connectedAt,lastRegisteredAt,defaults}]}`이며 `defaults`는 저장된 값과 `completedItems`, `total:4`를 포함한다. 저장된 값이 없으면 각 묶음은 빈 객체다. `POST /v1/malls/zigzag/connect`, `POST .../rotate`의 입력은 `{accessKey,secretKey}`이며 앞뒤 공백 제거 후 각각 1~256자다. 두 동작을 합쳐 사용자당 시간당 10회로 제한한다. `DELETE /v1/malls/zigzag`는 기본 설정을 지우지 않는다.
+
+`GET /v1/malls/zigzag/addresses`는 `{id,name,address,postcode,is_default}[]`를 반환한다. `PUT /v1/malls/zigzag/defaults`는 아래 값을 부분 저장하고 누적 저장값으로 완료 항목을 계산한다.
+
+| 묶음 | 필드 |
+|---|---|
+| `shipping` | `feeType:FREE\|CHARGED\|CONDITIONAL_FREE`, `baseFee`, `jejuFee`, `isolatedFee`, `conditionalAmount` |
+| `returns` | `partialFee`, `totalFee`, `exchangeFee` |
+| `addresses` | `shippingAddressId`, `returnAddressId` |
+| `disclosure` | `country`, `manufacturer`, `asManager`, `phone` |
+| 공통 선택 | `taxType:TAX\|FREE` 기본 TAX, `productOrigin:domestic\|imported` 기본 domestic |
+
+금액은 0 이상 정수다. 조건부 무료는 `conditionalAmount`가 필수다. 배송비의 무료 정책은 `baseFee` 없이 완료할 수 있다. 전화번호는 숫자와 하이픈만 허용한다. 오류는 `{error:{code,message}}`이며 연결 오류 코드는 `invalid_key`, `missing_permission`, `unreachable`, `unknown`이다. 원격 오류 원문은 응답에 포함하지 않는다.
 
 ## 7. 현행 코드와의 갭 (마이그레이션 TODO)
 
