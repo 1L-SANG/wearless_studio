@@ -831,7 +831,18 @@ R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Ca
 
 설정은 `CAFE24_ENABLED=false`, `CAFE24_CLIENT_ID`, `CAFE24_CLIENT_SECRET`, `CAFE24_REDIRECT_URI=https://api.wearless.kr/v1/malls/cafe24/callback`, `CAFE24_SCOPES='mall.read_product mall.write_product mall.read_store mall.read_category'`, `CAFE24_API_VERSION=2026-09-01`, `CAFE24_ALLOWED_MALL_IDS=''`다. client secret은 서버 비밀이다. `cafe24_ready`는 스위치와 client ID, client secret, `MALL_KEYS_KEK`가 모두 있어야 참이다. `cafe24_api_origin`은 콜백의 오리진이다. 허용 몰 목록은 쉼표로 나눠 공백을 제거한 frozenset이며 빈 목록은 제한 없음이다. `registration_enabled`는 `MALL_CONNECT_ENABLED`, `DETAIL_PUBLISH_ENABLED`, `cafe24_ready`를 모두 요구한다.
 
-카페24 등록 원장은 별도 표 없이 무과금 `jobs.kind='mall_register'` 한 건이다. `payload`는 확정 입력, `metadata`는 진행 기록, `result`는 결과이고 `metadata.productNo`가 상품 번호 확정의 근거다. `idempotency_key`는 `cafe24-register:{user_id}:{requestKey}`이고 요청 식별 정보는 소유자 조건으로 별도 조회한다. 프로젝트별 목록도 소유자와 kind를 제한해 최신 5건을 읽는다. JSON 패치는 얕은 병합이며 접수는 소유자의 pending 잡, 워커는 running 상태와 같은 lease, 확인 요청은 소유자의 done 또는 error 잡에만 쓴다. 진행률도 lease로 보호하고 종결의 `error_message`는 error일 때만 기록한다. 기존 활성 잡 인덱스를 유지하므로 같은 프로젝트의 등록은 한 번에 하나만 실행한다. 등록 HTTP 경로는 후속 Task에서 구현한다.
+카페24 등록 원장은 별도 표 없이 무과금 `jobs.kind='mall_register'` 한 건이다. `payload`는 확정 입력, `metadata`는 진행 기록, `result`는 결과이고 `metadata.productNo`가 상품 번호 확정의 근거다. `idempotency_key`는 `cafe24-register:{user_id}:{requestKey}`이고 요청 식별 정보는 소유자 조건으로 별도 조회한다. 프로젝트별 목록도 소유자와 kind를 제한해 최신 5건을 읽는다. JSON 패치는 얕은 병합이며 접수는 소유자의 pending 잡, 워커는 running 상태와 같은 lease, 확인 요청은 소유자의 done 또는 error 잡에만 쓴다. 진행률도 lease로 보호하고 종결의 `error_message`는 error일 때만 기록한다. 기존 활성 잡 인덱스를 유지하므로 같은 프로젝트의 등록은 한 번에 하나만 실행한다.
+
+아래 등록 관련 라우트는 모두 로그인 필수다. 접수는 등록 가능 설정, 계정 폐쇄 여부, 살아 있는 본인 프로젝트, 실존 모델 사용 여부, 현재 연결과 허용 몰, 같은 프로젝트의 본인 ready 게시, 정규화된 게시 이미지, 같은 프로젝트의 본인 대표 이미지 순서로 검사한다. 등록 시도는 연결 시도와 별도로 `mall-register:{user}` 키를 사용해 시간당 10회로 제한한다.
+
+| 라우트 | 계약 |
+|---|---|
+| `POST /v1/malls/cafe24/registrations` | 입력 `{projectId,publicationId,requestKey,productName,price,supplyPrice?,display?,selling?,taxType?,categoryNo?,thumbnailAssetId?}`. ID와 requestKey는 UUID, 상품명은 1~100자, 판매가는 1~2,147,483,647의 정수, 공급가는 0 이상 정수이며 기본 판매가다. 진열과 판매는 `T\|F` 기본 T, 과세는 `A\|B` 기본 A다. 신규 접수는 202 `{jobId,status:'queued',externalCode}`이며 코드는 `wl`과 잡 ID의 hex 앞 16자리다. 같은 키와 같은 확정 입력은 상태와 관계없이 200 등록 조회 응답을 반환한다. 비교에서 `requestKey`, `connectionId`만 제외하며 프로젝트 또는 입력이 바뀌면 409 `idempotency_key_reused`, 다른 키의 활성 등록이 있으면 409 `{error:{code:'registration_in_progress',message,jobId}}`다. |
+| `GET /v1/malls/cafe24/registrations/{job_id}` | 본인의 `mall_register` 잡만 조회한다. `{jobId,status,progress,outcome,productNo,productUrl,imageCount,thumbnail,code,errorMessage,externalCode,verifiable,warnings,createdAt,finishedAt}`를 반환한다. 상품 번호 확정이면 `created`, 명확한 거절 `metadata.rejectedAt`이 있으면 `failed`, 전송 기록 `metadata.create.sentAt`이 있으면 `unknown` 또는 `duplicate_suspected`, 그 외는 `failed`다. `verifiable`은 `unknown`, `duplicate_suspected`에서만 참이다. 복구 종료 잡도 metadata로 판정하며 `created`, `unknown`, `duplicate_suspected`에는 공용 복구 오류 문구를 표시하지 않는다. `warnings`는 결과 경고 배열이며 상품 생성 후 복구 오류가 나면 상품은 만들어졌다는 안내를 포함한다. |
+| `GET /v1/projects/{project_id}/mall-registrations` | 살아 있는 본인 프로젝트를 확인하고 본인의 `mall_register` 잡 최신 5건을 `{items:[등록 조회 응답]}`으로 반환한다. |
+| `GET /v1/malls/cafe24/categories` | 현재 연결로 100건씩 최대 3페이지를 조회하고 `use_display='F'`를 제외해 `{categoryNo,depth,name,fullName}[]`를 반환한다. 사용자와 연결 ID별로 프로세스 메모리에 10분 캐시한다. 캐시 사용 전에도 현재 연결과 만료, 허용 몰을 검사한다. |
+
+접수 준비 전에는 503 `cafe24_unconfigured`, 폐쇄 계정이나 프로젝트, 게시, 자산을 찾지 못하면 각 404, 실존 모델이면 403 `real_model_not_allowed`, 게시 이미지가 잘못됐으면 400 `invalid_files`다. 연결이 없으면 404 `not_connected`, refresh가 만료됐거나 허용 몰에서 제외되면 각각 409 `reconnect_required`, `cafe24_not_allowed`, 횟수 초과는 429 `rate_limited`다. 오류 봉투는 `{error:{code,message}}`이며 활성 등록 충돌에는 `jobId`도 포함한다. 실제 상품 생성 워커와 등록 여부 재확인 라우트는 후속 Task 범위다.
 
 ## 7. 현행 코드와의 갭 (마이그레이션 TODO)
 

@@ -146,6 +146,20 @@ async def claim_mall_connection_attempt(conn, *, user_id) -> bool:
         return True
 
 
+async def claim_mall_registration_attempt(conn, *, user_id) -> bool:
+    """Serialize the registration limit separately from connection/install attempts."""
+    key = f"mall-register:{user_id}"
+    async with conn.cursor() as cur:
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (key,))
+        await cur.execute("""select coalesce(sum(request_count), 0) as count from client_event_rate_limits
+            where scope = 'user' and key = %s and window_start > clock_timestamp() - interval '1 hour'""", (key,))
+        if (await cur.fetchone())["count"] >= 10:
+            return False
+        await cur.execute("""insert into client_event_rate_limits (scope, key, window_start, request_count)
+            values ('user', %s, clock_timestamp(), 1)""", (key,))
+        return True
+
+
 async def mall_connection_generation(conn, *, user_id, mall) -> str:
     async with conn.cursor() as cur:
         await cur.execute("""select id::text, status from mall_connections

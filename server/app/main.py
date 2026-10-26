@@ -690,9 +690,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(client_events_router)
     app.include_router(v1_router)
     if settings.mall_connect_enabled:
+        from .mall_connect import project_router as mall_project_router
         from .mall_connect import router as mall_connect_router
 
         app.include_router(mall_connect_router)
+        app.include_router(mall_project_router)
     if settings.detail_publish_enabled:
         from .detail_publications import router as detail_publications_router
 
