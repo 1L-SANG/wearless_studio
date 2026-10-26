@@ -146,7 +146,8 @@ def _result(row, r2, *, listing=False):
               "expiresAt": row["expires_at"], "createdAt": row["created_at"]}
     if listing:
         result.update(preset=row["preset"], width=row["width"], sliceCount=row["slice_count"],
-                      totalBytes=row["total_bytes"])
+                      totalBytes=row["total_bytes"], editorRevision=row["editor_revision"],
+                      productName=row["product_name"])
     return result
 
 

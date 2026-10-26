@@ -23,7 +23,8 @@ FACEMARKET_CUTOVER_JOB_KINDS = ("detail_page", "editor_image", "fm_model_asset_b
 
 
 _MALL_CONNECTION_COLS = """id::text, user_id::text, mall, status, shop_id, shop_name,
-    key_hint, permissions, connected_at, last_registered_at, revoked_at"""
+    key_hint, permissions, connected_at, last_registered_at, revoked_at,
+    token_expires_at, refresh_expires_at, scopes"""
 
 
 class MallShopMismatch(Exception):
@@ -2451,6 +2452,27 @@ async def get_job(conn: AsyncConnection, user_id: str, job_id: str) -> dict | No
         return await cur.fetchone()
 
 
+async def get_job_request_identity(conn: AsyncConnection, *, user_id: str, job_id: str) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select idempotency_key, project_id::text, payload from jobs where id = %s and user_id = %s",
+            (job_id, user_id),
+        )
+        return await cur.fetchone()
+
+
+async def list_project_jobs_by_kind(
+    conn: AsyncConnection, *, user_id: str, project_id: str, kind: str = "mall_register", limit: int = 5,
+) -> list[dict]:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s and kind = %s "
+            "order by created_at desc, id desc limit %s",
+            (user_id, project_id, kind, limit),
+        )
+        return await cur.fetchall()
+
+
 def _similar_cut_record(value: object) -> dict | None:
     """Storage envelope only; the planner validates the plan's action fields."""
     if (
@@ -3423,6 +3445,64 @@ async def set_job_progress(conn: AsyncConnection, job_id: str, progress: int):
             "update jobs set progress = greatest(progress, %s) where id = %s", (progress, job_id))
 
 
+async def _set_job_json_patch(
+    conn: AsyncConnection, *, column: str, job_id: str, patch: dict,
+    lease_token: str | None, user_id: str | None, expect_status: tuple[str, ...] | None,
+) -> bool:
+    where = ["id = %s"]
+    params = [Json(patch), job_id]
+    if lease_token is not None:
+        where.extend(["locked_by = %s", "status = 'running'"])
+        params.append(lease_token)
+    if user_id is not None:
+        where.append("user_id = %s")
+        params.append(user_id)
+    if expect_status is not None:
+        where.append("status = any(%s)")
+        params.append(list(expect_status))
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"update jobs set {column} = coalesce({column}, '{{}}'::jsonb) || %s::jsonb "
+            "where " + " and ".join(where),
+            tuple(params),
+        )
+        return cur.rowcount > 0
+
+
+async def set_job_metadata_patch(
+    conn: AsyncConnection, *, job_id: str, patch: dict,
+    lease_token: str | None = None, user_id: str | None = None,
+    expect_status: tuple[str, ...] | None = None,
+) -> bool:
+    return await _set_job_json_patch(
+        conn, column="metadata", job_id=job_id, patch=patch,
+        lease_token=lease_token, user_id=user_id, expect_status=expect_status,
+    )
+
+
+async def set_job_result_patch(
+    conn: AsyncConnection, *, job_id: str, patch: dict,
+    lease_token: str | None = None, user_id: str | None = None,
+    expect_status: tuple[str, ...] | None = None,
+) -> bool:
+    return await _set_job_json_patch(
+        conn, column="result", job_id=job_id, patch=patch,
+        lease_token=lease_token, user_id=user_id, expect_status=expect_status,
+    )
+
+
+async def set_job_progress_fenced(
+    conn: AsyncConnection, *, job_id: str, progress: int, lease_token: str,
+) -> bool:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set progress = greatest(progress, %s) "
+            "where id = %s and locked_by = %s and status = 'running'",
+            (progress, job_id, lease_token),
+        )
+        return cur.rowcount > 0
+
+
 async def renew_job_lease(conn: AsyncConnection, job_id: str, lease_token: str) -> bool:
     """실행 중인 잡의 lease 를 연장한다(하트비트).
 
@@ -4060,6 +4140,7 @@ async def finalize_uncharged_job(
     status: str,
     result: dict,
     product_tidy_capable: bool = False,
+    error_message: str | None = None,
 ) -> bool:
     """무과금 잡의 종결(원자·lease 펜스). False = lease 상실 → 아무것도 쓰지 않는다.
 
@@ -4089,10 +4170,12 @@ async def finalize_uncharged_job(
                 (Json(result), job_id),
             )
             return True
+        error_sql = ", error_message = %s" if status == "error" else ""
+        params = (status, Json(result)) + ((error_message,) if status == "error" else ()) + (job_id,)
         await cur.execute(
             "update jobs set status = %s, result = %s, progress = 100, "
-            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
-            (status, Json(result), job_id),
+            "locked_by = null, locked_at = null, finished_at = now()" + error_sql + " where id = %s",
+            params,
         )
         await cur.execute(
             "insert into job_events (job_id, event_type, payload) values (%s, %s, %s)",

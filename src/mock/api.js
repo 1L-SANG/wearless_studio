@@ -327,11 +327,12 @@ export const api = {
     DB.mallDefaults.zigzag = clone(next);
     return { ...clone(next), total: 4 };
   },
-  async createDetailPublication(projectId, { preset, width, productName, files }) {
+  async createDetailPublication(projectId, { preset, width, productName = '', files }) {
     const publicationId = uid('pub');
     const version = Math.max(0, ...DB.detailPublications.filter((item) => item.projectId === projectId).map((item) => item.version)) + 1;
+    const project = projectId === DB.project.id ? DB.project : projectDrafts.get(projectId)?.project;
     const row = { publicationId, projectId, preset, width, productName, version, status: 'pending',
-      files: clone(files), createdAt: new Date().toISOString() };
+      editorRevision: project?.editorRevision ?? 0, files: clone(files), createdAt: new Date().toISOString() };
     DB.detailPublications.push(row);
     return { publicationId, version, uploads: files.map(({ index }) => ({ index,
       uploadUrl: `https://images.example.test/pub/mock/${publicationId}/${String(index).padStart(2, '0')}.jpg`,

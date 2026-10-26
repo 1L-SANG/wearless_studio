@@ -139,6 +139,32 @@ test('mock library counts only ready publications for each project', async () =>
     row({ projectId: id, status: 'pending' }), row({ projectId: id, status: 'deleted' }), row({ projectId: 'other', status: 'ready' })];
   assert.equal((await api.getLibrary())[0].publicationCount, 2);
 });
+test('mock publication listing includes the published editor revision and product name', async () => {
+  const previousRevision = DB.project.editorRevision;
+  const previousPublications = DB.detailPublications;
+  try {
+    DB.detailPublications = [];
+    DB.project.editorRevision = 7;
+    const created = await api.createDetailPublication(DB.project.id, {
+      preset: 'smartstore', width: 860, productName: '게시한 셔츠', files: [],
+    });
+    DB.detailPublications.find((item) => item.publicationId === created.publicationId).status = 'ready';
+    DB.project.editorRevision = 8;
+    const { items } = await api.listDetailPublications(DB.project.id);
+    assert.equal(items[0].editorRevision, 7);
+    assert.equal(items[0].productName, '게시한 셔츠');
+    delete DB.project.editorRevision;
+    const unnamed = await api.createDetailPublication(DB.project.id, { preset: 'smartstore', width: 860, files: [] });
+    DB.detailPublications.find((item) => item.publicationId === unnamed.publicationId).status = 'ready';
+    const fallback = (await api.listDetailPublications(DB.project.id)).items[0];
+    assert.equal(fallback.editorRevision, 0);
+    assert.equal(fallback.productName, '');
+  } finally {
+    if (previousRevision === undefined) delete DB.project.editorRevision;
+    else DB.project.editorRevision = previousRevision;
+    DB.detailPublications = previousPublications;
+  }
+});
 test('account changes immediately hide manual HTML and deletion confirmation', async () => {
   const h = harness(); await h.ready();
   await findAll(h.render(), (node) => node.props?.children === 'HTML 복사')[0].props.onClick();

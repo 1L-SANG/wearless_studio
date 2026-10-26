@@ -55,6 +55,10 @@ def mall_pg(monkeypatch):
             if "create table" in statement or "create unique index" in statement:
                 admin.execute(statement.replace("public.mall_", f"{schema}.mall_")
                               .replace("references auth.users(id) on delete cascade", ""))
+        cafe24 = migration.with_name("20261027100000_mall_cafe24.sql")
+        for statement in cafe24.read_text().split(";"):
+            if "alter table public.mall_connections" in statement or "alter table public.mall_defaults" in statement:
+                admin.execute(statement.replace("public.mall_", f"{schema}.mall_"))
         admin.execute("""create table client_event_rate_limits (
             scope text, key text, window_start timestamptz, request_count integer)""")
         admin.execute("""create table jobs (
@@ -76,6 +80,25 @@ def mall_pg(monkeypatch):
     finally:
         admin.execute(psycopg.sql.SQL("drop schema {} cascade").format(psycopg.sql.Identifier(schema)))
         admin.close()
+
+
+def test_cafe24_migration_checks_actual_mall_constraints_and_token_columns(mall_pg):
+    _, admin, _pool = mall_pg
+    malls = ("zigzag", "ably", "smartstore", "cafe24")
+    for table in ("mall_connections", "mall_defaults"):
+        constraint = admin.execute(
+            "select pg_get_constraintdef(oid) as definition from pg_constraint "
+            "where conrelid = %s::regclass and conname = %s",
+            (table, f"{table}_mall_check"),
+        ).fetchone()
+        assert constraint is not None
+        assert all(f"'{mall}'::text" in constraint["definition"] for mall in malls)
+        for mall in malls:
+            admin.execute(psycopg.sql.SQL("insert into {} (user_id, mall) values (%s, %s)")
+                          .format(psycopg.sql.Identifier(table)), (USER, mall))
+    row = admin.execute("select token_expires_at, refresh_expires_at, scopes "
+                        "from mall_connections where mall = 'cafe24'").fetchone()
+    assert row == {"token_expires_at": None, "refresh_expires_at": None, "scopes": []}
 
 
 @pytest.mark.parametrize("change", ["disconnect", "replace"])

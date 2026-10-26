@@ -4,6 +4,7 @@ import os
 import math
 import pathlib
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 
 @dataclass(frozen=True)
@@ -459,6 +460,13 @@ class Settings:
     detail_publish_token_secret: str | None = None
     mall_connect_enabled: bool = False
     mall_keys_kek: str | None = None
+    cafe24_enabled: bool = False
+    cafe24_client_id: str | None = None
+    cafe24_client_secret: str | None = None
+    cafe24_redirect_uri: str = "https://api.wearless.kr/v1/malls/cafe24/callback"
+    cafe24_scopes: str = "mall.read_product mall.write_product mall.read_store mall.read_category"
+    cafe24_api_version: str = "2026-09-01"
+    cafe24_allowed_mall_ids: frozenset[str] = frozenset()
     zigzag_openapi_url: str = "https://openapi.zigzag.kr/1/graphql"
     zigzag_hmac_algorithm: str = "sha1"
     # ---- FaceMarket Chain (선택과제2, OmniOne Chain Free-Gas BESU) — record-only 정산 ----
@@ -631,6 +639,16 @@ class Settings:
     # 여기 안 적어도 된다 — 이 값은 병렬 워크트리(5174)·터널 같은 임시 QA 주소용이다.
     kakao_extra_redirect_uris: tuple[str, ...] = ()
 
+    @property
+    def cafe24_ready(self) -> bool:
+        return bool(self.cafe24_enabled and self.cafe24_client_id
+                    and self.cafe24_client_secret and self.mall_keys_kek)
+
+    @property
+    def cafe24_api_origin(self) -> str:
+        uri = urlsplit(self.cafe24_redirect_uri)
+        return f"{uri.scheme}://{uri.netloc}"
+
     def __post_init__(self):
         if (self.matching_cutout == "on"
                 or self.mannequin_tone_editor == "on"
@@ -651,6 +669,14 @@ class Settings:
                for model in (self.model_detail_core, self.model_detail_specialist, self.model_image_qc)):
             if not (self.anthropic_api_key or "").strip():
                 raise ValueError("Claude 검수 모델을 쓰려면 ANTHROPIC_API_KEY가 필요해요.")
+
+
+def registration_enabled(settings: Settings) -> bool:
+    return settings.mall_connect_enabled and settings.detail_publish_enabled and settings.cafe24_ready
+
+
+def is_allowed_mall(settings: Settings, mall_id: str) -> bool:
+    return not settings.cafe24_allowed_mall_ids or mall_id in settings.cafe24_allowed_mall_ids
 
 
 def _image_usage_persist(app_env: str) -> bool:
@@ -1124,6 +1150,16 @@ def load_settings() -> Settings:
         detail_publish_token_secret=os.getenv("DETAIL_PUBLISH_TOKEN_SECRET") or None,
         mall_connect_enabled=os.getenv("MALL_CONNECT_ENABLED", "false").lower() == "true",
         mall_keys_kek=os.getenv("MALL_KEYS_KEK") or None,
+        cafe24_enabled=os.getenv("CAFE24_ENABLED", "false").lower() == "true",
+        cafe24_client_id=os.getenv("CAFE24_CLIENT_ID") or None,
+        cafe24_client_secret=os.getenv("CAFE24_CLIENT_SECRET") or None,
+        cafe24_redirect_uri=os.getenv("CAFE24_REDIRECT_URI", "https://api.wearless.kr/v1/malls/cafe24/callback"),
+        cafe24_scopes=os.getenv("CAFE24_SCOPES", "mall.read_product mall.write_product mall.read_store mall.read_category"),
+        cafe24_api_version=os.getenv("CAFE24_API_VERSION", "2026-09-01"),
+        cafe24_allowed_mall_ids=frozenset(
+            mall_id.strip() for mall_id in os.getenv("CAFE24_ALLOWED_MALL_IDS", "").split(",")
+            if mall_id.strip()
+        ),
         zigzag_openapi_url=os.getenv("ZIGZAG_OPENAPI_URL", "https://openapi.zigzag.kr/1/graphql"),
         zigzag_hmac_algorithm=_flag("ZIGZAG_HMAC_ALGORITHM", "sha1", {"sha1", "sha256"}),
         fm_c2pa_cert_pem=os.getenv("FM_C2PA_CERT_PEM") or None,

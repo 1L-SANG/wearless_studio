@@ -467,6 +467,18 @@ def test_complete_derives_keys_instead_of_trusting_row(publication_client):
     assert all("another-user" not in key for key, _, _ in r2.copied)
 
 
+def test_listing_includes_editor_revision_and_product_name(publication_client):
+    client, store, _r2, _app = publication_client
+    created = uploaded(publication_client)
+    assert complete_publication(client, created).status_code == 200
+    response = client.get(f"/v1/projects/{PROJECT}/detail-publications")
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["editorRevision"] == 7
+    assert item["productName"] == "옷"
+    assert store["publications"][created["publicationId"]]["editor_revision"] == item["editorRevision"]
+
+
 def test_list_only_ready_and_owner(publication_client):
     client, store, _r2, app = publication_client
     created = uploaded(publication_client)
