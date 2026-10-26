@@ -46,6 +46,52 @@ async function finish(t, request) {
   return mock.getCafe24Registration(accepted.jobId);
 }
 
+test('peekEditorRevision does not touch revision sync', async (t) => {
+  const projectId = 'project-peek', original = [{ id: 'text', text: 'A' }], calls = [];
+  let server = { revision: 4, blocks: original };
+  t.mock.method(console, 'error', () => {});
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    calls.push([String(url), options.method]);
+    if (options.method === 'PUT') return json({ error: { code: 'editor_conflict', message: '다른 창에서 저장했어요' } }, 409);
+    return json(server);
+  });
+  await adapter.getEditorBlocks(projectId);
+  server = { revision: 5, blocks: [{ id: 'text', text: 'B' }] };
+  assert.equal(await adapter.peekEditorRevision(projectId), 5);
+  assert.equal(adapter.editorRevisionOf(projectId), 4);
+  await adapter.saveEditorBlocks(projectId, original);
+  assert.equal(calls.length, 2);
+  await assert.rejects(adapter.saveEditorBlocks(projectId, [{ id: 'text', text: 'A edited' }]),
+    (error) => error.status === 409 && error.code === 'editor_conflict');
+  assert.deepEqual(calls, [
+    [`/v1/projects/${projectId}/editor-blocks?withRevision=1`, 'GET'],
+    [`/v1/projects/${projectId}/editor-blocks?withRevision=1`, 'GET'],
+    [`/v1/projects/${projectId}/editor-blocks?baseRevision=4`, 'PUT'],
+  ]);
+  assert.equal(adapter.editorRevisionOf(projectId), 4);
+  assert.equal(await adapter.peekEditorRevision('project-peek-unloaded'), 5);
+  assert.equal(adapter.editorRevisionOf('project-peek-unloaded'), null);
+  for (const response of [[], { blocks: [], revision: '5' }]) {
+    server = response;
+    assert.equal(await adapter.peekEditorRevision(projectId), null);
+    assert.equal(adapter.editorRevisionOf(projectId), 4);
+  }
+});
+
+test('mock peekEditorRevision keeps the revision unknown and editor blocks unchanged', async () => {
+  const before = structuredClone(db.editorBlocks);
+  assert.equal(await mock.peekEditorRevision('project-local'), null);
+  assert.equal(mock.editorRevisionOf('project-local'), null);
+  assert.deepEqual(db.editorBlocks, before);
+});
+
+test('listMalls adds cafe24 unavailable when the server omits it', async (t) => {
+  const items = [{ mall: 'zigzag', status: 'connected', shopName: '스토어' },
+    { mall: 'ably', status: 'unavailable' }, { mall: 'smartstore', status: 'unavailable' }];
+  t.mock.method(globalThis, 'fetch', async () => json({ items, disabled: false }));
+  assert.deepEqual(await adapter.listMalls(), { items: [...items, { mall: 'cafe24', status: 'unavailable' }], disabled: false });
+});
+
 test('install sends normalized mall id with credentials include and reads start url', async (t) => {
   const calls = [];
   const startUrl = 'https://api.example.test/v1/malls/cafe24/install/local-attempt/start';

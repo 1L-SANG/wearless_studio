@@ -179,6 +179,9 @@ function editPlan(projectId, body) {
 
 export const mockAdapter = {
   ...base,
+  // 목 에디터는 리비전을 관리하지 않으므로 조회와 저장 기준 모두 모름(null)으로 둔다.
+  async peekEditorRevision() { return null; },
+  editorRevisionOf() { return null; },
   async pollJob(jobId, { onProgress, intervalMs = 1200, timeoutMs = 90000 } = {}) {
     const start = Date.now();
     for (;;) {

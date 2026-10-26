@@ -27,7 +27,7 @@ const reconnectCodes = ['reconnect_required', 'app_removed', 'missing_permission
 const validMoney = (value, minimum = 1) => /^\d+$/.test(value) && Number(value) >= minimum && Number(value) <= 2147483647;
 const won = (value) => Number(value || 0).toLocaleString('ko-KR');
 
-export function MallRegisterModal({ projectId, productName, connection, assets = [], waitForSave, onPublish, onClose, onRegistered, anchorRef }) {
+export function MallRegisterModal({ projectId, productName, connection, assets = [], waitForSave, onPublish, onConflict, onClose, onRegistered, anchorRef }) {
   const [phase, setPhase] = useState('preparing');
   const [publication, setPublication] = useState(null);
   const [name, setName] = useState(productName || '');
@@ -62,9 +62,12 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
     try {
       await waitForSave();
       if (!isCurrentRun()) return;
-      await api.getEditorBlocks(projectId);
+      const revision = await api.peekEditorRevision(projectId);
       if (!isCurrentRun()) return;
-      const revision = api.editorRevisionOf?.(projectId);
+      if (revision !== (api.editorRevisionOf?.(projectId) ?? null)) {
+        onConflict?.();
+        throw new Error('편집 내용이 다른 창에서 바뀌었어요. 다시 불러온 뒤 등록해 주세요');
+      }
       const response = await api.listDetailPublications(projectId);
       if (!isCurrentRun()) return;
       if (response.disabled) throw new Error('상세페이지 게시를 준비하고 있어요');

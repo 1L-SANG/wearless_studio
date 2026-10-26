@@ -4260,6 +4260,7 @@ export function Editor() {
       {registerCafe24 && <MallRegisterModal key={pubScope} projectId={projectId} productName={productName}
         connection={mallInfo?.items?.find((item) => item.mall === 'cafe24')} assets={cafe24Assets}
         waitForSave={waitForCafe24Save} onPublish={publishForCafe24} anchorRef={exportAnchorRef}
+        onConflict={reloadAfterEditorConflict}
         onClose={() => setRegisterCafe24(false)} />}
 
       {backWarn && (

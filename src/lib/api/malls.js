@@ -2,7 +2,11 @@ import { http } from './httpAdapter.js';
 
 export async function listMalls() {
   try {
-    return await http('/v1/malls', { suppressErrorLog: true });
+    const response = await http('/v1/malls', { suppressErrorLog: true });
+    if (!response.items.some((item) => item.mall === 'cafe24')) {
+      return { ...response, items: [...response.items, { mall: 'cafe24', status: 'unavailable' }] };
+    }
+    return response;
   } catch (error) {
     if (error?.status === 404) return { items: [], disabled: true };
     throw error;

@@ -747,6 +747,11 @@ export const httpAdapter = {
   async getEditorBlocks(projectId) {
     return editorRevisions.load(projectId);
   },
+  /** 본문을 적용하지 않는 조회는 에디터의 저장 기준을 바꾸지 않는다. */
+  async peekEditorRevision(projectId) {
+    const response = await http(`/v1/projects/${projectId}/editor-blocks?withRevision=1`);
+    return Number.isInteger(response?.revision) ? response.revision : null;
+  },
   /** 이 탭이 마지막으로 본 editor_revision(모르면 null) — 브라우저 임시 작업본의 기준점. */
   editorRevisionOf(projectId) {
     return editorRevisions.revisionOf(projectId);

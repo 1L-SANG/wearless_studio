@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { randomUUID } from 'node:crypto';
+import { createEditorRevisionSync } from '../../src/lib/editorRevisionSync.js';
 import { componentModule, hooks } from './helpers/reactHarness.mjs';
 
 const walk = (node) => [node, ...React.Children.toArray(node?.props?.children).flatMap(walk)];
@@ -13,7 +14,8 @@ const publication = { publicationId: 'pub-current', status: 'ready', editorRevis
 async function setup({ api: overrides = {}, strictEffects = false, ...extra } = {}) {
   const runtime = hooks(), calls = [];
   const api = {
-    getEditorBlocks: async () => { calls.push('revision'); return []; }, editorRevisionOf: () => 4,
+    getEditorBlocks: async () => [],
+    peekEditorRevision: async () => { calls.push('revision'); return 4; }, editorRevisionOf: () => 4,
     listDetailPublications: async () => ({ items: [publication] }), listCafe24Categories: async () => [{ categoryNo: 10, fullName: '의류 > 상의' }],
     createCafe24Registration: async (payload) => { calls.push(payload); return { jobId: 'job-one' }; },
     pollJob: async () => {}, getCafe24Registration: async () => ({ outcome: 'created', productNo: 123, thumbnail: 'none' }),
@@ -29,10 +31,10 @@ async function setup({ api: overrides = {}, strictEffects = false, ...extra } = 
     waitForSave: async () => { calls.push('save'); }, onPublish: async () => { calls.push('publish'); return publication; },
     assets: [{ assetId: 'asset-one', src: '/v1/assets/asset-one/file' }], onClose() {}, ...extra };
   const render = () => runtime.render(MallRegisterModal, props);
-  render(); runtime.flushEffects(); await settle();
+  render(); const cleanups = runtime.flushEffects(); await settle();
   const price = (value = '39000') => byName(render(), 'price').props.onChange({ target: { value } });
   const confirm = () => button(render(), '카페24에 상품 등록').props.onClick();
-  return { render, price, confirm, calls, props, api, runtime };
+  return { render, price, confirm, calls, props, api, runtime, unmount: () => cleanups.forEach((cleanup) => cleanup?.()) };
 }
 
 test('register button disabled until price entered', async () => {
@@ -74,7 +76,7 @@ test('modal waits for save then publishes when latest publication revision diffe
   let saved, resolveSave, resolvePublish;
   const ui = await setup({ waitForSave: () => new Promise((resolve) => { resolveSave = () => { saved = true; resolve(); }; }),
     onPublish: () => new Promise((resolve) => { resolvePublish = resolve; }),
-    api: { getEditorBlocks: async () => { assert.equal(saved, true); }, listDetailPublications: async () => ({ items: [{ ...publication, editorRevision: 3 }] }) } });
+    api: { peekEditorRevision: async () => { assert.equal(saved, true); return 4; }, listDetailPublications: async () => ({ items: [{ ...publication, editorRevision: 3 }] }) } });
   ui.price(); assert.equal(button(ui.render(), '카페24에 상품 등록').props.disabled, true);
   resolveSave(); await settle();
   assert.match(renderToStaticMarkup(ui.render()), /지금 상세페이지를 먼저 게시해요/);
@@ -84,6 +86,64 @@ test('modal waits for save then publishes when latest publication revision diffe
   assert.match(renderToStaticMarkup(ui.render()), /사진 1장/);
   await ui.confirm(); assert.equal(ui.calls[0].publicationId, 'pub-current');
   const current = await setup(); current.price(); await current.confirm(); assert.ok(!current.calls.includes('publish'));
+});
+
+test('opening the modal never advances the editor save baseline', async () => {
+  const original = [{ id: 'text', text: 'A' }];
+  let server = { revision: 4, blocks: original }, peeks = 0;
+  const writes = [];
+  const sync = createEditorRevisionSync({ load: async () => server,
+    put: async (_id, body, baseRevision) => {
+      writes.push(baseRevision);
+      if (baseRevision !== server.revision) throw Object.assign(new Error('conflict'), { code: 'editor_conflict' });
+      server = { revision: server.revision + 1, blocks: body };
+      return server;
+    } });
+  await sync.load('project-one');
+  server = { revision: 5, blocks: [{ id: 'text', text: 'B saved in another tab' }] };
+  const ui = await setup({ waitForSave: () => sync.save('project-one', original), api: {
+    getEditorBlocks: (id) => sync.load(id),
+    peekEditorRevision: async () => { peeks++; return server.revision; },
+    editorRevisionOf: (id) => sync.revisionOf(id),
+  } });
+  assert.equal(ui.api.editorRevisionOf('project-one'), 4);
+  assert.equal(peeks, 1);
+  assert.deepEqual(writes, []);
+  ui.props.onClose(); ui.unmount();
+  await assert.rejects(sync.save('project-one', [{ id: 'text', text: 'A edited after closing modal' }]),
+    (error) => error.code === 'editor_conflict');
+  assert.deepEqual(writes, [4]);
+  assert.equal(server.blocks[0].text, 'B saved in another tab');
+});
+
+test('modal detects revision changed by another tab and routes to conflict recovery without publishing', async () => {
+  let recovered = 0, listings = 0;
+  const ui = await setup({ onConflict: () => recovered++, api: {
+    peekEditorRevision: async () => 5,
+    listDetailPublications: async () => { listings++; return { items: [] }; },
+  } });
+  assert.equal(recovered, 1);
+  assert.equal(listings, 0);
+  assert.equal(ui.calls.includes('publish'), false);
+  assert.equal(ui.calls.some((entry) => entry?.requestKey), false);
+  const markup = renderToStaticMarkup(ui.render());
+  assert.match(markup, /role="alert"/);
+  assert.match(markup, /편집 내용이 다른 창에서 바뀌었어요. 다시 불러온 뒤 등록해 주세요/);
+  ui.price();
+  assert.equal(button(ui.render(), '카페24에 상품 등록').props.disabled, true);
+});
+
+test('closed modal ignores a pending revision conflict', async () => {
+  let recovered = 0, listings = 0, resolvePeek;
+  const ui = await setup({ onConflict: () => recovered++, api: {
+    peekEditorRevision: () => new Promise((resolve) => { resolvePeek = resolve; }),
+    listDetailPublications: async () => { listings++; return { items: [] }; },
+  } });
+  ui.unmount();
+  resolvePeek(5); await settle();
+  assert.equal(recovered, 0);
+  assert.equal(listings, 0);
+  assert.equal(ui.calls.includes('publish'), false);
 });
 
 test('request key is created once per confirm and reused on retry', async () => {
