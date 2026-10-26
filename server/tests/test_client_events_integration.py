@@ -14,6 +14,7 @@ class Cursor:
     def __init__(self, rows):
         self.rows = rows
         self.queries = []
+        self.rowcount = 0
 
     async def __aenter__(self):
         return self

@@ -31,6 +31,7 @@ def test_delete_account_revokes_mall_connections(client, make_token, monkeypatch
 
     class Conn:
         def __init__(self):
+            self.locks = []
             self.db = sqlite3.connect(":memory:", check_same_thread=False)
             self.db.executescript("""
                 create table mall_connections(user_id text, mall text, status text,
@@ -43,14 +44,21 @@ def test_delete_account_revokes_mall_connections(client, make_token, monkeypatch
                 create table mall_defaults(user_id text, addresses text);
                 insert into mall_defaults values ('user-1', '{"shippingAddressId":"a1"}');
                 create table personalization_profiles(id text, user_id text, status text, created_at text);
+                create table mall_install_attempts(user_id text, mall text, saved_at text, voided_at text);
+                insert into mall_install_attempts values
+                    ('user-1', 'cafe24', null, null),
+                    ('user-1', 'cafe24', 'saved', null),
+                    ('other', 'cafe24', null, null);
             """)
         def cursor(self): return self
         async def __aenter__(self): return self
         async def __aexit__(self, *_): return False
         async def execute(self, sql, args=()):
             if "pg_advisory_xact_lock" in sql:
+                self.locks.append(args[0])
                 return
             self.result = self.db.execute(sql.replace("%s", "?").replace("now()", "CURRENT_TIMESTAMP").replace("id::text", "id").replace("for update", ""), args)
+            self.rowcount = self.result.rowcount
         async def fetchone(self): return self.result.fetchone()
         async def commit(self): self.db.commit()
 
@@ -70,6 +78,10 @@ def test_delete_account_revokes_mall_connections(client, make_token, monkeypatch
         assert all(status == "revoked" and ak is None and sk is None and revoked for status, ak, sk, revoked in rows)
         assert conn.db.execute("select status, access_key_enc, secret_key_enc from mall_connections where user_id = 'other'").fetchone() == ("connected", b"\x07", b"\x08")
         assert conn.db.execute("select addresses from mall_defaults").fetchall() == [('{"shippingAddressId":"a1"}',)]
+        attempts = conn.db.execute("select user_id, saved_at, voided_at from mall_install_attempts").fetchall()
+        assert attempts[0][2] is not None
+        assert attempts[1:] == [('user-1', 'saved', None), ('other', None, None)]
+        assert conn.locks[:2] == ['mall-account:user-1', 'mall:user-1:cafe24']
     finally:
         conn.db.close()
 

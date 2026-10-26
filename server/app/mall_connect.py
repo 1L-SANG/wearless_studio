@@ -1,6 +1,7 @@
 """Mall connections and reusable defaults. Product creation belongs to the next stage."""
 
 import hashlib
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -102,6 +103,10 @@ def _connection_result(row, mall):
             "connectedAt": row.get("connected_at") if row else None,
             "lastRegisteredAt": row.get("last_registered_at") if row else None}
     if mall == "cafe24":
+        result.pop("keyHint")
+        if row and (not row.get("refresh_expires_at")
+                    or row["refresh_expires_at"] <= datetime.now(timezone.utc)):
+            result["status"] = "reconnect_required"
         result["mallId"] = row.get("shop_id") if row else None
         result["tokenExpiresAt"] = row.get("token_expires_at") if row else None
     return result
@@ -120,8 +125,12 @@ async def list_malls(request: Request, response: Response, user_id: str = Depend
     async with get_conn(request) as conn:
         row = await repo.get_mall_connection(conn, user_id=user_id, mall="zigzag")
         defaults = await repo.get_mall_defaults(conn, user_id=user_id, mall="zigzag")
+        cafe24 = await repo.get_mall_connection(conn, user_id=user_id, mall="cafe24")
+    cafe24_item = _connection_result(cafe24, "cafe24")
+    if not request.app.state.settings.cafe24_ready:
+        cafe24_item["status"] = "unavailable"
     return {"items": [{**_connection_result(row, "zigzag"), "defaults": _defaults_result(defaults)},
-                      {"mall": "ably", "status": "unavailable"}, {"mall": "smartstore", "status": "unavailable"}]}
+                      cafe24_item, {"mall": "ably", "status": "unavailable"}, {"mall": "smartstore", "status": "unavailable"}]}
 
 
 async def _verify_and_save(request, body, user_id, *, rotate=False):
@@ -195,6 +204,31 @@ def _install_cookie_hash(request, attempt_id):
 def _cafe24_client(settings, mall_id):
     return Cafe24Client(mall_id, client_id=settings.cafe24_client_id,
         client_secret=settings.cafe24_client_secret, api_version=settings.cafe24_api_version)
+
+
+@router.delete("/cafe24", status_code=204)
+async def disconnect_cafe24(request: Request, user_id: str = Depends(require_user)):
+    settings = request.app.state.settings
+    refresh_token = None
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:cafe24",))
+        row = await repo.get_mall_connection(conn, user_id=user_id, mall="cafe24")
+        if row and settings.mall_keys_kek:
+            tokens = await repo.get_cafe24_tokens(conn, user_id=user_id, connection_id=row["id"], kek=settings.mall_keys_kek)
+            refresh_token = tokens["refresh_token"] if tokens else None
+        await repo.revoke_mall_connection(conn, user_id=user_id, mall="cafe24")
+        await repo.void_install_attempts(conn, user_id=user_id, mall="cafe24")
+        await conn.commit()
+    if refresh_token:
+        succeeded = False
+        try:
+            await _cafe24_client(settings, row["shop_id"]).revoke(refresh_token, "refresh_token")
+            succeeded = True
+        except Exception:
+            pass
+        logging.getLogger(__name__).info("Cafe24 revoke succeeded=%s", succeeded)
+    return Response(status_code=204)
 
 
 @router.post("/cafe24/install")

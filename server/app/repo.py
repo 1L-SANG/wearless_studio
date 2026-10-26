@@ -51,6 +51,36 @@ async def get_mall_connection_keys(conn, *, user_id, mall, kek) -> tuple | None:
         return (row["access_key"], row["secret_key"]) if row else None
 
 
+async def get_cafe24_connection_by_id(conn, *, user_id, connection_id) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(f"""select {_MALL_CONNECTION_COLS} from mall_connections
+            where user_id = %s and id = %s and mall = 'cafe24'""", (user_id, connection_id))
+        return await cur.fetchone()
+
+
+async def get_cafe24_tokens(conn, *, user_id, connection_id, kek) -> dict | None:
+    # Read the version with its plaintext so a concurrent rotation cannot mix versions.
+    async with conn.cursor() as cur:
+        await cur.execute(f"""select {_MALL_CONNECTION_COLS},
+            public.wl_billing_decrypt(access_key_enc, %s) as access_token,
+            public.wl_billing_decrypt(secret_key_enc, %s) as refresh_token from mall_connections
+            where user_id = %s and id = %s and mall = 'cafe24' and status = 'connected'""",
+            (kek, kek, user_id, connection_id))
+        return await cur.fetchone()
+
+
+async def update_cafe24_tokens(conn, *, user_id, connection_id, access_token, refresh_token,
+                                token_expires_at, refresh_expires_at, kek) -> bool:
+    async with conn.cursor() as cur:
+        await cur.execute("""update mall_connections set
+            access_key_enc = public.wl_billing_encrypt(%s, %s),
+            secret_key_enc = public.wl_billing_encrypt(%s, %s),
+            token_expires_at = %s, refresh_expires_at = %s, updated_at = now()
+            where user_id = %s and id = %s and mall = 'cafe24' and status = 'connected'""",
+            (access_token, kek, refresh_token, kek, token_expires_at, refresh_expires_at, user_id, connection_id))
+        return cur.rowcount == 1
+
+
 async def upsert_mall_connection(conn, *, user_id, mall, shop_id, shop_name, key_hint,
                                  access_key, secret_key, permissions, kek, expected_connection_id=None) -> dict | None:
     async with conn.transaction():
@@ -95,6 +125,8 @@ async def revoke_mall_connection(conn, *, user_id, mall) -> bool:
 async def revoke_all_mall_connections(conn, user_id):
     async with conn.cursor() as cur:
         await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall-account:{user_id}",))
+        # Refresh holds this lock before updating rows; take it before the bulk update too.
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:cafe24",))
         await cur.execute("""update mall_connections set status = 'revoked', revoked_at = now(),
             updated_at = now(), access_key_enc = null, secret_key_enc = null
             where user_id = %s""", (user_id,))
@@ -193,6 +225,14 @@ async def purge_old_install_attempts(conn, *, user_id) -> int:
     async with conn.cursor() as cur:
         await cur.execute("""delete from mall_install_attempts
             where user_id = %s and created_at < now() - interval '1 day'""", (user_id,))
+        return cur.rowcount
+
+
+async def void_install_attempts(conn, *, user_id, mall="cafe24") -> int:
+    async with conn.cursor() as cur:
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:{mall}",))
+        await cur.execute("""update mall_install_attempts set voided_at = now()
+            where user_id = %s and mall = %s and saved_at is null and voided_at is null""", (user_id, mall))
         return cur.rowcount
 
 

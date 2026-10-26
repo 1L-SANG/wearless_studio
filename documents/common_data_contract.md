@@ -799,6 +799,14 @@ R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Ca
 
 카페24 연결 응답에는 `mallId`(`shop_id`)와 `tokenExpiresAt`을 포함한다. 연결 세대는 해당 사용자와 몰의 가장 최근 행(`created_at desc, id desc`)의 `id:status`이고 행이 없으면 `none`이다.
 
+`GET /v1/malls`의 `{items:[...]}` 봉투와 지그재그 항목은 유지한다. 카페24 항목은 `mall`, `status`, `shopName`, `mallId`, `permissions`, `connectedAt`, `lastRegisteredAt`, `tokenExpiresAt`을 제공한다. 준비 전에는 `unavailable`, 활성 행이 없으면 `none`, refresh 만료 또는 영속 무효화 뒤에는 `reconnect_required`, 그 외에는 `connected`다.
+
+카페24 호출 직전에 고정한 `connection_id`로 토큰을 읽고, access 만료 여유가 5분 이하면 갱신한다. `mall:{user}:cafe24` 잠금 안에서 행과 만료 여유를 다시 검사해 동시 요청이 한 번만 회전하도록 한다. 갱신 중에는 예외적으로 외부 호출의 최대 8초 동안 몰 잠금을 유지하며, 새 access와 refresh 암호문 및 만료 시각을 커밋한 뒤에만 반환한다. `invalid_grant`이면 refresh 만료 표시와 두 암호문 삭제를 커밋해 재설치를 요구한다. 회전 응답이나 DB 커밋을 잃으면 다음 갱신의 `invalid_grant`로 같은 상태가 된다.
+
+401 강제 갱신과 두 번째 401의 영속 무효화는 거절당한 `token_expires_at`이 아직 최신일 때만 적용한다. 그 사이 다른 요청이 회전했다면 현재 토큰을 재사용한다. 두 번째 401의 무효화가 버전 변경으로 적용되지 않으면 최신 토큰으로 한 번 더 시도하며, 원격 함수 호출은 총 3회까지다. 앱 삭제 의미의 403도 같은 조건부 무효화를 적용하고, 일반 권한 부족 403은 토큰을 지우지 않는다. 토큰 서비스의 사용자, 연결 ID, 거절된 버전과 호출 함수 인자는 키워드 전용이다.
+
+`DELETE /v1/malls/cafe24`는 로그인 필수다. 몰 잠금 안에서 로컬 연결을 해제하고 암호문을 지우며, 활성 연결 유무와 관계없이 미저장 설치 시도를 무효화하고 커밋한다. 접수, 시작, 소비됐지만 토큰 교환 중인 시도 모두 포함한다. 이후 메모리에 확보한 refresh로 원격 revoke를 최선으로 시도하며 실패해도 204다. 원격 대기 중 새 연결이 생겨도 건드리지 않는다. 탈퇴도 같은 계정 잠금 안에서 로컬 해제와 미저장 시도 무효화를 수행하고 원격 revoke는 하지 않는다. 잠금 순서는 `mall-account:{user}`, `mall:{user}:{mall}`, `mall-defaults:{user}:{mall}`이며 몰 잠금 뒤에 계정 잠금을 잡지 않는다.
+
 | 라우트 | 계약 |
 |---|---|
 | `POST /v1/malls/cafe24/install` | 로그인 필수. `{mallId,returnTo?}`의 몰 아이디를 정규화하고 허용 목록을 검사한다. 준비 전 503 `cafe24_unconfigured`, 잘못된 몰 400 `invalid_mall_id`, 허용 목록 밖 403 `cafe24_not_allowed`, 폐쇄 계정 404 `account_closed`. 지그재그와 시간당 10회 제한을 공유하며 초과 시 429 `rate_limited`. 시도 행 커밋 뒤 `{startUrl}`과 브라우저 비밀 쿠키를 발급한다. URL에는 비밀과 서명이 없다. |

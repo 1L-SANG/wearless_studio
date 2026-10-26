@@ -699,6 +699,7 @@ async def delete_account(request: Request, user_id: str = Depends(require_user))
 
     async with get_conn(request) as conn:
         await repo.revoke_all_mall_connections(conn, user_id)
+        await repo.void_install_attempts(conn, user_id=user_id, mall="cafe24")
         await delete_user_events(conn, user_id)
         async with conn.cursor() as cur:
             await cur.execute(

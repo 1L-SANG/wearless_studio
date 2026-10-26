@@ -44,6 +44,14 @@ class FakeCursor:
         self.result = []
         if "pg_advisory_xact_lock" in q:
             return
+        if q.startswith("update mall_install_attempts set voided_at"):
+            self.rowcount = 0
+            for row in self.store.get("installs", {}).values():
+                if ((row["user_id"], row["mall"]) == args
+                        and row["saved_at"] is None and row["voided_at"] is None):
+                    row["voided_at"] = NOW
+                    self.rowcount += 1
+            return
         if "from jobs" in q and "as closed" in q:
             self.result = [{"closed": args[0] in self.store["closed_accounts"]}]
             return
