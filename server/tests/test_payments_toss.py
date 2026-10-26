@@ -92,11 +92,12 @@ def pay(monkeypatch, keypair):
         status, payload = state["toss_response"]
         if status != 200:
             raise payments._err(payload.get("code", "x"), payload.get("message", "x"), 402)
-        return {"status": "DONE", "totalAmount": amount, "method": "카드", **payload}
+        return {"status": "DONE", "totalAmount": amount, "method": "카드",
+                "approvedAt": "2026-11-24T09:00:00+09:00", **payload}
 
     async def fake_purchase_topup(conn, *, user_id, plan_code, idempotency_key=None,
                                   metadata=None, provider="test", provider_ref=None,
-                                  snapshot=None):
+                                  snapshot=None, purchased_at=None):
         for g in state["grants"]:      # 원장 멱등 — 같은 키면 재적립 없이 기존 결과
             if g["idempotency_key"] == idempotency_key:
                 return {**g["result"], "idempotent": True}
@@ -105,6 +106,7 @@ def pay(monkeypatch, keypair):
         result = {"credits": credits, "available": state["balance"]}
         state["grants"].append({"idempotency_key": idempotency_key, "provider": provider,
                                 "provider_ref": provider_ref, "snapshot": snapshot,
+                                "purchased_at": purchased_at,
                                 "result": result})
         return result
 
@@ -257,6 +259,7 @@ def test_confirm_grants_credits_with_toss_provenance(pay, make_token):
     grant = state["grants"][0]
     # 결제 출처가 원장에 남아야 환불·대사(reconciliation)가 가능하다
     assert grant["provider"] == "toss" and grant["provider_ref"] == "pk_1"
+    assert grant["purchased_at"] == "2026-11-24T09:00:00+09:00"
     assert grant["idempotency_key"] == order["orderId"]
     assert state["toss_calls"][0]["amount"] == PLAN["price"]
 

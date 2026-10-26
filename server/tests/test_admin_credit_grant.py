@@ -1,6 +1,7 @@
 """관리자 계좌이체 지급의 인증, 원장 기록, 재시도 계약."""
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -129,7 +130,17 @@ def test_admin_grants_in_production_and_records_transfer(grant, make_token):
                                        "note": "계좌이체 확인", "baseCredits": 100,
                                        "bonusCredits": 0, "bonusPercent": 0, "planAtOrder": "free"}
     assert c.accounts[TARGET]["balance"] == 120
+    assert len(c.sources[0]) == 5  # 시행 전 결제는 period_end 파라미터 없이 무기한 유지
     assert c.commits == 1
+
+
+def test_admin_grant_uses_paid_date_for_post_cutoff_expiry(grant, make_token):
+    body = {**BODY, "paid_at": "2026-11-24T00:00:00+09:00"}
+    response = post(grant, make_token, body=body)
+    assert response.status_code == 200, response.text
+    source_params = grant[1].sources[0]
+    assert source_params[4] == datetime(2026, 11, 23, 15, 0, tzinfo=timezone.utc)
+    assert source_params[5] == "payment-1"
 
 
 def test_retry_returns_same_grant_without_duplicate_credit(grant, make_token):

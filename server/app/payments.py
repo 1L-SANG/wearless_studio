@@ -243,6 +243,7 @@ async def confirm_payment(
                 idempotency_key=order["order_id"], provider="toss",
                 provider_ref=body.payment_key,
                 metadata={"orderId": order["order_id"], "method": payment.get("method")},
+                purchased_at=payment.get("approvedAt"),
                 # 결제 시점 확정값으로 적립 — 그 사이 카탈로그가 바뀌어도 결제한 만큼만 준다.
                 snapshot={"credits": order["credits"], "price": order["amount"],
                           "bonusCredits": order.get("bonus_credits") or 0,

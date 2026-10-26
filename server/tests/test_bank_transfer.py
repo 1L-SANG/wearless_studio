@@ -7,8 +7,10 @@
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
 from app import bank_transfer, bank_transfer_admin, bank_transfer_notify, bank_transfer_service as service
@@ -225,14 +227,16 @@ class Cursor:
             self._set([{"id": pid}])
         elif q.startswith("insert into credit_sources"):
             sid = s.next_id("src")
-            if "period_end" in q:
+            if "'subscription'" in q:
                 s.sources[sid] = {"id": sid, "user_id": p[0], "plan_id": p[1], "initial": p[2],
                                   "remaining": p[3], "status": "active", "type": "subscription",
                                   "period_end": p[4], "payment_id": None}
             else:
                 s.sources[sid] = {"id": sid, "user_id": p[0], "plan_id": p[1], "initial": p[2],
                                   "remaining": p[3], "status": "active", "type": "topup",
-                                  "period_end": None, "payment_id": p[4]}
+                                  "period_end": (p[4] + timedelta(days=365)
+                                                 if "interval '1 year'" in q else None),
+                                  "payment_id": p[5] if "interval '1 year'" in q else p[4]}
             self._set([{"id": sid}])
         elif q.startswith("update credit_sources set payment_id"):
             s.sources[p[1]]["payment_id"] = p[0]
@@ -372,6 +376,46 @@ def test_info_disabled_without_account(store, keypair, make_token):
     assert res.status_code == 503
     assert res.json()["error"]["code"] == "bank_transfer_unavailable"
     assert not store.requests
+
+
+def test_production_manifest_disables_new_bank_transfer_sales():
+    manifest_path = Path(__file__).resolve().parents[2] / "copilot/api/manifest.yml"
+    variables = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))["variables"]
+    assert variables.get("BANK_TRANSFER_ENABLED") == "false"
+
+
+def test_disabled_sales_preserve_existing_request_and_entitlement_paths(
+        client, store, make_token):
+    assert create(client, make_token, planCode="seller").status_code == 200
+    assert create(client, make_token, planCode="topup_finish").status_code == 200
+    ids = _uuidify(store)
+    subscription_id = next(rid for rid in ids if store.requests[rid]["plan_code"] == "seller")
+    topup_id = next(rid for rid in ids if store.requests[rid]["plan_code"] == "topup_finish")
+    assert subscription_id and topup_id
+
+    client.app.state.settings = replace(client.app.state.settings, bank_transfer_enabled=False)
+
+    assert client.get("/v1/bank-transfer/info", headers=auth_headers(make_token)).json() == {
+        "enabled": False,
+    }
+    unavailable = create(client, make_token, planCode="starter")
+    assert unavailable.status_code == 503
+    assert unavailable.json()["error"]["code"] == "bank_transfer_unavailable"
+
+    opened = client.get(
+        "/v1/bank-transfer/requests/open", headers=auth_headers(make_token)).json()["open"]
+    assert {request["id"] for request in opened} == {subscription_id, topup_id}
+
+    canceled = client.post(
+        f"/v1/bank-transfer/requests/{topup_id}/cancel", headers=auth_headers(make_token))
+    assert canceled.status_code == 200
+    confirmed = confirm(client, make_token, subscription_id)
+    assert confirmed.status_code == 200
+
+    entitlement = client.get(
+        "/v1/bank-transfer/entitlement", headers=auth_headers(make_token)).json()
+    assert entitlement["active"] is True
+    assert entitlement["planCode"] == "seller"
 
 
 # ---------------------------------------------------------------- 신청
@@ -578,6 +622,15 @@ def test_confirm_topup_grants_snapshot_and_is_idempotent(client, store, make_tok
     assert again.json()["creditSourceId"] == "src-1" and again.json()["available"] == 280
     assert len(store.ledger) == len(store.payments) == 1 and len(store.audits) == 1
     assert store.notifications.count(("user", "seller@example.com", "topup_finish", None)) == 1
+
+
+def test_confirm_topup_uses_actual_paid_date_for_validity(client, store, make_token):
+    create(client, make_token, planCode="topup_finish")
+    rid = _uuidify(store)[0]
+    response = confirm(client, make_token, rid, paidAt="2026-11-24T00:00:00+09:00")
+    assert response.status_code == 200, response.text
+    source = next(iter(store.sources.values()))
+    assert source["period_end"] == datetime(2027, 11, 23, 15, 0, tzinfo=timezone.utc)
 
 
 def test_confirm_preserves_pro_bonus_after_downgrade_once(client, store, make_token):

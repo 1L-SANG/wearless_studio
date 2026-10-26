@@ -129,3 +129,19 @@ curl -s -H "Authorization: Bearer <token>" https://api.wearless.kr/v1/subscripti
 
 **크레딧이 안 사라진다**
 소멸은 `SubscriptionExpirer` 만 한다. 워커가 떠 있는지(로그 `subscription-expirer`), `grace_until`/`current_period_end` 가 지났는지 확인한다. `active` 구독은 **설계상 절대 소멸하지 않는다**(이월 정책).
+
+## 9. 수동 계좌이체에서 토스 정기결제로 전환 (2026-10-25)
+
+정기결제 계약 완료 뒤 운영 `ai.wearless.kr`을 토스 카드 자동결제로 바꿀 때는 프런트를 먼저 배포하고 서버 판매 스위치를 나중에 끈다. 두 변경을 한 배포에 섞으면 서버만 먼저 닫힌 동안 운영 화면의 계좌이체 버튼이 503을 내는 구간이 생길 수 있다.
+
+1. `bill_wearlau5j`의 라이브 클라이언트 키와 시크릿 키가 한 세트인지 확인한다.
+2. `GET /v1/subscriptions/me`가 운영에서 200인지 확인한다.
+3. 관리자 `계좌이체 확인` 화면에서 `확인 대기` 신청이 0건인지 확인한다.
+4. 프런트의 신규 수동 계좌이체 판매를 끄고 `ai.wearless.kr/pricing`에 카드 `구매하기`를 연다.
+5. 기존 열린 신청 조회·취소와 수동 이용권 조회는 판매 스위치와 분리해 유지한다.
+6. 프런트 배포와 세 심사·운영 호스트를 확인한 뒤 서버의 `BANK_TRANSFER_ENABLED=false`를 배포한다.
+7. 승인된 카드사 카드로 실제 승인 테스트를 할 때는 실행 직전에 오너 승인을 받는다.
+
+카드사 심사 중에는 승인된 카드사만 사용할 수 있다. 심사 등록 URL인 `toss.wearless.kr`은 상품, 가격, 푸터와 로그인 경로를 바꾸지 않고 유지한다. 전 카드사 승인 뒤 상점관리자에서 `bill_wearlau5j`의 홈페이지를 `https://ai.wearless.kr/pricing`으로 변경 신청하고, 변경 승인 뒤에만 심사 호스트를 내린다.
+
+장애 롤백은 `VITE_BANK_TRANSFER_ENABLED=true`로 프런트를 재배포하는 방식으로 한다. 이미 열린 토스 구독은 수동 이용권과 중복 지급하지 않으며, 서버의 기존 상호배제 제약을 그대로 사용한다.

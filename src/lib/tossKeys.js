@@ -12,7 +12,8 @@
    MID 가 하나뿐인 상점이면 VITE_TOSS_BILLING_CLIENT_KEY 를 비워 두면 된다 —
    일반결제 키로 떨어진다. 서버의 fallback 규칙과 같은 모양이다. */
 
-import { IS_PG_REVIEW_HOST } from './host.js';
+import { IS_GENERAL_PAYMENT_REVIEW_HOST, IS_PG_REVIEW_HOST } from './host.js';
+export { GENERAL_PAYMENT_REVIEW_PRODUCTS, isGeneralPaymentReviewProduct } from './generalPaymentProducts.js';
 
 /** 1회 충전(requestPayment) 용 — 일반결제 MID 의 클라이언트 키. */
 export const TOSS_CLIENT_KEY = import.meta.env.VITE_TOSS_CLIENT_KEY;
@@ -33,21 +34,25 @@ export const SUBSCRIPTION_TRANSFER_ENABLED = false;
    충전은 **일반결제**라 자동결제 계약만으로는 라이브에서 동작하지 않는다
    (`requestPayment` + `/v1/payments/confirm`). 2026-09-10 토스 확인:
    자동결제 MID 로 단건 결제를 대신 처리하는 것도 불가.
-   일반결제 계약(도입비 별도) 전까지 **탭을 숨긴다** — 누르면 실패할 버튼을 두면
-   사용자가 결제 실패를 겪는다. 서버 라우트(app/payments.py)는 그대로 살려 둔다:
-   TOSS_SECRET_KEY 가 없으면 이미 503 이고, 계약이 생기면 이 값만 true 로 바꾸면 된다.
-   크레딧이 부족한 사용자는 요금제 업그레이드(즉시 비례결제)로 간다. */
-export const TOPUP_ENABLED = false;
+   일반 운영 호스트에서는 계약 완료 전까지 숨기고, pay.wearless.kr 심사 호스트에서만
+   테스트 일반결제창을 확인할 수 있게 연다. 서버 라우트(app/payments.py)는 그대로 쓰며
+   TOSS_SECRET_KEY 가 없으면 승인 단계에서 503으로 멈춘다. */
+export const TOPUP_ENABLED = IS_GENERAL_PAYMENT_REVIEW_HOST;
+
+/** 일반결제 심사 호스트는 구독 상품을 숨겨 두 MID의 심사 경로를 분리한다. */
+export const SUBSCRIPTION_PRODUCTS_ENABLED = !IS_GENERAL_PAYMENT_REVIEW_HOST;
 
 /* 계좌이체(무통장입금) 신청 노출 여부 — PG 심사 전 결제 경로.
    지시서 docs/superpowers/plans/2026-09-22-bank-transfer-payments.md. 사용자가 사업자 통장으로
    입금하고 관리자가 확인해 지급한다(충전 팩 + 구독 플랜 1개월 이용권). 켜져 있으면 요금제
    버튼이 토스 결제창 대신 신청 창을 열고, 충전 탭도 보인다(계좌이체로는 충전을 팔 수 있다).
    토스가 열리면 false 로 바꾼다. 코드는 남긴다. 계좌 정보는 서버(/v1/bank-transfer/info)가 준다.
-   심사 전용 호스트(toss.wearless.kr)만 예외로 끈다 — 토스가 그 주소에서 결제창까지 심사한다
-   (lib/host.js IS_PG_REVIEW_HOST). ai.wearless.kr 손님은 계속 계좌이체다. */
-export const BANK_TRANSFER_ENABLED = !IS_PG_REVIEW_HOST;
+   두 심사 전용 호스트에서는 항상 끈다. 운영에서도 명시적으로 true 를 넣었을 때만 열어
+   환경변수 누락이 계좌이체 재오픈으로 이어지지 않게 한다. 기존 신청·수동 이용권 조회는
+   이 판매 스위치와 별개로 유지한다(Pricing·Subscription). */
+export const BANK_TRANSFER_ENABLED = import.meta.env.VITE_BANK_TRANSFER_ENABLED === 'true'
+  && !(IS_PG_REVIEW_HOST || IS_GENERAL_PAYMENT_REVIEW_HOST);
 
 // 토스 심사용 임시 이메일 로그인. 심사 종료 후 false로 바꾸고 재배포한다.
 // 화면 노출만 제어한다. 사용한 심사 계정과 세션도 별도로 비활성화해야 한다.
-export const PG_REVIEW_LOGIN_ENABLED = true;
+export const PG_REVIEW_LOGIN_ENABLED = IS_PG_REVIEW_HOST || IS_GENERAL_PAYMENT_REVIEW_HOST;
