@@ -114,6 +114,88 @@ async def claim_mall_connection_attempt(conn, *, user_id) -> bool:
         return True
 
 
+async def mall_connection_generation(conn, *, user_id, mall) -> str:
+    async with conn.cursor() as cur:
+        await cur.execute("""select id::text, status from mall_connections
+            where user_id = %s and mall = %s order by created_at desc, id desc limit 1""", (user_id, mall))
+        row = await cur.fetchone()
+        return f"{row['id']}:{row['status']}" if row else "none"
+
+
+async def create_install_attempt(conn, *, user_id, mall, mall_id, expected_generation,
+                                 return_to, cookie_hash, expires_at) -> str:
+    async with conn.cursor() as cur:
+        await cur.execute("""insert into mall_install_attempts
+            (user_id, mall, mall_id, expected_generation, return_to, cookie_hash, expires_at)
+            values (%s, %s, %s, %s, %s, %s, %s) returning id::text""",
+            (user_id, mall, mall_id, expected_generation, return_to, cookie_hash, expires_at))
+        return (await cur.fetchone())["id"]
+
+
+async def start_install_attempt(conn, *, attempt_id, cookie_hash) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute("""update mall_install_attempts set started_at = now()
+            where id = %s and cookie_hash = %s and started_at is null
+              and consumed_at is null and voided_at is null and expires_at > now()
+            returning user_id::text, mall_id, expires_at""", (attempt_id, cookie_hash))
+        return await cur.fetchone()
+
+
+async def consume_install_attempt(conn, *, attempt_id, cookie_hash) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute("""update mall_install_attempts set consumed_at = now()
+            where id = %s and cookie_hash = %s and started_at is not null
+              and consumed_at is null and voided_at is null and expires_at > now()
+            returning user_id::text, mall_id, expected_generation, return_to""", (attempt_id, cookie_hash))
+        return await cur.fetchone()
+
+
+async def save_cafe24_connection(conn, *, attempt_id, user_id, mall_id, shop_name,
+                                 access_token, refresh_token, token_expires_at,
+                                 refresh_expires_at, scopes, permissions, kek) -> dict | None:
+    async with conn.transaction():
+        async with conn.cursor() as cur:
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall-account:{user_id}",))
+        if await user_account_purge_closed(conn, user_id):
+            raise MallAccountClosed()
+        async with conn.cursor() as cur:
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:cafe24",))
+            await cur.execute("""select mall_id, expected_generation, consumed_at, saved_at, voided_at
+                from mall_install_attempts where id = %s and user_id = %s and mall = 'cafe24' for update""",
+                (attempt_id, user_id))
+            attempt = await cur.fetchone()
+        if (not attempt or attempt["consumed_at"] is None or attempt["saved_at"] is not None
+                or attempt["voided_at"] is not None or attempt["mall_id"] != mall_id):
+            return None
+        if await mall_connection_generation(conn, user_id=user_id, mall="cafe24") != attempt["expected_generation"]:
+            return None
+        await revoke_mall_connection(conn, user_id=user_id, mall="cafe24")
+        async with conn.cursor() as cur:
+            await cur.execute(f"""insert into mall_connections
+                (user_id, mall, shop_id, shop_name, key_hint, access_key_enc, secret_key_enc,
+                 token_expires_at, refresh_expires_at, scopes, permissions)
+                values (%s, 'cafe24', %s, %s, null, public.wl_billing_encrypt(%s, %s),
+                        public.wl_billing_encrypt(%s, %s), %s, %s, %s, %s)
+                returning {_MALL_CONNECTION_COLS}""",
+                (user_id, mall_id, shop_name, access_token, kek, refresh_token, kek,
+                 token_expires_at, refresh_expires_at, scopes, permissions))
+            row = await cur.fetchone()
+            await cur.execute("update mall_install_attempts set saved_at = now() where id = %s", (attempt_id,))
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall-defaults:{user_id}:cafe24",))
+            await cur.execute("""insert into mall_defaults (user_id, mall, shop_id) values (%s, %s, %s)
+                on conflict (user_id, mall) do update set shop_id = excluded.shop_id, addresses = '{}',
+                  completed_items = array_remove(mall_defaults.completed_items, 'addresses'), updated_at = now()
+                where mall_defaults.shop_id is distinct from excluded.shop_id""", (user_id, "cafe24", mall_id))
+            return row
+
+
+async def purge_old_install_attempts(conn, *, user_id) -> int:
+    async with conn.cursor() as cur:
+        await cur.execute("""delete from mall_install_attempts
+            where user_id = %s and created_at < now() - interval '1 day'""", (user_id,))
+        return cur.rowcount
+
+
 async def get_mall_defaults(conn, *, user_id, mall) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute("""select shop_id, shipping, returns, addresses, disclosure, tax_type, product_origin,

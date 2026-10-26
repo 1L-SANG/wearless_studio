@@ -769,7 +769,7 @@ R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Ca
 |---|---|---|
 | `mall` | `mall` | `zigzag`, `ably`, `smartstore`, `cafe24` |
 | `status` | `status` | 저장은 `connected`, `revoked`. 활성 연결이 없으면 응답은 `none` |
-| `shop_id`, `shop_name` | `shopName` | 인증키로 조회한 스토어. ID는 서버에서만 사용 |
+| `shop_id`, `shop_name` | `shopName`, 카페24의 `mallId` | 인증으로 조회한 스토어. 지그재그 ID는 서버에서만 사용 |
 | `key_hint` | `keyHint` | Access Key 끝자리 최대 8자. 원문 전체가 될 만큼 짧으면 null |
 | `access_key_enc`, `secret_key_enc` | 제공하지 않음 | 전용 `MALL_KEYS_KEK`와 `pgp_sym_encrypt`로 암호화 |
 | `permissions` | `permissions` | 셀러용 권한 문구 배열 |
@@ -797,11 +797,33 @@ R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Ca
 
 카페24 저장 계약: `shop_id`는 `mall_id`이고 `access_key_enc`, `secret_key_enc`에 access token과 refresh token을 각각 암호화한다. `token_expires_at`, `refresh_expires_at`은 timestamptz, `scopes`는 기본값이 빈 배열인 필수 text[]다. 만료 시각은 토큰 수신 시각에서 각각 2시간에 60초를 뺀 값, 14일에 1시간을 뺀 값으로 계산하며 access 만료 시각은 토큰 버전으로도 쓴다. 카페24 기본 설정은 아직 쓰지 않는다.
 
+카페24 연결 응답에는 `mallId`(`shop_id`)와 `tokenExpiresAt`을 포함한다. 연결 세대는 해당 사용자와 몰의 가장 최근 행(`created_at desc, id desc`)의 `id:status`이고 행이 없으면 `none`이다.
+
+| 라우트 | 계약 |
+|---|---|
+| `POST /v1/malls/cafe24/install` | 로그인 필수. `{mallId,returnTo?}`의 몰 아이디를 정규화하고 허용 목록을 검사한다. 준비 전 503 `cafe24_unconfigured`, 잘못된 몰 400 `invalid_mall_id`, 허용 목록 밖 403 `cafe24_not_allowed`, 폐쇄 계정 404 `account_closed`. 지그재그와 시간당 10회 제한을 공유하며 초과 시 429 `rate_limited`. 시도 행 커밋 뒤 `{startUrl}`과 브라우저 비밀 쿠키를 발급한다. URL에는 비밀과 서명이 없다. |
+| `GET /v1/malls/cafe24/install/{attempt_id}/start` | 로그인 없이 쿠키 해시가 시도 행과 일치해야 한 번만 시작할 수 있다. 쿠키를 새로 발급하지 않는다. `{a:attempt_id,e:만료 epoch}`만 서명한 state를 사용해 카페24 승인 주소로 302 이동한다. |
+| `GET /v1/malls/cafe24/callback` | 로그인 없이 서명 state, 쿠키, 시도 행을 대조한다. 시도를 원자적으로 소비하고 커밋한 뒤 토큰을 교환한다. 응답 몰과 허용 목록, scope를 재검사하고, 저장 시 계정 잠금, 몰 잠금, 시도 행 `for update` 순서로 폐쇄 여부와 소비됨, 미저장, 미무효화, 세대 일치를 확인한다. 토큰을 암호화하고 `saved_at`을 같은 트랜잭션에 저장한다. 실패해 받은 토큰은 최선으로 폐기한다. 항상 고정 `public_web_origin`의 `/settings/malls?mall=cafe24&result=...`로 302 이동한다. |
+
+`returnTo`는 `/`로 시작하고 `//`로 시작하지 않는 경로만 저장하고 성공 이동 주소의 쿼리에 포함한다. 설치 쿠키는 `wl_cafe24_install={attempt_id}.{secret}`, `Secure; HttpOnly; SameSite=Lax; Path=/v1/malls/cafe24; Max-Age=600`이며 Domain을 지정하지 않는다. 접수, 시작, 콜백 응답은 `Cache-Control: no-store`, 시작과 콜백은 `Referrer-Policy: no-referrer`를 사용한다. 콜백은 성공과 실패 모두 쿠키를 지운다. 시작과 콜백의 접근 로그 쿼리는 `[redacted]`로 가린다. 토큰, code, state, 비밀 원문을 결과 응답이나 로그에 넣지 않는다.
+
+| `result` | 셀러 문구 |
+|---|---|
+| `connected` | 연결됨 |
+| `cancelled` | 설치를 취소했어요. 다시 시도하면 돼요 |
+| `state_invalid` | 설치 확인이 만료됐거나 다른 브라우저에서 돌아왔어요. 같은 브라우저에서 다시 시작해 주세요 |
+| `mall_mismatch` | 입력한 몰 아이디와 로그인한 몰이 달라요. 몰 아이디를 확인해 주세요 |
+| `missing_permission` | 권한을 모두 허용해야 등록할 수 있어요. 다시 설치하며 권한을 허용해 주세요 |
+| `not_allowed` | 지금은 시범 운영 중이라 등록된 몰만 연결할 수 있어요 |
+| `connection_changed` | 그 사이 연결이 바뀌었어요. 지금 상태를 확인한 뒤 다시 시도해 주세요 |
+| `token_exchange_failed` | 카페24에서 인증을 마치지 못했어요. 잠시 뒤 다시 시도해 주세요 |
+| `account_closed` | 계정 삭제가 완료되어 사용할 수 없습니다. |
+
 `mall_install_attempts`는 서버 전용이며 RLS를 켜고 anon과 authenticated의 모든 권한을 회수한다. service_role만 접근한다. `user_id`, `mall='cafe24'`, `mall_id`, `expected_generation`, `return_to`, `cookie_hash`(SHA-256), `created_at`, `expires_at`과 `started_at`, `consumed_at`, `saved_at`, `voided_at`을 보관한다. 브라우저 비밀 원문과 토큰은 저장하지 않으며 시도는 10분 뒤 만료된다.
 
 설정은 `CAFE24_ENABLED=false`, `CAFE24_CLIENT_ID`, `CAFE24_CLIENT_SECRET`, `CAFE24_REDIRECT_URI=https://api.wearless.kr/v1/malls/cafe24/callback`, `CAFE24_SCOPES='mall.read_product mall.write_product mall.read_store mall.read_category'`, `CAFE24_API_VERSION=2026-09-01`, `CAFE24_ALLOWED_MALL_IDS=''`다. client secret은 서버 비밀이다. `cafe24_ready`는 스위치와 client ID, client secret, `MALL_KEYS_KEK`가 모두 있어야 참이다. `cafe24_api_origin`은 콜백의 오리진이다. 허용 몰 목록은 쉼표로 나눠 공백을 제거한 frozenset이며 빈 목록은 제한 없음이다. `registration_enabled`는 `MALL_CONNECT_ENABLED`, `DETAIL_PUBLISH_ENABLED`, `cafe24_ready`를 모두 요구한다.
 
-카페24 등록 원장은 별도 표 없이 무과금 `jobs.kind='mall_register'` 한 건이다. `payload`는 확정 입력, `metadata`는 진행 기록, `result`는 결과이고 `metadata.productNo`가 상품 번호 확정의 근거다. `idempotency_key`는 `cafe24-register:{user_id}:{requestKey}`이고 요청 식별 정보는 소유자 조건으로 별도 조회한다. 프로젝트별 목록도 소유자와 kind를 제한해 최신 5건을 읽는다. JSON 패치는 얕은 병합이며 접수는 소유자의 pending 잡, 워커는 running 상태와 같은 lease, 확인 요청은 소유자의 done 또는 error 잡에만 쓴다. 진행률도 lease로 보호하고 종결의 `error_message`는 error일 때만 기록한다. 기존 활성 잡 인덱스를 유지하므로 같은 프로젝트의 등록은 한 번에 하나만 실행한다. 설치와 등록 HTTP 경로는 후속 Task에서 구현한다.
+카페24 등록 원장은 별도 표 없이 무과금 `jobs.kind='mall_register'` 한 건이다. `payload`는 확정 입력, `metadata`는 진행 기록, `result`는 결과이고 `metadata.productNo`가 상품 번호 확정의 근거다. `idempotency_key`는 `cafe24-register:{user_id}:{requestKey}`이고 요청 식별 정보는 소유자 조건으로 별도 조회한다. 프로젝트별 목록도 소유자와 kind를 제한해 최신 5건을 읽는다. JSON 패치는 얕은 병합이며 접수는 소유자의 pending 잡, 워커는 running 상태와 같은 lease, 확인 요청은 소유자의 done 또는 error 잡에만 쓴다. 진행률도 lease로 보호하고 종결의 `error_message`는 error일 때만 기록한다. 기존 활성 잡 인덱스를 유지하므로 같은 프로젝트의 등록은 한 번에 하나만 실행한다. 등록 HTTP 경로는 후속 Task에서 구현한다.
 
 ## 7. 현행 코드와의 갭 (마이그레이션 TODO)
 
