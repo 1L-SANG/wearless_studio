@@ -3,17 +3,15 @@ import { Button, Icon } from '@/components/ui.jsx';
 import styles from './ExportMenu.module.css';
 
 export function buildExportMenuItems({ malls, publishEnabled, gifCount, onDownload, onPublish, onConnect, onGifs }) {
-  const connected = malls?.items?.find((item) => item.mall === 'zigzag')?.status === 'connected';
+  const zigzagDisabled = malls?.disabled || malls?.items?.find((item) => item.mall === 'zigzag')?.status === 'connected';
   return [
     { id: 'download', label: '이미지로 다운로드', icon: 'download', kind: 'action', onSelect: onDownload },
     ...(publishEnabled ? [{ id: 'paste', label: '몰에 붙여넣기', icon: 'link', kind: 'action', onSelect: onPublish }] : []),
-    ...(!malls?.disabled ? [
-      { id: 'zigzag', label: connected ? '지그재그에 상품 등록' : '지그재그 연결하기',
-        logo: '/assets/malls/zigzag-48.png', srcSet: '/assets/malls/zigzag-96.png 2x', kind: connected ? 'action' : 'go',
-        disabled: connected, badge: connected ? '준비 중' : undefined, onSelect: onConnect },
-      { id: 'ably', label: '에이블리에 상품 등록', logo: '/assets/malls/ably-48.png',
-        srcSet: '/assets/malls/ably-96.png 2x', kind: 'action', disabled: true, badge: '준비 중' },
-    ] : []),
+    { id: 'zigzag', label: zigzagDisabled ? '지그재그에 상품 등록' : '지그재그 연결하기',
+      logo: '/assets/malls/zigzag-48.png', srcSet: '/assets/malls/zigzag-96.png 2x', kind: zigzagDisabled ? 'action' : 'go',
+      disabled: zigzagDisabled, badge: zigzagDisabled ? '준비 중' : undefined, onSelect: onConnect },
+    { id: 'ably', label: '에이블리에 상품 등록', logo: '/assets/malls/ably-48.png',
+      srcSet: '/assets/malls/ably-96.png 2x', kind: 'action', disabled: true, badge: '준비 중' },
     ...(gifCount > 0 ? [{ id: 'gif', label: 'GIF 따로 받기', icon: 'gif', kind: 'action', onSelect: onGifs }] : []),
   ];
 }

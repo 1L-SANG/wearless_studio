@@ -761,7 +761,7 @@ R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Ca
 
 ## § 쇼핑몰 연결
 
-`MALL_CONNECT_ENABLED` 기본값은 false이며 꺼져 있으면 `/v1/malls` 라우트와 몰 메뉴를 제공하지 않는다. 에이블리와 스마트스토어는 `unavailable` 표시만 제공한다.
+`MALL_CONNECT_ENABLED` 기본값은 false이며 꺼져 있으면 `/v1/malls` 라우트와 프로필의 쇼핑몰 연결 메뉴를 제공하지 않는다. 연결 API가 꺼져 있으면 메뉴의 지그재그·에이블리 항목은 '준비 중'으로 비활성 표시한다. 에이블리와 스마트스토어는 `unavailable` 표시만 제공한다.
 
 | 저장 필드 | HTTP 필드 | 의미 |
 |---|---|---|
