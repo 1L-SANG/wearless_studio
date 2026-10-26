@@ -142,8 +142,13 @@ test('profile menu shows 쇼핑몰 연결 above 요금제 관리 only when enabl
   assert.doesNotMatch(await profile(true, true), /쇼핑몰 연결/);
 });
 
-test('menu hides mall items when connect api is disabled', async () => {
+test('disabled connect api hides profile link and shows export mall items as 준비 중', async () => {
   assert.doesNotMatch(await profile(false, false), /쇼핑몰 연결/);
   const { buildExportMenuItems } = await componentModule('src/features/editor/ExportMenu.jsx', ['buildExportMenuItems'], {});
-  assert.deepEqual(buildExportMenuItems({ malls: { disabled: true }, publishEnabled: true, gifCount: 0 }).map((item) => item.id), ['download', 'paste']);
+  const items = buildExportMenuItems({ malls: { disabled: true }, publishEnabled: true, gifCount: 0 });
+  assert.deepEqual(items.map((item) => item.id), ['download', 'paste', 'zigzag', 'ably']);
+  for (const item of items.filter((item) => ['zigzag', 'ably'].includes(item.id))) {
+    assert.equal(item.disabled, true);
+    assert.equal(item.badge, '준비 중');
+  }
 });

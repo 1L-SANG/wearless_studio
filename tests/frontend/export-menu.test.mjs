@@ -38,13 +38,20 @@ test('split button renders main and caret with aria', async () => {
   assert.equal(downloads, 1); assert.equal(opened, true);
 });
 
-test('menu lists fixed order and hides mall items when connect api is disabled', async () => {
+test('menu lists fixed order and shows mall items as 준비 중 when connect api is disabled', async () => {
   const { buildExportMenuItems } = await load();
   assert.deepEqual(buildExportMenuItems(options()).map((item) => item.label),
     ['이미지로 다운로드', '몰에 붙여넣기', '지그재그 연결하기', '에이블리에 상품 등록', 'GIF 따로 받기']);
-  assert.deepEqual(buildExportMenuItems(options({ malls: { disabled: true } })).map((item) => item.label),
-    ['이미지로 다운로드', '몰에 붙여넣기', 'GIF 따로 받기']);
-  assert.deepEqual(buildExportMenuItems(options({ malls: { disabled: true }, publishEnabled: false, gifCount: 0 })).map((item) => item.label), ['이미지로 다운로드']);
+  const disabled = buildExportMenuItems(options({ malls: { items: [], disabled: true } }));
+  assert.deepEqual(disabled.map((item) => item.label),
+    ['이미지로 다운로드', '몰에 붙여넣기', '지그재그에 상품 등록', '에이블리에 상품 등록', 'GIF 따로 받기']);
+  assert.deepEqual(disabled.filter((item) => ['zigzag', 'ably'].includes(item.id))
+    .map(({ id, label, kind, disabled, badge }) => ({ id, label, kind, disabled, badge })), [
+    { id: 'zigzag', label: '지그재그에 상품 등록', kind: 'action', disabled: true, badge: '준비 중' },
+    { id: 'ably', label: '에이블리에 상품 등록', kind: 'action', disabled: true, badge: '준비 중' },
+  ]);
+  assert.deepEqual(buildExportMenuItems(options({ malls: { disabled: true }, publishEnabled: false, gifCount: 0 })).map((item) => item.label),
+    ['이미지로 다운로드', '지그재그에 상품 등록', '에이블리에 상품 등록']);
 });
 
 test('zigzag item is connect link when not connected and disabled badge when connected', async () => {
