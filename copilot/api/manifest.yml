@@ -92,7 +92,7 @@ network:
 #    원인은 터널 프로토콜이 아니다. 측정은 .scratch/tunnel-protocol-20261012/(로컬).
 sidecars:
   cloudflared:
-    image: cloudflare/cloudflared@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
+    image: cloudflare/cloudflared@sha256:4c72c1af2984a66a255efd20fc4ec73fe0f7267384b55315ad953b354b3361b4
     essential: true
     command: ["tunnel", "--grace-period", "55s", "run"]
     depends_on:
