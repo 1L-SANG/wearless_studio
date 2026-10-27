@@ -280,6 +280,7 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
         {outcome === 'unknown' && <p>지금 다시 등록하면 같은 상품이 두 번 생길 수 있어요</p>}
         {outcome === 'duplicate_suspected' && <p>같은 코드의 상품이 여러 개예요</p>}
         {outcome === 'failed' && <p className={styles.error} role="alert">{FAILURE_COPY[result.code] || result.errorMessage || FAILURE_COPY.unknown}</p>}
+        {outcome && outcome !== 'failed' && <a className={styles.goLink} href={adminUrl} target="_blank" rel="noopener noreferrer">카페24 관리자에서 보기 ›</a>}
         {notice && <p role="status" className={styles.notice}>{notice}</p>}
         {error && <p role="alert" className={styles.error}>{error}</p>}
       </div>
@@ -295,7 +296,6 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
           {outcome === 'failed' && reconnectCodes.includes(result.code)
             && <Link className={styles.goLink} to="/settings/malls">다시 연결하기 ›</Link>}
         </div>
-        {outcome && outcome !== 'failed' && <a className={styles.goLink} href={adminUrl} target="_blank" rel="noopener noreferrer">카페24 관리자에서 보기 ›</a>}
       </footer>
     </div>
   </Modal>;
