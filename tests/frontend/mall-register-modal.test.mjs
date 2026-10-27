@@ -51,6 +51,10 @@ test('register button disabled until price entered', async () => {
   ui.price(); assert.equal(button(ui.render(), '카페24에 상품 등록').props.disabled, false);
   const markup = renderToStaticMarkup(ui.render());
   assert.match(markup, /없이 등록/); assert.match(markup, /<select[^>]*name="categoryNo"/); assert.match(markup, /<details/);
+  assert.match(markup, /<span>상세설명<\/span><span>이미지 1장<\/span>/);
+  assert.match(markup, /판매가만 넣으면 돼요/);
+  assert.match(markup, /옵션과 재고는 카페24 관리자에서 더해요/);
+  assert.match(markup, /판매가 39,000원 · 사진 1장 · 진열함, 판매함/);
   byName(ui.render(), 'thumbnailAssetId').props.onChange({ target: { value: '' } });
   await ui.confirm(); assert.equal(ui.calls.find((value) => value?.requestKey).thumbnailAssetId, undefined);
   const blocked = await setup({ waitForSave: async () => { throw new Error('저장을 마쳐 주세요'); } });
@@ -325,12 +329,52 @@ test('request key is created once per confirm and reused on retry', async () => 
   assert.notEqual(reopened.calls.find((entry) => entry?.requestKey).requestKey, received[0].requestKey);
 });
 
+test('progress titles and status copy follow submitting polling and verifying phases', async () => {
+  let finishSubmit, finishPoll, reportProgress, finishVerify;
+  const ui = await setup({ api: {
+    createCafe24Registration: () => new Promise((resolve) => { finishSubmit = resolve; }),
+    pollJob: (_id, { onProgress }) => { reportProgress = onProgress; return new Promise((resolve) => { finishPoll = resolve; }); },
+    getCafe24Registration: async () => registration(),
+    verifyCafe24Registration: () => new Promise((resolve) => { finishVerify = resolve; }),
+  } });
+  const expectProgress = (title, status) => {
+    const tree = ui.render();
+    assert.equal(walk(tree).find((node) => node.type === 'h2').props.children, title);
+    assert.ok(walk(tree).some((node) => node.props?.role === 'status' && renderToStaticMarkup(node).includes(status)));
+  };
+  assert.equal(walk(ui.render()).find((node) => node.type === 'h2').props.children, '확인하고 등록해요');
+  ui.price(); const submitting = ui.confirm();
+  expectProgress('등록하고 있어요', '등록 준비 중');
+  finishSubmit({ jobId: 'job-one' }); await settle();
+  reportProgress(69); expectProgress('등록하고 있어요', '이미지 올리는 중');
+  reportProgress(70); expectProgress('등록하고 있어요', '상품 등록 중');
+  finishPoll(); await submitting;
+  const verifying = button(ui.render(), '다시 확인').props.onClick();
+  expectProgress('확인하고 있어요', '등록 확인 중');
+  finishVerify({ found: false }); await verifying;
+  assert.equal(walk(ui.render()).find((node) => node.type === 'h2').props.children, '등록 여부를 확인하고 있어요');
+});
+
 test('status screens map derived outcomes created unknown duplicate failed', async () => {
   for (const [outcome, copy] of [['created', '등록 완료'], ['unknown', '등록 여부를 확인하고 있어요'], ['duplicate_suspected', '같은 코드의 상품이 여러 개예요'], ['failed', '등록하지 못했어요']]) {
     const ui = await setup({ api: { getCafe24Registration: async () => ({ status: 'error', outcome, productNo: outcome === 'created' ? 123 : null, thumbnail: 'skipped', code: 'invalid_request' }) } });
     ui.price(); await ui.confirm(); const markup = renderToStaticMarkup(ui.render());
     assert.ok(markup.includes(copy), outcome);
-    if (outcome === 'created') { assert.match(markup, /123/); assert.match(markup, /대표 이미지는 카페24 관리자에서 넣어 주세요/); }
+    if (outcome === 'created') {
+      assert.match(markup, /<div role="status"><p>상품 번호 123<\/p>/);
+      assert.doesNotMatch(markup, /카페24에 상품을 등록했어요/);
+      assert.match(markup, /대표 이미지는 카페24 관리자에서 넣어 주세요/);
+    }
+    if (outcome === 'duplicate_suspected') {
+      assert.match(markup, /<p>같은 코드의 상품이 여러 개예요<\/p>/);
+      assert.equal(markup.split('카페24 관리자에서 확인해 주세요').length - 1, 1);
+    }
+    if (outcome === 'failed') {
+      assert.equal(walk(ui.render()).filter((node) => node.props?.onClick === ui.props.onClose).length, 1);
+      assert.ok(button(ui.render(), '닫기'));
+      assert.doesNotMatch(markup, /닫고 입력 확인하기/);
+      assert.match(markup, /카페24가 입력을 받지 않았어요. 판매가와 상품명을 확인해 주세요/);
+    }
   }
   let closed = 0, focused;
   const ui = await setup({ onClose: () => closed++ });
@@ -352,7 +396,7 @@ test('error poll result still fetches registration detail for code and copy', as
     getCafe24Registration: async () => { details++; return { status: 'error', outcome: 'failed', code: 'reconnect_required', errorMessage: '카페24 연결이 끊겼어요. 쇼핑몰 연결에서 다시 설치해 주세요' }; } } });
   ui.price(); await ui.confirm();
   const markup = renderToStaticMarkup(ui.render()); assert.equal(details, 1); assert.match(markup, /쇼핑몰 연결에서 다시 설치해 주세요/);
-  assert.match(markup, /href="\/settings\/malls"/); assert.doesNotMatch(markup, /generic raw failure/);
+  assert.match(markup, /href="\/settings\/malls"[^>]*>다시 연결하기 ›<\/a>/); assert.doesNotMatch(markup, /generic raw failure|닫고 입력 확인하기/);
 });
 
 test('poll timeout retains job id and request key without creating another job', async () => {
@@ -373,7 +417,8 @@ test('unknown state offers verify button and never re-registers automatically', 
   ui.price(); await ui.confirm(); assert.equal(verifies, 0);
   assert.ok(!button(ui.render(), '카페24에 상품 등록'));
   await button(ui.render(), '다시 확인').props.onClick();
-  assert.match(renderToStaticMarkup(ui.render()), /아직 확인되지 않았어요/);
+  assert.match(renderToStaticMarkup(ui.render()), /아직 확인되지 않았어요. 잠시 뒤 다시 확인해 주세요<\/p>/);
+  assert.match(renderToStaticMarkup(ui.render()), /카페24 관리자에서 보기 ›/);
   await button(ui.render(), '다시 확인').props.onClick();
   assert.match(renderToStaticMarkup(ui.render()), /등록 완료/); assert.equal(ui.calls.filter((entry) => entry?.requestKey).length, 1);
   let checks = 0;

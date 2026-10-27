@@ -35,6 +35,23 @@ test('cafe24 row renders none editing starting connected failed reconnect states
   }
 });
 
+test('connected cafe24 metadata hides permissions while zigzag keeps them', async () => {
+  const { MallConnectionRow } = await load();
+  for (const mall of ['cafe24', 'zigzag']) {
+    const markup = html(React.createElement(MallConnectionRow, { mall, state: 'connected',
+      connection: { ...connection, mall, connectedAt: '2026-10-26', lastRegisteredAt: '2026-10-26', keyHint: '12345678' } }));
+    assert.match(markup, /연결한 날 2026.10.26/);
+    assert.match(markup, /마지막 등록 2026.10.26/);
+    if (mall === 'cafe24') {
+      assert.match(markup, /몰 아이디 myshop/);
+      assert.doesNotMatch(markup, /권한|상품 조회와 등록|인증키 끝자리/);
+    } else {
+      assert.match(markup, /권한 상품 조회와 등록/);
+      assert.match(markup, /인증키 끝자리 12345678/);
+    }
+  }
+});
+
 test('cafe24 start button disabled while starting', async () => {
   const runtime = hooks(); let resolve, starts = 0, assigned;
   const previous = globalThis.window;
@@ -94,6 +111,12 @@ test('callback result query shows seller copy and clears query', async () => {
     const connectedRuntime = hooks(); const module = await load(connectedRuntime);
     connectedRuntime.render(module.Cafe24Connection, props); connectedRuntime.flushEffects();
     assert.equal(rowOf(connectedRuntime.render(module.Cafe24Connection, props)).props.state, 'none'); assert.equal(changed, 1);
+    globalThis.window.location.href = 'https://app.test/settings/malls?mall=cafe24&result=state_invalid';
+    const expiredRuntime = hooks(); const expired = await load(expiredRuntime);
+    expiredRuntime.render(expired.Cafe24Connection, props); expiredRuntime.flushEffects();
+    const expiredRow = rowOf(expiredRuntime.render(expired.Cafe24Connection, props));
+    assert.equal(expiredRow.props.state, 'failed');
+    assert.equal(expiredRow.props.error, '설치 확인이 만료됐어요. 같은 브라우저에서 다시 시작해 주세요');
   } finally { globalThis.window = previous; }
 });
 
@@ -153,6 +176,10 @@ test('account switch gives Cafe24 a fresh form and ignores the old install respo
 test('revoke dialog copy for cafe24', async () => {
   const { MallActionDialog } = await load();
   const markup = html(React.createElement(MallActionDialog, { mall: 'cafe24', kind: 'revoke', anchorRef: {} }));
-  assert.match(markup, /카페24 연결을 해제할까요\?/); assert.match(markup, /자사몰과의 연결이 끊겨요/);
+  assert.match(markup, /카페24 연결을 해제할까요\?/);
+  assert.match(markup, /해제하면 에디터에서 바로 등록을 못 해요. 등록한 상품과 게시한 이미지는 그대로예요<\/p>/);
+  assert.doesNotMatch(markup, /자사몰과의 연결이 끊겨요/);
   assert.match(markup, /등록한 상품과 게시한 이미지는 그대로예요/); assert.doesNotMatch(markup, /기본 설정은 남아요/);
+  const zigzag = html(React.createElement(MallActionDialog, { kind: 'revoke', anchorRef: {} }));
+  assert.match(zigzag, /스토어와의 연결이 끊겨요. 해제하면 에디터에서 바로 등록을 못 해요. 등록한 상품과 게시한 이미지는 그대로예요. 기본 설정은 남아요/);
 });

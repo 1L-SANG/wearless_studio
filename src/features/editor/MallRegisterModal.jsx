@@ -195,7 +195,7 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
       const detail = await api.getCafe24Registration(request.current.jobId);
       if (!isCurrent()) return;
       applyDetail(detail);
-      setNotice(response?.found === false ? '아직 확인되지 않았어요. 잠시 뒤 다시 확인하거나 카페24 관리자 상품 목록을 봐 주세요' : '');
+      setNotice(response?.found === false ? '아직 확인되지 않았어요. 잠시 뒤 다시 확인해 주세요' : '');
       if (verifyError && detail.outcome !== 'created') throw verifyError;
     } catch (failure) {
       if (isCurrent()) { setPhase('result'); setError(reconnectCodes.includes((verifyError || failure).code)
@@ -215,7 +215,8 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
     else if (!event.shiftKey && dialogRef.current.ownerDocument.activeElement === last) { event.preventDefault(); first.focus(); }
   };
   const outcome = result?.outcome;
-  const title = outcome === 'created' ? '등록 완료' : outcome === 'failed' ? '등록하지 못했어요'
+  const title = phase === 'verifying' ? '확인하고 있어요' : ['submitting', 'polling'].includes(phase) ? '등록하고 있어요'
+    : outcome === 'created' ? '등록 완료' : outcome === 'failed' ? '등록하지 못했어요'
     : outcome === 'duplicate_suspected' ? '카페24 관리자에서 확인해 주세요' : outcome === 'unknown' ? '등록 여부를 확인하고 있어요' : '확인하고 등록해요';
   const adminUrl = `https://${connection?.mallId}.cafe24.com/admin`;
   const selectedImage = assets.find((asset) => asset.assetId === thumbnailAssetId);
@@ -235,7 +236,7 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
           <section className={styles.zone} aria-labelledby="cafe24-check-title">
             <h3 id="cafe24-check-title">확인</h3>
             <label className={styles.row}><span>상품명</span><input name="productName" value={name} maxLength={100} onChange={(event) => setName(event.target.value)} disabled={phase !== 'ready'} /></label>
-            <div className={styles.row}><span>상세설명</span><span>지금 상세페이지의 이미지 {publication?.files?.length || 0}장</span></div>
+            <div className={styles.row}><span>상세설명</span><span>이미지 {publication?.files?.length || 0}장</span></div>
             <label className={styles.row}><span>대표 이미지</span><span className={styles.imageField}>
               {selectedImage && <img className={styles.thumbnail} src={selectedImage.src} alt="선택한 대표 이미지" />}
               <select name="thumbnailAssetId" value={thumbnailAssetId} onChange={(event) => setThumbnailAssetId(event.target.value)} disabled={phase !== 'ready'}>
@@ -265,11 +266,11 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
             <p className={styles.notice}>옵션과 재고는 카페24 관리자에서 더해요</p>
           </details>
         </>}
-        {busy && !form && <p role="status"><Icon name="loader" className="spin" size={18} />{phase === 'verifying' ? '등록 여부를 확인하고 있어요'
-          : phase === 'submitting' ? '상품 등록을 준비하고 있어요'
-          : progress < 70 ? '이미지 준비 중' : '상품 전송 중'}</p>}
+        {busy && !form && <p role="status"><Icon name="loader" className="spin" size={18} />{phase === 'verifying' ? '등록 확인 중'
+          : phase === 'submitting' ? '등록 준비 중'
+          : progress < 70 ? '이미지 올리는 중' : '상품 등록 중'}</p>}
         {phase === 'polling' && <progress aria-label="상품 등록 진행률" max={100} value={progress} />}
-        {outcome === 'created' && <div role="status"><p>카페24에 상품을 등록했어요</p><p>상품 번호 {result.productNo}</p>
+        {outcome === 'created' && <div role="status"><p>상품 번호 {result.productNo}</p>
           <p className={styles.notice}>옵션과 재고는 카페24 관리자에서 더해요</p>
           {result.thumbnail !== 'ok' && <p className={styles.notice}>대표 이미지는 카페24 관리자에서 넣어 주세요</p>}
           {result.warnings?.includes('마무리 확인이 늦어졌어요. 상품은 만들어졌어요')
@@ -277,7 +278,7 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
           {result.productUrl && <a className={styles.goLink} href={result.productUrl} target="_blank" rel="noopener noreferrer">자사몰에서 보기 ›</a>}
         </div>}
         {outcome === 'unknown' && <p>지금 다시 등록하면 같은 상품이 두 번 생길 수 있어요</p>}
-        {outcome === 'duplicate_suspected' && <p>같은 코드의 상품이 여러 개예요. 카페24 관리자에서 확인해 주세요</p>}
+        {outcome === 'duplicate_suspected' && <p>같은 코드의 상품이 여러 개예요</p>}
         {outcome === 'failed' && <p className={styles.error} role="alert">{FAILURE_COPY[result.code] || result.errorMessage || FAILURE_COPY.unknown}</p>}
         {notice && <p role="status" className={styles.notice}>{notice}</p>}
         {error && <p role="alert" className={styles.error}>{error}</p>}
@@ -291,9 +292,8 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
           {phase === 'submit_error' && <Button variant="primary" onClick={submit}>다시 시도</Button>}
           {phase === 'waiting' && <Button variant="primary" onClick={resume}>상태 확인</Button>}
           {['unknown', 'duplicate_suspected'].includes(outcome) && <Button variant="primary" disabled={busy} onClick={verify}>다시 확인</Button>}
-          {outcome === 'failed' && (reconnectCodes.includes(result.code)
-            ? <Link className={styles.goLink} to="/settings/malls">다시 연결하기 ›</Link>
-            : <Button onClick={onClose}>닫고 입력 확인하기</Button>)}
+          {outcome === 'failed' && reconnectCodes.includes(result.code)
+            && <Link className={styles.goLink} to="/settings/malls">다시 연결하기 ›</Link>}
         </div>
         {outcome && outcome !== 'failed' && <a className={styles.goLink} href={adminUrl} target="_blank" rel="noopener noreferrer">카페24 관리자에서 보기 ›</a>}
       </footer>

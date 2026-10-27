@@ -49,7 +49,7 @@ export function MallConnectionRow({ mall = 'zigzag', logo = `/assets/malls/${mal
         {state === 'reconnect_required' && <span className={styles.warningDot} aria-hidden="true" />}</div>
       {state === 'connected' ? <div className={styles.metadata}>
         {cafe24 && <span>몰 아이디 {connection?.mallId}</span>}
-        <span>권한 {(connection?.permissions || []).join(', ')}</span>
+        {!cafe24 && <span>권한 {(connection?.permissions || []).join(', ')}</span>}
         {!cafe24 && <span>인증키 끝자리 {connection?.keyHint || '••••••••'}</span>}
         <span>연결한 날 {connection?.connectedAt ? seoulDate(connection.connectedAt) : '확인 중'}</span>
         <span>마지막 등록 {connection?.lastRegisteredAt ? seoulDate(connection.lastRegisteredAt) : '없음'}</span>
@@ -110,7 +110,7 @@ function MallDialog({ children, kind, anchorRef, fallbackRef, busy = false, onCl
 export function MallActionDialog({ mall = 'zigzag', kind, values, showSecret, onToggleSecret, onChange, busy, error, onSubmit, onClose, anchorRef, fallbackRef }) {
   return <MallDialog kind={kind} anchorRef={anchorRef} fallbackRef={fallbackRef} busy={busy} onClose={onClose}>
     <h2 id={`mall-${kind}-title`}>{kind === 'revoke' ? `${mall === 'cafe24' ? '카페24' : '지그재그'} 연결을 해제할까요?` : '인증정보 변경'}</h2>
-    <p>{kind === 'revoke' ? mall === 'cafe24' ? '자사몰과의 연결이 끊겨요. 해제하면 에디터에서 바로 등록을 못 해요. 등록한 상품과 게시한 이미지는 그대로예요' : '스토어와의 연결이 끊겨요. 해제하면 에디터에서 바로 등록을 못 해요. 등록한 상품과 게시한 이미지는 그대로예요. 기본 설정은 남아요'
+    <p>{kind === 'revoke' ? mall === 'cafe24' ? '해제하면 에디터에서 바로 등록을 못 해요. 등록한 상품과 게시한 이미지는 그대로예요' : '스토어와의 연결이 끊겨요. 해제하면 에디터에서 바로 등록을 못 해요. 등록한 상품과 게시한 이미지는 그대로예요. 기본 설정은 남아요'
       : '새 인증키로 확인이 끝나야 바뀌어요. 확인이 안 되면 지금 연결은 그대로 남아요'}</p>
     <form onSubmit={onSubmit}>
       {kind === 'rotate' && <KeyFields rotate values={values} onChange={onChange} showSecret={showSecret} onToggleSecret={onToggleSecret} busy={busy} />}
@@ -168,7 +168,7 @@ export function ZigzagConnection({ connection, onChanged, onDefaultsSaved }) {
 
 const CAFE24_INSTALL_COPY = {
   cancelled: '설치를 취소했어요. 다시 시도하면 돼요',
-  state_invalid: '설치 확인이 만료됐거나 다른 브라우저에서 돌아왔어요. 같은 브라우저에서 다시 시작해 주세요',
+  state_invalid: '설치 확인이 만료됐어요. 같은 브라우저에서 다시 시작해 주세요',
   mall_mismatch: '입력한 몰 아이디와 로그인한 몰이 달라요. 몰 아이디를 확인해 주세요',
   missing_permission: '권한을 모두 허용해야 등록할 수 있어요. 다시 설치하며 권한을 허용해 주세요',
   not_allowed: '지금은 시범 운영 중이라 등록된 몰만 연결할 수 있어요',
