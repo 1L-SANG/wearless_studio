@@ -27,7 +27,8 @@ async function setup({ api: overrides = {}, strictEffects = false, getAccountGen
     ...overrides,
   };
   const { MallRegisterModal } = await componentModule('src/features/editor/MallRegisterModal.jsx', ['MallRegisterModal'], {
-    ...runtime, useEffect: (effect, deps) => runtime.useEffect(strictEffects ? () => { effect()?.(); return effect(); } : effect, deps),
+    ...runtime, useLayoutEffect: runtime.useEffect,
+    useEffect: (effect, deps) => runtime.useEffect(strictEffects ? () => { effect()?.(); return effect(); } : effect, deps),
     api, styles: {}, Button: ({ children, ...props }) => React.createElement('button', props, children),
     Icon: () => null, Modal: ({ children }) => children, Link: ({ to, children, ...props }) => React.createElement('a', { href: to, ...props }, children),
     clientEvents: { getAccountGeneration }, crypto: { randomUUID: uuid },

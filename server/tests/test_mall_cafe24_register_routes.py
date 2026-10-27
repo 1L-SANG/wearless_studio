@@ -357,7 +357,23 @@ def test_create_registration_409_when_other_registration_active_with_job_id(env)
     assert_error(response, 409, "registration_in_progress")
     assert response.json()["error"]["jobId"] == first.json()["jobId"]
     assert len(store["jobs"]) == 1 and store["wakes"] == 1
-    assert store["attempts"] == {f"mall-register:{USER}": 2}
+    assert store["attempts"] == {f"mall-register:{USER}": 1}
+
+
+def test_registration_in_progress_conflict_does_not_consume_quota_even_at_limit(env):
+    client, store = env
+    for _ in range(9):
+        assert submit(client, requestKey=str(uuid.uuid4())).status_code == 202
+        store["jobs"][-1]["status"] = "done"
+    active = submit(client, requestKey=str(uuid.uuid4()))
+    assert active.status_code == 202, active.text
+    assert store["attempts"] == {f"mall-register:{USER}": 10}
+
+    response = submit(client, requestKey=str(uuid.uuid4()))
+    assert_error(response, 409, "registration_in_progress")
+    assert response.json()["error"]["jobId"] == active.json()["jobId"]
+    assert store["attempts"] == {f"mall-register:{USER}": 10}
+    assert len(store["jobs"]) == 10 and store["wakes"] == 10
 
 
 def test_create_registration_rate_limited(env):

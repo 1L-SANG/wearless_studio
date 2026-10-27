@@ -332,12 +332,12 @@ async def create_cafe24_registration(request: Request, response: Response, body:
                 _assert_registration_input(existing, project_id, payload)
                 response.status_code = 200
                 return registration_view(row)
-        # Keep a newly inserted job and its quota slot atomic. A concurrent same-key
-        # request joins above without spending another slot, even at the hourly limit.
-        allowed = await repo.claim_mall_registration_attempt(conn, user_id=user_id)
-        if not allowed:
-            raise _error("rate_limited", "한 시간에 10번까지 등록할 수 있어요. 잠시 뒤 다시 시도해 주세요", 429)
         if created:
+            # Keep a newly inserted job and its quota slot atomic. Joining an
+            # existing job never spends another slot, even at the hourly limit.
+            allowed = await repo.claim_mall_registration_attempt(conn, user_id=user_id)
+            if not allowed:
+                raise _error("rate_limited", "한 시간에 10번까지 등록할 수 있어요. 잠시 뒤 다시 시도해 주세요", 429)
             code = _external_code(row["id"])
             await repo.set_job_metadata_patch(conn, job_id=row["id"], patch={"externalCode": code},
                                               user_id=user_id, expect_status=("pending",))

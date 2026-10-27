@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { clientEvents } from '@/lib/clientEvents.js';
@@ -52,7 +52,6 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
   const dialogRef = useRef(null);
   const scope = useRef({ projectId, mallId: connection?.mallId, accountGeneration: clientEvents.getAccountGeneration() });
   const connectionChanged = useRef(false);
-  if (connection?.mallId !== scope.current.mallId) connectionChanged.current = true;
   const isCurrent = () => active.current && !connectionChanged.current && projectId === scope.current.projectId
     && scope.current.accountGeneration === clientEvents.getAccountGeneration();
   const busy = ['publishing', 'submitting', 'polling', 'verifying'].includes(phase);
@@ -112,7 +111,8 @@ export function MallRegisterModal({ projectId, productName, connection, assets =
     prepare(); loadCategories();
     return () => { active.current = false; };
   }, [projectId]);
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (connection?.mallId !== scope.current.mallId) connectionChanged.current = true;
     if (!connectionChanged.current) return;
     setResult(null); setNotice(''); setError('카페24 연결이 바뀌었어요. 등록 창을 다시 열어 주세요'); setPhase('connection_changed');
   }, [connection?.mallId]);
