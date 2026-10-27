@@ -116,7 +116,8 @@ def test_two_submissions_same_project_join_one_active_job(register_pg, monkeypat
                         task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
         assert admin.execute("select count(*) as n from jobs where kind = 'mall_register'").fetchone()["n"] == 1
-        expected_slots = used_slots + (1 if same_key else 2)
+        # Joining an existing job never spends a slot, whichever key the second request used.
+        expected_slots = used_slots + 1
         assert admin.execute("select sum(request_count) as n from client_event_rate_limits where key = %s",
                              (f"mall-register:{USER}",)).fetchone()["n"] == expected_slots
 
