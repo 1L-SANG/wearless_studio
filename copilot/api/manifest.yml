@@ -133,6 +133,11 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   #   ② 아래 secrets 블록에 두 키 추가 ③ 이 값을 "true"로. 켜는 건 오너 승인 뒤.
   DETAIL_PUBLISH_ENABLED: "false"
   MALL_CONNECT_ENABLED: "false"
+  # 카페24 자사몰 등록. 앱은 2026-10-28 오너가 개발자센터에 만듦(Client ID는 공개값). 꺼 둔 채 배포한다.
+  # 심사 통과 전에는 CAFE24_ALLOWED_MALL_IDS의 몰만 연결된다. 비우면 모든 몰을 허용하니(config.is_allowed_mall) 심사 뒤에만 비운다.
+  CAFE24_ENABLED: "false"
+  CAFE24_CLIENT_ID: "9AW6kUlREBHopTSVGRKc6C"
+  CAFE24_ALLOWED_MALL_IDS: "dailymoment2026"   # 오너 테스트몰(2026-10-28)
   # 상세페이지는 0대 Spot 전용 워커가 소유한다. API는 나머지 잡만 claim하고,
   # pending detail_page가 생기면 아래 autoscaler가 detail-worker를 1대로 깨운다.
   JOB_KINDS: "-detail_page"
@@ -670,6 +675,9 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   #   MALL_KEYS_KEK는 바꾸면 저장된 몰 인증키를 못 읽으니 회전 금지. 플래그는 variables의 *_ENABLED로 따로 켠다.
   DETAIL_PUBLISH_TOKEN_SECRET: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/DETAIL_PUBLISH_TOKEN_SECRET
   MALL_KEYS_KEK: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/MALL_KEYS_KEK
+  # 카페24 앱 Client Secret. 2026-10-28 오너가 ops/put_cafe24_secret.sh로 SSM에 넣고 copilot 태그를 확인했다.
+  #   개발자센터에서 재발급하면 이 값을 같이 바꿔야 연결과 토큰 갱신이 된다.
+  CAFE24_CLIENT_SECRET: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/CAFE24_CLIENT_SECRET
   # 정기결제(빌링) — 계획서 docs/plans/2026-09-09-toss-billing-subscription.md.
   # ⚠️ 자동결제는 별도 계약 MID 라 일반결제와 시크릿 키가 다를 수 있다. 개발자센터 API 키
   #    메뉴에서 '자동결제로 계약된 MID' 를 고른 뒤의 키를 넣는다. 비우면 TOSS_SECRET_KEY 로
