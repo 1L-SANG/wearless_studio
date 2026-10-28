@@ -108,7 +108,7 @@ async def upsert_mall_connection(conn, *, user_id, mall, shop_id, shop_name, key
             await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall-defaults:{user_id}:{mall}",))
             await cur.execute("""insert into mall_defaults (user_id, mall, shop_id) values (%s, %s, %s)
                 on conflict (user_id, mall) do update set shop_id = excluded.shop_id, addresses = '{}',
-                  completed_items = array_remove(mall_defaults.completed_items, 'addresses'), updated_at = now()
+                  revision = mall_defaults.revision + 1, updated_at = now()
                 where mall_defaults.shop_id is distinct from excluded.shop_id""", (user_id, mall, shop_id))
             return row
 
@@ -230,7 +230,7 @@ async def save_cafe24_connection(conn, *, attempt_id, user_id, mall_id, shop_nam
             await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall-defaults:{user_id}:cafe24",))
             await cur.execute("""insert into mall_defaults (user_id, mall, shop_id) values (%s, %s, %s)
                 on conflict (user_id, mall) do update set shop_id = excluded.shop_id, addresses = '{}',
-                  completed_items = array_remove(mall_defaults.completed_items, 'addresses'), updated_at = now()
+                  revision = mall_defaults.revision + 1, updated_at = now()
                 where mall_defaults.shop_id is distinct from excluded.shop_id""", (user_id, "cafe24", mall_id))
             return row
 
@@ -250,50 +250,82 @@ async def void_install_attempts(conn, *, user_id, mall="cafe24") -> int:
         return cur.rowcount
 
 
+_SALES_DEFAULTS_COLS = """shipping, returns, disclosure, tax_type, product_origin,
+    shipping_days, listing_mode, revision, created_at, updated_at"""
+
+
 async def get_mall_defaults(conn, *, user_id, mall) -> dict | None:
     async with conn.cursor() as cur:
-        await cur.execute("""select shop_id, shipping, returns, addresses, disclosure, tax_type, product_origin,
-            completed_items from mall_defaults where user_id = %s and mall = %s""", (user_id, mall))
+        await cur.execute("""select shop_id, addresses, revision from mall_defaults
+            where user_id = %s and mall = %s""", (user_id, mall))
         return await cur.fetchone()
 
 
-def _completed_mall_defaults(values):
-    complete = []
-    shipping = values["shipping"]
-    money = lambda value: type(value) is int and value >= 0
-    if (shipping.get("feeType") in ("FREE", "CHARGED", "CONDITIONAL_FREE")
-            and all(money(shipping.get(key)) for key in ("jejuFee", "isolatedFee"))
-            and (shipping["feeType"] == "FREE" or money(shipping.get("baseFee")))
-            and (shipping["feeType"] != "CONDITIONAL_FREE" or money(shipping.get("conditionalAmount")))):
-        complete.append("shipping")
-    if all(money(values["returns"].get(key)) for key in ("partialFee", "totalFee", "exchangeFee")):
-        complete.append("returns")
-    if all(str(values["addresses"].get(key) or "").strip() for key in ("shippingAddressId", "returnAddressId")):
-        complete.append("addresses")
-    if all(str(values["disclosure"].get(key) or "").strip() for key in ("country", "manufacturer", "asManager", "phone")):
-        complete.append("disclosure")
-    return complete
+async def get_sales_defaults(conn, *, user_id: str) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(f"select {_SALES_DEFAULTS_COLS} from mall_sales_defaults where user_id = %s", (user_id,))
+        return await cur.fetchone()
 
 
-async def upsert_mall_defaults(conn, *, user_id, mall, payload) -> dict:
-    async with conn.transaction():
-        async with conn.cursor() as cur:
-            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall-defaults:{user_id}:{mall}",))
-        previous = await get_mall_defaults(conn, user_id=user_id, mall=mall) or {}
-        values = {key: {**(previous.get(key) or {}), **(payload.get(key) or {})}
-                  for key in ("shipping", "returns", "addresses", "disclosure")}
-        async with conn.cursor() as cur:
-            await cur.execute("""insert into mall_defaults
-                (user_id, mall, shipping, returns, addresses, disclosure, tax_type, product_origin, completed_items)
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                on conflict (user_id, mall) do update set shipping = excluded.shipping, returns = excluded.returns,
-                  addresses = excluded.addresses, disclosure = excluded.disclosure, tax_type = excluded.tax_type,
-                  product_origin = excluded.product_origin, completed_items = excluded.completed_items, updated_at = now()
-                returning shipping, returns, addresses, disclosure, tax_type, product_origin, completed_items""",
-                (user_id, mall, *(Json(values[key]) for key in ("shipping", "returns", "addresses", "disclosure")),
-                 payload.get("taxType", previous.get("tax_type", "TAX")),
-                 payload.get("productOrigin", previous.get("product_origin", "domestic")), _completed_mall_defaults(values)))
-            return await cur.fetchone()
+async def save_sales_defaults(conn, *, user_id: str, base_revision: int, patch: dict) -> dict:
+    from .services.mall_sales_defaults import normalize_sales_defaults
+
+    if type(base_revision) is not int or base_revision < 0:
+        raise ValueError("base_revision must be a nonnegative integer")
+    async with conn.cursor() as cur:
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                          (f"mall-sales-defaults:{user_id}",))
+        previous = await get_sales_defaults(conn, user_id=user_id)
+        if (previous or {}).get("revision", 0) != base_revision:
+            raise CreditError("defaults_conflict", "판매 기본 정보가 바뀌었어요. 다시 확인해 주세요.", 409)
+        values = normalize_sales_defaults(previous or {}, patch)
+        await cur.execute(f"""insert into mall_sales_defaults
+            (user_id, shipping, returns, disclosure, tax_type, product_origin, shipping_days, listing_mode)
+            values (%s, %s, %s, %s, %s, %s, %s, %s)
+            on conflict (user_id) do update set shipping = excluded.shipping, returns = excluded.returns,
+              disclosure = excluded.disclosure, tax_type = excluded.tax_type, product_origin = excluded.product_origin,
+              shipping_days = excluded.shipping_days, listing_mode = excluded.listing_mode,
+              revision = mall_sales_defaults.revision + 1, updated_at = now()
+            returning {_SALES_DEFAULTS_COLS}""",
+            (user_id, *(Json(values[k]) for k in ("shipping", "returns", "disclosure")),
+             *(values[k] for k in ("tax_type", "product_origin", "shipping_days", "listing_mode"))))
+        return await cur.fetchone()
+
+
+async def save_mall_specific_defaults(conn, *, user_id: str, mall: str, base_revision: int, patch: dict) -> dict:
+    if mall not in ("cafe24", "zigzag", "ably"):
+        raise CreditError("mall_not_found", "쇼핑몰을 찾을 수 없어요.", 404)
+    if type(base_revision) is not int or base_revision < 0:
+        raise ValueError("base_revision must be a nonnegative integer")
+    if not isinstance(patch, dict) or patch.keys() - {"addresses"}:
+        raise ValueError("Only mall addresses can be saved")
+    addresses = patch.get("addresses", {})
+    if not isinstance(addresses, dict) or addresses.keys() - {"shippingAddressId", "returnAddressId"}:
+        raise ValueError("Invalid mall address fields")
+    if any(not isinstance(value, str) for value in addresses.values()):
+        raise ValueError("Address IDs must be text")
+    async with conn.cursor() as cur:
+        for key in (f"mall-account:{user_id}", f"mall:{user_id}:{mall}"):
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (key,))
+        if await user_account_purge_closed(conn, user_id):
+            raise MallAccountClosed()
+        connection = await get_mall_connection(conn, user_id=user_id, mall=mall)
+        if not connection:
+            raise CreditError("connection_required", "쇼핑몰을 다시 연결해 주세요.", 409)
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                          (f"mall-defaults:{user_id}:{mall}",))
+        previous = await get_mall_defaults(conn, user_id=user_id, mall=mall)
+        if (previous or {}).get("revision", 0) != base_revision:
+            raise CreditError("defaults_conflict", "쇼핑몰 주소가 바뀌었어요. 다시 확인해 주세요.", 409)
+        if previous and previous["shop_id"] != connection["shop_id"]:
+            raise CreditError("connection_changed", "연결한 스토어가 바뀌었어요. 다시 확인해 주세요.", 409)
+        merged = {**(previous or {}).get("addresses", {}), **addresses}
+        merged = {key: value.strip() for key, value in merged.items() if value.strip()}
+        await cur.execute("""insert into mall_defaults (user_id, mall, shop_id, addresses)
+            values (%s, %s, %s, %s) on conflict (user_id, mall) do update
+            set addresses = excluded.addresses, revision = mall_defaults.revision + 1, updated_at = now()
+            returning shop_id, addresses, revision""", (user_id, mall, connection["shop_id"], Json(merged)))
+        return await cur.fetchone()
 
 
 class CreditError(Exception):
@@ -2619,24 +2651,199 @@ async def list_project_jobs_by_kind(
         return await cur.fetchall()
 
 
-async def get_project_mall_registration_recovery(conn: AsyncConnection, *, user_id: str,
-                                                project_id: str, mall_id: str) -> dict | None:
+async def load_registration_source(conn, *, user_id: str, project_id: str, publication_id: str,
+                                   asset_ids: list[str], lock: bool = False) -> dict:
+    """Read owned registration inputs, locking publication before project.
+
+    Admission callers acquire any account, mall, defaults, batch and project
+    advisory locks before calling with lock=True, following the global order.
+    """
+    suffix = " for update" if lock else ""
     async with conn.cursor() as cur:
-        # Match derive_outcome's metadata precedence across all history, rather
-        # than allowing the newest five confirmed jobs to hide an unresolved POST.
-        await cur.execute(
-            f"""select {_JOB_COLS} from jobs
-                where user_id = %s and project_id = %s and kind = 'mall_register'
-                  and payload->>'mall' = 'cafe24' and payload->>'mallId' = %s
-                  and (status in ('pending', 'running') or (
-                    status in ('done', 'error', 'cancelled')
-                    and coalesce(metadata->'productNo', 'null'::jsonb) in ('null', 'false', '0', '\"\"', '[]', '{{}}')
-                    and coalesce(metadata->'rejectedAt', 'null'::jsonb) in ('null', 'false', '0', '\"\"', '[]', '{{}}')
-                    and coalesce(metadata->'create'->'sentAt', 'null'::jsonb) not in ('null', 'false', '0', '\"\"', '[]', '{{}}')
-                  )) order by created_at desc, id desc limit 1""",
-            (user_id, project_id, mall_id),
-        )
-        return await cur.fetchone()
+        await cur.execute(f"select {_DETAIL_PUBLICATION_COLS} from detail_publications "
+                          "where id = %s and user_id = %s and project_id = %s" + suffix,
+                          (publication_id, user_id, project_id))
+        publication = await cur.fetchone()
+        await cur.execute(f"select {_PROJECT_COLS}, editor_revision, editor_blocks from projects "
+                          "where id = %s and user_id = %s and deleted_at is null" + suffix,
+                          (project_id, user_id))
+        project = await cur.fetchone()
+        if project is None:
+            return {"project": None, "publication": None, "product": None, "analysis": {}, "assets": []}
+        await cur.execute("""select to_jsonb(prod) as product, coalesce(a.payload, '{}'::jsonb) as analysis
+            from products prod join projects p on p.id = prod.project_id
+            left join analyses a on a.project_id = prod.project_id
+            where prod.project_id = %s and p.user_id = %s and p.deleted_at is null""", (project_id, user_id))
+        product = await cur.fetchone() or {}
+        await cur.execute("""select id::text, project_id::text, r2_bucket, r2_key, mime_type,
+            source, width, height, metadata from assets
+            where user_id = %s and project_id = %s and id = any(%s::uuid[]) and deleted_at is null
+            order by id""" + suffix, (user_id, project_id, asset_ids))
+        assets = await cur.fetchall()
+    return {"project": project, "publication": publication, "product": product.get("product"),
+            "analysis": product.get("analysis", {}), "assets": assets}
+
+
+async def get_mall_batch_jobs(conn, *, user_id: str, batch_id: str) -> list[dict]:
+    async with conn.cursor() as cur:
+        await cur.execute(f"select {_JOB_COLS} from jobs where user_id = %s and kind = 'mall_register' "
+                          "and payload->>'batchId' = %s order by id", (user_id, batch_id))
+        jobs = await cur.fetchall()
+    if jobs:
+        _mall_batch_receipt(jobs)
+    return jobs
+
+
+async def find_mall_registration_recoveries(conn, *, user_id: str, project_id: str,
+                                           mall: str, shop_id: str) -> list[dict]:
+    """All unresolved jobs in this store, including history beyond the visible list."""
+    async with conn.cursor() as cur:
+        await cur.execute(f"""select {_JOB_COLS} from jobs
+            where user_id = %s and project_id = %s and kind = 'mall_register'
+              and payload->>'mall' = %s and payload->>'shopId' = %s
+              and (status in ('pending', 'running') or (
+                status in ('done', 'error', 'cancelled') and (
+                  (nullif(metadata->>'productId', '') is not null
+                    and result->>'setupStatus' is distinct from 'complete')
+                  or (nullif(metadata->>'productId', '') is null
+                    and nullif(metadata->>'rejectedAt', '') is null
+                    and (nullif(metadata->'create'->>'sentAt', '') is not null
+                      or result->>'outcome' in ('unknown', 'duplicate_suspected')))
+                ))) order by created_at desc, id desc""", (user_id, project_id, mall, shop_id))
+        return await cur.fetchall()
+
+
+def _mall_batch_receipt(jobs: list[dict]) -> dict:
+    receipt = jobs[0].get("metadata", {}).get("batchReceipt")
+    if (not isinstance(receipt, dict)
+            or any(job.get("metadata", {}).get("batchReceipt") != receipt for job in jobs)
+            or any(job["payload"].get("requestHash") != receipt.get("requestHash")
+                   or job["payload"].get("batchId") != receipt.get("batchId") for job in jobs)
+            or {item.get("jobId") for item in receipt.get("items", []) if item.get("status") == "accepted"}
+               != {job["id"] for job in jobs}):
+        raise CreditError("registration_receipt_invalid", "접수 기록을 확인할 수 없어요.", 500)
+    return receipt
+
+
+async def enqueue_mall_registration_batch(conn, *, user_id: str, project_id: str, batch_id: str,
+                                           request_hash: str, payloads: dict[str, dict], blocked: list[dict]) -> dict:
+    """Atomically store new jobs, quota and identical receipts, without committing.
+
+    payloads are server-validated frozen inputs. Higher source locks, when needed,
+    belong to the admission route. A savepoint also rolls back logical rejections.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                          (f"mall-batch:{user_id}:{batch_id}",))
+        previous = await get_mall_batch_jobs(conn, user_id=user_id, batch_id=batch_id)
+        if previous:
+            receipt = previous[0]["metadata"]["batchReceipt"]
+            if receipt["requestHash"] != request_hash:
+                raise IdempotencyKeyReused()
+            return receipt
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                          (f"mall-register:{user_id}:{project_id}",))
+        await cur.execute("savepoint mall_registration_batch")
+        try:
+            items = [{**item, "status": "blocked"} for item in blocked]
+            created_jobs = []
+            for mall, payload in sorted(payloads.items()):
+                if (mall not in ("cafe24", "zigzag", "ably") or payload.get("mall") != mall
+                        or payload.get("batchId") != batch_id or payload.get("requestHash") != request_hash):
+                    raise ValueError("Registration payload identity does not match its batch")
+                recoveries = await find_mall_registration_recoveries(conn, user_id=user_id,
+                    project_id=project_id, mall=mall, shop_id=payload["shopId"])
+                if recoveries:
+                    existing = recoveries[0]
+                    code = "registration_in_progress" if existing["status"] in ("pending", "running") else "registration_unresolved"
+                    items.append({"mall": mall, "status": "blocked", "existingJobId": existing["id"],
+                                  "issues": [{"code": code}]})
+                    continue
+                job, created = await create_job(conn, user_id=user_id, project_id=project_id,
+                    kind="mall_register", payload=payload,
+                    idempotency_key=f"mall-register:{user_id}:{batch_id}:{mall}",
+                    credits_reserved=0, metadata={"stage": "pending", "leaseRecoveries": 0})
+                if not created:
+                    items.append({"mall": mall, "status": "blocked", "existingJobId": job["id"],
+                                  "issues": [{"code": "registration_in_progress"}]})
+                    continue
+                created_jobs.append(job)
+                items.append({"mall": mall, "status": "accepted", "jobId": job["id"]})
+            if not created_jobs:
+                error = CreditError("no_ready_malls", "지금 등록할 수 있는 쇼핑몰이 없어요.", 409)
+                error.items = sorted(items, key=lambda item: item["mall"])
+                raise error
+            for _ in created_jobs:
+                if not await claim_mall_registration_attempt(conn, user_id=user_id):
+                    raise CreditError("rate_limited", "시간당 등록 한도에 도달했어요. 잠시 뒤 다시 시도해 주세요.", 429)
+            receipt = {"batchId": batch_id, "requestHash": request_hash,
+                       "acceptedAt": datetime.now(timezone.utc).isoformat(),
+                       "selectedMalls": sorted({item["mall"] for item in items}),
+                       "items": sorted(items, key=lambda item: item["mall"])}
+            for job in sorted(created_jobs, key=lambda job: job["id"]):
+                await cur.execute("""update jobs set metadata = metadata || %s::jsonb, updated_at = now()
+                    where id = %s and user_id = %s and kind = 'mall_register'""",
+                    (Json({"batchReceipt": receipt, "externalCode": "wl" + uuid.UUID(job["id"]).hex[:16]}),
+                     job["id"], user_id))
+        except BaseException:
+            await cur.execute("rollback to savepoint mall_registration_batch")
+            await cur.execute("release savepoint mall_registration_batch")
+            raise
+        await cur.execute("release savepoint mall_registration_batch")
+        return receipt
+
+
+async def requeue_mall_registration(conn, *, user_id: str, job_id: str, request_key: str) -> tuple[dict, bool]:
+    """Requeue a confirmed product on the same immutable job, without committing.
+
+    The route checks adapter/checkpoint eligibility before calling. Persisted
+    result errors may be stale after lease recovery, so metadata takes priority.
+    """
+    job = await get_job(conn, user_id, job_id)
+    if not job or job["kind"] != "mall_register" or job["payload"].get("mall") not in ("cafe24", "zigzag", "ably"):
+        raise CreditError("registration_not_found", "등록 작업을 찾을 수 없어요.", 404)
+    async with conn.cursor() as cur:
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                          (f"mall-register:{user_id}:{job['project_id']}",))
+        await cur.execute(f"select {_JOB_COLS} from jobs where id = %s and user_id = %s "
+                          "and kind = 'mall_register' for update", (job_id, user_id))
+        job = await cur.fetchone()
+        if not job:
+            raise CreditError("registration_not_found", "등록 작업을 찾을 수 없어요.", 404)
+        metadata = job["metadata"]
+        if request_key in metadata.get("resumeRequestKeys", []):
+            return job, False
+        result = job.get("result") or {}
+        product_id = metadata.get("productId")
+        if (job["status"] not in ("done", "error", "cancelled")
+                or not isinstance(product_id, str) or not product_id.strip()
+                or result.get("setupStatus") == "complete"):
+            raise CreditError("registration_not_resumable", "이 작업은 설정을 이어 할 수 없어요.", 409)
+        await cur.execute("""select id::text from jobs where user_id = %s and project_id = %s
+            and kind = 'mall_register' and payload->>'mall' = %s and status in ('pending', 'running')""",
+            (user_id, job["project_id"], job["payload"]["mall"]))
+        if await cur.fetchone():
+            raise CreditError("registration_in_progress", "이 쇼핑몰에 등록 중인 작업이 있어요.", 409)
+        history = [*metadata.get("resumeHistory", []), {"requestKey": request_key,
+            "resumedAt": datetime.now(timezone.utc).isoformat(), "leaseRecoveries": metadata.get("leaseRecoveries", 0)}]
+        patch = {"resumeRequestKeys": [*metadata.get("resumeRequestKeys", []), request_key],
+                 "resumeHistory": history, "leaseRecoveries": 0}
+        await cur.execute("savepoint mall_registration_resume")
+        try:
+            await cur.execute(f"""update jobs set status = 'pending', locked_by = null, locked_at = null,
+                finished_at = null, error_message = null, metadata = metadata || %s::jsonb, updated_at = now()
+                where id = %s and user_id = %s and kind = 'mall_register' returning {_JOB_COLS}""",
+                (Json(patch), job_id, user_id))
+            job = await cur.fetchone()
+        except errors.UniqueViolation:
+            await cur.execute("rollback to savepoint mall_registration_resume")
+            raise CreditError("registration_in_progress", "이 쇼핑몰에 등록 중인 작업이 있어요.", 409) from None
+        except BaseException:
+            await cur.execute("rollback to savepoint mall_registration_resume")
+            raise
+        finally:
+            await cur.execute("release savepoint mall_registration_resume")
+        return job, True
 
 
 def _similar_cut_record(value: object) -> dict | None:
@@ -3180,10 +3387,11 @@ async def create_job(
         return row
 
     async def _active(cur):
+        mall_filter = " and payload->>'mall' = %s" if kind == "mall_register" else ""
         await cur.execute(
             f"select {_JOB_COLS} from jobs where project_id = %s and user_id = %s "
-            "and kind = %s and status in ('pending', 'running')",
-            (project_id, user_id, kind),
+            "and kind = %s and status in ('pending', 'running')" + mall_filter,
+            (project_id, user_id, kind, *([payload.get("mall")] if kind == "mall_register" else [])),
         )
         return await cur.fetchone()
 
