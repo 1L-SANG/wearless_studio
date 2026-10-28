@@ -35,17 +35,28 @@ class WorkerEnv:
     def __init__(self, monkeypatch):
         assert importlib.util.find_spec("app.workers.mall_register_job"), "registration worker is missing"
         self.worker = importlib.import_module("app.workers.mall_register_job")
+        self.publication = dict(id=PUBLICATION, user_id=USER, project_id=PROJECT, status="ready", editor_revision=3,
+            files=[dict(index=i, bytes=10, r2_key="unsafe/other-owner") for i in range(1, 10)])
+        from app.detail_publications import publication_files
+        snapshot = dict(productName='니트 <"상품">', price=dict(amount=39000, basis='tax_excluded'), priceSetting='B',
+            variants=[dict(variantKey='["black","FREE"]', colorId='black', colorName='검정', size='FREE', quantity=0, additionalAmount=0),
+                      dict(variantKey='["white","FREE"]', colorId='white', colorName='흰색', size='FREE', quantity=3, additionalAmount=1000)],
+            images=[dict(assetId='thumb', r2Key='owned/thumb.png', mimeType='image/png')],
+            imageRatio=dict(width=2, height=1), notice=dict(fields=dict(materials='면 100%', origin='대한민국'), conflicts=[]),
+            category=dict(categoryId='27'), sales=dict(taxType='TAX', listingMode='HIDDEN'),
+            publication=dict(id=PUBLICATION, width=860, files=publication_files(self.publication)))
         self.job = dict(id=JOB, user_id=USER, project_id=PROJECT, kind="mall_register", status="running",
-            lease_token=LEASE, payload=dict(mall="cafe24", connectionId=CONNECTION, mallId="myshop",
-                publicationId=PUBLICATION, width=860, productName='니트 <"상품">', price=39000,
-                supplyPrice=30000, display="T", selling="F", taxType="A", categoryNo=27,
-                thumbnailAssetId=None), metadata={}, result=None)
+            lease_token=LEASE, payload=dict(mall="cafe24", connectionId=CONNECTION, shopId="myshop", batchId=JOB,
+                requestHash='fixed-request-hash', publicationId=PUBLICATION, editorRevision=3, snapshot=snapshot), metadata={}, result=None)
         self.stored = copy.deepcopy(self.job)
         self.committed = copy.deepcopy(self.stored)
         self.connection_row = dict(id=CONNECTION, user_id=USER, mall="cafe24", shop_id="myshop",
             status="connected", refresh_expires_at=datetime.now(timezone.utc) + timedelta(days=1))
-        self.publication = dict(id=PUBLICATION, user_id=USER, project_id=PROJECT, status="ready",
-            files=[dict(index=i, bytes=10, r2_key="unsafe/other-owner") for i in range(1, 10)])
+        self.remote_state = dict(productId='123', display='F', selling='F')
+        self.remote_variants = [dict(variantCode='sku-' + row['colorId'], options=[
+            dict(name='사이즈', value=row['size']), dict(name='색상', value=row['colorName'])],
+            quantity=0, additionalAmount=0, useInventory='F', display='T', selling='F', displaySoldout='F', safetyInventory=0)
+            for row in snapshot['variants']]
         self.alive, self.closed, self.cancelled = True, False, False
         self.calls, self.events, self.reads, self.patches, self.sleeps, self.ensures = [], [], [], [], [], []
         self.scripts, self.hooks = {}, {}
@@ -71,7 +82,8 @@ class WorkerEnv:
         monkeypatch.setattr(cafe24_tokens, "ensure_cafe24_access_token", self.ensure)
         monkeypatch.setattr(cafe24_tokens, "_mark", self.mark)
         # Patch only the worker's sleep, keeping the event loop's sleep available.
-        monkeypatch.setattr(self.worker, "_sleep", self.sleep)
+        from app.workers import mall_register_context
+        monkeypatch.setattr(mall_register_context, "_sleep", self.sleep)
 
     @asynccontextmanager
     async def connection(self):
@@ -89,6 +101,9 @@ class WorkerEnv:
     async def execute(self, sql, params):
         assert_query_binds(sql, params)
         q = " ".join(sql.lower().split())
+        if q.startswith('select pg_advisory_xact_lock'):
+            assert params == (f'mall:{USER}:cafe24',)
+            return
         assert q.startswith("update mall_connections set last_registered_at")
         assert "status = 'connected'" in q and "locked_by = %s" in q and "status = 'running'" in q
         assert "user_id = %s" in q and "exists" in q
@@ -122,8 +137,10 @@ class WorkerEnv:
         return copy.deepcopy(self.publication)
 
     async def get_asset(self, conn, user, project, asset):
-        assert (user, project, asset) == (USER, PROJECT, "thumb")
-        return {"r2_key": "owned/thumb.png", "mime_type": "image/png"}
+        assert (user, project) == (USER, PROJECT)
+        if hook := self.hooks.get('asset'):
+            return hook(asset)
+        return {"r2_key": f"owned/{asset}.png", "mime_type": "image/png"}
 
     async def patch(self, conn, *, job_id, patch, lease_token):
         assert (job_id, lease_token) == (JOB, LEASE)
@@ -170,7 +187,7 @@ class WorkerEnv:
     def get_bytes(self, key):
         assert not key.startswith("unsafe/")
         self.reads.append(key)
-        if key == "owned/thumb.png":
+        if key.startswith("owned/"):
             return self.asset_bytes.getvalue()
         return b"x" * getattr(self, "image_size", 10)
 
@@ -188,8 +205,8 @@ class WorkerEnv:
             return value
         if name == "upload":
             return [f"https://myshop.cafe24.com/upload/{len(self.calls)}-{i}.jpg" for i in range(len(args[0]))]
-        return {"setting": "B", "create": 123, "find": [], "thumbnail": {},
-                "store": {"mall_url": "https://shop.example/"}}[name]
+        return {"setting": "B", "create": 123, "find": [], "thumbnail": {}, 'additional': {'count': 1},
+                'variants': copy.deepcopy(self.remote_variants), 'state': dict(self.remote_state), 'inventory': {}, 'activate': None}[name]
 
     async def upload_description_images(self, token, images):
         return await self.remote("upload", token, images)
@@ -212,8 +229,34 @@ class WorkerEnv:
             assert im.format == "JPEG" and max(im.size) == 2000 and im.mode == "RGB"
         return await self.remote("thumbnail", token, product_no, image)
 
-    async def store(self, token):
-        return await self.remote("store", token)
+    async def product_state(self, token, product_no):
+        assert product_no == 123
+        return await self.remote('state', token, product_no)
+
+    async def variants(self, token, product_no):
+        assert product_no == 123
+        return await self.remote('variants', token, product_no)
+
+    async def update_variants(self, token, product_no, variants):
+        result = await self.remote('inventory', token, product_no, variants)
+        keys = dict(additional_amount='additionalAmount', use_inventory='useInventory', display_soldout='displaySoldout', safety_inventory='safetyInventory')
+        for change in variants:
+            row = next(row for row in self.remote_variants if row['variantCode'] == change['variant_code'])
+            row.update({keys.get(key, key): value for key, value in change.items() if key != 'variant_code'})
+        return result
+
+    async def upload_additional_images(self, token, product_no, images):
+        return await self.remote('additional', token, product_no, images)
+
+    async def set_product_state(self, token, product_no, **state):
+        result = await self.remote('activate', token, product_no, state)
+        self.remote_state.update(state)
+        return result
+
+    def seed_upload(self, urls):
+        from app.services.mall_adapters.cafe24 import _hash
+        self.seed(dict(checkpoints={'uploading_images': dict(status='pending', urls=urls,
+            filesHash=_hash(self.job['payload']['snapshot']['publication']['files']))}))
 
     def seed(self, metadata):
         self.job["metadata"] = copy.deepcopy(metadata)
@@ -221,6 +264,8 @@ class WorkerEnv:
         self.committed = copy.deepcopy(self.stored)
 
     def run(self):
+        # Test-specific draft choices are frozen in the fake DB before execution.
+        self.stored['payload'] = copy.deepcopy(self.job['payload'])
         asyncio.run(self.worker.run_mall_register_job(self.app, self.job))
 
     def named(self, name):
@@ -240,25 +285,25 @@ def test_worker_uploads_images_in_worker_batches_then_creates_product_with_cafe2
     body = env.named("create")[0][2][0]
     request = body["request"]
     assert body["shop_no"] == 1 and request["price_excluding_tax"] == 39000 and "price" not in request
-    assert request["supply_price"] == 30000 and request["selling"] == "F"
+    assert request["supply_price"] == 39000 and request["selling"] == "F"
     assert request["custom_product_code"] == "wl" + JOB.replace("-", "")[:16]
     assert request["add_category_no"] == [{"category_no": 27, "recommend": "F", "new": "F"}]
     assert request["description"] == request["mobile_description"]
     assert request["description"].count('<img src="https://myshop.cafe24.com/') == 9
     assert "&lt;&quot;상품&quot;&gt;" in request["description"]
-    assert env.stored["result"]["outcome"] == "created" and env.stored["result"]["thumbnail"] == "none"
-    assert env.stored["result"]["productUrl"] == "https://shop.example/product/detail.html?product_no=123"
+    assert env.stored["result"]["outcome"] == "created" and env.stored["result"]["setupStatus"] == "complete"
+    assert env.stored["result"]["productUrl"] == "https://myshop.cafe24.com/product/detail.html?product_no=123"
     from app.workers.dispatcher import _WORKERS
     assert _WORKERS["mall_register"] is env.worker.run_mall_register_job
 
 
 def test_worker_resumes_after_partial_image_upload_without_reupload(env):
     urls = [f"https://saved.example/{i}.jpg" for i in range(8)]
-    env.seed({"images": {"urls": urls}})
+    env.seed_upload(urls)
     env.run()
     assert len(env.named("upload")) == 1 and len(env.named("upload")[0][2][0]) == 1
-    assert env.reads == [f"pub/{USER}/{PUBLICATION}/09.jpg"]
-    assert env.stored["metadata"]["images"]["urls"][:8] == urls
+    assert env.reads == [f"pub/{USER}/{PUBLICATION}/09.jpg", "owned/thumb.png"]
+    assert env.stored["metadata"]["checkpoints"]["uploading_images"]["urls"][:8] == urls
 
 
 @pytest.mark.parametrize("failure,delay", [(status_error(429, "120"), 60),
@@ -270,7 +315,7 @@ def test_worker_rechecks_before_each_write_and_retry(env, failure, delay):
     if delay is not None:
         assert env.sleeps == [delay]
     for i, event in enumerate(env.events):
-        if event in {"upload", "setting", "create", "thumbnail", "find", "store"}:
+        if event in {"upload", "setting", "create", "thumbnail", "find", "state", "variants", "inventory", "additional", "activate"}:
             assert env.events[i - 2:i] == ["recheck", "commit"]
 
 
@@ -310,7 +355,7 @@ def test_worker_stops_after_account_delete_mid_upload(env):
 @pytest.mark.parametrize("error", [status_error(503), status_error(401), TimeoutError("private"),
     Cafe24ApiError("price_setting_unavailable")])
 def test_worker_aborts_before_create_when_price_setting_unavailable(env, error):
-    env.scripts["setting"] = [error, error, error]
+    env.scripts["setting"] = [error] * 8
     env.run()
     assert not env.named("create") and not env.stored["metadata"].get("create")
     assert env.stored["status"] == "error" and env.stored["result"]["code"] == "price_setting_unavailable"
@@ -345,16 +390,16 @@ def test_worker_5xx_after_create_recovers_by_lookup_without_second_post(env, sta
     env.scripts.update(create=[status_error(status)], find=[[123]])
     env.run()
     assert len(env.named("create")) == len(env.named("find")) == 1
-    assert env.stored["metadata"]["productNo"] == 123 and env.stored["result"]["outcome"] == "created"
+    assert env.stored["metadata"]["productId"] == "123" and env.stored["result"]["outcome"] == "created"
 
 
 @pytest.mark.parametrize("lookup", [[], TimeoutError("private")])
 def test_worker_timeout_after_create_with_no_match_ends_done_unknown(env, lookup):
-    env.scripts.update(create=[TimeoutError("private")], find=[lookup])
+    env.scripts.update(create=[TimeoutError("private")], find=[lookup] * 4)
     env.run()
-    assert len(env.named("create")) == len(env.named("find")) == 1
+    assert len(env.named("create")) == 1 and len(env.named("find")) == (4 if isinstance(lookup, Exception) else 1)
     assert env.stored["status"] == "done" and env.stored["result"]["outcome"] == "unknown"
-    assert env.stored["metadata"]["create"]["sentAt"] and not env.stored["metadata"].get("productNo")
+    assert env.stored["metadata"]["create"]["sentAt"] and not env.stored["metadata"].get("productId")
 
 
 def test_worker_lookup_two_matches_ends_duplicate_suspected(env):
@@ -384,28 +429,26 @@ def test_worker_401_refreshes_once_and_resends_with_new_attempt(env, failures, o
 
 @pytest.mark.parametrize("failure", [TimeoutError("private"), None])
 def test_worker_thumbnail_failure_keeps_created_with_warning(env, failure):
-    env.job["payload"]["thumbnailAssetId"] = "thumb"
     if failure:
         env.scripts["thumbnail"] = [failure] * 4
     env.run()
     assert env.stored["status"] == "done" and env.stored["result"]["outcome"] == "created"
-    assert env.stored["result"]["thumbnail"] == ("failed" if failure else "ok")
+    assert env.stored["result"]["setupStatus"] == ("needs_attention" if failure else "complete")
     assert bool(env.stored["result"]["warnings"]) is bool(failure)
 
 
 def test_disconnect_after_product_created_preserves_created_outcome(env):
-    env.job["payload"]["thumbnailAssetId"] = "thumb"
     env.hooks["create"] = lambda: env.connection_row.update(status="revoked")
     env.run()
-    assert env.stored["metadata"]["productNo"] == 123
+    assert env.stored["metadata"]["productId"] == "123"
     assert env.stored["status"] == "done" and env.stored["result"]["outcome"] == "created"
-    assert env.stored["result"]["thumbnail"] == "skipped" and env.stored["result"]["warnings"]
+    assert env.stored["result"]["setupStatus"] == "needs_attention" and env.stored["result"]["warnings"]
     assert not env.named("thumbnail") and not env.named("store") and not env.last_registered
 
 
 @pytest.mark.parametrize("rejected", [False, True])
 def test_resume_uses_saved_product_no_without_lookup(env, rejected):
-    env.seed({"productNo": 123, "create": {"sentAt": "saved"}, **({"rejectedAt": "saved"} if rejected else {})})
+    env.seed({"productId": "123", "create": {"sentAt": "saved"}, **({"rejectedAt": "saved"} if rejected else {})})
     env.run()
     assert not env.named("find") and not env.named("create") and not env.named("upload")
     assert env.stored["result"]["outcome"] == "created"
@@ -416,14 +459,13 @@ def test_worker_lease_loss_writes_nothing_and_makes_no_remote_call(env, loss):
     if loss == "initial":
         env.alive = False
     elif loss.endswith("patch"):
-        env.fail_patch = "create" if loss == "create_patch" else "productNo"
+        env.fail_patch = "create" if loss == "create_patch" else "productId"
     elif loss == "progress":
         env.fail_progress = True
     elif loss == "retry":
         env.scripts["upload"] = [status_error(503)]
         env.hooks["sleep"] = lambda: setattr(env, "alive", False)
     else:
-        env.job["payload"]["thumbnailAssetId"] = "thumb"
         env.hooks["thumbnail"] = lambda: setattr(env, "alive", False)
     env.run()
     assert "finalize" not in env.events and not env.last_registered

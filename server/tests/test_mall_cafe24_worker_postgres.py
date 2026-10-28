@@ -24,8 +24,7 @@ from test_multimall_routes import draft, facts, source
 
 
 @pytest.fixture
-def worker_pg(mall_pg):
-    # This input belongs only to the existing worker body, which changes in A03.
+def worker_pg(mall_pg, monkeypatch):
     app, admin, pool = mall_pg
     admin.execute("""alter table jobs
         add column id uuid primary key,
@@ -49,8 +48,24 @@ def worker_pg(mall_pg):
     admin.execute("create table fm_models (id uuid, user_id uuid)")
     app.state.settings = replace(app.state.settings, multimall_register_enabled=True, detail_publish_enabled=True, cafe24_enabled=True,
         cafe24_client_id="fixture-id", cafe24_client_secret="fixture-private")
-    payload = dict(mall="cafe24", mallId="myshop", connectionId=CONNECTION, publicationId=PUBLICATION,
-        width=860, productName="니트", price=39000, supplyPrice=39000, display="T", selling="T", taxType="A")
+    value = normalize_register_draft(draft(projectId=PROJECT, publicationId=PUBLICATION, selectedMalls=['cafe24']))
+    owned = source()
+    owned['project']['id'] = PROJECT
+    owned['publication'].update(id=PUBLICATION, user_id=USER, project_id=PROJECT)
+    payload = dict(mall='cafe24', batchId=str(uuid.uuid4()), requestHash=registration_request_hash(value),
+        connectionId=CONNECTION, shopId='myshop', publicationId=PUBLICATION, editorRevision=3,
+        snapshot=freeze_registration(value, source=owned, facts=facts()))
+
+    async def publication(conn, *, user_id, publication_id):
+        assert (user_id, publication_id) == (USER, PUBLICATION)
+        return copy.deepcopy(owned['publication'])
+
+    async def asset(conn, user, project, asset_id):
+        assert (user, project) == (USER, PROJECT)
+        return next((copy.deepcopy(row) for row in owned['assets'] if row['id'] == asset_id), None)
+
+    monkeypatch.setattr(repo, 'get_detail_publication', publication)
+    monkeypatch.setattr(repo, 'get_project_asset_for_user', asset)
     admin.execute("""insert into mall_connections (id, user_id, mall, shop_id, refresh_expires_at)
         values (%s, %s, 'cafe24', 'myshop', now() + interval '1 day')""", (CONNECTION, USER))
     admin.execute("""insert into jobs (id, project_id, user_id, kind, status, payload, locked_by, locked_at)
@@ -150,7 +165,7 @@ def test_reclaimed_job_fence_blocks_stale_worker_create(worker_pg, monkeypatch):
 
         async def product_setting(self, token):
             client_calls.append("setting")
-            return "P"
+            return "S"
 
         async def create_product(self, *args):
             pytest.fail("stale worker must never send the create request")
@@ -159,11 +174,20 @@ def test_reclaimed_job_fence_blocks_stale_worker_create(worker_pg, monkeypatch):
         assert (user_id, connection_id) == (USER, CONNECTION)
         return "fixture-token", datetime.now(timezone.utc)
 
-    async def images(*args):
-        return ["https://fake.invalid/1.jpg"]
+    from app.services.mall_adapters.cafe24 import Cafe24Adapter, build_cafe24_product_request, _hash
 
-    monkeypatch.setattr(worker, "Cafe24Client", Client)
-    monkeypatch.setattr(worker, "_upload_images", images)
+    async def prepare(adapter, ctx):
+        basis = await ctx.call(ctx.client.product_setting, effect='read')
+        from app.services.cafe24_client import build_description_html
+        urls = ['https://fake.invalid/1.jpg']
+        body = build_cafe24_product_request(ctx.snapshot, description=build_description_html(
+            urls, ctx.snapshot['productName'], ctx.snapshot['publication']['width']), price_basis=basis,
+            external_code=ctx.job['metadata']['externalCode'])
+        await ctx.checkpoint(dict(checkpoints={'uploading_images': dict(status='complete', urls=urls),
+            'price_setting': dict(status='complete', basis=basis, requestHash=_hash(body))}))
+
+    monkeypatch.setattr(worker, 'Cafe24Client', Client)
+    monkeypatch.setattr(Cafe24Adapter, 'prepare', prepare)
     monkeypatch.setattr(cafe24_tokens, "ensure_cafe24_access_token", token)
     app.state.r2 = object()
 

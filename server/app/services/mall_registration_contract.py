@@ -348,6 +348,8 @@ def derive_registration_outcome(job: dict) -> str | None:
 def can_resume_registration(job: dict) -> bool:
     if job['payload'].get('mall') != 'cafe24' or derive_registration_outcome(job) != 'created':
         return False
+    if (job.get('metadata') or {}).get('resumeBlocked'):
+        return False
     checkpoint = (job.get('metadata') or {}).get('checkpoints', {}).get('uploading_additional_images') or {}
     requests = checkpoint.get('requests') or []
     if checkpoint.get('status') == 'unknown' or (checkpoint.get('sentAt') and checkpoint.get('status') != 'complete') or any(

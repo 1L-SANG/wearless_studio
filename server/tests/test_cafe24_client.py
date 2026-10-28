@@ -400,3 +400,57 @@ def test_total_timeout_covers_request_body_close_and_pagination(stage):
         asyncio.run(api.find_products_by_custom_code("access", "code") if stage == "pagination" else api.store("access"))
     assert time.monotonic() - started < 0.15
     assert module().classify_error(error.value) == "unreachable"
+
+
+def test_variant_bulk_write_requires_every_row_and_inventory_read_preserves_confirmation_fields():
+    calls = []
+    variant = dict(variant_code='sku', quantity=0, additional_amount='1000.00', display='T', selling='F',
+                   use_inventory='T', display_soldout='T', safety_inventory=0,
+                   options=[dict(name='색상', value='검정'), dict(name='사이즈', value='FREE')])
+    changes = [{k: v for k, v in variant.items() if k != 'options'}]
+
+    def respond(request):
+        calls.append(request)
+        assert request.url.path == '/api/v2/admin/products/123/variants'
+        if request.method == 'PUT':
+            assert json.loads(request.content) == dict(shop_no=1, request=dict(variants=changes))
+        return httpx.Response(200, json={'variants': [variant]})
+
+    api = client(respond)
+    assert asyncio.run(api.update_variants('access', 123, changes)) == {'variantCodes': ['sku']}
+    rows = asyncio.run(api.variants('access', 123))
+    assert rows[0]['useInventory'] == 'T' and rows[0]['quantity'] == 0 and rows[0]['additionalAmount'] == '1000.00'
+    assert rows[0]['displaySoldout'] == 'T' and rows[0]['safetyInventory'] == 0
+    for rows in ([], [{'variant_code': 'other'}], [{'variant_code': 'sku', 'error': {'message': 'private'}}]):
+        with pytest.raises(module().Cafe24ApiError):
+            asyncio.run(client(lambda _: httpx.Response(200, json={'variants': rows})).update_variants('access', 123, changes))
+    assert len(calls) == 2
+
+
+def test_each_paginated_read_checks_the_injected_request_fence():
+    calls = []
+    api = client(lambda req: calls.append(req) or httpx.Response(200, json={'variants': [
+        dict(variant_code=f'sku{i}', options=[]) for i in range(100)]}))
+    checks = []
+
+    async def fence():
+        checks.append('check')
+        if len(checks) == 2:
+            raise RuntimeError('lease_lost')
+
+    api.before_request = fence
+    with pytest.raises(RuntimeError, match='lease_lost'):
+        asyncio.run(api.variants('access', 123))
+    assert len(checks) == 2 and len(calls) == 1
+
+
+def test_inventory_fallback_and_activation_only_send_absolute_explicit_values():
+    calls = []
+    api = client(lambda req: calls.append(req) or httpx.Response(200, json={'product': {'product_no': 123}}))
+    inventory = dict(quantity=0, use_inventory='T', display_soldout='T', safety_inventory=0)
+    assert asyncio.run(api.set_variant_inventory('access', 123, 'sku/code', inventory)) is None
+    assert calls[-1].url.raw_path == b'/api/v2/admin/products/123/variants/sku%2Fcode/inventories'
+    assert json.loads(calls[-1].content) == dict(shop_no=1, request=inventory)
+    assert asyncio.run(api.set_product_state('access', 123, display='T', selling='F')) is None
+    assert calls[-1].method == 'PUT' and calls[-1].url.path == '/api/v2/admin/products/123'
+    assert json.loads(calls[-1].content) == dict(shop_no=1, request=dict(display='T', selling='F'))
