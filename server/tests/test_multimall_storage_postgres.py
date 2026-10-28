@@ -54,7 +54,9 @@ def storage_pg(mall_pg):
             created_roles.append(role)
         admin.execute(sql.SQL("alter default privileges in schema {} grant all on tables to {}, {}")
                       .format(*(sql.Identifier(value) for value in (pool.schema, roles["anon"], roles["authenticated"]))))
-        migration = MIGRATION.read_text().replace("public.", pool.schema + ".")
+        migration = MIGRATION.read_text().replace(
+            "alter table public.mall_defaults add column revision bigint not null default 1 check (revision >= 1);", "")
+        migration = migration.replace("public.", pool.schema + ".")
         migration = migration.replace("auth.users(id)", f"{pool.schema}.test_users(id)")
         migration = migration.replace("from anon, authenticated", f"from {roles['anon']}, {roles['authenticated']}")
         migration = migration.replace("to service_role", f"to {roles['service_role']}")

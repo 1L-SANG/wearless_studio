@@ -93,22 +93,28 @@ class FakeCursor:
                 else:
                     assert "access_key_enc" not in q and "secret_key_enc" not in q
                     self.result = [self.safe(row)]
+        elif q.startswith("insert into mall_sales_defaults"):
+            user, shipping, returns, disclosure, tax, origin, days, listing = args
+            previous = self.store.setdefault("sales", {}).get(user, {})
+            row = dict(shipping=shipping.obj, returns=returns.obj, disclosure=disclosure.obj,
+                       tax_type=tax, product_origin=origin, shipping_days=days, listing_mode=listing,
+                       revision=previous.get("revision", 0) + 1)
+            self.store["sales"][user] = copy.deepcopy(row)
+            self.result = [row]
+        elif "from mall_sales_defaults" in q:
+            row = self.store.setdefault("sales", {}).get(args[0])
+            self.result = [copy.deepcopy(row)] if row else []
         elif q.startswith("insert into mall_defaults"):
-            if len(args) == 3:
-                assert "addresses = '{}'" in q and "array_remove(mall_defaults.completed_items, 'addresses')" in q
-                assert "where mall_defaults.shop_id is distinct from excluded.shop_id" in q
-                user, mall, shop_id = args
-                row = self.store["defaults"].setdefault((user, mall), dict(
-                    shipping={}, returns={}, addresses={}, disclosure={}, tax_type="TAX", product_origin="domestic", completed_items=[]))
-                if row.get("shop_id") != shop_id:
-                    row.update(shop_id=shop_id, addresses={}, completed_items=[s for s in row["completed_items"] if s != "addresses"])
-                return
-            user, mall, shipping, returns, addresses, disclosure, tax, origin, completed = args
-            row = dict(user_id=user, mall=mall, shipping=shipping.obj, returns=returns.obj, addresses=addresses.obj,
-                       disclosure=disclosure.obj, tax_type=tax, product_origin=origin, completed_items=completed,
-                       shop_id=self.store["defaults"].get((user, mall), {}).get("shop_id"))
+            user, mall, shop_id, *addresses = args
+            previous = self.store["defaults"].get((user, mall))
+            row = previous or dict(shop_id=shop_id, addresses={}, revision=1)
+            if addresses:
+                row.update(addresses=addresses[0].obj, revision=previous["revision"] + 1 if previous else 1)
+                self.result = [copy.deepcopy(row)]
+            elif previous and previous["shop_id"] != shop_id:
+                assert "revision = mall_defaults.revision + 1" in q
+                row.update(shop_id=shop_id, addresses={}, revision=row["revision"] + 1)
             self.store["defaults"][(user, mall)] = copy.deepcopy(row)
-            self.result = [copy.deepcopy(row)]
         elif "from mall_defaults" in q:
             row = self.store["defaults"].get(tuple(args))
             self.result = [copy.deepcopy(row)] if row else []
@@ -345,13 +351,16 @@ def test_connect_to_other_shop_clears_saved_addresses(env):
              "returns": {"partialFee": 3000, "totalFee": 6000, "exchangeFee": 6000},
              "addresses": {"shippingAddressId": "a1", "returnAddressId": "a1"},
              "disclosure": {"country": "한국", "manufacturer": "니트", "asManager": "담당", "phone": "02-123-4567"}}
-    assert client.put("/v1/malls/zigzag/defaults", json=saved).status_code == 200
+    addresses = saved.pop("addresses")
+    assert client.put("/v1/malls/sales-defaults", json={"baseRevision": 0, **saved}).status_code == 200
+    assert client.put("/v1/malls/zigzag/registration-defaults", json={"baseRevision": 1, "addresses": addresses}).status_code == 200
     assert client.delete("/v1/malls/zigzag").status_code == 204
     assert connect(client, {**KEYS, "accessKey": "other-shop-fixture-87654321"}).status_code == 200
-    defaults = client.get("/v1/malls").json()["items"][0]["defaults"]
-    assert defaults["addresses"] == {}
-    assert defaults["completedItems"] == ["shipping", "returns", "disclosure"]
-    assert all(defaults[section] == saved[section] for section in ("shipping", "returns", "disclosure"))
+    defaults = client.get("/v1/malls/zigzag/registration-defaults").json()
+    assert defaults["addresses"] == {} and defaults["revision"] == 3
+    common = client.get("/v1/malls/sales-defaults").json()
+    assert all(common[section] == saved[section] for section in ("returns", "disclosure"))
+    assert common["shipping"] == {**saved["shipping"], "baseFee": 0}
     assert store["defaults"][(USER, "zigzag")]["shop_id"] == "s2"
 
 
@@ -368,14 +377,16 @@ def test_rotate_rejects_other_shop_key(env):
 def test_revoke_keeps_defaults(env):
     client, store = env
     connect(client)
-    assert client.put("/v1/malls/zigzag/defaults", json={"returns": {"partialFee": 3000, "totalFee": 6000, "exchangeFee": 6000},
+    assert client.put("/v1/malls/sales-defaults", json={"baseRevision": 0,
+        "returns": {"partialFee": 3000, "totalFee": 6000, "exchangeFee": 6000}}).status_code == 200
+    assert client.put("/v1/malls/zigzag/registration-defaults", json={"baseRevision": 1,
         "addresses": {"shippingAddressId": "a1", "returnAddressId": "a1"}}).status_code == 200
     before = copy.deepcopy(store["defaults"])
     assert client.delete("/v1/malls/zigzag").status_code == 204
     assert store["defaults"] == before
     connect(client)
-    defaults = client.get("/v1/malls").json()["items"][0]["defaults"]
-    assert defaults["completedItems"] == ["returns", "addresses"] and defaults["returns"]["totalFee"] == 6000
+    assert client.get("/v1/malls/sales-defaults").json()["returns"]["totalFee"] == 6000
+    assert client.get("/v1/malls/zigzag/registration-defaults").json()["addresses"]["shippingAddressId"] == "a1"
     assert store["defaults"] == before
 
 
@@ -387,15 +398,17 @@ def test_addresses_requires_connection(env):
     assert client.get("/v1/malls/zigzag/addresses").json()[0]["id"] == "a1"
 
 
-def test_defaults_partial_save_tracks_completed_items(env):
+def test_defaults_partial_save_tracks_missing_items_and_revision(env):
     client, _ = env
-    first = client.put("/v1/malls/zigzag/defaults", json={"shipping": {"feeType": "CONDITIONAL_FREE", "baseFee": 3000}})
-    assert first.status_code == 200 and first.json()["completedItems"] == []
-    second = client.put("/v1/malls/zigzag/defaults", json={"shipping": {"jejuFee": 0, "isolatedFee": 0, "conditionalAmount": 50000}})
-    assert second.status_code == 200 and second.json()["completedItems"] == ["shipping"]
-    assert second.json()["shipping"]["baseFee"] == 3000
-    invalid = client.put("/v1/malls/zigzag/defaults", json={"returns": {"totalFee": -1}})
+    first = client.put("/v1/malls/sales-defaults", json={"baseRevision": 0, "shipping": {"feeType": "CONDITIONAL_FREE", "baseFee": 3000}})
+    assert first.status_code == 200 and "shipping" in first.json()["missingItems"]
+    second = client.put("/v1/malls/sales-defaults", json={"baseRevision": 1, "shipping": {"jejuFee": 0, "isolatedFee": 0, "conditionalAmount": 50000}})
+    assert second.status_code == 200 and "shipping" not in second.json()["missingItems"]
+    assert second.json()["shipping"]["baseFee"] == 3000 and second.json()["revision"] == 2
+    invalid = client.put("/v1/malls/sales-defaults", json={"baseRevision": 2, "returns": {"totalFee": -1}})
     assert invalid.status_code == 422
+    conflict = client.put("/v1/malls/sales-defaults", json={"baseRevision": 1, "listingMode": "ON_SALE"})
+    assert conflict.status_code == 409 and conflict.json()["error"]["code"] == "defaults_conflict"
 
 
 def test_rate_limited(env):

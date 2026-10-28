@@ -46,7 +46,10 @@ def mall_pg(monkeypatch):
     for name in ("PGHOSTADDR", "PGSERVICE", "PGSERVICEFILE"):
         monkeypatch.delenv(name, raising=False)
     schema = "mall_race_" + uuid.uuid4().hex
-    admin = psycopg.connect(dsn, autocommit=True, row_factory=dict_row, connect_timeout=3)
+    try:
+        admin = psycopg.connect(dsn, autocommit=True, row_factory=dict_row, connect_timeout=3)
+    except psycopg.OperationalError:
+        pytest.skip("disposable local PostgreSQL is unreachable in this environment")
     admin.execute(psycopg.sql.SQL("create schema {}").format(psycopg.sql.Identifier(schema)))
     try:
         admin.execute(psycopg.sql.SQL("set search_path to {}, public").format(psycopg.sql.Identifier(schema)))
@@ -59,6 +62,10 @@ def mall_pg(monkeypatch):
         for statement in cafe24.read_text().split(";"):
             if "alter table public.mall_connections" in statement or "alter table public.mall_defaults" in statement:
                 admin.execute(statement.replace("public.mall_", f"{schema}.mall_"))
+        multimall = migration.with_name("20261028124908_multimall_registration.sql")
+        for statement in multimall.read_text().split(";"):
+            if "alter table public.mall_defaults" in statement:
+                admin.execute(statement.replace("public.mall_defaults", f"{schema}.mall_defaults"))
         admin.execute("""create table client_event_rate_limits (
             scope text, key text, window_start timestamptz, request_count integer)""")
         admin.execute("""create table jobs (

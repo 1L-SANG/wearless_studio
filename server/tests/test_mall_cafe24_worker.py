@@ -14,7 +14,6 @@ import pytest
 from PIL import Image
 
 from app import repo
-from app.mall_connect import registration_view
 from app.services import cafe24_tokens
 from app.services.cafe24_client import ERROR_COPY, Cafe24ApiError
 from conftest import assert_query_binds, make_settings
@@ -56,7 +55,7 @@ class WorkerEnv:
         self.asset_bytes = BytesIO()
         Image.new("RGBA", (2500, 1000), (255, 0, 0, 128)).save(self.asset_bytes, format="PNG")
         self.app = SimpleNamespace(state=SimpleNamespace(pool=self, r2=self,
-            settings=make_settings(mall_connect_enabled=True, detail_publish_enabled=True,
+            settings=make_settings(multimall_register_enabled=True, mall_connect_enabled=True, detail_publish_enabled=True,
                 cafe24_enabled=True, cafe24_client_id="fixture-id", cafe24_client_secret="fixture-private",
                 mall_keys_kek="fixture-kek", cafe24_allowed_mall_ids=frozenset({"myshop"}))))
         monkeypatch.setattr(self.worker, "Cafe24Client", lambda *a, **kw: self)
@@ -355,7 +354,7 @@ def test_worker_timeout_after_create_with_no_match_ends_done_unknown(env, lookup
     env.run()
     assert len(env.named("create")) == len(env.named("find")) == 1
     assert env.stored["status"] == "done" and env.stored["result"]["outcome"] == "unknown"
-    assert registration_view(env.stored)["verifiable"] is True
+    assert env.stored["metadata"]["create"]["sentAt"] and not env.stored["metadata"].get("productNo")
 
 
 def test_worker_lookup_two_matches_ends_duplicate_suspected(env):
@@ -472,4 +471,4 @@ def test_worker_definite_rejection_after_send_ends_failed_not_unknown(env, statu
     assert env.stored["metadata"]["rejectedAt"] and env.stored["metadata"]["code"] == "invalid_request"
     assert env.stored["status"] == "error" and env.stored["result"]["outcome"] == "failed"
     assert env.stored["error_message"] == ERROR_COPY["invalid_request"]
-    assert registration_view(env.stored)["verifiable"] is False
+    assert env.stored["metadata"].get("rejectedAt")

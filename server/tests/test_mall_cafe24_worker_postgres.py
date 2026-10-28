@@ -4,19 +4,28 @@ import asyncio
 import copy
 from dataclasses import replace
 from datetime import datetime, timezone
+import uuid
 
 import httpx
 import pytest
 from psycopg.types.json import Json
 
 from app import repo
+from app.auth import require_user
 from app.services import cafe24_tokens
+from app.services.cafe24_client import Cafe24Client
+from app.services.mall_catalog import REQUIRED_SCOPES
+from app.services.mall_registration_contract import (
+    freeze_registration, normalize_register_draft, registration_request_hash,
+)
 from test_mall_connect_postgres import mall_pg
 from test_mall_cafe24_worker import CONNECTION, JOB, LEASE, PROJECT, PUBLICATION, USER
+from test_multimall_routes import draft, facts, source
 
 
 @pytest.fixture
 def worker_pg(mall_pg):
+    # This input belongs only to the existing worker body, which changes in A03.
     app, admin, pool = mall_pg
     admin.execute("""alter table jobs
         add column id uuid primary key,
@@ -38,7 +47,7 @@ def worker_pg(mall_pg):
     admin.execute("create table fm_cutover_batches (status text)")
     admin.execute("create table personalization_profiles (id uuid, status text)")
     admin.execute("create table fm_models (id uuid, user_id uuid)")
-    app.state.settings = replace(app.state.settings, detail_publish_enabled=True, cafe24_enabled=True,
+    app.state.settings = replace(app.state.settings, multimall_register_enabled=True, detail_publish_enabled=True, cafe24_enabled=True,
         cafe24_client_id="fixture-id", cafe24_client_secret="fixture-private")
     payload = dict(mall="cafe24", mallId="myshop", connectionId=CONNECTION, publicationId=PUBLICATION,
         width=860, productName="니트", price=39000, supplyPrice=39000, display="T", selling="T", taxType="A")
@@ -50,9 +59,49 @@ def worker_pg(mall_pg):
     return app, admin, pool
 
 
-def test_second_lease_expiry_after_send_remains_verifiable(worker_pg):
+@pytest.fixture
+def verify_pg(worker_pg, monkeypatch):
+    from app import mall_registration
+
     app, admin, pool = worker_pg
-    admin.execute("update jobs set metadata = %s where id = %s",
+    app.dependency_overrides[require_user] = lambda: USER
+    value = normalize_register_draft(draft(
+        projectId=PROJECT, publicationId=PUBLICATION, selectedMalls=["cafe24"]))
+    owned = source()
+    owned["project"]["id"] = PROJECT
+    owned["publication"].update(id=PUBLICATION, user_id=USER, project_id=PROJECT)
+    batch_id = str(uuid.uuid4())
+    payload = dict(mall="cafe24", batchId=batch_id, requestHash=registration_request_hash(value),
+        connectionId=CONNECTION, shopId="myshop", publicationId=PUBLICATION, editorRevision=3,
+        snapshot=freeze_registration(value, source=owned, facts=facts()))
+    external_code = "wl" + uuid.UUID(JOB).hex[:16]
+    admin.execute("update jobs set payload = %s, idempotency_key = %s, metadata = %s where id = %s",
+        (Json(payload), f"mall-register:{USER}:{batch_id}:cafe24", Json({"externalCode": external_code}), JOB))
+    admin.execute("update mall_connections set scopes = %s where id = %s", (sorted(REQUIRED_SCOPES), CONNECTION))
+    calls = []
+
+    def respond(request):
+        assert request.method == "GET", "verify must never create a product or write settings"
+        assert request.url.path == "/api/v2/admin/products"
+        assert request.url.params["custom_product_code"] == external_code
+        assert request.headers["Authorization"] == "Bearer fixture-token"
+        calls.append(request)
+        return httpx.Response(200, json={"products": [
+            {"product_no": 42, "custom_product_code": external_code}]})
+
+    async def with_token(app, *, user_id, connection_id, fn):
+        assert (user_id, connection_id) == (USER, CONNECTION)
+        return await fn("fixture-token")
+
+    monkeypatch.setattr(mall_registration, "Cafe24Client", lambda *args, **kwargs:
+        Cafe24Client(*args, **kwargs, transport=httpx.MockTransport(respond)))
+    monkeypatch.setattr(mall_registration, "call_with_token", with_token)
+    return app, admin, pool, calls
+
+
+def test_second_lease_expiry_after_send_remains_verifiable(verify_pg):
+    app, admin, pool, calls = verify_pg
+    admin.execute("update jobs set metadata = metadata || %s::jsonb where id = %s",
         (Json({"create": {"sentAt": "2026-10-26T00:00:00+00:00", "attempt": 1, "leaseToken": LEASE}}), JOB))
 
     async def scenario():
@@ -69,18 +118,24 @@ def test_second_lease_expiry_after_send_remains_verifiable(worker_pg):
             await conn.commit()
             assert recovered[0]["status"] == "error"
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-            # The PG fixture authenticates its own user; set it to this ledger's owner.
-            from app.auth import require_user
-            app.dependency_overrides[require_user] = lambda: USER
-            response = await client.get(f"/v1/malls/cafe24/registrations/{JOB}")
-        assert response.status_code == 200
-        view = response.json()
-        assert view["status"] == "error" and view["outcome"] == "unknown"
-        assert view["verifiable"] is True and view["errorMessage"] is None
+            response = await client.get(f"/v1/malls/registrations/{JOB}")
+            assert response.status_code == 200, response.text
+            view = response.json()
+            assert view["status"] == "error" and view["outcome"] == "unknown"
+            assert view["retryAction"] == "verify" and view["productId"] is None
+            before = admin.execute("select metadata, result from jobs where id = %s", (JOB,)).fetchone()
+            assert before["metadata"]["leaseRecoveries"] == 2 and before["result"] is None
+            response = await client.post(f"/v1/malls/registrations/{JOB}/verify")
+            assert response.status_code == 200, response.text
+            view = response.json()
+            assert (view["status"], view["outcome"], view["productId"]) == ("error", "created", "42")
+            assert view["setupStatus"] == "needs_attention" and view["retryAction"] == "resume"
 
     asyncio.run(scenario())
     row = admin.execute("select metadata, result from jobs where id = %s", (JOB,)).fetchone()
-    assert row["metadata"]["leaseRecoveries"] == 2 and row["result"] is None
+    assert row["metadata"]["leaseRecoveries"] == 2 and row["metadata"]["productId"] == "42"
+    assert row["result"]["outcome"] == "created" and len(calls) == 1
+    assert admin.execute("select count(*) as n from job_events").fetchone()["n"] == 1
 
 
 def test_reclaimed_job_fence_blocks_stale_worker_create(worker_pg, monkeypatch):
@@ -163,30 +218,12 @@ def test_reclaimed_job_fence_blocks_stale_worker_create(worker_pg, monkeypatch):
 
 
 @pytest.mark.parametrize("status", ["done", "error"])
-def test_verify_and_late_worker_finalize_do_not_clobber_product_no(worker_pg, monkeypatch, status):
-    from app import mall_connect
-    from app.auth import require_user
-
-    app, admin, pool = worker_pg
-    app.dependency_overrides[require_user] = lambda: USER
-    admin.execute("""update jobs set status = %s, metadata = %s, result = %s,
+def test_verify_and_late_worker_finalize_do_not_clobber_product_no(verify_pg, monkeypatch, status):
+    app, admin, pool, calls = verify_pg
+    admin.execute("""update jobs set status = %s, metadata = metadata || %s::jsonb, result = %s,
         finished_at = now(), locked_by = null, locked_at = null where id = %s""",
         (status, Json({"create": {"sentAt": "2026-10-26T00:00:00+00:00"}}),
-         Json({"outcome": "unknown", "productNo": None}), JOB))
-    calls = []
-
-    class Client:
-        async def find_products_by_custom_code(self, token, code):
-            calls.append(code)
-            assert code == "wl" + JOB.replace("-", "")[:16]
-            return [42]
-
-    async def with_token(app, *, user_id, connection_id, fn):
-        assert (user_id, connection_id) == (USER, CONNECTION)
-        return await fn("fixture-token")
-
-    monkeypatch.setattr(mall_connect, "_cafe24_client", lambda *_: Client())
-    monkeypatch.setattr(mall_connect, "call_with_token", with_token)
+         Json({"outcome": "unknown", "setupStatus": "pending"}), JOB))
 
     async def scenario():
         patch_ready, resume = asyncio.Event(), asyncio.Event()
@@ -200,13 +237,15 @@ def test_verify_and_late_worker_finalize_do_not_clobber_product_no(worker_pg, mo
 
         monkeypatch.setattr(repo, "set_job_result_patch", pause_result_patch)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-            verifying = asyncio.create_task(client.post(f"/v1/malls/cafe24/registrations/{JOB}/verify"))
+            verifying = asyncio.create_task(client.post(f"/v1/malls/registrations/{JOB}/verify"))
             try:
                 await asyncio.wait_for(patch_ready.wait(), timeout=5)
                 # A different DB connection carries the expired worker's stale lease and unknown result.
                 async with pool.connection() as late:
                     assert not await repo.finalize_uncharged_job(late, job_id=JOB, lease_token=LEASE,
-                        status="done", result={"outcome": "unknown", "productNo": None})
+                        status="done", result={"outcome": "unknown", "setupStatus": "pending"})
+                    assert not await repo.set_job_metadata_patch(late, job_id=JOB, lease_token=LEASE,
+                        patch={"productId": "999"})
                     await late.commit()
                 resume.set()
                 response = await asyncio.wait_for(verifying, timeout=5)
@@ -216,19 +255,21 @@ def test_verify_and_late_worker_finalize_do_not_clobber_product_no(worker_pg, mo
                     verifying.cancel()
                 await asyncio.gather(verifying, return_exceptions=True)
             assert response.status_code == 200, response.text
-            assert response.json()["productNo"] == 42
+            assert response.json()["productId"] == "42"
+            assert response.json()["setupStatus"] == "needs_attention"
             async with pool.connection() as late:
                 assert not await repo.finalize_uncharged_job(late, job_id=JOB, lease_token=LEASE,
                     status="error", result={"outcome": "failed"}, error_message="늦은 워커")
                 assert not await patch(late, job_id=JOB, user_id="99999999-9999-4999-8999-999999999999",
-                                       expect_status=("done", "error"), patch={"productNo": 999})
+                                       expect_status=("done", "error"), patch={"productId": "999"})
                 assert not await patch(late, job_id=JOB, user_id=USER,
-                                       expect_status=("running",), patch={"productNo": 999})
+                                       expect_status=("running",), patch={"productId": "999"})
                 await late.commit()
 
     asyncio.run(scenario())
     saved = admin.execute("select status, metadata, result from jobs where id = %s", (JOB,)).fetchone()
     assert saved["status"] == status
-    assert saved["metadata"]["productNo"] == saved["result"]["productNo"] == 42
+    assert saved["metadata"]["productId"] == "42"
+    assert "productNo" not in saved["metadata"] and "productNo" not in saved["result"]
     assert saved["result"]["outcome"] == "created" and len(calls) == 1
     assert admin.execute("select count(*) as n from job_events").fetchone()["n"] == 0

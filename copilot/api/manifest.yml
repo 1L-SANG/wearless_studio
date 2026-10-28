@@ -133,6 +133,8 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   #   ② 아래 secrets 블록에 두 키 추가 ③ 이 값을 "true"로. 켜는 건 오너 승인 뒤.
   DETAIL_PUBLISH_ENABLED: "false"
   MALL_CONNECT_ENABLED: "false"
+  # 여러 몰 등록 API는 A03 작업 실행과 인수 검증을 마칠 때까지 꺼 둔다.
+  MULTIMALL_REGISTER_ENABLED: "false"
   # 카페24 자사몰 등록. 앱은 2026-10-28 오너가 개발자센터에 만듦(Client ID는 공개값). 꺼 둔 채 배포한다.
   # 심사 통과 전에는 CAFE24_ALLOWED_MALL_IDS의 몰만 연결된다. 비우면 모든 몰을 허용하니(config.is_allowed_mall) 심사 뒤에만 비운다.
   CAFE24_ENABLED: "false"

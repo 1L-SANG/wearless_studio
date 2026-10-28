@@ -9,8 +9,26 @@ import json
 import math
 import re
 from urllib.parse import urlencode
+from typing import TypedDict
 
 import httpx
+
+
+class Cafe24ImageSetting(TypedDict):
+    width: int
+    height: int
+
+
+class Cafe24ProductState(TypedDict):
+    productId: str
+    display: str
+    selling: str
+
+
+class Cafe24Variant(TypedDict):
+    variantCode: str
+    options: list[dict]
+    quantity: int | None
 
 
 PRICE_BASIS_FIELD = "calculate_price_based_on"
@@ -26,6 +44,7 @@ ERROR_COPY = {
     "invalid_request": "카페24가 입력을 받지 않았어요. 판매가와 상품명을 확인해 주세요",
     "price_setting_unavailable": "카페24 가격 설정을 확인하지 못했어요. 잠시 뒤 다시 등록해 주세요",
     "unreachable": "카페24에 연결하지 못했어요. 잠시 뒤 다시 시도해 주세요",
+    "image_setting_unavailable": "카페24 이미지 설정을 확인하지 못했어요. 잠시 뒤 다시 확인해 주세요",
     "image_upload_mismatch": "상세 이미지를 올리지 못했어요. 잠시 뒤 다시 시도해 주세요",
     "connection_changed": "그 사이 카페24 연결이 바뀌었어요. 다시 등록해 주세요",
     "cafe24_not_allowed": "지금은 시범 운영 중이라 등록된 몰만 등록할 수 있어요",
@@ -316,3 +335,34 @@ class Cafe24Client:
     async def categories(self, access_token, *, limit, offset) -> list[dict]:
         return _rows(await self._request("GET", "/admin/categories", access_token=access_token,
                                         params={"limit": limit, "offset": offset}), "categories")
+
+    async def image_setting(self, access_token: str) -> 'Cafe24ImageSetting':
+        setting = _object(await self._request('GET', '/admin/images/setting', access_token=access_token),
+                          'images_setting', code='image_setting_unavailable')
+        width, height = setting.get('detail_image_width'), setting.get('detail_image_height')
+        if type(width) is not int or type(height) is not int or not 0 < width <= 20000 or not 0 < height <= 20000:
+            raise Cafe24ApiError('image_setting_unavailable')
+        return {'width': width, 'height': height}
+
+    async def product_state(self, access_token: str, product_no: int) -> 'Cafe24ProductState':
+        if type(product_no) is not int or product_no <= 0:
+            raise ValueError('invalid_product_no')
+        row = _object(await self._request('GET', f'/admin/products/{product_no}', access_token=access_token), 'product')
+        if row.get('product_no') != product_no or row.get('display') not in ('T', 'F') or row.get('selling') not in ('T', 'F'):
+            raise Cafe24ApiError()
+        return dict(productId=str(product_no), display=row['display'], selling=row['selling'])
+
+    async def variants(self, access_token: str, product_no: int) -> list['Cafe24Variant']:
+        if type(product_no) is not int or product_no <= 0:
+            raise ValueError('invalid_product_no')
+        items = []
+        for offset in range(0, 5000, 100):
+            rows = _rows(await self._request('GET', f'/admin/products/{product_no}/variants',
+                access_token=access_token, params={'limit': 100, 'offset': offset}), 'variants')
+            for row in rows:
+                if not isinstance(row.get('variant_code'), str) or not row['variant_code']:
+                    raise Cafe24ApiError()
+                items.append(dict(variantCode=row['variant_code'], options=row.get('options') or [], quantity=row.get('quantity')))
+            if len(rows) < 100:
+                return items
+        raise Cafe24ApiError()

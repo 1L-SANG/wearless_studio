@@ -761,6 +761,8 @@ R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Ca
 
 만료 규칙은 `profiles.plan`을 기준으로 한다. free가 아니면 `expires_at=null`, 처음부터 free면 `created_at+6개월`, 구독 종료를 처음 관찰한 free 게시면 관찰 시각+6개월이다. 이미 정해진 free 만료일은 유지하고 삭제 의도 확정 전에 재구독하면 null로 되돌린다. 워커는 하루 한 번 만료일을 계산하고 한 시간마다 정리한다. 탈퇴 시에는 즉시 삭제를 시도하고 실패는 재시도한다.
 
+카페24 등록은 워커에서 게시 이미지를 카페24로 복사한다. 이 사실은 기존 게시 삭제와 만료 정책을 바꾸지 않는다.
+
 ## § 쇼핑몰 연결
 
 `MALL_CONNECT_ENABLED` 기본값은 false이며 꺼져 있으면 `/v1/malls` 라우트와 프로필의 쇼핑몰 연결 메뉴를 제공하지 않는다. 연결 API가 꺼져 있으면 메뉴의 지그재그, 카페24, 에이블리 항목은 '준비 중'으로 비활성 표시한다. 에이블리와 스마트스토어는 `unavailable` 표시만 제공한다.
@@ -775,27 +777,28 @@ R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Ca
 | `permissions` | `permissions` | 셀러용 권한 문구 배열 |
 | `connected_at`, `last_registered_at` | `connectedAt`, `lastRegisteredAt` | ISO 8601 또는 null |
 | `mall_defaults.shop_id` | 제공하지 않음 | 주소 기본값이 속한 스토어 ID |
-| `mall_defaults.completed_items` | `defaults.completedItems` | 완료한 `shipping`, `returns`, `addresses`, `disclosure` |
+| `mall_defaults.revision` | `addressesRevision` | 현재 몰 주소 선택의 리비전 |
 
-연결은 새 키로 스토어 조회를 마친 뒤 저장한다. 인증정보 변경은 검증이 성공한 경우에만 기존 연결을 `revoked`로 바꾸고 새 `connected` 행을 같은 트랜잭션에 만든다. 실패하면 기존 연결을 유지한다. 연결할 스토어가 `mall_defaults.shop_id`와 다르면 `addresses`를 비우고 완료 항목에서 제외한 뒤 스토어 ID를 갱신한다. 다른 기본 설정과 같은 스토어의 재연결 설정은 유지한다. 인증정보 변경에서 기존 연결과 스토어가 다르면 400 `shop_mismatch`로 거절한다. 연결 해제와 탈퇴는 암호문을 즉시 지우고 `revoked`로 바꾸며 기본 설정을 보존한다. 응답과 로그에 키 원문을 넣지 않는다.
+연결은 새 키로 스토어 조회를 마친 뒤 저장한다. 인증정보 변경은 검증이 성공한 경우에만 기존 연결을 `revoked`로 바꾸고 새 `connected` 행을 같은 트랜잭션에 만든다. 실패하면 기존 연결을 유지한다. 연결할 스토어가 `mall_defaults.shop_id`와 다르면 `addresses`를 비우고 revision을 증가시킨 뒤 스토어 ID를 갱신한다. 공통 판매 정보와 같은 스토어의 주소 선택은 유지한다. 인증정보 변경에서 기존 연결과 스토어가 다르면 400 `shop_mismatch`로 거절한다. 연결 해제와 탈퇴는 암호문을 즉시 지우고 `revoked`로 바꾸며 기본 설정을 보존한다. 응답과 로그에 키 원문을 넣지 않는다.
 
 인증정보 변경은 외부 검증을 시작하기 전에 현재 연결 ID를 기록한다. 저장할 때 연결 해제와 같은 잠금 안에서 그 연결이 여전히 활성 상태인지 확인한다. 연결이 없거나 해제되거나 다른 연결로 교체됐다면 409 `connection_changed`로 거절하며, 늦게 끝난 변경 요청이 연결을 다시 만들지 않는다.
 
-`GET /v1/malls`는 `{items:[{mall,status,shopName,keyHint,permissions,connectedAt,lastRegisteredAt,defaults}]}`이며 `defaults`는 저장된 값과 `completedItems`, `total:4`를 포함한다. 저장된 값이 없으면 각 묶음은 빈 객체다. `POST /v1/malls/zigzag/connect`, `POST .../rotate`의 입력은 `{accessKey,secretKey}`이며 앞뒤 공백 제거 후 각각 1~256자다. 두 동작을 합쳐 사용자당 시간당 10회로 제한한다. `DELETE /v1/malls/zigzag`는 기본 설정을 지우지 않는다.
+`GET /v1/malls`는 `{items:[...]}`다. 각 몰에 연결 정보, `addressesRevision`, 활성 연결 ID의 SHA-256인 공개 `connectionVersion`과 `registration:{status,reasonCode?}`를 제공한다. 등록 상태는 `available`, `preparing`, `reconnect_required`다. 연결됨과 등록 가능은 독립이며 Phase A의 지그재그와 에이블리 등록은 항상 preparing이다. 준비 중 이유에 비밀 설정 이름을 넣지 않는다. 지그재그 연결과 인증정보 변경의 `{accessKey,secretKey}` 입력, 앞뒤 공백 제거와 1~256자 제한, 합산 시간당 10회 제한은 유지한다.
 
-`GET /v1/malls/zigzag/addresses`는 `{id,name,address,postcode,is_default}[]`를 반환한다. `PUT /v1/malls/zigzag/defaults`는 아래 값을 부분 저장하고 누적 저장값으로 완료 항목을 계산한다.
+공통 판매 정보는 연결 없이 저장할 수 있는 `mall_sales_defaults`가 정본이다. 이전 `mall_defaults`의 배송, 반품, 고시 열을 읽거나 이전하지 않는다. 몰별 기본값은 주소 선택과 revision만 사용하고 API에 shop_id를 노출하지 않는다.
 
-| 묶음 | 필드 |
+| 경로 | 입력과 응답 |
 |---|---|
-| `shipping` | `feeType:FREE\|CHARGED\|CONDITIONAL_FREE`, `baseFee`, `jejuFee`, `isolatedFee`, `conditionalAmount` |
-| `returns` | `partialFee`, `totalFee`, `exchangeFee` |
-| `addresses` | `shippingAddressId`, `returnAddressId` |
-| `disclosure` | `country`, `manufacturer`, `asManager`, `phone` |
-| 공통 선택 | `taxType:TAX\|FREE` 기본 TAX, `productOrigin:domestic\|imported` 기본 domestic |
+| `GET /v1/malls/sales-defaults` | `{revision,shipping,returns,disclosure,taxType,productOrigin,shippingDays,listingMode,missingItems}` |
+| `PUT /v1/malls/sales-defaults` | `{baseRevision,...변경할 구역}`. 구역 내부는 명시한 필드만 병합하고 새 revision 반환. 충돌은 409 `defaults_conflict` |
+| `GET /v1/malls/{mall}/registration-defaults` | `{revision,addresses}` |
+| `PUT /v1/malls/{mall}/registration-defaults` | `{baseRevision,addresses?}`. 현재 연결 스토어의 주소 ID만 선택 가능. 다른 세대로 바뀌면 409 |
+| `GET /v1/malls/{mall}/registration-catalog` | `{mall,status,catalogVersion,complete,categories,priceBasis,imageRatio,capabilities,issues}`. 사용자, 몰, 연결 세대와 계약 버전별로 최대 10분 캐시. 실패와 잘린 목록은 캐시하지 않음 |
+| `GET /v1/malls/zigzag/addresses` | `{id,name,address,postcode,is_default}[]`. 50개씩 skip_count로 끝까지 조회하고 ID 중복 제거 |
 
-금액은 0 이상 정수다. 조건부 무료는 `conditionalAmount`가 필수다. 배송비의 무료 정책은 `baseFee` 없이 완료할 수 있다. 전화번호는 숫자와 하이픈만 허용한다. 오류는 `{error:{code,message}}`이며 연결 오류 코드는 `invalid_key`, `missing_permission`, `unreachable`, `unknown`이다. 원격 오류 원문은 응답에 포함하지 않는다.
+`shipping`은 feeType, baseFee, jejuFee, isolatedFee, conditionalAmount, `returns`는 partialFee, totalFee, exchangeFee, `disclosure`는 country, manufacturer, asManager, phone, warrantyText를 가진다. 공통 선택은 `taxType:TAX|FREE`, `productOrigin:domestic|imported`, `shippingDays:1..30`, `listingMode:HIDDEN|ON_SALE`이며 초기값은 TAX, domestic, 2, HIDDEN이다. 금액은 Boolean을 제외한 0 이상 정수이며 conditionalAmount는 1 이상이다. 무료 배송의 baseFee는 0이다. disclosure의 빈 문자열은 해당 필드를 지우고 null은 모든 판매 정보 필드에서 거부한다. 구역을 덜 채워도 저장 가능하며 missingItems는 shipping, returns, disclosure 중 미완료 구역을 나타낸다. 알 수 없는 필드는 거부한다. 이전 zigzag/defaults PUT은 제공하지 않는다.
 
-카페24 저장 계약: `shop_id`는 `mall_id`이고 `access_key_enc`, `secret_key_enc`에 access token과 refresh token을 각각 암호화한다. `token_expires_at`, `refresh_expires_at`은 timestamptz, `scopes`는 기본값이 빈 배열인 필수 text[]다. 만료 시각은 토큰 수신 시각에서 각각 2시간에 60초를 뺀 값, 14일에 1시간을 뺀 값으로 계산하며 access 만료 시각은 토큰 버전으로도 쓴다. 카페24 기본 설정은 아직 쓰지 않는다.
+카페24 저장 계약: `shop_id`는 `mall_id`이고 `access_key_enc`, `secret_key_enc`에 access token과 refresh token을 각각 암호화한다. `token_expires_at`, `refresh_expires_at`은 timestamptz, `scopes`는 기본값이 빈 배열인 필수 text[]다. 만료 시각은 토큰 수신 시각에서 각각 2시간에 60초를 뺀 값, 14일에 1시간을 뺀 값으로 계산하며 access 만료 시각은 토큰 버전으로도 쓴다. 카페24는 공통 판매 정보를 사용하고 주소 선택은 지원하지 않는다.
 
 카페24 연결 응답에는 `mallId`(`shop_id`)와 `tokenExpiresAt`을 포함한다. 연결 세대는 해당 사용자와 몰의 가장 최근 행(`created_at desc, id desc`)의 `id:status`이고 행이 없으면 `none`이다.
 
@@ -813,19 +816,7 @@ R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Ca
 | `reconnect_required` | 다시 설치 안내, 다시 연결을 누르면 응답의 mallId로 입력칸 복원 |
 | `unavailable` | 준비 중. 연결 목록 로딩 또는 API 비활성도 같은 표시 |
 
-에디터 메뉴의 카페24 항목은 지그재그와 에이블리 사이에 둔다. 연결 없음은 설정 이동, 연결됨은 상품 등록 모달, 재연결 필요는 설정 이동이며, 목록 로딩과 API 비활성 또는 게시 비활성은 준비 중이다. 등록 모달은 먼저 현재 프로젝트와 몰의 미완료 또는 미확인 등록을 조회하고, 있으면 기존 jobId의 상태 조회와 확인을 이어간다. 내역 조회 실패를 신규 등록으로 처리하지 않는다. 복원할 작업이 없을 때만 저장 완료를 기다리고 현재 에디터 리비전을 읽은 뒤 같은 리비전의 게시를 찾으며, 없으면 먼저 게시한다. 게시 목록은 ready 행만 반환하고 응답에 status를 포함하지 않으므로 이를 재검사하지 않는다. 판매가는 필수이고 공급가는 접힌 기본값이며 대표 이미지는 없이 등록할 수 있다. 확인할 때 만든 requestKey와 확정 입력은 접수 재시도에 그대로 쓰며, 접수 뒤에는 같은 jobId만 조회한다. 폴링 제한은 10분이고 성공, 실패, 시간 초과 뒤 모두 등록 상세를 조회한다. job_timeout은 실패로 표시하지 않고 jobId와 requestKey를 유지해 상태 확인 버튼을 제공한다. 결과가 unknown 또는 duplicate_suspected이면 창을 닫았다 다시 열어도 확인만 제공하고 자동 재등록하지 않는다. 보관함 패널에는 프로젝트의 마지막 등록 결과를 한 줄로 표시한다.
-
-| 카페24 화면 구역과 상태 | 문구와 동작 |
-|---|---|
-| 등록 확인 구역 | 상세설명 값은 `이미지 N장` |
-| 등록 접수 중 `submitting` | 제목 `등록하고 있어요`, 진행 문구 `등록 준비 중` |
-| 등록 진행 중 `polling` | 제목 `등록하고 있어요`. 진행률 70 미만은 `이미지 올리는 중`, 70 이상은 `상품 등록 중` |
-| 등록 확인 중 `verifying` | 이전 결과보다 현재 단계를 우선해 제목 `확인하고 있어요`, 진행 문구 `등록 확인 중` |
-| 등록 완료 `created` | 제목 `등록 완료`, 본문은 `상품 번호 N`부터 표시 |
-| 등록 실패 `failed` | 기존 실패 문구를 유지하며 닫기 버튼은 `닫기` 하나만 제공. 재연결이 필요하면 `다시 연결하기 ›` 링크 유지 |
-| 재확인 결과 없음 | `아직 확인되지 않았어요. 잠시 뒤 다시 확인해 주세요`. 관리자 링크는 푸터에서 제공 |
-| 중복 의심 `duplicate_suspected` | 제목 `카페24 관리자에서 확인해 주세요`, 본문 `같은 코드의 상품이 여러 개예요` |
-| 연결 해제 본문 | `해제하면 에디터에서 바로 등록을 못 해요. 등록한 상품과 게시한 이미지는 그대로예요` |
+여러 몰 등록 창은 먼저 프로젝트별 recoveries를 확인한다. 복원할 작업이 없을 때 저장 완료, 현재 editorRevision 확인, 같은 revision의 ready 게시 준비, preflight 순서로 진행한다. 대표 이미지는 필수이며 본인 프로젝트 자산만 선택하고 추가 이미지는 서로 다른 자산 최대 4개다. 등록 가격과 옵션별 수량을 확인하고 선택한 몰을 묶음으로 접수한다. 실행 결과를 잃으면 새로 생성하지 않고 같은 batchId 재생 또는 기존 jobId 확인을 사용한다. 화면 전환은 A04와 A05에서 공통 API에 연결한다.
 
 설치 성공 결과는 연결 목록을 갱신하는 신호로만 사용한다. 연결됨, 연결 없음, 재연결 필요 표시는 현재 계정의 서버 응답을 따르며, 이전 설치 성공 표시가 이후 해제나 만료 상태를 가리지 않는다.
 
@@ -857,27 +848,39 @@ R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Ca
 
 `mall_install_attempts`는 서버 전용이며 RLS를 켜고 anon과 authenticated의 모든 권한을 회수한다. service_role만 접근한다. `user_id`, `mall='cafe24'`, `mall_id`, `expected_generation`, `return_to`, `cookie_hash`(SHA-256), `created_at`, `expires_at`과 `started_at`, `consumed_at`, `saved_at`, `voided_at`을 보관한다. 브라우저 비밀 원문과 토큰은 저장하지 않으며 시도는 10분 뒤 만료된다.
 
-설정은 `CAFE24_ENABLED=false`, `CAFE24_CLIENT_ID`, `CAFE24_CLIENT_SECRET`, `CAFE24_REDIRECT_URI=https://api.wearless.kr/v1/malls/cafe24/callback`, `CAFE24_SCOPES='mall.read_product mall.write_product mall.read_store mall.read_category'`, `CAFE24_API_VERSION=2026-09-01`, `CAFE24_ALLOWED_MALL_IDS=''`다. client secret은 서버 비밀이다. `cafe24_ready`는 스위치와 client ID, client secret, `MALL_KEYS_KEK`가 모두 있어야 참이다. `cafe24_api_origin`은 콜백의 오리진이다. 허용 몰 목록은 쉼표로 나눠 공백을 제거한 frozenset이며 빈 목록은 제한 없음이다. `registration_enabled`는 `MALL_CONNECT_ENABLED`, `DETAIL_PUBLISH_ENABLED`, `cafe24_ready`를 모두 요구한다.
+설정은 `CAFE24_ENABLED=false`, `CAFE24_CLIENT_ID`, `CAFE24_CLIENT_SECRET`, `CAFE24_REDIRECT_URI=https://api.wearless.kr/v1/malls/cafe24/callback`, `CAFE24_SCOPES='mall.read_product mall.write_product mall.read_store mall.read_category'`, `CAFE24_API_VERSION=2026-09-01`, `CAFE24_ALLOWED_MALL_IDS=''`다. client secret은 서버 비밀이다. `cafe24_ready`는 스위치와 client ID, client secret, `MALL_KEYS_KEK`가 모두 있어야 참이다. `cafe24_api_origin`은 콜백의 오리진이다. 허용 몰 목록은 쉼표로 나눠 공백을 제거한 frozenset이며 빈 목록은 제한 없음이다. `registration_enabled`는 `MULTIMALL_REGISTER_ENABLED`(기본 false), `MALL_CONNECT_ENABLED`, `DETAIL_PUBLISH_ENABLED`, `cafe24_ready`를 모두 요구한다.
 
-카페24 등록 원장은 별도 표 없이 무과금 `jobs.kind='mall_register'` 한 건이다. `payload`는 확정 입력, `metadata`는 진행 기록, `result`는 결과이고 `metadata.productNo`가 상품 번호 확정의 근거다. `idempotency_key`는 `cafe24-register:{user_id}:{requestKey}`이고 요청 식별 정보는 소유자 조건으로 별도 조회한다. 프로젝트별 목록도 소유자와 kind를 제한해 최신 5건을 읽는다. JSON 패치는 얕은 병합이며 접수는 소유자의 pending 잡, 워커는 running 상태와 같은 lease, 확인 요청은 소유자의 done 또는 error 잡에만 쓴다. 진행률도 lease로 보호하고 종결의 `error_message`는 error일 때만 기록한다. 기존 활성 잡 인덱스를 유지하므로 같은 프로젝트의 등록은 한 번에 하나만 실행한다.
+## § 여러 몰 등록
 
-아래 등록 관련 라우트는 모두 로그인 필수다. 접수는 등록 가능 설정, 계정 폐쇄 여부, 살아 있는 본인 프로젝트, 실존 모델 사용 여부, 현재 연결과 허용 몰, 같은 프로젝트의 본인 ready 게시, 정규화된 게시 이미지, 같은 프로젝트의 본인 대표 이미지 순서로 검사한다. 등록 시도는 연결 시도와 별도로 `mall-register:{user}` 키를 사용해 시간당 10회로 제한한다.
+정본은 `docs/superpowers/specs/2026-10-28-multimall-design.md` 3.5절과 4~8절이다. A02는 서버 계약과 읽기, 접수, 확인, 설정 재개까지 제공한다. A03의 어댑터와 작업 실행이 연결되고 인수 검증을 마칠 때까지 MULTIMALL_REGISTER_ENABLED를 켜지 않는다.
 
-| 라우트 | 계약 |
+RegisterDraft는 projectId, publicationId, editorRevision, selectedMalls, productName, basePrice, defaultQuantity, priceOverrides, sizes, variantOverrides, mainAssetId, additionalAssetIds, categories, confirmedSourcesByMall, salesOverrides다. 상품명은 공백 정리 뒤 1~100자이며 제어문자를 거부한다. 가격은 1 이상, 수량과 추가금액은 0 이상 정수이고 Boolean, 소수, 음수와 최종 가격 overflow를 거부한다. 수량 미입력은 0이다. 색상은 저장된 그룹 ID와 이름만 쓰고 sizes는 저장된 kind='size' 블록의 info.rows 라벨과 일치해야 한다. 색상과 사이즈의 JSON 배열 직렬화가 variantKey이며 공백 정리로 충돌하는 라벨과 중복 override를 거부한다. 앱의 옵션 상한은 200개다.
+
+에디터 required_notice.info.fields의 10개 키가 고시 정본이다. 기존 셀러 입력을 우선하고 빈칸에만 저장된 소재, 색상, 실제 kind='size' 치수와 kind='care' 문구, 공통 고시 정보를 보충한다. 안내문과 NBSP, FREE만으로 실측을 만들지 않는다. 다른 값을 가진 고시 블록은 충돌로 기록하고 그 필드를 전송하지 않는다. 제조연월은 자동 생성하지 않는다. 보충 출처와 누락은 snapshot.notice에 고정한다. 카페24의 소재와 원산지 누락은 경고이며 공통 배송 정보가 미완료여도 카페24를 막지 않는다.
+
+| 경로 | 계약 |
 |---|---|
-| `POST /v1/malls/cafe24/registrations` | 입력 `{projectId,publicationId,requestKey,productName,price,supplyPrice?,display?,selling?,taxType?,categoryNo?,thumbnailAssetId?}`. ID와 requestKey는 UUID, 상품명은 1~100자, 판매가는 1~2,147,483,647의 정수, 공급가는 0 이상 정수이며 기본 판매가다. 진열과 판매는 `T\|F` 기본 T, 과세는 `A\|B` 기본 A다. 신규 접수는 202 `{jobId,status:'queued',externalCode}`이며 코드는 `wl`과 잡 ID의 hex 앞 16자리다. 기능 설정과 계정 폐쇄 여부를 확인한 뒤 소유자와 요청 키로 이미 접수한 작업을 먼저 찾는다. 같은 키와 정규화된 같은 요청 입력은 작업 상태, 현재 게시나 연결, 남은 접수 횟수와 관계없이 200 등록 조회 응답을 반환한다. 비교는 프로젝트와 요청 필드만 사용하고 requestKey, 현재 연결과 몰, 게시 폭 같은 서버 파생값은 비교하지 않는다. 프로젝트 또는 요청 입력이 바뀌면 409 `idempotency_key_reused`다. 새 작업에만 현재 자원 검사와 횟수 제한을 적용하며, 제한 초과 시 아직 커밋하지 않은 새 작업도 취소한다. 다른 키의 활성 등록이 있으면 409 `{error:{code:'registration_in_progress',message,jobId}}`다. |
-| `GET /v1/malls/cafe24/registrations/{job_id}` | 본인의 `mall_register` 잡만 조회한다. `{jobId,status,progress,outcome,productNo,productUrl,imageCount,thumbnail,code,errorMessage,externalCode,verifiable,warnings,createdAt,finishedAt,mallId,publicationId}`를 반환한다. 상품 번호 확정이면 `created`, 명확한 거절 `metadata.rejectedAt`이 있으면 `failed`, 전송 기록 `metadata.create.sentAt`이 있으면 `unknown` 또는 `duplicate_suspected`, 그 외는 `failed`다. `verifiable`은 `unknown`, `duplicate_suspected`에서만 참이다. 복구 종료 잡도 metadata로 판정하며 `created`, `unknown`, `duplicate_suspected`에는 공용 복구 오류 문구를 표시하지 않는다. `warnings`는 결과 경고 배열이며 상품 생성 후 복구 오류가 나면 상품은 만들어졌다는 안내를 포함한다. |
-| `POST /v1/malls/cafe24/registrations/{job_id}/verify` | 본인의 `mall_register` 중 `done` 또는 `error`이며 `verifiable=true`인 잡만 받는다. `sentAt`이 있는 복구 종료 error 잡도 가능하며 나머지는 409 `not_verifiable`다. 사용자별 `mall-verify:{user}` 키로 분당 6회 제한하고 초과 시 429 `rate_limited`, 접수한 연결이 바뀌거나 만료되면 409다. 자체상품코드 정확 일치가 1건이면 상품 번호와 `created`, `thumbnail:'skipped'`, `verifiedAt`, 대표 이미지 안내를 소유자와 종료 상태 조건으로 원자적으로 저장하고, 여러 건이면 `duplicate_suspected`와 관리자 확인 안내를 남겨 등록 조회 응답을 반환한다. 0건이면 결과를 유지하고 `{found:false,checkedAt,message}`를 반환한다. 잡 상태를 바꾸거나 상품 생성 및 이미지 업로드를 하지 않는다. |
-| `GET /v1/projects/{project_id}/mall-registrations` | 살아 있는 본인 프로젝트를 확인하고 본인의 `mall_register` 잡 최신 5건과 복원할 작업을 `{items:[등록 조회 응답],recovery:등록 조회 응답 또는 null}`로 반환한다. recovery는 전체 이력에서 현재 연결된 카페24 몰과 같은 몰의 최신 pending, running 또는 결과가 unknown, duplicate_suspected인 종료 작업을 찾는다. 다른 몰과 다른 사용자의 작업은 복원하지 않는다. 연결이 없으면 recovery는 null이다. 최근 5건보다 오래된 미확인 작업도 복원 대상이다. recovery 필드가 없는 이전 서버 응답으로는 새 등록을 열지 않으므로, 카페24 기능이 켜진 환경에서는 이 응답을 제공하는 서버를 프런트보다 먼저 배포한다. 등록 조회 응답에는 저장된 mallId와 publicationId를 포함한다. |
-| `GET /v1/malls/cafe24/categories` | 현재 연결로 100건씩 최대 3페이지를 조회하고 `use_display='F'`를 제외해 `{categoryNo,depth,name,fullName}[]`를 반환한다. 사용자와 연결 ID별로 프로세스 메모리에 10분 캐시한다. 캐시 사용 전에도 현재 연결과 만료, 허용 몰을 검사한다. |
+| `POST /v1/malls/registrations/preflight` | RegisterDraft. `{editorRevision,inputHash,readyMalls,blockedMalls,items}` 반환. 몰별 ready, blocked, preparing과 issues, warnings, ready인 몰의 sourceVersions, summary를 제공. 상품 쓰기, 잡 생성과 등록 한도 소비 없음 |
+| `POST /v1/malls/registration-batches` | `{batchId:UUID,draft:RegisterDraft}`. 새 접수 202, 같은 요청 재생 200. `{batchId,acceptedAt,items,readyCount}` 반환 |
+| `GET /v1/malls/registration-batches/{batchId}` | 원래 영수증의 blocked 항목과 accepted 항목의 현재 registration 뷰를 합침. 사본 불일치는 500 |
+| `GET /v1/malls/registrations/{jobId}` | 소유자, kind와 payload.mall을 제한한 공통 등록 뷰 |
+| `POST /v1/malls/registrations/{jobId}/verify` | 종료된 unknown과 duplicate_suspected만 원격 조회로 확인. 생성과 설정 쓰기 없음. 현재 연결 세대 재검사 후 저장. 사용자당 분당 6회 |
+| `POST /v1/malls/registrations/{jobId}/resume` | `{requestKey:UUID}`. 확인된 상품의 안전한 미완료 설정만 같은 잡을 pending으로 전환. 원본 payload와 checkpoints 유지. 같은 requestKey는 재생. 추가 이미지 POST가 불명확하면 관리자 확인만 허용. 사용자당 분당 6회 |
+| `GET /v1/projects/{projectId}/mall-registrations` | `{items,recoveries:{cafe24:[],zigzag:[]}}`. 최신 5건 외에도 현재 스토어 전체 이력의 활성, 생성 불명확, 설정 미완료를 복구. Phase A의 zigzag 배열은 비어 있음 |
 
-접수 준비 전에는 503 `cafe24_unconfigured`, 폐쇄 계정이나 프로젝트, 게시, 자산을 찾지 못하면 각 404, 실존 모델이면 403 `real_model_not_allowed`, 게시 이미지가 잘못됐으면 400 `invalid_files`다. 연결이 없으면 404 `not_connected`, refresh가 만료됐거나 허용 몰에서 제외되면 각각 409 `reconnect_required`, `cafe24_not_allowed`, 횟수 초과는 429 `rate_limited`다. 오류 봉투는 `{error:{code,message}}`이며 활성 등록 충돌에는 `jobId`도 포함한다.
+카테고리 추천 도우미는 직접 완전 일치, 의류 사전 일치, parentCategoryId를 따른 상위 경로 포함 순으로 비교하며 동률은 자동 선택하지 않는다. 추가 AI 호출은 없다.
 
-등록 워커는 게시 이미지를 카페24에 복사하고 가격 설정을 조회한 뒤 상품을 생성한다. 이미지 분할과 체크포인트는 워커가 담당하며 한 배치는 최대 8장, base64 합계 20MB다. 저장된 URL만큼 건너뛰고 재개한다. 이미지 업로드의 429는 `Retry-After`를 최대 60초로 제한해 세 번 재시도하고, 5xx와 연결 실패는 1초, 2초, 4초 뒤 재시도한다. 가격 설정 조회가 실패하면 상품 생성 전에 중단한다. 각 외부 호출과 재시도 직전에 lease, 등록 설정과 비밀값 준비 여부, 현재 허용 몰, 계정 폐쇄, 접수한 연결 ID와 몰, refresh 만료, 취소 여부를 재검증한다. 모든 DB 쓰기는 같은 running lease로 보호하며 lease 상실 뒤에는 호출과 쓰기를 중단한다.
+SourceVersions는 connectionVersion, salesDefaultsRevision, mallDefaultsRevision, catalogVersion, editorRevision이다. 접수는 현재 ready 후보에만 확인 버전을 요구한다. 누락은 preflight_required, 연결 변경은 connection_changed, 공통 또는 몰 기본값 변경은 defaults_changed, 카탈로그 변경은 catalog_changed로 해당 몰만 차단한다. preparing과 blocked 몰에 버전이 없어도 다른 몰을 접수할 수 있다. 카페24 B 기준은 priceOverrides.cafe24에 amount와 basis=tax_excluded를 명시해야 한다. 다른 기준은 selling_price이며 서버가 임의 세금 변환을 하지 않는다.
 
-생성 요청 직전에 `metadata.create={sentAt,attempt,leaseToken}`을 먼저 커밋한다. `sentAt`이 있으면 재시작 시 상품을 다시 생성하지 않고 자체상품코드로 한 번 조회해 복구한다. 401로 거절된 요청만 토큰 갱신 후 새 attempt로 다시 보낼 수 있다. 불명확한 응답도 조회로만 복구하며 정확히 한 상품이면 상품 번호를 저장하고, 여러 개면 `duplicate_suspected`, 없거나 조회 실패면 `unknown`으로 끝낸다. 상품 번호가 이미 저장됐으면 조회 없이 마무리한다. 대표 이미지는 긴 변 2000px 이하 JPEG로 올리며 실패해도 생성 완료와 경고를 남긴다. 마지막 등록 시각은 접수한 연결 ID가 아직 connected일 때만 갱신한다.
+접수는 계정, 몰 연결(cafe24 다음 zigzag), 공통 기본값, 몰별 기본값, 묶음, 프로젝트 등록 잠금 뒤 게시 행과 프로젝트 행을 잠근다. `publication.editor_revision == draft.editorRevision == projects.editor_revision`을 재검사하고 현재 사실에서 snapshot을 고정한다. 외부 조회는 이 트랜잭션 밖에서 끝낸다. 준비된 몰마다 무과금 mall_register 잡 하나와 시간당 신규 등록 슬롯 하나를 같은 트랜잭션으로 저장한다. 슬롯이 모자라면 묶음 전체를 429로 롤백한다. 접수할 몰이 없으면 409 no_ready_malls 및 최신 items를 반환하며 영수증을 저장하지 않는다. 커밋 후 dispatcher를 한 번 깨운다.
 
-종료 우선순위는 저장된 `productNo`의 `created`, 400·422 거절 기록 `rejectedAt`의 `failed`, 전송 기록 `sentAt`의 `unknown` 또는 `duplicate_suspected`, 전송 전 오류의 `failed` 순이다. `created`, `unknown`, `duplicate_suspected`는 done, `failed`만 error이며 오류는 자체 코드와 셀러 문구만 저장한다. 공용 lease 복구는 첫 만료에 재큐하고 두 번째에 error로 끝내지만, 등록 조회는 metadata로 결과를 판정하므로 `sentAt`이 있는 미확인 등록은 계속 `verifiable=true`다.
+idempotency_key는 `mall-register:{user_id}:{batchId}:{mall}`이다. 정규화한 클라이언트 요청 전체를 SHA-256으로 해시하며 selectedMalls와 객체 키는 정렬하고 이미지와 옵션의 의미 있는 순서는 보존한다. confirmedSourcesByMall도 해시에 포함하되 현재 서버 연결 ID나 조회 시각을 덧붙이지 않는다. 같은 batchId는 계정 폐쇄와 요청 형식을 확인한 뒤 현재 자원 재검사보다 먼저 원래 영수증을 재생한다. 다른 입력은 409 idempotency_key_reused다.
+
+payload는 mall, batchId, requestHash, connectionId, shopId, publicationId, editorRevision, snapshot만 가진다. snapshot은 상품명, 가격과 기준, 옵션별 수량과 추가금액, 소유 자산의 이미지 순서, 고시, 카테고리, 공통값과 몰별 선택, 이미지 비율, 가격 설정 및 카탈로그 버전을 고정한다. 실행 중 현재 기본값으로 다시 만들지 않는다. metadata.batchReceipt는 batchId, requestHash, acceptedAt, selectedMalls와 items를 모든 새 잡에 동일하게 보관한다. externalCode는 wl과 최초 잡 ID hex 앞 16자리이며 productId는 몰 공통 문자열이다. 같은 프로젝트라도 서로 다른 몰은 동시에 활성일 수 있고 같은 몰의 활성 잡은 하나다.
+
+공통 등록 뷰는 jobId, mall, status, progress, stage, outcome, setupStatus, productId, productUrl, adminUrl, stages, retryAction, code, warnings, retention, publicationId, createdAt, finishedAt이다. pending과 running의 outcome은 null이고 setupStatus는 pending이다. 종료 시 productId 확인, rejectedAt, create.sentAt, 전송 전 실패 순으로 판정한다. 상품 확인이면 created를 유지하고 모든 설정이 끝나야 complete, 미완료면 needs_attention이다. unknown과 duplicate_suspected는 verify, 안전한 설정 미완료는 resume, 생성 전 확정 실패는 new_request를 제공한다. checkpoints는 단계 이름별 객체이며 status=complete로 완료를 표시한다. uploading_additional_images.requests에는 요청별 sentAt과 status를 남기고 불명확한 POST는 자동 재개하지 않는다.
+
+모든 새 API는 로그인, 소유자 조건과 Cache-Control: no-store, `{error:{code,message,...}}`를 사용한다. 비밀값, 임의 외부 URL, upstream 원문과 예외 객체를 결과와 이벤트에 보관하지 않는다. 카페24 전용 등록 경로, 이전 요청 모델과 단일 recovery 응답은 제거한다. OAuth, 토큰 회전 및 카페24로 게시 이미지를 복사하는 정책은 유지한다. 지그재그 게시 보관 정책은 Phase B 전까지 적용하지 않는다.
 
 ## 7. 현행 코드와의 갭 (마이그레이션 TODO)
 

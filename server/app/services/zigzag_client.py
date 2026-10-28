@@ -95,9 +95,16 @@ class ZigzagClient:
                 "allowed_brands": shop.get("allowed_brand_list", []), "sites": shop.get("site_country_list", [])}
 
     async def shipping_addresses(self):
-        data = await self.query("""query { shop_shipping_address_list(limit_count: 50) {
-            item_list { id name address address_detail postcode is_default } } }""")
-        return [{"id": row["id"], "name": row["name"],
-                 "address": " ".join(filter(None, [row["address"], row.get("address_detail")])),
-                 "postcode": row["postcode"], "is_default": row["is_default"]}
-                for row in data["shop_shipping_address_list"]["item_list"]]
+        items = {}
+        skip = 0
+        while True:
+            data = await self.query("""query($skip: Int!) { shop_shipping_address_list(limit_count: 50, skip_count: $skip) {
+                item_list { id name address address_detail postcode is_default } } }""", {"skip": skip})
+            rows = data["shop_shipping_address_list"]["item_list"]
+            for row in rows:
+                items[row["id"]] = {"id": row["id"], "name": row["name"],
+                    "address": " ".join(filter(None, [row["address"], row.get("address_detail")])),
+                    "postcode": row["postcode"], "is_default": row["is_default"]}
+            if len(rows) < 50:
+                return list(items.values())
+            skip += 50

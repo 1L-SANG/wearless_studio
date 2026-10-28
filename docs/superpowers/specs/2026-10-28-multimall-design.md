@@ -29,7 +29,7 @@
 
 ### 정본 우선순위
 
-이번 오너 지시와 확정 v2 시안이 제품 방향의 우선 근거다. 현재 코드와 현행 계약으로 저장과 인증의 실제 동작을 확인한다. 과거 연구와 v5는 API 대조 자료로만 사용한다. v5의 제조연월 자동 입력, 고시 12항목 고정, 기본 노출함, 등록 후 상품 갱신을 되살리지 않는다.
+이번 오너 지시와 확정 v2 시안이 제품 방향의 우선 근거다. 현재 코드와 현행 계약으로 저장과 인증의 실제 동작을 확인한다. 예전 시안(v1~v5)은 폐기했다(10월 29일 오너 지시로 파일 삭제). 예전 시안에 있던 제조연월 자동 입력, 고시 12항목 고정, 기본 노출함, 등록 후 상품 갱신을 되살리지 않는다.
 
 | 근거 | 이번 설계에서 사용하는 부분 |
 |---|---|
@@ -37,7 +37,6 @@
 | 같은 폴더 `BRIEF_v2.md` | 21개 요구사항. 17절에서 구현 Task와 대응한다 |
 | `/Users/daily/Documents/wearless_studio/.scratch/mall-upload-research-20261023/DESIGN_cafe24.md` v3 | OAuth, 토큰 회전, lease, 선커밋, 조회 복구, 종료 우선순위 |
 | 같은 폴더 `zigzag_openapi_schema_20261023.graphql`, `REPORT.md` 2절 | 지그재그 입력 타입, 쿼리, 서명과 x-solution, 이미지 복사 구분 |
-| `/Users/daily/Documents/wearless_studio/mockups/export-merge-20261023/plan-b-api-v5.html` 9절 | 지그재그 입력의 출처와 누락 처리. 최신 지시와 충돌하는 기본값은 채택하지 않음 |
 | `documents/common_data_contract.md`의 § 게시, § 쇼핑몰 연결 | 게시 수명, 연결 보안, 현재 등록 계약 |
 | `documents/PRD.md`, `CONTEXT.md`, `docs/adr/0017-detail-page-partial-publish.md` | 프로젝트와 분석의 의미, 실측 추정 금지, 완성한 상세의 내보내기 정책 |
 | `/Users/daily/Documents/wearless_studio/CLAUDE.md`, `DESIGN.md` | append-only, 새 표 ACL, 서비스 레이어, 외과적 변경, 화면 규칙 |
@@ -313,7 +312,7 @@ resume는 원본 jobId와 payload를 보존하고 metadata의 완료 단계도 �
 | 기능 준비 | 연결, 게시, MULTIMALL 스위치, 몰별 스위치와 허용 스토어 | 추가로 ZIGZAG_REGISTER_ENABLED와 x-solution, 알파 검증 완료 |
 | 소유자와 편집본 | 살아 있는 본인 프로젝트, 실존 모델 차단, ready 게시와 일치하는 리비전, 정규화된 파일 | 동일 |
 | 연결 | 접수한 연결 ID와 현재 스토어, 카페24 refresh 유효와 4개 scope | 해당 연결 세대와 상품 조회, 등록 권한. shop 성공만으로 쓰기 권한이 확인됐다고 하지 않음 |
-| 판매가 | 1 이상 정수. 카페24 가격 기준 조회 필수 | v5 기준 10원 단위, 최종 옵션가도 검사. 실제 하한은 알파 확인 |
+| 판매가 | 1 이상 정수. 카페24 가격 기준 조회 필수 | 지그재그 조사 기준 10원 단위, 최종 옵션가도 검사. 실제 하한은 알파 확인 |
 | 옵션과 재고 | 색상과 사이즈 조합, 0 이상 정수, 앱 상한 200개 | 최대 200개, attribute_list와 option_list의 완전한 대응 |
 | 카테고리 | 셀러 분류 목록. 선택은 권장, 미선택은 경고. 고른 ID는 현재 목록에 있어야 함 | 말단 필수. 카테고리와 essential_code 매핑 및 템플릿 해시 일치 |
 | 고시 | 10항목 전체가 비었다고 차단하지 않음. 소재와 원산지는 있으면 보내고 없으면 경고 | 10항목의 빈칸과 해당 템플릿 추가 필수값을 모두 검사 |

@@ -1,39 +1,32 @@
-"""Mall connections, reusable defaults and Cafe24 registration requests."""
+"""Mall connections and OAuth installation. Registration lives in mall_registration."""
 
 import hashlib
 import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from time import monotonic
-from typing import Literal
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field, SecretStr, StrictInt, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from starlette.responses import JSONResponse, RedirectResponse
 
 from . import repo
 from .auth import require_user
-from .config import is_allowed_mall, registration_enabled
+from .config import is_allowed_mall
 from .db import get_conn
-from .detail_publications import _assert_account_open, publication_files
-from .routes import _wake_dispatcher
 from .services.cafe24_client import (
-    ERROR_COPY as CAFE24_ERROR_COPY,
-    Cafe24Client, ConnectionChanged, ReconnectRequired, SignatureInvalid,
-    build_authorize_url, classify_error as classify_cafe24_error, derive_state_key,
+    Cafe24Client, SignatureInvalid,
+    build_authorize_url, derive_state_key,
     make_signed, normalize_mall_id, parse_signed,
 )
-from .services.cafe24_tokens import call_with_token
 from .services.zigzag_client import ERROR_COPY, ZigzagClient, classify_error
+from .services.mall_catalog import connection_version, registration_capability, invalidate_catalog
 
 
 router = APIRouter(prefix="/v1/malls", tags=["Mall connections"])
-project_router = APIRouter(prefix="/v1/projects", tags=["Mall registrations"])
 _INSTALL_COOKIE = "wl_cafe24_install"
 _INSTALL_PATH = "/v1/malls/cafe24"
-_CATEGORY_CACHE = {}
 
 
 def _error(code, message, status=400):
@@ -53,55 +46,6 @@ class ConnectionKeys(BaseModel):
 class Cafe24Install(BaseModel):
     mallId: str = Field(max_length=2048)
     returnTo: str | None = Field(default=None, max_length=2048)
-
-
-class Cafe24Registration(BaseModel):
-    projectId: uuid.UUID
-    publicationId: uuid.UUID
-    requestKey: uuid.UUID
-    productName: str = Field(min_length=1, max_length=100)
-    price: StrictInt = Field(ge=1, le=2147483647)
-    supplyPrice: StrictInt | None = Field(default=None, ge=0)
-    display: Literal["T", "F"] = "T"
-    selling: Literal["T", "F"] = "T"
-    taxType: Literal["A", "B"] = "A"
-    categoryNo: StrictInt | None = Field(default=None, ge=1)
-    thumbnailAssetId: uuid.UUID | None = None
-
-
-class ShippingPatch(BaseModel):
-    feeType: Literal["FREE", "CHARGED", "CONDITIONAL_FREE"] | None = None
-    baseFee: StrictInt | None = Field(default=None, ge=0)
-    jejuFee: StrictInt | None = Field(default=None, ge=0)
-    isolatedFee: StrictInt | None = Field(default=None, ge=0)
-    conditionalAmount: StrictInt | None = Field(default=None, ge=0)
-
-
-class ReturnsPatch(BaseModel):
-    partialFee: StrictInt | None = Field(default=None, ge=0)
-    totalFee: StrictInt | None = Field(default=None, ge=0)
-    exchangeFee: StrictInt | None = Field(default=None, ge=0)
-
-
-class AddressesPatch(BaseModel):
-    shippingAddressId: str | None = Field(default=None, max_length=256)
-    returnAddressId: str | None = Field(default=None, max_length=256)
-
-
-class DisclosurePatch(BaseModel):
-    country: str | None = Field(default=None, max_length=100)
-    manufacturer: str | None = Field(default=None, max_length=200)
-    asManager: str | None = Field(default=None, max_length=200)
-    phone: str | None = Field(default=None, max_length=30, pattern=r"^[0-9-]*$")
-
-
-class DefaultsPatch(BaseModel):
-    shipping: ShippingPatch | None = None
-    returns: ReturnsPatch | None = None
-    addresses: AddressesPatch | None = None
-    disclosure: DisclosurePatch | None = None
-    taxType: Literal["TAX", "FREE"] | None = None
-    productOrigin: Literal["domestic", "imported"] | None = None
 
 
 def _require_kek(request):
@@ -134,13 +78,6 @@ def _connection_result(row, mall):
     return result
 
 
-def _defaults_result(row):
-    row = row or {}
-    return {**{name: row.get(name) or {} for name in ("shipping", "returns", "addresses", "disclosure")},
-            "taxType": row.get("tax_type", "TAX"), "productOrigin": row.get("product_origin", "domestic"),
-            "completedItems": row.get("completed_items", []), "total": 4}
-
-
 @router.get("")
 async def list_malls(request: Request, response: Response, user_id: str = Depends(require_user)):
     response.headers["Cache-Control"] = "no-store"
@@ -148,11 +85,19 @@ async def list_malls(request: Request, response: Response, user_id: str = Depend
         row = await repo.get_mall_connection(conn, user_id=user_id, mall="zigzag")
         defaults = await repo.get_mall_defaults(conn, user_id=user_id, mall="zigzag")
         cafe24 = await repo.get_mall_connection(conn, user_id=user_id, mall="cafe24")
+        cafe24_defaults = await repo.get_mall_defaults(conn, user_id=user_id, mall="cafe24")
     cafe24_item = _connection_result(cafe24, "cafe24")
     if not request.app.state.settings.cafe24_ready:
         cafe24_item["status"] = "unavailable"
-    return {"items": [{**_connection_result(row, "zigzag"), "defaults": _defaults_result(defaults)},
-                      cafe24_item, {"mall": "ably", "status": "unavailable"}, {"mall": "smartstore", "status": "unavailable"}]}
+    items = []
+    for mall, connection, specific in (("zigzag", row, defaults), ("cafe24", cafe24, cafe24_defaults), ("ably", None, None)):
+        item = cafe24_item if mall == "cafe24" else _connection_result(connection, mall)
+        items.append({**item, "addressesRevision": (specific or {}).get("revision", 0),
+                      "connectionVersion": connection_version(connection),
+                      "registration": registration_capability(request.app.state.settings, mall, connection)})
+    items.append({"mall": "smartstore", "status": "unavailable", "addressesRevision": 0,
+                  "connectionVersion": None, "registration": {"status": "preparing"}})
+    return {"items": items}
 
 
 async def _verify_and_save(request, body, user_id, *, rotate=False):
@@ -185,6 +130,7 @@ async def _verify_and_save(request, body, user_id, *, rotate=False):
             raise _error("shop_mismatch", "다른 스토어의 인증키예요. 스토어를 바꾸려면 연결을 해제한 뒤 다시 연결해 주세요") from None
         if row is None:
             raise _error("connection_changed", "연결 정보가 바뀌었어요. 현재 연결을 확인한 뒤 다시 시도해 주세요", 409)
+    invalidate_catalog(request.app, user_id, "zigzag")
     return _connection_result(row, "zigzag")
 
 
@@ -243,266 +189,6 @@ def derive_outcome(job):
     return "failed"
 
 
-def registration_view(job):
-    metadata, result, payload = job.get("metadata") or {}, job.get("result") or {}, job.get("payload") or {}
-    outcome = derive_outcome(job)
-    warnings = list(result.get("warnings") or metadata.get("warnings") or [])
-    if outcome == "created" and job["status"] == "error":
-        warnings.append("마무리 확인이 늦어졌어요. 상품은 만들어졌어요")
-    return {"jobId": job["id"], "status": job["status"], "progress": job.get("progress", 0),
-            "mallId": payload.get("mallId"), "publicationId": payload.get("publicationId"),
-            "outcome": outcome, "productNo": metadata.get("productNo"),
-            "productUrl": result.get("productUrl"),
-            "imageCount": result.get("imageCount", len((metadata.get("images") or {}).get("urls") or [])),
-            "thumbnail": result.get("thumbnail"), "code": result.get("code"),
-            "errorMessage": job.get("error_message") if outcome == "failed" else None,
-            "externalCode": metadata.get("externalCode") or result.get("externalCode") or _external_code(job["id"]),
-            "verifiable": outcome in ("unknown", "duplicate_suspected"),
-            "warnings": warnings,
-            "createdAt": job.get("created_at"), "finishedAt": job.get("finished_at")}
-
-
-def confirmed_input(payload):
-    values = {key: payload.get(key) for key in Cafe24Registration.model_fields
-              if key not in ("projectId", "requestKey")}
-    if values["supplyPrice"] is None:
-        values["supplyPrice"] = values["price"]
-    return values
-
-
-def _assert_registration_input(job, project_id, payload):
-    if job["project_id"] != project_id or confirmed_input(job["payload"]) != confirmed_input(payload):
-        raise _error("idempotency_key_reused", "같은 요청 번호에 다른 입력을 사용할 수 없어요. 입력을 확인해 주세요", 409)
-
-
-async def _registration_connection(conn, settings, user_id):
-    row = await repo.get_mall_connection(conn, user_id=user_id, mall="cafe24")
-    if not row:
-        raise _error("not_connected", "먼저 카페24를 연결해 주세요", 404)
-    if not row.get("refresh_expires_at") or row["refresh_expires_at"] <= datetime.now(timezone.utc):
-        raise _error("reconnect_required", CAFE24_ERROR_COPY["reconnect_required"], 409)
-    if not is_allowed_mall(settings, row["shop_id"]):
-        raise _error("cafe24_not_allowed", CAFE24_ERROR_COPY["cafe24_not_allowed"], 409)
-    return row
-
-
-@router.post("/cafe24/registrations", status_code=202)
-async def create_cafe24_registration(request: Request, response: Response, body: Cafe24Registration,
-                                     user_id: str = Depends(require_user)):
-    settings = request.app.state.settings
-    if not registration_enabled(settings):
-        raise _error("cafe24_unconfigured", "카페24 연결이 아직 준비되지 않았어요", 503)
-    response.headers["Cache-Control"] = "no-store"
-    project_id, publication_id = str(body.projectId), str(body.publicationId)
-    payload = body.model_dump(mode="json", exclude={"projectId"})
-    payload["supplyPrice"] = body.price if body.supplyPrice is None else body.supplyPrice
-    key = f"cafe24-register:{user_id}:{body.requestKey}"
-    async with get_conn(request) as conn:
-        await _assert_account_open(conn, user_id)
-        existing = await repo.get_job_by_request_key(conn, user_id=user_id, kind="mall_register", idempotency_key=key)
-        if existing:
-            _assert_registration_input(existing, project_id, payload)
-            response.status_code = 200
-            return registration_view(existing)
-        if await repo.get_project(conn, user_id, project_id) is None:
-            raise _error("project_not_found", "프로젝트를 찾을 수 없어요.", 404)
-        if await repo.project_uses_real_model(conn, user_id=user_id, project_id=project_id):
-            raise _error("real_model_not_allowed", "실존 모델 컷은 다운로드로 받아 몰에 직접 올려 주세요.", 403)
-        connection = await _registration_connection(conn, settings, user_id)
-        publication = await repo.get_detail_publication(conn, user_id=user_id, publication_id=publication_id)
-        # get_detail_publication takes a row lock; release it before validating JSON and creating the job.
-        await conn.commit()
-        if not publication or publication["status"] != "ready" or publication["project_id"] != project_id:
-            raise _error("publication_not_found", "게시한 상세페이지를 찾을 수 없어요.", 404)
-        try:
-            publication_files(publication)
-        except ValueError:
-            raise _error("invalid_files", "이미지 조각 정보를 다시 확인해 주세요.") from None
-        if body.thumbnailAssetId:
-            asset = await repo.get_project_asset_for_user(conn, user_id, project_id, str(body.thumbnailAssetId))
-            if not asset or not (asset.get("mime_type") or "").startswith("image/"):
-                raise _error("asset_not_found", "대표 이미지를 찾을 수 없어요.", 404)
-        payload.update(mall="cafe24", connectionId=connection["id"], mallId=connection["shop_id"],
-                       width=publication["width"])
-        row, created = await repo.create_job(conn, user_id=user_id, project_id=project_id, kind="mall_register",
-            payload=payload, idempotency_key=key, credits_reserved=0, metadata={"mall": "cafe24", "stage": "queued"})
-        if not created:
-            existing = await repo.get_job_request_identity(conn, user_id=user_id, job_id=row["id"])
-            if row["kind"] == "mall_register" and existing and existing["idempotency_key"] == key:
-                _assert_registration_input(existing, project_id, payload)
-                response.status_code = 200
-                return registration_view(row)
-        if created:
-            # Keep a newly inserted job and its quota slot atomic. Joining an
-            # existing job never spends another slot, even at the hourly limit.
-            allowed = await repo.claim_mall_registration_attempt(conn, user_id=user_id)
-            if not allowed:
-                raise _error("rate_limited", "한 시간에 10번까지 등록할 수 있어요. 잠시 뒤 다시 시도해 주세요", 429)
-            code = _external_code(row["id"])
-            await repo.set_job_metadata_patch(conn, job_id=row["id"], patch={"externalCode": code},
-                                              user_id=user_id, expect_status=("pending",))
-            await conn.commit()
-            _wake_dispatcher(request)
-            return {"jobId": row["id"], "status": "queued", "externalCode": code}
-        await conn.commit()
-        raise HTTPException(status_code=409, detail={"code": "registration_in_progress",
-            "message": "이 프로젝트의 상품을 등록하고 있어요", "jobId": row["id"]})
-
-
-@router.get("/cafe24/registrations/{job_id}")
-async def get_cafe24_registration(request: Request, response: Response, job_id: str,
-                                  user_id: str = Depends(require_user)):
-    response.headers["Cache-Control"] = "no-store"
-    try:
-        job_id = str(uuid.UUID(job_id))
-    except ValueError:
-        raise _error("registration_not_found", "등록 내역을 찾을 수 없어요.", 404) from None
-    async with get_conn(request) as conn:
-        row = await repo.get_job(conn, user_id, job_id)
-    if not row or row["kind"] != "mall_register":
-        raise _error("registration_not_found", "등록 내역을 찾을 수 없어요.", 404)
-    return registration_view(row)
-
-
-async def _verify_connection(conn, user_id, payload):
-    connection = await repo.get_mall_connection(conn, user_id=user_id, mall="cafe24")
-    message = "연결이 바뀌어 확인할 수 없어요. 카페24 관리자에서 상품 목록을 확인해 주세요"
-    if (not connection or connection["id"] != payload["connectionId"]
-            or connection["shop_id"] != payload["mallId"]):
-        raise _error("connection_changed", message, 409)
-    if not connection.get("refresh_expires_at") or connection["refresh_expires_at"] <= datetime.now(timezone.utc):
-        raise _error("reconnect_required", message, 409)
-
-
-@router.post("/cafe24/registrations/{job_id}/verify")
-async def verify_cafe24_registration(request: Request, response: Response, job_id: str,
-                                     user_id: str = Depends(require_user)):
-    settings = _require_cafe24(request)
-    response.headers["Cache-Control"] = "no-store"
-    try:
-        job_id = str(uuid.UUID(job_id))
-    except ValueError:
-        raise _error("registration_not_found", "등록 내역을 찾을 수 없어요.", 404) from None
-    async with get_conn(request) as conn:
-        job = await repo.get_job(conn, user_id, job_id)
-        if not job or job["kind"] != "mall_register":
-            raise _error("registration_not_found", "등록 내역을 찾을 수 없어요.", 404)
-        if job["status"] not in ("done", "error") or not registration_view(job)["verifiable"]:
-            raise _error("not_verifiable", "등록 여부를 다시 확인할 수 없는 상태예요", 409)
-        await _assert_account_open(conn, user_id)
-        payload = job["payload"]
-        await _verify_connection(conn, user_id, payload)
-        key = f"mall-verify:{user_id}"
-        async with conn.cursor() as cur:
-            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (key,))
-            await cur.execute("""select coalesce(sum(request_count), 0) as count from client_event_rate_limits
-                where scope = 'user' and key = %s and window_start > clock_timestamp() - interval '1 minute'""", (key,))
-            if (await cur.fetchone())["count"] >= 6:
-                raise _error("rate_limited", "1분에 6번까지 확인할 수 있어요. 잠시 뒤 다시 시도해 주세요", 429)
-            await cur.execute("""insert into client_event_rate_limits (scope, key, window_start, request_count)
-                values ('user', %s, clock_timestamp(), 1)""", (key,))
-        await conn.commit()
-    external_code = registration_view(job)["externalCode"]
-    client = _cafe24_client(settings, payload["mallId"])
-    try:
-        products = await call_with_token(request.app, user_id=user_id, connection_id=payload["connectionId"],
-            fn=lambda token: client.find_products_by_custom_code(token, external_code))
-    except Exception as exc:
-        code = classify_cafe24_error(exc)
-        if isinstance(exc, (ConnectionChanged, ReconnectRequired)):
-            raise _error(code, "연결이 바뀌어 확인할 수 없어요. 카페24 관리자에서 상품 목록을 확인해 주세요", 409) from None
-        raise _error(code, CAFE24_ERROR_COPY[code], 429 if code == "rate_limited" else 400) from None
-    async with get_conn(request) as conn:
-        # Serialize disconnect and concurrent verifies only while saving, never across the remote lookup.
-        async with conn.cursor() as cur:
-            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:cafe24",))
-            await cur.execute("select id from jobs where id = %s and user_id = %s for update", (job_id, user_id))
-        job = await repo.get_job(conn, user_id, job_id)
-        if not job or job["kind"] != "mall_register":
-            raise _error("registration_not_found", "등록 내역을 찾을 수 없어요.", 404)
-        await _verify_connection(conn, user_id, payload)
-        if job["status"] not in ("done", "error"):
-            raise _error("not_verifiable", "등록 여부를 다시 확인할 수 없는 상태예요", 409)
-        if derive_outcome(job) == "created":
-            return registration_view(job)
-        if not registration_view(job)["verifiable"]:
-            raise _error("not_verifiable", "등록 여부를 다시 확인할 수 없는 상태예요", 409)
-        checked_at = datetime.now(timezone.utc).isoformat()
-        if not products:
-            return {"found": False, "checkedAt": checked_at,
-                    "message": "아직 확인되지 않았어요. 잠시 뒤 다시 확인하거나 카페24 관리자 상품 목록을 봐 주세요"}
-        warnings = list((job.get("result") or {}).get("warnings") or (job.get("metadata") or {}).get("warnings") or [])
-        if len(products) == 1:
-            product_no = products[0]
-            if not await repo.set_job_metadata_patch(conn, job_id=job_id, patch={"productNo": product_no},
-                                                     user_id=user_id, expect_status=("done", "error")):
-                raise _error("not_verifiable", "등록 여부를 다시 확인할 수 없는 상태예요", 409)
-            warnings.append("대표 이미지는 카페24 관리자에서 넣어 주세요")
-            patch = dict(outcome="created", productNo=product_no, thumbnail="skipped", code=None,
-                productUrl=f'https://{payload["mallId"]}.cafe24.com/product/detail.html?product_no={product_no}',
-                verifiedAt=checked_at, warnings=warnings)
-        else:
-            message = "같은 코드의 상품이 여러 개예요. 카페24 관리자에서 확인해 주세요"
-            if message not in warnings:
-                warnings.append(message)
-            patch = dict(outcome="duplicate_suspected", warnings=warnings)
-        if not await repo.set_job_result_patch(conn, job_id=job_id, patch=patch,
-                                               user_id=user_id, expect_status=("done", "error")):
-            raise _error("not_verifiable", "등록 여부를 다시 확인할 수 없는 상태예요", 409)
-        job = await repo.get_job(conn, user_id, job_id)
-        await conn.commit()
-    return registration_view(job)
-
-
-@project_router.get("/{project_id}/mall-registrations")
-async def list_mall_registrations(request: Request, response: Response, project_id: str,
-                                  user_id: str = Depends(require_user)):
-    response.headers["Cache-Control"] = "no-store"
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
-            raise _error("project_not_found", "프로젝트를 찾을 수 없어요.", 404)
-        rows = await repo.list_project_jobs_by_kind(conn, user_id=user_id, project_id=project_id,
-                                                   kind="mall_register", limit=5)
-        connection = await repo.get_mall_connection(conn, user_id=user_id, mall="cafe24")
-        recovery = await repo.get_project_mall_registration_recovery(conn, user_id=user_id,
-            project_id=project_id, mall_id=connection["shop_id"]) if connection else None
-    return {"items": [registration_view(row) for row in rows],
-            "recovery": registration_view(recovery) if recovery else None}
-
-
-@router.get("/cafe24/categories")
-async def list_cafe24_categories(request: Request, response: Response, user_id: str = Depends(require_user)):
-    settings = _require_cafe24(request)
-    response.headers["Cache-Control"] = "no-store"
-    async with get_conn(request) as conn:
-        await _assert_account_open(conn, user_id)
-        connection = await _registration_connection(conn, settings, user_id)
-    now = monotonic()
-    for key, (expires, _) in list(_CATEGORY_CACHE.items()):
-        if expires <= now:
-            del _CATEGORY_CACHE[key]
-    key = (user_id, connection["id"])
-    if key in _CATEGORY_CACHE:
-        return _CATEGORY_CACHE[key][1]
-    client = _cafe24_client(settings, connection["shop_id"])
-    items = []
-    try:
-        for offset in (0, 100, 200):
-            rows = await call_with_token(request.app, user_id=user_id, connection_id=connection["id"],
-                                        fn=lambda token: client.categories(token, limit=100, offset=offset))
-            items.extend({"categoryNo": row["category_no"], "depth": row["category_depth"],
-                          "name": row["category_name"], "fullName": row.get("full_category_name") or []}
-                         for row in rows[:100] if row.get("use_display") != "F")
-            if len(rows) < 100:
-                break
-    except Exception as exc:
-        code = classify_cafe24_error(exc)
-        raise _error(code, CAFE24_ERROR_COPY[code],
-                     409 if isinstance(exc, (ConnectionChanged, ReconnectRequired)) else 400) from None
-    _CATEGORY_CACHE[key] = (monotonic() + 600, items)
-    return items
-
-
 @router.delete("/cafe24", status_code=204)
 async def disconnect_cafe24(request: Request, user_id: str = Depends(require_user)):
     settings = request.app.state.settings
@@ -517,6 +203,7 @@ async def disconnect_cafe24(request: Request, user_id: str = Depends(require_use
         await repo.revoke_mall_connection(conn, user_id=user_id, mall="cafe24")
         await repo.void_install_attempts(conn, user_id=user_id, mall="cafe24")
         await conn.commit()
+    invalidate_catalog(request.app, user_id, "cafe24")
     if refresh_token:
         succeeded = False
         try:
@@ -525,6 +212,7 @@ async def disconnect_cafe24(request: Request, user_id: str = Depends(require_use
         except Exception:
             pass
         logging.getLogger(__name__).info("Cafe24 revoke succeeded=%s", succeeded)
+    invalidate_catalog(request.app, user_id, "zigzag")
     return Response(status_code=204)
 
 
@@ -665,6 +353,7 @@ async def cafe24_callback(request: Request):
     if failure:
         await _revoke_cafe24_token(client, tokens)
         return _install_result(request, failure)
+    invalidate_catalog(request.app, attempt["user_id"], "cafe24")
     return _install_result(request, "connected", return_to=attempt["return_to"])
 
 
@@ -682,6 +371,7 @@ async def rotate_zigzag(request: Request, body: ConnectionKeys, user_id: str = D
 async def disconnect_zigzag(request: Request, user_id: str = Depends(require_user)):
     async with get_conn(request) as conn:
         await repo.revoke_mall_connection(conn, user_id=user_id, mall="zigzag")
+    invalidate_catalog(request.app, user_id, "zigzag")
     return Response(status_code=204)
 
 
@@ -697,12 +387,3 @@ async def list_zigzag_addresses(request: Request, user_id: str = Depends(require
     except Exception as exc:
         code = classify_error(exc)
         raise _error(code, ERROR_COPY[code]) from None
-
-
-@router.put("/zigzag/defaults")
-async def save_zigzag_defaults(request: Request, body: DefaultsPatch, user_id: str = Depends(require_user)):
-    payload = body.model_dump(exclude_unset=True)
-    payload = {key: value for key, value in payload.items() if value is not None}
-    async with get_conn(request) as conn:
-        row = await repo.upsert_mall_defaults(conn, user_id=user_id, mall="zigzag", payload=payload)
-    return _defaults_result(row)

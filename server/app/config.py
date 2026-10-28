@@ -458,6 +458,7 @@ class Settings:
     # ---- 상세페이지 게시 (기본 off, FaceMarket 공증과 독립) ----
     detail_publish_enabled: bool = False
     detail_publish_token_secret: str | None = None
+    multimall_register_enabled: bool = False
     mall_connect_enabled: bool = False
     mall_keys_kek: str | None = None
     cafe24_enabled: bool = False
@@ -672,7 +673,8 @@ class Settings:
 
 
 def registration_enabled(settings: Settings) -> bool:
-    return settings.mall_connect_enabled and settings.detail_publish_enabled and settings.cafe24_ready
+    return (settings.multimall_register_enabled and settings.mall_connect_enabled
+            and settings.detail_publish_enabled and settings.cafe24_ready)
 
 
 def is_allowed_mall(settings: Settings, mall_id: str) -> bool:
@@ -1148,6 +1150,7 @@ def load_settings() -> Settings:
         ),
         detail_publish_enabled=os.getenv("DETAIL_PUBLISH_ENABLED", "false").lower() == "true",
         detail_publish_token_secret=os.getenv("DETAIL_PUBLISH_TOKEN_SECRET") or None,
+        multimall_register_enabled=os.getenv("MULTIMALL_REGISTER_ENABLED", "false").lower() == "true",
         mall_connect_enabled=os.getenv("MALL_CONNECT_ENABLED", "false").lower() == "true",
         mall_keys_kek=os.getenv("MALL_KEYS_KEK") or None,
         cafe24_enabled=os.getenv("CAFE24_ENABLED", "false").lower() == "true",

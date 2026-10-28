@@ -319,13 +319,13 @@ def test_list_malls_reports_reconnect_required_and_mall_id(env, status):
     assert item["mallId"] == (None if status == "none" else "myshop")
 
 
-def test_list_malls_keeps_items_envelope_and_zigzag_shape(env):
+def test_list_malls_keeps_items_envelope_and_reports_registration_capability(env):
     client, _ = env
     body = client.get("/v1/malls").json()
     assert set(body) == {"items"}
     assert body["items"][0] == dict(mall="zigzag", status="none", shopName=None, keyHint=None,
-        permissions=[], connectedAt=None, lastRegisteredAt=None, defaults=dict(shipping={}, returns={},
-        addresses={}, disclosure={}, taxType="TAX", productOrigin="domestic", completedItems=[], total=4))
+        permissions=[], connectedAt=None, lastRegisteredAt=None, addressesRevision=0,
+        connectionVersion=None, registration={"status": "preparing"})
     assert {r["mall"] for r in body["items"]} == {"zigzag", "cafe24", "ably", "smartstore"}
 
 

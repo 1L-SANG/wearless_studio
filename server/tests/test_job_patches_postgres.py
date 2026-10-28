@@ -28,7 +28,12 @@ def job_patch_pg(monkeypatch):
     for name in ("PGHOSTADDR", "PGSERVICE", "PGSERVICEFILE"):
         monkeypatch.delenv(name, raising=False)
     schema = "mall_job_patch_" + uuid.uuid4().hex
-    admin = psycopg.connect(dsn, autocommit=True, row_factory=dict_row, connect_timeout=3)
+    try:
+        admin = psycopg.connect(dsn, autocommit=True, row_factory=dict_row, connect_timeout=3)
+    except psycopg.OperationalError as exc:
+        if "Operation not permitted" not in str(exc):
+            raise
+        pytest.skip("sandbox forbids connecting to disposable local PostgreSQL")
     admin.execute(sql.SQL("create schema {}").format(sql.Identifier(schema)))
     try:
         admin.execute(sql.SQL("set search_path to {}, public").format(sql.Identifier(schema)))
