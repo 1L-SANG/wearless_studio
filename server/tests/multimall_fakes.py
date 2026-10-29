@@ -66,7 +66,6 @@ def registration_env(monkeypatch):
         s['assets'] = [a for a in s['assets'] if a['id'] in asset_ids and a.get('user_id', USER)==user_id and a.get('project_id', PROJECT)==project_id and not a.get('deleted_at')]
         return s
     async def get_facts(app, *, user_id, mall): return copy.deepcopy(store['facts'][mall])
-    async def sales(conn, *, user_id): return copy.deepcopy(store['source'].get('salesDefaults'))
     async def defaults(conn, *, user_id, mall): return copy.deepcopy(store['source'].get('mallSpecificDefaults', {}).get(mall))
     async def connection(conn, *, user_id, mall):
         f = store['facts'][mall]
@@ -121,7 +120,7 @@ def registration_env(monkeypatch):
         column='result' if patch.get('outcome') else 'metadata'
         j[column]={**(j.get(column) or {}),**copy.deepcopy(patch)};return True
     def wake(request): store['wakes']+=1
-    for name,fn in dict(user_account_purge_closed=closed, load_registration_source=load, get_sales_defaults=sales,
+    for name,fn in dict(user_account_purge_closed=closed, load_registration_source=load,
         get_mall_defaults=defaults,get_mall_connection=connection,find_mall_registration_recoveries=recover,
         get_mall_batch_jobs=batches,enqueue_mall_registration_batch=enqueue,project_uses_real_model=real,
         get_project=project,list_project_jobs_by_kind=listing,requeue_mall_registration=requeue,

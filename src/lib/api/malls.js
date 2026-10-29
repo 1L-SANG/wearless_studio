@@ -29,20 +29,12 @@ export function listZigzagAddresses() {
   return http('/v1/malls/zigzag/addresses');
 }
 
-export function getSalesDefaults() {
-  return http('/v1/malls/sales-defaults');
-}
-
-export function saveSalesDefaults({ baseRevision, ...patch }) {
-  return http('/v1/malls/sales-defaults', { method: 'PUT', body: { baseRevision, ...patch } });
-}
-
 export function getMallDefaults(mall) {
   return http(`/v1/malls/${encodeURIComponent(mall)}/registration-defaults`);
 }
 
-export function saveMallDefaults(mall, { baseRevision, addresses }) {
-  return http(`/v1/malls/${encodeURIComponent(mall)}/registration-defaults`, { method: 'PUT', body: { baseRevision, addresses } });
+export function saveMallDefaults(mall, { baseRevision, ...patch }) {
+  return http(`/v1/malls/${encodeURIComponent(mall)}/registration-defaults`, { method: 'PUT', body: { baseRevision, ...patch } });
 }
 
 export function startCafe24Install({ mallId, returnTo }) {

@@ -31,8 +31,9 @@ export function MallRegisterFields({ draft, preflight, onChange, disabled }) {
     setSizeError('');
     try { await context.onSaveSizes?.(sizes); } catch (error) { setSizeError(error.message); }
   };
-  const sales = { ...defaults, ...draft.salesOverrides, shipping: { ...defaults.shipping, ...draft.salesOverrides.shipping }, returns: { ...defaults.returns, ...draft.salesOverrides.returns } };
-  const updateSale = (key, value) => patch({ salesOverrides: { ...draft.salesOverrides, [key]: value } });
+  const zigzagDefaults = defaults.zigzag || {};
+  const sales = { ...zigzagDefaults, ...draft.salesOverrides, shipping: { ...zigzagDefaults.shipping, ...draft.salesOverrides.shipping }, returns: { ...zigzagDefaults.returns, ...draft.salesOverrides.returns } };
+  const updateSale = (key, value) => { const salesOverrides = { ...draft.salesOverrides }; if (value === '') delete salesOverrides[key]; else salesOverrides[key] = value; patch({ salesOverrides }); };
   return <fieldset className={styles.fields} disabled={disabled}>
     <section className={styles.zone}><h3>확인</h3>
       <label className={styles.row}><span>상품명</span><span><input data-field="productName" value={draft.productName} maxLength={100} aria-invalid={!!issueFor('productName') || undefined} aria-describedby={issueFor('productName') ? 'mall-error-productName' : undefined}
@@ -92,14 +93,14 @@ export function MallRegisterFields({ draft, preflight, onChange, disabled }) {
     </section>
     <p className={styles.notice}>재고는 몰끼리 자동으로 맞춰지지 않아요.</p>
     <section className={styles.zone} aria-label="몰별 배송과 진열">
-      {draft.selectedMalls.includes('zigzag') && <p>지그재그 · {sales.shipping.feeType === 'FREE' ? '무료 배송' : `${Number(sales.shipping.baseFee || 0).toLocaleString()}원`}
+      {draft.selectedMalls.includes('zigzag') && <p>지그재그 · {sales.shipping.feeType === 'FREE' ? '무료 배송' : sales.shipping.baseFee == null ? '배송비 확인 필요' : `${Number(sales.shipping.baseFee).toLocaleString()}원`}
         {sales.shipping.feeType === 'CONDITIONAL_FREE' ? ` · ${Number(sales.shipping.conditionalAmount || 0).toLocaleString()}원 이상 무료` : ''} · {sales.shippingDays || 2}일 발송 · {context.returnAddressName || '반품지 확인 필요'}</p>}
       {draft.selectedMalls.includes('cafe24') && <p>카페24는 몰 기본 배송 설정</p>}
-      <p>{sales.listingMode === 'ON_SALE' ? '진열과 판매를 켜요' : '진열 안 함으로 올려요'}</p>
+      {draft.selectedMalls.filter((mall) => mall !== 'ably').map((mall) => <p key={mall}>{MALL_LABELS[mall]} · {(draft.salesOverrides.listingMode || defaults[mall]?.listingMode) === 'ON_SALE' ? '진열과 판매를 켜요' : '진열 안 함으로 올려요'}</p>)}
       <details className={styles.disclosure} onToggle={disclosure}><summary aria-expanded="false" aria-controls="mall-sales">배송과 진열 바꾸기</summary><div id="mall-sales">
-        <label className={styles.row}><span>등록 직후</span><select value={sales.listingMode || 'HIDDEN'} onChange={(event) => updateSale('listingMode', event.target.value)}><option value="HIDDEN">진열 안 함</option><option value="ON_SALE">진열과 판매 켬</option></select></label>
+        <label className={styles.row}><span>등록 직후</span><select value={draft.salesOverrides.listingMode || ''} onChange={(event) => updateSale('listingMode', event.target.value)}><option value="">몰마다 저장한 상태</option><option value="HIDDEN">진열 안 함</option><option value="ON_SALE">진열과 판매 켬</option></select></label>
         {draft.selectedMalls.includes('zigzag') && <>
-          <label className={styles.row}><span>배송비</span><select value={sales.shipping.feeType || 'FREE'} onChange={(event) => updateSale('shipping', { ...sales.shipping, feeType: event.target.value })}><option value="FREE">무료</option><option value="CHARGED">고정 배송비</option><option value="CONDITIONAL_FREE">조건부 무료</option></select></label>
+          <label className={styles.row}><span>배송비</span><select value={sales.shipping.feeType || ''} onChange={(event) => updateSale('shipping', { ...sales.shipping, feeType: event.target.value })}><option value="" disabled>배송비 정책 선택</option><option value="FREE">무료</option><option value="CHARGED">고정 배송비</option><option value="CONDITIONAL_FREE">조건부 무료</option></select></label>
           {['baseFee', 'conditionalAmount', 'jejuFee', 'isolatedFee'].map((key) => <label className={styles.row} key={key}><span>{{ baseFee: '기본 배송비', conditionalAmount: '무료 기준 금액', jejuFee: '제주 추가비', isolatedFee: '도서산간 추가비' }[key]}</span>{input(`shipping.${key}`, sales.shipping[key] ?? '', (value) => updateSale('shipping', { ...sales.shipping, [key]: value === '' ? 0 : Number(value) }), key)}</label>)}
           <label className={styles.row}><span>발송 소요일</span>{input('shippingDays', sales.shippingDays ?? 2, (value) => updateSale('shippingDays', Number(value)), '발송 소요일')}</label>
           {['totalFee', 'partialFee', 'exchangeFee'].map((key) => <label className={styles.row} key={key}><span>{{ totalFee: '전체 반품비', partialFee: '부분 반품비', exchangeFee: '교환비' }[key]}</span>{input(`returns.${key}`, sales.returns[key] ?? '', (value) => updateSale('returns', { ...sales.returns, [key]: Number(value) }), key)}</label>)}

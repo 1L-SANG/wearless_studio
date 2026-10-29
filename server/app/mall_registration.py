@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import Field, StrictInt
+from pydantic import ConfigDict, Field, StrictInt
 
 from . import repo
 from .auth import require_user
@@ -22,7 +22,7 @@ from .services.mall_registration_contract import (
     MALLS, StrictModel, RegisterDraftInput, normalize_register_draft, registration_request_hash,
     freeze_registration, registration_view, derive_registration_outcome,
 )
-from .services.mall_sales_defaults import sales_defaults_view
+from .services.mall_defaults import mall_defaults_view, normalize_mall_defaults
 
 router = APIRouter(prefix='/v1/malls', tags=['Mall registrations'])
 project_router = APIRouter(prefix='/v1/projects', tags=['Mall registrations'])
@@ -41,20 +41,9 @@ class ResumeRegistrationRequest(StrictModel):
     requestKey: UUID
 
 
-class SalesDefaultsRequest(StrictModel):
-    baseRevision: StrictInt = Field(ge=0)
-    shipping: dict | None = None
-    returns: dict | None = None
-    disclosure: dict | None = None
-    taxType: str | None = None
-    productOrigin: str | None = None
-    shippingDays: StrictInt | None = None
-    listingMode: str | None = None
-
-
 class MallDefaultsRequest(StrictModel):
+    model_config = ConfigDict(extra="allow")
     baseRevision: StrictInt = Field(ge=0)
-    addresses: dict[str, str] = Field(default_factory=dict)
 
 
 def _error(code, message, status=400, **detail):
@@ -103,7 +92,6 @@ async def _source(conn, draft, user_id, facts_by_mall, *, lock=False, settings):
         raise _error('asset_not_found', '이 프로젝트의 이미지를 찾을 수 없어요', 404)
     if await repo.project_uses_real_model(conn, user_id=user_id, project_id=draft['projectId']):
         raise _error('real_model_not_allowed', '실존 모델 컷은 다운로드로 받아 몰에 직접 올려 주세요', 403)
-    source['salesDefaults'] = await repo.get_sales_defaults(conn, user_id=user_id)
     source['mallSpecificDefaults'], source['recoveries'] = {}, {}
     for mall in draft['selectedMalls']:
         source['mallSpecificDefaults'][mall] = await repo.get_mall_defaults(conn, user_id=user_id, mall=mall)
@@ -125,49 +113,32 @@ def _draft(body):
     return normalize_register_draft(body.model_dump(mode='json', exclude_unset=True))
 
 
-@router.get('/sales-defaults')
-async def get_sales_defaults(request: Request, user_id: str = Depends(require_user)):
-    async with _conn(request) as conn:
-        await _assert_account_open(conn, user_id)
-        return sales_defaults_view(await repo.get_sales_defaults(conn, user_id=user_id))
-
-
-@router.put('/sales-defaults')
-async def put_sales_defaults(request: Request, body: SalesDefaultsRequest, user_id: str = Depends(require_user)):
-    async with _conn(request) as conn:
-        await _locks(conn, [f'mall-account:{user_id}'])
-        await _assert_account_open(conn, user_id)
-        try:
-            row = await repo.save_sales_defaults(conn, user_id=user_id, base_revision=body.baseRevision,
-                patch=body.model_dump(exclude_unset=True, exclude={'baseRevision'}))
-        except ValueError:
-            raise _error('invalid_defaults', '판매 기본 정보를 다시 확인해 주세요', 422) from None
-        return sales_defaults_view(row)
-
-
 @router.get('/{mall}/registration-defaults')
 async def get_registration_defaults(request: Request, mall: str, user_id: str = Depends(require_user)):
     _mall(mall)
     async with _conn(request) as conn:
         await _assert_account_open(conn, user_id)
         row = await repo.get_mall_defaults(conn, user_id=user_id, mall=mall) or {}
-    return dict(revision=row.get('revision', 0), addresses=row.get('addresses') or {})
+    return mall_defaults_view(mall, row)
 
 
 @router.put('/{mall}/registration-defaults')
 async def put_registration_defaults(request: Request, mall: str, body: MallDefaultsRequest, user_id: str = Depends(require_user)):
     _mall(mall)
+    if mall == 'ably':
+        raise _error('invalid_defaults', '이 쇼핑몰의 판매 정보는 준비 중이에요', 400)
+    patch = body.model_dump(exclude_unset=True, exclude={'baseRevision'})
+    try:
+        normalize_mall_defaults(mall, {}, patch)
+    except ValueError:
+        raise _error('invalid_defaults', '이 쇼핑몰의 판매 정보를 다시 확인해 주세요', 400) from None
     async with _conn(request) as conn:
         await _assert_account_open(conn, user_id)
         connection = await repo.get_mall_connection(conn, user_id=user_id, mall=mall)
     if not connection:
         raise _error('connection_required', '쇼핑몰을 먼저 연결해 주세요', 409)
-    addresses = body.addresses
-    if addresses.keys() - {'shippingAddressId', 'returnAddressId'}:
-        raise _error('invalid_defaults', '주소 선택을 다시 확인해 주세요', 422)
+    addresses = patch.get('addresses', {})
     if any(addresses.values()):
-        if mall != 'zigzag':
-            raise _error('invalid_defaults', '이 쇼핑몰은 주소 선택을 지원하지 않아요', 422)
         from .mall_connect import list_zigzag_addresses
         rows = await list_zigzag_addresses(request, user_id)
         if any(value.strip() and value.strip() not in {row['id'] for row in rows} for value in addresses.values()):
@@ -178,8 +149,8 @@ async def put_registration_defaults(request: Request, mall: str, body: MallDefau
         current = await repo.get_mall_connection(conn, user_id=user_id, mall=mall)
         if not current or current['id'] != connection['id']:
             raise _error('connection_changed', '연결이 바뀌었어요. 다시 확인해 주세요', 409)
-        row = await repo.save_mall_specific_defaults(conn, user_id=user_id, mall=mall, base_revision=body.baseRevision, patch={'addresses': addresses})
-    return dict(revision=row['revision'], addresses=row['addresses'])
+        row = await repo.save_mall_defaults(conn, user_id=user_id, mall=mall, base_revision=body.baseRevision, patch=patch)
+    return mall_defaults_view(mall, row)
 
 
 @router.get('/{mall}/registration-catalog')
@@ -224,7 +195,7 @@ async def create_registration_batch(request: Request, response: Response, body: 
     facts = {mall: await load_mall_facts(request.app, user_id=user_id, mall=mall) for mall in draft['selectedMalls']}
     async with _conn(request) as conn:
         await _locks(conn, [f'mall-account:{user_id}', *[f'mall:{user_id}:{m}' for m in draft['selectedMalls']],
-            f'mall-sales-defaults:{user_id}', *[f'mall-defaults:{user_id}:{m}' for m in draft['selectedMalls']],
+            *[f'mall-defaults:{user_id}:{m}' for m in draft['selectedMalls']],
             f'mall-batch:{user_id}:{batch_id}', f'mall-register:{user_id}:{draft["projectId"]}'])
         await _assert_account_open(conn, user_id)
         previous = await repo.get_mall_batch_jobs(conn, user_id=user_id, batch_id=batch_id)
@@ -245,7 +216,7 @@ async def create_registration_batch(request: Request, response: Response, body: 
                 code = None
                 if not confirmed: code = 'preflight_required'
                 elif confirmed['connectionVersion'] != current['connectionVersion']: code = 'connection_changed'
-                elif any(confirmed[k] != current[k] for k in ('salesDefaultsRevision', 'mallDefaultsRevision')): code = 'defaults_changed'
+                elif confirmed['mallDefaultsRevision'] != current['mallDefaultsRevision']: code = 'defaults_changed'
                 elif confirmed['catalogVersion'] != current['catalogVersion']: code = 'catalog_changed'
                 elif confirmed['editorRevision'] != current['editorRevision']: code = 'editor_revision_changed'
                 if code:

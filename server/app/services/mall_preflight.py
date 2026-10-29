@@ -11,7 +11,6 @@ def issue(code, path, message, action):
 
 def source_versions(draft, source, facts):
     return dict(connectionVersion=facts['connectionVersion'],
-        salesDefaultsRevision=(source.get('salesDefaults') or {}).get('revision', 0),
         mallDefaultsRevision=((source.get('mallSpecificDefaults') or {}).get(facts['mall']) or {}).get('revision', 0),
         catalogVersion=facts['catalogVersion'], editorRevision=draft['editorRevision'])
 

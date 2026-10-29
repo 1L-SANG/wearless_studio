@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
-from .mall_sales_defaults import normalize_sales_defaults, sales_defaults_view
+from .mall_defaults import mall_default_fields, normalize_mall_defaults, mall_defaults_view
 
 MAX_AMOUNT = 2_147_483_647
 MALLS = ('cafe24', 'zigzag', 'ably')
@@ -44,7 +44,6 @@ class CategorySelection(StrictModel):
 
 class SourceVersions(StrictModel):
     connectionVersion: str
-    salesDefaultsRevision: StrictInt = Field(ge=0)
     mallDefaultsRevision: StrictInt = Field(ge=0)
     catalogVersion: str
     editorRevision: StrictInt = Field(ge=0)
@@ -102,7 +101,7 @@ class RegisterDraftInput(StrictModel):
     def sales(cls, value):
         if value.keys() - {'listingMode', 'shippingDays', 'shipping', 'returns', 'taxType', 'productOrigin'}:
             raise ValueError('unknown sales override')
-        normalize_sales_defaults({}, value)
+        normalize_mall_defaults('zigzag', {}, value)
         return value
 
 
@@ -131,7 +130,6 @@ class RegistrationSource(TypedDict, total=False):
     editorBlocks: list[dict]
     publication: dict
     assets: list[dict]
-    salesDefaults: dict
     mallSpecificDefaults: dict[str, dict]
     recoveries: dict[str, list[dict]]
 
@@ -316,7 +314,10 @@ def freeze_registration(draft: RegisterDraft, *, source: RegistrationSource, fac
         raise ContractError('asset_not_found', 'mainAssetId', '이 프로젝트의 이미지를 골라 주세요', 'choose_image')
     if any(assets[i].get('mime_type') not in ('image/jpeg', 'image/png', 'image/webp') for i in ids):
         raise ContractError('image_format', 'mainAssetId', '정지 이미지를 준비해 주세요', 'choose_image')
-    sales = sales_defaults_view(normalize_sales_defaults(source.get('salesDefaults') or {}, draft['salesOverrides']))
+    mall = facts['mall']
+    defaults = (source.get('mallSpecificDefaults') or {}).get(mall) or {}
+    overrides = {k: v for k, v in draft['salesOverrides'].items() if k in mall_default_fields(mall)}
+    sales = mall_defaults_view(mall, {**normalize_mall_defaults(mall, defaults, overrides), 'revision': defaults.get('revision', 0)})
     product = {**(source.get('product') or {}), 'name': draft['productName'],
                'materials': (source.get('analysis') or {}).get('materials', [])}
     notice = resolve_notice(blocks, product, sales)
@@ -327,7 +328,7 @@ def freeze_registration(draft: RegisterDraft, *, source: RegistrationSource, fac
         images=[dict(assetId=i, r2Key=assets[i]['r2_key'], mimeType=assets[i]['mime_type'],
                      width=assets[i].get('width'), height=assets[i].get('height')) for i in ids],
         notice=notice, category=category, sales=sales,
-        mallDefaults=(source.get('mallSpecificDefaults') or {}).get(facts['mall']) or {},
+        mallDefaults=mall_defaults_view(mall, defaults),
         publication=dict(id=publication['id'], width=publication['width'], files=files),
         imageRatio=facts['imageRatio'], catalogVersion=facts['catalogVersion'], priceSetting=facts['priceBasis']))
 

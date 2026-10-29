@@ -324,7 +324,10 @@ def test_list_malls_keeps_items_envelope_and_reports_registration_capability(env
     body = client.get("/v1/malls").json()
     assert set(body) == {"items"}
     assert body["items"][0] == dict(mall="zigzag", status="none", shopName=None, keyHint=None,
-        permissions=[], connectedAt=None, lastRegisteredAt=None, addressesRevision=0,
+        permissions=[], connectedAt=None, lastRegisteredAt=None, defaultsRevision=0,
+        defaultsMissingItems=["shipping.feeType", "shipping.baseFee", "shipping.jejuFee", "shipping.isolatedFee",
+            "returns.exchangeFee", "returns.partialFee", "returns.totalFee", "disclosure.asManager", "disclosure.country",
+            "disclosure.manufacturer", "disclosure.phone", "disclosure.warrantyText", "addresses.returnAddressId"],
         connectionVersion=None, registration={"status": "preparing"})
     assert {r["mall"] for r in body["items"]} == {"zigzag", "cafe24", "ably", "smartstore"}
 

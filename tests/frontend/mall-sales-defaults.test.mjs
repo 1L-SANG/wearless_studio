@@ -3,20 +3,21 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { componentModule, hooks } from './helpers/reactHarness.mjs';
+import { readFileSync } from 'node:fs';
 import * as logic from '../../src/lib/mallDefaults.js';
 
 const walk = (node) => [node, ...React.Children.toArray(node?.props?.children).flatMap(walk)];
 const field = (tree, name) => walk(tree).find((n) => n.props?.name === name);
 const empty = { revision: 0, shipping: {}, returns: {}, disclosure: {}, taxType: 'TAX', productOrigin: 'domestic', shippingDays: 2, listingMode: 'HIDDEN', missingItems: ['shipping', 'returns', 'disclosure'] };
 async function card(runtime = hooks(), api = {}) {
-  return componentModule('src/features/settings/MallDefaultsChecklist.jsx', ['SalesDefaultsCard'], {
-    ...runtime, ...logic, api, styles: {}, Button: 'button', Icon: () => null,
+  return componentModule('src/features/settings/MallDefaultsChecklist.jsx', ['MallDefaultsForm'], {
+    ...runtime, ...logic, api, useAuth: () => ({ session: { user: { id: 'local' } } }), useQuery: () => ({ data: [{ id: 'mock-shipping', name: '창고', address: '서울' }] }), styles: {}, Button: 'button', Icon: () => null,
   });
 }
 async function connections(runtime = hooks(), api = {}, bindings = {}) {
-  return componentModule('src/features/settings/MallConnections.jsx', ['MallConnections', 'MallAddressDefaults', 'Cafe24Connection'], {
-    ...runtime, ...logic, api, styles: {}, Button: 'button', Icon: () => null, Modal: ({ children }) => children,
-    ExportMenu: () => null, Link: 'a', SalesDefaultsCard: () => null, seoulDate: () => '',
+  return componentModule('src/features/settings/MallConnections.jsx', ['MallConnections', 'MallSettings', 'Cafe24Connection'], {
+    ...runtime, ...logic, api, useAuth: () => ({ session: { user: { id: 'local' } } }), useQuery: () => ({ data: [{ id: 'mock-shipping', name: '창고', address: '서울' }] }), styles: {}, Button: 'button', Icon: () => null, Modal: ({ children }) => children,
+    ExportMenu: () => null, Link: 'a', MallDefaultsForm: () => null, seoulDate: () => '',
     useAuth: () => ({ session: { user: { id: 'local-user' } } }), useLocation: () => ({ search: '' }),
     useQueryClient: () => ({ setQueryData() {}, invalidateQueries() {} }),
     useQuery: () => ({ data: [{ id: 'mock-shipping', name: '성수 창고', address: '성수동' }], isPending: false }), ...bindings,
@@ -24,50 +25,55 @@ async function connections(runtime = hooks(), api = {}, bindings = {}) {
 }
 
 test('sales defaults card shows split fees shipping days and hidden default', async () => {
-  const runtime = hooks(), calls = [], { SalesDefaultsCard } = await card(runtime, { saveSalesDefaults: async (input) => { calls.push(input); return { ...empty, revision: 1 }; } });
-  const props = { defaults: empty };
-  let tree = runtime.render(SalesDefaultsCard, props);
+  const runtime = hooks(), calls = [], { MallDefaultsForm } = await card(runtime, { saveMallDefaults: async (mall, input) => { calls.push(input); return { ...empty, revision: 1 }; } });
+  const props = { mall: 'zigzag', defaults: empty };
+  let tree = runtime.render(MallDefaultsForm, props);
   const html = renderToStaticMarkup(tree);
-  for (const text of ['판매 기본 정보', '무료', '고정', '조건부 무료', '제주 추가', '도서산간 추가', '전체 반품', '부분 반품', '교환', '발송 소요일', '품질보증기준', '카페24는 몰 설정']) assert.ok(html.includes(text), text);
+  for (const text of ['판매 정보', '무료', '고정', '조건부 무료', '제주 추가', '도서산간 추가', '전체 반품', '부분 반품', '교환', '발송 소요일', '품질보증기준', '반품지']) assert.ok(html.includes(text), text);
   assert.equal(field(tree, 'shippingDays').props.value, 2);
   assert.equal(field(tree, 'listingMode').props.value, 'HIDDEN');
   field(tree, 'feeType').props.onChange('CONDITIONAL_FREE');
-  tree = runtime.render(SalesDefaultsCard, props);
+  tree = runtime.render(MallDefaultsForm, props);
   assert.ok(field(tree, 'conditionalAmount'));
   field(tree, 'conditionalAmount').props.onChange('50000');
-  tree = runtime.render(SalesDefaultsCard, props);
+  tree = runtime.render(MallDefaultsForm, props);
   field(tree, 'feeType').props.onChange('FREE');
-  tree = runtime.render(SalesDefaultsCard, props);
+  tree = runtime.render(MallDefaultsForm, props);
   assert.equal(field(tree, 'conditionalAmount'), undefined);
   await tree.props.onSubmit({ preventDefault() {} });
   assert.equal(calls[0].baseRevision, 0); assert.deepEqual(calls[0].shipping, { feeType: 'FREE', baseFee: 0 });
   assert.equal(calls[0].listingMode, 'HIDDEN'); assert.equal(calls[0].disclosure.warrantyText, '');
-  assert.equal('addresses' in calls[0], false);
+  assert.deepEqual(calls[0].addresses, { returnAddressId: '' });
 });
 
-test('addresses stay under their own mall connection', async () => {
-  const runtime = hooks(), calls = [], { MallAddressDefaults } = await connections(runtime, { saveMallDefaults: async (...args) => { calls.push(args); return { revision: 3, addresses: args[1].addresses }; } });
+test('each mall form renders only its own fields and saves one return address', async () => {
+  const runtime = hooks(), calls = [], { MallDefaultsForm } = await card(runtime, { saveMallDefaults: async (...args) => { calls.push(args); return { revision: 3 }; } });
   const props = { mall: 'zigzag', defaults: { revision: 2, addresses: {} } };
-  let tree = runtime.render(MallAddressDefaults, props);
-  for (const name of ['shippingAddressId', 'returnAddressId']) {
-    field(tree, name).props.onChange({ target: { value: 'mock-shipping' } });
-    tree = runtime.render(MallAddressDefaults, props);
-  }
+  let tree = runtime.render(MallDefaultsForm, props);
+  assert.equal(field(tree, 'shippingAddressId'), undefined);
+  field(tree, 'returnAddressId').props.onChange({ target: { value: 'mock-shipping' } });
+  tree = runtime.render(MallDefaultsForm, props);
   await tree.props.onSubmit({ preventDefault() {} });
-  assert.deepEqual(calls, [['zigzag', { baseRevision: 2, addresses: { shippingAddressId: 'mock-shipping', returnAddressId: 'mock-shipping' } }]]);
-  assert.doesNotMatch(renderToStaticMarkup(runtime.render(MallAddressDefaults, { mall: 'cafe24', defaults: {} })), /<select/);
+  assert.equal(calls[0][0], 'zigzag'); assert.deepEqual(calls[0][1].addresses, { returnAddressId: 'mock-shipping' });
+  const cafeRuntime = hooks(), cafe = await card(cafeRuntime);
+  const cafeTree = cafeRuntime.render(cafe.MallDefaultsForm, { mall: 'cafe24', defaults: {} });
+  const html = renderToStaticMarkup(cafeTree);
+  for (const name of ['shippingDays', 'feeType', 'manufacturer', 'productOrigin', 'returnAddressId']) assert.equal(field(cafeTree, name), undefined, name);
+  for (const name of ['country', 'taxType', 'listingMode']) assert.ok(field(cafeTree, name), name);
+  assert.doesNotMatch(html, /모든 몰|지그재그|카페24는 몰 설정/);
+  assert.deepEqual(logic.mallDefaultsPatch('cafe24', logic.mallDefaultsValues('cafe24', {})), { disclosure: { country: '' }, taxType: 'TAX', listingMode: 'HIDDEN' });
 });
 
 test('defaults conflict keeps entered values and reloads current revision', async () => {
   const runtime = hooks(), calls = []; let loads = 0;
-  const { SalesDefaultsCard } = await card(runtime, {
-    saveSalesDefaults: async (input) => { calls.push(input); if (calls.length === 1) throw Object.assign(new Error('충돌'), { code: 'defaults_conflict', status: 409 }); return { ...empty, revision: 9 }; },
-    getSalesDefaults: async () => { loads++; return { ...empty, revision: 8, disclosure: { manufacturer: '다른 창' } }; },
+  const { MallDefaultsForm } = await card(runtime, {
+    saveMallDefaults: async (mall, input) => { calls.push(input); if (calls.length === 1) throw Object.assign(new Error('충돌'), { code: 'defaults_conflict', status: 409 }); return { ...empty, revision: 9 }; },
+    getMallDefaults: async () => { loads++; return { ...empty, revision: 8, disclosure: { manufacturer: '다른 창' } }; },
   });
-  const props = { defaults: { ...empty, revision: 3 } };
-  let tree = runtime.render(SalesDefaultsCard, props);
-  field(tree, 'manufacturer').props.onChange('내 입력'); tree = runtime.render(SalesDefaultsCard, props);
-  await tree.props.onSubmit({ preventDefault() {} }); tree = runtime.render(SalesDefaultsCard, props);
+  const props = { mall: 'zigzag', defaults: { ...empty, revision: 3 } };
+  let tree = runtime.render(MallDefaultsForm, props);
+  field(tree, 'manufacturer').props.onChange('내 입력'); tree = runtime.render(MallDefaultsForm, props);
+  await tree.props.onSubmit({ preventDefault() {} }); tree = runtime.render(MallDefaultsForm, props);
   assert.equal(loads, 1); assert.equal(field(tree, 'manufacturer').props.value, '내 입력');
   assert.match(renderToStaticMarkup(tree), /입력한 값은 남아 있어요/);
   await tree.props.onSubmit({ preventDefault() {} });
@@ -83,6 +89,49 @@ test('preparing malls never expose a working registration or ably connect form',
   const html = renderToStaticMarkup(tree);
   assert.match(html, /셀러스 입점만 연결할 수 있어요/); assert.match(html, /파트너스는 연결할 수 없어요/);
   assert.match(html, /등록 준비 중/); assert.doesNotMatch(html, /셀러스 어드민 API 토큰/);
+});
+
+test('list links connected malls to their own form and preserves editor return state', async () => {
+  const runtime = hooks(), returnTo = '/editor/local?mode=edit';
+  const { MallConnectionRow, MallConnections } = await componentModule('src/features/settings/MallConnections.jsx', ['MallConnectionRow', 'MallConnections'], {
+    ...runtime, styles: {}, api: {}, Button: 'button', Icon: () => null, ExportMenu: () => null, Link: 'a',
+    useAuth: () => ({ session: { user: { id: 'local' } } }), useLocation: () => ({ state: { returnTo }, search: '' }),
+    useQueryClient: () => ({ invalidateQueries() {} }), useQuery: () => ({ data: { items: [] } }),
+  });
+  for (const mall of ['cafe24', 'zigzag']) {
+    const tree = MallConnectionRow({ mall, state: 'connected', returnTo, connection: { defaultsMissingItems: ['disclosure.country'] } });
+    const link = walk(tree).find((node) => node.type === 'a');
+    assert.equal(link.props.to, `/settings/malls/${mall}`); assert.deepEqual(link.props.state, { returnTo });
+    assert.match(renderToStaticMarkup(tree), /판매 정보 빈칸 1개/);
+    const disconnected = MallConnectionRow({ mall, state: 'none' });
+    assert.doesNotMatch(renderToStaticMarkup(disconnected), /판매 정보/);
+  }
+  const list = runtime.render(MallConnections);
+  assert.doesNotMatch(renderToStaticMarkup(list), /판매 기본 정보|<input[^>]*name="(shippingDays|country)"/);
+  const app = readFileSync(new URL('../../src/apps/seller/App.jsx', import.meta.url), 'utf8');
+  assert.match(app, /path="settings\/malls\/:mall" element={<MallSettings \/>}/);
+});
+
+test('detail redirects unsupported or disconnected malls and keeps returnTo through navigation', async () => {
+  const returnTo = '/editor/local';
+  for (const [mall, status] of [['unknown', 'connected'], ['ably', 'connected'], ['cafe24', 'none'], ['zigzag', 'connected']]) {
+    const runtime = hooks();
+    const { MallSettings, ZigzagConnection, MallDefaultsForm } = await componentModule('src/features/settings/MallConnections.jsx', ['MallSettings', 'ZigzagConnection', 'MallDefaultsForm'], {
+      ...runtime, styles: {}, api: {}, Button: 'button', Icon: () => null, ExportMenu: () => null, Link: 'a', Navigate: 'redirect', MallDefaultsForm: 'mall-form',
+      useAuth: () => ({ session: { user: { id: 'local' } } }), useLocation: () => ({ state: { returnTo } }), useParams: () => ({ mall }),
+      useQueryClient: () => ({ invalidateQueries() {}, setQueryData() {} }),
+      useQuery: ({ queryKey }) => ({ data: queryKey[0] === 'mall-connections' ? { items: [{ mall, status, shopName: '내 상점' }] } : { revision: 2 } }),
+    });
+    const tree = runtime.render(MallSettings);
+    if (mall !== 'zigzag') {
+      assert.equal(tree.type, 'redirect'); assert.equal(tree.props.to, '/settings/malls'); assert.deepEqual(tree.props.state, { returnTo });
+    } else {
+      const back = walk(tree).find((node) => node.type === 'a' && node.props.to === '/settings/malls');
+      assert.deepEqual(back.props.state, { returnTo });
+      assert.ok(walk(tree).find((node) => node.type === ZigzagConnection && node.props.detail));
+      assert.equal(walk(tree).find((node) => node.type === MallDefaultsForm).props.mall, 'zigzag');
+    }
+  }
 });
 
 test('cafe24 app url mall_id only prefills the mall id field', async () => {

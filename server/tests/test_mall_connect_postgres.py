@@ -66,6 +66,10 @@ def mall_pg(monkeypatch):
         for statement in multimall.read_text().split(";"):
             if "alter table public.mall_defaults" in statement:
                 admin.execute(statement.replace("public.mall_defaults", f"{schema}.mall_defaults"))
+        per_mall = migration.with_name("20261029184338_multimall_per_mall_defaults.sql")
+        for statement in per_mall.read_text().split(";"):
+            if "alter table public.mall_defaults" in statement:
+                admin.execute(statement.replace("public.mall_defaults", f"{schema}.mall_defaults"))
         admin.execute("""create table client_event_rate_limits (
             scope text, key text, window_start timestamptz, request_count integer)""")
         admin.execute("""create table jobs (

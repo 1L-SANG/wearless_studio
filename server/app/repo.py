@@ -250,60 +250,24 @@ async def void_install_attempts(conn, *, user_id, mall="cafe24") -> int:
         return cur.rowcount
 
 
-_SALES_DEFAULTS_COLS = """shipping, returns, disclosure, tax_type, product_origin,
-    shipping_days, listing_mode, revision, created_at, updated_at"""
+_MALL_DEFAULTS_COLS = """shop_id, shipping, returns, disclosure, tax_type, product_origin,
+    shipping_days, listing_mode, addresses, revision"""
 
 
 async def get_mall_defaults(conn, *, user_id, mall) -> dict | None:
     async with conn.cursor() as cur:
-        await cur.execute("""select shop_id, addresses, revision from mall_defaults
+        await cur.execute(f"""select {_MALL_DEFAULTS_COLS} from mall_defaults
             where user_id = %s and mall = %s""", (user_id, mall))
         return await cur.fetchone()
 
 
-async def get_sales_defaults(conn, *, user_id: str) -> dict | None:
-    async with conn.cursor() as cur:
-        await cur.execute(f"select {_SALES_DEFAULTS_COLS} from mall_sales_defaults where user_id = %s", (user_id,))
-        return await cur.fetchone()
-
-
-async def save_sales_defaults(conn, *, user_id: str, base_revision: int, patch: dict) -> dict:
-    from .services.mall_sales_defaults import normalize_sales_defaults
+async def save_mall_defaults(conn, *, user_id: str, mall: str, base_revision: int, patch: dict) -> dict:
+    from .services.mall_defaults import normalize_mall_defaults
 
     if type(base_revision) is not int or base_revision < 0:
         raise ValueError("base_revision must be a nonnegative integer")
-    async with conn.cursor() as cur:
-        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                          (f"mall-sales-defaults:{user_id}",))
-        previous = await get_sales_defaults(conn, user_id=user_id)
-        if (previous or {}).get("revision", 0) != base_revision:
-            raise CreditError("defaults_conflict", "판매 기본 정보가 바뀌었어요. 다시 확인해 주세요.", 409)
-        values = normalize_sales_defaults(previous or {}, patch)
-        await cur.execute(f"""insert into mall_sales_defaults
-            (user_id, shipping, returns, disclosure, tax_type, product_origin, shipping_days, listing_mode)
-            values (%s, %s, %s, %s, %s, %s, %s, %s)
-            on conflict (user_id) do update set shipping = excluded.shipping, returns = excluded.returns,
-              disclosure = excluded.disclosure, tax_type = excluded.tax_type, product_origin = excluded.product_origin,
-              shipping_days = excluded.shipping_days, listing_mode = excluded.listing_mode,
-              revision = mall_sales_defaults.revision + 1, updated_at = now()
-            returning {_SALES_DEFAULTS_COLS}""",
-            (user_id, *(Json(values[k]) for k in ("shipping", "returns", "disclosure")),
-             *(values[k] for k in ("tax_type", "product_origin", "shipping_days", "listing_mode"))))
-        return await cur.fetchone()
-
-
-async def save_mall_specific_defaults(conn, *, user_id: str, mall: str, base_revision: int, patch: dict) -> dict:
-    if mall not in ("cafe24", "zigzag", "ably"):
-        raise CreditError("mall_not_found", "쇼핑몰을 찾을 수 없어요.", 404)
-    if type(base_revision) is not int or base_revision < 0:
-        raise ValueError("base_revision must be a nonnegative integer")
-    if not isinstance(patch, dict) or patch.keys() - {"addresses"}:
-        raise ValueError("Only mall addresses can be saved")
-    addresses = patch.get("addresses", {})
-    if not isinstance(addresses, dict) or addresses.keys() - {"shippingAddressId", "returnAddressId"}:
-        raise ValueError("Invalid mall address fields")
-    if any(not isinstance(value, str) for value in addresses.values()):
-        raise ValueError("Address IDs must be text")
+    # Validate before taking locks, including fields unsupported by this mall.
+    normalize_mall_defaults(mall, {}, patch)
     async with conn.cursor() as cur:
         for key in (f"mall-account:{user_id}", f"mall:{user_id}:{mall}"):
             await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (key,))
@@ -316,15 +280,17 @@ async def save_mall_specific_defaults(conn, *, user_id: str, mall: str, base_rev
                           (f"mall-defaults:{user_id}:{mall}",))
         previous = await get_mall_defaults(conn, user_id=user_id, mall=mall)
         if (previous or {}).get("revision", 0) != base_revision:
-            raise CreditError("defaults_conflict", "쇼핑몰 주소가 바뀌었어요. 다시 확인해 주세요.", 409)
+            raise CreditError("defaults_conflict", "판매 정보가 바뀌었어요. 다시 확인해 주세요.", 409)
         if previous and previous["shop_id"] != connection["shop_id"]:
             raise CreditError("connection_changed", "연결한 스토어가 바뀌었어요. 다시 확인해 주세요.", 409)
-        merged = {**(previous or {}).get("addresses", {}), **addresses}
-        merged = {key: value.strip() for key, value in merged.items() if value.strip()}
-        await cur.execute("""insert into mall_defaults (user_id, mall, shop_id, addresses)
-            values (%s, %s, %s, %s) on conflict (user_id, mall) do update
-            set addresses = excluded.addresses, revision = mall_defaults.revision + 1, updated_at = now()
-            returning shop_id, addresses, revision""", (user_id, mall, connection["shop_id"], Json(merged)))
+        values = normalize_mall_defaults(mall, previous or {}, patch)
+        columns = list(values)
+        assignments = ", ".join(f"{k} = excluded.{k}" for k in columns)
+        await cur.execute(f"""insert into mall_defaults (user_id, mall, shop_id, {', '.join(columns)})
+            values (%s, %s, %s, {', '.join('%s' for _ in columns)}) on conflict (user_id, mall) do update
+            set {assignments}, revision = mall_defaults.revision + 1, updated_at = now()
+            returning {_MALL_DEFAULTS_COLS}""", (user_id, mall, connection["shop_id"],
+                *(Json(values[k]) if isinstance(values[k], dict) else values[k] for k in columns)))
         return await cur.fetchone()
 
 

@@ -12,7 +12,7 @@ async function load(runtime = hooks(), api = {}, bindings = {}) {
   return componentModule('src/features/settings/MallConnections.jsx',
     ['MallConnections', 'MallConnectionRow', 'Cafe24Connection', 'MallActionDialog', 'MallIdField'], {
       ...runtime, api, Button, Icon: () => null, Modal: ({ children }) => children,
-      styles: {}, seoulDate: () => '2026.10.26', ExportMenu: () => null, SalesDefaultsCard: () => null,
+      styles: {}, seoulDate: () => '2026.10.26', ExportMenu: () => null, Link: 'a', MallDefaultsForm: () => null,
       ...bindings,
     });
 }
@@ -39,7 +39,7 @@ test('v2 connection rows show store identity and only relevant connection detail
   const { MallConnectionRow } = await load();
   const cafe24 = html(React.createElement(MallConnectionRow, { mall: 'cafe24', title: '카페24', state: 'connected', connection }));
   assert.match(cafe24, /카페24 · myshop/);
-  assert.match(cafe24, /배송, 반품, 출고지는 카페24 몰 설정을 써요/);
+  assert.match(cafe24, /판매 정보 채움/); assert.match(cafe24, /판매 정보 ›/);
   assert.doesNotMatch(cafe24, /권한|인증키 끝자리|연결한 날|마지막 등록/);
   const zigzag = html(React.createElement(MallConnectionRow, { state: 'connected', connection: { ...connection, keyHint: '12345678' } }));
   assert.match(zigzag, /지그재그 · 니트 스토어/); assert.match(zigzag, /인증키 끝자리 12345678/);

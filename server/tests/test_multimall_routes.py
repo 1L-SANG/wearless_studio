@@ -81,7 +81,7 @@ def source():
                          editor_revision=3, width=860, files=[dict(index=1, bytes=100, width=860, height=100)]),
         product=dict(name='니트', colors=[dict(id='black', name='검정')]), analysis={},
         assets=[dict(id=ASSET, r2_key='owned/main.png', mime_type='image/png', width=800, height=1000)],
-        salesDefaults={}, mallSpecificDefaults={}, recoveries={})
+        mallSpecificDefaults={}, recoveries={})
 
 
 def facts(mall='cafe24', **changes):
@@ -99,10 +99,56 @@ def test_preflight_is_read_only_and_blocks_only_affected_mall():
     assert result['items'][0]['sourceVersions']['editorRevision'] == 3
     assert s == before
     snapshot = c.freeze_registration(d, source=s, facts=facts())
-    s['salesDefaults']['listing_mode'] = 'ON_SALE'
+    s['mallSpecificDefaults']['cafe24'] = {'listing_mode': 'ON_SALE'}
     assert snapshot['sales']['listingMode'] == 'HIDDEN'
     d['variantOverrides'] = [{'variantKey': '["black","FREE"]', 'additionalAmount': 2147483647}]
     with pytest.raises(ValueError): c.freeze_registration(d, source=s, facts=facts())
+
+
+def test_snapshot_and_notice_use_only_selected_mall_defaults():
+    from app.services.mall_preflight import evaluate_preflight
+    from app.services.mall_adapters.cafe24 import build_cafe24_product_request
+    c = contract(); d = c.normalize_register_draft(draft()); s = source()
+    s['mallSpecificDefaults'] = {
+        'cafe24': {'revision': 4, 'tax_type': 'FREE', 'listing_mode': 'ON_SALE',
+                   'disclosure': {'country': 'KR'}},
+        'zigzag': {'revision': 9, 'tax_type': 'TAX', 'listing_mode': 'HIDDEN',
+                   'shipping': {'baseFee': 9000}, 'addresses': {'returnAddressId': 'zig-return'},
+                   'disclosure': {'country': 'CN', 'manufacturer': '지그재그 공장'}},
+    }
+    checked = evaluate_preflight(d, source=s, facts_by_mall={
+        'cafe24': facts(), 'zigzag': facts('zigzag', status='preparing')})
+    assert checked['readyMalls'] == ['cafe24']
+    assert checked['items'][0]['sourceVersions'] == dict(connectionVersion='v1', mallDefaultsRevision=4,
+        catalogVersion='cat1', editorRevision=3)
+    snapshot = c.freeze_registration(d, source=s, facts=facts())
+    assert snapshot['sales']['taxType'] == 'FREE' and snapshot['sales']['listingMode'] == 'ON_SALE'
+    assert snapshot['notice']['fields']['origin'] == 'KR'
+    assert snapshot['notice']['fields']['maker'] == ''
+    assert 'shipping' not in snapshot['sales'] and 'addresses' not in snapshot['mallDefaults']
+    request = build_cafe24_product_request(snapshot, description='상세페이지', price_basis='S', external_code='wl-fixture')['request']
+    assert request['made_in_code'] == 'KR' and request['tax_type'] == 'B'
+    assert request['shipping_fee_by_product'] == 'F'
+    zigzag = c.freeze_registration(d, source=s, facts=facts('zigzag'))
+    assert zigzag['sales']['shipping']['baseFee'] == 9000
+    assert zigzag['notice']['fields']['maker'] == '지그재그 공장'
+    s['mallSpecificDefaults']['cafe24']['disclosure']['country'] = 'US'
+    s['mallSpecificDefaults']['zigzag']['shipping']['baseFee'] = 1
+    assert snapshot['notice']['fields']['origin'] == 'KR' and zigzag['sales']['shipping']['baseFee'] == 9000
+    s['project']['editor_blocks'] = [{'infoType': 'required_notice', 'info': {'fields': [{'key': 'origin', 'value': 'JP'}]}}]
+    assert c.freeze_registration(d, source=s, facts=facts())['notice']['fields']['origin'] == 'JP'
+
+
+def test_another_mall_defaults_change_does_not_invalidate_cafe24_admission(env):
+    from multimall_fakes import confirmed, submit
+    client, store = env
+    value = confirmed(client)
+    store['source']['mallSpecificDefaults']['zigzag'] = {'revision': 99, 'shipping': {'baseFee': 9000}}
+    result = submit(client, value)
+    assert result.status_code == 202, result.text
+    snapshot = next(iter(store['jobs'].values()))['payload']['snapshot']
+    assert 'shipping' not in snapshot['sales']
+    assert all('mall-sales-defaults' not in str(params) for _, params in store['sql'])
 
 
 def test_category_pagination_price_basis_and_image_settings_fail_closed():
@@ -147,12 +193,11 @@ def test_ready_mall_is_accepted_when_blocked_mall_has_no_source_versions(env):
     assert store['wakes']==1 and store['limits']['register']==1
 
 
-@pytest.mark.parametrize('changed,code', [('connectionVersion','connection_changed'),('salesDefaults','defaults_changed'),('mallDefaults','defaults_changed'),('catalogVersion','catalog_changed')])
+@pytest.mark.parametrize('changed,code', [('connectionVersion','connection_changed'),('mallDefaults','defaults_changed'),('catalogVersion','catalog_changed')])
 def test_admission_rechecks_connection_defaults_and_catalog_versions(env,changed,code):
     from multimall_fakes import confirmed, submit
     client,store=env;value=confirmed(client)
-    if changed=='salesDefaults':store['source']['salesDefaults']={'revision':1,'listing_mode':'ON_SALE'}
-    elif changed=='mallDefaults':store['source']['mallSpecificDefaults']={'cafe24':{'revision':1}}
+    if changed=='mallDefaults':store['source']['mallSpecificDefaults']={'cafe24':{'revision':1}}
     else:store['facts']['cafe24'][changed]='changed'
     r=submit(client,value)
     assert r.status_code==409,r.text

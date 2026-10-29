@@ -113,10 +113,11 @@ export function preflightForDisplayedSources(result, displayed) {
     const versions = item.sourceVersions || {};
     const expected = {
       connectionVersion: displayed.malls?.items?.find((connection) => connection.mall === item.mall)?.connectionVersion,
-      salesDefaultsRevision: displayed.defaults?.revision, mallDefaultsRevision: displayed.mallDefaults?.[item.mall]?.revision,
+      mallDefaultsRevision: displayed.mallDefaults?.[item.mall]?.revision,
       catalogVersion: displayed.catalogs?.[item.mall]?.catalogVersion,
     };
-    const changed = Object.keys(expected).find((key) => expected[key] != null && expected[key] !== versions[key]);
+    const changed = expected.mallDefaultsRevision == null ? 'mallDefaultsRevision'
+      : Object.keys(expected).find((key) => expected[key] != null && expected[key] !== versions[key]);
     if (!changed) return item;
     const code = changed === 'connectionVersion' ? 'connection_changed' : changed === 'catalogVersion' ? 'catalog_changed' : 'defaults_changed';
     return { ...item, status: 'blocked', sourceVersions: undefined, issues: [{ code, path: `confirmedSourcesByMall.${item.mall}`,

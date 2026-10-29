@@ -1,21 +1,21 @@
-.page { max-width: 1200px; margin: 0 auto; padding: 48px 24px 80px; font-size: 15px; line-height: 1.6; color: var(--fg-1); }
+.page { max-width: 760px; margin: 0 auto; padding: 48px 24px 80px; font-size: 15px; line-height: 1.6; color: var(--fg-1); }
 .pageHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 32px; }
 .pageHead h1 { font-size: 32px; line-height: 1.3; text-wrap: balance; }
 .pageHead p { color: var(--fg-2-read); margin: 10px 0 0; }
-.goLink { color: var(--fg-1); text-decoration: underline; text-underline-offset: 3px; font-size: 14px; }
+.goLink { display: inline-flex; align-items: center; min-height: 44px; color: var(--fg-1); text-decoration: underline; text-underline-offset: 3px; font-size: 14px; }
 .pageHead > .goLink { flex-shrink: 0; padding-top: 8px; }
 .mallList { background: var(--bg-1); box-shadow: var(--elev-card); border-radius: var(--r-6); }
 .mallRow { min-width: 0; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: start; gap: var(--sp-12); padding: var(--sp-20); box-shadow: 0 1px var(--ring); }
 .mallLogo { width: 32px; height: 32px; border-radius: var(--r-4); }
 .mallMark { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: var(--bg-2); border-radius: var(--r-4); font-weight: 600; }
-.mallInfo h3 { font-size: 16px; line-height: 1.5; text-wrap: balance; margin: 0; }
+.mallInfo h1, .mallInfo h3 { font-size: 16px; line-height: 1.5; text-wrap: balance; margin: 0; }
 .mallTitle { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; }
 .metadata { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; color: var(--fg-2-read); font-size: 13px; }
 .rowActions { display: flex; align-items: center; gap: 12px; position: relative; }
 .status { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--fg-2-read); white-space: nowrap; padding-top: 8px; }
 .connectedDot { width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--accent-success); }
 .warningDot { width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--accent-error); }
-.manage { width: 40px; height: 40px; font-size: 24px; background: transparent; color: var(--fg-1); border: 0; border-radius: var(--r-4); cursor: pointer; }
+.manage { width: 44px; height: 44px; font-size: 24px; background: transparent; color: var(--fg-1); border: 0; border-radius: var(--r-4); cursor: pointer; }
 .manage:hover { background: var(--bg-2); }
 .inlineForm { grid-column: 2 / -1; min-width: 0; padding-top: 8px; }
 .issuePath { margin-bottom: 20px; }
@@ -36,8 +36,7 @@
 .dialog p { font-size: 15px; color: var(--fg-2-read); margin: 12px 0 20px; }
 .dialog .error { font-size: 13px; color: var(--accent-error); }
 .dialog .danger { color: var(--accent-error); }
-.settingsGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-24); align-items: start; }
-.settingsGrid > * { min-width: 0; }
+.detailHead { margin-bottom: var(--sp-24); background: var(--bg-1); border-radius: var(--r-6); box-shadow: var(--elev-card); }
 .salesCard { background: var(--bg-1); border-radius: var(--r-6); box-shadow: var(--elev-card); padding: var(--sp-24); }
 .salesCard h2, .cardHead h2 { font-size: 20px; line-height: 1.4; margin: 0; text-wrap: balance; }
 .cardIntro { color: var(--fg-2-read); font-size: 14px; margin: var(--sp-4) 0 0; }
@@ -45,14 +44,11 @@
 .salesGroup { padding: var(--sp-20) 0; box-shadow: 0 1px var(--ring); }
 .groupHead { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8) var(--sp-12); margin-bottom: var(--sp-12); }
 .groupHead h3 { font-size: 15px; font-weight: 600; margin: 0; text-wrap: balance; }
-.uses { display: flex; flex-wrap: wrap; gap: var(--sp-4) var(--sp-8); color: var(--fg-2-read); font-size: 13px; }
-.uses > span { display: inline-flex; align-items: center; gap: var(--sp-4); text-wrap: balance; }
-.uses img { width: 16px; height: 16px; border-radius: var(--r-2); }
 .formFields, .radios { border: 0; padding: 0; margin: 0; min-width: 0; }
 .segments { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); padding: var(--sp-3); background: var(--bg-2); border-radius: var(--r-pill); box-shadow: inset 0 0 0 1px var(--ring-strong); }
 .segments label { position: relative; min-width: 0; cursor: pointer; }
 .segments input { position: absolute; opacity: 0; width: 1px; height: 1px; }
-.segments span { display: flex; align-items: center; justify-content: center; min-height: 38px; padding: var(--sp-4) var(--sp-8); border-radius: var(--r-pill); font-size: 14px; font-weight: 400; text-align: center; text-wrap: balance; color: var(--fg-2-read); }
+.segments span { display: flex; align-items: center; justify-content: center; min-height: 44px; padding: var(--sp-4) var(--sp-8); border-radius: var(--r-pill); font-size: 14px; font-weight: 400; text-align: center; text-wrap: balance; color: var(--fg-2-read); }
 .segments input:checked + span { color: var(--fg-1); background: var(--bg-1); box-shadow: var(--elev-soft), 0 0 0 1px var(--ring); font-weight: 600; }
 .segments input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 2px; }
 .segments input:disabled + span { cursor: default; }
@@ -63,18 +59,13 @@
 .warrantyField { margin-top: var(--sp-16); }
 .saveActions { margin-top: var(--sp-16); justify-content: flex-end; flex-wrap: wrap; }
 .saveActions > [role="status"] { margin-right: auto; }
-.addressDefaults { margin: 0 var(--sp-20) var(--sp-20); padding: var(--sp-16); background: var(--bg-2); border-radius: var(--r-5); }
-.addressDefaults .fields { grid-template-columns: minmax(0, 1fr); }
 .errorSummary { color: var(--accent-error); font-size: 14px; margin: var(--sp-16) 0; padding: var(--sp-12); box-shadow: inset 0 0 0 1px var(--accent-error); border-radius: var(--r-4); }
 .errorSummary p { margin: 0 0 var(--sp-8); }
 .errorSummary a { display: block; color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .errorSummary:focus { outline: 2px solid var(--focus); outline-offset: 3px; }
-.salesCard input, .salesCard fieldset, .addressDefaults select { scroll-margin-block: var(--sp-24); }
+.salesCard input, .salesCard fieldset { scroll-margin-block: var(--sp-24); }
 .srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .field input:focus-visible, .field select:focus-visible, .manage:focus-visible, .reveal:focus-visible, .goLink:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
-@media (max-width: 920px) {
-  .settingsGrid { grid-template-columns: minmax(0, 1fr); }
-}
 @media (max-width: 640px) {
   .page { padding: 28px 16px 48px; }
   .pageHead { flex-direction: column; gap: 12px; }
@@ -86,5 +77,4 @@
   .fields { grid-template-columns: minmax(0, 1fr); }
   .salesCard { padding: var(--sp-20) var(--sp-16); }
   .cardHead { padding: var(--sp-20) var(--sp-16) var(--sp-8); }
-  .addressDefaults { margin: 0 var(--sp-16) var(--sp-20); padding: var(--sp-12); }
 }

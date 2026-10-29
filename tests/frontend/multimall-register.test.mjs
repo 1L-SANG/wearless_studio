@@ -110,12 +110,15 @@ test('editor conflict or stale account response prevents submission', async () =
   await assert.rejects(prepareMallRegisterDraft(base, { waitForSave: async () => { throw Object.assign(new Error('conflict'), { code: 'editor_conflict' }); }, onPublish: () => publishes++, assertCurrent() {} }), /conflict/);
   assert.equal(publishes, 0);
   const { preflightForDisplayedSources } = await loadDraft();
-  const ready = { items: [{ mall: 'cafe24', status: 'ready', issues: [], sourceVersions: { connectionVersion: 'shop-1', salesDefaultsRevision: 2, mallDefaultsRevision: 0, catalogVersion: 'catalog-v1', editorRevision: 3 } }] };
-  const displayed = { defaults: { revision: 1 }, catalogs: { cafe24: { catalogVersion: 'catalog-v1' } }, mallDefaults: { cafe24: { revision: 0 } }, malls: { items: [{ mall: 'cafe24', connectionVersion: 'shop-1' }] } };
+  const ready = { items: [{ mall: 'cafe24', status: 'ready', issues: [], sourceVersions: { connectionVersion: 'shop-1', mallDefaultsRevision: 2, catalogVersion: 'catalog-v1', editorRevision: 3 } }] };
+  const displayed = { catalogs: { cafe24: { catalogVersion: 'catalog-v1' } }, mallDefaults: { cafe24: { revision: 1 } }, malls: { items: [{ mall: 'cafe24', connectionVersion: 'shop-1' }] } };
   const checked = preflightForDisplayedSources(ready, displayed);
   assert.equal(checked.items[0].status, 'blocked'); assert.equal(checked.items[0].issues[0].code, 'defaults_changed');
   assert.equal(ready.items[0].status, 'ready');
-  displayed.defaults.revision = 2; assert.equal(preflightForDisplayedSources(ready, displayed).items[0].status, 'ready');
+  displayed.mallDefaults.cafe24.revision = 2; assert.equal(preflightForDisplayedSources(ready, displayed).items[0].status, 'ready');
+  const missingDefaults = { ...displayed, mallDefaults: { cafe24: null } };
+  assert.equal(preflightForDisplayedSources(ready, missingDefaults).items[0].issues[0].code, 'defaults_changed');
+  assert.equal(preflightForDisplayedSources(ready, { ...displayed, mallDefaults: {} }).items[0].status, 'blocked');
   displayed.malls.items[0].connectionVersion = 'shop-2'; assert.equal(preflightForDisplayedSources(ready, displayed).items[0].issues[0].code, 'connection_changed');
 
   let current = true, release; const api = fakeApi({ listMallRegistrations: () => new Promise((r) => { release = r; }) });
@@ -177,7 +180,7 @@ test('mixed results retry only failed mall and resume setup on the same job', as
   try {
     for (const demo of ['partial', 'mixed', 'unknown', 'setup', 'activation', 'lost']) {
       globalThis.location = { search: `?mallRegistrationDemo=${demo}` };
-      db.mallConnections = {}; db.mallDefaults = {}; db.mallSalesDefaults = null; db.mallRegistrations = []; db.mallRegistrationBatches = {};
+      db.mallConnections = {}; db.mallDefaults = {}; db.mallRegistrations = []; db.mallRegistrationBatches = {};
       db.detailPublications = [{ publicationId: 'pub', projectId: 'a05-project', status: 'ready', editorRevision: 2, files: [{ index: 1 }] }];
       const malls = await mock.listMalls(); assert.equal(malls.items.find((item) => item.mall === 'cafe24').registration.status, 'available');
       const input = { ...clone(base), selectedMalls: ['cafe24', ...(['partial', 'mixed'].includes(demo) ? ['zigzag'] : [])] };
@@ -236,7 +239,7 @@ test('keyboard focus returns to menu and error summary opens the invalid field',
   const helpers = await loadDraft();
   const noticeHelpers = await import('../../src/features/editor/mallNotice.js');
   const { MallRegisterModal } = await componentModule('src/features/editor/MallRegisterModal.jsx', ['MallRegisterModal'], {
-    ...helpers, ...noticeHelpers, ...runtime, Modal: ({ children }) => children, styles: {}, api: {}, clientEvents: { getAccountGeneration: () => 0 },
+    ...helpers, ...noticeHelpers, ...runtime, useLocation: () => ({ pathname: '/editor/local', search: '', hash: '' }), useNavigate: () => () => {}, Link: 'a', Modal: ({ children }) => children, styles: {}, api: {}, clientEvents: { getAccountGeneration: () => 0 },
     createMallRegisterSession: () => ({ restore: async () => null, getState: () => ({}) }), trapRegistrationFocus, Button: 'button', useAuth: () => ({ session: { user: { id: 'a' } } }),
   });
   runtime.render(MallRegisterModal, { projectId: 'p', blocks: [], product: {}, assets: [], anchorRef: { current: { focus: () => restored++ } } });

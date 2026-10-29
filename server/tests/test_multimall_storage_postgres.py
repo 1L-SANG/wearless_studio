@@ -61,6 +61,14 @@ def storage_pg(mall_pg):
         migration = migration.replace("from anon, authenticated", f"from {roles['anon']}, {roles['authenticated']}")
         migration = migration.replace("to service_role", f"to {roles['service_role']}")
         admin.execute(migration)
+        # Match the existing mall_defaults ACL before the forward migration.
+        admin.execute("alter table mall_defaults enable row level security")
+        admin.execute(f"revoke all on mall_defaults from {roles['anon']}, {roles['authenticated']}")
+        admin.execute(f"grant select on mall_defaults to {roles['authenticated']}")
+        admin.execute(f"grant all on mall_defaults to {roles['service_role']}")
+        per_mall = MIGRATION.with_name("20261029184338_multimall_per_mall_defaults.sql").read_text()
+        # mall_pg already ran the new ALTER, so run its remaining DROP after A01.
+        admin.execute(per_mall[per_mall.index("drop table"):per_mall.index("commit;")].replace("public.", pool.schema + "."))
         admin.execute("""create table projects (
             id uuid primary key, user_id uuid, status text default 'draft', title text,
             compose_mode text, copywriting boolean, selected_mannequin_id text, adjust_count integer,
@@ -131,31 +139,34 @@ async def stop_pending(pending):
     await asyncio.gather(pending, return_exceptions=True)
 
 
-def test_sales_defaults_rls_acl_and_migration_shape(storage_pg):
+def test_per_mall_defaults_inherit_rls_acl_and_migration_shape(storage_pg):
     admin, pool, roles = storage_pg
-    original = MIGRATION.read_text().lower()
-    assert "revoke all on public.mall_sales_defaults from anon, authenticated" in original
-    assert "security definer" not in original
+    original = MIGRATION.with_name("20261029184338_multimall_per_mall_defaults.sql").read_text().lower()
+    assert "security definer" not in original and "create table" not in original
     assert original.strip().startswith("begin;") and original.strip().endswith("commit;")
-    table = pool.schema + ".mall_sales_defaults"
+    assert admin.execute("select to_regclass(%s) as table", (pool.schema + ".mall_sales_defaults",)).fetchone()["table"] is None
+    table = pool.schema + ".mall_defaults"
     assert admin.execute("select relrowsecurity from pg_class where oid = %s::regclass", (table,)).fetchone()["relrowsecurity"]
+    assert not admin.execute("select has_table_privilege(%s, %s, 'SELECT') as allowed", (roles['anon'], table)).fetchone()['allowed']
+    assert admin.execute("select has_table_privilege(%s, %s, 'SELECT') as allowed", (roles['authenticated'], table)).fetchone()['allowed']
     for name in ("anon", "authenticated"):
-        for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"):
+        for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"):
             assert not admin.execute("select has_table_privilege(%s, %s, %s) as allowed",
                                      (roles[name], table, privilege)).fetchone()["allowed"]
     for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
         assert admin.execute("select has_table_privilege(%s, %s, %s) as allowed",
                              (roles["service_role"], table, privilege)).fetchone()["allowed"]
-    row = admin.execute("insert into mall_sales_defaults (user_id) values (%s) returning *", (USER,)).fetchone()
+    row = admin.execute("insert into mall_defaults (user_id, mall) values (%s, 'cafe24') returning *", (USER,)).fetchone()
     assert row["revision"] == 1 and row["shipping_days"] == 2 and row["listing_mode"] == "HIDDEN"
-    for assignment in ("shipping = '[]'", "returns = 'null'", "disclosure = '1'", "tax_type = 'A'",
-                       "product_origin = 'KR'", "shipping_days = 0", "shipping_days = 31",
-                       "listing_mode = 'T'", "revision = 0"):
+    for assignment in ("shipping_days = 0", "shipping_days = 31", "listing_mode = 'T'", "revision = 0"):
         with pytest.raises(psycopg.errors.CheckViolation):
-            admin.execute(f"update mall_sales_defaults set {assignment} where user_id = %s", (USER,))
-    fk = admin.execute("select pg_get_constraintdef(oid) as definition from pg_constraint "
-                       "where conrelid = %s::regclass and contype = 'f'", (table,)).fetchone()["definition"]
-    assert "ON DELETE CASCADE" in fk
+            admin.execute(f"update mall_defaults set {assignment} where user_id = %s", (USER,))
+    for assignment in ("shipping_days = NULL", "listing_mode = NULL"):
+        with pytest.raises(psycopg.errors.NotNullViolation):
+            admin.execute(f"update mall_defaults set {assignment} where user_id = %s", (USER,))
+    constraints = admin.execute("select pg_get_constraintdef(oid) as definition from pg_constraint where conrelid = %s::regclass", (table,)).fetchall()
+    assert any("shipping_days" in row['definition'] and "30" in row['definition'] for row in constraints)
+    assert any("HIDDEN" in row['definition'] and "ON_SALE" in row['definition'] for row in constraints)
     for project, mall in ((None, "cafe24"), (PROJECT, "smartstore"), (PROJECT, None)):
         with pytest.raises(psycopg.errors.CheckViolation):
             admin.execute("insert into jobs (user_id, project_id, kind, status, payload) "
@@ -169,22 +180,19 @@ def test_sales_defaults_rls_acl_and_migration_shape(storage_pg):
         assert kind in general
     assert "payload ->> 'mall'" in indexes["jobs_mall_register_active_unique_idx"]
     assert "batchId" in indexes["jobs_mall_register_batch_idx"]
-    admin.execute("delete from test_users where id = %s", (USER,))
-    assert admin.execute("select count(*) as n from mall_sales_defaults").fetchone()["n"] == 0
 
 
 @pytest.mark.parametrize("section", ["sales", "addresses"])
 def test_concurrent_defaults_revision_has_one_winner(storage_pg, section):
     admin, pool, _roles = storage_pg
-    if section == "addresses":
-        admin.execute("insert into mall_connections (user_id, mall, shop_id) values (%s, 'zigzag', 'store')", (USER,))
-        admin.execute("insert into mall_defaults (user_id, mall, shop_id) values (%s, 'zigzag', 'store')", (USER,))
+    admin.execute("insert into mall_connections (user_id, mall, shop_id) values (%s, 'zigzag', 'store')", (USER,))
+    admin.execute("insert into mall_defaults (user_id, mall, shop_id) values (%s, 'zigzag', 'store')", (USER,))
 
     async def save(conn, value):
         if section == "sales":
-            return await repo.save_sales_defaults(conn, user_id=USER, base_revision=0,
+            return await repo.save_mall_defaults(conn, user_id=USER, mall="zigzag", base_revision=1,
                                                   patch={"shipping": {"baseFee": value}})
-        return await repo.save_mall_specific_defaults(conn, user_id=USER, mall="zigzag", base_revision=1,
+        return await repo.save_mall_defaults(conn, user_id=USER, mall="zigzag", base_revision=1,
                                                        patch={"addresses": {"returnAddressId": str(value)}})
 
     async def scenario():
@@ -206,12 +214,32 @@ def test_concurrent_defaults_revision_has_one_winner(storage_pg, section):
                 await second.rollback()
             finally:
                 await stop_pending(pending)
-            assert winner["revision"] == (1 if section == "sales" else 2)
+            assert winner["revision"] == 2
     asyncio.run(scenario())
     if section == "sales":
-        assert admin.execute("select shipping from mall_sales_defaults").fetchone()["shipping"] == {"baseFee": 100}
+        assert admin.execute("select shipping from mall_defaults").fetchone()["shipping"] == {"baseFee": 100}
     else:
         assert admin.execute("select addresses from mall_defaults").fetchone()["addresses"] == {"returnAddressId": "100"}
+
+
+def test_defaults_revisions_are_independent_for_each_mall(storage_pg):
+    admin, pool, _roles = storage_pg
+    for mall in ("cafe24", "zigzag"):
+        admin.execute("insert into mall_connections (user_id, mall, shop_id) values (%s, %s, 'store')", (USER, mall))
+        admin.execute("insert into mall_defaults (user_id, mall, shop_id) values (%s, %s, 'store')", (USER, mall))
+
+    async def scenario():
+        async with pool.connection() as conn:
+            zigzag = await repo.save_mall_defaults(conn, user_id=USER, mall="zigzag", base_revision=1,
+                patch={"shipping": {"baseFee": 3000}, "shippingDays": 3})
+            cafe24 = await repo.save_mall_defaults(conn, user_id=USER, mall="cafe24", base_revision=1,
+                patch={"disclosure": {"country": "KR"}, "taxType": "FREE", "listingMode": "ON_SALE"})
+            assert zigzag["revision"] == cafe24["revision"] == 2
+            await conn.commit()
+    asyncio.run(scenario())
+    rows = {row["mall"]: row for row in admin.execute("select * from mall_defaults").fetchall()}
+    assert rows["cafe24"]["shipping"] == {} and rows["cafe24"]["tax_type"] == "FREE"
+    assert rows["zigzag"]["shipping"] == {"baseFee": 3000} and rows["zigzag"]["tax_type"] == "TAX"
 
 
 @pytest.mark.parametrize("mode", ["index", "batch"])

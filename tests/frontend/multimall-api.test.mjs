@@ -18,21 +18,20 @@ before(async () => {
   supabase.auth.getSession = async () => ({ data: { session: { access_token: 'local-session' } } });
 });
 beforeEach(() => {
-  db.mallConnections = {}; db.mallDefaults = {}; db.mallSalesDefaults = null;
+  db.mallConnections = {}; db.mallDefaults = {};
   db.mallRegistrations = []; db.mallRegistrationBatches = {};
   db.detailPublications = [{ publicationId: 'publication-local', projectId: 'project-local', status: 'ready', editorRevision: 4, files: [{ index: 0 }] }];
 });
 after(() => vite?.close());
 const draft = (patch = {}) => ({ projectId: 'project-local', publicationId: 'publication-local', editorRevision: 4,
   selectedMalls: ['cafe24', 'zigzag'], productName: '니트', basePrice: 39000, defaultQuantity: 2, sizes: ['FREE'], mainAssetId: 'asset-local', ...patch });
-const names = ['getSalesDefaults', 'saveSalesDefaults', 'getMallDefaults', 'saveMallDefaults', 'getMallRegistrationCatalog',
+const names = ['getMallDefaults', 'saveMallDefaults', 'getMallRegistrationCatalog',
   'preflightMallRegistration', 'createMallRegistrationBatch', 'getMallRegistrationBatch', 'getMallRegistration', 'verifyMallRegistration', 'resumeMallRegistration'];
 
 test('services use one batch contract and preserve request identity', async (t) => {
   const calls = [], request = { batchId: randomUUID(), draft: draft() }, key = randomUUID();
   t.mock.method(globalThis, 'fetch', async (url, options) => { calls.push([String(url), options]); return new Response('{}'); });
   for (const name of names) assert.equal(typeof http[name], 'function', name);
-  await http.getSalesDefaults(); await http.saveSalesDefaults({ baseRevision: 0, shippingDays: 3 });
   await http.getMallDefaults('zigzag'); await http.saveMallDefaults('zigzag', { baseRevision: 0, addresses: { returnAddressId: 'a1' } });
   await http.getMallRegistrationCatalog('cafe24'); await http.preflightMallRegistration(request.draft);
   await http.createMallRegistrationBatch(request); await http.createMallRegistrationBatch(request);
@@ -40,7 +39,6 @@ test('services use one batch contract and preserve request identity', async (t) 
   await http.verifyMallRegistration('job-one'); await http.resumeMallRegistration('job-one', { requestKey: key });
   await http.listMallRegistrations('project-local');
   assert.deepEqual(calls.map(([url, options]) => [url, options.method]), [
-    ['/v1/malls/sales-defaults', 'GET'], ['/v1/malls/sales-defaults', 'PUT'],
     ['/v1/malls/zigzag/registration-defaults', 'GET'], ['/v1/malls/zigzag/registration-defaults', 'PUT'],
     ['/v1/malls/cafe24/registration-catalog', 'GET'], ['/v1/malls/registrations/preflight', 'POST'],
     ['/v1/malls/registration-batches', 'POST'], ['/v1/malls/registration-batches', 'POST'],
@@ -48,10 +46,10 @@ test('services use one batch contract and preserve request identity', async (t) 
     ['/v1/malls/registrations/job-one/verify', 'POST'], ['/v1/malls/registrations/job-one/resume', 'POST'],
     ['/v1/projects/project-local/mall-registrations', 'GET'],
   ]);
-  assert.equal(calls[6][1].body, calls[7][1].body);
-  assert.deepEqual(JSON.parse(calls[6][1].body), request);
-  assert.deepEqual(JSON.parse(calls[11][1].body), { requestKey: key });
-  for (const name of ['saveZigzagDefaults', 'listCafe24Categories', 'createCafe24Registration', 'getCafe24Registration', 'verifyCafe24Registration']) {
+  assert.equal(calls[4][1].body, calls[5][1].body);
+  assert.deepEqual(JSON.parse(calls[4][1].body), request);
+  assert.deepEqual(JSON.parse(calls[9][1].body), { requestKey: key });
+  for (const name of ['getSalesDefaults', 'saveSalesDefaults', 'saveZigzagDefaults', 'listCafe24Categories', 'createCafe24Registration', 'getCafe24Registration', 'verifyCafe24Registration']) {
     assert.equal(name in http, false); assert.equal(name in mock, false);
   }
 });
@@ -62,7 +60,7 @@ test('http mode never falls back to mock for missing registration functions', as
   t.mock.method(console, 'error', () => {});
   t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ error: { code: 'not_found', message: '없어요' } }), { status: 404 }));
   const api = boundary();
-  for (const [name, args] of [['getSalesDefaults', []], ['getMallRegistrationCatalog', ['cafe24']],
+  for (const [name, args] of [['getMallDefaults', ['zigzag']], ['getMallRegistrationCatalog', ['cafe24']],
     ['createMallRegistrationBatch', [{ batchId: randomUUID(), draft: draft() }]], ['getMallRegistration', ['job-one']]]) {
     await assert.rejects(api[name](...args), (error) => error.status === 404);
   }
@@ -82,17 +80,21 @@ test('http mode never falls back to mock for missing registration functions', as
 });
 
 test('mock reproduces blocked mall and mixed result contracts', async () => {
-  const empty = await mock.getSalesDefaults();
-  assert.deepEqual(empty, { revision: 0, shipping: {}, returns: {}, disclosure: {}, taxType: 'TAX', productOrigin: 'domestic', shippingDays: 2, listingMode: 'HIDDEN', missingItems: ['shipping', 'returns', 'disclosure'] });
-  const saved = await mock.saveSalesDefaults({ baseRevision: 0, shipping: { feeType: 'FREE', jejuFee: 0, isolatedFee: 0 }, disclosure: { manufacturer: '니트' } });
-  assert.equal(saved.revision, 1); assert.equal(saved.shipping.baseFee, 0);
-  await assert.rejects(mock.saveSalesDefaults({ baseRevision: 0, shippingDays: 5 }), (e) => e.code === 'defaults_conflict' && e.status === 409);
-  for (const patch of [{ shipping: { baseFee: true } }, { shipping: { baseFee: 2147483648 } }, { shippingDays: 0 }, { disclosure: { phone: null } }, { addresses: {} }]) {
-    await assert.rejects(mock.saveSalesDefaults({ baseRevision: 1, ...patch }), (e) => e.status === 422);
+  const empty = await mock.getMallDefaults('zigzag');
+  assert.equal(empty.revision, 0); assert.deepEqual(empty.shipping, {});
+  await mock.connectZigzag({ accessKey: 'local-fixture-12345678', secretKey: 'local-fixture-secret' });
+  const saved = await mock.saveMallDefaults('zigzag', { baseRevision: 1, shipping: { feeType: 'FREE', jejuFee: 0, isolatedFee: 0 }, disclosure: { manufacturer: '니트' } });
+  assert.equal(saved.revision, 2); assert.equal(saved.shipping.baseFee, 0);
+  await assert.rejects(mock.saveMallDefaults('zigzag', { baseRevision: 1, shippingDays: 5 }), (e) => e.code === 'defaults_conflict' && e.status === 409);
+  for (const patch of [{ shipping: { baseFee: true } }, { shipping: { baseFee: 2147483648 } }, { shippingDays: 0 }, { disclosure: { phone: null } }, { addresses: { shippingAddressId: 'x' } }]) {
+    await assert.rejects(mock.saveMallDefaults('zigzag', { baseRevision: 2, ...patch }), (e) => e.status === 400);
   }
   await mock.startCafe24Install({ mallId: 'myshop' });
+  for (const patch of [{ shipping: {} }, { returns: {} }, { shippingDays: 3 }, { productOrigin: 'domestic' }, { addresses: {} }, { disclosure: { manufacturer: 'x' } }]) {
+    await assert.rejects(mock.saveMallDefaults('cafe24', { baseRevision: 1, ...patch }), (e) => e.status === 400);
+  }
   const cafe = (await mock.listMalls()).items.find((i) => i.mall === 'cafe24');
-  assert.deepEqual(cafe.registration, { status: 'available' }); assert.ok(cafe.connectionVersion); assert.equal(cafe.addressesRevision, 0);
+  assert.deepEqual(cafe.registration, { status: 'available' }); assert.ok(cafe.connectionVersion); assert.equal(cafe.defaultsRevision, 1);
   const catalog = await mock.getMallRegistrationCatalog('cafe24');
   assert.equal(catalog.complete, true); assert.equal(catalog.capabilities.shippingSource, 'mall');
   assert.ok(catalog.categories[0].categoryId); assert.equal('categoryNo' in catalog.categories[0], false);

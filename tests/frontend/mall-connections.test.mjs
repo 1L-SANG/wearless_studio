@@ -13,7 +13,7 @@ async function load(runtime = hooks(), api = {}) {
   assert.ok(existsSync(new URL('../../src/features/settings/MallConnections.jsx', import.meta.url)), 'mall settings page is missing');
   return componentModule('src/features/settings/MallConnections.jsx', ['MallConnectionRow', 'ZigzagConnection', 'MallActionDialog', 'MallDialog', 'KeyFields'],
     { ...runtime, api, Button, Icon, Modal: ({ children }) => children, styles: {},
-      seoulDate: () => '2026.10.24', ExportMenu: () => null, SalesDefaultsCard: () => null });
+      seoulDate: () => '2026.10.24', ExportMenu: () => null, Link: 'a', MallDefaultsForm: () => null });
 }
 
 test('secret key input accessible name is exactly Secret Key', async () => {

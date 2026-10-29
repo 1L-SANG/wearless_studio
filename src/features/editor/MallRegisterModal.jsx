@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Button, Modal } from '@/components/ui.jsx';
 import { api } from '@/lib/api/index.js';
 import { clientEvents } from '@/lib/clientEvents.js';
@@ -13,6 +14,8 @@ import styles from './MallRegisterModal.module.css';
 
 export function MallRegisterModal({ projectId, product, blocks, assets, malls, initialMall,
   waitForSave, onSaveNotice, onSaveSizes, onPublish, onConflict, onClose, onRegistered, anchorRef }) {
+  const location = useLocation(), navigate = useNavigate();
+  const returnTo = `${location.pathname}${location.search}${location.hash}`;
   const rootRef = useRef(null), summaryRef = useRef(null), closeRef = useRef(null), controller = useRef(null);
   const displayedSources = useRef({}), lifecycle = useRef(0), scopeGuard = useRef(() => false);
   const alive = useRef(false), generation = useRef(0), locked = useRef(false), latest = useRef(null), draftRef = useRef(null);
@@ -54,17 +57,16 @@ export function MallRegisterModal({ projectId, product, blocks, assets, malls, i
   };
   const loadSources = async () => {
     const guard = scopeGuard.current;
-    const saved = await api.getSalesDefaults();
     const currentMalls = api.listMalls ? await api.listMalls() : latest.current.malls;
-    const entries = await Promise.all((currentMalls?.items || []).filter((item) => item.registration?.status === 'available').map(async (item) => {
+    const entries = await Promise.all((currentMalls?.items || []).filter((item) => ['cafe24', 'zigzag'].includes(item.mall) && item.status === 'connected').map(async (item) => {
       const [catalog, mallDefaults] = await Promise.allSettled([api.getMallRegistrationCatalog(item.mall), api.getMallDefaults?.(item.mall)]);
       return [item.mall, catalog.status === 'fulfilled' ? catalog.value : { complete: false, categories: [] }, mallDefaults.status === 'fulfilled' ? mallDefaults.value : null];
     }));
     if (!guard()) throw new Error('계정이나 상품이 바뀌었어요. 다시 열어 주세요');
     const nextCatalogs = Object.fromEntries(entries.map(([mall, catalog]) => [mall, catalog]));
     const nextDefaults = Object.fromEntries(entries.map(([mall, _catalog, value]) => [mall, value]));
-    displayedSources.current = { defaults: saved, malls: currentMalls, catalogs: nextCatalogs, mallDefaults: nextDefaults };
-    setDefaults(saved); setCatalogs(nextCatalogs); setConnections(currentMalls);
+    displayedSources.current = { malls: currentMalls, catalogs: nextCatalogs, mallDefaults: nextDefaults };
+    setDefaults(nextDefaults); setCatalogs(nextCatalogs); setConnections(currentMalls);
     if (currentMalls?.items?.some((item) => item.mall === 'zigzag' && item.status === 'connected') && api.listZigzagAddresses) {
       try {
         const addresses = await api.listZigzagAddresses();
@@ -72,7 +74,7 @@ export function MallRegisterModal({ projectId, product, blocks, assets, malls, i
         setReturnAddressName(addresses.find((row) => row.id === nextDefaults.zigzag?.addresses?.returnAddressId)?.name || '');
       } catch { if (guard()) setReturnAddressName(''); }
     }
-    return saved;
+    return nextDefaults;
   };
   const reloadSources = async () => {
     if (locked.current) return; locked.current = true; setError('');
@@ -180,7 +182,7 @@ export function MallRegisterModal({ projectId, product, blocks, assets, malls, i
     try { await controller.current[method](jobId); } catch (failure) { report(failure); }
     finally { locked.current = false; if (alive.current) setPhase('results'); }
   };
-  const resolution = resolveMallNotice({ blocks, product: { ...product, name: draft?.productName || product?.name }, defaults });
+  const resolution = resolveMallNotice({ blocks, product: { ...product, name: draft?.productName || product?.name }, defaults: defaults[draft?.selectedMalls.includes('zigzag') ? 'zigzag' : 'cafe24'] || {} });
   const resultMode = Boolean(batch && !retryMall) && phase !== 'input';
   const failedCount = batch?.items.filter((item) => item.registration?.outcome === 'failed').length || 0;
   const resultTitle = batch?.receiptUnconfirmed ? '접수를 다시 확인해 주세요'
@@ -189,9 +191,10 @@ export function MallRegisterModal({ projectId, product, blocks, assets, malls, i
         : failedCount ? `${failedCount}곳은 올리지 못했어요`
           : batch?.items.some((item) => item.registration?.setupStatus === 'needs_attention') ? '설정을 확인해 주세요' : '등록했어요';
   const selection = registrationSelection(draft?.selectedMalls || [], preflight);
-  const items = preflight?.items || [], issues = [...localIssues, ...items.flatMap((item) => item.issues || [])];
+  const items = preflight?.items || [], issues = [...localIssues, ...items.flatMap((item) => (item.issues || []).map((issue) => ({ ...issue, mall: item.mall })))];
   const jump = (issue) => {
     if (['verify_existing', 'resume_existing'].includes(issue.action)) { void resultAction('restore', projectId); return; }
+    if (['open_defaults', 'reconnect'].includes(issue.action)) { navigate(issue.action === 'open_defaults' ? `/settings/malls/${issue.mall}` : '/settings/malls', { state: { returnTo } }); return; }
     if (issue.action === 'fill_notice') { const details = rootRef.current?.querySelector('#mall-notice'); if (details) details.open = true; }
     openRegistrationIssue(rootRef.current, issue);
   };
@@ -215,7 +218,7 @@ export function MallRegisterModal({ projectId, product, blocks, assets, malls, i
         })}</fieldset>
         <section className={styles.checks} aria-label="몰마다 점검" aria-live="polite">{checking && <p>몰마다 점검 중이에요</p>}{items.map((item) => <div key={item.mall}>
           <img src={`/assets/malls/${item.mall}-48.png`} alt="" className={styles.logo} /><span>{MALL_LABELS[item.mall]} · {item.status === 'ready' ? '준비됐어요' : item.status === 'preparing' ? '준비 중' : item.issues[0]?.message || '입력한 항목을 확인해 주세요'}</span>
-          {item.issues?.map((issue, index) => ['open_defaults', 'reconnect'].includes(issue.action) ? <a className={styles.goLink} href={issue.action === 'open_defaults' ? '/settings/malls?tab=sales' : '/settings/malls'} key={index}>설정에서 확인</a>
+          {item.issues?.map((issue, index) => ['open_defaults', 'reconnect'].includes(issue.action) ? <Link className={styles.goLink} to={issue.action === 'open_defaults' ? `/settings/malls/${item.mall}` : '/settings/malls'} state={{ returnTo }} key={index}>설정에서 확인</Link>
             : <button type="button" className={styles.textButton} key={index} onClick={() => jump(issue)}>{issue.action === 'fill_notice' ? '채우기' : '확인하기'}</button>)}
           {item.warnings?.map((warning, index) => <p className={styles.notice} key={index}>{warning.message}</p>)}
         </div>)}{items.some((item) => item.issues?.some((issue) => ['defaults_changed', 'catalog_changed', 'connection_changed'].includes(issue.code))) && <Button disabled={busy} onClick={reloadSources}>기본 정보 다시 확인</Button>}<p className={styles.notice}>막힌 몰은 빼고 준비된 몰만 먼저 올릴 수 있어요.</p></section>

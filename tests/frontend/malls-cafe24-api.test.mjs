@@ -25,7 +25,7 @@ before(async () => {
 });
 beforeEach(() => {
   db.mallConnections = {};
-  db.mallRegistrations = []; db.mallRegistrationBatches = {}; db.mallDefaults = {}; db.mallSalesDefaults = null;
+  db.mallRegistrations = []; db.mallRegistrationBatches = {}; db.mallDefaults = {};
   db.detailPublications = [{ publicationId: 'publication-local', projectId: 'project-local',
     status: 'ready', editorRevision: 4, files: [{ index: 0 }, { index: 1 }] }];
 });
@@ -113,17 +113,17 @@ async function finish(t, patch = {}) {
 }
 
 test('mock install exposes public connection generation and preserves sales across disconnect', async () => {
-  await mock.saveSalesDefaults({ baseRevision: 0, disclosure: { manufacturer: '내 상점' } });
   for (const [mallId, code] of [['bad-shop', 'invalid_mall_id'], ['closed-shop', 'cafe24_not_allowed'], ['x', 'invalid_mall_id']]) {
     await assert.rejects(mock.startCafe24Install({ mallId }), (error) => error.code === code);
   }
   await mock.startCafe24Install({ mallId: 'MyShop.cafe24.com' });
+  await mock.saveMallDefaults('cafe24', { baseRevision: 1, disclosure: { country: 'KR' } });
   const connection = (await mock.listMalls()).items.find((item) => item.mall === 'cafe24');
   assert.equal(connection.mallId, 'myshop'); assert.equal(connection.registration.status, 'available');
   assert.equal('shopId' in connection, false); assert.ok(connection.connectionVersion);
   await mock.disconnectCafe24();
   assert.equal((await mock.listMalls()).items.find((item) => item.mall === 'cafe24').status, 'none');
-  assert.equal((await mock.getSalesDefaults()).disclosure.manufacturer, '내 상점');
+  assert.equal((await mock.getMallDefaults('cafe24')).disclosure.country, 'KR');
 });
 
 test('mock common registration preserves pending outcome and terminal view fields', async (t) => {
@@ -177,7 +177,7 @@ test('mock admission requires confirmed revisions and replays receipts before co
   await assert.rejects(mock.createMallRegistrationBatch({ batchId, draft }), (error) => error.code === 'no_ready_malls' && error.items[0].issues[0].code === 'preflight_required');
   const check = await mock.preflightMallRegistration(draft);
   draft.confirmedSourcesByMall = { cafe24: check.items[0].sourceVersions };
-  await mock.saveSalesDefaults({ baseRevision: 0, shippingDays: 3 });
+  await mock.saveMallDefaults('cafe24', { baseRevision: 1, listingMode: 'ON_SALE' });
   await assert.rejects(mock.createMallRegistrationBatch({ batchId, draft }), (error) => error.items[0].issues[0].code === 'defaults_changed');
   draft.confirmedSourcesByMall.cafe24 = (await mock.preflightMallRegistration(draft)).items[0].sourceVersions;
   const receipt = await mock.createMallRegistrationBatch({ batchId, draft });

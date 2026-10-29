@@ -1,67 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, Navigate, useLocation, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { Button, Icon, Modal } from '@/components/ui.jsx';
 import { ExportMenu } from '@/features/editor/ExportMenu.jsx';
-import { SalesDefaultsCard } from './MallDefaultsChecklist.jsx';
+import { MallDefaultsForm } from './MallDefaultsChecklist.jsx';
 import styles from './MallConnections.module.css';
 
 const EMPTY_KEYS = { accessKey: '', secretKey: '' };
-
-export function MallAddressDefaults({ mall, defaults = {}, onSaved }) {
-  const { session } = useAuth();
-  const [values, setValues] = useState(() => ({ ...defaults.addresses }));
-  const [revision, setRevision] = useState(defaults.revision ?? 0);
-  const [failure, setFailure] = useState('');
-  const [notice, setNotice] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [needsReload, setNeedsReload] = useState(false);
-  const active = useRef(true), locked = useRef(false), summaryRef = useRef(null);
-  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
-  useEffect(() => { if (failure) summaryRef.current?.focus(); }, [failure]);
-  const { data: addresses = [], isPending, error, refetch } = useQuery({
-    queryKey: ['mall-addresses', session?.user?.id, mall, defaults.revision], queryFn: () => api.listZigzagAddresses(), enabled: mall === 'zigzag', retry: false,
-  });
-  const reloadRevision = async () => {
-    try {
-      const current = await api.getMallDefaults(mall);
-      if (active.current) { setRevision(current.revision); setNeedsReload(false); setFailure('다른 창에서 주소를 바꿨어요. 입력한 값은 남아 있어요. 확인 후 다시 저장해 주세요'); }
-    } catch { if (active.current) { setNeedsReload(true); setFailure('최신 주소 설정을 불러오지 못했어요. 입력한 값은 남아 있어요'); } }
-  };
-  const save = async (event) => {
-    event.preventDefault();
-    if (locked.current || needsReload) return;
-    locked.current = true; setBusy(true); setFailure(''); setNotice('');
-    try {
-      const result = await api.saveMallDefaults(mall, { baseRevision: revision, addresses: values });
-      if (active.current) { setRevision(result.revision); setNotice('주소를 저장했어요'); onSaved?.(result); }
-    } catch (error) {
-      if (!active.current) return;
-      if (error.code === 'defaults_conflict') await reloadRevision();
-      else setFailure(error.message || '주소를 저장하지 못했어요');
-    } finally { locked.current = false; if (active.current) setBusy(false); }
-  };
-  if (mall !== 'zigzag') return <p className={styles.help}>배송, 반품, 출고지는 카페24 몰 설정을 써요</p>;
-  return <form className={styles.addressDefaults} onSubmit={save} aria-label="지그재그 출고지와 반품지" aria-busy={busy}>
-    {failure && <div className={styles.errorSummary} role="alert" tabIndex={-1} ref={summaryRef}><p>{failure}</p>
-      {needsReload && <Button onClick={reloadRevision}>최신 정보 다시 확인</Button>}</div>}
-    {isPending ? <p className={styles.help} role="status">주소록을 가져오는 중이에요</p> : error
-      ? <div role="alert"><p className={styles.error}>{error.message}</p><Button onClick={refetch}>다시 확인</Button></div>
-      : <fieldset className={styles.formFields} disabled={busy}><div className={styles.fields}>
-        {[['shippingAddressId', '출고지'], ['returnAddressId', '반품지']].map(([name, label]) => <label className={styles.field} key={name} htmlFor={`${mall}-${name}`}>
-          <span>{label}</span><select id={`${mall}-${name}`} name={name} value={values[name] || ''}
-            aria-describedby={`${mall}-address-help`} onChange={(event) => setValues((current) => ({ ...current, [name]: event.target.value }))}>
-            <option value="">주소를 골라 주세요</option>
-            {addresses.map((address) => <option key={address.id} value={address.id}>{address.name} ({address.address})</option>)}
-          </select></label>)}
-      </div></fieldset>}
-    <p className={styles.help} id={`${mall}-address-help`}>지그재그 파트너센터 주소록에서 골라요. 새 주소는 파트너센터에서 더해요.</p>
-    <div className={`modal-actions ${styles.saveActions}`}><span className={styles.help} role="status">{notice}</span>
-      <Button type="submit" disabled={busy || isPending || !!error || needsReload}>{busy ? '저장 중' : '주소 저장'}</Button></div>
-  </form>;
-}
 
 function KeyFields({ values = EMPTY_KEYS, onChange, showSecret, onToggleSecret, busy, rotate = false }) {
   const prefix = rotate ? 'rotate' : 'connect';
@@ -86,23 +33,25 @@ function KeyFields({ values = EMPTY_KEYS, onChange, showSecret, onToggleSecret, 
   </div>;
 }
 
-export function MallConnectionRow({ mall = 'zigzag', logo = `/assets/malls/${mall}-48.png`, title = mall === 'cafe24' ? '카페24' : '지그재그',
+export function MallConnectionRow({ detail = false, returnTo, mall = 'zigzag', logo = `/assets/malls/${mall}-48.png`, title = mall === 'cafe24' ? '카페24' : '지그재그',
   help = '파트너센터 상품과 주문 API', children, submitLabel, submitDisabled,
   state, connection, values, error, showSecret, onToggleSecret, onChange, onSubmit,
   onConnect, onCollapse, anchorRef, rowRef, menuOpen, onMenuToggle, onMenuClose, menuItems = [] }) {
   const busy = ['verifying', 'starting'].includes(state);
   const editing = ['editing', 'verifying', 'starting', 'failed'].includes(state);
   const cafe24 = mall === 'cafe24';
+  const Heading = detail ? 'h1' : 'h3';
+  const storeName = detail ? connection?.shopName || connection?.mallId : cafe24 ? connection?.mallId : connection?.shopName;
   return <div className={styles.mallRow} data-state={state} ref={rowRef}>
     {logo ? <img className={styles.mallLogo} src={logo} srcSet={`/assets/malls/${mall}-96.png 2x`} alt="" />
       : <span className={styles.mallMark} aria-hidden="true">{cafe24 ? 'C' : 'Z'}</span>}
     <div className={styles.mallInfo}>
-      <div className={styles.mallTitle}><h3>{title}{state === 'connected' && (cafe24 ? connection?.mallId : connection?.shopName) ? ` · ${cafe24 ? connection.mallId : connection.shopName}` : ''}</h3>
+      <div className={styles.mallTitle}><Heading>{title}{state === 'connected' && storeName ? ` · ${storeName}` : ''}</Heading>
         {state === 'reconnect_required' && <span className={styles.warningDot} aria-hidden="true" />}</div>
       {state === 'connected' ? <div className={styles.metadata}>
         {!cafe24 && <span>인증키 끝자리 {connection?.keyHint || '••••••••'}</span>}
-        {cafe24 && <span>배송, 반품, 출고지는 카페24 몰 설정을 써요</span>}
         {connection?.registration?.status !== 'available' && <span>{connection?.registration?.status === 'reconnect_required' ? '등록하려면 다시 연결해 주세요' : '등록 준비 중'}</span>}
+        {!detail && <span>{connection?.defaultsMissingItems?.length ? `판매 정보 빈칸 ${connection.defaultsMissingItems.length}개` : '판매 정보 채움'}</span>}
       </div> : <p className={styles.help}>{state === 'reconnect_required' ? '연결이 끊겼어요. 다시 설치하면 이어서 쓸 수 있어요'
         : busy && !cafe24 ? '스토어 이름과 권한을 받아 오고 있어요' : help}</p>}
     </div>
@@ -112,9 +61,10 @@ export function MallConnectionRow({ mall = 'zigzag', logo = `/assets/malls/${mal
       {editing && <span className={styles.status} role="status">{busy ? cafe24 ? '설치 시작 중' : '확인 중' : '입력 중'}</span>}
       {state === 'connected' && <>
         <span className={styles.status}><span className={styles.connectedDot} aria-hidden="true" />연결됨</span>
-        <button type="button" className={styles.manage} ref={anchorRef} aria-label={`${title} 연결 관리`} aria-haspopup="menu"
-          aria-expanded={!!menuOpen} onClick={onMenuToggle}>⋯</button>
-        <ExportMenu open={menuOpen} onClose={onMenuClose} anchorRef={anchorRef} items={menuItems} />
+        {!detail && <Link className={styles.goLink} to={`/settings/malls/${mall}`} state={{ returnTo }}>판매 정보 ›</Link>}
+        {detail && <button type="button" className={styles.manage} ref={anchorRef} aria-label={`${title} 연결 관리`} aria-haspopup="menu"
+          aria-expanded={!!menuOpen} onClick={onMenuToggle}>⋯</button>}
+        <ExportMenu open={detail && menuOpen} onClose={onMenuClose} anchorRef={anchorRef} items={menuItems} />
       </>}
     </div>
     {editing && <form className={styles.inlineForm} onSubmit={onSubmit} aria-busy={busy}>
@@ -175,7 +125,7 @@ export function MallActionDialog({ mall = 'zigzag', kind, values, showSecret, on
   </MallDialog>;
 }
 
-export function ZigzagConnection({ connection, onChanged }) {
+export function ZigzagConnection({ connection, onChanged, detail = false, returnTo }) {
   const [state, setState] = useState('none');
   const [values, setValues] = useState(EMPTY_KEYS);
   const [showSecret, setShowSecret] = useState(false);
@@ -204,7 +154,7 @@ export function ZigzagConnection({ connection, onChanged }) {
   };
   const manage = (kind) => { clearKeys(); setMenuOpen(false); setDialog(kind); };
   return <>
-    <MallConnectionRow state={connection?.status === 'connected' ? 'connected' : state} connection={connection}
+    <MallConnectionRow detail={detail} returnTo={returnTo} state={connection?.status === 'connected' ? 'connected' : state} connection={connection}
       values={values} onChange={setValues} showSecret={showSecret} onToggleSecret={() => setShowSecret((value) => !value)} error={error}
       onSubmit={submit} onConnect={() => setState('editing')} onCollapse={() => { setState('none'); clearKeys(); }}
       anchorRef={anchorRef} rowRef={rowRef} menuOpen={menuOpen} onMenuToggle={() => setMenuOpen(!menuOpen)} onMenuClose={() => setMenuOpen(false)}
@@ -244,7 +194,7 @@ function MallIdField({ value, onChange, busy }) {
   </>;
 }
 
-export function Cafe24Connection({ connection, onChanged, returnTo, unavailable = false, storageKey = 'cafe24-install-mall-id' }) {
+export function Cafe24Connection({ connection, onChanged, returnTo, unavailable = false, storageKey = 'cafe24-install-mall-id', detail = false }) {
   const [state, setState] = useState(null);
   const [mallId, setMallId] = useState(connection?.mallId || '');
   const [error, setError] = useState('');
@@ -310,7 +260,7 @@ export function Cafe24Connection({ connection, onChanged, returnTo, unavailable 
     finally { locked.current = false; if (active.current) setBusy(false); }
   };
   return <>
-    <MallConnectionRow mall="cafe24" title="카페24" help="자사몰 관리자 로그인으로 연결"
+    <MallConnectionRow detail={detail} returnTo={returnTo} mall="cafe24" title="카페24" help="자사몰 관리자 로그인으로 연결"
       state={unavailable ? 'unavailable' : state || connection?.status || 'none'} connection={connection}
       error={error} onSubmit={submit} submitLabel="카페24에서 앱 설치" submitDisabled={!mallId.trim()}
       onChange={setMallId} onConnect={() => { setMallId(connection?.mallId || mallId); setError(''); setState('editing'); }}
@@ -331,11 +281,7 @@ export function MallConnections() {
   const userId = session?.user?.id;
   const queryKey = ['mall-connections', userId];
   const { data, isPending, error, refetch } = useQuery({ queryKey, queryFn: () => api.listMalls(), enabled: !!userId, retry: false });
-  const salesKey = ['mall-sales-defaults', userId];
-  const sales = useQuery({ queryKey: salesKey, queryFn: () => api.getSalesDefaults(), enabled: !!userId, retry: false });
   const zigzag = data?.items?.find((item) => item.mall === 'zigzag');
-  const addressKey = ['mall-defaults', userId, 'zigzag', zigzag?.connectionVersion];
-  const addresses = useQuery({ queryKey: addressKey, queryFn: () => api.getMallDefaults('zigzag'), enabled: !!userId && zigzag?.status === 'connected', retry: false });
   const requestedReturn = location.state?.returnTo || new URLSearchParams(location.search).get('returnTo');
   const returnTo = typeof requestedReturn === 'string' && requestedReturn.startsWith('/')
     && !requestedReturn.startsWith('//') && !requestedReturn.includes('\\') ? requestedReturn : null;
@@ -346,35 +292,66 @@ export function MallConnections() {
     queryClient.invalidateQueries({ queryKey: ['mall-registration-catalog', userId] });
   };
   return <main className={styles.page}>
-    <header className={styles.pageHead}><div><h1>쇼핑몰 연결과 판매 기본 정보</h1><p>배송비와 고시는 한 번 저장하고, 쇼핑몰은 따로 연결해요.</p></div>
+    <header className={styles.pageHead}><div><h1>쇼핑몰 연결</h1><p>연결한 쇼핑몰에서 바로 등록해요.</p></div>
       {returnTo && <Link className={styles.goLink} to={returnTo}>에디터로 돌아가기 ›</Link>}
     </header>
-    <div className={styles.settingsGrid}>
-      <div>{sales.isPending ? <p role="status">판매 기본 정보를 불러오는 중이에요</p> : sales.error
-        ? <div role="alert"><p>{sales.error.message}</p><Button onClick={sales.refetch}>다시 확인</Button></div>
-        : sales.data && <SalesDefaultsCard key={userId} defaults={sales.data} onSaved={(defaults) => queryClient.setQueryData(salesKey, defaults)} />}</div>
       <section className={styles.mallList} aria-labelledby="mall-connections-title">
         <div className={styles.cardHead}><h2 id="mall-connections-title">쇼핑몰 연결</h2><p className={styles.cardIntro}>한 번 연결해 두면 에디터에서 바로 등록할 수 있어요.</p></div>
         {isPending && <p className={styles.cardHead} role="status">연결 정보를 불러오는 중이에요</p>}
         {error && <div className={styles.cardHead} role="alert"><p>{error.message}</p><Button onClick={refetch}>다시 확인</Button></div>}
         {data?.disabled && <p className={styles.cardHead}>쇼핑몰 연결을 준비하고 있어요</p>}
         {!isPending && !error && !data?.disabled && <div>
-          <ZigzagConnection key={`${userId}:${zigzag?.connectionVersion}`} connection={zigzag} onChanged={changed} />
-          {zigzag?.status === 'connected' && (addresses.isPending ? <p className={styles.addressDefaults} role="status">주소 설정을 불러오는 중이에요</p>
-            : addresses.error ? <div className={styles.addressDefaults} role="alert"><p>{addresses.error.message}</p><Button onClick={addresses.refetch}>다시 확인</Button></div>
-              : addresses.data && <MallAddressDefaults key={`${userId}:${zigzag.connectionVersion}`} mall="zigzag" defaults={addresses.data}
-                onSaved={(defaults) => { queryClient.setQueryData(addressKey, defaults); queryClient.invalidateQueries({ queryKey }); }} />)}
+          <ZigzagConnection returnTo={returnTo} key={`${userId}:${zigzag?.connectionVersion}`} connection={zigzag} onChanged={changed} />
         </div>}
         <Cafe24Connection key={`cafe24:${userId}`} connection={data?.items?.find((item) => item.mall === 'cafe24')}
           unavailable={isPending || !!error || !!data?.disabled || data?.items?.find((item) => item.mall === 'cafe24')?.status === 'unavailable'}
           returnTo={returnTo} storageKey={`cafe24-install-mall-id:${userId}`} onChanged={changed} />
         <div className={styles.mallRow}>
           <img className={styles.mallLogo} src="/assets/malls/ably-48.png" srcSet="/assets/malls/ably-96.png 2x" alt="" />
-          <div className={styles.mallInfo}><h3>에이블리</h3><p className={styles.help}>셀러스 입점만 연결할 수 있어요. 파트너스는 연결할 수 없어요.</p><p className={styles.help}>제휴 승인 뒤 열려요.</p></div>
+          <div className={styles.mallInfo}><h3>에이블리</h3><p className={styles.help}>셀러스 입점만 연결할 수 있어요. 파트너스는 연결할 수 없어요.</p></div>
           <span className={styles.status}>준비 중</span>
         </div>
       </section>
-    </div>
     {!data?.disabled && <p className={styles.securityNote}><Icon name="lock" size={16} />인증 정보는 서버에 암호화해 저장해요</p>}
+  </main>;
+}
+
+export function MallSettings() {
+  const { mall } = useParams();
+  const { session } = useAuth();
+  const location = useLocation();
+  const queryClient = useQueryClient();
+  const userId = session?.user?.id;
+  const supported = ['cafe24', 'zigzag'].includes(mall);
+  const connectionsKey = ['mall-connections', userId];
+  const connections = useQuery({ queryKey: connectionsKey, queryFn: () => api.listMalls(), enabled: !!userId && supported, retry: false });
+  const connection = connections.data?.items?.find((item) => item.mall === mall);
+  const defaultsKey = ['mall-defaults', userId, mall, connection?.connectionVersion];
+  const defaults = useQuery({ queryKey: defaultsKey, queryFn: () => api.getMallDefaults(mall),
+    enabled: !!userId && supported && connection?.status === 'connected', retry: false });
+  const requestedReturn = location.state?.returnTo;
+  const returnTo = typeof requestedReturn === 'string' && requestedReturn.startsWith('/') && !requestedReturn.startsWith('//') && !requestedReturn.includes('\\') ? requestedReturn : null;
+  const changed = () => {
+    queryClient.invalidateQueries({ queryKey: connectionsKey });
+    queryClient.invalidateQueries({ queryKey: ['mall-defaults', userId] });
+    queryClient.invalidateQueries({ queryKey: ['mall-addresses', userId] });
+    queryClient.invalidateQueries({ queryKey: ['mall-registration-catalog', userId] });
+  };
+  if (!supported || connections.data && connection?.status !== 'connected') return <Navigate to="/settings/malls" state={{ returnTo }} replace />;
+  return <main className={styles.page}>
+    <header className={styles.pageHead}><Link className={styles.goLink} to="/settings/malls" state={{ returnTo }}>쇼핑몰 연결로 ‹</Link>
+      {returnTo && <Link className={styles.goLink} to={returnTo}>에디터로 돌아가기 ›</Link>}</header>
+    {connections.isPending ? <p role="status">연결 정보를 불러오는 중이에요</p> : connections.error
+      ? <div role="alert"><p>{connections.error.message}</p><Button onClick={() => connections.refetch()}>다시 확인</Button></div>
+      : <>
+        <section className={styles.detailHead} aria-label="쇼핑몰 연결 관리">
+          {mall === 'cafe24' ? <Cafe24Connection detail connection={connection} onChanged={changed} returnTo={returnTo} />
+            : <ZigzagConnection detail connection={connection} onChanged={changed} />}
+        </section>
+        {defaults.isPending ? <p role="status">판매 정보를 불러오는 중이에요</p> : defaults.error
+          ? <div role="alert"><p>{defaults.error.message}</p><Button onClick={() => defaults.refetch()}>다시 확인</Button></div>
+          : defaults.data && <MallDefaultsForm key={`${userId}:${mall}:${connection?.connectionVersion}`} mall={mall} defaults={defaults.data}
+            onSaved={(value) => { queryClient.setQueryData(defaultsKey, value); queryClient.invalidateQueries({ queryKey: connectionsKey }); }} />}
+      </>}
   </main>;
 }

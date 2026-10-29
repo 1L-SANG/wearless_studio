@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateDefaults, salesDefaultsValues, salesDefaultsPatch, validateSalesDefaults } from '../../src/lib/mallDefaults.js';
+import { validateDefaults, mallDefaultsValues, mallDefaultsPatch, validateMallDefaults } from '../../src/lib/mallDefaults.js';
 import { componentModule, hooks } from './helpers/reactHarness.mjs';
 import * as logic from '../../src/lib/mallDefaults.js';
 import React from 'react';
@@ -11,11 +11,11 @@ const field = (tree, name) => walk(tree).find((node) => node.props?.name === nam
 const initial = { revision: 0, shipping: {}, returns: {}, disclosure: {} };
 async function setup(api = {}, defaults = initial) {
   const runtime = hooks(), changes = [];
-  const { SalesDefaultsCard } = await componentModule('src/features/settings/MallDefaultsChecklist.jsx', ['SalesDefaultsCard'], {
-    ...runtime, ...logic, api, styles: {}, Button: 'button',
+  const { MallDefaultsForm } = await componentModule('src/features/settings/MallDefaultsChecklist.jsx', ['MallDefaultsForm'], {
+    ...runtime, ...logic, api, useAuth: () => ({ session: { user: { id: 'local' } } }), useQuery: () => ({ data: [{ id: 'mock-shipping', name: '창고', address: '서울' }] }), styles: {}, Button: 'button',
   });
-  const props = { defaults, onSaved: (result) => changes.push(result) };
-  return { runtime, changes, render: () => runtime.render(SalesDefaultsCard, props) };
+  const props = { mall: 'zigzag', defaults, onSaved: (result) => changes.push(result) };
+  return { runtime, changes, render: () => runtime.render(MallDefaultsForm, props) };
 }
 
 test('shipping validation rejects invalid amounts and requires positive free threshold', () => {
@@ -27,25 +27,25 @@ test('shipping validation rejects invalid amounts and requires positive free thr
 });
 
 test('incomplete sales defaults save without inventing zero fees or approved warranty text', () => {
-  const values = salesDefaultsValues(initial);
-  assert.equal(validateSalesDefaults(values).ok, true);
-  assert.deepEqual(salesDefaultsPatch(values).shipping, { feeType: 'CHARGED' });
-  assert.deepEqual(salesDefaultsPatch(values).returns, {});
-  assert.equal(salesDefaultsPatch(values).disclosure.warrantyText, '');
-  assert.equal(validateSalesDefaults({ ...values, shippingDays: 31 }).ok, false);
+  const values = mallDefaultsValues('zigzag', initial);
+  assert.equal(validateMallDefaults('zigzag', values).ok, true);
+  assert.deepEqual(mallDefaultsPatch('zigzag', values).shipping, { feeType: 'CHARGED' });
+  assert.deepEqual(mallDefaultsPatch('zigzag', values).returns, {});
+  assert.equal(mallDefaultsPatch('zigzag', values).disclosure.warrantyText, '');
+  assert.equal(validateMallDefaults('zigzag', { ...values, shippingDays: 31 }).ok, false);
 });
 
 test('changing shipping policy discards hidden fees and conditional threshold', () => {
   for (const policy of ['FREE', 'CHARGED']) {
-    const values = salesDefaultsValues({ shipping: { feeType: policy, baseFee: policy === 'FREE' ? -1 : 3000, jejuFee: 0, isolatedFee: 0, conditionalAmount: -1 } });
-    assert.equal(validateSalesDefaults(values).ok, true);
-    assert.deepEqual(salesDefaultsPatch(values).shipping, { feeType: policy, baseFee: policy === 'FREE' ? 0 : 3000, jejuFee: 0, isolatedFee: 0 });
+    const values = mallDefaultsValues('zigzag', { shipping: { feeType: policy, baseFee: policy === 'FREE' ? -1 : 3000, jejuFee: 0, isolatedFee: 0, conditionalAmount: -1 } });
+    assert.equal(validateMallDefaults('zigzag', values).ok, true);
+    assert.deepEqual(mallDefaultsPatch('zigzag', values).shipping, { feeType: policy, baseFee: policy === 'FREE' ? 0 : 3000, jejuFee: 0, isolatedFee: 0 });
   }
 });
 
 test('validation summary blocks saving and links the invalid field', async () => {
   let calls = 0;
-  const ui = await setup({ saveSalesDefaults: () => calls++ });
+  const ui = await setup({ saveMallDefaults: () => calls++ });
   field(ui.render(), 'shippingDays').props.onChange('31');
   await ui.render().props.onSubmit({ preventDefault() {} });
   const html = renderToStaticMarkup(ui.render());
@@ -54,7 +54,7 @@ test('validation summary blocks saving and links the invalid field', async () =>
 
 test('late save from an unmounted account never updates replacement defaults', async () => {
   let finish;
-  const ui = await setup({ saveSalesDefaults: () => new Promise((resolve) => { finish = resolve; }) });
+  const ui = await setup({ saveMallDefaults: () => new Promise((resolve) => { finish = resolve; }) });
   const tree = ui.render(), cleanups = ui.runtime.flushEffects();
   const saving = tree.props.onSubmit({ preventDefault() {} });
   cleanups.forEach((cleanup) => cleanup?.()); finish({ revision: 1 }); await saving;
@@ -64,8 +64,8 @@ test('late save from an unmounted account never updates replacement defaults', a
 test('a failed revision reload retains the draft and blocks save until reloaded', async () => {
   let calls = 0, loads = 0;
   const ui = await setup({
-    saveSalesDefaults: async () => { calls++; throw Object.assign(new Error('conflict'), { code: 'defaults_conflict' }); },
-    getSalesDefaults: async () => { if (++loads === 1) throw new Error('offline'); return { revision: 9 }; },
+    saveMallDefaults: async () => { calls++; throw Object.assign(new Error('conflict'), { code: 'defaults_conflict' }); },
+    getMallDefaults: async () => { if (++loads === 1) throw new Error('offline'); return { revision: 9 }; },
   });
   field(ui.render(), 'manufacturer').props.onChange('내 입력');
   await ui.render().props.onSubmit({ preventDefault() {} });
@@ -78,7 +78,7 @@ test('a failed revision reload retains the draft and blocks save until reloaded'
 
 test('clearing a stored fee cannot silently report the previous amount as saved', async () => {
   let calls = 0;
-  const ui = await setup({ saveSalesDefaults: async () => { calls++; return { revision: 2 }; } }, { ...initial, revision: 1, shipping: { feeType: 'CHARGED', baseFee: 3000 } });
+  const ui = await setup({ saveMallDefaults: async () => { calls++; return { revision: 2 }; } }, { ...initial, revision: 1, shipping: { feeType: 'CHARGED', baseFee: 3000 } });
   field(ui.render(), 'baseFee').props.onChange('');
   await ui.render().props.onSubmit({ preventDefault() {} });
   assert.equal(calls, 0); assert.match(renderToStaticMarkup(ui.render()), /href="#sales-shipping-baseFee"/);

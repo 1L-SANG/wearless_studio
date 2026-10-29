@@ -21,6 +21,7 @@ from .services.cafe24_client import (
     make_signed, normalize_mall_id, parse_signed,
 )
 from .services.zigzag_client import ERROR_COPY, ZigzagClient, classify_error
+from .services.mall_defaults import mall_defaults_view
 from .services.mall_catalog import connection_version, registration_capability, invalidate_catalog
 
 
@@ -92,10 +93,11 @@ async def list_malls(request: Request, response: Response, user_id: str = Depend
     items = []
     for mall, connection, specific in (("zigzag", row, defaults), ("cafe24", cafe24, cafe24_defaults), ("ably", None, None)):
         item = cafe24_item if mall == "cafe24" else _connection_result(connection, mall)
-        items.append({**item, "addressesRevision": (specific or {}).get("revision", 0),
+        items.append({**item, "defaultsRevision": (specific or {}).get("revision", 0),
+                      "defaultsMissingItems": mall_defaults_view(mall, specific)["missingItems"],
                       "connectionVersion": connection_version(connection),
                       "registration": registration_capability(request.app.state.settings, mall, connection)})
-    items.append({"mall": "smartstore", "status": "unavailable", "addressesRevision": 0,
+    items.append({"mall": "smartstore", "status": "unavailable", "defaultsRevision": 0,
                   "connectionVersion": None, "registration": {"status": "preparing"}})
     return {"items": items}
 
