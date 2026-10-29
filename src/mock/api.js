@@ -1,7 +1,6 @@
 import { uploadWardrobeGif, mergeWardrobeGifs } from '../lib/api/gifWardrobe.js';
 import { inheritSimilarCutRecipes } from '@/lib/storyboardSimilarCuts.js';
 import { acceptMockClientEvent } from './clientEvents.js';
-import { completedItems } from '../lib/mallDefaults.js';
 /* =============================================================
    mock/api.js — the ONLY data access screens are allowed to use.
    Signatures/shapes follow documents/common_data_contract.md §6.
@@ -289,162 +288,289 @@ function checkMannequinQuote(expected, cost) {
 const publicationBlobs = new Map();
 DB.detailPublications ||= [];
 
-const cafe24Error = (code, message, status = 400) => Object.assign(new Error(message), { code, status });
-function cafe24Connection() {
-  const connection = DB.mallConnections.cafe24;
-  if (!connection) throw cafe24Error('not_connected', '먼저 카페24를 연결해 주세요', 404);
-  if (connection.status === 'reconnect_required') {
-    throw cafe24Error('reconnect_required', '카페24 연결이 끊겼어요. 쇼핑몰 연결에서 다시 설치해 주세요', 409);
+const mallError = (code, message, status = 400, extra = {}) => Object.assign(new Error(message), { code, status, ...extra });
+const MALLS = ['cafe24', 'zigzag', 'ably'];
+const SALES_FIELDS = {
+  shipping: ['feeType', 'baseFee', 'jejuFee', 'isolatedFee', 'conditionalAmount'],
+  returns: ['totalFee', 'partialFee', 'exchangeFee'],
+  disclosure: ['country', 'manufacturer', 'asManager', 'phone', 'warrantyText'],
+};
+const integer = (value, min = 0) => Number.isInteger(value) && value >= min && value <= 2147483647;
+const object = (value) => value != null && typeof value === 'object' && !Array.isArray(value);
+const invalidDefaults = () => mallError('invalid_defaults', '판매 기본 정보를 다시 확인해 주세요', 422);
+const assertMall = (mall) => { if (!MALLS.includes(mall)) throw mallError('mall_not_found', '쇼핑몰을 찾을 수 없어요', 404); };
+function salesView(previous = {}, patch = {}) {
+  if (!object(patch) || Object.keys(patch).some((key) => ![...Object.keys(SALES_FIELDS), 'taxType', 'productOrigin', 'shippingDays', 'listingMode'].includes(key))) throw invalidDefaults();
+  const next = { revision: previous.revision || 0 };
+  for (const [section, fields] of Object.entries(SALES_FIELDS)) {
+    const changes = patch[section] === undefined ? {} : patch[section];
+    if (!object(changes) || Object.keys(changes).some((key) => !fields.includes(key))) throw invalidDefaults();
+    next[section] = { ...previous[section], ...changes };
+    for (const [key, value] of Object.entries(next[section])) {
+      if (section === 'disclosure') {
+        if (typeof value !== 'string') throw invalidDefaults();
+        if (value.trim()) next[section][key] = value.trim();
+        else delete next[section][key];
+      } else if (key === 'feeType') {
+        if (!['FREE', 'CHARGED', 'CONDITIONAL_FREE'].includes(value)) throw invalidDefaults();
+      } else if (!integer(value, key === 'conditionalAmount' ? 1 : 0)) throw invalidDefaults();
+    }
   }
-  return connection;
+  if (next.shipping.feeType === 'FREE') next.shipping.baseFee = 0;
+  if (next.shipping.feeType !== 'CONDITIONAL_FREE') delete next.shipping.conditionalAmount;
+  for (const [key, initial, allowed] of [['taxType', 'TAX', ['TAX', 'FREE']], ['productOrigin', 'domestic', ['domestic', 'imported']], ['listingMode', 'HIDDEN', ['HIDDEN', 'ON_SALE']]]) {
+    next[key] = patch[key] === undefined ? previous[key] ?? initial : patch[key];
+    if (!allowed.includes(next[key])) throw invalidDefaults();
+  }
+  next.shippingDays = patch.shippingDays === undefined ? previous.shippingDays ?? 2 : patch.shippingDays;
+  if (!integer(next.shippingDays, 1) || next.shippingDays > 30) throw invalidDefaults();
+  next.missingItems = [];
+  if (!next.shipping.feeType || ['baseFee', 'jejuFee', 'isolatedFee', ...(next.shipping.feeType === 'CONDITIONAL_FREE' ? ['conditionalAmount'] : [])].some((key) => !(key in next.shipping))) next.missingItems.push('shipping');
+  for (const section of ['returns', 'disclosure']) if (SALES_FIELDS[section].some((key) => !(key in next[section]))) next.missingItems.push(section);
+  return clone(next);
 }
-function cafe24Registration(jobId) {
+const MOCK_MALLS_KEY = 'wl-mock-malls';
+function persistMockMalls() {
+  try { sessionStorage.setItem(MOCK_MALLS_KEY, JSON.stringify({ connections: DB.mallConnections, defaults: DB.mallDefaults, sales: DB.mallSalesDefaults })); } catch { /* Storage is optional. */ }
+}
+try {
+  const saved = JSON.parse(sessionStorage.getItem(MOCK_MALLS_KEY) || 'null');
+  if (saved) { DB.mallConnections = saved.connections || {}; DB.mallDefaults = saved.defaults || {}; DB.mallSalesDefaults = saved.sales || null; }
+} catch { /* Storage is optional. */ }
+function registrationCapability(mall) {
+  const connection = DB.mallConnections[mall];
+  if (mall !== 'cafe24') return { status: 'preparing' };
+  if (!connection) return { status: 'reconnect_required', reasonCode: 'connection_required' };
+  if (connection.status !== 'connected') return { status: 'reconnect_required', reasonCode: 'reconnect_required' };
+  return { status: 'available' };
+}
+function connectionView(mall) {
+  const connection = DB.mallConnections[mall];
+  const result = { mall, status: connection?.status || 'none', shopName: connection?.shopName || null,
+    permissions: connection?.permissions || [], connectedAt: connection?.connectedAt || null, lastRegisteredAt: connection?.lastRegisteredAt || null };
+  if (mall === 'cafe24') Object.assign(result, { mallId: connection?.mallId || null, tokenExpiresAt: connection?.tokenExpiresAt || null });
+  else result.keyHint = connection?.keyHint || null;
+  return clone(result);
+}
+function replaceMallConnection(mall, connection, shopId) {
+  const previous = DB.mallDefaults[mall];
+  if (previous && previous.shopId !== shopId) DB.mallDefaults[mall] = { shopId, revision: previous.revision + 1, addresses: {} };
+  DB.mallConnections[mall] = { ...connection, shopId, connectionVersion: globalThis.crypto.randomUUID() };
+  persistMockMalls();
+}
+function zigzagIdentity({ accessKey, secretKey }) {
+  const key = String(accessKey || '').trim(), secret = String(secretKey || '').trim();
+  if (!key || !secret || key.startsWith('bad')) throw mallError('invalid_key', '인증키가 맞지 않아요. 파트너센터에서 다시 복사해 주세요');
+  if (key.startsWith('noperm')) throw mallError('missing_permission', '상품 등록 권한이 없는 키예요. 상품과 주문 API 권한을 켜 주세요');
+  return { key, secret, shopId: key.startsWith('other') ? 'mock-other-zigzag-shop' : 'mock-zigzag-shop' };
+}
+const registrationRow = (jobId) => {
   const row = DB.mallRegistrations.find((item) => item.view.jobId === jobId);
-  if (!row) throw cafe24Error('registration_not_found', '등록 내역을 찾을 수 없어요.', 404);
+  if (!row) throw mallError('registration_not_found', '등록 내역을 찾을 수 없어요', 404);
   return row;
+};
+function assertRegistrationConnection(row) {
+  if (DB.mallConnections[row.view.mall]?.connectionVersion !== row.connectionVersion) throw mallError('connection_changed', '연결이 바뀌었어요. 기존 쇼핑몰 관리자에서 확인해 주세요', 409);
 }
-function setCafe24Product(row, thumbnail) {
-  const productNo = Number.parseInt(row.view.jobId.replaceAll('-', '').slice(0, 8), 16) + 1;
-  Object.assign(row.view, { outcome: 'created', productNo, verifiable: false, thumbnail, code: null,
-    productUrl: `https://${row.mallId}.cafe24.com/product/detail.html?product_no=${productNo}` });
+const issue = (code, path, message, action) => ({ code, path, message, action });
+const stable = (value) => JSON.stringify(value, (_key, item) => object(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
+async function inputHash(value) {
+  const bytes = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(stable(value)));
+  return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
-
-
-// 목 전용: 카페24 앱 설치는 페이지 전체 이동이라 메모리 DB가 초기화된다. 실서버의 DB처럼 연결 상태만 세션 저장소에 잠시 보존한다.
-const MOCK_CAFE24_KEY = 'wl-mock-cafe24-connection';
-function persistMockCafe24(connection) {
-  try { connection ? sessionStorage.setItem(MOCK_CAFE24_KEY, JSON.stringify(connection)) : sessionStorage.removeItem(MOCK_CAFE24_KEY); } catch { /* 저장소 없음 */ }
+function normalizedDraft(input) {
+  const allowed = ['projectId', 'publicationId', 'editorRevision', 'selectedMalls', 'productName', 'basePrice', 'defaultQuantity', 'priceOverrides', 'sizes', 'variantOverrides', 'mainAssetId', 'additionalAssetIds', 'categories', 'confirmedSourcesByMall', 'salesOverrides'];
+  if (!object(input) || Object.keys(input).some((key) => !allowed.includes(key))
+    || !input.projectId || !integer(input.editorRevision) || !integer(input.basePrice, 1)
+    || typeof input.productName !== 'string' || !input.productName.trim() || input.productName.length > 100
+    || !Array.isArray(input.selectedMalls) || !input.selectedMalls.length || new Set(input.selectedMalls).size !== input.selectedMalls.length || input.selectedMalls.some((mall) => !MALLS.includes(mall))
+    || !Array.isArray(input.sizes) || !input.sizes.length || input.sizes.some((size) => typeof size !== 'string' || !size.trim())
+    || !integer(input.defaultQuantity ?? 0)) throw mallError('invalid_request', '등록 정보를 다시 확인해 주세요', 422);
+  const result = { publicationId: null, defaultQuantity: 0, priceOverrides: {}, variantOverrides: [], mainAssetId: null,
+    additionalAssetIds: [], categories: {}, confirmedSourcesByMall: {}, salesOverrides: {}, ...clone(input),
+    productName: input.productName.trim().replace(/\s+/g, ' '), selectedMalls: [...input.selectedMalls].sort(), sizes: input.sizes.map((s) => s.trim().replace(/\s+/g, ' ')) };
+  if (new Set(result.sizes).size !== result.sizes.length || result.sizes.length > 200) throw mallError('invalid_request', '사이즈를 다시 확인해 주세요', 422);
+  salesView({}, result.salesOverrides);
+  return result;
 }
-function restoreMockCafe24() {
-  try { const raw = sessionStorage.getItem(MOCK_CAFE24_KEY); if (!raw) return null; DB.mallConnections.cafe24 = JSON.parse(raw); return DB.mallConnections.cafe24; } catch { return null; }
+function completeMockRegistration(row) {
+  const view = row.view;
+  view.finishedAt = new Date().toISOString(); view.progress = 100;
+  if (row.draft.productName.toLowerCase().includes('unknown') && !row.resumed) {
+    Object.assign(view, { status: 'done', outcome: 'unknown', setupStatus: 'pending', retryAction: 'verify' });
+  } else if (row.draft.basePrice === 999) {
+    Object.assign(view, { status: 'error', outcome: 'failed', setupStatus: 'not_applicable', retryAction: 'new_request', code: 'invalid_request' });
+  } else {
+    const productId = view.productId || String(Number.parseInt(view.jobId.replaceAll('-', '').slice(0, 8), 16) + 1);
+    Object.assign(view, { status: 'done', outcome: 'created', productId,
+      productUrl: `https://${row.shopId}.cafe24.com/product/detail.html?product_no=${productId}`,
+      setupStatus: 'complete', retryAction: 'none', stage: 'activating' });
+    if (row.draft.productName.includes('setup-fail') && !row.resumed) Object.assign(view, { status: 'error', setupStatus: 'needs_attention', retryAction: 'resume', stage: 'setting_inventory', code: 'inventory_failed' });
+    if (DB.mallConnections[view.mall]?.connectionVersion === row.connectionVersion) DB.mallConnections[view.mall].lastRegisteredAt = view.finishedAt;
+  }
 }
 
 export const api = {
   async listMalls() {
-    return { items: [{ mall: 'zigzag', status: 'none', ...clone(DB.mallConnections.zigzag || {}),
-      defaults: { shipping: {}, returns: {}, addresses: {}, disclosure: {}, taxType: 'TAX', productOrigin: 'domestic',
-        completedItems: [], ...clone(DB.mallDefaults.zigzag || {}), total: 4 } },
-    { mall: 'cafe24', status: 'none', shopName: null, mallId: null, permissions: [], connectedAt: null,
-      lastRegisteredAt: null, tokenExpiresAt: null, ...clone(DB.mallConnections.cafe24 || restoreMockCafe24() || {}) },
-    { mall: 'ably', status: 'unavailable' }, { mall: 'smartstore', status: 'unavailable' }] };
+    return { items: [...['zigzag', 'cafe24', 'ably'].map((mall) => ({ ...connectionView(mall), addressesRevision: DB.mallDefaults[mall]?.revision || 0,
+      connectionVersion: DB.mallConnections[mall]?.connectionVersion || null, registration: registrationCapability(mall) })),
+    { mall: 'smartstore', status: 'unavailable', addressesRevision: 0, connectionVersion: null, registration: { status: 'preparing' } }] };
   },
   async connectZigzag({ accessKey, secretKey }) {
-    const key = String(accessKey || '').trim();
-    const secret = String(secretKey || '').trim();
-    if (!key || !secret || key.startsWith('bad')) {
-      throw Object.assign(new Error('인증키가 맞지 않아요. 파트너센터에서 다시 복사해 주세요'), { code: 'invalid_key', status: 400 });
-    }
-    if (key.startsWith('noperm')) {
-      throw Object.assign(new Error('상품 등록 권한이 없는 키예요. 상품과 주문 API 권한을 켜 주세요'), { code: 'missing_permission', status: 400 });
-    }
-    // Mock state keeps only safe display data, never raw credentials.
-    DB.mallConnections.zigzag = { mall: 'zigzag', status: 'connected', shopName: '데일리 니트 스토어',
+    const { key, secret, shopId } = zigzagIdentity({ accessKey, secretKey });
+    // other로 시작하는 인증키는 mock의 다른 스토어 연결 시나리오다.
+    const otherStore = key.startsWith('other');
+    replaceMallConnection('zigzag', { mall: 'zigzag', status: 'connected', shopName: otherStore ? '다른 니트 스토어' : '데일리 니트 스토어',
       keyHint: key.length > 8 && key.slice(-8) !== secret ? key.slice(-8) : null,
-      permissions: ['상품 조회와 등록'], connectedAt: new Date().toISOString(), lastRegisteredAt: null };
-    return clone(DB.mallConnections.zigzag);
+      permissions: ['상품 조회와 등록'], connectedAt: new Date().toISOString(), lastRegisteredAt: null }, shopId);
+    return connectionView('zigzag');
   },
-  async rotateZigzag(keys) { return api.connectZigzag(keys); },
-  async disconnectZigzag() { delete DB.mallConnections.zigzag; },
+  async rotateZigzag(keys) {
+    const current = DB.mallConnections.zigzag;
+    if (!current) throw mallError('connection_changed', '연결 정보가 바뀌었어요. 현재 연결을 확인한 뒤 다시 시도해 주세요', 409);
+    if (zigzagIdentity(keys).shopId !== current.shopId) throw mallError('shop_mismatch', '다른 스토어의 인증키예요. 스토어를 바꾸려면 연결을 해제한 뒤 다시 연결해 주세요');
+    return api.connectZigzag(keys);
+  },
+  async disconnectZigzag() { delete DB.mallConnections.zigzag; persistMockMalls(); },
   async listZigzagAddresses() {
-    if (!DB.mallConnections.zigzag) throw Object.assign(new Error('먼저 지그재그를 연결해 주세요'), { code: 'not_connected', status: 404 });
-    return [{ id: 'mock-shipping', name: '성수 창고', address: '서울 성동구 성수이로', postcode: '04790', is_default: true }];
+    if (!DB.mallConnections.zigzag) throw mallError('not_connected', '먼저 지그재그를 연결해 주세요', 404);
+    return [{ id: DB.mallConnections.zigzag.shopId === 'mock-other-zigzag-shop' ? 'mock-other-shipping' : 'mock-shipping', name: '성수 창고', address: '서울 성동구 성수이로', postcode: '04790', is_default: true }];
   },
-  async saveZigzagDefaults(payload) {
-    const previous = DB.mallDefaults.zigzag || {};
-    const next = { taxType: 'TAX', productOrigin: 'domestic', ...previous, ...payload };
-    for (const section of ['shipping', 'returns', 'addresses', 'disclosure']) {
-      next[section] = { ...previous[section], ...payload[section] };
+  async getSalesDefaults() { return salesView(DB.mallSalesDefaults || {}); },
+  async saveSalesDefaults({ baseRevision, ...patch }) {
+    if (!integer(baseRevision)) throw invalidDefaults();
+    if (baseRevision !== (DB.mallSalesDefaults?.revision || 0)) throw mallError('defaults_conflict', '다른 창에서 기본 정보를 바꿨어요. 다시 확인해 주세요', 409);
+    const result = salesView(DB.mallSalesDefaults || {}, patch);
+    result.revision += 1; DB.mallSalesDefaults = clone(result); persistMockMalls(); return result;
+  },
+  async getMallDefaults(mall) {
+    assertMall(mall); const row = DB.mallDefaults[mall];
+    return clone({ revision: row?.revision || 0, addresses: row?.addresses || {} });
+  },
+  async saveMallDefaults(mall, input) {
+    assertMall(mall);
+    const connection = DB.mallConnections[mall];
+    if (!connection) throw mallError('connection_required', '쇼핑몰을 먼저 연결해 주세요', 409);
+    const { baseRevision, addresses = {} } = input;
+    if (Object.keys(input).some((key) => !['baseRevision', 'addresses'].includes(key)) || !integer(baseRevision) || !object(addresses)
+      || Object.entries(addresses).some(([key, value]) => !['shippingAddressId', 'returnAddressId'].includes(key) || typeof value !== 'string')) throw invalidDefaults();
+    if (Object.values(addresses).some(Boolean)) {
+      if (mall !== 'zigzag') throw invalidDefaults();
+      const rows = await api.listZigzagAddresses();
+      if (Object.values(addresses).some((value) => value.trim() && !rows.some((row) => row.id === value.trim()))) throw mallError('address_not_found', '현재 스토어의 주소를 골라 주세요', 422);
     }
-    next.completedItems = completedItems(next);
-    DB.mallDefaults.zigzag = clone(next);
-    return { ...clone(next), total: 4 };
+    const previous = DB.mallDefaults[mall];
+    if (DB.mallConnections[mall] !== connection) throw mallError('connection_changed', '연결이 바뀌었어요. 다시 확인해 주세요', 409);
+    if (baseRevision !== (previous?.revision || 0)) throw mallError('defaults_conflict', '다른 창에서 기본 정보를 바꿨어요. 다시 확인해 주세요', 409);
+    const merged = { ...previous?.addresses };
+    for (const [key, value] of Object.entries(addresses)) { if (value.trim()) merged[key] = value.trim(); else delete merged[key]; }
+    DB.mallDefaults[mall] = { shopId: DB.mallConnections[mall].shopId, revision: baseRevision + 1, addresses: merged };
+    persistMockMalls(); return api.getMallDefaults(mall);
   },
   async startCafe24Install({ mallId }) {
-    const normalized = String(mallId ?? '').trim().toLowerCase().replace(/^https?:\/\//, '')
-      .split(/[/?#]/, 1)[0].replace(/\.(cafe24|cafe24api)\.com$/, '');
-    if (!/^[a-z0-9][a-z0-9_-]{1,29}$/.test(normalized) || normalized.startsWith('bad')) {
-      throw cafe24Error('invalid_mall_id', '몰 아이디를 확인해 주세요');
-    }
-    if (normalized.startsWith('closed')) {
-      throw cafe24Error('cafe24_not_allowed', '지금은 시범 운영 중이라 등록된 몰만 연결할 수 있어요', 403);
-    }
-    DB.mallConnections.cafe24 = { mall: 'cafe24', status: 'connected', shopName: '데일리 자사몰', mallId: normalized,
+    const normalized = String(mallId ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').split(/[/?#]/, 1)[0].replace(/\.(cafe24|cafe24api)\.com$/, '');
+    if (!/^[a-z0-9][a-z0-9_-]{1,29}$/.test(normalized) || normalized.startsWith('bad')) throw mallError('invalid_mall_id', '몰 아이디를 확인해 주세요');
+    if (normalized.startsWith('closed')) throw mallError('cafe24_not_allowed', '지금은 시범 운영 중이라 등록된 몰만 연결할 수 있어요', 403);
+    replaceMallConnection('cafe24', { mall: 'cafe24', status: 'connected', shopName: '데일리 자사몰', mallId: normalized,
       permissions: ['상품 조회와 등록', '쇼핑몰 정보 조회', '상품 분류 조회'], connectedAt: new Date().toISOString(),
-      lastRegisteredAt: null, tokenExpiresAt: new Date(Date.now() + (2 * 60 * 60 - 60) * 1000).toISOString() };
-    persistMockCafe24(DB.mallConnections.cafe24);
+      lastRegisteredAt: null, tokenExpiresAt: new Date(Date.now() + (2 * 60 * 60 - 60) * 1000).toISOString() }, normalized);
     return { startUrl: `${globalThis.location?.origin || 'http://localhost'}/settings/malls?mall=cafe24&result=connected` };
   },
-  async disconnectCafe24() { delete DB.mallConnections.cafe24; persistMockCafe24(null); },
-  async listCafe24Categories() {
-    cafe24Connection();
-    return [{ categoryNo: 1, depth: 1, name: '상의', fullName: ['상의'] },
-      { categoryNo: 27, depth: 2, name: '니트', fullName: ['상의', '니트'] }];
+  async disconnectCafe24() { delete DB.mallConnections.cafe24; persistMockMalls(); },
+  async getMallRegistrationCatalog(mall) {
+    assertMall(mall);
+    const capability = registrationCapability(mall);
+    const available = capability.status === 'available';
+    return { mall, status: capability.status, catalogVersion: available ? 'mock-catalog-v1' : null, complete: available,
+      categories: available ? [{ categoryId: '1', name: '상의', parentCategoryId: null, depth: 1 }, { categoryId: '27', name: '니트', parentCategoryId: '1', depth: 2 }] : [],
+      priceBasis: available ? 'A' : null, imageRatio: available ? { width: 1000, height: 1000 } : null,
+      capabilities: available ? { options: true, maxVariants: 200, maxAdditionalImages: 4, shippingSource: 'mall' } : {}, issues: null };
   },
-  async createCafe24Registration(payload) {
-    const connection = cafe24Connection();
-    // Keep only contract input, never arbitrary credentials or tokens supplied by a caller.
-    const input = { projectId: payload.projectId, publicationId: payload.publicationId, requestKey: payload.requestKey,
-      productName: payload.productName, price: payload.price, supplyPrice: payload.supplyPrice ?? payload.price,
-      display: payload.display ?? 'T', selling: payload.selling ?? 'T', taxType: payload.taxType ?? 'A',
-      categoryNo: payload.categoryNo ?? null, thumbnailAssetId: payload.thumbnailAssetId ?? null };
-    const existing = DB.mallRegistrations.find((row) => row.payload.requestKey === input.requestKey);
-    if (existing) {
-      if (JSON.stringify(existing.payload) !== JSON.stringify(input) || existing.mallId !== connection.mallId) {
-        throw cafe24Error('idempotency_key_reused', '같은 요청 번호에 다른 입력을 사용할 수 없어요. 입력을 확인해 주세요', 409);
+  async preflightMallRegistration(input) {
+    const draft = normalizedDraft(input), items = [];
+    for (const mall of draft.selectedMalls) {
+      const capability = registrationCapability(mall), item = { mall, status: 'blocked', issues: [], warnings: [] };
+      const publication = DB.detailPublications.find((p) => p.publicationId === draft.publicationId && p.projectId === draft.projectId);
+      const recoveries = (await api.listMallRegistrations(draft.projectId)).recoveries[mall] || [];
+      if (capability.status === 'preparing') Object.assign(item, { status: 'preparing', issues: [issue('registration_preparing', 'mall', '이 쇼핑몰 등록은 준비 중이에요', 'open_defaults')] });
+      else if (capability.status !== 'available') item.issues.push(issue(capability.reasonCode, 'connection', '쇼핑몰을 다시 연결해 주세요', 'reconnect'));
+      else if (recoveries.length) Object.assign(item, { existingJobId: recoveries[0].jobId, issues: [issue('registration_unresolved', 'registration', '이전 등록 상태를 먼저 확인해 주세요', recoveries[0].retryAction === 'resume' ? 'resume_existing' : 'verify_existing')] });
+      else if (!publication || publication.status !== 'ready') item.issues.push(issue('publication_required', 'publicationId', '상세페이지를 먼저 게시해 주세요', 'choose_image'));
+      else if (publication.editorRevision !== draft.editorRevision) item.issues.push(issue('editor_revision_changed', 'editorRevision', '편집본이 바뀌었어요. 저장하고 다시 확인해 주세요', 'choose_image'));
+      else if (!draft.mainAssetId) item.issues.push(issue('main_image_required', 'mainAssetId', '대표 이미지를 골라 주세요', 'choose_image'));
+      else {
+        const catalog = await api.getMallRegistrationCatalog(mall);
+        if (draft.categories[mall] && !catalog.categories.some((c) => c.categoryId === draft.categories[mall].categoryId)) item.issues.push(issue('category_changed', `categories.${mall}`, '카테고리를 다시 골라 주세요', 'choose_category'));
+        else Object.assign(item, { status: 'ready', sourceVersions: { connectionVersion: DB.mallConnections[mall].connectionVersion,
+          salesDefaultsRevision: DB.mallSalesDefaults?.revision || 0, mallDefaultsRevision: DB.mallDefaults[mall]?.revision || 0, catalogVersion: catalog.catalogVersion, editorRevision: draft.editorRevision },
+          summary: { variantCount: (DB.product?.colors?.length || 1) * draft.sizes.length, price: draft.priceOverrides[mall]?.amount || draft.basePrice, shippingSource: 'mall' } });
+        if (!draft.categories[mall]) item.warnings.push(issue('category_recommended', `categories.${mall}`, '카테고리를 고르면 상품을 찾기 쉬워요', 'choose_category'));
+        if (draft.defaultQuantity === 0) item.warnings.push(issue('all_sold_out', 'defaultQuantity', '모든 옵션이 품절로 등록돼요', 'edit_options'));
       }
-      return clone(existing.view);
+      items.push(item);
     }
-    const active = DB.mallRegistrations.find((row) => row.payload.projectId === input.projectId
-      && ['pending', 'running'].includes(row.view.status));
-    if (active) throw Object.assign(cafe24Error('registration_in_progress', '이 프로젝트의 상품을 등록하고 있어요', 409),
-      { jobId: active.view.jobId });
-    const jobId = globalThis.crypto.randomUUID();
-    const externalCode = `wl${jobId.replaceAll('-', '').slice(0, 16)}`;
-    const row = { payload: clone(input), mallId: connection.mallId, verifyCount: 0,
-      view: { jobId, status: 'pending', progress: 0, outcome: 'failed', productNo: null, productUrl: null,
-        mallId: connection.mallId, publicationId: input.publicationId,
-        imageCount: 0, thumbnail: null, code: null, errorMessage: null, externalCode, verifiable: false,
-        warnings: [], createdAt: new Date().toISOString(), finishedAt: null } };
-    DB.mallRegistrations.push(row);
-    const imageCount = DB.detailPublications.find((item) => item.publicationId === input.publicationId)?.files?.length || 0;
-    void wait(2000).then(() => {
-      Object.assign(row.view, { status: 'done', progress: 100, imageCount, finishedAt: new Date().toISOString() });
-      if (input.price === 999) {
-        Object.assign(row.view, { status: 'error', outcome: 'failed', code: 'invalid_request',
-          errorMessage: '카페24가 입력을 받지 않았어요. 판매가와 상품명을 확인해 주세요' });
-      } else if (input.productName.startsWith('unknown')) {
-        Object.assign(row.view, { outcome: 'unknown', verifiable: true });
-      } else {
-        setCafe24Product(row, input.thumbnailAssetId ? 'ok' : 'none');
-        if (DB.mallConnections.cafe24 === connection) connection.lastRegisteredAt = row.view.finishedAt;
-      }
-    });
-    return { jobId, status: 'queued', externalCode };
+    return { editorRevision: draft.editorRevision, inputHash: await inputHash(draft), readyMalls: items.filter((i) => i.status === 'ready').map((i) => i.mall), blockedMalls: items.filter((i) => i.status !== 'ready').map((i) => i.mall), items };
   },
-  async getCafe24Registration(jobId) { return clone(cafe24Registration(jobId).view); },
-  async verifyCafe24Registration(jobId) {
-    const row = cafe24Registration(jobId);
-    if (!['done', 'error'].includes(row.view.status) || !row.view.verifiable) {
-      throw cafe24Error('not_verifiable', '등록 여부를 다시 확인할 수 없는 상태예요', 409);
+  async createMallRegistrationBatch({ batchId, draft: input }) {
+    const draft = normalizedDraft(input), hash = await inputHash(draft), previous = DB.mallRegistrationBatches[batchId];
+    if (previous) {
+      if (previous.hash !== hash) throw mallError('idempotency_key_reused', '같은 요청 번호에 다른 입력을 사용할 수 없어요', 409);
+      return clone(previous.receipt);
     }
-    const connection = cafe24Connection();
-    if (connection.mallId !== row.mallId) {
-      throw cafe24Error('connection_changed', '연결이 바뀌어 확인할 수 없어요. 카페24 관리자에서 상품 목록을 확인해 주세요', 409);
+    const checked = await api.preflightMallRegistration(draft), items = [];
+    for (const item of checked.items) {
+      if (item.status === 'ready') {
+        const confirmed = draft.confirmedSourcesByMall[item.mall], current = item.sourceVersions;
+        const code = !confirmed ? 'preflight_required' : confirmed.connectionVersion !== current.connectionVersion ? 'connection_changed'
+          : ['salesDefaultsRevision', 'mallDefaultsRevision'].some((key) => confirmed[key] !== current[key]) ? 'defaults_changed'
+            : confirmed.catalogVersion !== current.catalogVersion ? 'catalog_changed' : confirmed.editorRevision !== current.editorRevision ? 'editor_revision_changed' : null;
+        if (code) Object.assign(item, { status: 'blocked', issues: [issue(code, `confirmedSourcesByMall.${item.mall}`, '확인한 정보가 바뀌었어요. 다시 점검해 주세요', 'open_defaults')] });
+      }
+      items.push(item.status === 'ready' ? { mall: item.mall, status: 'accepted', jobId: globalThis.crypto.randomUUID() }
+        : { mall: item.mall, status: 'blocked', issues: item.issues, ...(item.existingJobId ? { existingJobId: item.existingJobId } : {}) });
     }
-    row.verifyCount += 1;
-    if (row.verifyCount === 1) return { found: false, checkedAt: new Date().toISOString(),
-      message: '아직 확인되지 않았어요. 잠시 뒤 다시 확인하거나 카페24 관리자 상품 목록을 봐 주세요' };
-    setCafe24Product(row, 'skipped');
-    row.view.warnings.push('대표 이미지는 카페24 관리자에서 넣어 주세요');
+    const receipt = { batchId, acceptedAt: new Date().toISOString(), items, readyCount: items.filter((i) => i.status === 'accepted').length };
+    if (!receipt.readyCount) throw mallError('no_ready_malls', '등록할 수 있는 쇼핑몰이 없어요', 409, { items });
+    DB.mallRegistrationBatches[batchId] = { hash, receipt: clone(receipt) };
+    for (const item of items.filter((i) => i.status === 'accepted')) {
+      const connection = DB.mallConnections[item.mall];
+      const row = { draft: clone(draft), shopId: connection.shopId, connectionVersion: connection.connectionVersion, resumeKeys: [],
+        view: { jobId: item.jobId, mall: item.mall, status: 'pending', progress: 0, stage: null, outcome: null, setupStatus: 'pending',
+          productId: null, productUrl: null, adminUrl: `https://${connection.shopId}.cafe24.com/admin`, stages: {}, retryAction: 'none', code: null,
+          warnings: [], retention: null, publicationId: draft.publicationId, createdAt: receipt.acceptedAt, finishedAt: null } };
+      DB.mallRegistrations.push(row); void wait(2000).then(() => completeMockRegistration(row));
+    }
+    return receipt;
+  },
+  async getMallRegistrationBatch(batchId) {
+    const batch = DB.mallRegistrationBatches[batchId];
+    if (!batch) throw mallError('registration_not_found', '접수 기록을 찾을 수 없어요', 404);
+    const receipt = clone(batch.receipt);
+    for (const item of receipt.items) if (item.status === 'accepted') item.registration = await api.getMallRegistration(item.jobId);
+    return receipt;
+  },
+  async getMallRegistration(jobId) { return clone(registrationRow(jobId).view); },
+  async verifyMallRegistration(jobId) {
+    const row = registrationRow(jobId); assertRegistrationConnection(row);
+    if (!['unknown', 'duplicate_suspected'].includes(row.view.outcome) || !['done', 'error', 'cancelled'].includes(row.view.status)) throw mallError('not_verifiable', '등록 여부를 다시 확인할 수 없는 상태예요', 409);
+    row.verifyCount = (row.verifyCount || 0) + 1;
+    if (row.verifyCount > 1) Object.assign(row.view, { outcome: 'created', productId: '1001', setupStatus: 'needs_attention', retryAction: 'resume', productUrl: `https://${row.shopId}.cafe24.com/product/detail.html?product_no=1001` });
     return clone(row.view);
   },
+  async resumeMallRegistration(jobId, { requestKey }) {
+    const row = registrationRow(jobId);
+    if (row.resumeKeys.includes(requestKey)) return clone(row.view);
+    assertRegistrationConnection(row);
+    if (row.view.retryAction !== 'resume') throw mallError('registration_not_resumable', '이 작업은 설정을 이어 할 수 없어요', 409);
+    row.resumeKeys.push(requestKey); row.resumed = true;
+    Object.assign(row.view, { status: 'pending', progress: 0, outcome: null, setupStatus: 'pending', retryAction: 'none', code: null, finishedAt: null });
+    void wait(2000).then(() => completeMockRegistration(row)); return clone(row.view);
+  },
   async listMallRegistrations(projectId) {
-    const rows = DB.mallRegistrations.filter((row) => row.payload.projectId === projectId).reverse();
-    const connection = DB.mallConnections.cafe24;
-    const recovery = connection && rows.find((row) => row.mallId === connection.mallId
-      && (['pending', 'running'].includes(row.view.status)
-        || ['done', 'error', 'cancelled'].includes(row.view.status) && ['unknown', 'duplicate_suspected'].includes(row.view.outcome)));
-    return { items: rows.slice(0, 5).map((row) => clone(row.view)), recovery: recovery ? clone(recovery.view) : null };
+    const rows = DB.mallRegistrations.filter((row) => row.draft.projectId === projectId).slice().reverse();
+    const recoveries = rows.filter((row) => row.view.mall === 'cafe24' && row.shopId === DB.mallConnections.cafe24?.shopId
+      && (['pending', 'running'].includes(row.view.status) || ['unknown', 'duplicate_suspected'].includes(row.view.outcome) || row.view.setupStatus === 'needs_attention'));
+    return clone({ items: rows.slice(0, 5).map((row) => row.view), recoveries: { cafe24: recoveries.map((row) => row.view), zigzag: [] } });
   },
   async createDetailPublication(projectId, { preset, width, productName = '', files }) {
     const publicationId = uid('pub');
@@ -1385,9 +1511,9 @@ export const api = {
     }
     const registration = DB.mallRegistrations.find((row) => row.view.jobId === jobId)?.view;
     if (registration) {
-      const { status, progress, errorMessage, outcome, productNo, productUrl, imageCount, thumbnail, code, externalCode, warnings } = registration;
-      return clone({ id: jobId, status, progress, errorMessage,
-        result: ['done', 'error'].includes(status) ? { outcome, productNo, productUrl, imageCount, thumbnail, code, externalCode, warnings } : null });
+      const { status, progress } = registration;
+      return clone({ id: jobId, status, progress, errorMessage: null,
+        result: ['done', 'error'].includes(status) ? registration : null });
     }
     return { id: jobId, status: ewSim?.status || 'done', progress: ewSim?.progress ?? 100,
       result: ewSim?.result || null, errorMessage: null };

@@ -1,8 +1,9 @@
 import { uploadWardrobeGif, readWardrobeGifs, writeWardrobeGifs, mergeWardrobeGifs } from './gifWardrobe.js';
 import { createDetailPublication, completeDetailPublication, listDetailPublications, deleteDetailPublication } from './detailPublications.js';
-import { listMalls, connectZigzag, rotateZigzag, disconnectZigzag, listZigzagAddresses, saveZigzagDefaults,
-  startCafe24Install, disconnectCafe24, listCafe24Categories, createCafe24Registration,
-  getCafe24Registration, verifyCafe24Registration, listMallRegistrations } from './malls.js';
+import { listMalls, connectZigzag, rotateZigzag, disconnectZigzag, listZigzagAddresses,
+  startCafe24Install, disconnectCafe24, getSalesDefaults, saveSalesDefaults, getMallDefaults, saveMallDefaults,
+  getMallRegistrationCatalog, preflightMallRegistration, createMallRegistrationBatch, getMallRegistrationBatch,
+  getMallRegistration, verifyMallRegistration, resumeMallRegistration, listMallRegistrations } from './malls.js';
 import { preparePublicAnalysis, publicAnalysisForm } from './publicAnalysisRequest.js';
 import { hasOutfitContextChange, mergeOutfitAnalysis, assertOutfitAccessoriesSaved, requireOutfitAccessorySupport } from '../outfitSelections.js';
 import { stripFeatureClientFields } from '../featureRun.js';
@@ -492,9 +493,10 @@ async function recommendMatchHttp(projectId, analysis, current, { defaultSelecti
 
 export const httpAdapter = {
   pollJob,
-  listMalls, connectZigzag, rotateZigzag, disconnectZigzag, listZigzagAddresses, saveZigzagDefaults,
-  startCafe24Install, disconnectCafe24, listCafe24Categories, createCafe24Registration,
-  getCafe24Registration, verifyCafe24Registration, listMallRegistrations,
+  listMalls, connectZigzag, rotateZigzag, disconnectZigzag, listZigzagAddresses,
+  startCafe24Install, disconnectCafe24, getSalesDefaults, saveSalesDefaults, getMallDefaults, saveMallDefaults,
+  getMallRegistrationCatalog, preflightMallRegistration, createMallRegistrationBatch, getMallRegistrationBatch,
+  getMallRegistration, verifyMallRegistration, resumeMallRegistration, listMallRegistrations,
   createDetailPublication,
   completeDetailPublication,
   listDetailPublications,

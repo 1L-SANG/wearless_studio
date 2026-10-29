@@ -25,27 +25,13 @@ before(async () => {
 });
 beforeEach(() => {
   db.mallConnections = {};
-  db.mallRegistrations = [];
+  db.mallRegistrations = []; db.mallRegistrationBatches = {}; db.mallDefaults = {}; db.mallSalesDefaults = null;
   db.detailPublications = [{ publicationId: 'publication-local', projectId: 'project-local',
-    status: 'ready', files: [{ index: 0 }, { index: 1 }] }];
+    status: 'ready', editorRevision: 4, files: [{ index: 0 }, { index: 1 }] }];
 });
 after(() => vite?.close());
 
-const payload = (patch = {}) => ({ projectId: 'project-local', publicationId: 'publication-local',
-  requestKey: randomUUID(), productName: '니트', price: 39000, ...patch });
-const registrationFields = ['jobId', 'status', 'progress', 'outcome', 'productNo', 'productUrl',
-  'mallId', 'publicationId', 'imageCount', 'thumbnail', 'code', 'errorMessage', 'externalCode', 'verifiable', 'warnings', 'createdAt', 'finishedAt'];
-const connectionFields = ['mall', 'status', 'shopName', 'mallId', 'permissions', 'connectedAt', 'lastRegisteredAt', 'tokenExpiresAt'];
-const fieldsMatch = (value, fields) => assert.deepEqual(Object.keys(value).sort(), [...fields].sort());
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status });
-const clock = (t) => t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: new Date('2026-10-26T00:00:00Z') });
-async function finish(t, request) {
-  const accepted = await mock.createCafe24Registration(request);
-  t.mock.timers.tick(2000);
-  await Promise.resolve();
-  return mock.getCafe24Registration(accepted.jobId);
-}
-
 test('peekEditorRevision does not touch revision sync', async (t) => {
   const projectId = 'project-peek', original = [{ id: 'text', text: 'A' }], calls = [];
   let server = { revision: 4, blocks: original };
@@ -113,220 +99,106 @@ test('install sends normalized mall id with credentials include and reads start 
   assert.deepEqual(JSON.parse(calls.at(-1).options.body), { mallId: 'myshop' });
 });
 
-test('registration routes and request key match contract', async (t) => {
-  const calls = [];
-  const request = payload({ supplyPrice: 20000, display: 'F', selling: 'T', taxType: 'B',
-    categoryNo: 27, thumbnailAssetId: 'asset-local' });
-  const accepted = { jobId: randomUUID(), status: 'queued', externalCode: 'wl0123456789abcdef' };
-  const detail = { jobId: accepted.jobId, status: 'done', outcome: 'unknown', verifiable: true,
-    mallId: 'myshop', publicationId: 'publication-local', progress: 100, productNo: null, productUrl: null,
-    imageCount: 2, thumbnail: null, externalCode: accepted.externalCode,
-    code: null, errorMessage: null, warnings: [], createdAt: '2026-10-26T00:00:00Z', finishedAt: '2026-10-26T00:00:01Z' };
-  const categories = [{ categoryNo: 27, depth: 2, name: '니트', fullName: ['상의', '니트'] }];
-  const replies = [accepted, detail, detail, { found: false, checkedAt: '2026-10-26T00:00:00Z', message: '아직 확인되지 않았어요' },
-    { ...detail, outcome: 'created', verifiable: false }, { items: [detail], recovery: detail }, categories];
-  t.mock.method(globalThis, 'fetch', async (url, options) => {
-    calls.push({ url: String(url), options });
-    return options.method === 'DELETE' ? new Response(null, { status: 204 }) : json(replies.shift());
-  });
-  assert.deepEqual(await adapter.createCafe24Registration(request), accepted);
-  assert.deepEqual(await adapter.createCafe24Registration(request), detail);
-  assert.deepEqual(await adapter.getCafe24Registration(accepted.jobId), detail);
-  assert.equal((await adapter.verifyCafe24Registration(accepted.jobId)).found, false);
-  assert.equal((await adapter.verifyCafe24Registration(accepted.jobId)).outcome, 'created');
-  assert.deepEqual(await adapter.listMallRegistrations(request.projectId), { items: [detail], recovery: detail });
-  assert.deepEqual(await adapter.listCafe24Categories(), categories);
-  await adapter.disconnectCafe24();
-  const route = `/v1/malls/cafe24/registrations/${accepted.jobId}`;
-  assert.deepEqual(calls.map(({ url, options }) => [url, options.method]), [
-    ['/v1/malls/cafe24/registrations', 'POST'], ['/v1/malls/cafe24/registrations', 'POST'], [route, 'GET'],
-    [`${route}/verify`, 'POST'], [`${route}/verify`, 'POST'],
-    ['/v1/projects/project-local/mall-registrations', 'GET'], ['/v1/malls/cafe24/categories', 'GET'], ['/v1/malls/cafe24', 'DELETE'],
-  ]);
-  assert.deepEqual(JSON.parse(calls[0].options.body), request);
-  assert.equal(JSON.parse(calls[1].options.body).requestKey, request.requestKey);
-  assert.ok(calls.every(({ options }) => options.credentials === undefined));
-  t.mock.method(console, 'error', () => {});
-  t.mock.method(globalThis, 'fetch', async () => json({ error: {
-    code: 'registration_in_progress', message: '이 프로젝트의 상품을 등록하고 있어요', jobId: accepted.jobId,
-  } }, 409));
-  await assert.rejects(adapter.createCafe24Registration(payload()), (error) =>
-    error.status === 409 && error.code === 'registration_in_progress' && error.jobId === accepted.jobId);
-});
+const requestDraft = (patch = {}) => ({ projectId: 'project-local', publicationId: 'publication-local', editorRevision: 4,
+  selectedMalls: ['cafe24'], productName: '니트', basePrice: 39000, sizes: ['FREE'], mainAssetId: 'asset-local', ...patch });
+const clock = (t) => t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: new Date('2026-10-26T00:00:00Z') });
+async function accept(patch = {}) {
+  const draft = requestDraft(patch), check = await mock.preflightMallRegistration(draft);
+  for (const item of check.items) if (item.status === 'ready') (draft.confirmedSourcesByMall ||= {})[item.mall] = item.sourceVersions;
+  return mock.createMallRegistrationBatch({ batchId: randomUUID(), draft });
+}
+async function finish(t, patch = {}) {
+  const receipt = await accept(patch); t.mock.timers.tick(2000); await Promise.resolve();
+  return mock.getMallRegistration(receipt.items[0].jobId);
+}
 
-test('mock install connects with mall id and never stores tokens', async (t) => {
-  const previous = Object.getOwnPropertyDescriptor(globalThis, 'location');
-  Object.defineProperty(globalThis, 'location', { configurable: true, value: { origin: 'https://studio.example.test' } });
-  t.after(() => previous ? Object.defineProperty(globalThis, 'location', previous) : delete globalThis.location);
-  const absent = (await mock.listMalls()).items.find((item) => item.mall === 'cafe24');
-  fieldsMatch(absent, connectionFields);
-  assert.equal(absent.status, 'none');
-  assert.equal(absent.mallId, null);
-  for (const [mallId, code, status] of [['bad-shop', 'invalid_mall_id', 400], ['closed-shop', 'cafe24_not_allowed', 403],
-    ['x', 'invalid_mall_id', 400], ['https://shop.example.test', 'invalid_mall_id', 400]]) {
-    await assert.rejects(mock.startCafe24Install({ mallId }), (error) => error.code === code && error.status === status);
+test('mock install exposes public connection generation and preserves sales across disconnect', async () => {
+  await mock.saveSalesDefaults({ baseRevision: 0, disclosure: { manufacturer: '내 상점' } });
+  for (const [mallId, code] of [['bad-shop', 'invalid_mall_id'], ['closed-shop', 'cafe24_not_allowed'], ['x', 'invalid_mall_id']]) {
+    await assert.rejects(mock.startCafe24Install({ mallId }), (error) => error.code === code);
   }
-  const result = await mock.startCafe24Install({ mallId: 'HTTPS://MyShop.cafe24.com/admin',
-    returnTo: '/editor/project-local', access_token: 'fixture-access', refresh_token: 'fixture-refresh' });
-  assert.deepEqual(result, { startUrl: 'https://studio.example.test/settings/malls?mall=cafe24&result=connected' });
-  const connected = (await mock.listMalls()).items.find((item) => item.mall === 'cafe24');
-  fieldsMatch(connected, connectionFields);
-  assert.equal(connected.status, 'connected');
-  assert.equal(connected.mallId, 'myshop');
-  assert.equal(typeof connected.shopName, 'string');
-  assert.ok(Date.parse(connected.tokenExpiresAt) > Date.now());
-  for (const value of [result, connected, db]) {
-    assert.doesNotMatch(JSON.stringify(value), /fixture-access|fixture-refresh|access_token|refresh_token|accessKey|secretKey/);
-  }
+  await mock.startCafe24Install({ mallId: 'MyShop.cafe24.com' });
+  const connection = (await mock.listMalls()).items.find((item) => item.mall === 'cafe24');
+  assert.equal(connection.mallId, 'myshop'); assert.equal(connection.registration.status, 'available');
+  assert.equal('shopId' in connection, false); assert.ok(connection.connectionVersion);
   await mock.disconnectCafe24();
   assert.equal((await mock.listMalls()).items.find((item) => item.mall === 'cafe24').status, 'none');
-  assert.equal(db.mallConnections.cafe24, undefined);
+  assert.equal((await mock.getSalesDefaults()).disclosure.manufacturer, '내 상점');
 });
 
-test('mock registration reaches created, unknown, failed with code, and verify', async (t) => {
-  clock(t);
-  await mock.startCafe24Install({ mallId: 'myshop' });
-  const accepted = await mock.createCafe24Registration(payload({ thumbnailAssetId: 'asset-local' }));
-  assert.equal(accepted.status, 'queued');
-  assert.match(accepted.externalCode, /^wl[0-9a-f]{16}$/);
-  assert.equal(accepted.externalCode, `wl${accepted.jobId.replaceAll('-', '').slice(0, 16)}`);
-  assert.equal((await mock.getCafe24Registration(accepted.jobId)).status, 'pending');
-  assert.equal((await mock.getJob(accepted.jobId)).result, null);
-  t.mock.timers.tick(1999);
-  await Promise.resolve();
-  assert.equal((await mock.getCafe24Registration(accepted.jobId)).status, 'pending');
-  t.mock.timers.tick(1);
-  await Promise.resolve();
-  const created = await mock.getCafe24Registration(accepted.jobId);
-  fieldsMatch(created, registrationFields);
-  assert.equal(created.status, 'done');
-  assert.equal(created.outcome, 'created');
-  assert.equal(created.verifiable, false);
-  assert.equal(created.progress, 100);
-  assert.equal(created.imageCount, 2);
-  assert.equal(created.thumbnail, 'ok');
-  assert.equal((await mock.getJob(accepted.jobId)).result.outcome, 'created');
-  assert.match(created.productUrl, /^https:\/\/myshop.cafe24.com\/product\/detail.html\?product_no=\d+$/);
-  assert.equal((await mock.listMalls()).items.find((item) => item.mall === 'cafe24').lastRegisteredAt, created.finishedAt);
-  await assert.rejects(mock.verifyCafe24Registration(created.jobId), (error) => error.code === 'not_verifiable' && error.status === 409);
-  const unknown = await finish(t, payload({ productName: 'unknown 니트' }));
-  assert.equal(unknown.status, 'done');
-  assert.equal(unknown.outcome, 'unknown');
-  assert.equal(unknown.verifiable, true);
-  assert.equal(unknown.productNo, null);
-  const notFound = await mock.verifyCafe24Registration(unknown.jobId);
-  fieldsMatch(notFound, ['found', 'checkedAt', 'message']);
-  assert.equal(notFound.found, false);
-  assert.equal((await mock.getCafe24Registration(unknown.jobId)).outcome, 'unknown');
-  const found = await mock.verifyCafe24Registration(unknown.jobId);
-  fieldsMatch(found, registrationFields);
-  assert.equal(found.outcome, 'created');
-  assert.equal(found.status, 'done');
-  assert.equal(found.verifiable, false);
-  assert.equal(found.thumbnail, 'skipped');
-  assert.deepEqual(found.warnings, ['대표 이미지는 카페24 관리자에서 넣어 주세요']);
-  assert.equal(db.mallRegistrations.length, 2);
-  const failed = await finish(t, payload({ price: 999, productName: 'unknown 거절' }));
-  assert.equal(failed.status, 'error');
-  assert.equal(failed.outcome, 'failed');
-  assert.equal(failed.code, 'invalid_request');
-  assert.equal(failed.errorMessage, '카페24가 입력을 받지 않았어요. 판매가와 상품명을 확인해 주세요');
-  assert.equal(failed.verifiable, false);
-  assert.equal(failed.productNo, null);
-  assert.equal((await mock.getJob(failed.jobId)).result.code, 'invalid_request');
-  await assert.rejects(mock.getCafe24Registration('missing'), (error) => error.status === 404 && error.code === 'registration_not_found');
-});
-
-test('same request key returns same job id in mock', async (t) => {
-  clock(t);
-  await mock.startCafe24Install({ mallId: 'myshop' });
-  const request = payload();
-  const first = await mock.createCafe24Registration(request);
-  const retry = await mock.createCafe24Registration({ ...request, supplyPrice: request.price, display: 'T', selling: 'T', taxType: 'A' });
-  assert.equal(retry.jobId, first.jobId);
-  fieldsMatch(retry, registrationFields);
-  await assert.rejects(mock.createCafe24Registration(payload()), (error) =>
-    error.status === 409 && error.code === 'registration_in_progress' && error.jobId === first.jobId);
-  for (const patch of [{ price: 40000 }, { projectId: 'other-project' }]) {
-    await assert.rejects(mock.createCafe24Registration({ ...request, ...patch }), (error) =>
-      error.status === 409 && error.code === 'idempotency_key_reused');
-  }
-  t.mock.timers.tick(2000);
-  await Promise.resolve();
-  assert.equal((await mock.createCafe24Registration(request)).jobId, first.jobId);
-  assert.equal((await mock.createCafe24Registration(request)).outcome, 'created');
-  assert.equal(db.mallRegistrations.length, 1);
-  assert.notEqual((await mock.createCafe24Registration(payload())).jobId, first.jobId);
-});
-
-test('listing fields match server contract', async (t) => {
-  clock(t);
-  await mock.startCafe24Install({ mallId: 'myshop' });
-  const categories = await mock.listCafe24Categories();
-  assert.ok(categories.length > 0);
-  for (const item of categories) {
-    fieldsMatch(item, ['categoryNo', 'depth', 'name', 'fullName']);
-    assert.ok(Array.isArray(item.fullName));
-  }
-  const recent = [];
-  for (let index = 0; index < 6; index += 1) recent.push(await finish(t, payload()));
-  await finish(t, payload({ projectId: 'other-project' }));
-  const listing = await mock.listMallRegistrations('project-local');
-  fieldsMatch(listing, ['items', 'recovery']);
-  assert.equal(listing.recovery, null);
-  assert.deepEqual(listing.items.map((item) => item.jobId), recent.slice(-5).reverse().map((item) => item.jobId));
-  for (const item of listing.items) {
-    fieldsMatch(item, registrationFields);
-    assert.deepEqual(item, await mock.getCafe24Registration(item.jobId));
-  }
-  listing.items[0].warnings.push('mutated');
-  assert.deepEqual((await mock.getCafe24Registration(listing.items[0].jobId)).warnings, []);
-  assert.deepEqual(await mock.listMallRegistrations('empty-project'), { items: [], recovery: null });
-  const connections = await mock.listMalls();
-  for (const status of ['none', 'connected', 'reconnect_required', 'unavailable']) {
-    const cafe24 = { ...connections.items.find((item) => item.mall === 'cafe24'), status };
-    t.mock.method(globalThis, 'fetch', async () => json({ items: [cafe24] }));
-    assert.deepEqual(await adapter.listMalls(), { items: [cafe24] });
-  }
-});
-
-test('recovery finds an older unresolved registration for the current mall beyond recent five', async (t) => {
-  clock(t);
-  await mock.startCafe24Install({ mallId: 'myshop' });
-  const unresolved = await finish(t, payload({ productName: 'unknown 니트' }));
-  for (let index = 0; index < 6; index++) await finish(t, payload());
-  await mock.startCafe24Install({ mallId: 'othershop' });
-  const otherMall = await finish(t, payload({ productName: 'unknown 다른 몰' }));
-  await mock.startCafe24Install({ mallId: 'myshop' });
-  const listing = await mock.listMallRegistrations('project-local');
-  assert.equal(listing.items.length, 5);
-  assert.equal(listing.items[0].jobId, otherMall.jobId);
-  assert.equal(listing.items.some((item) => item.jobId === unresolved.jobId), false);
-  assert.equal(listing.recovery?.jobId, unresolved.jobId);
-  assert.equal(listing.recovery.mallId, 'myshop');
-  assert.equal(listing.recovery.publicationId, 'publication-local');
-  listing.recovery.warnings.push('mutated');
-  assert.deepEqual((await mock.getCafe24Registration(unresolved.jobId)).warnings, []);
-  db.mallConnections.cafe24.status = 'reconnect_required';
-  assert.equal((await mock.listMallRegistrations('project-local')).recovery.jobId, unresolved.jobId);
-  await mock.disconnectCafe24();
-  assert.equal((await mock.listMallRegistrations('project-local')).recovery, null);
-});
-
-test('recovery includes pending running and duplicate suspected but excludes definitive outcomes', async (t) => {
-  clock(t);
-  await mock.startCafe24Install({ mallId: 'myshop' });
-  const accepted = await mock.createCafe24Registration(payload());
-  assert.equal((await mock.listMallRegistrations('project-local')).recovery?.jobId, accepted.jobId);
-  db.mallRegistrations[0].view.status = 'running';
-  assert.equal((await mock.listMallRegistrations('project-local')).recovery?.jobId, accepted.jobId);
+test('mock common registration preserves pending outcome and terminal view fields', async (t) => {
+  clock(t); await mock.startCafe24Install({ mallId: 'myshop' });
+  const receipt = await accept(), jobId = receipt.items[0].jobId;
+  const pending = await mock.getMallRegistration(jobId);
+  assert.equal(pending.outcome, null); assert.equal(pending.setupStatus, 'pending');
+  assert.equal((await mock.getJob(jobId)).result, null);
+  assert.equal((await mock.listMallRegistrations('project-local')).recoveries.cafe24[0].jobId, jobId);
   t.mock.timers.tick(2000); await Promise.resolve();
-  assert.equal((await mock.listMallRegistrations('project-local')).recovery, null);
-  await finish(t, payload({ price: 999 }));
-  assert.equal((await mock.listMallRegistrations('project-local')).recovery, null);
-  const uncertain = await finish(t, payload({ productName: 'unknown 니트' }));
-  db.mallRegistrations.at(-1).view.outcome = 'duplicate_suspected';
-  assert.equal((await mock.listMallRegistrations('project-local')).recovery?.jobId, uncertain.jobId);
-  await finish(t, payload({ projectId: 'other-project', productName: 'unknown 다른 프로젝트' }));
-  assert.equal((await mock.listMallRegistrations('project-local')).recovery?.jobId, uncertain.jobId);
+  const view = await mock.getMallRegistration(jobId);
+  assert.deepEqual(Object.keys(view).sort(), ['jobId', 'mall', 'status', 'progress', 'stage', 'outcome', 'setupStatus', 'productId', 'productUrl', 'adminUrl', 'stages', 'retryAction', 'code', 'warnings', 'retention', 'publicationId', 'createdAt', 'finishedAt'].sort());
+  assert.equal(view.outcome, 'created'); assert.equal(view.setupStatus, 'complete'); assert.equal(typeof view.productId, 'string');
+  await assert.rejects(mock.verifyMallRegistration(jobId), (error) => error.code === 'not_verifiable');
+  await assert.rejects(mock.resumeMallRegistration(jobId, { requestKey: randomUUID() }), (error) => error.code === 'registration_not_resumable');
+  const failed = await finish(t, { basePrice: 999 });
+  assert.equal(failed.outcome, 'failed'); assert.equal(failed.retryAction, 'new_request'); assert.equal(failed.code, 'invalid_request');
+});
+
+test('mock unknown verification never creates a job and resume reuses its product', async (t) => {
+  clock(t); await mock.startCafe24Install({ mallId: 'myshop' });
+  const unknown = await finish(t, { productName: 'unknown 니트' });
+  assert.equal(unknown.retryAction, 'verify');
+  assert.equal((await mock.verifyMallRegistration(unknown.jobId)).outcome, 'unknown');
+  const found = await mock.verifyMallRegistration(unknown.jobId);
+  assert.equal(found.outcome, 'created'); assert.equal(found.retryAction, 'resume');
+  const key = randomUUID(), pending = await mock.resumeMallRegistration(found.jobId, { requestKey: key });
+  assert.equal(pending.outcome, null); assert.equal(pending.productId, found.productId);
+  assert.deepEqual(await mock.resumeMallRegistration(found.jobId, { requestKey: key }), pending);
+  t.mock.timers.tick(2000); await Promise.resolve();
+  const done = await mock.getMallRegistration(found.jobId);
+  assert.equal(done.productId, found.productId); assert.equal(done.setupStatus, 'complete');
+  assert.equal(db.mallRegistrations.length, 1);
+});
+
+test('mock setup failure resumes the same job and preserves successful product identity', async (t) => {
+  clock(t); await mock.startCafe24Install({ mallId: 'myshop' });
+  const partial = await finish(t, { productName: 'setup-fail 니트' });
+  assert.equal(partial.outcome, 'created'); assert.equal(partial.setupStatus, 'needs_attention');
+  assert.equal((await mock.listMallRegistrations('project-local')).recoveries.cafe24[0].jobId, partial.jobId);
+  await mock.resumeMallRegistration(partial.jobId, { requestKey: randomUUID() });
+  t.mock.timers.tick(2000); await Promise.resolve();
+  const done = await mock.getMallRegistration(partial.jobId);
+  assert.equal(done.productId, partial.productId); assert.equal(done.setupStatus, 'complete');
+  assert.equal(db.mallRegistrations.length, 1);
+});
+
+test('mock admission requires confirmed revisions and replays receipts before connection checks', async (t) => {
+  clock(t); await mock.startCafe24Install({ mallId: 'myshop' });
+  const draft = requestDraft(), batchId = randomUUID();
+  await assert.rejects(mock.createMallRegistrationBatch({ batchId, draft }), (error) => error.code === 'no_ready_malls' && error.items[0].issues[0].code === 'preflight_required');
+  const check = await mock.preflightMallRegistration(draft);
+  draft.confirmedSourcesByMall = { cafe24: check.items[0].sourceVersions };
+  await mock.saveSalesDefaults({ baseRevision: 0, shippingDays: 3 });
+  await assert.rejects(mock.createMallRegistrationBatch({ batchId, draft }), (error) => error.items[0].issues[0].code === 'defaults_changed');
+  draft.confirmedSourcesByMall.cafe24 = (await mock.preflightMallRegistration(draft)).items[0].sourceVersions;
+  const receipt = await mock.createMallRegistrationBatch({ batchId, draft });
+  await mock.disconnectCafe24();
+  assert.deepEqual(await mock.createMallRegistrationBatch({ batchId, draft }), receipt);
+  await assert.rejects(mock.createMallRegistrationBatch({ batchId, draft: { ...draft, basePrice: 40000 } }), (error) => error.code === 'idempotency_key_reused');
+});
+
+test('mock history finds older recoveries for the current store beyond recent five', async (t) => {
+  clock(t); await mock.startCafe24Install({ mallId: 'myshop' });
+  const old = await finish(t, { productName: 'unknown 니트' });
+  db.detailPublications.push({ ...db.detailPublications[0], projectId: 'other-project' });
+  for (let i = 0; i < 6; i++) await finish(t, { projectId: 'other-project' });
+  // Completed same-project history can follow an unresolved record imported from an earlier session.
+  for (const row of db.mallRegistrations.slice(1)) row.draft.projectId = 'project-local';
+  const list = await mock.listMallRegistrations('project-local');
+  assert.equal(list.items.length, 5); assert.equal(list.items.some((i) => i.jobId === old.jobId), false);
+  assert.equal(list.recoveries.cafe24[0].jobId, old.jobId); assert.deepEqual(list.recoveries.zigzag, []);
+  list.recoveries.cafe24[0].warnings.push('mutation');
+  assert.deepEqual((await mock.getMallRegistration(old.jobId)).warnings, []);
+  await mock.startCafe24Install({ mallId: 'othershop' });
+  assert.deepEqual((await mock.listMallRegistrations('project-local')).recoveries.cafe24, []);
+  await assert.rejects(mock.verifyMallRegistration(old.jobId), (error) => error.code === 'connection_changed');
 });

@@ -29,8 +29,20 @@ export function listZigzagAddresses() {
   return http('/v1/malls/zigzag/addresses');
 }
 
-export function saveZigzagDefaults(payload) {
-  return http('/v1/malls/zigzag/defaults', { method: 'PUT', body: payload });
+export function getSalesDefaults() {
+  return http('/v1/malls/sales-defaults');
+}
+
+export function saveSalesDefaults({ baseRevision, ...patch }) {
+  return http('/v1/malls/sales-defaults', { method: 'PUT', body: { baseRevision, ...patch } });
+}
+
+export function getMallDefaults(mall) {
+  return http(`/v1/malls/${encodeURIComponent(mall)}/registration-defaults`);
+}
+
+export function saveMallDefaults(mall, { baseRevision, addresses }) {
+  return http(`/v1/malls/${encodeURIComponent(mall)}/registration-defaults`, { method: 'PUT', body: { baseRevision, addresses } });
 }
 
 export function startCafe24Install({ mallId, returnTo }) {
@@ -45,20 +57,32 @@ export function disconnectCafe24() {
   return http('/v1/malls/cafe24', { method: 'DELETE' });
 }
 
-export function listCafe24Categories() {
-  return http('/v1/malls/cafe24/categories');
+export function getMallRegistrationCatalog(mall) {
+  return http(`/v1/malls/${encodeURIComponent(mall)}/registration-catalog`);
 }
 
-export function createCafe24Registration(payload) {
-  return http('/v1/malls/cafe24/registrations', { method: 'POST', body: payload });
+export function preflightMallRegistration(draft) {
+  return http('/v1/malls/registrations/preflight', { method: 'POST', body: draft });
 }
 
-export function getCafe24Registration(jobId) {
-  return http(`/v1/malls/cafe24/registrations/${jobId}`);
+export function createMallRegistrationBatch({ batchId, draft }) {
+  return http('/v1/malls/registration-batches', { method: 'POST', body: { batchId, draft } });
 }
 
-export function verifyCafe24Registration(jobId) {
-  return http(`/v1/malls/cafe24/registrations/${jobId}/verify`, { method: 'POST' });
+export function getMallRegistrationBatch(batchId) {
+  return http(`/v1/malls/registration-batches/${encodeURIComponent(batchId)}`);
+}
+
+export function getMallRegistration(jobId) {
+  return http(`/v1/malls/registrations/${encodeURIComponent(jobId)}`);
+}
+
+export function verifyMallRegistration(jobId) {
+  return http(`/v1/malls/registrations/${encodeURIComponent(jobId)}/verify`, { method: 'POST' });
+}
+
+export function resumeMallRegistration(jobId, { requestKey }) {
+  return http(`/v1/malls/registrations/${encodeURIComponent(jobId)}/resume`, { method: 'POST', body: { requestKey } });
 }
 
 export function listMallRegistrations(projectId) {

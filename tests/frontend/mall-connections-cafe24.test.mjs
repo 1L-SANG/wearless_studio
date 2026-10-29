@@ -12,7 +12,7 @@ async function load(runtime = hooks(), api = {}, bindings = {}) {
   return componentModule('src/features/settings/MallConnections.jsx',
     ['MallConnections', 'MallConnectionRow', 'Cafe24Connection', 'MallActionDialog', 'MallIdField'], {
       ...runtime, api, Button, Icon: () => null, Modal: ({ children }) => children,
-      styles: {}, seoulDate: () => '2026.10.26', ExportMenu: () => null, MallDefaultsChecklist: () => null,
+      styles: {}, seoulDate: () => '2026.10.26', ExportMenu: () => null, SalesDefaultsCard: () => null,
       ...bindings,
     });
 }
@@ -27,7 +27,7 @@ test('zigzag row keeps existing five states after generalization', async () => {
 
 test('cafe24 row renders none editing starting connected failed reconnect states', async () => {
   const { MallConnectionRow, MallIdField } = await load();
-  for (const [state, copy] of [['none', '연결하기'], ['editing', '몰 아이디'], ['starting', '설치 시작 중'], ['connected', '몰 아이디 myshop'], ['failed', '몰 아이디가 달라요'], ['reconnect_required', '다시 연결']]) {
+  for (const [state, copy] of [['none', '연결하기'], ['editing', '몰 아이디'], ['starting', '설치 시작 중'], ['connected', '카페24 · myshop'], ['failed', '몰 아이디가 달라요'], ['reconnect_required', '다시 연결']]) {
     const markup = html(React.createElement(MallConnectionRow, { mall: 'cafe24', title: '카페24', state, connection,
       error: state === 'failed' ? '몰 아이디가 달라요' : '', submitLabel: '카페24에서 앱 설치',
       children: React.createElement(MallIdField, { value: 'myshop' }) }));
@@ -35,21 +35,14 @@ test('cafe24 row renders none editing starting connected failed reconnect states
   }
 });
 
-test('connected cafe24 metadata hides permissions while zigzag keeps them', async () => {
+test('v2 connection rows show store identity and only relevant connection details', async () => {
   const { MallConnectionRow } = await load();
-  for (const mall of ['cafe24', 'zigzag']) {
-    const markup = html(React.createElement(MallConnectionRow, { mall, state: 'connected',
-      connection: { ...connection, mall, connectedAt: '2026-10-26', lastRegisteredAt: '2026-10-26', keyHint: '12345678' } }));
-    assert.match(markup, /연결한 날 2026.10.26/);
-    assert.match(markup, /마지막 등록 2026.10.26/);
-    if (mall === 'cafe24') {
-      assert.match(markup, /몰 아이디 myshop/);
-      assert.doesNotMatch(markup, /권한|상품 조회와 등록|인증키 끝자리/);
-    } else {
-      assert.match(markup, /권한 상품 조회와 등록/);
-      assert.match(markup, /인증키 끝자리 12345678/);
-    }
-  }
+  const cafe24 = html(React.createElement(MallConnectionRow, { mall: 'cafe24', title: '카페24', state: 'connected', connection }));
+  assert.match(cafe24, /카페24 · myshop/);
+  assert.match(cafe24, /배송, 반품, 출고지는 카페24 몰 설정을 써요/);
+  assert.doesNotMatch(cafe24, /권한|인증키 끝자리|연결한 날|마지막 등록/);
+  const zigzag = html(React.createElement(MallConnectionRow, { state: 'connected', connection: { ...connection, keyHint: '12345678' } }));
+  assert.match(zigzag, /지그재그 · 니트 스토어/); assert.match(zigzag, /인증키 끝자리 12345678/);
 });
 
 test('cafe24 start button disabled while starting', async () => {
@@ -97,7 +90,7 @@ test('callback result query shows seller copy and clears query', async () => {
   const previous = globalThis.window; let replaced, changed = 0;
   globalThis.window = { location: { href: 'https://app.test/settings/malls?mall=cafe24&result=mall_mismatch&keep=yes#row' },
     history: { state: { idx: 1 }, replaceState: (...args) => { replaced = args; } },
-    sessionStorage: { getItem: () => 'myshop', removeItem() {} } };
+    sessionStorage: { getItem: (key) => key === 'cafe24-install-mall-id' ? 'myshop' : null, removeItem() {} } };
   try {
     const runtime = hooks(); const { Cafe24Connection } = await load(runtime);
     const props = { connection: { status: 'none' }, onChanged: () => changed++ };
@@ -123,7 +116,7 @@ test('callback result query shows seller copy and clears query', async () => {
 test('successful install callback follows refreshed connection status', async () => {
   const previous = globalThis.window; let changed = 0;
   globalThis.window = { location: { href: 'https://app.test/settings/malls?mall=cafe24&result=connected' },
-    history: { replaceState() {} }, sessionStorage: { getItem: () => 'myshop' } };
+    history: { replaceState() {} }, sessionStorage: { getItem: (key) => key === 'cafe24-install-mall-id' ? 'myshop' : null } };
   try {
     const runtime = hooks(), { Cafe24Connection, MallConnectionRow } = await load(runtime);
     const props = { connection, onChanged: () => changed++ };

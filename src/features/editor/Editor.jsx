@@ -3879,11 +3879,6 @@ export function Editor() {
               onDownload: () => { setDlNotice(''); setDlError(''); setDownload(true); },
               onPublish: () => { setPubResult(null); setPubError(''); setPubProg(null); setPublish(true); },
               onConnect: () => navigate('/settings/malls', { state: { returnTo: location.pathname } }),
-              onRegisterCafe24: () => {
-                if (realModelBlocked) return;
-                flushSync(() => document.activeElement?.blur());
-                setRegisterCafe24(true);
-              },
               onGifs: () => receiveGifs(),
             }).map((item) => item.id === 'paste' || item.id === 'cafe24' && item.kind === 'action' && !item.disabled
               ? { ...item, disabled: realModelBlocked, badge: realModelBlocked ? '다운로드만 가능' : undefined } : item)} />

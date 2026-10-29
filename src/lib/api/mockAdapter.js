@@ -185,7 +185,7 @@ export const mockAdapter = {
   async pollJob(jobId, { onProgress, intervalMs = 1200, timeoutMs = 90000 } = {}) {
     const start = Date.now();
     for (;;) {
-      const job = await base.getCafe24Registration(jobId);
+      const job = await base.getMallRegistration(jobId);
       onProgress?.(job.progress);
       if (job.status === 'done') return job;
       if (['error', 'cancelled'].includes(job.status)) throw Object.assign(new Error(job.errorMessage || '등록 상태를 확인해 주세요'), { code: job.code, jobId });
