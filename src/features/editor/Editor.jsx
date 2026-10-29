@@ -84,6 +84,8 @@ import { GenDonePreview } from '@/features/editor/GenDonePreview.jsx';
 import { EditorDownloadModal } from '@/features/editor/EditorDownloadModal.jsx';
 import { EditorPublishModal } from './EditorPublishModal.jsx';
 import { MallRegisterModal } from './MallRegisterModal.jsx';
+import { patchNoticeBlocks } from './mallNotice.js';
+import { patchRegistrationSizes } from './mallRegisterDraft.js';
 import { extractEditorAssetId } from '@/lib/editorAssetInfo.js';
 import { ExportSplitButton, buildExportMenuItems } from './ExportMenu.jsx';
 import { publishDetailPage, buildPublicationHtml, buildPublicationUrlList, downloadPublicationZip } from './detailPublish.js';
@@ -1122,7 +1124,8 @@ export function Editor() {
   const [dlError, setDlError] = useState('');
   const [dlOriginalError, setDlOriginalError] = useState(null);
   const [publish, setPublish] = useState(false);
-  const [registerCafe24, setRegisterCafe24] = useState(false);
+  const [registerMall, setRegisterMall] = useState(null);
+  const mallSavedSource = useRef(null);
   const [pubBusy, setPubBusy] = useState(false);
   const [pubCapturing, setPubCapturing] = useState(false);
   const [pubProg, setPubProg] = useState(null);
@@ -1215,7 +1218,7 @@ export function Editor() {
     const isCurrent = () => !cancelled && pubScopeRef.current === pubScope
       && accountGeneration === clientEvents.getAccountGeneration();
     setPublish(false);
-    setRegisterCafe24(false);
+    setRegisterMall(null);
     setPubBusy(false);
     setPubError('');
     setPubResult(null);
@@ -1751,6 +1754,7 @@ export function Editor() {
   useEffect(() => {
     if (blocks == null) return;
     clearTimeout(saveTimer.current);
+    if (registerMall) return;
     if (genActive) {
       saveTimer.current = setTimeout(() => {
         const backedUp = backupLatestEditorDraft(latestBlocks.current);
@@ -1786,7 +1790,7 @@ export function Editor() {
         setSaveError({ ...classifyEditorLoadError(error), backedUp, error });
       });
     }, 1500);
-  }, [blocks, genActive, projectId, backupLatestEditorDraft, reloadAfterEditorConflict]);
+  }, [blocks, genActive, projectId, backupLatestEditorDraft, reloadAfterEditorConflict, registerMall]);
   /* 배너의 [다시 저장] — 자동 저장과 같은 경로. 성공하면 배너가 사라지고 임시 보관본도 정리된다. */
   const retrySaveNow = () => {
     const source = latestBlocks.current;
@@ -2367,7 +2371,13 @@ export function Editor() {
       if (isCurrent()) { setPubBusy(false); setPubProg(null); }
     }
   };
-  const waitForCafe24Save = async () => {
+  const waitForMallSave = async () => {
+    const scope = pubScope;
+    const accountGeneration = clientEvents.getAccountGeneration();
+    const assertCurrent = () => {
+      if (scope !== pubScopeRef.current || accountGeneration !== clientEvents.getAccountGeneration()) throw new Error('계정이나 상품이 바뀌었어요. 다시 열어 주세요');
+    };
+    assertCurrent();
     if (saveError || genActiveRef.current || editorConflictPending.current) throw new Error('에디터에서 저장을 마친 뒤 다시 열어 주세요');
     clearTimeout(saveTimer.current);
     const source = latestBlocks.current;
@@ -2376,7 +2386,9 @@ export function Editor() {
     try {
       // The adapter waits for any in-flight autosave before saving this snapshot.
       await api.saveEditorBlocks(projectId, persistable(source));
+      assertCurrent();
     } catch (error) {
+      assertCurrent();
       if (isEditorConflict(error)) reloadAfterEditorConflict();
       else if (saveGuard.current.isNewest(ticket)) {
         const backedUp = backupLatestEditorDraft(latestBlocks.current);
@@ -2384,37 +2396,67 @@ export function Editor() {
       }
       throw new Error('에디터에서 저장을 마친 뒤 다시 열어 주세요');
     }
+    assertCurrent();
     if (!saveGuard.current.isCurrent(ticket, latestBlocks.current)) throw new Error('편집 내용이 바뀌었어요. 다시 열어 주세요');
+    const revision = api.editorRevisionOf(projectId);
+    if (!Number.isInteger(revision) || await api.peekEditorRevision(projectId) !== revision) throw new Error('편집본이 바뀌었어요. 다시 저장해 주세요');
+    assertCurrent();
+    if (!saveGuard.current.isCurrent(ticket, latestBlocks.current)) throw new Error('편집 내용이 바뀌었어요. 다시 열어 주세요');
+    mallSavedSource.current = source;
     clearEditorWaitDraft(projectId); pendingGenerationDraft.current = false; setSaveError(null);
+    return revision;
   };
-  const publishForCafe24 = async (assertModalCurrent) => {
+  async function saveMallNotice({ fields }) {
+    const next = patchNoticeBlocks(latestBlocks.current, { fields }, infoCtx);
+    flushSync(() => setBlocks(next));
+    return waitForMallSave();
+  }
+  async function saveMallSizes(sizes) {
+    const next = patchRegistrationSizes(latestBlocks.current, sizes, infoCtx);
+    flushSync(() => setBlocks(next));
+    return waitForMallSave();
+  }
+  const publishForMalls = async (assertModalCurrent, revision) => {
     if (realModelBlocked || genActiveRef.current || dlBusy || pubCaptureRef.current) throw new Error('지금은 상세페이지를 게시할 수 없어요');
     const token = ++pubRequestRef.current;
     const accountGeneration = clientEvents.getAccountGeneration();
     const isCurrent = () => token === pubRequestRef.current && pubScope === pubScopeRef.current
       && accountGeneration === clientEvents.getAccountGeneration();
+    const source = mallSavedSource.current;
+    const assertSnapshot = () => {
+      assertModalCurrent?.();
+      if (!isCurrent() || source !== latestBlocks.current || api.editorRevisionOf(projectId) !== revision) throw new Error('편집본이 바뀌었어요. 다시 저장해 주세요');
+    };
+    assertSnapshot();
+    const existing = await api.listDetailPublications(projectId);
+    assertSnapshot();
+    const reusable = existing.items.find((item) => (!item.status || item.status === 'ready') && item.editorRevision === revision && item.preset === 'smartstore');
+    if (reusable) return reusable;
     const nodes = [...(canvasRef.current?.querySelectorAll('.canvas-block') || [])];
     if (!nodes.length) throw new Error('올릴 블록이 없어요. 상세페이지에 블록을 추가해 주세요');
     pubCaptureRef.current = token; setPubCapturing(true); setPubBusy(true);
     try {
       const result = await publishDetailPage(nodes, { projectId, productName, preset: 'smartstore' }, {
-        assertCurrent: () => {
-          assertModalCurrent?.();
-          if (!isCurrent()) throw new Error('게시하는 상품이 바뀌었어요. 다시 열어 주세요');
-        },
+        assertCurrent: assertSnapshot,
       });
+      assertSnapshot();
+      if (await api.peekEditorRevision(projectId) !== revision) throw new Error('편집본이 바뀌었어요. 다시 저장해 주세요');
+      assertSnapshot();
+      const confirmed = (await api.listDetailPublications(projectId)).items.find((item) => item.publicationId === result.publicationId && item.editorRevision === revision);
+      assertSnapshot();
+      if (!confirmed) throw new Error('게시한 편집본을 확인하지 못했어요. 다시 확인해 주세요');
       if (isCurrent()) setPublicationInfo((current) => ({ ...current, count: current.count + 1 }));
-      return result;
+      return confirmed;
     } finally {
       if (pubCaptureRef.current === token) { pubCaptureRef.current = false; setPubCapturing(false); }
       if (isCurrent()) setPubBusy(false);
     }
   };
-  const cafe24Assets = [...new Map([
+  const registrationAssets = [...new Map([
     ...(blocks || []).flatMap((block) => (block.elements || []).filter((element) => element.type === 'image')),
     ...Object.values(wardrobe || {}).flat(),
-  ].filter((image) => !isGifImage(image)).map((image) => ({
-    assetId: image.assetId || extractEditorAssetId(image.src), src: image.src,
+  ].filter((image) => !image.hidden).map((image) => ({
+    assetId: isGifImage(image) ? extractEditorAssetId(image.posterSrc) || image.posterAssetId : extractEditorAssetId(image.src) || image.assetId, src: isGifImage(image) ? image.posterSrc : image.src,
   })).filter((image) => image.assetId && image.src).map((image) => [image.assetId, image])).values()];
   const copyPublication = async (text) => {
     const accountGeneration = clientEvents.getAccountGeneration();
@@ -3878,9 +3920,10 @@ export function Editor() {
               publishEnabled: publicationInfo.scope === pubScope && !publicationInfo.disabled, gifCount: gifImages.length,
               onDownload: () => { setDlNotice(''); setDlError(''); setDownload(true); },
               onPublish: () => { setPubResult(null); setPubError(''); setPubProg(null); setPublish(true); },
+              onRegisterMall: (mall) => setRegisterMall(mall),
               onConnect: () => navigate('/settings/malls', { state: { returnTo: location.pathname } }),
               onGifs: () => receiveGifs(),
-            }).map((item) => item.id === 'paste' || item.id === 'cafe24' && item.kind === 'action' && !item.disabled
+            }).map((item) => item.id === 'paste' || ['cafe24', 'zigzag'].includes(item.id) && item.kind === 'action' && !item.disabled
               ? { ...item, disabled: realModelBlocked, badge: realModelBlocked ? '다운로드만 가능' : undefined } : item)} />
         </div>
       </div>
@@ -4252,11 +4295,11 @@ export function Editor() {
         </Modal>
       )}
 
-      {registerCafe24 && <MallRegisterModal key={pubScope} projectId={projectId} productName={productName}
-        connection={mallInfo?.items?.find((item) => item.mall === 'cafe24')} assets={cafe24Assets}
-        waitForSave={waitForCafe24Save} onPublish={publishForCafe24} anchorRef={exportAnchorRef}
-        onConflict={reloadAfterEditorConflict}
-        onClose={() => setRegisterCafe24(false)} />}
+      {registerMall && <MallRegisterModal key={pubScope} projectId={projectId}
+        product={{ ...product, name: productName, analysis, materials: analysis?.materials, registrationGifNotice: gifImages.length > 0 }} blocks={blocks} assets={registrationAssets}
+        malls={mallInfo} initialMall={registerMall} waitForSave={waitForMallSave} onSaveNotice={saveMallNotice}
+        onSaveSizes={saveMallSizes} onPublish={publishForMalls} anchorRef={exportAnchorRef}
+        onConflict={reloadAfterEditorConflict} onClose={() => setRegisterMall(null)} />}
 
       {backWarn && (
         <Modal onClose={() => setBackWarn(false)}>

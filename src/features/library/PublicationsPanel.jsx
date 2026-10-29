@@ -90,18 +90,19 @@ export function PublicationsPanel({ projectId, productName, onClose }) {
     finally { if (isCurrent()) setBusy(false); }
   };
 
-  const lastRegistration = registrations.scope === scope ? registrations.items[0] : null;
-  const lastRegistrationLabel = lastRegistration && (['pending', 'running', 'queued'].includes(lastRegistration.status) ? '등록 중'
-    : lastRegistration.outcome === 'created' ? `상품 ${lastRegistration.productNo}`
-    : ['unknown', 'duplicate_suspected'].includes(lastRegistration.outcome) ? '등록 여부 확인 필요' : '등록하지 못했어요');
+  const lastRegistrations = registrations.scope === scope
+    ? [...new Map(registrations.items.map((item) => item.mall).map((mall) => [mall, registrations.items.find((item) => item.mall === mall)])).values()] : [];
+  const registrationLabel = (item) => ['pending', 'running', 'queued'].includes(item.status) ? '등록 중'
+    : ['unknown', 'duplicate_suspected'].includes(item.outcome) ? '등록 여부 확인 필요'
+    : item.outcome === 'created' ? `상품 ${item.productId}${item.setupStatus === 'complete' ? ' · 완료' : ' · 설정 확인 필요'}` : '등록하지 못했어요';
   return (
     <Modal onClose={() => { if (!busy && !confirm) onClose(); }} wide>
       <div className={styles.panel}>
         <h3 className={styles.title}>붙여넣을 코드</h3>
-        {lastRegistration && <p className={styles.lastRegistration}>마지막 등록 카페24 · {lastRegistrationLabel} · {dateLabel(lastRegistration.finishedAt || lastRegistration.createdAt)}
-          {lastRegistration.outcome === 'created' && lastRegistration.productUrl
-            && <> · <a href={lastRegistration.productUrl} target="_blank" rel="noopener noreferrer">자사몰에서 보기 ›</a></>}
-        </p>}
+        {lastRegistrations.map((item) => <p key={item.jobId} className={styles.lastRegistration}>마지막 등록 {{ cafe24: '카페24', zigzag: '지그재그', ably: '에이블리' }[item.mall]} · {registrationLabel(item)} · {dateLabel(item.finishedAt || item.createdAt)}
+          {item.adminUrl && <> · <a href={item.adminUrl} target="_blank" rel="noopener noreferrer">관리자에서 보기 ›</a></>}
+          {item.productUrl && <> · <a href={item.productUrl} target="_blank" rel="noopener noreferrer">상품 보기 ›</a></>}
+        </p>)}
         {registrationError && <p className={styles.lastRegistration} role="status">{registrationError}</p>}
         {loading && <p role="status">붙여넣을 코드를 불러오는 중이에요</p>}
         {!loading && !error && items.length === 0 && <p className={styles.notice}>만든 코드가 없어요</p>}

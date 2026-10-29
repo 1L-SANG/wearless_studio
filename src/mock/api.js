@@ -44,6 +44,8 @@ import {
 } from '@/lib/limits.js';
 import { normalizeMatchClothingSelection } from '@/lib/api/matchingItems.js';
 import { uid } from '@/lib/ids.js';
+import { resolveMallNotice } from '@/features/editor/mallNotice.js';
+import { sameEditorJson } from '@/lib/editorRevisionSync.js';
 import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
 import { normalizeTargetGendersForClothingType } from '@/lib/productGender.js';
 import { createMeasurementFields } from '@/lib/measurementSchema.js';
@@ -331,15 +333,39 @@ function salesView(previous = {}, patch = {}) {
 }
 const MOCK_MALLS_KEY = 'wl-mock-malls';
 function persistMockMalls() {
-  try { sessionStorage.setItem(MOCK_MALLS_KEY, JSON.stringify({ connections: DB.mallConnections, defaults: DB.mallDefaults, sales: DB.mallSalesDefaults })); } catch { /* Storage is optional. */ }
+  try { sessionStorage.setItem(MOCK_MALLS_KEY, JSON.stringify({ connections: DB.mallConnections, defaults: DB.mallDefaults, sales: DB.mallSalesDefaults, registrations: DB.mallRegistrations, batches: DB.mallRegistrationBatches })); } catch { /* Storage is optional. */ }
 }
 try {
   const saved = JSON.parse(sessionStorage.getItem(MOCK_MALLS_KEY) || 'null');
-  if (saved) { DB.mallConnections = saved.connections || {}; DB.mallDefaults = saved.defaults || {}; DB.mallSalesDefaults = saved.sales || null; }
+  if (saved) { DB.mallConnections = saved.connections || {}; DB.mallDefaults = saved.defaults || {}; DB.mallSalesDefaults = saved.sales || null; DB.mallRegistrations = saved.registrations || []; DB.mallRegistrationBatches = saved.batches || {};
+    for (const row of DB.mallRegistrations) if (['pending', 'running'].includes(row.view.status)) void wait(2000).then(() => completeMockRegistration(row)); }
 } catch { /* Storage is optional. */ }
+const mockEditorRevisions = new Map();
+const mockAssetIds = new Map();
+function registrationImage(image) {
+  if (!image?.src) return image;
+  const src = image.kind === 'gif' ? image.posterSrc : image.src;
+  if (!src) return image;
+  if (!mockAssetIds.has(src)) mockAssetIds.set(src, crypto.randomUUID());
+  return { ...image, [image.kind === 'gif' ? 'posterAssetId' : 'assetId']: (image.kind === 'gif' ? image.posterAssetId : image.assetId) || mockAssetIds.get(src) };
+}
+function registrationDemo() {
+  const value = mockQuery().get('mallRegistrationDemo');
+  const allowed = ['mixed', 'partial', 'unknown', 'setup', 'activation', 'lost', 'history-error', 'tax-excluded', 'off'];
+  try {
+    if (allowed.includes(value)) sessionStorage.setItem('wl-mall-registration-demo', value);
+    return allowed.includes(value) ? value : sessionStorage.getItem('wl-mall-registration-demo');
+  } catch { return allowed.includes(value) ? value : null; }
+}
+function seedRegistrationDemo() {
+  const demo = registrationDemo();
+  if (!demo || demo === 'off') return;
+  for (const mall of ['cafe24', 'zigzag']) if (!DB.mallConnections[mall]) replaceMallConnection(mall,
+    { mall, status: 'connected', shopName: '등록 점검 스토어', mallId: 'demo-shop', permissions: ['상품 조회와 등록'], connectedAt: new Date().toISOString() }, 'demo-shop');
+}
 function registrationCapability(mall) {
   const connection = DB.mallConnections[mall];
-  if (mall !== 'cafe24') return { status: 'preparing' };
+  if (mall !== 'cafe24' && !(mall === 'zigzag' && ['mixed', 'partial'].includes(registrationDemo()))) return { status: 'preparing' };
   if (!connection) return { status: 'reconnect_required', reasonCode: 'connection_required' };
   if (connection.status !== 'connected') return { status: 'reconnect_required', reasonCode: 'reconnect_required' };
   return { status: 'available' };
@@ -396,22 +422,26 @@ function normalizedDraft(input) {
 function completeMockRegistration(row) {
   const view = row.view;
   view.finishedAt = new Date().toISOString(); view.progress = 100;
-  if (row.draft.productName.toLowerCase().includes('unknown') && !row.resumed) {
+  if ((row.draft.productName.toLowerCase().includes('unknown') || row.demo === 'unknown') && !row.resumed) {
     Object.assign(view, { status: 'done', outcome: 'unknown', setupStatus: 'pending', retryAction: 'verify' });
-  } else if (row.draft.basePrice === 999) {
+  } else if (row.draft.basePrice === 999 || row.demo === 'mixed' && view.mall === 'zigzag') {
     Object.assign(view, { status: 'error', outcome: 'failed', setupStatus: 'not_applicable', retryAction: 'new_request', code: 'invalid_request' });
   } else {
     const productId = view.productId || String(Number.parseInt(view.jobId.replaceAll('-', '').slice(0, 8), 16) + 1);
     Object.assign(view, { status: 'done', outcome: 'created', productId,
       productUrl: `https://${row.shopId}.cafe24.com/product/detail.html?product_no=${productId}`,
       setupStatus: 'complete', retryAction: 'none', stage: 'activating' });
-    if (row.draft.productName.includes('setup-fail') && !row.resumed) Object.assign(view, { status: 'error', setupStatus: 'needs_attention', retryAction: 'resume', stage: 'setting_inventory', code: 'inventory_failed' });
+    if ((row.draft.productName.includes('setup-fail') || row.demo === 'setup' || row.demo === 'activation') && !row.resumed) Object.assign(view, { status: 'error', setupStatus: 'needs_attention', retryAction: 'resume', stage: 'setting_inventory', code: 'inventory_failed' });
+    if (view.setupStatus === 'complete') view.stages = { activating: { status: 'complete', display: row.draft.salesOverrides?.listingMode === 'ON_SALE' ? 'T' : 'F', selling: row.draft.salesOverrides?.listingMode === 'ON_SALE' && row.draft.defaultQuantity > 0 ? 'T' : 'F' } };
+    else if (row.demo === 'activation') Object.assign(view, { stage: 'activating', code: 'activation_unconfirmed', retryAction: 'open_admin', stages: { activating: { status: 'unknown', sentAt: view.finishedAt } } });
     if (DB.mallConnections[view.mall]?.connectionVersion === row.connectionVersion) DB.mallConnections[view.mall].lastRegisteredAt = view.finishedAt;
   }
+  persistMockMalls();
 }
 
 export const api = {
   async listMalls() {
+    seedRegistrationDemo();
     return { items: [...['zigzag', 'cafe24', 'ably'].map((mall) => ({ ...connectionView(mall), addressesRevision: DB.mallDefaults[mall]?.revision || 0,
       connectionVersion: DB.mallConnections[mall]?.connectionVersion || null, registration: registrationCapability(mall) })),
     { mall: 'smartstore', status: 'unavailable', addressesRevision: 0, connectionVersion: null, registration: { status: 'preparing' } }] };
@@ -483,10 +513,11 @@ export const api = {
     const available = capability.status === 'available';
     return { mall, status: capability.status, catalogVersion: available ? 'mock-catalog-v1' : null, complete: available,
       categories: available ? [{ categoryId: '1', name: '상의', parentCategoryId: null, depth: 1 }, { categoryId: '27', name: '니트', parentCategoryId: '1', depth: 2 }] : [],
-      priceBasis: available ? 'A' : null, imageRatio: available ? { width: 1000, height: 1000 } : null,
+      priceBasis: available ? registrationDemo() === 'tax-excluded' ? 'B' : 'A' : null, imageRatio: available ? { width: 1000, height: 1000 } : null,
       capabilities: available ? { options: true, maxVariants: 200, maxAdditionalImages: 4, shippingSource: 'mall' } : {}, issues: null };
   },
   async preflightMallRegistration(input) {
+    seedRegistrationDemo();
     const draft = normalizedDraft(input), items = [];
     for (const mall of draft.selectedMalls) {
       const capability = registrationCapability(mall), item = { mall, status: 'blocked', issues: [], warnings: [] };
@@ -498,9 +529,13 @@ export const api = {
       else if (!publication || publication.status !== 'ready') item.issues.push(issue('publication_required', 'publicationId', '상세페이지를 먼저 게시해 주세요', 'choose_image'));
       else if (publication.editorRevision !== draft.editorRevision) item.issues.push(issue('editor_revision_changed', 'editorRevision', '편집본이 바뀌었어요. 저장하고 다시 확인해 주세요', 'choose_image'));
       else if (!draft.mainAssetId) item.issues.push(issue('main_image_required', 'mainAssetId', '대표 이미지를 골라 주세요', 'choose_image'));
-      else {
+      else if (mall === 'zigzag' && registrationDemo() === 'partial' && resolveMallNotice({ blocks: DB.editorBlocks, product: { ...DB.product, materials: DB.analysis?.materials }, defaults: DB.mallSalesDefaults || {} }).missingCount) {
+        const notice = resolveMallNotice({ blocks: DB.editorBlocks, product: { ...DB.product, materials: DB.analysis?.materials }, defaults: DB.mallSalesDefaults || {} });
+        item.issues = notice.fields.filter((field) => !field.value).map((field) => issue('notice_missing', `notice.${field.key}`, `${field.label}을 채워 주세요`, 'fill_notice'));
+      } else {
         const catalog = await api.getMallRegistrationCatalog(mall);
-        if (draft.categories[mall] && !catalog.categories.some((c) => c.categoryId === draft.categories[mall].categoryId)) item.issues.push(issue('category_changed', `categories.${mall}`, '카테고리를 다시 골라 주세요', 'choose_category'));
+        if (catalog.priceBasis === 'B' && draft.priceOverrides[mall]?.basis !== 'tax_excluded') item.issues.push(issue('price_basis_required', `priceOverrides.${mall}`, '카페24 상품가, 세금 제외 금액을 확인해 주세요', 'edit_price'));
+        else if (draft.categories[mall] && !catalog.categories.some((c) => c.categoryId === draft.categories[mall].categoryId)) item.issues.push(issue('category_changed', `categories.${mall}`, '카테고리를 다시 골라 주세요', 'choose_category'));
         else Object.assign(item, { status: 'ready', sourceVersions: { connectionVersion: DB.mallConnections[mall].connectionVersion,
           salesDefaultsRevision: DB.mallSalesDefaults?.revision || 0, mallDefaultsRevision: DB.mallDefaults[mall]?.revision || 0, catalogVersion: catalog.catalogVersion, editorRevision: draft.editorRevision },
           summary: { variantCount: (DB.product?.colors?.length || 1) * draft.sizes.length, price: draft.priceOverrides[mall]?.amount || draft.basePrice, shippingSource: 'mall' } });
@@ -534,12 +569,14 @@ export const api = {
     DB.mallRegistrationBatches[batchId] = { hash, receipt: clone(receipt) };
     for (const item of items.filter((i) => i.status === 'accepted')) {
       const connection = DB.mallConnections[item.mall];
-      const row = { draft: clone(draft), shopId: connection.shopId, connectionVersion: connection.connectionVersion, resumeKeys: [],
+      const row = { demo: registrationDemo(), draft: clone(draft), shopId: connection.shopId, connectionVersion: connection.connectionVersion, resumeKeys: [],
         view: { jobId: item.jobId, mall: item.mall, status: 'pending', progress: 0, stage: null, outcome: null, setupStatus: 'pending',
           productId: null, productUrl: null, adminUrl: `https://${connection.shopId}.cafe24.com/admin`, stages: {}, retryAction: 'none', code: null,
           warnings: [], retention: null, publicationId: draft.publicationId, createdAt: receipt.acceptedAt, finishedAt: null } };
       DB.mallRegistrations.push(row); void wait(2000).then(() => completeMockRegistration(row));
     }
+    persistMockMalls();
+    if (registrationDemo() === 'lost') throw new Error('접수 응답을 받지 못했어요');
     return receipt;
   },
   async getMallRegistrationBatch(batchId) {
@@ -555,7 +592,7 @@ export const api = {
     if (!['unknown', 'duplicate_suspected'].includes(row.view.outcome) || !['done', 'error', 'cancelled'].includes(row.view.status)) throw mallError('not_verifiable', '등록 여부를 다시 확인할 수 없는 상태예요', 409);
     row.verifyCount = (row.verifyCount || 0) + 1;
     if (row.verifyCount > 1) Object.assign(row.view, { outcome: 'created', productId: '1001', setupStatus: 'needs_attention', retryAction: 'resume', productUrl: `https://${row.shopId}.cafe24.com/product/detail.html?product_no=1001` });
-    return clone(row.view);
+    persistMockMalls(); return clone(row.view);
   },
   async resumeMallRegistration(jobId, { requestKey }) {
     const row = registrationRow(jobId);
@@ -564,9 +601,10 @@ export const api = {
     if (row.view.retryAction !== 'resume') throw mallError('registration_not_resumable', '이 작업은 설정을 이어 할 수 없어요', 409);
     row.resumeKeys.push(requestKey); row.resumed = true;
     Object.assign(row.view, { status: 'pending', progress: 0, outcome: null, setupStatus: 'pending', retryAction: 'none', code: null, finishedAt: null });
-    void wait(2000).then(() => completeMockRegistration(row)); return clone(row.view);
+    void wait(2000).then(() => completeMockRegistration(row)); persistMockMalls(); return clone(row.view);
   },
   async listMallRegistrations(projectId) {
+    if (registrationDemo() === 'history-error') throw new Error('이전 등록을 불러오지 못했어요');
     const rows = DB.mallRegistrations.filter((row) => row.draft.projectId === projectId).slice().reverse();
     const recoveries = rows.filter((row) => row.view.mall === 'cafe24' && row.shopId === DB.mallConnections.cafe24?.shopId
       && (['pending', 'running'].includes(row.view.status) || ['unknown', 'duplicate_suspected'].includes(row.view.outcome) || row.view.setupStatus === 'needs_attention'));
@@ -1555,12 +1593,25 @@ export const api = {
   },
 
   /* ---- editor (PRD §10) ---- */
-  async getEditorBlocks(/* projectId */) { await wait(180); return clone(DB.editorBlocks); },
+  async getEditorBlocks(projectId) {
+    await wait(180);
+    mockEditorRevisions.set(projectId, DB.project.editorRevision || 0);
+    return clone(DB.editorBlocks).map((block) => ({ ...block, elements: block.elements.map(registrationImage) }));
+  },
+  async peekEditorRevision() { return DB.project.editorRevision || 0; },
+  editorRevisionOf(projectId) { return mockEditorRevisions.get(projectId) ?? null; },
   // 에디터 상태 영속화 (계약 §6) — 저장 버튼·자동 저장이 호출. 세션 내 재진입 시 편집 유지.
-  async saveEditorBlocks(_projectId, blocks) { await wait(200); DB.editorBlocks = clone(blocks); touch(); },
+  async saveEditorBlocks(projectId, blocks) {
+    await wait(200);
+    if (!sameEditorJson(DB.editorBlocks, blocks)) {
+      DB.editorBlocks = clone(blocks); DB.project.editorRevision = (DB.project.editorRevision || 0) + 1; touch();
+    }
+    mockEditorRevisions.set(projectId, DB.project.editorRevision || 0);
+  },
   async getWardrobe(projectId) {
     await wait(160);
-    return mergeWardrobeGifs(clone(DB.wardrobe), clone(DB.wardrobeGifs[projectId] || []));
+    const wardrobe = mergeWardrobeGifs(clone(DB.wardrobe), clone(DB.wardrobeGifs[projectId] || []));
+    return Object.fromEntries(Object.entries(wardrobe).map(([key, images]) => [key, images.map(registrationImage)]));
   },
   async saveWardrobeGif(projectId, result, options = {}) {
     const image = await uploadWardrobeGif(projectId, result, this.uploadPhoto.bind(this), options);

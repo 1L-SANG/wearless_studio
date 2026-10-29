@@ -99,9 +99,9 @@ test('expiry and error colors outrank shared modal paragraph styles', () => {
 });
 test('renders subscription keep label when expiresAt null', async () => {
   const h = harness(); await h.ready(); assert.match(h.html(), /구독 중 보관/);
-  const registered = harness({ registrations: [{ outcome: 'created', status: 'error', productNo: 123, productUrl: 'https://myshop.cafe24.com/product/123', finishedAt: '2026-10-26T00:00:00Z' }] });
-  await registered.ready(); assert.match(registered.html(), /마지막 등록 카페24 · 상품 123 · 2026.10.26/);
-  assert.match(registered.html(), /자사몰에서 보기 ›/);
+  const registered = harness({ registrations: [{ jobId: 'registered-job', mall: 'cafe24', outcome: 'created', status: 'done', setupStatus: 'complete', productId: '123', productUrl: 'https://myshop.cafe24.com/product/123', finishedAt: '2026-10-26T00:00:00Z' }] });
+  await registered.ready(); assert.match(registered.html(), /마지막 등록 카페24 · 상품 123 · 완료 · 2026.10.26/);
+  assert.match(registered.html(), /상품 보기 ›/);
   registered.changeUser('another'); assert.doesNotMatch(renderToStaticMarkup(registered.render()), /마지막 등록 카페24/);
 });
 test('delete confirm copy present', async () => {

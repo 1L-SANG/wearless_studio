@@ -192,17 +192,17 @@ test('menu order includes cafe24 between zigzag and ably', async () => {
   assert.deepEqual(buildExportMenuItems(options()).map((item) => item.id), ['download', 'paste', 'zigzag', 'cafe24', 'ably', 'gif']);
 });
 
-test('cafe24 connects or reconnects while registration waits for A05', async () => {
+test('cafe24 connects or reconnects and available registration uses the shared handler', async () => {
   const { buildExportMenuItems } = await load();
   let registered = 0, connected = 0;
-  const item = (malls) => buildExportMenuItems(options({ malls, onRegisterCafe24: () => registered++, onConnect: () => connected++ })).find((entry) => entry.id === 'cafe24');
+  const item = (malls) => buildExportMenuItems(options({ malls, onRegisterMall: (mall) => { assert.equal(mall, 'cafe24'); registered++; }, onConnect: () => connected++ })).find((entry) => entry.id === 'cafe24');
   for (const [status, label, kind] of [['none', '카페24 연결하기', 'go'], ['connected', '카페24에 상품 등록', 'action'], ['reconnect_required', '카페24 다시 연결하기', 'go']]) {
-    const entry = item({ items: [{ mall: 'cafe24', status }] });
+    const entry = item({ items: [{ mall: 'cafe24', status, registration: { status: 'available' } }] });
     assert.equal(entry.label, label); assert.equal(entry.kind, kind);
-    if (status === 'connected') { assert.equal(entry.disabled, true); assert.equal(entry.badge, '준비 중'); assert.equal(entry.onSelect, undefined); }
+    if (status === 'connected') { assert.equal(entry.disabled, false); assert.equal(entry.badge, undefined); entry.onSelect(); }
     else { assert.ok(!entry.disabled); entry.onSelect(); }
   }
-  assert.equal(registered, 0); assert.equal(connected, 2);
+  assert.equal(registered, 1); assert.equal(connected, 2);
   for (const malls of [undefined, { disabled: true }, { loading: true }, { items: [{ mall: 'cafe24', status: 'unavailable' }] }]) {
     const entry = item(malls); assert.equal(entry.disabled, true); assert.equal(entry.badge, '준비 중');
   }

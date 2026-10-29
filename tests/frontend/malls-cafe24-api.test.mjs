@@ -64,9 +64,9 @@ test('peekEditorRevision does not touch revision sync', async (t) => {
   }
 });
 
-test('mock peekEditorRevision keeps the revision unknown and editor blocks unchanged', async () => {
+test('mock peekEditorRevision exposes current revision without changing loaded blocks', async () => {
   const before = structuredClone(db.editorBlocks);
-  assert.equal(await mock.peekEditorRevision('project-local'), null);
+  assert.equal(await mock.peekEditorRevision('project-local'), 0);
   assert.equal(mock.editorRevisionOf('project-local'), null);
   assert.deepEqual(db.editorBlocks, before);
 });
