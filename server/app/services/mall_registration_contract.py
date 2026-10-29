@@ -3,6 +3,7 @@ from copy import deepcopy
 import hashlib
 import json
 import unicodedata
+from pathlib import Path
 from typing import Literal, TypedDict
 from uuid import UUID
 
@@ -13,6 +14,7 @@ from .mall_defaults import mall_default_fields, normalize_mall_defaults, mall_de
 MAX_AMOUNT = 2_147_483_647
 MALLS = ('cafe24', 'zigzag', 'ably')
 NOTICE_FIELDS = ('name', 'materials', 'colors', 'sizes', 'maker', 'origin', 'care', 'madeAt', 'warranty', 'contact')
+MEASUREMENT_LABELS = json.loads((Path(__file__).resolve().parents[1] / 'data' / 'measurement_labels.json').read_text(encoding='utf-8'))
 SETUP_STAGES = ('mapping_variants', 'setting_inventory', 'uploading_thumbnail', 'uploading_additional_images', 'activating')
 
 
@@ -226,7 +228,7 @@ def resolve_notice(blocks: list[dict], product: dict, defaults: dict) -> NoticeR
         info = block.get('info') or {}
         if block.get('kind') == 'size':
             for row in info.get('rows', []):
-                actual = ', '.join(f'{k} {v}' for k, v in (row.get('values') or {}).items() if str(v).strip() and v is not None)
+                actual = ', '.join(f'{MEASUREMENT_LABELS.get(k, k)} {v}' for k, v in (row.get('values') or {}).items() if str(v).strip() and v is not None)
                 if actual:
                     measurements.append(f"{row.get('label', '')}: {actual} {info.get('unit', 'cm')}")
         if block.get('kind') == 'care':

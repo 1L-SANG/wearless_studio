@@ -4,8 +4,9 @@ import styles from './MallRegisterModal.module.css';
 const STAGES = { preparing: '등록 준비', creating: '상품 생성', mapping_variants: '옵션 확인', setting_inventory: '재고 설정', uploading_thumbnail: '대표 이미지', uploading_additional_images: '추가 이미지', activating: '진열과 판매 설정' };
 export function registrationResultLabel(view) {
   if (registrationActive(view)) return '등록 중';
-  if (['unknown', 'duplicate_suspected'].includes(view?.outcome)) return '등록 여부 확인 필요';
-  if (view?.outcome === 'created') return view.setupStatus === 'complete' ? '완료' : '설정 확인 필요';
+  if (view?.outcome === 'unknown') return '상품 생성 미확인';
+  if (view?.outcome === 'duplicate_suspected') return '중복 상품 가능성';
+  if (view?.outcome === 'created') return view.setupStatus === 'complete' ? '완료' : '상품 생성됨';
   return '못 올림';
 }
 export function MallRegisterResults({ batch, onVerify, onResume, onRetryFailed }) {
@@ -21,11 +22,12 @@ export function MallRegisterResults({ batch, onVerify, onResume, onRetryFailed }
           {view?.productId && <p>상품 번호 {view.productId}</p>}
           {active && <p>{STAGES[view.stage] || '등록 준비'} · {view.progress || 0}%</p>}
           {!active && view?.outcome === 'created' && view.setupStatus === 'needs_attention' && <p>{uncertainActivation
-            ? '상품은 만들어졌어요. 판매 상태를 확인해 주세요'
-            : view.stage === 'setting_inventory' && !view.stages?.activating?.sentAt ? '상품은 만들어졌어요. 재고 설정을 마치지 못해 진열과 판매를 꺼 두었어요'
-              : '상품은 만들어졌어요. 설정과 판매 상태를 확인해 주세요'}</p>}
+            ? '판매 상태를 몰 관리자에서 확인해 주세요'
+            : view.stage === 'setting_inventory' && !view.stages?.activating?.sentAt ? '재고 설정을 마치지 못해 진열과 판매를 꺼 두었어요'
+              : '설정과 판매 상태를 확인해 주세요'}</p>}
+          {!active && ['unknown', 'duplicate_suspected'].includes(view?.outcome) && <p>다시 올리기 전에 몰에서 상품을 확인해 주세요.</p>}
           {!active && view?.outcome === 'created' && view.setupStatus === 'complete' && <p>{view.stages?.activating?.display === 'T' ? '진열 켬' : view.stages?.activating?.display === 'F' ? '진열 안 함' : '진열 상태는 관리자에서 확인해 주세요'} · {view.stages?.activating?.selling === 'T' ? '판매 켬' : view.stages?.activating?.selling === 'F' ? '판매 안 함' : '판매 상태 확인 필요'}</p>}
-          {!active && view?.stage && view.setupStatus !== 'complete' && <p>{STAGES[view.stage] || '등록 처리'} 단계 확인 필요</p>}
+          {!active && view?.outcome === 'failed' && view.stage && view.setupStatus !== 'complete' && <p>{STAGES[view.stage] || '등록 처리'} 단계 확인 필요</p>}
           {item.issues?.map((issue, index) => <p key={index}>{issue.message}</p>)}
           {view?.warnings?.map((warning, index) => <p key={index}>{typeof warning === 'string' ? warning : warning.message}</p>)}
           {view?.retention && <p className={styles.notice}>{view.retention.message || (view.retention.expiresAt ? `${new Date(view.retention.expiresAt).toLocaleDateString('ko-KR')}까지 상세 이미지를 보관해요` : '상세 이미지 보관 안내를 확인해 주세요')}</p>}

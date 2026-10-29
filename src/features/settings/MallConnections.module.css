@@ -38,8 +38,7 @@
 .dialog .danger { color: var(--accent-error); }
 .detailHead { margin-bottom: var(--sp-24); background: var(--bg-1); border-radius: var(--r-6); box-shadow: var(--elev-card); }
 .salesCard { background: var(--bg-1); border-radius: var(--r-6); box-shadow: var(--elev-card); padding: var(--sp-24); }
-.salesCard h2, .cardHead h2 { font-size: 20px; line-height: 1.4; margin: 0; text-wrap: balance; }
-.cardIntro { color: var(--fg-2-read); font-size: 14px; margin: var(--sp-4) 0 0; }
+.salesCard h2 { font-size: 20px; line-height: 1.4; margin: 0; text-wrap: balance; }
 .cardHead { padding: var(--sp-24) var(--sp-20) var(--sp-8); }
 .salesGroup { padding: var(--sp-20) 0; box-shadow: 0 1px var(--ring); }
 .groupHead { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8) var(--sp-12); margin-bottom: var(--sp-12); }
@@ -64,7 +63,7 @@
 .errorSummary a { display: block; color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .errorSummary:focus { outline: 2px solid var(--focus); outline-offset: 3px; }
 .salesCard input, .salesCard fieldset { scroll-margin-block: var(--sp-24); }
-.srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.srOnly, .singleFieldGroup .field > span:first-child { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .field input:focus-visible, .field select:focus-visible, .manage:focus-visible, .reveal:focus-visible, .goLink:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 @media (max-width: 640px) {
   .page { padding: 28px 16px 48px; }

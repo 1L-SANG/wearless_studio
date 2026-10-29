@@ -94,7 +94,7 @@ export function MallDefaultsForm({ mall, defaults = {}, onSaved }) {
           {field('shipping', 'jejuFee', '제주 추가', '원')}{field('shipping', 'isolatedFee', '도서산간 추가', '원')}
         </div>
       </section>
-      <section className={styles.salesGroup}><div className={styles.groupHead}><h3>발송 소요일</h3></div>
+      <section className={`${styles.salesGroup} ${styles.singleFieldGroup}`}><div className={styles.groupHead}><h3>발송 소요일</h3></div>
         <div className={styles.fields}>{field(null, 'shippingDays', '주문 뒤 발송까지', '일')}</div>
       </section>
       <section className={styles.salesGroup}><div className={styles.groupHead}><h3>반품비와 교환비</h3></div>
@@ -105,7 +105,7 @@ export function MallDefaultsForm({ mall, defaults = {}, onSaved }) {
           {field('disclosure', 'asManager', 'A/S 책임자')}{field('disclosure', 'phone', '전화번호')}</div>
         <div className={styles.warrantyField}>{field('disclosure', 'warrantyText', '품질보증기준')}</div>
       </section>
-      <section className={styles.salesGroup}><div className={styles.groupHead}><h3>반품지</h3></div>
+      <section className={`${styles.salesGroup} ${styles.singleFieldGroup}`}><div className={styles.groupHead}><h3>반품지</h3></div>
         {addresses.isPending ? <p role="status" className={styles.help}>주소록을 가져오는 중이에요</p> : addresses.error
           ? <div role="alert"><p className={styles.error}>{addresses.error.message}</p><Button onClick={() => addresses.refetch()}>다시 확인</Button></div>
           : <label className={styles.field} htmlFor="mall-return-address"><span>반품지</span>
@@ -117,12 +117,12 @@ export function MallDefaultsForm({ mall, defaults = {}, onSaved }) {
         <p className={styles.help}>지그재그 파트너센터 주소록에서 골라요.</p>
       </section>
       </>}
-      {mall === 'cafe24' && <section className={styles.salesGroup}><div className={styles.groupHead}><h3>원산지 기본값</h3></div>
+      {mall === 'cafe24' && <section className={`${styles.salesGroup} ${styles.singleFieldGroup}`}><div className={styles.groupHead}><h3>원산지 기본값</h3></div>
         {field('disclosure', 'country', '제조국')}
         <p className={styles.help}>에디터 고시에 제조국이 있으면 그 값을 써요.</p>
       </section>}
       <section className={styles.salesGroup}><div className={styles.groupHead}><h3>{mall === 'zigzag' ? '과세와 상품 출처' : '과세'}</h3></div>
-        <div className={styles.fields}><div className={styles.field}><span>과세</span>{radios(null, 'taxType', '과세', [['TAX', '과세'], ['FREE', '면세']])}</div>
+        <div className={styles.fields}><div className={styles.field}>{mall === 'zigzag' && <span>과세</span>}{radios(null, 'taxType', '과세', [['TAX', '과세'], ['FREE', '면세']])}</div>
           {mall === 'zigzag' && <div className={styles.field}><span>상품 출처</span>{radios(null, 'productOrigin', '상품 출처', [['domestic', '국내 사입'], ['imported', '직접 수입']])}</div>}</div>
       </section>
       <section className={styles.salesGroup}><div className={styles.groupHead}><h3>등록 직후</h3></div>

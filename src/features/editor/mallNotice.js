@@ -1,4 +1,5 @@
 import { NOTICE_FIELDS, NEEDS_INPUT, defaultInfoFor, rebuildInfoBlock } from './presets/infoPresets.js';
+import { MEASUREMENT_LABELS } from '../../lib/measurementSchema.js';
 
 export const noticeValue = (value) => {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -15,7 +16,7 @@ export function resolveMallNotice({ blocks = [], product = {}, defaults = {} }) 
     contact: disclosure.asManager && disclosure.phone ? `${disclosure.asManager} ${disclosure.phone}` : '',
     warranty: disclosure.warrantyText };
   const measurements = blocks.filter((block) => block.kind === 'size').flatMap((block) => (block.info?.rows || []).flatMap((row) => {
-    const values = Object.entries(row.values || {}).filter(([, value]) => value != null && noticeValue(value)).map(([key, value]) => `${key} ${value}`).join(', ');
+    const values = Object.entries(row.values || {}).filter(([, value]) => value != null && noticeValue(value)).map(([key, value]) => `${MEASUREMENT_LABELS[key] || key} ${value}`).join(', ');
     return values ? [`${row.label || ''}: ${values} ${block.info.unit || 'cm'}`] : [];
   })).join('; ');
   const care = blocks.find((block) => block.kind === 'care' && noticeValue(block.info?.text))?.info.text;

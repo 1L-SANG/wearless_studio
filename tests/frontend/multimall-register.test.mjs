@@ -63,17 +63,18 @@ test('notice and size edits save then republish before admission', async () => {
   const { resolveMallNotice, patchNoticeBlocks } = await import('../../src/features/editor/mallNotice.js');
   const { patchRegistrationSizes, prepareMallRegisterDraft } = await loadDraft();
   const { buildInfoBlock } = await import('../../src/features/editor/presets/infoPresets.js');
-  const size = { ...buildInfoBlock('size_table', { columns: ['chest'], rows: [{ label: 'FREE', values: { chest: 52 } }] }), sectionId: 'section', sectionLayout: 'columns', layoutRowId: 'row' };
+  const size = { ...buildInfoBlock('size_table', { columns: ['totalLength', 'shoulderWidth', 'chestWidth'], rows: [{ label: 'FREE', values: { totalLength: 64, shoulderWidth: 42, chestWidth: 52, hipWidth: 50, waistWidth: 0, sleeveLength: null, hemWidth: '' } }] }), sectionId: 'section', sectionLayout: 'columns', layoutRowId: 'row' };
   const old = buildInfoBlock('required_notice', { fields: [{ key: 'name', label: '품명', value: '직접 쓴 이름' }] });
   const resolution = resolveMallNotice({ blocks: [size, old], product: { name: '셔츠', colors: [{ id: 'white', name: '화이트' }] }, defaults: { disclosure: { asManager: '담당', phone: '02-111', manufacturer: '제조자' } } });
   assert.equal(resolution.fields.find((f) => f.key === 'name').value, '직접 쓴 이름');
   for (const key of ['madeAt', 'warranty']) assert.equal(resolution.fields.find((f) => f.key === key).value, '');
   assert.equal(resolution.fields.find((f) => f.key === 'contact').value, '담당 02-111');
-  assert.equal(resolution.fields.find((f) => f.key === 'sizes').value, 'FREE: chest 52 cm');
+  assert.equal(resolution.fields.find((f) => f.key === 'sizes').value, 'FREE: 총장 64, 어깨너비 42, 가슴단면 52, 힙단면 50, 허리단면 0 cm');
   const empty = resolveMallNotice({ blocks: [], product: {} });
   assert.equal(empty.fields.find((f) => f.key === 'sizes').value, '');
   const notices = patchNoticeBlocks([size, old], { fields: resolution.fields.map((f) => ({ ...f, value: f.key === 'madeAt' ? '2025년 1월' : f.value })) }, {});
   assert.equal(notices[1].id, old.id); assert.ok(notices[1].elements.some((e) => e.text === '2025년 1월'));
+  assert.equal(notices[1].info.fields.find((f) => f.key === 'sizes').value, resolution.fields.find((f) => f.key === 'sizes').value);
   const blocks = patchRegistrationSizes(notices, ['M', 'XL'], {});
   assert.equal(blocks[0].id, size.id); assert.equal(blocks[0].sectionId, 'section'); assert.equal(blocks[0].layoutRowId, 'row');
   assert.deepEqual(blocks[0].info.rows[0].values, {}); assert.deepEqual(blocks[0].info.rows[1].values, {});
@@ -173,9 +174,17 @@ test('mixed results retry only failed mall and resume setup on the same job', as
   if (previousStorage === undefined) delete globalThis.sessionStorage; else globalThis.sessionStorage = previousStorage;
   const { MallRegisterResults } = await vite.ssrLoadModule('/src/features/editor/MallRegisterResults.jsx');
   const resultHtml = (view) => renderToStaticMarkup(React.createElement(MallRegisterResults, { batch: { items: [{ mall: 'cafe24', jobId: view.jobId, registration: view }] } }));
-  assert.match(resultHtml({ jobId: 'setup', mall: 'cafe24', status: 'done', outcome: 'created', setupStatus: 'needs_attention', retryAction: 'resume', stage: 'setting_inventory', stages: {} }), /재고 설정을 마치지 못해 진열과 판매를 꺼 두었어요/);
+  const setupHtml = resultHtml({ jobId: 'setup', mall: 'cafe24', status: 'done', outcome: 'created', setupStatus: 'needs_attention', retryAction: 'resume', stage: 'setting_inventory', stages: {} });
+  assert.match(setupHtml, /상품 생성됨/); assert.match(setupHtml, /재고 설정을 마치지 못해 진열과 판매를 꺼 두었어요/);
+  assert.doesNotMatch(setupHtml, /설정 확인 필요|상품은 만들어졌어요|단계 확인 필요/);
   const activationHtml = resultHtml({ jobId: 'activation', mall: 'cafe24', status: 'done', outcome: 'created', setupStatus: 'needs_attention', retryAction: 'open_admin', stage: 'activating', stages: { activating: { status: 'unknown', sentAt: 'now' } } });
-  assert.match(activationHtml, /판매 상태를 확인해 주세요/); assert.doesNotMatch(activationHtml, /꺼 두었어요/);
+  assert.match(activationHtml, /판매 상태를 몰 관리자에서 확인해 주세요/); assert.doesNotMatch(activationHtml, /꺼 두었어요|단계 확인 필요/);
+  for (const outcome of ['unknown', 'duplicate_suspected']) {
+    const markup = resultHtml({ jobId: 'unknown', mall: 'cafe24', status: 'done', outcome, retryAction: 'verify', stage: 'creating' });
+    assert.match(markup, outcome === 'unknown' ? /상품 생성 미확인/ : /중복 상품 가능성/);
+    assert.match(markup, /다시 올리기 전에 몰에서 상품을 확인해 주세요/);
+    assert.doesNotMatch(markup, /등록 여부 확인 필요|단계 확인 필요/);
+  }
   const previousLocation = globalThis.location;
   try {
     for (const demo of ['partial', 'mixed', 'unknown', 'setup', 'activation', 'lost']) {

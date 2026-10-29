@@ -27,6 +27,10 @@ test('registration modal restores history before saving and preparing the clicke
   assert.deepEqual(calls, ['history']); assert.deepEqual(h.order, ['save', 'publish']);
   const tree = h.render(), fields = walk(tree).find((node) => node.type === 'fields');
   assert.deepEqual(fields.props.draft.selectedMalls, ['cafe24']); assert.equal(fields.props.draft.editorRevision, 2);
+  assert.match(h.html(), /에이블리 준비 중/); assert.doesNotMatch(h.html(), /에이블리 연결 필요/);
+  const choices = walk(tree).filter((node) => node.type === 'input' && node.props.type === 'checkbox');
+  assert.equal(choices.length, 3); assert.equal(choices[0].props.checked, true); assert.equal(choices[2].props.disabled, true);
+  assert.ok(choices.every((node) => node.props.tabIndex !== -1 && !node.props['aria-hidden']));
   const result = await harness({ listMallRegistrations: async () => { throw new Error('history unavailable'); } });
   result.render(); result.runtime.flushEffects(); await delay(); assert.deepEqual(result.order, []); assert.match(result.html(), /history unavailable/);
 });

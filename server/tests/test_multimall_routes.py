@@ -350,13 +350,17 @@ def test_snapshot_freezes_catalog_settings_and_unicode_product_name():
 def test_saved_editor_size_and_care_blocks_use_native_kind_contract():
     c=contract();s=source()
     # Exact persisted shape emitted by buildSizeTable and buildCare, without infoType.
-    blocks=[{'kind':'size','info':{'rows':[{'label':'M','values':{'chest':52}},{'label':'L','values':{'chest':55}}],'unit':'cm'}},
+    blocks=[{'kind':'size','info':{'rows':[
+                {'label':'M','values':{'totalLength':64,'shoulderWidth':42,'chestWidth':52,'hipWidth':50,'waistWidth':0,'sleeveLength':None,'hemWidth':''}},
+                {'label':'L','values':{'totalLength':66,'chestWidth':55}}],'unit':'cm'}},
             {'kind':'care','info':{'text':'중성세제로 손세탁. 케어라벨을 확인해주세요.'}}]
     s['project']['editor_blocks']=blocks
     d=c.normalize_register_draft(draft(sizes=['M','L']))
     snapshot=c.freeze_registration(d,source=s,facts=facts())
     assert [v['size'] for v in snapshot['variants']]==['M','L']
-    assert 'M: chest 52 cm' in snapshot['notice']['fields']['sizes']
+    expected='M: 총장 64, 어깨너비 42, 가슴단면 52, 힙단면 50, 허리단면 0 cm; L: 총장 66, 가슴단면 55 cm'
+    assert snapshot['notice']['fields']['sizes']==expected
+    assert c.freeze_registration(d,source=s,facts=facts('zigzag'))['notice']['fields']['sizes']==expected
     assert snapshot['notice']['fields']['care']=='중성세제로 손세탁. 케어라벨을 확인해주세요.'
     with pytest.raises(ValueError):c.freeze_registration(c.normalize_register_draft(draft()),source=s,facts=facts())
 

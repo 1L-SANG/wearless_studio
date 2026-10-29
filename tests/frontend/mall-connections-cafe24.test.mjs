@@ -27,7 +27,7 @@ test('zigzag row keeps existing five states after generalization', async () => {
 
 test('cafe24 row renders none editing starting connected failed reconnect states', async () => {
   const { MallConnectionRow, MallIdField } = await load();
-  for (const [state, copy] of [['none', '연결하기'], ['editing', '몰 아이디'], ['starting', '설치 시작 중'], ['connected', '카페24 · myshop'], ['failed', '몰 아이디가 달라요'], ['reconnect_required', '다시 연결']]) {
+  for (const [state, copy] of [['none', '연결하기'], ['editing', '몰 아이디'], ['starting', '설치 시작 중'], ['connected', '카페24 · 니트 스토어'], ['failed', '몰 아이디가 달라요'], ['reconnect_required', '다시 연결']]) {
     const markup = html(React.createElement(MallConnectionRow, { mall: 'cafe24', title: '카페24', state, connection,
       error: state === 'failed' ? '몰 아이디가 달라요' : '', submitLabel: '카페24에서 앱 설치',
       children: React.createElement(MallIdField, { value: 'myshop' }) }));
@@ -38,11 +38,18 @@ test('cafe24 row renders none editing starting connected failed reconnect states
 test('v2 connection rows show store identity and only relevant connection details', async () => {
   const { MallConnectionRow } = await load();
   const cafe24 = html(React.createElement(MallConnectionRow, { mall: 'cafe24', title: '카페24', state: 'connected', connection }));
-  assert.match(cafe24, /카페24 · myshop/);
+  assert.match(cafe24, /카페24 · 니트 스토어/); assert.match(cafe24, /몰 아이디 myshop/);
   assert.match(cafe24, /판매 정보 채움/); assert.match(cafe24, /판매 정보 ›/);
   assert.doesNotMatch(cafe24, /권한|인증키 끝자리|연결한 날|마지막 등록/);
   const zigzag = html(React.createElement(MallConnectionRow, { state: 'connected', connection: { ...connection, keyHint: '12345678' } }));
   assert.match(zigzag, /지그재그 · 니트 스토어/); assert.match(zigzag, /인증키 끝자리 12345678/);
+  for (const detail of [false, true]) {
+    const props = { detail, mall: 'cafe24', title: '카페24', state: 'connected', connection };
+    const markup = html(React.createElement(MallConnectionRow, props));
+    assert.match(markup, /카페24 · 니트 스토어/); assert.match(markup, /몰 아이디 myshop/);
+    const fallback = html(React.createElement(MallConnectionRow, { ...props, connection: { ...connection, shopName: '' } }));
+    assert.match(fallback, /카페24 · myshop/);
+  }
 });
 
 test('cafe24 start button disabled while starting', async () => {

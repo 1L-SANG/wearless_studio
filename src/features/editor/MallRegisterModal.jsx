@@ -212,9 +212,9 @@ export function MallRegisterModal({ projectId, product, blocks, assets, malls, i
       {!resultMode && draft && <>
         <fieldset className={styles.mallChoices} disabled={busy}><legend className={styles.srOnly}>등록할 쇼핑몰</legend>{['cafe24', 'zigzag', 'ably'].map((mall) => {
           const connection = connections?.items?.find((item) => item.mall === mall), preparing = connection?.registration?.status !== 'available' || items.find((item) => item.mall === mall)?.status === 'preparing';
-          return <label key={mall}><img src={`/assets/malls/${mall}-48.png`} alt="" className={styles.logo} /><span>{MALL_LABELS[mall]}{preparing ? connection?.status === 'connected' ? ' 준비 중' : ' 연결 필요' : ''}</span>
+          return <label key={mall}><img src={`/assets/malls/${mall}-48.png`} alt="" className={styles.logo} /><span>{MALL_LABELS[mall]}{mall === 'ably' ? ' 준비 중' : preparing ? connection?.status === 'connected' ? ' 준비 중' : ' 연결 필요' : ''}</span>
             <input type="checkbox" data-field={mall === initialMall ? 'selectedMalls' : undefined} checked={draft.selectedMalls.includes(mall) && !preparing} disabled={busy || preparing || Boolean(retryMall) && mall !== retryMall}
-              onChange={(event) => change({ ...draftRef.current, selectedMalls: event.target.checked ? [...draftRef.current.selectedMalls, mall] : draftRef.current.selectedMalls.filter((item) => item !== mall) })} /></label>;
+              onChange={(event) => change({ ...draftRef.current, selectedMalls: event.target.checked ? [...draftRef.current.selectedMalls, mall] : draftRef.current.selectedMalls.filter((item) => item !== mall) })} /><span className={styles.mallCheck} aria-hidden="true">✓</span></label>;
         })}</fieldset>
         <section className={styles.checks} aria-label="몰마다 점검" aria-live="polite">{checking && <p>몰마다 점검 중이에요</p>}{items.map((item) => <div key={item.mall}>
           <img src={`/assets/malls/${item.mall}-48.png`} alt="" className={styles.logo} /><span>{MALL_LABELS[item.mall]} · {item.status === 'ready' ? '준비됐어요' : item.status === 'preparing' ? '준비 중' : item.issues[0]?.message || '입력한 항목을 확인해 주세요'}</span>

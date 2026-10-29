@@ -107,7 +107,10 @@ test('list links connected malls to their own form and preserves editor return s
     assert.doesNotMatch(renderToStaticMarkup(disconnected), /판매 정보/);
   }
   const list = runtime.render(MallConnections);
-  assert.doesNotMatch(renderToStaticMarkup(list), /판매 기본 정보|<input[^>]*name="(shippingDays|country)"/);
+  const listHtml = renderToStaticMarkup(list);
+  assert.doesNotMatch(listHtml, /판매 기본 정보|<input[^>]*name="(shippingDays|country)"/);
+  assert.equal([...listHtml.matchAll(/>쇼핑몰 연결</g)].length, 1);
+  assert.equal([...listHtml.matchAll(/한 번 연결해 두면/g)].length, 1);
   const app = readFileSync(new URL('../../src/apps/seller/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /path="settings\/malls\/:mall" element={<MallSettings \/>}/);
 });
@@ -128,6 +131,7 @@ test('detail redirects unsupported or disconnected malls and keeps returnTo thro
     } else {
       const back = walk(tree).find((node) => node.type === 'a' && node.props.to === '/settings/malls');
       assert.deepEqual(back.props.state, { returnTo });
+      assert.equal(back.props.children, '‹ 쇼핑몰 연결');
       assert.ok(walk(tree).find((node) => node.type === ZigzagConnection && node.props.detail));
       assert.equal(walk(tree).find((node) => node.type === MallDefaultsForm).props.mall, 'zigzag');
     }

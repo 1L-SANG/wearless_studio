@@ -41,7 +41,7 @@ export function MallConnectionRow({ detail = false, returnTo, mall = 'zigzag', l
   const editing = ['editing', 'verifying', 'starting', 'failed'].includes(state);
   const cafe24 = mall === 'cafe24';
   const Heading = detail ? 'h1' : 'h3';
-  const storeName = detail ? connection?.shopName || connection?.mallId : cafe24 ? connection?.mallId : connection?.shopName;
+  const storeName = connection?.shopName || connection?.mallId;
   return <div className={styles.mallRow} data-state={state} ref={rowRef}>
     {logo ? <img className={styles.mallLogo} src={logo} srcSet={`/assets/malls/${mall}-96.png 2x`} alt="" />
       : <span className={styles.mallMark} aria-hidden="true">{cafe24 ? 'C' : 'Z'}</span>}
@@ -49,6 +49,7 @@ export function MallConnectionRow({ detail = false, returnTo, mall = 'zigzag', l
       <div className={styles.mallTitle}><Heading>{title}{state === 'connected' && storeName ? ` · ${storeName}` : ''}</Heading>
         {state === 'reconnect_required' && <span className={styles.warningDot} aria-hidden="true" />}</div>
       {state === 'connected' ? <div className={styles.metadata}>
+        {cafe24 && connection?.mallId && <span>몰 아이디 {connection.mallId}</span>}
         {!cafe24 && <span>인증키 끝자리 {connection?.keyHint || '••••••••'}</span>}
         {connection?.registration?.status !== 'available' && <span>{connection?.registration?.status === 'reconnect_required' ? '등록하려면 다시 연결해 주세요' : '등록 준비 중'}</span>}
         {!detail && <span>{connection?.defaultsMissingItems?.length ? `판매 정보 빈칸 ${connection.defaultsMissingItems.length}개` : '판매 정보 채움'}</span>}
@@ -292,11 +293,10 @@ export function MallConnections() {
     queryClient.invalidateQueries({ queryKey: ['mall-registration-catalog', userId] });
   };
   return <main className={styles.page}>
-    <header className={styles.pageHead}><div><h1>쇼핑몰 연결</h1><p>연결한 쇼핑몰에서 바로 등록해요.</p></div>
+    <header className={styles.pageHead}><div><h1 id="mall-connections-title">쇼핑몰 연결</h1><p>한 번 연결해 두면 에디터에서 바로 등록할 수 있어요.</p></div>
       {returnTo && <Link className={styles.goLink} to={returnTo}>에디터로 돌아가기 ›</Link>}
     </header>
       <section className={styles.mallList} aria-labelledby="mall-connections-title">
-        <div className={styles.cardHead}><h2 id="mall-connections-title">쇼핑몰 연결</h2><p className={styles.cardIntro}>한 번 연결해 두면 에디터에서 바로 등록할 수 있어요.</p></div>
         {isPending && <p className={styles.cardHead} role="status">연결 정보를 불러오는 중이에요</p>}
         {error && <div className={styles.cardHead} role="alert"><p>{error.message}</p><Button onClick={refetch}>다시 확인</Button></div>}
         {data?.disabled && <p className={styles.cardHead}>쇼핑몰 연결을 준비하고 있어요</p>}
@@ -339,7 +339,7 @@ export function MallSettings() {
   };
   if (!supported || connections.data && connection?.status !== 'connected') return <Navigate to="/settings/malls" state={{ returnTo }} replace />;
   return <main className={styles.page}>
-    <header className={styles.pageHead}><Link className={styles.goLink} to="/settings/malls" state={{ returnTo }}>쇼핑몰 연결로 ‹</Link>
+    <header className={styles.pageHead}><Link className={styles.goLink} to="/settings/malls" state={{ returnTo }}>‹ 쇼핑몰 연결</Link>
       {returnTo && <Link className={styles.goLink} to={returnTo}>에디터로 돌아가기 ›</Link>}</header>
     {connections.isPending ? <p role="status">연결 정보를 불러오는 중이에요</p> : connections.error
       ? <div role="alert"><p>{connections.error.message}</p><Button onClick={() => connections.refetch()}>다시 확인</Button></div>
