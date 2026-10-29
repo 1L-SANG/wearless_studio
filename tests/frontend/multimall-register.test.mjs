@@ -144,6 +144,41 @@ test('lost batch response retries the identical key and frozen draft', async () 
   await session.submit(input); assert.deepEqual(requests[0], requests[1]); assert.equal(requests[1].draft.basePrice, 39000);
 });
 
+for (const loseResponse of [false, true]) {
+  test(`setup resume requeues each confirmed attempt${loseResponse ? ' and deduplicates a lost response retry' : ''}`, async () => {
+    const failed = { ...clone(receipt.items[0].registration), setupStatus: 'needs_attention', retryAction: 'resume' };
+    let live = clone(failed), requeues = 0, nextId = 0;
+    const keys = new Set(), requests = [];
+    const currentReceipt = () => ({ ...clone(receipt), items: [{ ...clone(receipt.items[0]), registration: clone(live) }] });
+    const api = fakeApi({
+      createMallRegistrationBatch: async () => currentReceipt(),
+      getMallRegistrationBatch: async () => currentReceipt(),
+      resumeMallRegistration: async (jobId, { requestKey }) => {
+        assert.equal(jobId, 'cafe-job'); requests.push(requestKey);
+        // Match the server's key replay before its resumability check.
+        if (keys.has(requestKey)) return clone(live);
+        assert.equal(live.retryAction, 'resume');
+        keys.add(requestKey); requeues++;
+        live = { ...live, status: 'pending', outcome: null, setupStatus: 'pending', retryAction: 'none' };
+        if (loseResponse && requeues === 1) throw new Error('재개 응답 유실');
+        return clone(live);
+      },
+    });
+    const session = await sessionFor(api, { createId: () => `request-${++nextId}` });
+    await session.restore('p'); await session.submit(base);
+    if (loseResponse) await assert.rejects(session.resume('cafe-job'), /재개 응답 유실/);
+    await session.resume('cafe-job');
+    assert.equal(requeues, 1);
+    assert.equal(session.getState().batch.items[0].registration.status, 'pending');
+    if (loseResponse) assert.equal(requests[0], requests[1]);
+    live = clone(failed); await session.refresh();
+    await session.resume('cafe-job');
+    assert.equal(requeues, 2);
+    assert.notEqual(requests[0], requests.at(-1));
+    assert.equal(session.getState().batch.items[0].registration.status, 'pending');
+  });
+}
+
 test('mixed results retry only failed mall and resume setup on the same job', async () => {
   const mixed = clone(receipt); mixed.items[1] = { mall: 'zigzag', status: 'accepted', jobId: 'zig-job', registration: { mall: 'zigzag', jobId: 'zig-job', status: 'error', outcome: 'failed', retryAction: 'new_request' } };
   const resumes = []; const api = fakeApi({ getMallRegistrationBatch: async () => mixed,

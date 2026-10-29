@@ -950,7 +950,9 @@ Before / After
 
 연결 상태와 등록 가능 상태를 구분한다. Phase A는 카페24 등록을 제공하며 지그재그와 에이블리는 준비 중이다. 한 몰이 막혀도 준비된 다른 몰은 접수한다. 몰별 잡, 동일한 묶음 영수증과 등록 한도를 원자적으로 저장하고 실행 결과는 몰별로 보여준다. 같은 확인의 응답을 잃으면 같은 batchId를 재전송한다. 상품 생성 여부가 불명확하면 확인만 제공하고 다시 생성하지 않는다. 상품이 만들어졌어도 초기 설정이 미완료면 안전한 설정 이어 하기 또는 관리자 확인을 제공한다.
 
-공통 판매 기본 정보는 연결 전에도 저장할 수 있고 초기 진열 방식은 HIDDEN이다. 서버 계약은 common_data_contract.md의 여러 몰 등록 절을 따른다. A02는 API 계약이며 A03 작업 실행과 A04, A05 화면 연결이 끝나기 전까지 MULTIMALL_REGISTER_ENABLED=false를 유지한다.
+판매 기본 정보는 연결된 몰마다 mall_defaults에 따로 저장하며 다른 몰로 복사하거나 동기화하지 않는다. 카페24는 과세, 제조국 기본값과 등록 직후 상태만 받는다. 배송, 반품, 출고지와 나머지 고시 기본값은 받지 않는다. 지그재그는 배송비 정책과 금액, 제주와 도서산간 추가금, 발송 소요일, 전체와 부분 반품비, 교환비, 고시 기본값(제조국, 제조자, AS 책임자, 전화번호, 품질보증기준), 과세, 상품 출처, 등록 직후 상태와 반품지를 받는다. 지그재그는 출고지를 받지 않으며 반품지만 return_id로 보낸다. 에이블리는 준비 중으로 입력을 받지 않는다. 초기 진열 방식은 HIDDEN이다.
+
+설정의 /settings/malls는 쇼핑몰 연결 목록과 판매 정보 상태 및 이동을 보여 주며 /settings/malls/:mall에서 해당 몰의 판매 정보를 입력한다. 연결되지 않은 몰의 상세 주소는 연결 목록으로 이동한다. GET/PUT /v1/malls/{mall}/registration-defaults는 몰별 허용 필드와 revision을 관리하고 허용 밖 필드는 400으로 거절한다. sourceVersions는 connectionVersion, mallDefaultsRevision, catalogVersion, editorRevision이며 기본값은 mallDefaultsRevision 하나로 확인한다. 서버 계약은 common_data_contract.md의 여러 몰 등록 절과 설계 3절 첫머리의 10월 30일 변경 지시를 따른다. A02는 API 계약이며 A03 작업 실행과 A04, A05 화면 연결이 끝나기 전까지 MULTIMALL_REGISTER_ENABLED=false를 유지한다.
 
 ---
 

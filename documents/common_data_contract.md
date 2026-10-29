@@ -777,28 +777,34 @@ R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Ca
 | `permissions` | `permissions` | 셀러용 권한 문구 배열 |
 | `connected_at`, `last_registered_at` | `connectedAt`, `lastRegisteredAt` | ISO 8601 또는 null |
 | `mall_defaults.shop_id` | 제공하지 않음 | 주소 기본값이 속한 스토어 ID |
-| `mall_defaults.revision` | `addressesRevision` | 현재 몰 주소 선택의 리비전 |
+| `mall_defaults.revision` | `addressesRevision` | 현재 몰 판매 정보와 주소 선택을 함께 관리하는 리비전 |
 
-연결은 새 키로 스토어 조회를 마친 뒤 저장한다. 인증정보 변경은 검증이 성공한 경우에만 기존 연결을 `revoked`로 바꾸고 새 `connected` 행을 같은 트랜잭션에 만든다. 실패하면 기존 연결을 유지한다. 연결할 스토어가 `mall_defaults.shop_id`와 다르면 `addresses`를 비우고 revision을 증가시킨 뒤 스토어 ID를 갱신한다. 공통 판매 정보와 같은 스토어의 주소 선택은 유지한다. 인증정보 변경에서 기존 연결과 스토어가 다르면 400 `shop_mismatch`로 거절한다. 연결 해제와 탈퇴는 암호문을 즉시 지우고 `revoked`로 바꾸며 기본 설정을 보존한다. 응답과 로그에 키 원문을 넣지 않는다.
+연결은 새 키로 스토어 조회를 마친 뒤 저장한다. 인증정보 변경은 검증이 성공한 경우에만 기존 연결을 `revoked`로 바꾸고 새 `connected` 행을 같은 트랜잭션에 만든다. 실패하면 기존 연결을 유지한다. 연결할 스토어가 `mall_defaults.shop_id`와 다르면 `addresses`를 비우고 revision을 증가시킨 뒤 스토어 ID를 갱신한다. 해당 몰의 판매 정보와 같은 스토어의 주소 선택은 유지한다. 인증정보 변경에서 기존 연결과 스토어가 다르면 400 `shop_mismatch`로 거절한다. 연결 해제와 탈퇴는 암호문을 즉시 지우고 `revoked`로 바꾸며 기본 설정을 보존한다. 응답과 로그에 키 원문을 넣지 않는다.
 
 인증정보 변경은 외부 검증을 시작하기 전에 현재 연결 ID를 기록한다. 저장할 때 연결 해제와 같은 잠금 안에서 그 연결이 여전히 활성 상태인지 확인한다. 연결이 없거나 해제되거나 다른 연결로 교체됐다면 409 `connection_changed`로 거절하며, 늦게 끝난 변경 요청이 연결을 다시 만들지 않는다.
 
 `GET /v1/malls`는 `{items:[...]}`다. 각 몰에 연결 정보, `addressesRevision`, 활성 연결 ID의 SHA-256인 공개 `connectionVersion`과 `registration:{status,reasonCode?}`를 제공한다. 등록 상태는 `available`, `preparing`, `reconnect_required`다. 연결됨과 등록 가능은 독립이며 Phase A의 지그재그와 에이블리 등록은 항상 preparing이다. 준비 중 이유에 비밀 설정 이름을 넣지 않는다. 지그재그 연결과 인증정보 변경의 `{accessKey,secretKey}` 입력, 앞뒤 공백 제거와 1~256자 제한, 합산 시간당 10회 제한은 유지한다.
 
-공통 판매 정보는 연결 없이 저장할 수 있는 `mall_sales_defaults`가 정본이다. 이전 `mall_defaults`의 배송, 반품, 고시 열을 읽거나 이전하지 않는다. 몰별 기본값은 주소 선택과 revision만 사용하고 API에 shop_id를 노출하지 않는다.
+판매 정보는 `mall_defaults`의 `(user_id, mall)`별로 따로 저장한다. 배송, 반품, 고시, 과세, 상품 출처, 발송일, 진열 방식과 주소 중 해당 몰에 허용된 필드만 읽고 쓴다. 몰 사이 값 복사나 자동 동기화는 하지 않으며 API에 shop_id를 노출하지 않는다. 판매 정보 저장에는 활성 연결이 필요하다.
 
 | 경로 | 입력과 응답 |
 |---|---|
-| `GET /v1/malls/sales-defaults` | `{revision,shipping,returns,disclosure,taxType,productOrigin,shippingDays,listingMode,missingItems}` |
-| `PUT /v1/malls/sales-defaults` | `{baseRevision,...변경할 구역}`. 구역 내부는 명시한 필드만 병합하고 새 revision 반환. 충돌은 409 `defaults_conflict` |
-| `GET /v1/malls/{mall}/registration-defaults` | `{revision,addresses}` |
-| `PUT /v1/malls/{mall}/registration-defaults` | `{baseRevision,addresses?}`. 현재 연결 스토어의 주소 ID만 선택 가능. 다른 세대로 바뀌면 409 |
+| `GET /v1/malls/{mall}/registration-defaults` | `{revision,missingItems,...해당 몰의 허용 필드}`. 저장 행이 없으면 revision 0과 몰별 초기값 반환 |
+| `PUT /v1/malls/{mall}/registration-defaults` | `{baseRevision,...해당 몰에서 변경할 필드}`. 구역 내부는 명시한 필드만 병합하고 새 revision 반환. 충돌은 409 `defaults_conflict`, 연결 없음은 409 `connection_required`, 연결 세대 변경은 409 `connection_changed`. 주소는 현재 스토어의 주소록 ID만 허용 |
 | `GET /v1/malls/{mall}/registration-catalog` | `{mall,status,catalogVersion,complete,categories,priceBasis,imageRatio,capabilities,issues}`. 사용자, 몰, 연결 세대와 계약 버전별로 최대 10분 캐시. 실패와 잘린 목록은 캐시하지 않음 |
 | `GET /v1/malls/zigzag/addresses` | `{id,name,address,postcode,is_default}[]`. 50개씩 skip_count로 끝까지 조회하고 ID 중복 제거 |
 
-`shipping`은 feeType, baseFee, jejuFee, isolatedFee, conditionalAmount, `returns`는 partialFee, totalFee, exchangeFee, `disclosure`는 country, manufacturer, asManager, phone, warrantyText를 가진다. 공통 선택은 `taxType:TAX|FREE`, `productOrigin:domestic|imported`, `shippingDays:1..30`, `listingMode:HIDDEN|ON_SALE`이며 초기값은 TAX, domestic, 2, HIDDEN이다. 금액은 Boolean을 제외한 0 이상 정수이며 conditionalAmount는 1 이상이다. 무료 배송의 baseFee는 0이다. disclosure의 빈 문자열은 해당 필드를 지우고 null은 모든 판매 정보 필드에서 거부한다. 구역을 덜 채워도 저장 가능하며 missingItems는 shipping, returns, disclosure 중 미완료 구역을 나타낸다. 알 수 없는 필드는 거부한다. 이전 zigzag/defaults PUT은 제공하지 않는다.
+| 몰 | 판매 정보 허용 필드 |
+|---|---|
+| 카페24 | `taxType`, `disclosure.country`, `listingMode`. 과세는 A 또는 B로 변환하며 제조국은 made_in_code로 변환한다. 에디터 고시의 제조국이 우선이다. 배송, 반품, 주소와 나머지 고시 기본값은 받지 않는다 |
+| 지그재그 | `shipping:{feeType,baseFee,jejuFee,isolatedFee,conditionalAmount}`, `returns:{partialFee,totalFee,exchangeFee}`, `disclosure:{country,manufacturer,asManager,phone,warrantyText}`, `taxType`, `productOrigin`, `shippingDays`, `listingMode`, `addresses.returnAddressId`. 반품지만 받고 등록 입력의 address.return_id로 보낸다. 출고지와 shipping_id는 없다 |
+| 에이블리 | 준비 중. 판매 정보 입력을 받지 않으며 PUT은 400 `invalid_defaults` |
 
-카페24 저장 계약: `shop_id`는 `mall_id`이고 `access_key_enc`, `secret_key_enc`에 access token과 refresh token을 각각 암호화한다. `token_expires_at`, `refresh_expires_at`은 timestamptz, `scopes`는 기본값이 빈 배열인 필수 text[]다. 만료 시각은 토큰 수신 시각에서 각각 2시간에 60초를 뺀 값, 14일에 1시간을 뺀 값으로 계산하며 access 만료 시각은 토큰 버전으로도 쓴다. 카페24는 공통 판매 정보를 사용하고 주소 선택은 지원하지 않는다.
+`shipping.feeType`은 FREE, CHARGED, CONDITIONAL_FREE 중 하나다. 몰별 선택은 `taxType:TAX|FREE`, `productOrigin:domestic|imported`, `shippingDays:1..30`, `listingMode:HIDDEN|ON_SALE`이며 허용된 필드의 초기값은 TAX, domestic, 2, HIDDEN이다. 금액은 Boolean을 제외한 0 이상 2,147,483,647 이하 정수이며 conditionalAmount는 1 이상이다. 무료 배송의 baseFee는 0이며 조건부 무료가 아니면 conditionalAmount를 제거한다. disclosure의 빈 문자열은 해당 필드를 지우고 null은 모든 판매 정보 필드에서 거부한다. 구역을 덜 채워도 저장 가능하며 missingItems는 `disclosure.country`, `addresses.returnAddressId` 같은 누락 필드 경로를 나타낸다. 몰별 허용 목록 밖 필드는 400 `invalid_defaults`로 거절한다. 이전 zigzag/defaults PUT은 제공하지 않는다.
+
+`/settings/malls`는 쇼핑몰 연결 목록과 연결된 몰의 판매 정보 상태 및 이동을 보여 준다. `/settings/malls/:mall`은 카페24 또는 지그재그 한 몰의 판매 정보만 보여 주며, 지그재그 반품지도 여기서 고른다. 연결되지 않은 몰의 상세 주소는 연결 목록으로 이동한다. 등록 창의 open_defaults는 해당 몰의 상세 주소로 이동한다.
+
+카페24 저장 계약: `shop_id`는 `mall_id`이고 `access_key_enc`, `secret_key_enc`에 access token과 refresh token을 각각 암호화한다. `token_expires_at`, `refresh_expires_at`은 timestamptz, `scopes`는 기본값이 빈 배열인 필수 text[]다. 만료 시각은 토큰 수신 시각에서 각각 2시간에 60초를 뺀 값, 14일에 1시간을 뺀 값으로 계산하며 access 만료 시각은 토큰 버전으로도 쓴다. 카페24는 해당 몰의 과세, 제조국 기본값과 진열 방식을 사용하고 주소 선택은 지원하지 않는다.
 
 카페24 연결 응답에는 `mallId`(`shop_id`)와 `tokenExpiresAt`을 포함한다. 연결 세대는 해당 사용자와 몰의 가장 최근 행(`created_at desc, id desc`)의 `id:status`이고 행이 없으면 `none`이다.
 
@@ -852,11 +858,11 @@ R2 키는 `pub/<user_id>/<publication_id>/<index 2자리>.jpg`이며 JPEG와 `Ca
 
 ## § 여러 몰 등록
 
-정본은 `docs/superpowers/specs/2026-10-28-multimall-design.md` 3.5절과 4~8절이다. A02는 서버 계약과 읽기, 접수, 확인, 설정 재개까지 제공한다. A03의 어댑터와 작업 실행이 연결되고 인수 검증을 마칠 때까지 MULTIMALL_REGISTER_ENABLED를 켜지 않는다.
+정본은 `docs/superpowers/specs/2026-10-28-multimall-design.md` 3절 첫머리의 10월 30일 변경 지시, 3.5절과 4~8절이다. 기본값은 10월 30일 변경 지시를 우선한다. A02는 서버 계약과 읽기, 접수, 확인, 설정 재개까지 제공한다. A03의 어댑터와 작업 실행이 연결되고 인수 검증을 마칠 때까지 MULTIMALL_REGISTER_ENABLED를 켜지 않는다.
 
 RegisterDraft는 projectId, publicationId, editorRevision, selectedMalls, productName, basePrice, defaultQuantity, priceOverrides, sizes, variantOverrides, mainAssetId, additionalAssetIds, categories, confirmedSourcesByMall, salesOverrides다. 상품명은 공백 정리 뒤 1~100자이며 제어문자를 거부한다. 가격은 1 이상, 수량과 추가금액은 0 이상 정수이고 Boolean, 소수, 음수와 최종 가격 overflow를 거부한다. 수량 미입력은 0이다. 색상은 저장된 그룹 ID와 이름만 쓰고 sizes는 저장된 kind='size' 블록의 info.rows 라벨과 일치해야 한다. 색상과 사이즈의 JSON 배열 직렬화가 variantKey이며 공백 정리로 충돌하는 라벨과 중복 override를 거부한다. 앱의 옵션 상한은 200개다.
 
-에디터 required_notice.info.fields의 10개 키가 고시 정본이다. 기존 셀러 입력을 우선하고 빈칸에만 저장된 소재, 색상, 실제 kind='size' 치수와 kind='care' 문구, 공통 고시 정보를 보충한다. 안내문과 NBSP, FREE만으로 실측을 만들지 않는다. 다른 값을 가진 고시 블록은 충돌로 기록하고 그 필드를 전송하지 않는다. 제조연월은 자동 생성하지 않는다. 보충 출처와 누락은 snapshot.notice에 고정한다. 카페24의 소재와 원산지 누락은 경고이며 공통 배송 정보가 미완료여도 카페24를 막지 않는다.
+에디터 required_notice.info.fields의 10개 키가 고시 정본이다. 기존 셀러 입력을 우선하고 빈칸에만 저장된 소재, 색상, 실제 kind='size' 치수와 kind='care' 문구, 해당 몰의 disclosure 기본값을 보충한다. 안내문과 NBSP, FREE만으로 실측을 만들지 않는다. 다른 값을 가진 고시 블록은 충돌로 기록하고 그 필드를 전송하지 않는다. 제조연월은 자동 생성하지 않는다. 보충 출처와 누락은 snapshot.notice에 고정한다. 카페24의 소재와 원산지 누락은 경고이며 배송과 반품 기본값은 요구하지 않는다.
 
 | 경로 | 계약 |
 |---|---|
@@ -870,13 +876,13 @@ RegisterDraft는 projectId, publicationId, editorRevision, selectedMalls, produc
 
 카테고리 추천 도우미는 직접 완전 일치, 의류 사전 일치, parentCategoryId를 따른 상위 경로 포함 순으로 비교하며 동률은 자동 선택하지 않는다. 추가 AI 호출은 없다.
 
-SourceVersions는 connectionVersion, salesDefaultsRevision, mallDefaultsRevision, catalogVersion, editorRevision이다. 접수는 현재 ready 후보에만 확인 버전을 요구한다. 누락은 preflight_required, 연결 변경은 connection_changed, 공통 또는 몰 기본값 변경은 defaults_changed, 카탈로그 변경은 catalog_changed로 해당 몰만 차단한다. preparing과 blocked 몰에 버전이 없어도 다른 몰을 접수할 수 있다. 카페24 B 기준은 priceOverrides.cafe24에 amount와 basis=tax_excluded를 명시해야 한다. 다른 기준은 selling_price이며 서버가 임의 세금 변환을 하지 않는다.
+SourceVersions는 connectionVersion, mallDefaultsRevision, catalogVersion, editorRevision이다. 기본값 버전은 mallDefaultsRevision 하나로 해당 몰의 판매 정보와 주소 선택을 함께 확인한다. 접수는 현재 ready 후보에만 확인 버전을 요구한다. 누락은 preflight_required, 연결 변경은 connection_changed, 몰 기본값 변경은 defaults_changed, 카탈로그 변경은 catalog_changed로 해당 몰만 차단한다. preparing과 blocked 몰에 버전이 없어도 다른 몰을 접수할 수 있다. 카페24 B 기준은 priceOverrides.cafe24에 amount와 basis=tax_excluded를 명시해야 한다. 다른 기준은 selling_price이며 서버가 임의 세금 변환을 하지 않는다.
 
-접수는 계정, 몰 연결(cafe24 다음 zigzag), 공통 기본값, 몰별 기본값, 묶음, 프로젝트 등록 잠금 뒤 게시 행과 프로젝트 행을 잠근다. `publication.editor_revision == draft.editorRevision == projects.editor_revision`을 재검사하고 현재 사실에서 snapshot을 고정한다. 외부 조회는 이 트랜잭션 밖에서 끝낸다. 준비된 몰마다 무과금 mall_register 잡 하나와 시간당 신규 등록 슬롯 하나를 같은 트랜잭션으로 저장한다. 슬롯이 모자라면 묶음 전체를 429로 롤백한다. 접수할 몰이 없으면 409 no_ready_malls 및 최신 items를 반환하며 영수증을 저장하지 않는다. 커밋 후 dispatcher를 한 번 깨운다.
+접수는 계정, 몰 연결(cafe24 다음 zigzag), 몰별 기본값, 묶음, 프로젝트 등록 잠금 뒤 게시 행과 프로젝트 행을 잠근다. `publication.editor_revision == draft.editorRevision == projects.editor_revision`을 재검사하고 현재 사실에서 snapshot을 고정한다. 외부 조회는 이 트랜잭션 밖에서 끝낸다. 준비된 몰마다 무과금 mall_register 잡 하나와 시간당 신규 등록 슬롯 하나를 같은 트랜잭션으로 저장한다. 슬롯이 모자라면 묶음 전체를 429로 롤백한다. 접수할 몰이 없으면 409 no_ready_malls 및 최신 items를 반환하며 영수증을 저장하지 않는다. 커밋 후 dispatcher를 한 번 깨운다.
 
 idempotency_key는 `mall-register:{user_id}:{batchId}:{mall}`이다. 정규화한 클라이언트 요청 전체를 SHA-256으로 해시하며 selectedMalls와 객체 키는 정렬하고 이미지와 옵션의 의미 있는 순서는 보존한다. confirmedSourcesByMall도 해시에 포함하되 현재 서버 연결 ID나 조회 시각을 덧붙이지 않는다. 같은 batchId는 계정 폐쇄와 요청 형식을 확인한 뒤 현재 자원 재검사보다 먼저 원래 영수증을 재생한다. 다른 입력은 409 idempotency_key_reused다.
 
-payload는 mall, batchId, requestHash, connectionId, shopId, publicationId, editorRevision, snapshot만 가진다. snapshot은 상품명, 가격과 기준, 옵션별 수량과 추가금액, 소유 자산의 이미지 순서, 고시, 카테고리, 공통값과 몰별 선택, 이미지 비율, 가격 설정 및 카탈로그 버전을 고정한다. 실행 중 현재 기본값으로 다시 만들지 않는다. metadata.batchReceipt는 batchId, requestHash, acceptedAt, selectedMalls와 items를 모든 새 잡에 동일하게 보관한다. externalCode는 wl과 최초 잡 ID hex 앞 16자리이며 productId는 몰 공통 문자열이다. 같은 프로젝트라도 서로 다른 몰은 동시에 활성일 수 있고 같은 몰의 활성 잡은 하나다.
+payload는 mall, batchId, requestHash, connectionId, shopId, publicationId, editorRevision, snapshot만 가진다. snapshot은 상품명, 가격과 기준, 옵션별 수량과 추가금액, 소유 자산의 이미지 순서, 고시, 카테고리, 해당 몰의 기본값과 선택, 이미지 비율, 가격 설정 및 카탈로그 버전을 고정한다. 실행 중 현재 기본값으로 다시 만들지 않는다. metadata.batchReceipt는 batchId, requestHash, acceptedAt, selectedMalls와 items를 모든 새 잡에 동일하게 보관한다. externalCode는 wl과 최초 잡 ID hex 앞 16자리이며 productId는 몰 공통 문자열이다. 같은 프로젝트라도 서로 다른 몰은 동시에 활성일 수 있고 같은 몰의 활성 잡은 하나다.
 
 공통 등록 뷰는 jobId, mall, status, progress, stage, outcome, setupStatus, productId, productUrl, adminUrl, stages, retryAction, code, warnings, retention, publicationId, createdAt, finishedAt이다. pending과 running의 outcome은 null이고 setupStatus는 pending이다. 종료 시 productId 확인, rejectedAt, create.sentAt, 전송 전 실패 순으로 판정한다. 상품 확인이면 created를 유지하고 모든 설정이 끝나야 complete, 미완료면 needs_attention이다. unknown과 duplicate_suspected는 verify, 안전한 설정 미완료는 resume, 생성 전 확정 실패는 new_request를 제공한다. checkpoints는 단계 이름별 객체이며 status=complete로 완료를 표시한다. uploading_additional_images.requests에는 요청별 sentAt과 status를 남기고 불명확한 POST는 자동 재개하지 않는다.
 

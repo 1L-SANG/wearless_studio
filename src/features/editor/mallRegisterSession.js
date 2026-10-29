@@ -107,6 +107,8 @@ export function createMallRegisterSession({ api, createId, isCurrent, onChange }
       if (view?.outcome !== 'created' || view.retryAction !== 'resume') throw new Error('설정을 이어 할 수 없는 상태예요');
       if (!resumeKeys.has(jobId)) resumeKeys.set(jobId, createId());
       const result = await api.resumeMallRegistration(jobId, { requestKey: resumeKeys.get(jobId) });
+      // Keep the key on a lost response; a confirmed receipt ends this attempt.
+      resumeKeys.delete(jobId);
       assertCurrent(); startedAt = Date.now(); return replaceView(result);
     },
     async retryFailed(mall, draft) {
