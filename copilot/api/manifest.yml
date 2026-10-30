@@ -127,19 +127,14 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 충전 보너스(Seller 5%, Pro 10%). 켜는 조건과 끄는 법은 docs/runbooks/topup-bonus-rollout.md.
   # 10/7 확인: 마이그레이션 20261006120000 물리 적용, api 태스크는 5250a7f3 한 대뿐, 보너스 주문 0건.
   TOPUP_BONUS_ENABLED: "true"
-  # 몰에 붙여넣기(상세페이지 이미지를 R2에 올려 붙여넣기 HTML 제공)와 쇼핑몰 연결(지그재그 인증키 저장).
-  # 2026-10-26 PR #588 머지 시점에는 둘 다 꺼 둔다. 메뉴에는 지그재그·에이블리가 "준비 중"으로만 보인다.
-  # 켜기 전 순서: ① SSM에 DETAIL_PUBLISH_TOKEN_SECRET, MALL_KEYS_KEK 생성(.scratch/mall-upload-research-20261023/ops/init_publish_secrets.sh)
-  #   ② 아래 secrets 블록에 두 키 추가 ③ 이 값을 "true"로. 켜는 건 오너 승인 뒤.
-  DETAIL_PUBLISH_ENABLED: "false"
-  MALL_CONNECT_ENABLED: "false"
-  # 여러 몰 등록 API는 A03 작업 실행과 인수 검증을 마칠 때까지 꺼 둔다.
-  MULTIMALL_REGISTER_ENABLED: "false"
-  # 카페24 자사몰 등록. 앱은 2026-10-28 오너가 개발자센터에 만듦(Client ID는 공개값). 꺼 둔 채 배포한다.
+  DETAIL_PUBLISH_ENABLED: "true"  # 2026-10-31 모든 셀러에게 몰에 붙여넣기 공개.
+  MALL_CONNECT_ENABLED: "true"  # 2026-10-31 모든 셀러에게 쇼핑몰 연결 공개.
+  MULTIMALL_REGISTER_ENABLED: "true"  # 2026-10-31 카페24 테스트몰 실제 등록 활성화.
   # 심사 통과 전에는 CAFE24_ALLOWED_MALL_IDS의 몰만 연결된다. 비우면 모든 몰을 허용하니(config.is_allowed_mall) 심사 뒤에만 비운다.
-  CAFE24_ENABLED: "false"
+  CAFE24_ENABLED: "true"  # 2026-10-31 테스트몰 dailymoment2026 활성화.
   CAFE24_CLIENT_ID: "9AW6kUlREBHopTSVGRKc6C"
   CAFE24_ALLOWED_MALL_IDS: "dailymoment2026"   # 오너 테스트몰(2026-10-28)
+  ZIGZAG_CONNECT_ENABLED: "false"  # 카카오스타일 x-solution 발급 뒤 켬.
   # 상세페이지는 0대 Spot 전용 워커가 소유한다. API는 나머지 잡만 claim하고,
   # pending detail_page가 생기면 아래 autoscaler가 detail-worker를 1대로 깨운다.
   JOB_KINDS: "-detail_page"

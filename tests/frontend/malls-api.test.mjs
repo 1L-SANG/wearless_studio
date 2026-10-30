@@ -40,6 +40,11 @@ test('mall http adapter sends exact route contracts without logging keys', async
   assert.deepEqual(JSON.parse(calls[0].options.body), keys);
 });
 
+test('mock zigzag defaults to unavailable', async () => {
+  db.mallConnections = {};
+  assert.equal((await mock.listMalls()).items.find((item) => item.mall === 'zigzag').status, 'unavailable');
+});
+
 test('mock mall connect succeeds and responses never contain keys', async () => {
   const result = await mock.connectZigzag(keys);
   assert.equal(result.shopName, '데일리 니트 스토어');
@@ -71,7 +76,7 @@ test('mock disconnect preserves partial defaults for reconnect', async () => {
   await mock.saveMallDefaults('zigzag', { baseRevision: 1, returns: { partialFee: 3000 } });
   await mock.saveMallDefaults('zigzag', { baseRevision: 2, returns: { totalFee: 6000, exchangeFee: 6000 } });
   await mock.disconnectZigzag();
-  assert.equal((await mock.listMalls()).items[0].status, 'none');
+  assert.equal((await mock.listMalls()).items[0].status, 'unavailable');
   await mock.connectZigzag(keys);
   const saved = await mock.getMallDefaults('zigzag');
   assert.equal(saved.returns.partialFee, 3000);

@@ -45,6 +45,24 @@ test('renders five row states', async () => {
   }
 });
 
+test('unavailable zigzag only shows preparing without a connect button or key inputs', async () => {
+  const runtime = hooks();
+  const { ZigzagConnection, MallConnectionRow } = await load(runtime);
+  for (const detail of [false, true]) {
+    const props = { connection: { status: 'unavailable' }, detail };
+    let tree = runtime.render(ZigzagConnection, props);
+    let row = React.Children.toArray(tree.props.children)[0];
+    // A local editing state must not override the server's unavailable status.
+    row.props.onConnect();
+    tree = runtime.render(ZigzagConnection, props);
+    row = React.Children.toArray(tree.props.children)[0];
+    assert.equal(row.props.state, 'unavailable');
+    const html = render(React.createElement(MallConnectionRow, row.props));
+    assert.match(html, /준비 중/);
+    assert.doesNotMatch(html, /연결하기|Access Key|Secret Key|<input|<form|인증키 발급/);
+  }
+});
+
 test('connect failure keeps typed values and shows seller copy', async () => {
   const runtime = hooks();
   const sellerCopy = '인증키가 맞지 않아요. 파트너센터에서 다시 복사해 주세요';

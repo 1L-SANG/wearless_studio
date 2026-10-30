@@ -227,6 +227,7 @@ test('mixed results retry only failed mall and resume setup on the same job', as
       db.mallConnections = {}; db.mallDefaults = {}; db.mallRegistrations = []; db.mallRegistrationBatches = {};
       db.detailPublications = [{ publicationId: 'pub', projectId: 'a05-project', status: 'ready', editorRevision: 2, files: [{ index: 1 }] }];
       const malls = await mock.listMalls(); assert.equal(malls.items.find((item) => item.mall === 'cafe24').registration.status, 'available');
+      assert.equal(malls.items.find((item) => item.mall === 'zigzag').status, 'connected');
       const input = { ...clone(base), selectedMalls: ['cafe24', ...(['partial', 'mixed'].includes(demo) ? ['zigzag'] : [])] };
       const checked = await mock.preflightMallRegistration(input);
       if (demo === 'partial') { assert.deepEqual(checked.readyMalls, ['cafe24']); assert.equal(checked.items.find((item) => item.mall === 'zigzag').issues[0].action, 'fill_notice'); }

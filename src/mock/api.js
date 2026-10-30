@@ -386,7 +386,7 @@ function registrationCapability(mall) {
 }
 function connectionView(mall) {
   const connection = DB.mallConnections[mall];
-  const result = { mall, status: connection?.status || 'none', shopName: connection?.shopName || null,
+  const result = { mall, status: connection?.status || (mall === 'zigzag' ? 'unavailable' : 'none'), shopName: connection?.shopName || null,
     permissions: connection?.permissions || [], connectedAt: connection?.connectedAt || null, lastRegisteredAt: connection?.lastRegisteredAt || null };
   if (mall === 'cafe24') Object.assign(result, { mallId: connection?.mallId || null, tokenExpiresAt: connection?.tokenExpiresAt || null });
   else result.keyHint = connection?.keyHint || null;

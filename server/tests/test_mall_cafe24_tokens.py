@@ -321,6 +321,7 @@ def test_list_malls_reports_reconnect_required_and_mall_id(env, status):
 
 def test_list_malls_keeps_items_envelope_and_reports_registration_capability(env):
     client, _ = env
+    client.app.state.settings = replace(client.app.state.settings, zigzag_connect_enabled=True)
     body = client.get("/v1/malls").json()
     assert set(body) == {"items"}
     assert body["items"][0] == dict(mall="zigzag", status="none", shopName=None, keyHint=None,

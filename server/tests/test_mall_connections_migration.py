@@ -42,20 +42,23 @@ def test_mall_connections_migration_timestamp_is_unique():
 
 
 def test_mall_connect_settings_default_off_and_use_separate_kek(monkeypatch):
-    for name in ("MALL_CONNECT_ENABLED", "MALL_KEYS_KEK", "ZIGZAG_OPENAPI_URL", "ZIGZAG_HMAC_ALGORITHM"):
+    for name in ("MALL_CONNECT_ENABLED", "MALL_KEYS_KEK", "ZIGZAG_CONNECT_ENABLED", "ZIGZAG_OPENAPI_URL", "ZIGZAG_HMAC_ALGORITHM"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("TOSS_BILLING_KEK", "billing-only")
     settings = load_settings()
     assert settings.mall_connect_enabled is False
+    assert settings.zigzag_connect_enabled is False
     assert settings.mall_keys_kek is None
     assert settings.zigzag_hmac_algorithm == "sha1"
     assert settings.zigzag_openapi_url == "https://openapi.zigzag.kr/1/graphql"
     monkeypatch.setenv("MALL_CONNECT_ENABLED", "true")
+    monkeypatch.setenv("ZIGZAG_CONNECT_ENABLED", "TRUE")
     monkeypatch.setenv("MALL_KEYS_KEK", "mall-only")
     monkeypatch.setenv("ZIGZAG_HMAC_ALGORITHM", "sha256")
     monkeypatch.setenv("ZIGZAG_OPENAPI_URL", "https://alpha.invalid/graphql")
     settings = load_settings()
     assert settings.mall_connect_enabled is True
+    assert settings.zigzag_connect_enabled is True
     assert settings.mall_keys_kek == "mall-only"
     assert settings.zigzag_hmac_algorithm == "sha256"
     assert settings.zigzag_openapi_url == "https://alpha.invalid/graphql"
