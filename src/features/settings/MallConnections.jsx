@@ -155,7 +155,7 @@ export function ZigzagConnection({ connection, onChanged, detail = false, return
   };
   const manage = (kind) => { clearKeys(); setMenuOpen(false); setDialog(kind); };
   return <>
-    <MallConnectionRow detail={detail} returnTo={returnTo} state={connection?.status === 'connected' ? 'connected' : state} connection={connection}
+    <MallConnectionRow detail={detail} returnTo={returnTo} state={['connected', 'unavailable'].includes(connection?.status) ? connection.status : state} connection={connection}
       values={values} onChange={setValues} showSecret={showSecret} onToggleSecret={() => setShowSecret((value) => !value)} error={error}
       onSubmit={submit} onConnect={() => setState('editing')} onCollapse={() => { setState('none'); clearKeys(); }}
       anchorRef={anchorRef} rowRef={rowRef} menuOpen={menuOpen} onMenuToggle={() => setMenuOpen(!menuOpen)} onMenuClose={() => setMenuOpen(false)}

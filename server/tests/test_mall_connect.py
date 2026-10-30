@@ -5,6 +5,7 @@ import contextlib
 import copy
 import importlib
 import importlib.util
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import httpx
@@ -161,7 +162,7 @@ def env(monkeypatch):
     client_class = mall.ZigzagClient
     monkeypatch.setattr(mall, "ZigzagClient", lambda *args, **kwargs:
         client_class(*args, **{**kwargs, "transport": httpx.MockTransport(respond)}))
-    app = create_app(make_settings(mall_connect_enabled=True, mall_keys_kek="mall-test-kek"))
+    app = create_app(make_settings(mall_connect_enabled=True, zigzag_connect_enabled=True, mall_keys_kek="mall-test-kek"))
     app.state.pool = FakePool(store)
     app.dependency_overrides[require_user] = lambda: USER
     return TestClient(app), store
@@ -169,6 +170,39 @@ def env(monkeypatch):
 
 def connect(client, keys=None):
     return client.post("/v1/malls/zigzag/connect", json=keys or KEYS)
+
+
+@pytest.mark.parametrize("enabled, status", [(False, "unavailable"), (True, "none")])
+def test_zigzag_list_status_follows_connect_flag(env, enabled, status):
+    client, _ = env
+    client.app.state.settings = replace(client.app.state.settings, zigzag_connect_enabled=enabled)
+    response = client.get("/v1/malls")
+    assert response.status_code == 200
+    assert response.json()["items"][0]["status"] == status
+
+
+@pytest.mark.parametrize("kek", [None, "mall-test-kek"])
+def test_zigzag_disabled_connect_rejects_before_attempt_or_external_request(env, kek):
+    client, store = env
+    client.app.state.settings = replace(client.app.state.settings, zigzag_connect_enabled=False, mall_keys_kek=kek)
+    response = connect(client)
+    assert response.status_code == 409
+    assert response.json()["error"] == {"code": "mall_unavailable", "message": "지그재그 연결은 준비 중이에요"}
+    assert store["attempts"] == {} and store["remote"] == 0
+    assert store["connections"] == [] and store["sql"] == []
+
+
+def test_zigzag_disabled_preserves_existing_connection_management(env):
+    client, store = env
+    assert connect(client).status_code == 200
+    client.app.state.settings = replace(client.app.state.settings, zigzag_connect_enabled=False)
+    assert client.get("/v1/malls").json()["items"][0]["status"] == "connected"
+    assert connect(client).status_code == 409
+    assert sum(store["attempts"].values()) == 1 and store["remote"] == 1
+    assert client.get("/v1/malls/zigzag/addresses").status_code == 200
+    assert client.post("/v1/malls/zigzag/rotate", json=KEYS).status_code == 200
+    assert client.delete("/v1/malls/zigzag").status_code == 204
+    assert client.get("/v1/malls").json()["items"][0]["status"] == "unavailable"
 
 
 def test_connect_success_stores_encrypted_and_returns_hint(env):
@@ -463,7 +497,7 @@ def test_connection_is_owner_scoped(env):
 
 def test_connect_requires_separate_kek(env):
     client, store = env
-    client.app.state.settings = make_settings(mall_connect_enabled=True, toss_billing_kek="not-for-malls")
+    client.app.state.settings = make_settings(mall_connect_enabled=True, zigzag_connect_enabled=True, toss_billing_kek="not-for-malls")
     assert connect(client).status_code == 503
     assert store["connections"] == [] and store["remote"] == 0
 

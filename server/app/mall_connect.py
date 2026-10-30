@@ -93,6 +93,8 @@ async def list_malls(request: Request, response: Response, user_id: str = Depend
     items = []
     for mall, connection, specific in (("zigzag", row, defaults), ("cafe24", cafe24, cafe24_defaults), ("ably", None, None)):
         item = cafe24_item if mall == "cafe24" else _connection_result(connection, mall)
+        if mall == "zigzag" and not connection and not request.app.state.settings.zigzag_connect_enabled:
+            item["status"] = "unavailable"
         items.append({**item, "defaultsRevision": (specific or {}).get("revision", 0),
                       "defaultsMissingItems": mall_defaults_view(mall, specific)["missingItems"],
                       "connectionVersion": connection_version(connection),
@@ -361,6 +363,8 @@ async def cafe24_callback(request: Request):
 
 @router.post("/zigzag/connect")
 async def connect_zigzag(request: Request, body: ConnectionKeys, user_id: str = Depends(require_user)):
+    if not request.app.state.settings.zigzag_connect_enabled:
+        raise _error("mall_unavailable", "지그재그 연결은 준비 중이에요", 409)
     return await _verify_and_save(request, body, user_id)
 
 

@@ -83,7 +83,7 @@ def mall_pg(monkeypatch):
 
         monkeypatch.setattr(mall_connect, "ZigzagClient", lambda *args, **kwargs:
             client_class(*args, **{**kwargs, "transport": httpx.MockTransport(respond)}))
-        app = create_app(make_settings(mall_connect_enabled=True, mall_keys_kek="mall-test-kek"))
+        app = create_app(make_settings(mall_connect_enabled=True, zigzag_connect_enabled=True, mall_keys_kek="mall-test-kek"))
         pool = PgPool(dsn, schema)
         app.state.pool = pool
         app.dependency_overrides[require_user] = lambda: USER

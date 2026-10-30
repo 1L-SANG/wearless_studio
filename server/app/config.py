@@ -468,6 +468,7 @@ class Settings:
     cafe24_scopes: str = "mall.read_product mall.write_product mall.read_store mall.read_category"
     cafe24_api_version: str = "2026-09-01"
     cafe24_allowed_mall_ids: frozenset[str] = frozenset()
+    zigzag_connect_enabled: bool = False
     zigzag_openapi_url: str = "https://openapi.zigzag.kr/1/graphql"
     zigzag_hmac_algorithm: str = "sha1"
     # ---- FaceMarket Chain (선택과제2, OmniOne Chain Free-Gas BESU) — record-only 정산 ----
@@ -1163,6 +1164,7 @@ def load_settings() -> Settings:
             mall_id.strip() for mall_id in os.getenv("CAFE24_ALLOWED_MALL_IDS", "").split(",")
             if mall_id.strip()
         ),
+        zigzag_connect_enabled=os.getenv("ZIGZAG_CONNECT_ENABLED", "false").lower() == "true",
         zigzag_openapi_url=os.getenv("ZIGZAG_OPENAPI_URL", "https://openapi.zigzag.kr/1/graphql"),
         zigzag_hmac_algorithm=_flag("ZIGZAG_HMAC_ALGORITHM", "sha1", {"sha1", "sha256"}),
         fm_c2pa_cert_pem=os.getenv("FM_C2PA_CERT_PEM") or None,
