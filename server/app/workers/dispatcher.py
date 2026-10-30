@@ -24,6 +24,7 @@ from .base_fidelity_observe_job import run_base_fidelity_observe_job
 from .editor_garment_mask_job import run_editor_garment_mask_job
 from .sam_preprocess_job import run_sam_preprocess_job
 from .matching_cutout_job import run_matching_cutout_job
+from .mall_register_job import run_mall_register_job
 
 log = logging.getLogger("wearless.dispatcher")
 
@@ -45,6 +46,7 @@ _WORKERS = {
     # 커스텀 매칭 의류 누끼(무과금·이미지 생성 없음). 커스텀 매칭 등록 후 백그라운드로 돈다.
     "matching_cutout": run_matching_cutout_job,
     "fm_model_asset_build": run_fm_model_asset_job,  # 실존 모델 자산 빌드(합성+QC, handoff fork)
+    "mall_register": run_mall_register_job,
 }
 _KINDS = tuple(_WORKERS)
 _SWEEP_INTERVAL = 60.0  # lease 복구 점검 주기(초)

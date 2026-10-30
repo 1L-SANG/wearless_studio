@@ -1,7 +1,6 @@
 import { uploadWardrobeGif, mergeWardrobeGifs } from '../lib/api/gifWardrobe.js';
 import { inheritSimilarCutRecipes } from '@/lib/storyboardSimilarCuts.js';
 import { acceptMockClientEvent } from './clientEvents.js';
-import { completedItems } from '../lib/mallDefaults.js';
 /* =============================================================
    mock/api.js — the ONLY data access screens are allowed to use.
    Signatures/shapes follow documents/common_data_contract.md §6.
@@ -45,6 +44,8 @@ import {
 } from '@/lib/limits.js';
 import { normalizeMatchClothingSelection } from '@/lib/api/matchingItems.js';
 import { uid } from '@/lib/ids.js';
+import { resolveMallNotice } from '@/features/editor/mallNotice.js';
+import { sameEditorJson } from '@/lib/editorRevisionSync.js';
 import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
 import { normalizeTargetGendersForClothingType } from '@/lib/productGender.js';
 import { createMeasurementFields } from '@/lib/measurementSchema.js';
@@ -289,49 +290,339 @@ function checkMannequinQuote(expected, cost) {
 const publicationBlobs = new Map();
 DB.detailPublications ||= [];
 
+const mallError = (code, message, status = 400, extra = {}) => Object.assign(new Error(message), { code, status, ...extra });
+const MALLS = ['cafe24', 'zigzag', 'ably'];
+const SALES_FIELDS = {
+  shipping: ['feeType', 'baseFee', 'jejuFee', 'isolatedFee', 'conditionalAmount'],
+  returns: ['totalFee', 'partialFee', 'exchangeFee'],
+  disclosure: ['country', 'manufacturer', 'asManager', 'phone', 'warrantyText'],
+};
+const integer = (value, min = 0) => Number.isInteger(value) && value >= min && value <= 2147483647;
+const object = (value) => value != null && typeof value === 'object' && !Array.isArray(value);
+const invalidDefaults = () => mallError('invalid_defaults', '판매 정보를 다시 확인해 주세요', 400);
+const assertMall = (mall) => { if (!MALLS.includes(mall)) throw mallError('mall_not_found', '쇼핑몰을 찾을 수 없어요', 404); };
+function mallDefaultFields(mall) {
+  return mall === 'cafe24' ? ['disclosure', 'taxType', 'listingMode'] : mall === 'zigzag'
+    ? [...Object.keys(SALES_FIELDS), 'taxType', 'productOrigin', 'shippingDays', 'listingMode', 'addresses'] : [];
+}
+function mallDefaultsView(mall, previous = {}, patch = {}) {
+  if (!object(patch) || Object.keys(patch).some((key) => !mallDefaultFields(mall).includes(key))) throw invalidDefaults();
+  const next = { revision: previous.revision || 0 };
+  for (const [section, allFields] of Object.entries(SALES_FIELDS)) {
+    if (!mallDefaultFields(mall).includes(section)) continue;
+    const fields = mall === 'cafe24' ? ['country'] : allFields;
+    const changes = patch[section] === undefined ? {} : patch[section];
+    if (!object(changes) || Object.keys(changes).some((key) => !fields.includes(key))) throw invalidDefaults();
+    next[section] = { ...Object.fromEntries(Object.entries(previous[section] || {}).filter(([key]) => fields.includes(key))), ...changes };
+    for (const [key, value] of Object.entries(next[section])) {
+      if (section === 'disclosure') {
+        if (typeof value !== 'string') throw invalidDefaults();
+        if (value.trim()) next[section][key] = value.trim();
+        else delete next[section][key];
+      } else if (key === 'feeType') {
+        if (!['FREE', 'CHARGED', 'CONDITIONAL_FREE'].includes(value)) throw invalidDefaults();
+      } else if (!integer(value, key === 'conditionalAmount' ? 1 : 0)) throw invalidDefaults();
+    }
+  }
+  if (next.shipping?.feeType === 'FREE') next.shipping.baseFee = 0;
+  if (next.shipping && next.shipping.feeType !== 'CONDITIONAL_FREE') delete next.shipping.conditionalAmount;
+  for (const [key, initial, allowed] of [['taxType', 'TAX', ['TAX', 'FREE']], ['productOrigin', 'domestic', ['domestic', 'imported']], ['listingMode', 'HIDDEN', ['HIDDEN', 'ON_SALE']]]) {
+    if (!mallDefaultFields(mall).includes(key)) continue;
+    next[key] = patch[key] === undefined ? previous[key] ?? initial : patch[key];
+    if (!allowed.includes(next[key])) throw invalidDefaults();
+  }
+  next.missingItems = [];
+  if (mall === 'zigzag') {
+    next.shippingDays = patch.shippingDays === undefined ? previous.shippingDays ?? 2 : patch.shippingDays;
+    if (!integer(next.shippingDays, 1) || next.shippingDays > 30) throw invalidDefaults();
+    const changes = patch.addresses === undefined ? {} : patch.addresses;
+    if (!object(changes) || Object.entries(changes).some(([key, value]) => key !== 'returnAddressId' || typeof value !== 'string')) throw invalidDefaults();
+    next.addresses = { ...previous.addresses, ...changes };
+    for (const [key, value] of Object.entries(next.addresses)) { if (value.trim()) next.addresses[key] = value.trim(); else delete next.addresses[key]; }
+    for (const key of ['feeType', 'baseFee', 'jejuFee', 'isolatedFee', ...(next.shipping.feeType === 'CONDITIONAL_FREE' ? ['conditionalAmount'] : [])]) if (!(key in next.shipping)) next.missingItems.push(`shipping.${key}`);
+    for (const section of ['returns', 'disclosure']) for (const key of SALES_FIELDS[section].slice().sort()) if (!(key in next[section])) next.missingItems.push(`${section}.${key}`);
+    if (!next.addresses.returnAddressId) next.missingItems.push('addresses.returnAddressId');
+  } else if (mall === 'cafe24' && !next.disclosure.country) next.missingItems.push('disclosure.country');
+  return clone(next);
+}
+const MOCK_MALLS_KEY = 'wl-mock-malls';
+function persistMockMalls() {
+  try { sessionStorage.setItem(MOCK_MALLS_KEY, JSON.stringify({ connections: DB.mallConnections, defaults: DB.mallDefaults, registrations: DB.mallRegistrations, batches: DB.mallRegistrationBatches })); } catch { /* Storage is optional. */ }
+}
+try {
+  const saved = JSON.parse(sessionStorage.getItem(MOCK_MALLS_KEY) || 'null');
+  if (saved) { DB.mallConnections = saved.connections || {}; DB.mallDefaults = saved.defaults || {}; DB.mallRegistrations = saved.registrations || []; DB.mallRegistrationBatches = saved.batches || {};
+    for (const row of DB.mallRegistrations) if (['pending', 'running'].includes(row.view.status)) void wait(2000).then(() => completeMockRegistration(row)); }
+} catch { /* Storage is optional. */ }
+const mockEditorRevisions = new Map();
+const mockAssetIds = new Map();
+function registrationImage(image) {
+  if (!image?.src) return image;
+  const src = image.kind === 'gif' ? image.posterSrc : image.src;
+  if (!src) return image;
+  if (!mockAssetIds.has(src)) mockAssetIds.set(src, crypto.randomUUID());
+  return { ...image, [image.kind === 'gif' ? 'posterAssetId' : 'assetId']: (image.kind === 'gif' ? image.posterAssetId : image.assetId) || mockAssetIds.get(src) };
+}
+function registrationDemo() {
+  const value = mockQuery().get('mallRegistrationDemo');
+  const allowed = ['mixed', 'partial', 'unknown', 'setup', 'activation', 'lost', 'history-error', 'tax-excluded', 'off'];
+  try {
+    if (allowed.includes(value)) sessionStorage.setItem('wl-mall-registration-demo', value);
+    return allowed.includes(value) ? value : sessionStorage.getItem('wl-mall-registration-demo');
+  } catch { return allowed.includes(value) ? value : null; }
+}
+function seedRegistrationDemo() {
+  const demo = registrationDemo();
+  if (!demo || demo === 'off') return;
+  for (const mall of ['cafe24', 'zigzag']) if (!DB.mallConnections[mall]) replaceMallConnection(mall,
+    { mall, status: 'connected', shopName: '등록 점검 스토어', mallId: 'demo-shop', permissions: ['상품 조회와 등록'], connectedAt: new Date().toISOString() }, 'demo-shop');
+}
+function registrationCapability(mall) {
+  const connection = DB.mallConnections[mall];
+  if (mall !== 'cafe24' && !(mall === 'zigzag' && ['mixed', 'partial'].includes(registrationDemo()))) return { status: 'preparing' };
+  if (!connection) return { status: 'reconnect_required', reasonCode: 'connection_required' };
+  if (connection.status !== 'connected') return { status: 'reconnect_required', reasonCode: 'reconnect_required' };
+  return { status: 'available' };
+}
+function connectionView(mall) {
+  const connection = DB.mallConnections[mall];
+  const result = { mall, status: connection?.status || 'none', shopName: connection?.shopName || null,
+    permissions: connection?.permissions || [], connectedAt: connection?.connectedAt || null, lastRegisteredAt: connection?.lastRegisteredAt || null };
+  if (mall === 'cafe24') Object.assign(result, { mallId: connection?.mallId || null, tokenExpiresAt: connection?.tokenExpiresAt || null });
+  else result.keyHint = connection?.keyHint || null;
+  return clone(result);
+}
+function replaceMallConnection(mall, connection, shopId) {
+  const previous = DB.mallDefaults[mall];
+  if (previous && previous.shopId !== shopId) DB.mallDefaults[mall] = { ...previous, shopId, revision: previous.revision + 1, addresses: {} };
+  if (!previous) DB.mallDefaults[mall] = { shopId, revision: 1, addresses: {} };
+  DB.mallConnections[mall] = { ...connection, shopId, connectionVersion: globalThis.crypto.randomUUID() };
+  persistMockMalls();
+}
+function zigzagIdentity({ accessKey, secretKey }) {
+  const key = String(accessKey || '').trim(), secret = String(secretKey || '').trim();
+  if (!key || !secret || key.startsWith('bad')) throw mallError('invalid_key', '인증키가 맞지 않아요. 파트너센터에서 다시 복사해 주세요');
+  if (key.startsWith('noperm')) throw mallError('missing_permission', '상품 등록 권한이 없는 키예요. 상품과 주문 API 권한을 켜 주세요');
+  return { key, secret, shopId: key.startsWith('other') ? 'mock-other-zigzag-shop' : 'mock-zigzag-shop' };
+}
+const registrationRow = (jobId) => {
+  const row = DB.mallRegistrations.find((item) => item.view.jobId === jobId);
+  if (!row) throw mallError('registration_not_found', '등록 내역을 찾을 수 없어요', 404);
+  return row;
+};
+function assertRegistrationConnection(row) {
+  if (DB.mallConnections[row.view.mall]?.connectionVersion !== row.connectionVersion) throw mallError('connection_changed', '연결이 바뀌었어요. 기존 쇼핑몰 관리자에서 확인해 주세요', 409);
+}
+const issue = (code, path, message, action) => ({ code, path, message, action });
+const stable = (value) => JSON.stringify(value, (_key, item) => object(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
+async function inputHash(value) {
+  const bytes = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(stable(value)));
+  return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+function normalizedDraft(input) {
+  const allowed = ['projectId', 'publicationId', 'editorRevision', 'selectedMalls', 'productName', 'basePrice', 'defaultQuantity', 'priceOverrides', 'sizes', 'variantOverrides', 'mainAssetId', 'additionalAssetIds', 'categories', 'confirmedSourcesByMall', 'salesOverrides'];
+  if (!object(input) || Object.keys(input).some((key) => !allowed.includes(key))
+    || !input.projectId || !integer(input.editorRevision) || !integer(input.basePrice, 1)
+    || typeof input.productName !== 'string' || !input.productName.trim() || input.productName.length > 100
+    || !Array.isArray(input.selectedMalls) || !input.selectedMalls.length || new Set(input.selectedMalls).size !== input.selectedMalls.length || input.selectedMalls.some((mall) => !MALLS.includes(mall))
+    || !Array.isArray(input.sizes) || !input.sizes.length || input.sizes.some((size) => typeof size !== 'string' || !size.trim())
+    || !integer(input.defaultQuantity ?? 0)) throw mallError('invalid_request', '등록 정보를 다시 확인해 주세요', 422);
+  const result = { publicationId: null, defaultQuantity: 0, priceOverrides: {}, variantOverrides: [], mainAssetId: null,
+    additionalAssetIds: [], categories: {}, confirmedSourcesByMall: {}, salesOverrides: {}, ...clone(input),
+    productName: input.productName.trim().replace(/\s+/g, ' '), selectedMalls: [...input.selectedMalls].sort(), sizes: input.sizes.map((s) => s.trim().replace(/\s+/g, ' ')) };
+  if (new Set(result.sizes).size !== result.sizes.length || result.sizes.length > 200) throw mallError('invalid_request', '사이즈를 다시 확인해 주세요', 422);
+  mallDefaultsView('zigzag', {}, result.salesOverrides);
+  return result;
+}
+function completeMockRegistration(row) {
+  const view = row.view;
+  view.finishedAt = new Date().toISOString(); view.progress = 100;
+  if ((row.draft.productName.toLowerCase().includes('unknown') || row.demo === 'unknown') && !row.resumed) {
+    Object.assign(view, { status: 'done', outcome: 'unknown', setupStatus: 'pending', retryAction: 'verify' });
+  } else if (row.draft.basePrice === 999 || row.demo === 'mixed' && view.mall === 'zigzag') {
+    Object.assign(view, { status: 'error', outcome: 'failed', setupStatus: 'not_applicable', retryAction: 'new_request', code: 'invalid_request' });
+  } else {
+    const productId = view.productId || String(Number.parseInt(view.jobId.replaceAll('-', '').slice(0, 8), 16) + 1);
+    Object.assign(view, { status: 'done', outcome: 'created', productId,
+      productUrl: `https://${row.shopId}.cafe24.com/product/detail.html?product_no=${productId}`,
+      setupStatus: 'complete', retryAction: 'none', stage: 'activating' });
+    if ((row.draft.productName.includes('setup-fail') || row.demo === 'setup' || row.demo === 'activation') && !row.resumed) Object.assign(view, { status: 'error', setupStatus: 'needs_attention', retryAction: 'resume', stage: 'setting_inventory', code: 'inventory_failed' });
+    if (view.setupStatus === 'complete') view.stages = { activating: { status: 'complete', display: row.snapshot.listingMode === 'ON_SALE' ? 'T' : 'F', selling: row.snapshot.listingMode === 'ON_SALE' && row.draft.defaultQuantity > 0 ? 'T' : 'F' } };
+    else if (row.demo === 'activation') Object.assign(view, { stage: 'activating', code: 'activation_unconfirmed', retryAction: 'open_admin', stages: { activating: { status: 'unknown', sentAt: view.finishedAt } } });
+    if (DB.mallConnections[view.mall]?.connectionVersion === row.connectionVersion) DB.mallConnections[view.mall].lastRegisteredAt = view.finishedAt;
+  }
+  persistMockMalls();
+}
+
 export const api = {
   async listMalls() {
-    return { items: [{ mall: 'zigzag', status: 'none', ...clone(DB.mallConnections.zigzag || {}),
-      defaults: { shipping: {}, returns: {}, addresses: {}, disclosure: {}, taxType: 'TAX', productOrigin: 'domestic',
-        completedItems: [], ...clone(DB.mallDefaults.zigzag || {}), total: 4 } },
-    { mall: 'ably', status: 'unavailable' }, { mall: 'smartstore', status: 'unavailable' }] };
+    seedRegistrationDemo();
+    return { items: [...['zigzag', 'cafe24', 'ably'].map((mall) => ({ ...connectionView(mall), defaultsRevision: DB.mallDefaults[mall]?.revision || 0, defaultsMissingItems: mallDefaultsView(mall, DB.mallDefaults[mall]).missingItems,
+      connectionVersion: DB.mallConnections[mall]?.connectionVersion || null, registration: registrationCapability(mall) })),
+    { mall: 'smartstore', status: 'unavailable', defaultsRevision: 0, connectionVersion: null, registration: { status: 'preparing' } }] };
   },
   async connectZigzag({ accessKey, secretKey }) {
-    const key = String(accessKey || '').trim();
-    const secret = String(secretKey || '').trim();
-    if (!key || !secret || key.startsWith('bad')) {
-      throw Object.assign(new Error('인증키가 맞지 않아요. 파트너센터에서 다시 복사해 주세요'), { code: 'invalid_key', status: 400 });
-    }
-    if (key.startsWith('noperm')) {
-      throw Object.assign(new Error('상품 등록 권한이 없는 키예요. 상품과 주문 API 권한을 켜 주세요'), { code: 'missing_permission', status: 400 });
-    }
-    // Mock state keeps only safe display data, never raw credentials.
-    DB.mallConnections.zigzag = { mall: 'zigzag', status: 'connected', shopName: '데일리 니트 스토어',
+    const { key, secret, shopId } = zigzagIdentity({ accessKey, secretKey });
+    // other로 시작하는 인증키는 mock의 다른 스토어 연결 시나리오다.
+    const otherStore = key.startsWith('other');
+    replaceMallConnection('zigzag', { mall: 'zigzag', status: 'connected', shopName: otherStore ? '다른 니트 스토어' : '데일리 니트 스토어',
       keyHint: key.length > 8 && key.slice(-8) !== secret ? key.slice(-8) : null,
-      permissions: ['상품 조회와 등록'], connectedAt: new Date().toISOString(), lastRegisteredAt: null };
-    return clone(DB.mallConnections.zigzag);
+      permissions: ['상품 조회와 등록'], connectedAt: new Date().toISOString(), lastRegisteredAt: null }, shopId);
+    return connectionView('zigzag');
   },
-  async rotateZigzag(keys) { return api.connectZigzag(keys); },
-  async disconnectZigzag() { delete DB.mallConnections.zigzag; },
+  async rotateZigzag(keys) {
+    const current = DB.mallConnections.zigzag;
+    if (!current) throw mallError('connection_changed', '연결 정보가 바뀌었어요. 현재 연결을 확인한 뒤 다시 시도해 주세요', 409);
+    if (zigzagIdentity(keys).shopId !== current.shopId) throw mallError('shop_mismatch', '다른 스토어의 인증키예요. 스토어를 바꾸려면 연결을 해제한 뒤 다시 연결해 주세요');
+    return api.connectZigzag(keys);
+  },
+  async disconnectZigzag() { delete DB.mallConnections.zigzag; persistMockMalls(); },
   async listZigzagAddresses() {
-    if (!DB.mallConnections.zigzag) throw Object.assign(new Error('먼저 지그재그를 연결해 주세요'), { code: 'not_connected', status: 404 });
-    return [{ id: 'mock-shipping', name: '성수 창고', address: '서울 성동구 성수이로', postcode: '04790', is_default: true }];
+    if (!DB.mallConnections.zigzag) throw mallError('not_connected', '먼저 지그재그를 연결해 주세요', 404);
+    return [{ id: DB.mallConnections.zigzag.shopId === 'mock-other-zigzag-shop' ? 'mock-other-shipping' : 'mock-shipping', name: '성수 창고', address: '서울 성동구 성수이로', postcode: '04790', is_default: true }];
   },
-  async saveZigzagDefaults(payload) {
-    const previous = DB.mallDefaults.zigzag || {};
-    const next = { taxType: 'TAX', productOrigin: 'domestic', ...previous, ...payload };
-    for (const section of ['shipping', 'returns', 'addresses', 'disclosure']) {
-      next[section] = { ...previous[section], ...payload[section] };
+  async getMallDefaults(mall) {
+    assertMall(mall); return mallDefaultsView(mall, DB.mallDefaults[mall]);
+  },
+  async saveMallDefaults(mall, { baseRevision, ...patch }) {
+    assertMall(mall);
+    if (mall === 'ably') throw invalidDefaults();
+    if (!integer(baseRevision)) throw invalidDefaults();
+    const previous = DB.mallDefaults[mall];
+    const next = mallDefaultsView(mall, previous, patch);
+    const connection = DB.mallConnections[mall];
+    if (!connection) throw mallError('connection_required', '쇼핑몰을 먼저 연결해 주세요', 409);
+    const addresses = patch.addresses || {};
+    if (Object.values(addresses).some(Boolean)) {
+      const rows = await api.listZigzagAddresses();
+      if (Object.values(addresses).some((value) => value.trim() && !rows.some((row) => row.id === value.trim()))) throw mallError('address_not_found', '현재 스토어의 주소를 골라 주세요', 422);
     }
-    next.completedItems = completedItems(next);
-    DB.mallDefaults.zigzag = clone(next);
-    return { ...clone(next), total: 4 };
+    if (DB.mallConnections[mall] !== connection) throw mallError('connection_changed', '연결이 바뀌었어요. 다시 확인해 주세요', 409);
+    if (baseRevision !== (DB.mallDefaults[mall]?.revision || 0)) throw mallError('defaults_conflict', '다른 창에서 판매 정보를 바꿨어요. 다시 확인해 주세요', 409);
+    DB.mallDefaults[mall] = { ...next, shopId: connection.shopId, revision: baseRevision + 1 };
+    persistMockMalls(); return api.getMallDefaults(mall);
   },
-  async createDetailPublication(projectId, { preset, width, productName, files }) {
+  async startCafe24Install({ mallId }) {
+    const normalized = String(mallId ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').split(/[/?#]/, 1)[0].replace(/\.(cafe24|cafe24api)\.com$/, '');
+    if (!/^[a-z0-9][a-z0-9_-]{1,29}$/.test(normalized) || normalized.startsWith('bad')) throw mallError('invalid_mall_id', '몰 아이디를 확인해 주세요');
+    if (normalized.startsWith('closed')) throw mallError('cafe24_not_allowed', '지금은 시범 운영 중이라 등록된 몰만 연결할 수 있어요', 403);
+    replaceMallConnection('cafe24', { mall: 'cafe24', status: 'connected', shopName: '데일리 자사몰', mallId: normalized,
+      permissions: ['상품 조회와 등록', '쇼핑몰 정보 조회', '상품 분류 조회'], connectedAt: new Date().toISOString(),
+      lastRegisteredAt: null, tokenExpiresAt: new Date(Date.now() + (2 * 60 * 60 - 60) * 1000).toISOString() }, normalized);
+    return { startUrl: `${globalThis.location?.origin || 'http://localhost'}/settings/malls?mall=cafe24&result=connected` };
+  },
+  async disconnectCafe24() { delete DB.mallConnections.cafe24; persistMockMalls(); },
+  async getMallRegistrationCatalog(mall) {
+    assertMall(mall);
+    const capability = registrationCapability(mall);
+    const available = capability.status === 'available';
+    return { mall, status: capability.status, catalogVersion: available ? 'mock-catalog-v1' : null, complete: available,
+      categories: available ? [{ categoryId: '1', name: '상의', parentCategoryId: null, depth: 1 }, { categoryId: '27', name: '니트', parentCategoryId: '1', depth: 2 }] : [],
+      priceBasis: available ? registrationDemo() === 'tax-excluded' ? 'B' : 'A' : null, imageRatio: available ? { width: 1000, height: 1000 } : null,
+      capabilities: available ? { options: true, maxVariants: 200, maxAdditionalImages: 4, shippingSource: 'mall' } : {}, issues: null };
+  },
+  async preflightMallRegistration(input) {
+    seedRegistrationDemo();
+    const draft = normalizedDraft(input), items = [];
+    for (const mall of draft.selectedMalls) {
+      const capability = registrationCapability(mall), item = { mall, status: 'blocked', issues: [], warnings: [] };
+      const publication = DB.detailPublications.find((p) => p.publicationId === draft.publicationId && p.projectId === draft.projectId);
+      const recoveries = (await api.listMallRegistrations(draft.projectId)).recoveries[mall] || [];
+      if (capability.status === 'preparing') Object.assign(item, { status: 'preparing', issues: [issue('registration_preparing', 'mall', '이 쇼핑몰 등록은 준비 중이에요', 'open_defaults')] });
+      else if (capability.status !== 'available') item.issues.push(issue(capability.reasonCode, 'connection', '쇼핑몰을 다시 연결해 주세요', 'reconnect'));
+      else if (recoveries.length) Object.assign(item, { existingJobId: recoveries[0].jobId, issues: [issue('registration_unresolved', 'registration', '이전 등록 상태를 먼저 확인해 주세요', recoveries[0].retryAction === 'resume' ? 'resume_existing' : 'verify_existing')] });
+      else if (!publication || publication.status !== 'ready') item.issues.push(issue('publication_required', 'publicationId', '상세페이지를 먼저 게시해 주세요', 'choose_image'));
+      else if (publication.editorRevision !== draft.editorRevision) item.issues.push(issue('editor_revision_changed', 'editorRevision', '편집본이 바뀌었어요. 저장하고 다시 확인해 주세요', 'choose_image'));
+      else if (!draft.mainAssetId) item.issues.push(issue('main_image_required', 'mainAssetId', '대표 이미지를 골라 주세요', 'choose_image'));
+      else if (mall === 'zigzag' && registrationDemo() === 'partial' && resolveMallNotice({ blocks: DB.editorBlocks, product: { ...DB.product, materials: DB.analysis?.materials }, defaults: DB.mallDefaults[mall] || {} }).missingCount) {
+        const notice = resolveMallNotice({ blocks: DB.editorBlocks, product: { ...DB.product, materials: DB.analysis?.materials }, defaults: DB.mallDefaults[mall] || {} });
+        item.issues = notice.fields.filter((field) => !field.value).map((field) => issue('notice_missing', `notice.${field.key}`, `${field.label}을 채워 주세요`, 'fill_notice'));
+      } else {
+        const catalog = await api.getMallRegistrationCatalog(mall);
+        if (catalog.priceBasis === 'B' && draft.priceOverrides[mall]?.basis !== 'tax_excluded') item.issues.push(issue('price_basis_required', `priceOverrides.${mall}`, '카페24 상품가, 세금 제외 금액을 확인해 주세요', 'edit_price'));
+        else if (draft.categories[mall] && !catalog.categories.some((c) => c.categoryId === draft.categories[mall].categoryId)) item.issues.push(issue('category_changed', `categories.${mall}`, '카테고리를 다시 골라 주세요', 'choose_category'));
+        else Object.assign(item, { status: 'ready', sourceVersions: { connectionVersion: DB.mallConnections[mall].connectionVersion,
+          mallDefaultsRevision: DB.mallDefaults[mall]?.revision || 0, catalogVersion: catalog.catalogVersion, editorRevision: draft.editorRevision },
+          summary: { variantCount: (DB.product?.colors?.length || 1) * draft.sizes.length, price: draft.priceOverrides[mall]?.amount || draft.basePrice, shippingSource: 'mall' } });
+        if (!draft.categories[mall]) item.warnings.push(issue('category_recommended', `categories.${mall}`, '카테고리를 고르면 상품을 찾기 쉬워요', 'choose_category'));
+        if (draft.defaultQuantity === 0) item.warnings.push(issue('all_sold_out', 'defaultQuantity', '모든 옵션이 품절로 등록돼요', 'edit_options'));
+      }
+      items.push(item);
+    }
+    return { editorRevision: draft.editorRevision, inputHash: await inputHash(draft), readyMalls: items.filter((i) => i.status === 'ready').map((i) => i.mall), blockedMalls: items.filter((i) => i.status !== 'ready').map((i) => i.mall), items };
+  },
+  async createMallRegistrationBatch({ batchId, draft: input }) {
+    const draft = normalizedDraft(input), hash = await inputHash(draft), previous = DB.mallRegistrationBatches[batchId];
+    if (previous) {
+      if (previous.hash !== hash) throw mallError('idempotency_key_reused', '같은 요청 번호에 다른 입력을 사용할 수 없어요', 409);
+      return clone(previous.receipt);
+    }
+    const checked = await api.preflightMallRegistration(draft), items = [];
+    for (const item of checked.items) {
+      if (item.status === 'ready') {
+        const confirmed = draft.confirmedSourcesByMall[item.mall], current = item.sourceVersions;
+        const code = !confirmed ? 'preflight_required' : confirmed.connectionVersion !== current.connectionVersion ? 'connection_changed'
+          : confirmed.mallDefaultsRevision !== current.mallDefaultsRevision ? 'defaults_changed'
+            : confirmed.catalogVersion !== current.catalogVersion ? 'catalog_changed' : confirmed.editorRevision !== current.editorRevision ? 'editor_revision_changed' : null;
+        if (code) Object.assign(item, { status: 'blocked', issues: [issue(code, `confirmedSourcesByMall.${item.mall}`, '확인한 정보가 바뀌었어요. 다시 점검해 주세요', 'open_defaults')] });
+      }
+      items.push(item.status === 'ready' ? { mall: item.mall, status: 'accepted', jobId: globalThis.crypto.randomUUID() }
+        : { mall: item.mall, status: 'blocked', issues: item.issues, ...(item.existingJobId ? { existingJobId: item.existingJobId } : {}) });
+    }
+    const receipt = { batchId, acceptedAt: new Date().toISOString(), items, readyCount: items.filter((i) => i.status === 'accepted').length };
+    if (!receipt.readyCount) throw mallError('no_ready_malls', '등록할 수 있는 쇼핑몰이 없어요', 409, { items });
+    DB.mallRegistrationBatches[batchId] = { hash, receipt: clone(receipt) };
+    for (const item of items.filter((i) => i.status === 'accepted')) {
+      const connection = DB.mallConnections[item.mall];
+      const defaults = mallDefaultsView(item.mall, DB.mallDefaults[item.mall]);
+      const allowedOverrides = Object.fromEntries(Object.entries(draft.salesOverrides).filter(([key]) => mallDefaultFields(item.mall).includes(key)));
+      const row = { snapshot: mallDefaultsView(item.mall, defaults, allowedOverrides), demo: registrationDemo(), draft: clone(draft), shopId: connection.shopId, connectionVersion: connection.connectionVersion, resumeKeys: [],
+        view: { jobId: item.jobId, mall: item.mall, status: 'pending', progress: 0, stage: null, outcome: null, setupStatus: 'pending',
+          productId: null, productUrl: null, adminUrl: `https://${connection.shopId}.cafe24.com/admin`, stages: {}, retryAction: 'none', code: null,
+          warnings: [], retention: null, publicationId: draft.publicationId, createdAt: receipt.acceptedAt, finishedAt: null } };
+      DB.mallRegistrations.push(row); void wait(2000).then(() => completeMockRegistration(row));
+    }
+    persistMockMalls();
+    if (registrationDemo() === 'lost') throw new Error('접수 응답을 받지 못했어요');
+    return receipt;
+  },
+  async getMallRegistrationBatch(batchId) {
+    const batch = DB.mallRegistrationBatches[batchId];
+    if (!batch) throw mallError('registration_not_found', '접수 기록을 찾을 수 없어요', 404);
+    const receipt = clone(batch.receipt);
+    for (const item of receipt.items) if (item.status === 'accepted') item.registration = await api.getMallRegistration(item.jobId);
+    return receipt;
+  },
+  async getMallRegistration(jobId) { return clone(registrationRow(jobId).view); },
+  async verifyMallRegistration(jobId) {
+    const row = registrationRow(jobId); assertRegistrationConnection(row);
+    if (!['unknown', 'duplicate_suspected'].includes(row.view.outcome) || !['done', 'error', 'cancelled'].includes(row.view.status)) throw mallError('not_verifiable', '등록 여부를 다시 확인할 수 없는 상태예요', 409);
+    row.verifyCount = (row.verifyCount || 0) + 1;
+    if (row.verifyCount > 1) Object.assign(row.view, { outcome: 'created', productId: '1001', setupStatus: 'needs_attention', retryAction: 'resume', productUrl: `https://${row.shopId}.cafe24.com/product/detail.html?product_no=1001` });
+    persistMockMalls(); return clone(row.view);
+  },
+  async resumeMallRegistration(jobId, { requestKey }) {
+    const row = registrationRow(jobId);
+    if (row.resumeKeys.includes(requestKey)) return clone(row.view);
+    assertRegistrationConnection(row);
+    if (row.view.retryAction !== 'resume') throw mallError('registration_not_resumable', '이 작업은 설정을 이어 할 수 없어요', 409);
+    row.resumeKeys.push(requestKey); row.resumed = true;
+    Object.assign(row.view, { status: 'pending', progress: 0, outcome: null, setupStatus: 'pending', retryAction: 'none', code: null, finishedAt: null });
+    void wait(2000).then(() => completeMockRegistration(row)); persistMockMalls(); return clone(row.view);
+  },
+  async listMallRegistrations(projectId) {
+    if (registrationDemo() === 'history-error') throw new Error('이전 등록을 불러오지 못했어요');
+    const rows = DB.mallRegistrations.filter((row) => row.draft.projectId === projectId).slice().reverse();
+    const recoveries = rows.filter((row) => row.view.mall === 'cafe24' && row.shopId === DB.mallConnections.cafe24?.shopId
+      && (['pending', 'running'].includes(row.view.status) || ['unknown', 'duplicate_suspected'].includes(row.view.outcome) || row.view.setupStatus === 'needs_attention'));
+    return clone({ items: rows.slice(0, 5).map((row) => row.view), recoveries: { cafe24: recoveries.map((row) => row.view), zigzag: [] } });
+  },
+  async createDetailPublication(projectId, { preset, width, productName = '', files }) {
     const publicationId = uid('pub');
     const version = Math.max(0, ...DB.detailPublications.filter((item) => item.projectId === projectId).map((item) => item.version)) + 1;
+    const project = projectId === DB.project.id ? DB.project : projectDrafts.get(projectId)?.project;
     const row = { publicationId, projectId, preset, width, productName, version, status: 'pending',
-      files: clone(files), createdAt: new Date().toISOString() };
+      editorRevision: project?.editorRevision ?? 0, files: clone(files), createdAt: new Date().toISOString() };
     DB.detailPublications.push(row);
     return { publicationId, version, uploads: files.map(({ index }) => ({ index,
       uploadUrl: `https://images.example.test/pub/mock/${publicationId}/${String(index).padStart(2, '0')}.jpg`,
@@ -1263,6 +1554,12 @@ export const api = {
           : latest.status === 'cancelled' ? '다시 만들 수 있어요.' : null,
       };
     }
+    const registration = DB.mallRegistrations.find((row) => row.view.jobId === jobId)?.view;
+    if (registration) {
+      const { status, progress } = registration;
+      return clone({ id: jobId, status, progress, errorMessage: null,
+        result: ['done', 'error'].includes(status) ? registration : null });
+    }
     return { id: jobId, status: ewSim?.status || 'done', progress: ewSim?.progress ?? 100,
       result: ewSim?.result || null, errorMessage: null };
   },
@@ -1303,12 +1600,25 @@ export const api = {
   },
 
   /* ---- editor (PRD §10) ---- */
-  async getEditorBlocks(/* projectId */) { await wait(180); return clone(DB.editorBlocks); },
+  async getEditorBlocks(projectId) {
+    await wait(180);
+    mockEditorRevisions.set(projectId, DB.project.editorRevision || 0);
+    return clone(DB.editorBlocks).map((block) => ({ ...block, elements: block.elements.map(registrationImage) }));
+  },
+  async peekEditorRevision() { return DB.project.editorRevision || 0; },
+  editorRevisionOf(projectId) { return mockEditorRevisions.get(projectId) ?? null; },
   // 에디터 상태 영속화 (계약 §6) — 저장 버튼·자동 저장이 호출. 세션 내 재진입 시 편집 유지.
-  async saveEditorBlocks(_projectId, blocks) { await wait(200); DB.editorBlocks = clone(blocks); touch(); },
+  async saveEditorBlocks(projectId, blocks) {
+    await wait(200);
+    if (!sameEditorJson(DB.editorBlocks, blocks)) {
+      DB.editorBlocks = clone(blocks); DB.project.editorRevision = (DB.project.editorRevision || 0) + 1; touch();
+    }
+    mockEditorRevisions.set(projectId, DB.project.editorRevision || 0);
+  },
   async getWardrobe(projectId) {
     await wait(160);
-    return mergeWardrobeGifs(clone(DB.wardrobe), clone(DB.wardrobeGifs[projectId] || []));
+    const wardrobe = mergeWardrobeGifs(clone(DB.wardrobe), clone(DB.wardrobeGifs[projectId] || []));
+    return Object.fromEntries(Object.entries(wardrobe).map(([key, images]) => [key, images.map(registrationImage)]));
   },
   async saveWardrobeGif(projectId, result, options = {}) {
     const image = await uploadWardrobeGif(projectId, result, this.uploadPhoto.bind(this), options);

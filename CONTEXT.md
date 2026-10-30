@@ -143,3 +143,24 @@ _Avoid_: 베이스 컬러
 **의류 탭 (Wardrobe)**:
 에디터에서 캔버스에 넣을 수 있는, 색상 그룹별로 묶인 이미지 라이브러리.
 _Avoid_: 갤러리
+
+
+### 여러 몰 등록
+
+**몰별 판매 기본 정보 (MallDefaults)**:
+연결된 몰마다 따로 저장하며 mall_defaults의 (user_id, mall)이 정본이다. 카페24는 과세, 제조국 기본값과 진열 방식만 받고 지그재그는 배송, 반품, 고시, 과세, 상품 출처, 발송일, 진열 방식과 반품지를 받는다. 지그재그 출고지는 없으며 반품지만 return_id로 보낸다. 에이블리는 준비 중이다. GET/PUT /v1/malls/{mall}/registration-defaults로 해당 몰의 허용 필드만 다루며 판매 정보와 주소 선택은 하나의 revision을 공유한다. 몰 사이 복사나 동기화는 하지 않는다. /settings/malls는 연결 목록이며 /settings/malls/:mall에서 해당 몰의 판매 정보를 입력한다.
+
+**등록 초안 (RegisterDraft)**:
+저장된 편집본과 게시, 상품명, 가격, 옵션별 수량, 이미지 순서와 선택한 몰을 담은 확인 입력. 고시와 사이즈는 에디터 저장 후 점검하며 FREE는 실제 치수가 아니다.
+
+**사전 점검 (Preflight)**:
+몰별 현재 사실을 읽어 ready, blocked, preparing을 돌려주는 읽기 동작. ready 몰의 SourceVersions는 connectionVersion, mallDefaultsRevision, catalogVersion, editorRevision이며 접수에서 다시 비교한다. 기본값 버전은 mallDefaultsRevision 하나로 확인한다. 연결됨 자체는 등록 가능을 뜻하지 않는다.
+
+**묶음 접수와 영수증 (BatchReceipt)**:
+한 번 확인한 batchId로 준비된 몰만 접수하는 서버 기록. 몰마다 별도 잡을 만들고 차단된 몰도 영수증에 남긴다. 같은 입력 재전송은 원래 영수증을 반환하고 다른 입력은 거부한다. 시간당 10개 한도는 신규 몰 잡 수로 소비하며 묶음과 함께 커밋한다.
+
+**등록 스냅샷 (RegistrationSnapshot)**:
+접수 순간 서버가 소유권과 리비전을 확인한 불변 작업 입력. 이후 기본값이나 편집본이 바뀌어도 작업 내용을 다시 만들지 않는다. 상품 ID는 metadata.productId 문자열 하나로 통일한다.
+
+**등록 확인과 설정 이어 하기**:
+생성 여부가 불명확하면 verify로 조회만 하고 다시 생성하지 않는다. 확인된 상품의 설정 미완료만 resume로 같은 잡을 재개한다. 생성 완료와 설정 완료는 구분한다. Phase A의 지그재그와 에이블리 등록은 preparing이며 공통 등록 실행은 A03 완료 전까지 플래그를 끈다.

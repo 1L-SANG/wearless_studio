@@ -1,6 +1,9 @@
 import { uploadWardrobeGif, readWardrobeGifs, writeWardrobeGifs, mergeWardrobeGifs } from './gifWardrobe.js';
 import { createDetailPublication, completeDetailPublication, listDetailPublications, deleteDetailPublication } from './detailPublications.js';
-import { listMalls, connectZigzag, rotateZigzag, disconnectZigzag, listZigzagAddresses, saveZigzagDefaults } from './malls.js';
+import { listMalls, connectZigzag, rotateZigzag, disconnectZigzag, listZigzagAddresses,
+  startCafe24Install, disconnectCafe24, getMallDefaults, saveMallDefaults,
+  getMallRegistrationCatalog, preflightMallRegistration, createMallRegistrationBatch, getMallRegistrationBatch,
+  getMallRegistration, verifyMallRegistration, resumeMallRegistration, listMallRegistrations } from './malls.js';
 import { preparePublicAnalysis, publicAnalysisForm } from './publicAnalysisRequest.js';
 import { hasOutfitContextChange, mergeOutfitAnalysis, assertOutfitAccessoriesSaved, requireOutfitAccessorySupport } from '../outfitSelections.js';
 import { stripFeatureClientFields } from '../featureRun.js';
@@ -97,7 +100,7 @@ const storyboardRevisions = createStoryboardRevisionSync({
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
 export async function http(path, {
-  method = 'GET', body, signal, keepalive, headers: requestHeaders, expectedUserId,
+  method = 'GET', body, signal, keepalive, credentials, headers: requestHeaders, expectedUserId,
   requireAuth = true, suppressErrorLog = false, isCurrent = () => true,
   accountGeneration = clientEvents.getAccountGeneration(),
 } = {}) {
@@ -163,6 +166,7 @@ export async function http(path, {
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
       keepalive,
+      ...(credentials === undefined ? {} : { credentials }),
     }, { blockOffline: true, accountGeneration });
   } catch (cause) {
     if (cause?.name === 'AbortError') throw cause;
@@ -181,12 +185,14 @@ export async function http(path, {
     let code;
     let meta;
     let missing;
+    let jobId;
     try {
       const payload = await res.json();
       if (payload?.error?.message) message = payload.error.message;
       if (payload?.error?.code) code = payload.error.code;
       if (payload?.error?.meta) meta = absolutizeAssetUrls(payload.error.meta);
       if (Array.isArray(payload?.error?.missing)) missing = payload.error.missing;
+      if (payload?.error?.jobId) jobId = payload.error.jobId;
     } catch { /* 비 JSON 응답 — 기본 메시지 유지 */ }
     if (!suppressErrorLog) console.error(`API ${res.status} ${path}`); // 기술 세부는 콘솔로만
     // 기기 게이트 거절(승인 대기·회수·미등록). 화면마다 403 을 해석하게 하지 않고 RequireDevice 가
@@ -204,6 +210,7 @@ export async function http(path, {
     if (code) err.code = code;
     if (meta) err.meta = meta;
     if (missing) err.missing = missing;
+    if (jobId) err.jobId = jobId;
     throw attachResponseError(err, res);
   }
   if (res.status === 204) return null;
@@ -485,7 +492,11 @@ async function recommendMatchHttp(projectId, analysis, current, { defaultSelecti
 // 선택 토글 머지 — id 단위 selected/selOrder 반영 후 1..max 재부여(mock 정규화와 동일 규칙).
 
 export const httpAdapter = {
-  listMalls, connectZigzag, rotateZigzag, disconnectZigzag, listZigzagAddresses, saveZigzagDefaults,
+  pollJob,
+  listMalls, connectZigzag, rotateZigzag, disconnectZigzag, listZigzagAddresses,
+  startCafe24Install, disconnectCafe24, getMallDefaults, saveMallDefaults,
+  getMallRegistrationCatalog, preflightMallRegistration, createMallRegistrationBatch, getMallRegistrationBatch,
+  getMallRegistration, verifyMallRegistration, resumeMallRegistration, listMallRegistrations,
   createDetailPublication,
   completeDetailPublication,
   listDetailPublications,
@@ -737,6 +748,11 @@ export const httpAdapter = {
   },
   async getEditorBlocks(projectId) {
     return editorRevisions.load(projectId);
+  },
+  /** 본문을 적용하지 않는 조회는 에디터의 저장 기준을 바꾸지 않는다. */
+  async peekEditorRevision(projectId) {
+    const response = await http(`/v1/projects/${projectId}/editor-blocks?withRevision=1`);
+    return Number.isInteger(response?.revision) ? response.revision : null;
   },
   /** 이 탭이 마지막으로 본 editor_revision(모르면 null) — 브라우저 임시 작업본의 기준점. */
   editorRevisionOf(projectId) {

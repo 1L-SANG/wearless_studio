@@ -2,16 +2,25 @@ import { useEffect, useRef } from 'react';
 import { Button, Icon } from '@/components/ui.jsx';
 import styles from './ExportMenu.module.css';
 
-export function buildExportMenuItems({ malls, publishEnabled, gifCount, onDownload, onPublish, onConnect, onGifs }) {
-  const zigzagDisabled = malls?.disabled || malls?.items?.find((item) => item.mall === 'zigzag')?.status === 'connected';
+export function buildExportMenuItems({ malls, publishEnabled, gifCount, onDownload, onPublish, onConnect, onRegisterMall, onGifs }) {
+  const mallItems = ['zigzag', 'cafe24', 'ably'].map((mall) => {
+    const name = { zigzag: '지그재그', cafe24: '카페24', ably: '에이블리' }[mall];
+    const connection = malls?.items?.find((item) => item.mall === mall);
+    const status = connection?.status || 'none';
+    const needsReconnect = status === 'reconnect_required' || connection?.registration?.status === 'reconnect_required';
+    const available = status === 'connected' && connection?.registration?.status === 'available';
+    const disabled = !malls || malls.disabled || malls.loading || mall === 'ably' || status === 'unavailable'
+      || status === 'connected' && (!available && !needsReconnect || !publishEnabled);
+    const connect = !disabled && !available;
+    return { id: mall, label: connect ? `${name}${needsReconnect ? ' 다시 연결하기' : ' 연결하기'}` : `${name}에 상품 등록`,
+      logo: `/assets/malls/${mall}-48.png`, srcSet: `/assets/malls/${mall}-96.png 2x`, kind: connect ? 'go' : 'action',
+      disabled: !!disabled, badge: disabled ? '준비 중' : undefined,
+      onSelect: disabled ? undefined : connect ? () => onConnect?.(mall) : () => onRegisterMall?.(mall) };
+  });
   return [
     { id: 'download', label: '이미지로 다운로드', icon: 'download', kind: 'action', onSelect: onDownload },
     ...(publishEnabled ? [{ id: 'paste', label: '몰에 붙여넣기', icon: 'link', kind: 'action', onSelect: onPublish }] : []),
-    { id: 'zigzag', label: zigzagDisabled ? '지그재그에 상품 등록' : '지그재그 연결하기',
-      logo: '/assets/malls/zigzag-48.png', srcSet: '/assets/malls/zigzag-96.png 2x', kind: zigzagDisabled ? 'action' : 'go',
-      disabled: zigzagDisabled, badge: zigzagDisabled ? '준비 중' : undefined, onSelect: onConnect },
-    { id: 'ably', label: '에이블리에 상품 등록', logo: '/assets/malls/ably-48.png',
-      srcSet: '/assets/malls/ably-96.png 2x', kind: 'action', disabled: true, badge: '준비 중' },
+    ...mallItems,
     ...(gifCount > 0 ? [{ id: 'gif', label: 'GIF 따로 받기', icon: 'gif', kind: 'action', onSelect: onGifs }] : []),
   ];
 }

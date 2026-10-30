@@ -1,4 +1,4 @@
-"""Remove payment credentials from the server's formatted log output."""
+"""Remove payment credentials and Cafe24 OAuth queries from formatted logs."""
 
 import logging
 import re
@@ -10,9 +10,13 @@ _PAYMENT_PATH = re.compile(
     r"/v1/billing/authorizations/issue(?=$|[/\s?#'\"<>:\x1b])"
     r"|(?P<prefix>/v1/(?:webhooks/toss|billing)/)[^/\s?#'\"<>\x1b]+"
 )
+_CAFE24_QUERY = re.compile(
+    r"(/v1/malls/cafe24/(?:callback|install/[^/\s?]+/start))\?[^\s'\"<>\x1b]*"
+)
 
 
 def redact_payment_paths(text: str) -> str:
+    text = _CAFE24_QUERY.sub(r"\1?[redacted]", text)
     return _PAYMENT_PATH.sub(
         lambda match: f"{match['prefix']}[redacted]" if match['prefix'] else match[0],
         text,

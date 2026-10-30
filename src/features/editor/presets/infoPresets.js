@@ -652,6 +652,12 @@ export function carrySlotImages(prevElements, block, wardrobeImages = []) {
   };
 }
 
+// Registration edits use the same renderer and preserve document placement and photo slots.
+export function rebuildInfoBlock(previous, type, info, context = {}) {
+  const built = carrySlotImages(previous?.elements, buildInfoBlock(type, info, context));
+  return previous ? { ...previous, ...built, id: previous.id } : built;
+}
+
 /* 슬롯 채움을 elements 와 info(폼 정본)에 **동시에** 기록한다 — 요소에만 쓰면
    재생성(재편집·템플릿 재적용) 때 사진-포인트 연결이 끊긴다(리뷰 확정 결함).
    이미지 요소의 서수 = info 배열 인덱스 (빌더가 같은 순서로 방출). */

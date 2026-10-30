@@ -13,7 +13,7 @@ async function load(runtime = hooks(), api = {}) {
   assert.ok(existsSync(new URL('../../src/features/settings/MallConnections.jsx', import.meta.url)), 'mall settings page is missing');
   return componentModule('src/features/settings/MallConnections.jsx', ['MallConnectionRow', 'ZigzagConnection', 'MallActionDialog', 'MallDialog', 'KeyFields'],
     { ...runtime, api, Button, Icon, Modal: ({ children }) => children, styles: {},
-      seoulDate: () => '2026.10.24', ExportMenu: () => null, MallDefaultsChecklist: () => null });
+      seoulDate: () => '2026.10.24', ExportMenu: () => null, Link: 'a', MallDefaultsForm: () => null });
 }
 
 test('secret key input accessible name is exactly Secret Key', async () => {
@@ -146,7 +146,7 @@ test('disabled connect api hides profile link and shows export mall items as 준
   assert.doesNotMatch(await profile(false, false), /쇼핑몰 연결/);
   const { buildExportMenuItems } = await componentModule('src/features/editor/ExportMenu.jsx', ['buildExportMenuItems'], {});
   const items = buildExportMenuItems({ malls: { disabled: true }, publishEnabled: true, gifCount: 0 });
-  assert.deepEqual(items.map((item) => item.id), ['download', 'paste', 'zigzag', 'ably']);
+  assert.deepEqual(items.map((item) => item.id), ['download', 'paste', 'zigzag', 'cafe24', 'ably']);
   for (const item of items.filter((item) => ['zigzag', 'ably'].includes(item.id))) {
     assert.equal(item.disabled, true);
     assert.equal(item.badge, '준비 중');

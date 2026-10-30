@@ -1,3 +1,5 @@
+import measurementLabels from '../../server/app/data/measurement_labels.json' with { type: 'json' };
+
 export const MEASUREMENT_SCHEMA = Object.freeze({
   top: ['totalLength', 'shoulderWidth', 'chestWidth', 'sleeveLength'],
   bottom: ['totalLength', 'waistWidth', 'hipWidth', 'rise', 'thighWidth', 'hemWidth'],
@@ -5,18 +7,7 @@ export const MEASUREMENT_SCHEMA = Object.freeze({
   dress: ['totalLength', 'shoulderWidth', 'chestWidth', 'waistWidth', 'hipWidth', 'armhole', 'sleeveLength', 'hemWidth'],
 });
 
-export const MEASUREMENT_LABELS = Object.freeze({
-  totalLength: '총장',
-  shoulderWidth: '어깨너비',
-  chestWidth: '가슴단면',
-  sleeveLength: '소매길이',
-  waistWidth: '허리단면',
-  hipWidth: '힙단면',
-  rise: '밑위',
-  thighWidth: '허벅지단면',
-  hemWidth: '밑단단면',
-  armhole: '암홀',
-});
+export const MEASUREMENT_LABELS = Object.freeze(measurementLabels);
 
 export function measurementKeysFor(clothingType) {
   return MEASUREMENT_SCHEMA[clothingType] || MEASUREMENT_SCHEMA.top;

@@ -32,10 +32,10 @@ test('mall http adapter sends exact route contracts without logging keys', async
   await adapter.rotateZigzag(keys);
   await adapter.disconnectZigzag();
   await adapter.listZigzagAddresses();
-  await adapter.saveZigzagDefaults({ taxType: 'FREE' });
+  await adapter.saveMallDefaults('zigzag', { baseRevision: 0, taxType: 'FREE' });
   assert.deepEqual(calls.map(({ url, options }) => [url, options.method]), [
     ['/v1/malls/zigzag/connect', 'POST'], ['/v1/malls/zigzag/rotate', 'POST'],
-    ['/v1/malls/zigzag', 'DELETE'], ['/v1/malls/zigzag/addresses', 'GET'], ['/v1/malls/zigzag/defaults', 'PUT'],
+    ['/v1/malls/zigzag', 'DELETE'], ['/v1/malls/zigzag/addresses', 'GET'], ['/v1/malls/zigzag/registration-defaults', 'PUT'],
   ]);
   assert.deepEqual(JSON.parse(calls[0].options.body), keys);
 });
@@ -67,12 +67,28 @@ test('mock rejects bad and noperm keys while rotate keeps the connection', async
 });
 
 test('mock disconnect preserves partial defaults for reconnect', async () => {
-  await mock.saveZigzagDefaults({ returns: { partialFee: 3000 } });
-  await mock.saveZigzagDefaults({ returns: { totalFee: 6000, exchangeFee: 6000 } });
+  db.mallDefaults = {}; await mock.connectZigzag(keys);
+  await mock.saveMallDefaults('zigzag', { baseRevision: 1, returns: { partialFee: 3000 } });
+  await mock.saveMallDefaults('zigzag', { baseRevision: 2, returns: { totalFee: 6000, exchangeFee: 6000 } });
   await mock.disconnectZigzag();
   assert.equal((await mock.listMalls()).items[0].status, 'none');
   await mock.connectZigzag(keys);
-  const saved = (await mock.listMalls()).items[0].defaults;
+  const saved = await mock.getMallDefaults('zigzag');
   assert.equal(saved.returns.partialFee, 3000);
-  assert.deepEqual(saved.completedItems, ['returns']);
+  assert.ok(saved.missingItems.includes('shipping.feeType')); assert.ok(saved.missingItems.includes('disclosure.country')); assert.ok(!saved.missingItems.some((key) => key.startsWith('returns.')));
+  assert.equal('defaults' in (await mock.listMalls()).items[0], false);
+});
+
+test('mock mall revisions reject conflicts and foreign addresses while preserving own sales', async () => {
+  db.mallDefaults = {}; db.mallConnections = {};
+  await mock.connectZigzag(keys);
+  await mock.saveMallDefaults('zigzag', { baseRevision: 1, shippingDays: 3 });
+  const first = await mock.saveMallDefaults('zigzag', { baseRevision: 2, addresses: { returnAddressId: 'mock-shipping' } });
+  assert.equal(first.revision, 3);
+  await assert.rejects(mock.saveMallDefaults('zigzag', { baseRevision: 2, addresses: {} }), (error) => error.code === 'defaults_conflict' && error.status === 409);
+  await assert.rejects(mock.saveMallDefaults('zigzag', { baseRevision: 3, addresses: { returnAddressId: 'foreign-address' } }), (error) => error.code === 'address_not_found');
+  await mock.disconnectZigzag();
+  await mock.connectZigzag({ ...keys, accessKey: 'other-fixture-12345678' });
+  const changed = await mock.getMallDefaults('zigzag');
+  assert.deepEqual(changed.addresses, {}); assert.equal(changed.revision, 4); assert.equal(changed.shippingDays, 3);
 });

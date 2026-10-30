@@ -46,7 +46,10 @@ def mall_pg(monkeypatch):
     for name in ("PGHOSTADDR", "PGSERVICE", "PGSERVICEFILE"):
         monkeypatch.delenv(name, raising=False)
     schema = "mall_race_" + uuid.uuid4().hex
-    admin = psycopg.connect(dsn, autocommit=True, row_factory=dict_row, connect_timeout=3)
+    try:
+        admin = psycopg.connect(dsn, autocommit=True, row_factory=dict_row, connect_timeout=3)
+    except psycopg.OperationalError:
+        pytest.skip("disposable local PostgreSQL is unreachable in this environment")
     admin.execute(psycopg.sql.SQL("create schema {}").format(psycopg.sql.Identifier(schema)))
     try:
         admin.execute(psycopg.sql.SQL("set search_path to {}, public").format(psycopg.sql.Identifier(schema)))
@@ -55,6 +58,18 @@ def mall_pg(monkeypatch):
             if "create table" in statement or "create unique index" in statement:
                 admin.execute(statement.replace("public.mall_", f"{schema}.mall_")
                               .replace("references auth.users(id) on delete cascade", ""))
+        cafe24 = migration.with_name("20261027100000_mall_cafe24.sql")
+        for statement in cafe24.read_text().split(";"):
+            if "alter table public.mall_connections" in statement or "alter table public.mall_defaults" in statement:
+                admin.execute(statement.replace("public.mall_", f"{schema}.mall_"))
+        multimall = migration.with_name("20261028124908_multimall_registration.sql")
+        for statement in multimall.read_text().split(";"):
+            if "alter table public.mall_defaults" in statement:
+                admin.execute(statement.replace("public.mall_defaults", f"{schema}.mall_defaults"))
+        per_mall = migration.with_name("20261029184338_multimall_per_mall_defaults.sql")
+        for statement in per_mall.read_text().split(";"):
+            if "alter table public.mall_defaults" in statement:
+                admin.execute(statement.replace("public.mall_defaults", f"{schema}.mall_defaults"))
         admin.execute("""create table client_event_rate_limits (
             scope text, key text, window_start timestamptz, request_count integer)""")
         admin.execute("""create table jobs (
@@ -76,6 +91,25 @@ def mall_pg(monkeypatch):
     finally:
         admin.execute(psycopg.sql.SQL("drop schema {} cascade").format(psycopg.sql.Identifier(schema)))
         admin.close()
+
+
+def test_cafe24_migration_checks_actual_mall_constraints_and_token_columns(mall_pg):
+    _, admin, _pool = mall_pg
+    malls = ("zigzag", "ably", "smartstore", "cafe24")
+    for table in ("mall_connections", "mall_defaults"):
+        constraint = admin.execute(
+            "select pg_get_constraintdef(oid) as definition from pg_constraint "
+            "where conrelid = %s::regclass and conname = %s",
+            (table, f"{table}_mall_check"),
+        ).fetchone()
+        assert constraint is not None
+        assert all(f"'{mall}'::text" in constraint["definition"] for mall in malls)
+        for mall in malls:
+            admin.execute(psycopg.sql.SQL("insert into {} (user_id, mall) values (%s, %s)")
+                          .format(psycopg.sql.Identifier(table)), (USER, mall))
+    row = admin.execute("select token_expires_at, refresh_expires_at, scopes "
+                        "from mall_connections where mall = 'cafe24'").fetchone()
+    assert row == {"token_expires_at": None, "refresh_expires_at": None, "scopes": []}
 
 
 @pytest.mark.parametrize("change", ["disconnect", "replace"])
