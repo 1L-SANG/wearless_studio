@@ -886,6 +886,8 @@ payload는 mall, batchId, requestHash, connectionId, shopId, publicationId, edit
 
 공통 등록 뷰는 jobId, mall, status, progress, stage, outcome, setupStatus, productId, productUrl, adminUrl, stages, retryAction, code, warnings, retention, publicationId, createdAt, finishedAt이다. pending과 running의 outcome은 null이고 setupStatus는 pending이다. 종료 시 productId 확인, rejectedAt, create.sentAt, 전송 전 실패 순으로 판정한다. 상품 확인이면 created를 유지하고 모든 설정이 끝나야 complete, 미완료면 needs_attention이다. unknown과 duplicate_suspected는 verify, 안전한 설정 미완료는 resume, 생성 전 확정 실패는 new_request를 제공한다. checkpoints는 단계 이름별 객체이며 status=complete로 완료를 표시한다. uploading_additional_images.requests에는 요청별 sentAt과 status를 남기고 불명확한 POST는 자동 재개하지 않는다.
 
+복구 조회도 공통 뷰와 같은 완료 기준을 사용한다. productId가 확인된 종료 작업은 result.setupStatus가 complete이거나 SETUP_STAGES의 모든 필수 체크포인트가 complete이면 미해결 목록에서 제외한다. 최종 결과 저장 전에 작업이 중단돼 result가 없어도 같다. 필수 단계가 하나라도 미완료이면 복구 대상으로 유지하고, pending과 running 작업은 완료 체크포인트 유무와 관계없이 활성 작업으로 유지한다.
+
 모든 새 API는 로그인, 소유자 조건과 Cache-Control: no-store, `{error:{code,message,...}}`를 사용한다. 비밀값, 임의 외부 URL, upstream 원문과 예외 객체를 결과와 이벤트에 보관하지 않는다. 카페24 전용 등록 경로, 이전 요청 모델과 단일 recovery 응답은 제거한다. OAuth, 토큰 회전 및 카페24로 게시 이미지를 복사하는 정책은 유지한다. 지그재그 게시 보관 정책은 Phase B 전까지 적용하지 않는다.
 
 ## 7. 현행 코드와의 갭 (마이그레이션 TODO)

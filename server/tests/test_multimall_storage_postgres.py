@@ -10,6 +10,7 @@ from psycopg.types.json import Json
 import pytest
 
 from app import repo
+from app.services.mall_registration_contract import registration_view
 from test_mall_connect import OTHER, USER
 from test_mall_connect_postgres import mall_pg
 
@@ -137,6 +138,105 @@ async def stop_pending(pending):
     if not pending.done():
         pending.cancel()
     await asyncio.gather(pending, return_exceptions=True)
+
+
+@pytest.mark.parametrize("status", ["done", "error", "cancelled"])
+@pytest.mark.parametrize("unfinished", [None, "mapping_variants", "setting_inventory",
+                                      "uploading_thumbnail", "uploading_additional_images", "activating"])
+def test_checkpoint_completion_controls_recovery_and_new_admission(storage_pg, status, unfinished):
+    admin, pool, _roles = storage_pg
+    job_id = str(uuid.uuid4())
+    checkpoints = {stage: {"status": "complete"} for stage in (
+        "mapping_variants", "setting_inventory", "uploading_thumbnail",
+        "uploading_additional_images", "activating")}
+    if unfinished:
+        del checkpoints[unfinished]
+    frozen = payloads(str(uuid.uuid4()), ("cafe24",))["cafe24"]
+    admin.execute("""insert into jobs
+        (id, user_id, project_id, kind, status, payload, metadata, result)
+        values (%s, %s, %s, 'mall_register', %s, %s, %s, null)""",
+        (job_id, USER, PROJECT, status, Json(frozen),
+         Json({"productId": "123", "checkpoints": checkpoints})))
+
+    async def scenario():
+        async with pool.connection() as conn:
+            job = await repo.get_job(conn, USER, job_id)
+            assert registration_view(job)["setupStatus"] == ("needs_attention" if unfinished else "complete")
+            recoveries = await repo.find_mall_registration_recoveries(conn, user_id=USER,
+                project_id=PROJECT, mall="cafe24", shop_id="cafe24-shop")
+            assert [row["id"] for row in recoveries] == ([job_id] if unfinished else [])
+            if unfinished:
+                with pytest.raises(repo.CreditError) as blocked:
+                    await enqueue(conn, str(uuid.uuid4()), ("cafe24",))
+                assert blocked.value.code == "no_ready_malls"
+                assert blocked.value.items[0]["existingJobId"] == job_id
+            else:
+                receipt = await enqueue(conn, str(uuid.uuid4()), ("cafe24",))
+                assert receipt["items"][0]["status"] == "accepted"
+                assert receipt["items"][0]["jobId"] != job_id
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status", ["pending", "running"])
+def test_active_registration_stays_recoverable_after_setup_checkpoints(storage_pg, status):
+    admin, pool, _roles = storage_pg
+    job_id = str(uuid.uuid4())
+    checkpoints = {stage: {"status": "complete"} for stage in (
+        "mapping_variants", "setting_inventory", "uploading_thumbnail",
+        "uploading_additional_images", "activating")}
+    admin.execute("""insert into jobs (id, user_id, project_id, kind, status, payload, metadata)
+        values (%s, %s, %s, 'mall_register', %s, %s, %s)""",
+        (job_id, USER, PROJECT, status, Json(payloads(str(uuid.uuid4()), ("cafe24",))["cafe24"]),
+         Json({"productId": "123", "checkpoints": checkpoints})))
+
+    async def scenario():
+        async with pool.connection() as conn:
+            rows = await repo.find_mall_registration_recoveries(conn, user_id=USER, project_id=PROJECT,
+                mall="cafe24", shop_id="cafe24-shop")
+            assert [row["id"] for row in rows] == [job_id]
+            assert registration_view(rows[0])["setupStatus"] == "pending"
+            with pytest.raises(repo.CreditError) as blocked:
+                await enqueue(conn, str(uuid.uuid4()), ("cafe24",))
+            assert blocked.value.code == "no_ready_malls"
+            assert blocked.value.items[0]["existingJobId"] == job_id
+
+    asyncio.run(scenario())
+
+
+def test_batch_lookup_can_use_the_migration_partial_index(storage_pg):
+    admin, _pool, _roles = storage_pg
+    batch_id = str(uuid.uuid4())
+    admin.execute("""insert into jobs (user_id, project_id, kind, status, payload)
+        select %s, %s, 'mall_register', 'done', jsonb_build_object(
+            'mall', 'cafe24', 'batchId', gen_random_uuid()::text)
+        from generate_series(1, 2000)""", (OTHER, PROJECT))
+    admin.execute("analyze jobs")
+    statements = []
+
+    class CaptureCursor:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def execute(self, query, params): statements.append((query, params))
+        async def fetchall(self): return []
+
+    class CaptureConnection:
+        def cursor(self): return CaptureCursor()
+
+    # Capture the actual repository query; EXPLAIN a copied query would not catch a regression.
+    assert asyncio.run(repo.get_mall_batch_jobs(CaptureConnection(), user_id=USER, batch_id=batch_id)) == []
+    query, params = statements[0]
+    try:
+        # Assert index eligibility rather than a timing threshold or planner cost preference.
+        admin.execute("set enable_seqscan = off")
+        plan = admin.execute("explain (format json) " + query, params).fetchone()["QUERY PLAN"][0]["Plan"]
+    finally:
+        admin.execute("reset enable_seqscan")
+
+    def indexes(node):
+        return {node.get("Index Name")} | set().union(*(indexes(child) for child in node.get("Plans", [])))
+
+    assert "jobs_mall_register_batch_idx" in indexes(plan)
 
 
 def test_per_mall_defaults_inherit_rls_acl_and_migration_shape(storage_pg):

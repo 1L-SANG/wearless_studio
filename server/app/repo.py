@@ -2652,8 +2652,9 @@ async def load_registration_source(conn, *, user_id: str, project_id: str, publi
 
 async def get_mall_batch_jobs(conn, *, user_id: str, batch_id: str) -> list[dict]:
     async with conn.cursor() as cur:
+        # Match the partial batch index predicate, including during locked receipt reads.
         await cur.execute(f"select {_JOB_COLS} from jobs where user_id = %s and kind = 'mall_register' "
-                          "and payload->>'batchId' = %s order by id", (user_id, batch_id))
+                          "and payload ? 'batchId' and payload->>'batchId' = %s order by id", (user_id, batch_id))
         jobs = await cur.fetchall()
     if jobs:
         _mall_batch_receipt(jobs)
@@ -2663,6 +2664,8 @@ async def get_mall_batch_jobs(conn, *, user_id: str, batch_id: str) -> list[dict
 async def find_mall_registration_recoveries(conn, *, user_id: str, project_id: str,
                                            mall: str, shop_id: str) -> list[dict]:
     """All unresolved jobs in this store, including history beyond the visible list."""
+    from .services.mall_registration_contract import SETUP_STAGES
+
     async with conn.cursor() as cur:
         await cur.execute(f"""select {_JOB_COLS} from jobs
             where user_id = %s and project_id = %s and kind = 'mall_register'
@@ -2670,12 +2673,15 @@ async def find_mall_registration_recoveries(conn, *, user_id: str, project_id: s
               and (status in ('pending', 'running') or (
                 status in ('done', 'error', 'cancelled') and (
                   (nullif(metadata->>'productId', '') is not null
-                    and result->>'setupStatus' is distinct from 'complete')
+                    and result->>'setupStatus' is distinct from 'complete'
+                    and exists (
+                      select 1 from unnest(%s::text[]) as required(stage)
+                      where metadata->'checkpoints'->required.stage->>'status' is distinct from 'complete'))
                   or (nullif(metadata->>'productId', '') is null
                     and nullif(metadata->>'rejectedAt', '') is null
                     and (nullif(metadata->'create'->>'sentAt', '') is not null
                       or result->>'outcome' in ('unknown', 'duplicate_suspected')))
-                ))) order by created_at desc, id desc""", (user_id, project_id, mall, shop_id))
+                ))) order by created_at desc, id desc""", (user_id, project_id, mall, shop_id, list(SETUP_STAGES)))
         return await cur.fetchall()
 
 

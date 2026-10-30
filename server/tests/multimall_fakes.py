@@ -12,6 +12,7 @@ from app import repo
 from app.auth import require_user
 from app.main import create_app
 from app.services.mall_catalog import REQUIRED_SCOPES
+from app.services.mall_registration_contract import SETUP_STAGES
 from conftest import make_settings
 from test_mall_connect import USER, OTHER
 from test_multimall_routes import PROJECT, PUBLICATION, ASSET, draft, source, facts
@@ -77,7 +78,9 @@ def registration_env(monkeypatch):
         result=[]
         for j in store['jobs'].values():
             m,r=j.get('metadata') or {},j.get('result') or {}
-            unresolved = (m.get('productId') and r.get('setupStatus') != 'complete') or (not m.get('productId') and not m.get('rejectedAt') and ((m.get('create') or {}).get('sentAt') or r.get('outcome') in ('unknown','duplicate_suspected')))
+            complete = r.get('setupStatus') == 'complete' or all(
+                (m.get('checkpoints', {}).get(stage) or {}).get('status') == 'complete' for stage in SETUP_STAGES)
+            unresolved = (m.get('productId') and not complete) or (not m.get('productId') and not m.get('rejectedAt') and ((m.get('create') or {}).get('sentAt') or r.get('outcome') in ('unknown','duplicate_suspected')))
             if j['user_id']==user_id and j['project_id']==project_id and j['kind']=='mall_register' and j['payload']['mall']==mall and j['payload']['shopId']==shop_id and (j['status'] in ('pending','running') or unresolved):
                 result.append(copy.deepcopy(j))
         return sorted(result,key=lambda j:j.get('created_at', ''),reverse=True)
