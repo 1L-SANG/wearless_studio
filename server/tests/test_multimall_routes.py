@@ -5,6 +5,8 @@ import uuid
 
 import pytest
 
+from cafe24_official_examples import official_example
+
 PROJECT, PUBLICATION, ASSET = [str(uuid.UUID(int=i)) for i in (10, 11, 12)]
 
 
@@ -160,7 +162,9 @@ def test_category_pagination_price_basis_and_image_settings_fail_closed():
         def respond(request):
             calls.append(request)
             if request.url.path.endswith('/images/setting'):
-                return httpx.Response(200, json={'images_setting': {'detail_image_width': 800, 'detail_image_height': 1000}})
+                payload = official_example('image_setting')
+                payload['image']['product_image_size'].update(detail_image_width=800, detail_image_height=1000)
+                return httpx.Response(200, json=payload)
             if request.url.path.endswith('/products/42'):
                 return httpx.Response(200, json={'product': {'product_no': 42, 'display': 'F', 'selling': 'F'}})
             return httpx.Response(200, json={'variants': [{'variant_code': 'V1', 'quantity': 0}]})
@@ -169,7 +173,7 @@ def test_category_pagination_price_basis_and_image_settings_fail_closed():
         assert (await client.product_state('secret', 42))['productId'] == '42'
         assert (await client.variants('secret', 42))[0]['variantCode'] == 'V1'
         assert all(r.method == 'GET' for r in calls)
-        client.transport = httpx.MockTransport(lambda _: httpx.Response(200, json={'images_setting': {}}))
+        client.transport = httpx.MockTransport(lambda _: httpx.Response(200, json={'image': {}}))
         with pytest.raises(Cafe24ApiError): await client.image_setting('secret')
     asyncio.run(scenario())
 
@@ -307,8 +311,10 @@ def test_catalog_reads_every_page_caches_only_complete_facts_and_preserves_paren
             rows=[dict(category_no=offset+i+1,category_name=f'분류{offset+i}',parent_category_no=1 if offset else None,
                        category_depth=2,use_display='F' if i==1 else 'T') for i in range(100 if cutoff[0] or offset<300 else 2)]
             return httpx.Response(200,json={'categories':rows})
-        if path.endswith('/products/setting'):return httpx.Response(200,json={'products_setting':{'calculate_price_based_on':'B'}})
-        return httpx.Response(200,json={'images_setting':{'detail_image_width':800,'detail_image_height':1000}})
+        if path.endswith('/products/setting'):
+            payload=official_example('product_setting');payload['product']['calculate_price_based_on']='B'
+            return httpx.Response(200,json=payload)
+        return httpx.Response(200,json=official_example('image_setting'))
     async def token(app,*,user_id,connection_id,fn):return await fn('fixture-token')
     monkeypatch.setattr(mall_catalog,'Cafe24Client',lambda *a,**kw:Cafe24Client(*a,**kw,transport=httpx.MockTransport(respond)))
     monkeypatch.setattr(mall_catalog,'call_with_token',token)
@@ -324,6 +330,57 @@ def test_catalog_reads_every_page_caches_only_complete_facts_and_preserves_paren
         incomplete=await mall_catalog.load_mall_facts(app,user_id='owner',mall='cafe24')
         assert not incomplete['complete'] and len(calls)==58 and not app.state.mall_catalog_cache
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('failure,code,exception', [
+    (None, None, None), ('categories', 'unreachable', 'TransportError'),
+    ('product_setting', 'price_setting_unavailable', 'Cafe24ApiError'),
+    ('image_setting', 'image_setting_unavailable', 'Cafe24ApiError'),
+])
+def test_official_catalog_preflight_blocks_failed_settings_and_logs_only_safe_diagnostics(env, monkeypatch, caplog, failure, code, exception):
+    import asyncio
+    import httpx
+    from app.services import mall_catalog
+    from app.services.cafe24_client import Cafe24Client
+    from app.services.mall_preflight import evaluate_preflight
+    client, store = env
+    calls = []
+    secret = 'private-token-body-query-marker'
+
+    def respond(request):
+        assert request.method == 'GET'
+        stage = {'/api/v2/admin/categories': 'categories', '/api/v2/admin/products/setting': 'product_setting',
+                 '/api/v2/admin/images/setting': 'image_setting'}[request.url.path]
+        calls.append(stage)
+        if stage == failure:
+            if stage == 'categories':
+                raise httpx.ReadTimeout(secret, request=httpx.Request('GET', f'https://private.invalid/?token={secret}'))
+            return httpx.Response(200, json={'private': secret})
+        if stage == 'categories':
+            return httpx.Response(200, json={'categories': [{'category_no': 27, 'category_name': '상의'}]})
+        return httpx.Response(200, json=official_example(stage))
+
+    async def token(app, *, user_id, connection_id, fn):
+        return await fn(secret)
+    monkeypatch.setattr(mall_catalog, 'Cafe24Client', lambda *a, **kw:
+        Cafe24Client(*a, **kw, transport=httpx.MockTransport(respond)))
+    monkeypatch.setattr(mall_catalog, 'call_with_token', token)
+    loaded = asyncio.run(mall_catalog.load_mall_facts(client.app, user_id='owner', mall='cafe24'))
+    checked = evaluate_preflight(contract().normalize_register_draft(draft(selectedMalls=['cafe24'])),
+                                 source=store['source'], facts_by_mall={'cafe24': loaded})
+    if failure is None:
+        assert checked['readyMalls'] == ['cafe24'] and loaded['complete']
+        assert loaded['priceBasis'] == 'P' and loaded['imageRatio'] == {'width': 500, 'height': 500}
+        assert calls == ['categories', 'product_setting', 'image_setting']
+        assert not [r for r in caplog.records if r.name == mall_catalog.__name__]
+    else:
+        assert checked['readyMalls'] == [] and checked['blockedMalls'] == ['cafe24']
+        assert checked['items'][0]['issues'][0]['code'] == code
+        assert not loaded['complete'] and not client.app.state.mall_catalog_cache
+        messages = [r.getMessage() for r in caplog.records if r.name == mall_catalog.__name__]
+        assert messages == [f'mall_catalog_failed stage={failure} code={code} exception={exception}']
+    assert not store['jobs'] and secret not in caplog.text
+    assert 'private.invalid' not in caplog.text
 
 
 def test_price_basis_b_requires_explicit_tax_excluded_confirmation():

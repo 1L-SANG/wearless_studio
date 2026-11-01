@@ -16,6 +16,8 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import pytest
 
+from cafe24_official_examples import official_example
+
 
 def module():
     assert importlib.util.find_spec("app.services.cafe24_client"), "Cafe24 client is missing"
@@ -191,13 +193,15 @@ def test_create_product_uses_price_excluding_tax_when_setting_is_b():
 
 @pytest.mark.parametrize("basis", ["S", "A", "P", "B"])
 def test_product_setting_parses_confirmed_field(basis):
+    payload = official_example('product_setting')
+    payload['product']['calculate_price_based_on'] = basis
     def respond(request):
         assert request.method == "GET" and request.url.path == "/api/v2/admin/products/setting"
-        return httpx.Response(200, json={"products_setting": {"calculate_price_based_on": basis,
-            "price_rounding_unit": "0", "price_rounding_rule": "U"}})
+        assert not request.content
+        return httpx.Response(200, json=payload)
 
     assert asyncio.run(client(respond).product_setting("access")) == basis
-    for payload in ({}, {"products_setting": {}}, {"products_setting": {"calculate_price_based_on": "X"}}):
+    for payload in ({}, {"product": {}}, {"product": {"calculate_price_based_on": "X"}}):
         with pytest.raises(Exception) as error:
             asyncio.run(client(lambda _: httpx.Response(200, json=payload)).product_setting("access"))
         assert module().classify_error(error.value) == "price_setting_unavailable"
@@ -402,29 +406,113 @@ def test_total_timeout_covers_request_body_close_and_pagination(stage):
     assert module().classify_error(error.value) == "unreachable"
 
 
-def test_variant_bulk_write_requires_every_row_and_inventory_read_preserves_confirmation_fields():
+def test_variant_bulk_write_and_read_use_official_examples():
     calls = []
-    variant = dict(variant_code='sku', quantity=0, additional_amount='1000.00', display='T', selling='F',
-                   use_inventory='T', display_soldout='T', safety_inventory=0,
-                   options=[dict(name='색상', value='검정'), dict(name='사이즈', value='FREE')])
-    changes = [{k: v for k, v in variant.items() if k != 'options'}]
+    body = official_example('update_variants_request')
 
     def respond(request):
         calls.append(request)
         assert request.url.path == '/api/v2/admin/products/123/variants'
         if request.method == 'PUT':
-            assert json.loads(request.content) == dict(shop_no=1, request=dict(variants=changes))
-        return httpx.Response(200, json={'variants': [variant]})
+            assert json.loads(request.content) == body
+            return httpx.Response(200, json=official_example('update_variants'))
+        assert request.method == 'GET' and dict(request.url.params) == {'limit': '100', 'offset': '0'}
+        return httpx.Response(200, json=official_example('variants'))
 
     api = client(respond)
-    assert asyncio.run(api.update_variants('access', 123, changes)) == {'variantCodes': ['sku']}
+    assert asyncio.run(api.update_variants('access', 123, body['requests'])) == {'variantCodes': ['P000000P000B']}
     rows = asyncio.run(api.variants('access', 123))
-    assert rows[0]['useInventory'] == 'T' and rows[0]['quantity'] == 0 and rows[0]['additionalAmount'] == '1000.00'
-    assert rows[0]['displaySoldout'] == 'T' and rows[0]['safetyInventory'] == 0
-    for rows in ([], [{'variant_code': 'other'}], [{'variant_code': 'sku', 'error': {'message': 'private'}}]):
-        with pytest.raises(module().Cafe24ApiError):
-            asyncio.run(client(lambda _: httpx.Response(200, json={'variants': rows})).update_variants('access', 123, changes))
+    assert rows == [dict(variantCode='P000000R000C', options=official_example('variants')['variants'][0]['options'],
+        quantity=6, additionalAmount='0.00', useInventory='T', display='T', selling='T', displaySoldout='T', safetyInventory=7)]
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize('failure', ['missing', 'wrong_code', 'duplicate', 'row_error', 'inventory_error', 'no_inventory'])
+def test_variant_bulk_write_rejects_missing_duplicate_or_failed_rows(failure):
+    body = official_example('update_variants_request')
+    payload = official_example('update_variants')
+    row = payload['variant'][0]
+    if failure == 'missing':
+        payload['variant'] = []
+    elif failure == 'wrong_code':
+        row['variant_code'] = 'other'
+    elif failure == 'duplicate':
+        body['requests'].append(dict(body['requests'][0], variant_code='other'))
+        payload['variant'].append(dict(row))
+    elif failure == 'row_error':
+        row['error'] = {'message': 'private'}
+    elif failure == 'inventory_error':
+        row['inventories']['error'] = {'message': 'private'}
+    else:
+        del row['inventories']
+    with pytest.raises(module().Cafe24ApiError) as error:
+        asyncio.run(client(lambda _: httpx.Response(200, json=payload)).update_variants('access', 123, body['requests']))
+    assert error.value.code == 'inventory_setup_incomplete'
+
+
+def test_image_setting_uses_official_nested_dimensions():
+    payload = official_example('image_setting')
+    def respond(request):
+        assert request.method == 'GET' and request.url.path == '/api/v2/admin/images/setting'
+        assert not request.content
+        return httpx.Response(200, json=payload)
+    assert asyncio.run(client(respond).image_setting('access')) == {'width': 500, 'height': 500}
+    # A non-square example ensures width and height are read independently.
+    payload['image']['product_image_size'].update(detail_image_width=800, detail_image_height=1000)
+    assert asyncio.run(client(respond).image_setting('access')) == {'width': 800, 'height': 1000}
+
+
+@pytest.mark.parametrize('size', [None, {}, {'detail_image_width': 0, 'detail_image_height': 500},
+    {'detail_image_width': '500', 'detail_image_height': 500},
+    {'detail_image_width': 500, 'detail_image_height': True}])
+def test_image_setting_rejects_unknown_dimensions(size):
+    payload = official_example('image_setting')
+    payload['image']['product_image_size'] = size
+    with pytest.raises(module().Cafe24ApiError) as error:
+        asyncio.run(client(lambda _: httpx.Response(200, json=payload)).image_setting('access'))
+    assert error.value.code == 'image_setting_unavailable'
+
+
+@pytest.mark.parametrize('url_key', ['big', 'medium'])
+def test_additional_images_uses_official_envelope_and_accepts_big_or_medium(url_key):
+    payload = official_example('additional_images')
+    if url_key == 'medium':
+        payload['additionalimage']['additional_image'][0] = {'medium': 'https://myshop.cafe24.com/sub.jpg'}
+    def respond(request):
+        assert request.method == 'POST' and request.url.path == '/api/v2/admin/products/123/additionalimages'
+        body = official_example('additional_images_request')
+        body['request']['additional_image'] = ['data:image/jpeg;base64,anBlZw==']
+        assert json.loads(request.content) == body
+        return httpx.Response(201, json=payload)
+    assert asyncio.run(client(respond).upload_additional_images('access', 123, [b'jpeg'])) == {'count': 1}
+
+
+@pytest.mark.parametrize('failure', ['missing', 'count', 'small_only', 'invalid_url', 'row_error'])
+def test_additional_images_rejects_ambiguous_responses_without_reposting(failure):
+    payload = official_example('additional_images')
+    rows = payload['additionalimage']['additional_image']
+    if failure == 'missing':
+        del payload['additionalimage']['additional_image']
+    elif failure == 'count':
+        rows.append(dict(rows[0]))
+    elif failure == 'small_only':
+        rows[0] = {'small': 'https://myshop.cafe24.com/small.jpg'}
+    elif failure == 'invalid_url':
+        rows[0] = {'big': 123, 'medium': ' '}
+    else:
+        rows[0]['error'] = {'message': 'private'}
+    calls = []
+    api = client(lambda req: calls.append(req) or httpx.Response(201, json=payload))
+    with pytest.raises(module().Cafe24ApiError) as error:
+        asyncio.run(api.upload_additional_images('access', 123, [b'jpeg']))
+    assert error.value.code == 'additional_images_unknown' and len(calls) == 1
+
+
+def test_product_state_reads_official_example():
+    def respond(request):
+        assert request.method == 'GET' and request.url.path == '/api/v2/admin/products/20'
+        return httpx.Response(200, json=official_example('product_state'))
+    assert asyncio.run(client(respond).product_state('access', 20)) == dict(productId='20', display='T', selling='F')
 
 
 def test_each_paginated_read_checks_the_injected_request_fence():
@@ -446,11 +534,14 @@ def test_each_paginated_read_checks_the_injected_request_fence():
 
 def test_inventory_fallback_and_activation_only_send_absolute_explicit_values():
     calls = []
-    api = client(lambda req: calls.append(req) or httpx.Response(200, json={'product': {'product_no': 123}}))
-    inventory = dict(quantity=0, use_inventory='T', display_soldout='T', safety_inventory=0)
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(200, json=official_example('inventory') if request.url.path.endswith('/inventories') else {})
+    api = client(respond)
+    inventory = official_example('inventory_request')['request']
     assert asyncio.run(api.set_variant_inventory('access', 123, 'sku/code', inventory)) is None
     assert calls[-1].url.raw_path == b'/api/v2/admin/products/123/variants/sku%2Fcode/inventories'
-    assert json.loads(calls[-1].content) == dict(shop_no=1, request=inventory)
-    assert asyncio.run(api.set_product_state('access', 123, display='T', selling='F')) is None
+    assert json.loads(calls[-1].content) == official_example('inventory_request')
+    assert asyncio.run(api.set_product_state('access', 123, display='T', selling='T')) is None
     assert calls[-1].method == 'PUT' and calls[-1].url.path == '/api/v2/admin/products/123'
-    assert json.loads(calls[-1].content) == dict(shop_no=1, request=dict(display='T', selling='F'))
+    assert json.loads(calls[-1].content) == official_example('set_product_state_request')

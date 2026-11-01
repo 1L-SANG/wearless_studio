@@ -354,11 +354,13 @@ def test_worker_stops_after_account_delete_mid_upload(env):
 
 @pytest.mark.parametrize("error", [status_error(503), status_error(401), TimeoutError("private"),
     Cafe24ApiError("price_setting_unavailable")])
-def test_worker_aborts_before_create_when_price_setting_unavailable(env, error):
+def test_worker_aborts_before_create_when_price_setting_unavailable(env, error, caplog):
     env.scripts["setting"] = [error] * 8
     env.run()
     assert not env.named("create") and not env.stored["metadata"].get("create")
     assert env.stored["status"] == "error" and env.stored["result"]["code"] == "price_setting_unavailable"
+    assert 'stage=price_setting code=price_setting_unavailable exception=Cafe24ApiError' in caplog.text
+    assert 'private' not in caplog.text
 
 
 @pytest.mark.parametrize("token_failure", [False, True])
@@ -498,7 +500,23 @@ def test_registration_failure_preserves_seller_code_and_copy(env, caplog, code):
     assert env.stored["status"] == "error" and env.stored["result"]["code"] == code
     assert env.stored["error_message"] == ERROR_COPY[code]
     assert env.stored["result"]["outcome"] == "failed"
+    exception = 'Cafe24ApiError' if code == 'image_upload_mismatch' else 'HTTPStatusError'
+    messages = [r.getMessage() for r in caplog.records if r.name == env.worker.__name__]
+    assert messages == [f'mall_register_failed stage=uploading_images code={code} exception={exception}']
     assert "upstream-private" not in repr(env.stored) + caplog.text
+
+
+def test_worker_failure_log_omits_exception_body_credentials_and_query(env, caplog):
+    secret = 'private-token-body-query-marker'
+    request = httpx.Request('POST', f'https://private.invalid/?token={secret}', headers={'Authorization': secret})
+    response = httpx.Response(422, request=request, json={'error': secret})
+    env.scripts['upload'] = [httpx.HTTPStatusError(secret, request=request, response=response)]
+    env.run()
+    messages = [r for r in caplog.records if r.name == env.worker.__name__]
+    assert [r.getMessage() for r in messages] == [
+        'mall_register_failed stage=uploading_images code=invalid_request exception=HTTPStatusError']
+    assert all(r.exc_info is None for r in messages)
+    assert secret not in caplog.text and 'private.invalid' not in caplog.text
 
 
 @pytest.mark.parametrize("status", [400, 422])

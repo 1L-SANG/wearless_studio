@@ -1,8 +1,9 @@
-"""A03 behavior through MockTransport. These synthetic envelopes are NOT live API fixtures."""
+"""A03 behavior through MockTransport using the saved 2026-11-01 official examples."""
 import asyncio
 import base64
 import copy
 from dataclasses import replace
+from decimal import Decimal
 from io import BytesIO
 import json
 
@@ -11,10 +12,11 @@ from PIL import Image
 import pytest
 
 from app.services.cafe24_client import Cafe24ApiError, Cafe24Client
-from app.services.mall_adapters.cafe24 import build_cafe24_product_request, match_cafe24_variants, _target
+from app.services.mall_adapters.cafe24 import build_cafe24_product_request, match_cafe24_variants, _integer, _target
 from app.services.mall_images import prepare_mall_jpeg
 from app.services.mall_registration_contract import derive_registration_outcome, registration_view
 from test_mall_cafe24_worker import WorkerEnv, status_error
+from cafe24_official_examples import official_example
 
 
 @pytest.fixture
@@ -30,7 +32,9 @@ def setup_env(monkeypatch):
                 urls = await env.upload_description_images(token, [base64.b64decode(v['image']) for v in body['requests']])
                 return httpx.Response(201, json={'images': [dict(path=url) for url in urls]})
             if path == '/products/setting':
-                return httpx.Response(200, json={'products_setting': {'calculate_price_based_on': await env.product_setting(token)}})
+                payload = official_example('product_setting')
+                payload['product']['calculate_price_based_on'] = await env.product_setting(token)
+                return httpx.Response(200, json=payload)
             if path == '/products' and method == 'POST':
                 return httpx.Response(201, json={'product': {'product_no': await env.create_product(token, body)}})
             if path == '/products':
@@ -46,23 +50,43 @@ def setup_env(monkeypatch):
                 rows = await env.variants(token, 123)
                 keys = dict(variantCode='variant_code', additionalAmount='additional_amount', useInventory='use_inventory',
                             displaySoldout='display_soldout', safetyInventory='safety_inventory')
-                return httpx.Response(200, json={'variants': [{keys.get(k, k): v for k, v in row.items()} for row in rows]})
+                payload = official_example('variants')
+                template = payload['variants'][0]
+                payload['variants'] = [{**template, **{keys.get(k, k): v for k, v in row.items()},
+                    'additional_amount': format(Decimal(str(row['additionalAmount'])), '.2f')} for row in rows]
+                return httpx.Response(200, json=payload)
             if path == '/products/123/variants':
-                changes = body['request']['variants']
+                assert set(body) == {'shop_no', 'requests'} and body['shop_no'] == 1
+                changes = body['requests']
+                assert all(isinstance(row['additional_amount'], str) for row in changes)
                 if getattr(env, 'partial_once', False):
                     env.partial_once = False
                     await env.remote('inventory', token, 123, changes)
                     env.remote_variants[0].update(_target(env.job['payload']['snapshot']['variants'][0]))
-                    return httpx.Response(200, json={'variants': [{'variant_code': 'sku-black'}, {'error': {'code': 'synthetic-failure'}}]})
+                    payload = official_example('update_variants')
+                    payload['variant'][0].update(variant_code='sku-black')
+                    payload['variant'].append({'variant_code': 'sku-white', 'error': {'code': 'synthetic-failure'}})
+                    return httpx.Response(200, json=payload)
                 await env.update_variants(token, 123, changes)
-                return httpx.Response(200, json={'variants': changes})
+                payload = official_example('update_variants')
+                template = payload['variant'][0]
+                inventory_keys = {'quantity', 'use_inventory', 'display_soldout', 'safety_inventory'}
+                payload['variant'] = [{**template, **{k: v for k, v in row.items() if k not in inventory_keys},
+                    'inventories': {**template['inventories'], 'variant_code': row['variant_code'],
+                        **{k: v for k, v in row.items() if k in inventory_keys}}} for row in changes]
+                return httpx.Response(200, json=payload)
             if path == '/products/123/images':
                 await env.upload_product_image(token, 123, base64.b64decode(body['request']['detail_image'].split(',')[1]))
                 return httpx.Response(201, json={'image': {'detail_image': 'https://myshop.cafe24.com/main.jpg'}})
             if path == '/products/123/additionalimages':
                 images = [base64.b64decode(value.split(',')[1]) for value in body['request']['additional_image']]
                 await env.upload_additional_images(token, 123, images)
-                return httpx.Response(201, json={'additionalimages': [dict(additional_image=f'https://myshop.cafe24.com/sub{i}.jpg') for i in range(len(images))]})
+                payload = official_example('additional_images')
+                payload['additionalimage']['additional_image'] = [dict(payload['additionalimage']['additional_image'][0],
+                    big=f'https://myshop.cafe24.com/sub{i}.jpg') for i in range(len(images))]
+                if getattr(env, 'malformed_additional', False):
+                    payload['additionalimage']['additional_image'] = []
+                return httpx.Response(201, json=payload)
         except httpx.HTTPStatusError as exc:
             return httpx.Response(exc.response.status_code, headers=exc.response.headers,
                                   json={'error': {'message': 'private-upstream-body'}})
@@ -133,9 +157,9 @@ def test_inventory_management_zero_stock_and_surcharges_are_applied_before_activ
     env.job['payload']['snapshot']['sales']['listingMode'] = 'ON_SALE'
     env.run()
     changes = env.named('inventory')[0][2][1]
-    assert changes[0] == dict(variant_code='sku-black', additional_amount=0, quantity=0,
+    assert changes[0] == dict(variant_code='sku-black', additional_amount='0.00', quantity=0,
         display='T', selling='F', use_inventory='T', display_soldout='T', safety_inventory=0)
-    assert changes[1]['quantity'] == 3 and changes[1]['additional_amount'] == 1000 and changes[1]['selling'] == 'T'
+    assert changes[1]['quantity'] == 3 and changes[1]['additional_amount'] == '1000.00' and changes[1]['selling'] == 'T'
     names = [row[0] for row in env.calls]
     assert names.index('inventory') < names.index('thumbnail') < names.index('activate')
     assert env.remote_state['selling'] == 'T' and env.stored['result']['setupStatus'] == 'complete'
@@ -166,9 +190,13 @@ def test_image_crop_and_additional_upload_limits():
     assert len(jpeg) <= 5000000
     # Small byte inputs test upload boundaries without allocating huge photos.
     calls = []
+    def respond(request):
+        calls.append(request)
+        payload = official_example('additional_images')
+        payload['additionalimage']['additional_image'] *= len(json.loads(request.content)['request']['additional_image'])
+        return httpx.Response(201, json=payload)
     api = Cafe24Client('myshop', client_id='id', client_secret='secret', api_version='2026-09-01',
-        transport=httpx.MockTransport(lambda req: calls.append(req) or httpx.Response(201, json={
-            'additionalimages': [{'additional_image': 'https://myshop.cafe24.com/sub.jpg'}] * len(json.loads(req.content)['request']['additional_image'])})))
+        transport=httpx.MockTransport(respond))
     assert asyncio.run(api.upload_additional_images('token', 123, [b'x'] * 20))['count'] == 20
     assert asyncio.run(api.upload_additional_images('token', 123, [b'x' * 5000000]))['count'] == 1
     for images in ([b'x'] * 21, [b'x' * 5000001], [b'x' * 5000000] * 5):
@@ -188,6 +216,46 @@ def test_lost_additional_image_response_never_blindly_appends(setup_env):
     restart(env)
     assert len(env.named('additional')) == 1 and len(env.named('create')) == 1
     assert env.stored['result']['setupStatus'] == 'needs_attention'
+
+
+def test_official_response_flow_completes_creation_inventory_images_and_activation(setup_env):
+    env = setup_env
+    add_image(env)
+    env.job['payload']['snapshot']['sales']['listingMode'] = 'ON_SALE'
+    env.remote_variants[0]['additionalAmount'] = '-1000.00'
+    env.run()
+    assert env.stored['result']['outcome'] == 'created' and env.stored['result']['setupStatus'] == 'complete'
+    assert env.stored['metadata']['stage'] == 'complete'
+    assert env.named('inventory')[0][2][1][0]['additional_amount'] == '0.00'
+    assert env.remote_state['display'] == env.remote_state['selling'] == 'T'
+    assert all(len(env.named(name)) == 1 for name in ('create', 'inventory', 'thumbnail', 'additional', 'activate'))
+    assert all(stage['status'] == 'complete' for stage in env.stored['metadata']['checkpoints'].values())
+
+
+def test_malformed_additional_response_stops_activation_and_never_reposts(setup_env, caplog):
+    env = setup_env
+    add_image(env)
+    env.malformed_additional = True
+    env.run()
+    restart(env)
+    assert len(env.named('create')) == len(env.named('additional')) == 1
+    assert not env.named('activate') and env.stored['result']['retryAction'] == 'open_admin'
+    assert 'stage=uploading_additional_images code=additional_images_unknown exception=Cafe24ApiError' in caplog.text
+
+
+@pytest.mark.parametrize('value,want', [('0.00', 0), ('1000.00', 1000), ('-1000.00', -1000),
+    ('1000.50', None), ('-0.50', None), ('NaN', None), ('Infinity', None), ('invalid', None), (True, None)])
+def test_remote_amounts_require_finite_whole_won_without_rounding(value, want):
+    assert _integer(value) == want
+
+
+def test_fractional_remote_amount_cannot_confirm_inventory(setup_env):
+    env = setup_env
+    env.hooks['inventory'] = lambda: env.scripts.update(variants=[[
+        dict(row, additionalAmount='1000.50') for row in env.remote_variants]])
+    env.run()
+    assert env.stored['result']['code'] == 'inventory_setup_incomplete'
+    assert not env.named('activate')
 
 
 def test_completed_image_checkpoints_survive_worker_restart(setup_env):

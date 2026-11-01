@@ -212,7 +212,7 @@ export function MallRegisterModal({ projectId, product, blocks, assets, malls, i
       {!resultMode && draft && <>
         <fieldset className={styles.mallChoices} disabled={busy}><legend className={styles.srOnly}>등록할 쇼핑몰</legend>{['cafe24', 'zigzag', 'ably'].map((mall) => {
           const connection = connections?.items?.find((item) => item.mall === mall), preparing = connection?.registration?.status !== 'available' || items.find((item) => item.mall === mall)?.status === 'preparing';
-          return <label key={mall}><img src={`/assets/malls/${mall}-48.png`} alt="" className={styles.logo} /><span>{MALL_LABELS[mall]}{mall === 'ably' ? ' 준비 중' : preparing ? connection?.status === 'connected' ? ' 준비 중' : ' 연결 필요' : ''}</span>
+          return <label key={mall}><img src={`/assets/malls/${mall}-48.png`} alt="" className={styles.logo} /><span>{MALL_LABELS[mall]}{mall === 'ably' || connection?.status === 'unavailable' ? ' 준비 중' : preparing ? connection?.status === 'connected' ? ' 준비 중' : ' 연결 필요' : ''}</span>
             <input type="checkbox" data-field={mall === initialMall ? 'selectedMalls' : undefined} checked={draft.selectedMalls.includes(mall) && !preparing} disabled={busy || preparing || Boolean(retryMall) && mall !== retryMall}
               onChange={(event) => change({ ...draftRef.current, selectedMalls: event.target.checked ? [...draftRef.current.selectedMalls, mall] : draftRef.current.selectedMalls.filter((item) => item !== mall) })} /><span className={styles.mallCheck} aria-hidden="true">✓</span></label>;
         })}</fieldset>

@@ -1,5 +1,6 @@
 """Uncharged, per-mall registration using one immutable job input."""
 from copy import deepcopy
+import logging
 import uuid
 
 from .. import repo
@@ -7,6 +8,8 @@ from ..services.cafe24_client import ERROR_COPY, Cafe24Client, classify_error, n
 from ..services.mall_adapters.base import get_adapter
 from ..services.mall_registration_contract import derive_registration_outcome, registration_view
 from .mall_register_context import RegistrationJobContext, RegistrationStopped, recheck_registration
+
+logger = logging.getLogger(__name__)
 
 
 async def finish_registration(app, job: dict, *, code: str | None = None) -> None:
@@ -83,9 +86,11 @@ async def run_mall_register_job(app, job: dict) -> None:
                     await adapter.create(ctx)
                 except RegistrationStopped:
                     raise
-                except Exception:
+                except Exception as exc:
                     if job['metadata'].get('rejectedAt') or not (job['metadata'].get('create') or {}).get('sentAt'):
                         raise
+                    logger.warning('mall_register_failed stage=%s code=%s exception=%s',
+                                   job['metadata'].get('stage', 'creating_product'), classify_error(exc), type(exc).__name__)
                     # A lost create response can only be recovered by exact-code lookup.
             if not job['metadata'].get('productId'):
                 lookup = await adapter.lookup_created(ctx)
@@ -96,6 +101,11 @@ async def run_mall_register_job(app, job: dict) -> None:
             await adapter.complete_setup(ctx)
         await finish_registration(app, job)
     except RegistrationStopped as exc:
+        logger.warning('mall_register_failed stage=%s code=%s exception=%s',
+                       job['metadata'].get('stage', 'recheck'), exc.code, type(exc).__name__)
         await finish_registration(app, job, code=exc.code)
     except Exception as exc:
-        await finish_registration(app, job, code=classify_error(exc))
+        code = classify_error(exc)
+        logger.warning('mall_register_failed stage=%s code=%s exception=%s',
+                       job['metadata'].get('stage', 'recheck'), code, type(exc).__name__)
+        await finish_registration(app, job, code=code)

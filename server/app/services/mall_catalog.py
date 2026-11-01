@@ -3,6 +3,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 import json
+import logging
 import re
 from time import monotonic
 
@@ -14,6 +15,7 @@ from .mall_registration_contract import MallFacts, CategoryNode, CategorySuggest
 
 CATALOG_CONTRACT = 'multimall-a02-1'
 REQUIRED_SCOPES = {'mall.read_product', 'mall.write_product', 'mall.read_store', 'mall.read_category'}
+logger = logging.getLogger(__name__)
 
 
 def connection_version(connection):
@@ -65,6 +67,7 @@ async def load_mall_facts(app, *, user_id: str, mall: str) -> MallFacts:
                           client_secret=settings.cafe24_client_secret, api_version=settings.cafe24_api_version)
     async def read(fn):
         return await call_with_token(app, user_id=user_id, connection_id=connection['id'], fn=fn)
+    stage = 'categories'
     try:
         categories = {}
         complete = False
@@ -85,7 +88,9 @@ async def load_mall_facts(app, *, user_id: str, mall: str) -> MallFacts:
                 complete = True
                 break
         facts.update(categories=list(categories.values()), complete=complete)
+        stage = 'product_setting'
         facts['priceBasis'] = await read(client.product_setting)
+        stage = 'image_setting'
         facts['imageRatio'] = await read(client.image_setting)
         facts['capabilities'] = dict(options=True, maxVariants=200, maxAdditionalImages=4, shippingSource='mall')
         facts['catalogVersion'] = hashlib.sha256(json.dumps({k: facts[k] for k in (
@@ -94,6 +99,7 @@ async def load_mall_facts(app, *, user_id: str, mall: str) -> MallFacts:
             cache[key] = (monotonic() + 600, deepcopy(facts))
     except Exception as exc:
         code = classify_error(exc)
+        logger.warning('mall_catalog_failed stage=%s code=%s exception=%s', stage, code, type(exc).__name__)
         facts.update(complete=False, issues=[dict(code=code, path='catalog', message='쇼핑몰 설정을 확인하지 못했어요. 다시 확인해 주세요', action='reconnect')])
     return facts
 

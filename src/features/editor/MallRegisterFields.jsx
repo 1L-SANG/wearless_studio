@@ -66,7 +66,7 @@ export function MallRegisterFields({ draft, preflight, onChange, disabled }) {
       {draft.selectedMalls.map((mall) => <label className={styles.row} key={mall}><span>{MALL_LABELS[mall]} 카테고리</span><span><select data-field={`categories.${mall}`} value={draft.categories[mall]?.categoryId || ''}
         aria-invalid={!!issueFor(`categories.${mall}`) || undefined} onChange={(event) => {
           const categories = { ...draft.categories }; if (event.target.value) categories[mall] = { categoryId: event.target.value }; else delete categories[mall]; patch({ categories });
-        }}><option value="">{catalogs[mall]?.complete ? '카테고리 선택' : '카테고리 확인 중'}</option>{options(catalogs[mall]).map((category) => <option key={category.categoryId} value={category.categoryId}>{category.label}</option>)}</select>
+        }}><option value="">{catalogs[mall] ? '카테고리를 골라 주세요' : '카테고리 확인 중'}</option>{options(catalogs[mall]).map((category) => <option key={category.categoryId} value={category.categoryId}>{category.label}</option>)}</select>
         {issueFor(`categories.${mall}`) && <small className={styles.error}>{issueFor(`categories.${mall}`).message}</small>}</span></label>)}
     </section>
     <section className={`${styles.zone} ${styles.inputZone}`}><h3>입력</h3>
