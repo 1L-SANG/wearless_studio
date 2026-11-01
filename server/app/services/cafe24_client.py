@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import html
 import json
+import logging
 import math
 import re
 from urllib.parse import urlencode
@@ -13,6 +14,8 @@ from urllib.parse import quote
 from typing import TypedDict
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class Cafe24ImageSetting(TypedDict):
@@ -38,10 +41,6 @@ class Cafe24Variant(TypedDict):
     safetyInventory: int | None
 
 
-class VariantUpdateResult(TypedDict):
-    variantCodes: list[str]
-
-
 class AdditionalImageResult(TypedDict):
     count: int
 
@@ -56,8 +55,9 @@ ERROR_COPY = {
     "price_basis_changed": "쇼핑몰의 가격 기준이 바뀌었어요. 가격을 다시 확인해 주세요",
     "variant_mapping_mismatch": "쇼핑몰 옵션을 입력한 조합과 맞추지 못했어요. 관리자에서 확인해 주세요",
     "inventory_setup_incomplete": "상품은 만들어졌지만 재고 설정을 마치지 못했어요",
+    "inventory_confirmation_pending": "카페24 재고 설정 반영을 확인 중이에요. 잠시 뒤 설정 이어 하기를 눌러 주세요",
     "additional_images_unknown": "추가 이미지 등록 여부를 관리자에서 확인해 주세요",
-    "activation_unconfirmed": "상품의 진열과 판매 상태를 관리자에서 확인해 주세요",
+    "activation_unconfirmed": "카페24 진열과 판매 상태를 확인 중이에요. 잠시 뒤 설정 이어 하기를 눌러 주세요",
     "remote_product_changed": "관리자에서 상품이 바뀌어 설정을 이어 할 수 없어요",
     "reconnect_required": "카페24 연결이 끊겼어요. 쇼핑몰 연결에서 다시 설치해 주세요",
     "app_removed": "카페24에서 앱이 삭제됐어요. 다시 설치해 주세요",
@@ -228,6 +228,36 @@ def _rows(payload, key, *, code="unknown"):
     return value
 
 
+def log_confirmation_failure(check, actual, expected):
+    # Callers pass only field names and normalized numbers, flags or shape checks.
+    differences = {key: dict(actual=actual.get(key), expected=value)
+                   for key, value in expected.items() if actual.get(key) != value}
+    logger.warning('cafe24_confirmation_failed check=%s fields=%s', check,
+                   json.dumps(differences, sort_keys=True, separators=(',', ':')))
+
+
+def _variant(row, inventory):
+    return dict(variantCode=row['variant_code'], options=row.get('options') or [],
+        quantity=inventory.get('quantity'), additionalAmount=row.get('additional_amount'),
+        useInventory=inventory.get('use_inventory'), display=row.get('display'), selling=row.get('selling'),
+        displaySoldout=inventory.get('display_soldout'), safetyInventory=inventory.get('safety_inventory'))
+
+
+def _product_state(payload, product_no, *, check, code):
+    row = payload.get('product')
+    actual = {'product.is_object': isinstance(row, dict)}
+    if isinstance(row, dict):
+        actual.update({'product.product_no_matches': type(row.get('product_no')) is int and row['product_no'] == product_no,
+            'product.display_valid': row.get('display') in ('T', 'F'),
+            'product.selling_valid': row.get('selling') in ('T', 'F'), 'product.error': 'error' in row})
+    expected = {'product.is_object': True, 'product.product_no_matches': True,
+        'product.display_valid': True, 'product.selling_valid': True, 'product.error': False}
+    if actual != expected:
+        log_confirmation_failure(check, actual, expected)
+        raise Cafe24ApiError(code)
+    return dict(productId=str(product_no), display=row['display'], selling=row['selling'])
+
+
 class Cafe24Client:
     def __init__(self, mall_id, *, client_id, client_secret, api_version, timeout=8.0, transport=None):
         self.base_url = f"https://{_mall_id(mall_id)}.cafe24api.com/api/v2"
@@ -289,6 +319,15 @@ class Cafe24Client:
                                               for key in ("access_token", "refresh_token")):
             raise Cafe24ApiError()
         return payload
+
+    async def _write_response(self, path, *, access_token, body, code):
+        try:
+            return await self._request('PUT', path, access_token=access_token, json=body)
+        except Cafe24ApiError as exc:
+            if exc.code != 'unknown':
+                raise
+            log_confirmation_failure('response_shape', {'response.valid_object': False}, {'response.valid_object': True})
+            raise Cafe24ApiError(code) from None
 
     async def exchange_code(self, code, redirect_uri) -> dict:
         return await self._request("POST", "/oauth/token", data={"grant_type": "authorization_code",
@@ -375,10 +414,8 @@ class Cafe24Client:
     async def product_state(self, access_token: str, product_no: int) -> 'Cafe24ProductState':
         if type(product_no) is not int or product_no <= 0:
             raise ValueError('invalid_product_no')
-        row = _object(await self._request('GET', f'/admin/products/{product_no}', access_token=access_token), 'product')
-        if row.get('product_no') != product_no or row.get('display') not in ('T', 'F') or row.get('selling') not in ('T', 'F'):
-            raise Cafe24ApiError()
-        return dict(productId=str(product_no), display=row['display'], selling=row['selling'])
+        payload = await self._request('GET', f'/admin/products/{product_no}', access_token=access_token)
+        return _product_state(payload, product_no, check='read_shape', code='unknown')
 
     async def variants(self, access_token: str, product_no: int) -> list['Cafe24Variant']:
         if type(product_no) is not int or product_no <= 0:
@@ -391,31 +428,40 @@ class Cafe24Client:
                 if not isinstance(row.get('variant_code'), str) or not row['variant_code']:
                     raise Cafe24ApiError()
                 # Missing inventory fields remain missing; they never imply a successful setup.
-                items.append(dict(variantCode=row['variant_code'], options=row.get('options') or [],
-                    quantity=row.get('quantity'), additionalAmount=row.get('additional_amount'),
-                    useInventory=row.get('use_inventory'), display=row.get('display'), selling=row.get('selling'),
-                    displaySoldout=row.get('display_soldout'), safetyInventory=row.get('safety_inventory')))
+                items.append(_variant(row, row))
             if len(rows) < 100:
                 return items
         raise Cafe24ApiError()
 
-    async def update_variants(self, access_token: str, product_no: int, variants: list[dict]) -> VariantUpdateResult:
+    async def update_variants(self, access_token: str, product_no: int, variants: list[dict]) -> list[Cafe24Variant]:
         if type(product_no) is not int or product_no <= 0 or not variants:
             raise ValueError('invalid variants')
-        payload = await self._request('PUT', f'/admin/products/{product_no}/variants', access_token=access_token,
-            json={'shop_no': 1, 'requests': variants})
-        rows = _rows(payload, 'variant', code='inventory_setup_incomplete')
-        codes = [row.get('variant_code') for row in rows]
-        if (len(rows) != len(variants) or any('error' in row or not isinstance(row.get('variant_code'), str) for row in rows)
-                or len(set(codes)) != len(codes) or set(codes) != {v['variant_code'] for v in variants}
-                or any(not isinstance(row.get('inventories'), dict) or 'error' in row['inventories'] for row in rows)):
+        payload = await self._write_response(f'/admin/products/{product_no}/variants', access_token=access_token,
+            body={'shop_no': 1, 'requests': variants}, code='inventory_setup_incomplete')
+        rows = payload.get('variant')
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            log_confirmation_failure('response_shape', {'variant.rows_valid': False}, {'variant.rows_valid': True})
             raise Cafe24ApiError('inventory_setup_incomplete')
-        return dict(variantCodes=codes)
+        codes = [row.get('variant_code') for row in rows]
+        valid_codes = all(isinstance(code, str) and code for code in codes)
+        actual = {'variant.count': len(rows), 'variant.codes_match': bool(valid_codes) and
+            len(set(codes)) == len(codes) and set(codes) == {v['variant_code'] for v in variants},
+            'variant.error': any('error' in row for row in rows),
+            'variant.inventories_valid': all(isinstance(row.get('inventories'), dict) and
+                'error' not in row['inventories'] for row in rows),
+            'variant.inventories_code_matches': all(isinstance(row.get('inventories'), dict) and
+                row['inventories'].get('variant_code', row.get('variant_code')) == row.get('variant_code') for row in rows)}
+        expected = {'variant.count': len(variants), 'variant.codes_match': True,
+            'variant.error': False, 'variant.inventories_valid': True, 'variant.inventories_code_matches': True}
+        if actual != expected:
+            log_confirmation_failure('response_shape', actual, expected)
+            raise Cafe24ApiError('inventory_setup_incomplete')
+        return [_variant(row, row['inventories']) for row in rows]
 
     async def set_variant_inventory(self, access_token: str, product_no: int, variant_code: str, inventory: dict) -> None:
         if type(product_no) is not int or product_no <= 0 or not isinstance(variant_code, str) or not variant_code:
             raise ValueError('invalid variant')
-        # Not called alongside bulk PUT. Setup is confirmed by a variants GET.
+        # Not called alongside bulk PUT, whose response confirms setup.
         await self._request('PUT', f'/admin/products/{product_no}/variants/{quote(variant_code, safe="")}/inventories',
             access_token=access_token, json={'shop_no': 1, 'request': inventory})
 
@@ -437,9 +483,9 @@ class Cafe24Client:
             raise Cafe24ApiError('additional_images_unknown')
         return dict(count=len(rows))
 
-    async def set_product_state(self, access_token: str, product_no: int, *, display: str, selling: str) -> None:
+    async def set_product_state(self, access_token: str, product_no: int, *, display: str, selling: str) -> Cafe24ProductState:
         if type(product_no) is not int or product_no <= 0 or display not in ('T', 'F') or selling not in ('T', 'F'):
             raise ValueError('invalid product state')
-        # 미확인, 테스트몰에서 fixture 확정: product update response. Confirm by product_state GET.
-        await self._request('PUT', f'/admin/products/{product_no}', access_token=access_token,
-                            json={'shop_no': 1, 'request': {'display': display, 'selling': selling}})
+        payload = await self._write_response(f'/admin/products/{product_no}', access_token=access_token,
+            body={'shop_no': 1, 'request': {'display': display, 'selling': selling}}, code='activation_unconfirmed')
+        return _product_state(payload, product_no, check='response_shape', code='activation_unconfirmed')
