@@ -228,6 +228,30 @@ def _rows(payload, key, *, code="unknown"):
     return value
 
 
+def _response_rows(value):
+    rows = [value] if isinstance(value, dict) else value
+    if isinstance(rows, list) and all(isinstance(row, dict) for row in rows):
+        return rows
+    return None
+
+
+def _log_response_shape(payload, key):
+    value = payload.get(key) if isinstance(payload, dict) else None
+    if key == 'additional_image':
+        additional = payload.get('additionalimage') if isinstance(payload, dict) else None
+        value = additional.get(key) if isinstance(additional, dict) else None
+    row = value[0] if isinstance(value, list) and value else value
+
+    def shape_type(item):
+        return 'list' if isinstance(item, list) else 'dict' if isinstance(item, dict) else 'other'
+
+    signature = {'top_level_keys': sorted(payload) if isinstance(payload, dict) else [],
+        f'{key}.type': shape_type(value), 'first_row_keys': sorted(row) if isinstance(row, dict) else [],
+        'inventories.type': shape_type(row.get('inventories') if isinstance(row, dict) else None)}
+    logger.warning('cafe24_confirmation_failed check=response_shape shape=%s',
+                   json.dumps(signature, sort_keys=True, separators=(',', ':')))
+
+
 def log_confirmation_failure(check, actual, expected):
     # Callers pass only field names and normalized numbers, flags or shape checks.
     differences = {key: dict(actual=actual.get(key), expected=value)
@@ -243,8 +267,24 @@ def _variant(row, inventory):
         displaySoldout=inventory.get('display_soldout'), safetyInventory=inventory.get('safety_inventory'))
 
 
+def _variant_inventory(row):
+    value = row.get('inventories')
+    if isinstance(value, dict):
+        return value
+    rows = _response_rows(value)
+    if not rows or any('error' in inventory for inventory in rows):
+        return None
+    matches = [inventory for inventory in rows if inventory.get('variant_code') == row.get('variant_code')]
+    if len(matches) == 1:
+        return matches[0]
+    return rows[0] if not matches and len(rows) == 1 else None
+
+
 def _product_state(payload, product_no, *, check, code):
     row = payload.get('product')
+    if check == 'response_shape':
+        rows = _response_rows(row)
+        row = rows[0] if rows is not None and len(rows) == 1 else None
     actual = {'product.is_object': isinstance(row, dict)}
     if isinstance(row, dict):
         actual.update({'product.product_no_matches': type(row.get('product_no')) is int and row['product_no'] == product_no,
@@ -253,7 +293,10 @@ def _product_state(payload, product_no, *, check, code):
     expected = {'product.is_object': True, 'product.product_no_matches': True,
         'product.display_valid': True, 'product.selling_valid': True, 'product.error': False}
     if actual != expected:
-        log_confirmation_failure(check, actual, expected)
+        if check == 'response_shape':
+            _log_response_shape(payload, 'product')
+        else:
+            log_confirmation_failure(check, actual, expected)
         raise Cafe24ApiError(code)
     return dict(productId=str(product_no), display=row['display'], selling=row['selling'])
 
@@ -312,11 +355,20 @@ class Cafe24Client:
                                         request=safe_request, response=safe_response) from None
         if response.status_code == 204 or path == "/oauth/revoke":
             return {}
+        confirmation_key = None
+        if method == 'PUT':
+            confirmation_key = 'variant' if path.endswith('/variants') else 'product'
+        elif method == 'POST' and path.endswith('/additionalimages'):
+            confirmation_key = 'additional_image'
         try:
             payload = response.json()
         except (ValueError, UnicodeError):
+            if confirmation_key:
+                _log_response_shape(None, confirmation_key)
             raise Cafe24ApiError() from None
         if not isinstance(payload, dict) or "error" in payload:
+            if confirmation_key:
+                _log_response_shape(payload, confirmation_key)
             raise Cafe24ApiError()
         if path == "/oauth/token" and not all(isinstance(payload.get(key), str) and payload[key]
                                               for key in ("access_token", "refresh_token")):
@@ -329,7 +381,6 @@ class Cafe24Client:
         except Cafe24ApiError as exc:
             if exc.code != 'unknown':
                 raise
-            log_confirmation_failure('response_shape', {'response.valid_object': False}, {'response.valid_object': True})
             raise Cafe24ApiError(code) from None
 
     async def exchange_code(self, code, redirect_uri) -> dict:
@@ -441,25 +492,32 @@ class Cafe24Client:
             raise ValueError('invalid variants')
         payload = await self._write_response(f'/admin/products/{product_no}/variants', access_token=access_token,
             body={'shop_no': 1, 'requests': variants}, code='inventory_setup_incomplete')
-        rows = payload.get('variant')
-        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
-            log_confirmation_failure('response_shape', {'variant.rows_valid': False}, {'variant.rows_valid': True})
+        rows = _response_rows(payload.get('variant'))
+        if rows is None:
+            _log_response_shape(payload, 'variant')
             raise Cafe24ApiError('inventory_setup_incomplete')
+        inventories = [_variant_inventory(row) for row in rows]
         codes = [row.get('variant_code') for row in rows]
         valid_codes = all(isinstance(code, str) and code for code in codes)
         actual = {'variant.count': len(rows), 'variant.codes_match': bool(valid_codes) and
             len(set(codes)) == len(codes) and set(codes) == {v['variant_code'] for v in variants},
             'variant.error': any('error' in row for row in rows),
-            'variant.inventories_valid': all(isinstance(row.get('inventories'), dict) and
-                'error' not in row['inventories'] for row in rows),
-            'variant.inventories_code_matches': all(isinstance(row.get('inventories'), dict) and
-                row['inventories'].get('variant_code', row.get('variant_code')) == row.get('variant_code') for row in rows)}
+            'variant.inventories_valid': all(isinstance(inventory, dict) and
+                'error' not in inventory for inventory in inventories),
+            'variant.inventories_code_matches': all(isinstance(inventory, dict) and
+                inventory.get('variant_code', row.get('variant_code')) == row.get('variant_code')
+                for row, inventory in zip(rows, inventories)),
+            'variant.values_present': all(isinstance(inventory, dict) and
+                all(row.get(key) is not None for key in ('additional_amount', 'display', 'selling')) and
+                all(inventory.get(key) is not None for key in ('quantity', 'use_inventory', 'display_soldout', 'safety_inventory'))
+                for row, inventory in zip(rows, inventories))}
         expected = {'variant.count': len(variants), 'variant.codes_match': True,
-            'variant.error': False, 'variant.inventories_valid': True, 'variant.inventories_code_matches': True}
+            'variant.error': False, 'variant.inventories_valid': True, 'variant.inventories_code_matches': True,
+            'variant.values_present': True}
         if actual != expected:
-            log_confirmation_failure('response_shape', actual, expected)
+            _log_response_shape(payload, 'variant')
             raise Cafe24ApiError('inventory_setup_incomplete')
-        return [_variant(row, row['inventories']) for row in rows]
+        return [_variant(row, inventory) for row, inventory in zip(rows, inventories)]
 
     async def set_variant_inventory(self, access_token: str, product_no: int, variant_code: str, inventory: dict) -> None:
         if type(product_no) is not int or product_no <= 0 or not isinstance(variant_code, str) or not variant_code:
@@ -479,10 +537,11 @@ class Cafe24Client:
         if len(json.dumps(body, separators=(',', ':')).encode()) > 30000000:
             raise ValueError('additional image request limit')
         payload = await self._request('POST', f'/admin/products/{product_no}/additionalimages', access_token=access_token, json=body)
-        additional = _object(payload, 'additionalimage', code='additional_images_unknown')
-        rows = _rows(additional, 'additional_image', code='additional_images_unknown')
-        if len(rows) != len(images) or any('error' in row or not any(
+        additional = payload.get('additionalimage')
+        rows = _response_rows(additional.get('additional_image')) if isinstance(additional, dict) else None
+        if rows is None or len(rows) != len(images) or any('error' in row or not any(
                 isinstance(row.get(key), str) and row[key].strip() for key in ('big', 'medium')) for row in rows):
+            _log_response_shape(payload, 'additional_image')
             raise Cafe24ApiError('additional_images_unknown')
         return dict(count=len(rows))
 

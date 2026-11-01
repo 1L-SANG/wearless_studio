@@ -26,6 +26,7 @@ def setup_env(monkeypatch):
     async def respond(request):
         token = request.headers['Authorization'].removeprefix('Bearer ')
         path, method = request.url.path.removeprefix('/api/v2/admin'), request.method
+        product_no = env.product_no
         body = json.loads(request.content) if request.content else {}
         try:
             if path == '/products/images':
@@ -40,18 +41,18 @@ def setup_env(monkeypatch):
             if path == '/products':
                 ids = await env.find_products_by_custom_code(token, request.url.params['custom_product_code'])
                 return httpx.Response(200, json={'products': [dict(product_no=no, custom_product_code=request.url.params['custom_product_code']) for no in ids]})
-            if path == '/products/123' and method == 'GET':
-                state = await env.product_state(token, 123)
-                return httpx.Response(200, json={'product': {'product_no': 123, **state}})
-            if path == '/products/123' and method == 'PUT':
-                await env.set_product_state(token, 123, **body['request'])
+            if path == f'/products/{product_no}' and method == 'GET':
+                state = await env.product_state(token, product_no)
+                return httpx.Response(200, json={'product': {'product_no': product_no, **state}})
+            if path == f'/products/{product_no}' and method == 'PUT':
+                await env.set_product_state(token, product_no, **body['request'])
                 payload = official_example('set_product_state')
-                payload['product'].update(product_no=123, display=env.remote_state['display'], selling=env.remote_state['selling'])
+                payload['product'].update(product_no=product_no, display=env.remote_state['display'], selling=env.remote_state['selling'])
                 if mutate := getattr(env, 'activation_response', None):
                     mutate(payload)
                 return httpx.Response(200, json=payload)
-            if path == '/products/123/variants' and method == 'GET':
-                rows = await env.variants(token, 123)
+            if path == f'/products/{product_no}/variants' and method == 'GET':
+                rows = await env.variants(token, product_no)
                 keys = dict(variantCode='variant_code', additionalAmount='additional_amount', useInventory='use_inventory',
                             displaySoldout='display_soldout', safetyInventory='safety_inventory')
                 payload = official_example('variants')
@@ -59,19 +60,19 @@ def setup_env(monkeypatch):
                 payload['variants'] = [{**template, **{keys.get(k, k): v for k, v in row.items()},
                     'additional_amount': format(Decimal(str(row['additionalAmount'])), '.2f')} for row in rows]
                 return httpx.Response(200, json=payload)
-            if path == '/products/123/variants':
+            if path == f'/products/{product_no}/variants':
                 assert set(body) == {'shop_no', 'requests'} and body['shop_no'] == 1
                 changes = body['requests']
                 assert all(isinstance(row['additional_amount'], str) for row in changes)
                 if getattr(env, 'partial_once', False):
                     env.partial_once = False
-                    await env.remote('inventory', token, 123, changes)
+                    await env.remote('inventory', token, product_no, changes)
                     env.remote_variants[0].update(_target(env.job['payload']['snapshot']['variants'][0]))
                     payload = official_example('update_variants')
                     payload['variant'][0].update(variant_code='sku-black')
                     payload['variant'].append({'variant_code': 'sku-white', 'error': {'code': 'synthetic-failure'}})
                     return httpx.Response(200, json=payload)
-                await env.update_variants(token, 123, changes)
+                await env.update_variants(token, product_no, changes)
                 payload = official_example('update_variants')
                 template = payload['variant'][0]
                 inventory_keys = {'quantity', 'use_inventory', 'display_soldout', 'safety_inventory'}
@@ -81,17 +82,19 @@ def setup_env(monkeypatch):
                 if mutate := getattr(env, 'inventory_response', None):
                     mutate(payload)
                 return httpx.Response(200, json=payload)
-            if path == '/products/123/images':
-                await env.upload_product_image(token, 123, base64.b64decode(body['request']['detail_image'].split(',')[1]))
+            if path == f'/products/{product_no}/images':
+                await env.upload_product_image(token, product_no, base64.b64decode(body['request']['detail_image'].split(',')[1]))
                 return httpx.Response(201, json={'image': {'detail_image': 'https://myshop.cafe24.com/main.jpg'}})
-            if path == '/products/123/additionalimages':
+            if path == f'/products/{product_no}/additionalimages':
                 images = [base64.b64decode(value.split(',')[1]) for value in body['request']['additional_image']]
-                await env.upload_additional_images(token, 123, images)
+                await env.upload_additional_images(token, product_no, images)
                 payload = official_example('additional_images')
                 payload['additionalimage']['additional_image'] = [dict(payload['additionalimage']['additional_image'][0],
                     big=f'https://myshop.cafe24.com/sub{i}.jpg') for i in range(len(images))]
                 if getattr(env, 'malformed_additional', False):
                     payload['additionalimage']['additional_image'] = []
+                if mutate := getattr(env, 'additional_response', None):
+                    mutate(payload)
                 return httpx.Response(201, json=payload)
         except httpx.HTTPStatusError as exc:
             return httpx.Response(exc.response.status_code, headers=exc.response.headers,
@@ -236,6 +239,87 @@ def test_official_response_flow_completes_creation_inventory_images_and_activati
     assert env.remote_state['display'] == env.remote_state['selling'] == 'T'
     assert all(len(env.named(name)) == 1 for name in ('create', 'inventory', 'thumbnail', 'additional', 'activate'))
     assert all(stage['status'] == 'complete' for stage in env.stored['metadata']['checkpoints'].values())
+
+
+@pytest.mark.parametrize('variant_object', [False, True])
+@pytest.mark.parametrize('inventory_list', [False, True])
+def test_single_variant_response_shapes_complete_inventory(setup_env, variant_object, inventory_list):
+    env = setup_env
+    env.job['payload']['snapshot']['variants'] = env.job['payload']['snapshot']['variants'][1:]
+    env.remote_variants = env.remote_variants[1:]
+    def mutate(payload):
+        row = payload['variant'][0]
+        if inventory_list:
+            row['inventories'] = [row['inventories']]
+        if variant_object:
+            payload['variant'] = row
+    env.inventory_response = mutate
+    env.run()
+    assert env.stored['metadata']['checkpoints']['setting_inventory']['status'] == 'complete'
+    assert env.stored['result']['setupStatus'] == 'complete'
+    assert len(env.named('create')) == len(env.named('inventory')) == 1
+
+
+def test_multiple_variants_select_own_inventory_from_reordered_lists(setup_env):
+    env = setup_env
+    def mutate(payload):
+        inventories = [row['inventories'] for row in reversed(payload['variant'])]
+        for row in payload['variant']:
+            row['inventories'] = inventories
+    env.inventory_response = mutate
+    env.run()
+    assert env.stored['result']['setupStatus'] == 'complete'
+    assert env.stored['metadata']['checkpoints']['setting_inventory']['status'] == 'complete'
+
+
+def test_additional_image_object_and_product_list_complete_without_duplicate_writes(setup_env):
+    env = setup_env
+    add_image(env)
+    env.additional_response = lambda payload: payload['additionalimage'].update(
+        additional_image=payload['additionalimage']['additional_image'][0])
+    env.activation_response = lambda payload: payload.update(product=[payload['product']])
+    env.run()
+    restart(env)
+    assert env.stored['result']['setupStatus'] == 'complete'
+    assert len(env.named('create')) == len(env.named('additional')) == len(env.named('activate')) == 1
+
+
+@pytest.mark.parametrize('inventory_list', [False, True])
+def test_product_12_received_inventory_response_resumes_same_absolute_put(setup_env, inventory_list):
+    env = setup_env
+    env.product_no = 12
+    env.remote_state['productId'] = '12'
+    variant = env.job['payload']['snapshot']['variants'][1]
+    env.job['payload']['snapshot']['variants'] = [variant]
+    before = env.remote_variants[1]
+    env.remote_variants = [dict(before, **_target(variant))]
+    code = before['variantCode']
+    env.seed(dict(productId='12', create={'sentAt': '2026-11-02T00:00:00+00:00'}, stage='setting_inventory',
+        checkpoints={
+            'mapping_variants': dict(status='complete', mapping={variant['variantKey']: code},
+                before={code: {key: before[key] for key in _target(variant)}}),
+            'setting_inventory': dict(status='pending', sentAt='2026-11-02T00:00:01+00:00', responseReceived=True),
+        }))
+    env.stored['payload'] = copy.deepcopy(env.job['payload'])
+    env.stored.update(status='error', result=dict(outcome='created', setupStatus='needs_attention', code='inventory_setup_incomplete'))
+    assert registration_view(env.stored)['retryAction'] == 'resume'
+    def mutate(payload):
+        row = payload['variant'][0]
+        if inventory_list:
+            row['inventories'] = [row['inventories']]
+        payload['variant'] = row
+    env.inventory_response = mutate
+    restart(env)
+    assert not env.named('create') and not env.named('find') and not env.named('upload')
+    assert len(env.named('inventory')) == 1
+    assert env.named('inventory')[0][2] == (12, [dict(variant_code=code, quantity=3,
+        additional_amount='1000.00', display='T', selling='T', use_inventory='T', display_soldout='T', safety_inventory=0)])
+    assert env.remote_state == dict(productId='12', display='F', selling='F')
+    assert env.stored['metadata']['checkpoints']['setting_inventory']['responseReceived'] is True
+    assert env.stored['metadata']['checkpoints']['setting_inventory']['status'] == 'complete'
+    assert env.stored['result']['setupStatus'] == 'complete'
+    restart(env)
+    assert len(env.named('inventory')) == 1 and not env.named('create')
 
 
 def test_malformed_additional_response_stops_activation_and_never_reposts(setup_env, caplog):
@@ -474,14 +558,23 @@ def test_inventory_neither_target_nor_before_blocks_resume(setup_env, confirmed,
 
 @pytest.mark.parametrize('changed', ['additional_amount', 'display', 'selling', 'quantity',
     'use_inventory', 'display_soldout', 'safety_inventory'])
-def test_inventory_response_must_confirm_every_target_field(setup_env, changed, caplog):
+@pytest.mark.parametrize('response_shape', ['list_object', 'object_object', 'object_list', 'list_list'])
+def test_inventory_response_must_confirm_every_target_field(setup_env, changed, response_shape, caplog):
     env = setup_env
+    if response_shape.startswith('object'):
+        env.job['payload']['snapshot']['variants'] = env.job['payload']['snapshot']['variants'][:1]
+        env.remote_variants = env.remote_variants[:1]
     wrong = dict(additional_amount='1000.00', display='F', selling='T', quantity=99,
         use_inventory='F', display_soldout='F', safety_inventory=9)
     def mutate(payload):
         row = payload['variant'][0]
         (row['inventories'] if changed in ('quantity', 'use_inventory', 'display_soldout', 'safety_inventory') else row)[changed] = wrong[changed]
         row['private'] = 'private-token?query=secret'
+        if response_shape.endswith('list'):
+            for item in payload['variant']:
+                item['inventories'] = [item['inventories']]
+        if response_shape.startswith('object'):
+            payload['variant'] = row
     env.inventory_response = mutate
     env.run()
     assert env.stored['result']['code'] == 'inventory_setup_incomplete'

@@ -430,6 +430,91 @@ def test_variant_bulk_write_and_read_use_official_examples():
     assert len(calls) == 2
 
 
+@pytest.mark.parametrize('variant_object', [False, True])
+@pytest.mark.parametrize('inventory_list', [False, True])
+def test_variant_bulk_write_accepts_object_or_list_envelopes(variant_object, inventory_list):
+    payload = official_example('update_variants')
+    expected = asyncio.run(client(lambda _: httpx.Response(200, json=payload)).update_variants(
+        'access', 123, official_example('update_variants_request')['requests']))
+    row = payload['variant'][0]
+    if inventory_list:
+        row['inventories'] = [row['inventories']]
+    if variant_object:
+        payload['variant'] = row
+    assert asyncio.run(client(lambda _: httpx.Response(200, json=payload)).update_variants(
+        'access', 123, official_example('update_variants_request')['requests'])) == expected
+
+
+@pytest.mark.parametrize('with_code', [False, True])
+def test_variant_inventory_list_selects_matching_code_or_single_uncoded_item(with_code):
+    payload = official_example('update_variants')
+    row = payload['variant'][0]
+    inventory = row['inventories']
+    if with_code:
+        row['inventories'] = [dict(inventory, variant_code='other', quantity=999), inventory]
+    else:
+        inventory.pop('variant_code')
+        row['inventories'] = [inventory]
+    result = asyncio.run(client(lambda _: httpx.Response(200, json=payload)).update_variants(
+        'access', 123, official_example('update_variants_request')['requests']))
+    assert result[0]['quantity'] == 15
+
+
+@pytest.mark.parametrize('failure', ['variant_scalar', 'empty_inventory', 'inventory_scalar',
+    'inventory_strings', 'inventory_mixed', 'no_matching_inventory', 'wrong_single_code',
+    'duplicate_inventory_code', 'matching_inventory_error', 'missing_quantity', 'missing_amount'])
+@pytest.mark.parametrize('variant_object', [False, True])
+def test_variant_malformed_response_logs_signature_without_values(failure, variant_object, caplog):
+    payload = official_example('update_variants')
+    row = payload['variant'][0]
+    inventory = row['inventories']
+    secret = 'private-token?query=secret'
+    payload['trace'] = secret
+    row['private'] = secret
+    if variant_object:
+        payload['variant'] = row
+    if failure == 'variant_scalar':
+        payload['variant'] = secret
+    elif failure == 'empty_inventory':
+        row['inventories'] = []
+    elif failure == 'inventory_scalar':
+        row['inventories'] = secret
+    elif failure == 'inventory_strings':
+        row['inventories'] = [secret]
+    elif failure == 'inventory_mixed':
+        row['inventories'] = [inventory, secret]
+    elif failure == 'no_matching_inventory':
+        row['inventories'] = [dict(inventory, variant_code='other'), dict(quantity=999)]
+    elif failure == 'wrong_single_code':
+        row['inventories'] = [dict(inventory, variant_code='other')]
+    elif failure == 'duplicate_inventory_code':
+        row['inventories'] = [inventory, dict(inventory)]
+    elif failure == 'matching_inventory_error':
+        row['inventories'] = [dict(inventory, error=secret)]
+    elif failure == 'missing_quantity':
+        inventory.pop('quantity')
+    else:
+        row.pop('additional_amount')
+    with pytest.raises(module().Cafe24ApiError) as error:
+        asyncio.run(client(lambda _: httpx.Response(200, json=payload)).update_variants(
+            secret, 123, official_example('update_variants_request')['requests']))
+    assert error.value.code == 'inventory_setup_incomplete'
+    records = [record for record in caplog.records if record.name == 'app.services.cafe24_client']
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert message.startswith('cafe24_confirmation_failed check=response_shape shape=')
+    signature = json.loads(message.split(' shape=', 1)[1])
+    assert signature == {
+        'top_level_keys': sorted(payload),
+        'variant.type': 'other' if failure == 'variant_scalar' else 'dict' if variant_object else 'list',
+        'first_row_keys': [] if failure == 'variant_scalar' else sorted(row),
+        'inventories.type': ('other' if failure in ('variant_scalar', 'inventory_scalar') else
+                             'dict' if failure in ('missing_quantity', 'missing_amount') else 'list'),
+    }
+    for value in (secret, 'query=', 'P000000P000B', '999', '-1000.00', 'OPTION_CUSTOM_CODE'):
+        assert value not in message
+
+
 @pytest.mark.parametrize('failure', ['missing', 'wrong_code', 'duplicate', 'row_error', 'inventory_error',
     'no_inventory', 'inventory_code', 'invalid_rows', 'invalid_code'])
 def test_variant_bulk_write_rejects_missing_duplicate_or_failed_rows(failure, caplog):
@@ -485,10 +570,13 @@ def test_image_setting_rejects_unknown_dimensions(size):
 
 
 @pytest.mark.parametrize('url_key', ['big', 'medium'])
-def test_additional_images_uses_official_envelope_and_accepts_big_or_medium(url_key):
+@pytest.mark.parametrize('image_object', [False, True])
+def test_additional_images_uses_official_envelope_and_accepts_big_or_medium(url_key, image_object):
     payload = official_example('additional_images')
     if url_key == 'medium':
         payload['additionalimage']['additional_image'][0] = {'medium': 'https://myshop.cafe24.com/sub.jpg'}
+    if image_object:
+        payload['additionalimage']['additional_image'] = payload['additionalimage']['additional_image'][0]
     def respond(request):
         assert request.method == 'POST' and request.url.path == '/api/v2/admin/products/123/additionalimages'
         body = official_example('additional_images_request')
@@ -498,8 +586,9 @@ def test_additional_images_uses_official_envelope_and_accepts_big_or_medium(url_
     assert asyncio.run(client(respond).upload_additional_images('access', 123, [b'jpeg'])) == {'count': 1}
 
 
-@pytest.mark.parametrize('failure', ['missing', 'count', 'small_only', 'invalid_url', 'row_error'])
-def test_additional_images_rejects_ambiguous_responses_without_reposting(failure):
+@pytest.mark.parametrize('failure', ['missing', 'count', 'small_only', 'invalid_url', 'row_error',
+    'scalar', 'object_count', 'invalid_envelope'])
+def test_additional_images_rejects_ambiguous_responses_without_reposting(failure, caplog):
     payload = official_example('additional_images')
     rows = payload['additionalimage']['additional_image']
     if failure == 'missing':
@@ -510,13 +599,23 @@ def test_additional_images_rejects_ambiguous_responses_without_reposting(failure
         rows[0] = {'small': 'https://myshop.cafe24.com/small.jpg'}
     elif failure == 'invalid_url':
         rows[0] = {'big': 123, 'medium': ' '}
-    else:
+    elif failure == 'row_error':
         rows[0]['error'] = {'message': 'private'}
+    elif failure == 'scalar':
+        payload['additionalimage']['additional_image'] = 'private-token?query=secret'
+    elif failure == 'object_count':
+        payload['additionalimage']['additional_image'] = rows[0]
+    else:
+        payload['additionalimage'] = ['private-token?query=secret']
     calls = []
     api = client(lambda req: calls.append(req) or httpx.Response(201, json=payload))
     with pytest.raises(module().Cafe24ApiError) as error:
-        asyncio.run(api.upload_additional_images('access', 123, [b'jpeg']))
+        asyncio.run(api.upload_additional_images('access', 123, [b'jpeg'] * (2 if failure == 'object_count' else 1)))
     assert error.value.code == 'additional_images_unknown' and len(calls) == 1
+    message = next(record.getMessage() for record in caplog.records if record.name == 'app.services.cafe24_client')
+    assert 'check=response_shape shape=' in message
+    assert 'additional_image.type' in message and 'top_level_keys' in message
+    assert 'private-token' not in message and 'https://' not in message
 
 
 def test_product_state_reads_official_example():
@@ -559,7 +658,21 @@ def test_inventory_fallback_and_activation_only_send_absolute_explicit_values():
     assert json.loads(calls[-1].content) == official_example('set_product_state_request')
 
 
-@pytest.mark.parametrize('product', [None, {}, {'product_no': 99, 'display': 'T', 'selling': 'T'},
+@pytest.mark.parametrize('product_list', [False, True])
+def test_activation_accepts_object_or_single_row_list(product_list):
+    payload = official_example('set_product_state')
+    if product_list:
+        payload['product'] = [payload['product']]
+    api = client(lambda _: httpx.Response(200, json=payload))
+    assert asyncio.run(api.set_product_state('access', 20, display='T', selling='T')) == dict(
+        productId='20', display='T', selling='T')
+
+
+@pytest.mark.parametrize('product', [None, {}, [], [None],
+    [{'product_no': 20, 'display': 'T', 'selling': 'T'}] * 2,
+    [{'product_no': 99, 'display': 'T', 'selling': 'T'}],
+    [{'product_no': 20, 'display': 'T', 'selling': 'T', 'error': 'private-token'}],
+    {'product_no': 99, 'display': 'T', 'selling': 'T'},
     {'product_no': 20, 'display': 'private-token?query=secret', 'selling': 'T'},
     {'product_no': 20, 'display': 'T'}])
 def test_activation_rejects_malformed_product_response_without_logging_body(product, caplog):
@@ -568,6 +681,8 @@ def test_activation_rejects_malformed_product_response_without_logging_body(prod
         asyncio.run(api.set_product_state('access', 20, display='T', selling='T'))
     assert error.value.code == 'activation_unconfirmed'
     assert 'check=response_shape' in caplog.text and 'private-token' not in caplog.text
+    message = next(record.getMessage() for record in caplog.records if record.name == 'app.services.cafe24_client')
+    assert 'shape=' in message and 'product.type' in message and 'top_level_keys' in message
 
 
 @pytest.mark.parametrize('write', ['inventory', 'activation'])
