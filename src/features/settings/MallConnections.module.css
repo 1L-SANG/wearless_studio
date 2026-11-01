@@ -12,6 +12,8 @@
 .mallTitle { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; }
 .metadata { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; color: var(--fg-2-read); font-size: 13px; }
 .rowActions { display: flex; align-items: center; gap: 12px; position: relative; }
+/* 목록의 연결된 몰: 연결됨 아래에 판매 정보 링크를 둔다. */
+.rowActionsStacked { flex-direction: column; align-items: flex-end; gap: 0; }
 .status { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--fg-2-read); white-space: nowrap; padding-top: 8px; }
 .connectedDot { width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--accent-success); }
 .warningDot { width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--accent-error); }
@@ -71,6 +73,7 @@
   .pageHead h1 { font-size: 28px; }
   .mallRow { gap: 12px; padding: 20px 16px; grid-template-columns: 32px minmax(0, 1fr); }
   .rowActions { grid-column: 2; justify-self: start; }
+  .rowActionsStacked { align-items: flex-start; }
   .mallRow > .status { grid-column: 2; }
   .inlineForm { grid-column: 1 / -1; }
   .fields { grid-template-columns: minmax(0, 1fr); }
