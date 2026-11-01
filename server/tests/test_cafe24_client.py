@@ -431,18 +431,35 @@ def test_variant_bulk_write_and_read_use_official_examples():
 
 
 @pytest.mark.parametrize('variant_object', [False, True])
-@pytest.mark.parametrize('inventory_list', [False, True])
-def test_variant_bulk_write_accepts_object_or_list_envelopes(variant_object, inventory_list):
+@pytest.mark.parametrize('response_key', ['variants', 'variant'])
+@pytest.mark.parametrize('inventory_shape', ['object', 'list', 'flat'])
+def test_variant_bulk_write_accepts_object_or_list_envelopes(variant_object, response_key, inventory_shape):
     payload = official_example('update_variants')
-    expected = asyncio.run(client(lambda _: httpx.Response(200, json=payload)).update_variants(
-        'access', 123, official_example('update_variants_request')['requests']))
-    row = payload['variant'][0]
-    if inventory_list:
+    row = payload.pop('variant')[0]
+    if inventory_shape == 'list':
         row['inventories'] = [row['inventories']]
-    if variant_object:
-        payload['variant'] = row
+    elif inventory_shape == 'flat':
+        row.update(row.pop('inventories'))
+    payload[response_key] = row if variant_object else [row]
     assert asyncio.run(client(lambda _: httpx.Response(200, json=payload)).update_variants(
-        'access', 123, official_example('update_variants_request')['requests'])) == expected
+        'access', 123, official_example('update_variants_request')['requests'])) == [dict(
+            variantCode='P000000P000B', options=row['options'], quantity=15, additionalAmount='-1000.00',
+            useInventory='T', display='T', selling='F', displaySoldout='T', safetyInventory=6)]
+
+
+@pytest.mark.parametrize('plural_valid', [False, True])
+def test_variant_bulk_write_prefers_present_plural_envelope(plural_valid):
+    payload = official_example('update_variants')
+    payload['variants'] = payload['variant'] if plural_valid else None
+    payload['variant'] = None if plural_valid else payload['variant']
+    api = client(lambda _: httpx.Response(200, json=payload))
+    if plural_valid:
+        result = asyncio.run(api.update_variants('access', 123, official_example('update_variants_request')['requests']))
+        assert result[0]['quantity'] == 15
+    else:
+        with pytest.raises(module().Cafe24ApiError) as error:
+            asyncio.run(api.update_variants('access', 123, official_example('update_variants_request')['requests']))
+        assert error.value.code == 'inventory_setup_incomplete'
 
 
 @pytest.mark.parametrize('with_code', [False, True])
@@ -462,9 +479,10 @@ def test_variant_inventory_list_selects_matching_code_or_single_uncoded_item(wit
 
 @pytest.mark.parametrize('failure', ['variant_scalar', 'empty_inventory', 'inventory_scalar',
     'inventory_strings', 'inventory_mixed', 'no_matching_inventory', 'wrong_single_code',
-    'duplicate_inventory_code', 'matching_inventory_error', 'missing_quantity', 'missing_amount'])
+    'duplicate_inventory_code', 'matching_inventory_error', 'missing_quantity', 'missing_amount', 'no_inventory'])
 @pytest.mark.parametrize('variant_object', [False, True])
-def test_variant_malformed_response_logs_signature_without_values(failure, variant_object, caplog):
+@pytest.mark.parametrize('response_key', ['variants', 'variant'])
+def test_variant_malformed_response_logs_signature_without_values(failure, variant_object, response_key, caplog):
     payload = official_example('update_variants')
     row = payload['variant'][0]
     inventory = row['inventories']
@@ -493,8 +511,11 @@ def test_variant_malformed_response_logs_signature_without_values(failure, varia
         row['inventories'] = [dict(inventory, error=secret)]
     elif failure == 'missing_quantity':
         inventory.pop('quantity')
+    elif failure == 'no_inventory':
+        row.pop('inventories')
     else:
         row.pop('additional_amount')
+    payload[response_key] = payload.pop('variant')
     with pytest.raises(module().Cafe24ApiError) as error:
         asyncio.run(client(lambda _: httpx.Response(200, json=payload)).update_variants(
             secret, 123, official_example('update_variants_request')['requests']))
@@ -506,9 +527,9 @@ def test_variant_malformed_response_logs_signature_without_values(failure, varia
     signature = json.loads(message.split(' shape=', 1)[1])
     assert signature == {
         'top_level_keys': sorted(payload),
-        'variant.type': 'other' if failure == 'variant_scalar' else 'dict' if variant_object else 'list',
+        f'{response_key}.type': 'other' if failure == 'variant_scalar' else 'dict' if variant_object else 'list',
         'first_row_keys': [] if failure == 'variant_scalar' else sorted(row),
-        'inventories.type': ('other' if failure in ('variant_scalar', 'inventory_scalar') else
+        'inventories.type': ('other' if failure in ('variant_scalar', 'inventory_scalar', 'no_inventory') else
                              'dict' if failure in ('missing_quantity', 'missing_amount') else 'list'),
     }
     for value in (secret, 'query=', 'P000000P000B', '999', '-1000.00', 'OPTION_CUSTOM_CODE'):

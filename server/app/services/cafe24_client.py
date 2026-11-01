@@ -492,11 +492,12 @@ class Cafe24Client:
             raise ValueError('invalid variants')
         payload = await self._write_response(f'/admin/products/{product_no}/variants', access_token=access_token,
             body={'shop_no': 1, 'requests': variants}, code='inventory_setup_incomplete')
-        rows = _response_rows(payload.get('variant'))
+        response_key = 'variants' if 'variants' in payload else 'variant'
+        rows = _response_rows(payload.get(response_key))
         if rows is None:
-            _log_response_shape(payload, 'variant')
+            _log_response_shape(payload, response_key)
             raise Cafe24ApiError('inventory_setup_incomplete')
-        inventories = [_variant_inventory(row) for row in rows]
+        inventories = [_variant_inventory(row) if 'inventories' in row else row for row in rows]
         codes = [row.get('variant_code') for row in rows]
         valid_codes = all(isinstance(code, str) and code for code in codes)
         actual = {'variant.count': len(rows), 'variant.codes_match': bool(valid_codes) and
@@ -515,7 +516,7 @@ class Cafe24Client:
             'variant.error': False, 'variant.inventories_valid': True, 'variant.inventories_code_matches': True,
             'variant.values_present': True}
         if actual != expected:
-            _log_response_shape(payload, 'variant')
+            _log_response_shape(payload, response_key)
             raise Cafe24ApiError('inventory_setup_incomplete')
         return [_variant(row, inventory) for row, inventory in zip(rows, inventories)]
 
