@@ -56,7 +56,7 @@ export function MallConnectionRow({ detail = false, returnTo, mall = 'zigzag', l
       </div> : <p className={styles.help}>{state === 'reconnect_required' ? '연결이 끊겼어요. 다시 설치하면 이어서 쓸 수 있어요'
         : busy && !cafe24 ? '스토어 이름과 권한을 받아 오고 있어요' : help}</p>}
     </div>
-    <div className={styles.rowActions}>
+    <div className={`${styles.rowActions} ${state === 'connected' && !detail ? styles.rowActionsStacked : ''}`}>
       {['none', 'reconnect_required'].includes(state) && <Button onClick={onConnect}>{state === 'none' ? '연결하기' : '다시 연결'}</Button>}
       {state === 'unavailable' && <span className={styles.status}>준비 중</span>}
       {editing && <span className={styles.status} role="status">{busy ? cafe24 ? '설치 시작 중' : '확인 중' : '입력 중'}</span>}
