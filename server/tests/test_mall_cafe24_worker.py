@@ -33,6 +33,7 @@ def status_error(status, retry_after=None):
 
 class WorkerEnv:
     def __init__(self, monkeypatch):
+        self.product_no = 123
         assert importlib.util.find_spec("app.workers.mall_register_job"), "registration worker is missing"
         self.worker = importlib.import_module("app.workers.mall_register_job")
         self.publication = dict(id=PUBLICATION, user_id=USER, project_id=PROJECT, status="ready", editor_revision=3,
@@ -207,7 +208,7 @@ class WorkerEnv:
             return value
         if name == "upload":
             return [f"https://myshop.cafe24.com/upload/{len(self.calls)}-{i}.jpg" for i in range(len(args[0]))]
-        return {"setting": "B", "create": 123, "find": [], "thumbnail": {}, 'additional': {'count': 1},
+        return {"setting": "B", "create": self.product_no, "find": [], "thumbnail": {}, 'additional': {'count': 1},
                 'variants': copy.deepcopy(self.remote_variants), 'state': dict(self.remote_state), 'inventory': {}, 'activate': None}[name]
 
     async def upload_description_images(self, token, images):
@@ -226,17 +227,17 @@ class WorkerEnv:
         return await self.remote("find", token, code)
 
     async def upload_product_image(self, token, product_no, image):
-        assert product_no == 123
+        assert product_no == self.product_no
         with Image.open(BytesIO(image)) as im:
             assert im.format == "JPEG" and max(im.size) == 2000 and im.mode == "RGB"
         return await self.remote("thumbnail", token, product_no, image)
 
     async def product_state(self, token, product_no):
-        assert product_no == 123
+        assert product_no == self.product_no
         return await self.remote('state', token, product_no)
 
     async def variants(self, token, product_no):
-        assert product_no == 123
+        assert product_no == self.product_no
         return await self.remote('variants', token, product_no)
 
     async def update_variants(self, token, product_no, variants):
