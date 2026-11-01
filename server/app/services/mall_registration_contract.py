@@ -374,9 +374,12 @@ def registration_view(job: dict) -> dict:
         setup, retry = 'pending', 'verify' if payload.get('mall') == 'cafe24' else 'open_admin'
     else:
         setup, retry = 'not_applicable', 'new_request'
+    warnings = deepcopy(metadata.get('warnings') or result.get('warnings') or [])
+    if setup == 'complete':
+        warnings = [warning for warning in warnings if warning.get('code') == 'all_sold_out']
     return dict(jobId=job['id'], mall=payload.get('mall'), status=job['status'], progress=job.get('progress', 0),
         stage=metadata.get('stage'), outcome=outcome, setupStatus=setup, productId=metadata.get('productId'),
         productUrl=result.get('productUrl'), adminUrl=result.get('adminUrl'), stages=deepcopy(metadata.get('checkpoints') or {}),
         retryAction=retry, code=result.get('code') if outcome is not None else None,
-        warnings=deepcopy(metadata.get('warnings') or result.get('warnings') or []), retention=result.get('retention'),
+        warnings=warnings, retention=result.get('retention'),
         publicationId=payload.get('publicationId'), createdAt=job.get('created_at'), finishedAt=job.get('finished_at'))

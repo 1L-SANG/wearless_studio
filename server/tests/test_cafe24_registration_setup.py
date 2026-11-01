@@ -264,6 +264,28 @@ def test_fractional_response_amount_cannot_confirm_inventory(setup_env, caplog):
     assert 'check=response_value' in caplog.text and 'additionalAmount' in caplog.text
 
 
+@pytest.mark.parametrize('zero', [False, True])
+def test_inventory_failure_warning_clears_after_resume_but_keeps_all_sold_out(setup_env, zero):
+    env = setup_env
+    if zero:
+        for row in env.job['payload']['snapshot']['variants']:
+            row['quantity'] = 0
+    env.inventory_response = lambda payload: payload['variant'][0]['inventories'].update(use_inventory='F')
+    env.run()
+    warnings = env.stored['metadata']['warnings']
+    assert env.stored['result']['setupStatus'] == 'needs_attention'
+    assert warnings == env.stored['result']['warnings'] == registration_view(env.stored)['warnings']
+    assert any(w['code'] == 'inventory_setup_incomplete' for w in warnings)
+    assert any(w['code'] == 'all_sold_out' for w in warnings) is zero
+    env.inventory_response = None
+    restart(env)
+    assert env.stored['result']['setupStatus'] == 'complete'
+    expected = [w for w in warnings if w['code'] == 'all_sold_out']
+    assert env.stored['metadata']['warnings'] == env.stored['result']['warnings'] == expected
+    assert registration_view(env.stored)['warnings'] == expected
+    assert len(env.named('create')) == 1
+
+
 def test_completed_image_checkpoints_survive_worker_restart(setup_env):
     env = setup_env
     add_image(env)
