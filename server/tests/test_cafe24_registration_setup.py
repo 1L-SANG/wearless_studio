@@ -45,7 +45,11 @@ def setup_env(monkeypatch):
                 return httpx.Response(200, json={'product': {'product_no': 123, **state}})
             if path == '/products/123' and method == 'PUT':
                 await env.set_product_state(token, 123, **body['request'])
-                return httpx.Response(200, json={'product': {'product_no': 123, **env.remote_state}})
+                payload = official_example('set_product_state')
+                payload['product'].update(product_no=123, display=env.remote_state['display'], selling=env.remote_state['selling'])
+                if mutate := getattr(env, 'activation_response', None):
+                    mutate(payload)
+                return httpx.Response(200, json=payload)
             if path == '/products/123/variants' and method == 'GET':
                 rows = await env.variants(token, 123)
                 keys = dict(variantCode='variant_code', additionalAmount='additional_amount', useInventory='use_inventory',
@@ -74,6 +78,8 @@ def setup_env(monkeypatch):
                 payload['variant'] = [{**template, **{k: v for k, v in row.items() if k not in inventory_keys},
                     'inventories': {**template['inventories'], 'variant_code': row['variant_code'],
                         **{k: v for k, v in row.items() if k in inventory_keys}}} for row in changes]
+                if mutate := getattr(env, 'inventory_response', None):
+                    mutate(payload)
                 return httpx.Response(200, json=payload)
             if path == '/products/123/images':
                 await env.upload_product_image(token, 123, base64.b64decode(body['request']['detail_image'].split(',')[1]))
@@ -249,13 +255,13 @@ def test_remote_amounts_require_finite_whole_won_without_rounding(value, want):
     assert _integer(value) == want
 
 
-def test_fractional_remote_amount_cannot_confirm_inventory(setup_env):
+def test_fractional_response_amount_cannot_confirm_inventory(setup_env, caplog):
     env = setup_env
-    env.hooks['inventory'] = lambda: env.scripts.update(variants=[[
-        dict(row, additionalAmount='1000.50') for row in env.remote_variants]])
+    env.inventory_response = lambda payload: payload['variant'][0].update(additional_amount='1000.50')
     env.run()
     assert env.stored['result']['code'] == 'inventory_setup_incomplete'
     assert not env.named('activate')
+    assert 'check=response_value' in caplog.text and 'additionalAmount' in caplog.text
 
 
 def test_completed_image_checkpoints_survive_worker_restart(setup_env):
@@ -383,3 +389,233 @@ def test_inventory_retry_checks_hidden_state_before_another_absolute_put(setup_e
     assert env.stored['result']['setupStatus'] == ('needs_attention' if manual_change else 'complete')
     if manual_change:
         assert not env.named('activate') and env.stored['result']['retryAction'] == 'open_admin'
+
+
+def test_inventory_put_response_completes_stage_without_get_confirmation(setup_env):
+    env = setup_env
+    before = copy.deepcopy(env.remote_variants)
+    env.hooks['inventory'] = lambda: env.scripts.update(variants=[before] * 20)
+    env.scripts['thumbnail'] = [status_error(422)]
+    env.run()
+    assert env.stored['metadata']['checkpoints']['setting_inventory']['status'] == 'complete'
+    names = [call[0] for call in env.calls]
+    assert names[names.index('inventory') + 1:] == ['state', 'thumbnail']
+    assert env.stored['result']['code'] == 'invalid_request'
+
+
+def test_cached_inventory_before_values_can_catch_up_before_activation(setup_env):
+    env = setup_env
+    before = copy.deepcopy(env.remote_variants)
+    env.hooks['inventory'] = lambda: env.scripts.update(variants=[before, before])
+    env.run()
+    assert env.stored['result']['setupStatus'] == 'complete'
+    assert env.sleeps == [2, 2]
+    assert len(env.named('create')) == len(env.named('inventory')) == len(env.named('activate')) == 1
+
+
+def test_cached_confirmed_inventory_waits_without_blocking_resume(setup_env, caplog):
+    env = setup_env
+    before = copy.deepcopy(env.remote_variants)
+    env.hooks['inventory'] = lambda: env.scripts.update(variants=[before] * 20)
+    env.run()
+    assert env.stored['result']['code'] == 'inventory_confirmation_pending'
+    assert env.stored['result']['retryAction'] == 'resume'
+    assert env.stored['result']['setupStatus'] == 'needs_attention'
+    assert not env.stored['metadata'].get('resumeBlocked') and not env.named('activate')
+    assert env.stored['metadata']['checkpoints']['setting_inventory']['status'] == 'complete'
+    assert env.sleeps == [2, 2]
+    assert 'check=read_value' in caplog.text and 'useInventory' in caplog.text
+    env.scripts.clear()
+    env.hooks.clear()
+    restart(env)
+    assert env.stored['result']['setupStatus'] == 'complete'
+    assert len(env.named('create')) == len(env.named('inventory')) == len(env.named('thumbnail')) == 1
+
+
+@pytest.mark.parametrize('confirmed', [False, True])
+def test_inventory_neither_target_nor_before_blocks_resume(setup_env, confirmed, caplog):
+    env = setup_env
+    env.scripts['thumbnail'] = [status_error(422)]
+    env.run()
+    if not confirmed:
+        inventory = env.stored['metadata']['checkpoints']['setting_inventory']
+        inventory.update(status='pending')
+        inventory.pop('responseReceived', None)
+    env.remote_variants[1]['quantity'] = 99
+    restart(env)
+    assert env.stored['result']['code'] == 'remote_product_changed'
+    assert env.stored['metadata']['resumeBlocked'] is True
+    assert env.stored['result']['retryAction'] == 'open_admin'
+    assert len(env.named('inventory')) == 1 and not env.named('activate')
+    assert 'check=read_value' in caplog.text and 'quantity' in caplog.text and '99' in caplog.text
+
+
+@pytest.mark.parametrize('changed', ['additional_amount', 'display', 'selling', 'quantity',
+    'use_inventory', 'display_soldout', 'safety_inventory'])
+def test_inventory_response_must_confirm_every_target_field(setup_env, changed, caplog):
+    env = setup_env
+    wrong = dict(additional_amount='1000.00', display='F', selling='T', quantity=99,
+        use_inventory='F', display_soldout='F', safety_inventory=9)
+    def mutate(payload):
+        row = payload['variant'][0]
+        (row['inventories'] if changed in ('quantity', 'use_inventory', 'display_soldout', 'safety_inventory') else row)[changed] = wrong[changed]
+        row['private'] = 'private-token?query=secret'
+    env.inventory_response = mutate
+    env.run()
+    assert env.stored['result']['code'] == 'inventory_setup_incomplete'
+    assert env.stored['metadata']['checkpoints']['setting_inventory']['status'] == 'pending'
+    assert not env.named('thumbnail') and not env.named('activate')
+    assert 'check=response_value' in caplog.text and 'private-token' not in caplog.text
+
+
+def test_lost_inventory_response_waits_for_visibility_then_resumes_without_put(setup_env):
+    env = setup_env
+    before = copy.deepcopy(env.remote_variants)
+    env.scripts['thumbnail'] = [status_error(422)]
+    env.run()
+    inventory = env.stored['metadata']['checkpoints']['setting_inventory']
+    inventory.update(status='pending')
+    inventory.pop('responseReceived', None)
+    env.scripts['variants'] = [before] * 20
+    writes = len(env.named('inventory'))
+    restart(env)
+    assert env.stored['result']['code'] == 'inventory_confirmation_pending'
+    assert env.stored['result']['retryAction'] == 'resume'
+    assert len(env.named('inventory')) == writes and env.sleeps == [2, 2]
+    assert not env.stored['metadata'].get('resumeBlocked')
+    env.scripts.clear()
+    restart(env)
+    assert env.stored['result']['setupStatus'] == 'complete'
+    assert len(env.named('inventory')) == writes and len(env.named('create')) == 1
+
+
+def test_d78e9bcd_pending_inventory_resume_completes_hidden_product(setup_env):
+    env = setup_env
+    add_image(env)
+    variant = env.job['payload']['snapshot']['variants'][0]
+    variant['quantity'] = 1
+    env.job['payload']['snapshot']['variants'] = [variant]
+    before = dict(quantity=0, additionalAmount=0, useInventory='F', display='T', selling='F',
+        displaySoldout='F', safetyInventory=0)
+    env.remote_variants = [dict(env.remote_variants[0], variantCode='P000000L000A', quantity=1,
+        useInventory='T', selling='T', displaySoldout='T')]
+    env.seed(dict(productId='123', create={'sentAt': '2026-11-01T00:00:00+00:00'}, stage='setting_inventory',
+        checkpoints={
+            'mapping_variants': dict(status='complete', mapping={variant['variantKey']: 'P000000L000A'},
+                before={'P000000L000A': before}),
+            'setting_inventory': dict(status='pending', sentAt='2026-11-01T00:00:01+00:00'),
+        }))
+    env.run()
+    assert not env.named('create') and not env.named('find') and not env.named('inventory')
+    assert env.stored['result']['outcome'] == 'created' and env.stored['result']['setupStatus'] == 'complete'
+    assert env.stored['metadata']['checkpoints']['setting_inventory']['status'] == 'complete'
+    assert len(env.named('thumbnail')) == len(env.named('additional')) == len(env.named('activate')) == 1
+    assert env.named('activate')[0][2][1] == dict(display='F', selling='F')
+
+
+def test_activation_uses_put_response_without_cached_product_get(setup_env):
+    env = setup_env
+    env.job['payload']['snapshot']['sales']['listingMode'] = 'ON_SALE'
+    env.hooks['activate'] = lambda: env.scripts.update(state=[dict(display='F', selling='F')] * 20)
+    env.run()
+    assert env.stored['result']['setupStatus'] == 'complete'
+    assert env.calls[-1][0] == 'activate'
+    restart(env)
+    assert env.stored['result']['setupStatus'] == 'complete'
+    assert env.calls[-1][0] == 'activate'
+    assert len(env.named('inventory')) == len(env.named('activate')) == 1
+
+
+def test_activation_response_mismatch_cannot_be_overruled_by_get(setup_env, caplog):
+    env = setup_env
+    env.job['payload']['snapshot']['sales']['listingMode'] = 'ON_SALE'
+    env.activation_response = lambda payload: payload['product'].update(selling='F')
+    env.run()
+    assert env.stored['result']['code'] == 'activation_unconfirmed'
+    assert env.stored['result']['retryAction'] == 'resume'
+    assert env.calls[-1][0] == 'activate'
+    assert 'check=response_value' in caplog.text and 'selling' in caplog.text
+
+
+@pytest.mark.parametrize('read_state,code', [({'display': 'F', 'selling': 'F'}, 'activation_unconfirmed'),
+    ({'display': 'T', 'selling': 'F'}, 'remote_product_changed')])
+def test_lost_activation_response_distinguishes_before_and_manual_change(setup_env, read_state, code, caplog):
+    env = setup_env
+    env.job['payload']['snapshot']['sales']['listingMode'] = 'ON_SALE'
+    env.scripts['activate'] = [TimeoutError('private-token')]
+    def activated():
+        env.remote_state.update(display='T', selling='T')
+        env.scripts['state'] = [dict(read_state)] * 20
+    env.hooks['activate'] = activated
+    env.run()
+    assert env.stored['result']['code'] == code
+    assert env.stored['result']['retryAction'] == ('resume' if code == 'activation_unconfirmed' else 'open_admin')
+    assert 'check=read_value' in caplog.text and 'private-token' not in caplog.text
+    if code == 'activation_unconfirmed':
+        assert env.sleeps == [2, 2]
+        env.scripts.clear()
+        restart(env)
+        assert env.stored['result']['setupStatus'] == 'complete'
+    else:
+        assert not env.sleeps and env.stored['metadata']['resumeBlocked'] is True
+    assert len(env.named('inventory')) == len(env.named('activate')) == 1
+
+
+def test_lost_activation_response_can_catch_up_without_any_more_writes(setup_env):
+    env = setup_env
+    env.job['payload']['snapshot']['sales']['listingMode'] = 'ON_SALE'
+    env.scripts['activate'] = [TimeoutError('private')]
+    def activated():
+        env.remote_state.update(display='T', selling='T')
+        env.scripts['state'] = [dict(display='F', selling='F')] * 2
+    env.hooks['activate'] = activated
+    env.run()
+    assert env.stored['result']['setupStatus'] == 'complete' and env.sleeps == [2, 2]
+    names = [row[0] for row in env.calls]
+    assert names[names.index('activate') + 1:] == ['state'] * 3
+
+
+@pytest.mark.parametrize('gate', ['lease', 'cancel', 'disconnect'])
+def test_visibility_wait_rechecks_job_before_next_read_or_write(setup_env, gate):
+    env = setup_env
+    before = copy.deepcopy(env.remote_variants)
+    env.hooks['inventory'] = lambda: env.scripts.update(variants=[before] * 20)
+    def stop():
+        if gate == 'lease':
+            env.alive = False
+        elif gate == 'cancel':
+            env.cancelled = True
+        else:
+            env.connection_row['status'] = 'revoked'
+    env.hooks['sleep'] = stop
+    env.run()
+    assert env.sleeps == [2] and env.calls[-1][0] == 'variants'
+    assert not env.named('activate') and len(env.named('inventory')) == 1
+    if gate == 'lease':
+        assert 'finalize' not in env.events
+    else:
+        assert env.stored['result']['code'] == ('cancelled' if gate == 'cancel' else 'connection_changed')
+
+
+def test_activation_rechecks_hidden_state_after_waiting_for_inventory_visibility(setup_env):
+    env = setup_env
+    before = copy.deepcopy(env.remote_variants)
+    env.hooks['thumbnail'] = lambda: env.scripts.update(variants=[copy.deepcopy(env.remote_variants), before])
+    env.hooks['sleep'] = lambda: env.remote_state.update(selling='T')
+    env.run()
+    assert env.sleeps == [2]
+    assert env.stored['result']['code'] == 'remote_product_changed'
+    assert env.stored['metadata']['resumeBlocked'] is True
+    assert not env.named('activate') and env.remote_state['selling'] == 'T'
+
+
+@pytest.mark.parametrize('status,attempts', [(422, 1), (503, 4)])
+def test_received_inventory_http_failure_can_resume_same_absolute_put(setup_env, status, attempts):
+    env = setup_env
+    env.scripts['inventory'] = [status_error(status)] * attempts
+    env.run()
+    assert env.stored['result']['setupStatus'] == 'needs_attention'
+    assert len(env.named('inventory')) == attempts and not env.named('activate')
+    restart(env)
+    assert env.stored['result']['setupStatus'] == 'complete'
+    assert len(env.named('create')) == 1 and len(env.named('inventory')) == attempts + 1

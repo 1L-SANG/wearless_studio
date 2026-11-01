@@ -83,7 +83,9 @@ class WorkerEnv:
         monkeypatch.setattr(cafe24_tokens, "_mark", self.mark)
         # Patch only the worker's sleep, keeping the event loop's sleep available.
         from app.workers import mall_register_context
+        from app.services.mall_adapters import cafe24
         monkeypatch.setattr(mall_register_context, "_sleep", self.sleep)
+        monkeypatch.setattr(cafe24, '_sleep', self.sleep)
 
     @asynccontextmanager
     async def connection(self):
@@ -243,7 +245,7 @@ class WorkerEnv:
         for change in variants:
             row = next(row for row in self.remote_variants if row['variantCode'] == change['variant_code'])
             row.update({keys.get(key, key): value for key, value in change.items() if key != 'variant_code'})
-        return result
+        return copy.deepcopy(self.remote_variants) if result == {} else result
 
     async def upload_additional_images(self, token, product_no, images):
         return await self.remote('additional', token, product_no, images)
@@ -251,7 +253,7 @@ class WorkerEnv:
     async def set_product_state(self, token, product_no, **state):
         result = await self.remote('activate', token, product_no, state)
         self.remote_state.update(state)
-        return result
+        return dict(self.remote_state) if result is None else result
 
     def seed_upload(self, urls):
         from app.services.mall_adapters.cafe24 import _hash

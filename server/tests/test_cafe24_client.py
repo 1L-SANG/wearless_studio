@@ -420,15 +420,19 @@ def test_variant_bulk_write_and_read_use_official_examples():
         return httpx.Response(200, json=official_example('variants'))
 
     api = client(respond)
-    assert asyncio.run(api.update_variants('access', 123, body['requests'])) == {'variantCodes': ['P000000P000B']}
+    assert asyncio.run(api.update_variants('access', 123, body['requests'])) == [dict(
+        variantCode='P000000P000B', options=official_example('update_variants')['variant'][0]['options'],
+        quantity=15, additionalAmount='-1000.00', useInventory='T', display='T', selling='F',
+        displaySoldout='T', safetyInventory=6)]
     rows = asyncio.run(api.variants('access', 123))
     assert rows == [dict(variantCode='P000000R000C', options=official_example('variants')['variants'][0]['options'],
         quantity=6, additionalAmount='0.00', useInventory='T', display='T', selling='T', displaySoldout='T', safetyInventory=7)]
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize('failure', ['missing', 'wrong_code', 'duplicate', 'row_error', 'inventory_error', 'no_inventory'])
-def test_variant_bulk_write_rejects_missing_duplicate_or_failed_rows(failure):
+@pytest.mark.parametrize('failure', ['missing', 'wrong_code', 'duplicate', 'row_error', 'inventory_error',
+    'no_inventory', 'inventory_code', 'invalid_rows', 'invalid_code'])
+def test_variant_bulk_write_rejects_missing_duplicate_or_failed_rows(failure, caplog):
     body = official_example('update_variants_request')
     payload = official_example('update_variants')
     row = payload['variant'][0]
@@ -443,11 +447,18 @@ def test_variant_bulk_write_rejects_missing_duplicate_or_failed_rows(failure):
         row['error'] = {'message': 'private'}
     elif failure == 'inventory_error':
         row['inventories']['error'] = {'message': 'private'}
-    else:
+    elif failure == 'no_inventory':
         del row['inventories']
+    elif failure == 'inventory_code':
+        row['inventories']['variant_code'] = 'other'
+    elif failure == 'invalid_rows':
+        payload['variant'] = [None]
+    else:
+        row['variant_code'] = {'private': 'private-token'}
     with pytest.raises(module().Cafe24ApiError) as error:
         asyncio.run(client(lambda _: httpx.Response(200, json=payload)).update_variants('access', 123, body['requests']))
     assert error.value.code == 'inventory_setup_incomplete'
+    assert 'check=response_shape' in caplog.text and 'private' not in caplog.text
 
 
 def test_image_setting_uses_official_nested_dimensions():
@@ -536,12 +547,37 @@ def test_inventory_fallback_and_activation_only_send_absolute_explicit_values():
     calls = []
     def respond(request):
         calls.append(request)
-        return httpx.Response(200, json=official_example('inventory') if request.url.path.endswith('/inventories') else {})
+        payload = official_example('inventory') if request.url.path.endswith('/inventories') else official_example('set_product_state')
+        return httpx.Response(200, json=payload)
     api = client(respond)
     inventory = official_example('inventory_request')['request']
     assert asyncio.run(api.set_variant_inventory('access', 123, 'sku/code', inventory)) is None
     assert calls[-1].url.raw_path == b'/api/v2/admin/products/123/variants/sku%2Fcode/inventories'
     assert json.loads(calls[-1].content) == official_example('inventory_request')
-    assert asyncio.run(api.set_product_state('access', 123, display='T', selling='T')) is None
-    assert calls[-1].method == 'PUT' and calls[-1].url.path == '/api/v2/admin/products/123'
+    assert asyncio.run(api.set_product_state('access', 20, display='T', selling='T')) == dict(productId='20', display='T', selling='T')
+    assert calls[-1].method == 'PUT' and calls[-1].url.path == '/api/v2/admin/products/20'
     assert json.loads(calls[-1].content) == official_example('set_product_state_request')
+
+
+@pytest.mark.parametrize('product', [None, {}, {'product_no': 99, 'display': 'T', 'selling': 'T'},
+    {'product_no': 20, 'display': 'private-token?query=secret', 'selling': 'T'},
+    {'product_no': 20, 'display': 'T'}])
+def test_activation_rejects_malformed_product_response_without_logging_body(product, caplog):
+    api = client(lambda _: httpx.Response(200, json={'product': product, 'private': 'private-token?query=secret'}))
+    with pytest.raises(module().Cafe24ApiError) as error:
+        asyncio.run(api.set_product_state('access', 20, display='T', selling='T'))
+    assert error.value.code == 'activation_unconfirmed'
+    assert 'check=response_shape' in caplog.text and 'private-token' not in caplog.text
+
+
+@pytest.mark.parametrize('write', ['inventory', 'activation'])
+@pytest.mark.parametrize('body', [b'private-token?query=secret', b'[]', b'{"error":"private-token"}'])
+def test_unreadable_write_response_logs_only_shape_and_stays_unconfirmed(write, body, caplog):
+    api = client(lambda _: httpx.Response(200, content=body))
+    with pytest.raises(module().Cafe24ApiError) as error:
+        if write == 'inventory':
+            asyncio.run(api.update_variants('access', 123, official_example('update_variants_request')['requests']))
+        else:
+            asyncio.run(api.set_product_state('access', 20, display='T', selling='T'))
+    assert error.value.code == ('inventory_setup_incomplete' if write == 'inventory' else 'activation_unconfirmed')
+    assert 'check=response_shape' in caplog.text and 'private-token' not in caplog.text

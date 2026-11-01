@@ -8,12 +8,16 @@ import json
 
 import httpx
 
-from ..cafe24_client import Cafe24ApiError, Cafe24Variant, build_description_html, price_fields
+from ..cafe24_client import Cafe24ApiError, Cafe24Variant, build_description_html, log_confirmation_failure, price_fields
 from ..mall_images import prepare_mall_jpeg
 from ..mall_registration_contract import (
     CreatedProduct, LookupResult, MallFacts, PreflightIssue, RegistrationSnapshot, VariantSnapshot,
 )
 from .base import JobContext
+
+VISIBILITY_READ_ATTEMPTS = 3
+VISIBILITY_READ_INTERVAL_SECONDS = 2
+_sleep = asyncio.sleep
 
 
 def _hash(value):
@@ -210,6 +214,7 @@ class Cafe24Adapter:
             raise Cafe24ApiError('remote_product_changed')
         state = await self._state(ctx)
         if state['display'] != 'F' or state['selling'] != 'F':
+            log_confirmation_failure('read_value', state, dict(display='F', selling='F'))
             await ctx.checkpoint(dict(resumeBlocked=True))
             raise Cafe24ApiError('remote_product_changed')
 
@@ -219,25 +224,59 @@ class Cafe24Adapter:
             mapping = match_cafe24_variants(ctx.snapshot['variants'], rows)
         except Cafe24ApiError:
             if ctx.job['metadata'].get('checkpoints', {}).get('mapping_variants'):
+                log_confirmation_failure('read_value', {'variants.mapping_matches': False}, {'variants.mapping_matches': True})
                 await ctx.checkpoint(dict(resumeBlocked=True))
                 raise Cafe24ApiError('remote_product_changed') from None
             raise
         saved = ctx.job['metadata'].get('checkpoints', {}).get('mapping_variants') or {}
         if saved and mapping != saved.get('mapping'):
+            log_confirmation_failure('read_value', {'variants.mapping_matches': False}, {'variants.mapping_matches': True})
             await ctx.checkpoint(dict(resumeBlocked=True))
             raise Cafe24ApiError('remote_product_changed')
         return rows, mapping
 
     async def _check_inventory(self, ctx, *, complete):
-        rows, mapping = await self._variants(ctx)
         before = ctx.job['metadata']['checkpoints']['mapping_variants']['before']
-        actual = {row['variantCode']: _inventory(row) for row in rows}
-        for variant in ctx.snapshot['variants']:
-            code = mapping[variant['variantKey']]
-            if actual[code] != _target(variant) and (complete or actual[code] != before[code]):
+        for attempt in range(VISIBILITY_READ_ATTEMPTS if complete else 1):
+            rows, mapping = await self._variants(ctx)
+            actual = {row['variantCode']: _inventory(row) for row in rows}
+            pending = []
+            for variant in ctx.snapshot['variants']:
+                code, target = mapping[variant['variantKey']], _target(variant)
+                if actual[code] == target:
+                    continue
+                if actual[code] != before[code]:
+                    log_confirmation_failure('read_value', actual[code], target)
+                    await ctx.checkpoint(dict(resumeBlocked=True))
+                    raise Cafe24ApiError('remote_product_changed')
+                if complete:
+                    pending.append((actual[code], target))
+            if not pending:
+                return actual
+            if attempt + 1 < VISIBILITY_READ_ATTEMPTS:
+                await _sleep(VISIBILITY_READ_INTERVAL_SECONDS)
+        # A cached before value does not prove a manual edit or a failed PUT.
+        log_confirmation_failure('read_value', *pending[0])
+        await ctx.checkpoint(dict(stage='setting_inventory'))
+        raise Cafe24ApiError('inventory_confirmation_pending')
+
+    async def _check_activation(self, ctx, desired):
+        activation = ctx.job['metadata']['checkpoints']['activating']
+        before = activation.get('before') or dict(display='F', selling='F')
+        for attempt in range(VISIBILITY_READ_ATTEMPTS):
+            state = await self._state(ctx)
+            actual = {key: state[key] for key in desired}
+            if actual == desired:
+                return
+            if actual != before:
+                log_confirmation_failure('read_value', actual, desired)
                 await ctx.checkpoint(dict(resumeBlocked=True))
                 raise Cafe24ApiError('remote_product_changed')
-        return actual
+            if attempt + 1 < VISIBILITY_READ_ATTEMPTS:
+                await _sleep(VISIBILITY_READ_INTERVAL_SECONDS)
+        log_confirmation_failure('read_value', actual, desired)
+        await _stage(ctx, 'activating', status='unknown')
+        raise Cafe24ApiError('activation_unconfirmed')
 
     async def complete_setup(self, ctx: JobContext) -> None:
         metadata = ctx.job['metadata']
@@ -250,10 +289,8 @@ class Cafe24Adapter:
         if activation.get('sentAt'):
             # An order may already have reduced stock. Never re-run setup or write
             # inventory after this fence, including when activation's response was lost.
-            state = await self._state(ctx)
-            if any(state[key] != value for key, value in desired.items()):
-                await _stage(ctx, 'activating', status='unknown')
-                raise Cafe24ApiError('activation_unconfirmed')
+            if not (activation.get('status') == 'complete' and activation.get('responseConfirmed')):
+                await self._check_activation(ctx, desired)
             await _stage(ctx, 'activating', status='complete', **desired)
             await ctx.checkpoint(dict(stage='complete'))
             return
@@ -265,7 +302,13 @@ class Cafe24Adapter:
             await _stage(ctx, 'mapping_variants', status='complete', mapping=mapping,
                          before={row['variantCode']: _inventory(row) for row in rows})
         inventory = metadata['checkpoints'].get('setting_inventory') or {}
-        await self._check_inventory(ctx, complete=inventory.get('status') == 'complete')
+        recovering = inventory.get('sentAt') and not inventory.get('responseReceived') and inventory.get('status') != 'complete'
+        await self._check_inventory(ctx, complete=inventory.get('status') == 'complete' or bool(recovering))
+        if recovering:
+            # Old pending checkpoints and lost responses can be recovered by a
+            # visible target, without repeating an already applied absolute PUT.
+            await _stage(ctx, 'setting_inventory', status='complete')
+            inventory = metadata['checkpoints']['setting_inventory']
         if inventory.get('status') != 'complete':
             await _stage(ctx, 'setting_inventory', status='pending')
             changes = [dict(variant_code=mapping[row['variantKey']], quantity=row['quantity'], additional_amount=format(Decimal(row['additionalAmount']), '.2f'),
@@ -276,16 +319,25 @@ class Cafe24Adapter:
                 # Also check after token wait and before each absolute PUT retry.
                 await self._hidden(ctx)
                 await self._check_inventory(ctx, complete=False)
-                await _stage(ctx, 'setting_inventory', sentAt=datetime.now(timezone.utc).isoformat())
+                await _stage(ctx, 'setting_inventory', sentAt=datetime.now(timezone.utc).isoformat(), responseReceived=False)
                 await ctx.recheck()
-                return await ctx.client.update_variants(token, int(metadata['productId']), changes)
+                try:
+                    return await ctx.client.update_variants(token, int(metadata['productId']), changes)
+                except (Cafe24ApiError, httpx.HTTPStatusError):
+                    # A received failure can safely retry the same absolute PUT.
+                    # Only a transport loss needs visibility-based recovery.
+                    await _stage(ctx, 'setting_inventory', responseReceived=True)
+                    raise
 
-            await ctx.call(update, effect='absolute_setup')
-            rows, _ = await self._variants(ctx)
+            rows = await ctx.call(update, effect='absolute_setup')
             actual = {row['variantCode']: _inventory(row) for row in rows}
-            if any(actual[mapping[row['variantKey']]] != _target(row) for row in ctx.snapshot['variants']):
-                raise Cafe24ApiError('inventory_setup_incomplete')
-            await _stage(ctx, 'setting_inventory', status='complete')
+            for row in ctx.snapshot['variants']:
+                target, received = _target(row), actual[mapping[row['variantKey']]]
+                if received != target:
+                    log_confirmation_failure('response_value', received, target)
+                    await _stage(ctx, 'setting_inventory', responseReceived=True)
+                    raise Cafe24ApiError('inventory_setup_incomplete')
+            await _stage(ctx, 'setting_inventory', status='complete', responseReceived=True)
         images = ctx.snapshot['images']
         thumbnail = metadata['checkpoints'].get('uploading_thumbnail') or {}
         if thumbnail.get('status') != 'complete':
@@ -337,19 +389,29 @@ class Cafe24Adapter:
         async def activate(token):
             await self._hidden(ctx)
             await self._check_inventory(ctx, complete=True)
-            await _stage(ctx, 'activating', sentAt=datetime.now(timezone.utc).isoformat(), **desired)
+            # Visibility polling can wait while an administrator changes state.
+            await self._hidden(ctx)
+            await _stage(ctx, 'activating', sentAt=datetime.now(timezone.utc).isoformat(),
+                         before=dict(display='F', selling='F'), **desired)
             await ctx.recheck()
             return await ctx.client.set_product_state(token, int(metadata['productId']), **desired)
 
+        response_confirmed = False
         try:
-            await ctx.call(activate, effect='activate')
-        except (Cafe24ApiError, httpx.HTTPError, TimeoutError):
+            state = await ctx.call(activate, effect='activate')
+        except (Cafe24ApiError, httpx.HTTPError, TimeoutError) as exc:
             if not (metadata['checkpoints'].get('activating') or {}).get('sentAt'):
                 raise
+            if isinstance(exc, Cafe24ApiError) and exc.code == 'activation_unconfirmed':
+                await _stage(ctx, 'activating', status='unknown')
+                raise
             # Only a GET may resolve an ambiguous activation, never another PUT.
-        state = await self._state(ctx)
-        if any(state[key] != value for key, value in desired.items()):
-            await _stage(ctx, 'activating', status='unknown')
-            raise Cafe24ApiError('activation_unconfirmed')
-        await _stage(ctx, 'activating', status='complete', **desired)
+            await self._check_activation(ctx, desired)
+        else:
+            if any(state[key] != value for key, value in desired.items()):
+                log_confirmation_failure('response_value', state, desired)
+                await _stage(ctx, 'activating', status='unknown')
+                raise Cafe24ApiError('activation_unconfirmed')
+            response_confirmed = True
+        await _stage(ctx, 'activating', status='complete', responseConfirmed=response_confirmed, **desired)
         await ctx.checkpoint(dict(stage='complete'))

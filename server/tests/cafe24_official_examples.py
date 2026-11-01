@@ -53,6 +53,7 @@ _EXAMPLES = {
     }]}},
     'product_state': {'product': {'shop_no': 1, 'product_no': 20, 'display': 'T', 'selling': 'F'}},
     'set_product_state_request': {'shop_no': 1, 'request': {'display': 'T', 'selling': 'T'}},
+    'set_product_state': {'product': {'shop_no': 1, 'product_no': 20, 'display': 'T', 'selling': 'T'}},
 }
 
 
