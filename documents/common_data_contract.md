@@ -888,6 +888,8 @@ payload는 mall, batchId, requestHash, connectionId, shopId, publicationId, edit
 
 복구 조회도 공통 뷰와 같은 완료 기준을 사용한다. productId가 확인된 종료 작업은 result.setupStatus가 complete이거나 SETUP_STAGES의 모든 필수 체크포인트가 complete이면 미해결 목록에서 제외한다. 최종 결과 저장 전에 작업이 중단돼 result가 없어도 같다. 필수 단계가 하나라도 미완료이면 복구 대상으로 유지하고, pending과 running 작업은 완료 체크포인트 유무와 관계없이 활성 작업으로 유지한다.
 
+카페24 재고 요청이 연결 생성 또는 연결 확보 단계에서 실패해 전송되지 않았고 앞선 미확인 요청도 없으면 setting_inventory.requestNotSent=true를 기록한다. 이 경우 설정 이어 하기는 비공개 상태와 관리자 변경 여부를 다시 확인한 뒤 같은 절대 수량 요청을 보낼 수 있다. 읽기와 쓰기 도중의 시간 초과는 전송 여부를 단정하지 않으며, 뒤의 연결 실패나 오류 응답이 앞선 미확인 요청 기록을 지우지 않는다. 전송 여부가 미확인인 요청은 목표 재고가 조회되면 재전송 없이 완료하고, 판매 전환 전송 기록 뒤에는 재고를 다시 쓰지 않는다.
+
 모든 새 API는 로그인, 소유자 조건과 Cache-Control: no-store, `{error:{code,message,...}}`를 사용한다. 비밀값, 임의 외부 URL, upstream 원문과 예외 객체를 결과와 이벤트에 보관하지 않는다. 카페24 전용 등록 경로, 이전 요청 모델과 단일 recovery 응답은 제거한다. OAuth, 토큰 회전 및 카페24로 게시 이미지를 복사하는 정책은 유지한다. 지그재그 게시 보관 정책은 Phase B 전까지 적용하지 않는다.
 
 ## 7. 현행 코드와의 갭 (마이그레이션 TODO)

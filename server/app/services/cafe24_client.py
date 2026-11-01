@@ -278,6 +278,9 @@ class Cafe24Client:
                                           timeout=self.timeout)
         except TimeoutError:
             raise TimeoutError(ERROR_COPY["unreachable"]) from None
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
+            # Preserve proof that no request was sent, without the request or secrets.
+            raise type(exc)(ERROR_COPY["unreachable"]) from None
         except httpx.TransportError:
             raise httpx.TransportError(ERROR_COPY["unreachable"]) from None
         except httpx.RequestError:
