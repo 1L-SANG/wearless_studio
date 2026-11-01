@@ -77,6 +77,30 @@ def test_registration_outcome_uses_metadata_and_hides_stale_results(status, meta
     assert view['productId'] == metadata.get('productId')
 
 
+@pytest.mark.parametrize('warning_source', ['metadata', 'result'])
+@pytest.mark.parametrize('status,completion,setup', [
+    ('done', 'result', 'complete'),
+    ('done', 'checkpoints', 'complete'),
+    ('done', None, 'needs_attention'),
+    ('running', 'checkpoints', 'pending'),
+])
+def test_registration_view_hides_setup_warnings_only_when_complete(warning_source, status, completion, setup):
+    c = contract()
+    warnings = [dict(code='inventory_setup_incomplete', message='상품은 만들어졌지만 재고 설정을 마치지 못했어요'),
+                dict(code='all_sold_out', message='모든 옵션이 품절로 등록돼요')]
+    job = dict(id=ASSET, status=status, metadata={'productId': '42'}, result={}, payload={'mall': 'cafe24'})
+    job[warning_source]['warnings'] = warnings
+    if completion == 'result':
+        job['result']['setupStatus'] = 'complete'
+    elif completion == 'checkpoints':
+        job['metadata']['checkpoints'] = {stage: {'status': 'complete'} for stage in c.SETUP_STAGES}
+    before = copy.deepcopy(job)
+    view = c.registration_view(job)
+    assert view['setupStatus'] == setup
+    assert view['warnings'] == (warnings[1:] if setup == 'complete' else warnings)
+    assert job == before
+
+
 def source():
     return dict(project=dict(id=PROJECT, editor_revision=3, editor_blocks=[]),
         publication=dict(id=PUBLICATION, user_id=str(uuid.UUID(int=1)), project_id=PROJECT, status='ready',

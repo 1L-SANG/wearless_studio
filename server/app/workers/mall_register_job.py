@@ -40,6 +40,9 @@ async def finish_registration(app, job: dict, *, code: str | None = None) -> Non
                           adminUrl=f'https://{mall_id}.cafe24.com/disp/admin/shop1/product/productmodify?product_no={int(metadata["productId"])}')
     terminal = {**job, 'status': 'error' if outcome == 'failed' else 'done', 'result': result}
     view = registration_view(terminal)
+    if view['setupStatus'] == 'complete':
+        warnings = [warning for warning in warnings if warning.get('code') == 'all_sold_out']
+        result['warnings'] = warnings
     result.update({key: deepcopy(view[key]) for key in ('setupStatus', 'productId', 'stages', 'retryAction')})
     async with app.state.pool.connection() as conn:
         # Connection lock precedes the job row lock. No token refresh in this short transaction.
