@@ -302,7 +302,8 @@ class Cafe24Adapter:
             await _stage(ctx, 'mapping_variants', status='complete', mapping=mapping,
                          before={row['variantCode']: _inventory(row) for row in rows})
         inventory = metadata['checkpoints'].get('setting_inventory') or {}
-        recovering = inventory.get('sentAt') and not inventory.get('responseReceived') and inventory.get('status') != 'complete'
+        recovering = (inventory.get('sentAt') and not inventory.get('responseReceived')
+                      and not inventory.get('requestNotSent') and inventory.get('status') != 'complete')
         await self._check_inventory(ctx, complete=inventory.get('status') == 'complete' or bool(recovering))
         if recovering:
             # Old pending checkpoints and lost responses can be recovered by a
@@ -319,14 +320,21 @@ class Cafe24Adapter:
                 # Also check after token wait and before each absolute PUT retry.
                 await self._hidden(ctx)
                 await self._check_inventory(ctx, complete=False)
-                await _stage(ctx, 'setting_inventory', sentAt=datetime.now(timezone.utc).isoformat(), responseReceived=False)
+                previous = metadata['checkpoints']['setting_inventory']
+                unconfirmed = bool(previous.get('sentAt') and not previous.get('responseReceived')
+                                   and not previous.get('requestNotSent'))
+                await _stage(ctx, 'setting_inventory', sentAt=datetime.now(timezone.utc).isoformat(),
+                             responseReceived=False, requestNotSent=False)
                 await ctx.recheck()
                 try:
                     return await ctx.client.update_variants(token, int(metadata['productId']), changes)
+                except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout):
+                    # A later unsent attempt cannot resolve an earlier ambiguous PUT.
+                    await _stage(ctx, 'setting_inventory', requestNotSent=not unconfirmed)
+                    raise
                 except (Cafe24ApiError, httpx.HTTPStatusError):
-                    # A received failure can safely retry the same absolute PUT.
-                    # Only a transport loss needs visibility-based recovery.
-                    await _stage(ctx, 'setting_inventory', responseReceived=True)
+                    # Keep any earlier unknown write unresolved across later failures.
+                    await _stage(ctx, 'setting_inventory', responseReceived=not unconfirmed)
                     raise
 
             rows = await ctx.call(update, effect='absolute_setup')

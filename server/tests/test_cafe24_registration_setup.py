@@ -619,3 +619,44 @@ def test_received_inventory_http_failure_can_resume_same_absolute_put(setup_env,
     restart(env)
     assert env.stored['result']['setupStatus'] == 'complete'
     assert len(env.named('create')) == 1 and len(env.named('inventory')) == attempts + 1
+
+
+@pytest.mark.parametrize('failure', [httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout])
+def test_unsent_inventory_request_resumes_after_connection_recovers(setup_env, failure):
+    env = setup_env
+    before = copy.deepcopy(env.remote_variants)
+    env.scripts['inventory'] = [failure('private-token')] * 4
+    env.run()
+    assert env.stored['result']['code'] == 'unreachable'
+    assert env.remote_variants == before and len(env.named('inventory')) == 4
+    assert env.stored['result']['retryAction'] == 'resume'
+
+    restart(env)
+    assert env.stored['result']['setupStatus'] == 'complete'
+    assert len(env.named('create')) == 1 and len(env.named('inventory')) == 5
+    assert len(env.named('activate')) == 1
+
+
+@pytest.mark.parametrize('later_failure', [httpx.ConnectTimeout('private'), status_error(503)])
+def test_later_received_or_unsent_failure_does_not_clear_earlier_unknown_write(setup_env, later_failure):
+    env = setup_env
+    env.scripts['inventory'] = [httpx.ReadTimeout('private'), *[later_failure] * 3]
+    env.run()
+    assert len(env.named('inventory')) == 4 and not env.named('activate')
+
+    restart(env)
+    assert env.stored['result']['code'] == 'inventory_confirmation_pending'
+    assert env.stored['result']['retryAction'] == 'resume'
+    assert len(env.named('inventory')) == 4 and not env.named('activate')
+
+
+def test_unsent_inventory_retry_still_protects_administrator_changes(setup_env):
+    env = setup_env
+    env.scripts['inventory'] = [httpx.ConnectTimeout('private')] * 4
+    env.run()
+    env.remote_variants[1]['quantity'] = 99
+
+    restart(env)
+    assert env.stored['result']['code'] == 'remote_product_changed'
+    assert env.stored['metadata']['resumeBlocked'] is True
+    assert len(env.named('inventory')) == 4 and not env.named('activate')

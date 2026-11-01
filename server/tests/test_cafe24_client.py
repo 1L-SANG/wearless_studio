@@ -581,3 +581,19 @@ def test_unreadable_write_response_logs_only_shape_and_stays_unconfirmed(write, 
             asyncio.run(api.set_product_state('access', 20, display='T', selling='T'))
     assert error.value.code == ('inventory_setup_incomplete' if write == 'inventory' else 'activation_unconfirmed')
     assert 'check=response_shape' in caplog.text and 'private-token' not in caplog.text
+
+
+@pytest.mark.parametrize('failure', [httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout])
+def test_unsent_connection_failure_keeps_safe_classification_without_secrets(failure):
+    def respond(request):
+        raise failure('private-token private-upstream-body', request=request)
+
+    access_token = 'private-token'
+    with pytest.raises(failure) as error:
+        asyncio.run(client(respond).update_variants(access_token, 123,
+            official_example('update_variants_request')['requests']))
+    assert module().classify_error(error.value) == 'unreachable'
+    assert str(error.value) == module().ERROR_COPY['unreachable']
+    assert 'private-token' not in ''.join(traceback.format_exception(error.value))
+    with pytest.raises(RuntimeError):
+        _ = error.value.request
