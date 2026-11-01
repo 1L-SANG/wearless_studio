@@ -43,6 +43,38 @@ test('registration modal restores unfinished results without saving or publishin
   assert.match(h.html(), /등록 여부를 확인해 주세요/); cleanups.forEach((cleanup) => cleanup?.());
 });
 
+test('unavailable zigzag connection is shown as preparing and stays disabled', async () => {
+  const h = await harness({
+    listMallRegistrations: async () => ({ items: [], recoveries: {} }),
+    listMalls: async () => ({ items: [
+      { mall: 'cafe24', status: 'connected', registration: { status: 'available' } },
+      { mall: 'zigzag', status: 'unavailable', registration: { status: 'preparing' } },
+    ] }),
+    getMallDefaults: async () => ({}), getMallRegistrationCatalog: async () => ({ complete: true, categories: [] }),
+  });
+  h.render(); const cleanups = h.runtime.flushEffects(); await delay();
+  assert.match(h.html(), /지그재그 준비 중/); assert.doesNotMatch(h.html(), /지그재그 연결 필요/);
+  const choices = walk(h.render()).filter((node) => node.type === 'input' && node.props.type === 'checkbox');
+  assert.equal(choices[1].props.disabled, true); assert.equal(choices[1].props.checked, false);
+  cleanups.forEach((cleanup) => cleanup?.());
+});
+
+test('category placeholder stops loading after the catalog response even when settings fail', async () => {
+  const runtime = hooks();
+  const { MallRegisterFields } = await componentModule('src/features/editor/MallRegisterFields.jsx', ['MallRegisterFields'], {
+    ...runtime, ...draftHelpers, styles: {}, Button: 'button',
+  });
+  const draft = draftHelpers.buildMallRegisterDraft({ projectId: 'modal-project', product: { name: '셔츠' }, selectedMall: 'cafe24' });
+  const props = { draft, preflight: { context: { catalogs: {} } }, onChange: () => {} };
+  const select = () => walk(runtime.render(MallRegisterFields, props)).find((node) => node.props?.['data-field'] === 'categories.cafe24');
+  assert.match(renderToStaticMarkup(select()), /카테고리 확인 중/);
+  for (const complete of [false, true]) {
+    props.preflight.context.catalogs.cafe24 = { complete, categories: [{ categoryId: '27', name: '상의' }] };
+    const html = renderToStaticMarkup(select());
+    assert.match(html, /카테고리를 골라 주세요/); assert.match(html, /상의/); assert.doesNotMatch(html, /카테고리 확인 중/);
+  }
+});
+
 test('open_defaults links to the affected mall and preserves editor returnTo', async () => {
   const h = await harness({
     listMallRegistrations: async () => ({ items: [], recoveries: {} }), getMallDefaults: async () => ({ revision: 1 }),

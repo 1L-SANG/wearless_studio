@@ -306,7 +306,7 @@ class Cafe24Client:
 
     async def product_setting(self, access_token) -> str:
         payload = await self._request("GET", "/admin/products/setting", access_token=access_token)
-        settings = _object(payload, "products_setting", code="price_setting_unavailable")
+        settings = _object(payload, "product", code="price_setting_unavailable")
         basis = settings.get(PRICE_BASIS_FIELD)
         if not isinstance(basis, str) or basis not in PRICE_BASES:
             raise Cafe24ApiError("price_setting_unavailable")
@@ -364,9 +364,9 @@ class Cafe24Client:
                                         params={"limit": limit, "offset": offset}), "categories")
 
     async def image_setting(self, access_token: str) -> 'Cafe24ImageSetting':
-        # 미확인, 테스트몰에서 fixture 확정: images_setting의 실제 대표 이미지 폭과 높이 키.
-        setting = _object(await self._request('GET', '/admin/images/setting', access_token=access_token),
-                          'images_setting', code='image_setting_unavailable')
+        image = _object(await self._request('GET', '/admin/images/setting', access_token=access_token),
+                        'image', code='image_setting_unavailable')
+        setting = _object(image, 'product_image_size', code='image_setting_unavailable')
         width, height = setting.get('detail_image_width'), setting.get('detail_image_height')
         if type(width) is not int or type(height) is not int or not 0 < width <= 20000 or not 0 < height <= 20000:
             raise Cafe24ApiError('image_setting_unavailable')
@@ -375,7 +375,6 @@ class Cafe24Client:
     async def product_state(self, access_token: str, product_no: int) -> 'Cafe24ProductState':
         if type(product_no) is not int or product_no <= 0:
             raise ValueError('invalid_product_no')
-        # 미확인, 테스트몰에서 fixture 확정: product read's display/selling envelope.
         row = _object(await self._request('GET', f'/admin/products/{product_no}', access_token=access_token), 'product')
         if row.get('product_no') != product_no or row.get('display') not in ('T', 'F') or row.get('selling') not in ('T', 'F'):
             raise Cafe24ApiError()
@@ -391,7 +390,6 @@ class Cafe24Client:
             for row in rows:
                 if not isinstance(row.get('variant_code'), str) or not row['variant_code']:
                     raise Cafe24ApiError()
-                # 미확인, 테스트몰에서 fixture 확정: 품목 조회의 재고 및 추가금액 필드와 오류 envelope.
                 # Missing inventory fields remain missing; they never imply a successful setup.
                 items.append(dict(variantCode=row['variant_code'], options=row.get('options') or [],
                     quantity=row.get('quantity'), additionalAmount=row.get('additional_amount'),
@@ -404,22 +402,20 @@ class Cafe24Client:
     async def update_variants(self, access_token: str, product_no: int, variants: list[dict]) -> VariantUpdateResult:
         if type(product_no) is not int or product_no <= 0 or not variants:
             raise ValueError('invalid variants')
-        # 미확인, 테스트몰에서 fixture 확정: 일괄 수정 request.variants, 응답 variants,
-        # 품목별 오류 구조와 재고 필드의 수용 여부. HTTP 성공만으로 완료 처리하지 않는다.
         payload = await self._request('PUT', f'/admin/products/{product_no}/variants', access_token=access_token,
-            json={'shop_no': 1, 'request': {'variants': variants}})
-        rows = _rows(payload, 'variants', code='inventory_setup_incomplete')
+            json={'shop_no': 1, 'requests': variants})
+        rows = _rows(payload, 'variant', code='inventory_setup_incomplete')
         codes = [row.get('variant_code') for row in rows]
         if (len(rows) != len(variants) or any('error' in row or not isinstance(row.get('variant_code'), str) for row in rows)
-                or len(set(codes)) != len(codes) or set(codes) != {v['variant_code'] for v in variants}):
+                or len(set(codes)) != len(codes) or set(codes) != {v['variant_code'] for v in variants}
+                or any(not isinstance(row.get('inventories'), dict) or 'error' in row['inventories'] for row in rows)):
             raise Cafe24ApiError('inventory_setup_incomplete')
         return dict(variantCodes=codes)
 
     async def set_variant_inventory(self, access_token: str, product_no: int, variant_code: str, inventory: dict) -> None:
         if type(product_no) is not int or product_no <= 0 or not isinstance(variant_code, str) or not variant_code:
             raise ValueError('invalid variant')
-        # The saved official page confirms the route, but not its response fields.
-        # 미확인, 테스트몰에서 fixture 확정: inventory envelope. Not called alongside bulk PUT.
+        # Not called alongside bulk PUT. Setup is confirmed by a variants GET.
         await self._request('PUT', f'/admin/products/{product_no}/variants/{quote(variant_code, safe="")}/inventories',
             access_token=access_token, json={'shop_no': 1, 'request': inventory})
 
@@ -428,16 +424,16 @@ class Cafe24Client:
             raise ValueError('invalid_product_no')
         if not 1 <= len(images) <= 20 or any(len(image) > 5000000 for image in images):
             raise ValueError('additional image limit')
-        # 미확인, 테스트몰에서 fixture 확정: additional_image request array, additionalimages
-        # response array and image identity/list lookup. The saved page only confirms POST and base64.
+        # 미확인: 응답 유실 후 동일 이미지 집합을 확인할 목록 조회 계약. POST를 반복하지 않는다.
         body = {'shop_no': 1, 'request': {'additional_image': [
             'data:image/jpeg;base64,' + base64.b64encode(image).decode() for image in images]}}
         if len(json.dumps(body, separators=(',', ':')).encode()) > 30000000:
             raise ValueError('additional image request limit')
         payload = await self._request('POST', f'/admin/products/{product_no}/additionalimages', access_token=access_token, json=body)
-        rows = _rows(payload, 'additionalimages', code='additional_images_unknown')
-        if len(rows) != len(images) or any('error' in row or not isinstance(row.get('additional_image'), str)
-                                         or not row['additional_image'] for row in rows):
+        additional = _object(payload, 'additionalimage', code='additional_images_unknown')
+        rows = _rows(additional, 'additional_image', code='additional_images_unknown')
+        if len(rows) != len(images) or any('error' in row or not any(
+                isinstance(row.get(key), str) and row[key].strip() for key in ('big', 'medium')) for row in rows):
             raise Cafe24ApiError('additional_images_unknown')
         return dict(count=len(rows))
 

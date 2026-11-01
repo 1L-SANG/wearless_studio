@@ -268,7 +268,7 @@ class Cafe24Adapter:
         await self._check_inventory(ctx, complete=inventory.get('status') == 'complete')
         if inventory.get('status') != 'complete':
             await _stage(ctx, 'setting_inventory', status='pending')
-            changes = [dict(variant_code=mapping[row['variantKey']], quantity=row['quantity'], additional_amount=row['additionalAmount'],
+            changes = [dict(variant_code=mapping[row['variantKey']], quantity=row['quantity'], additional_amount=format(Decimal(row['additionalAmount']), '.2f'),
                 display='T', selling='T' if row['quantity'] else 'F', use_inventory='T', display_soldout='T', safety_inventory=0)
                 for row in ctx.snapshot['variants']]
 
