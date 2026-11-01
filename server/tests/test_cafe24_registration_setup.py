@@ -284,8 +284,9 @@ def test_additional_image_object_and_product_list_complete_without_duplicate_wri
     assert len(env.named('create')) == len(env.named('additional')) == len(env.named('activate')) == 1
 
 
-@pytest.mark.parametrize('inventory_list', [False, True])
-def test_product_12_received_inventory_response_resumes_same_absolute_put(setup_env, inventory_list):
+@pytest.mark.parametrize('response_key', ['variants', 'variant'])
+@pytest.mark.parametrize('inventory_shape', ['object', 'list', 'flat'])
+def test_product_12_received_inventory_response_resumes_same_absolute_put(setup_env, response_key, inventory_shape):
     env = setup_env
     env.product_no = 12
     env.remote_state['productId'] = '12'
@@ -304,10 +305,12 @@ def test_product_12_received_inventory_response_resumes_same_absolute_put(setup_
     env.stored.update(status='error', result=dict(outcome='created', setupStatus='needs_attention', code='inventory_setup_incomplete'))
     assert registration_view(env.stored)['retryAction'] == 'resume'
     def mutate(payload):
-        row = payload['variant'][0]
-        if inventory_list:
+        row = payload.pop('variant')[0]
+        if inventory_shape == 'list':
             row['inventories'] = [row['inventories']]
-        payload['variant'] = row
+        elif inventory_shape == 'flat':
+            row.update(row.pop('inventories'))
+        payload[response_key] = row
     env.inventory_response = mutate
     restart(env)
     assert not env.named('create') and not env.named('find') and not env.named('upload')
