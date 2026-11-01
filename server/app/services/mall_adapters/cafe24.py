@@ -237,7 +237,11 @@ class Cafe24Adapter:
 
     async def _check_inventory(self, ctx, *, complete):
         before = ctx.job['metadata']['checkpoints']['mapping_variants']['before']
-        for attempt in range(VISIBILITY_READ_ATTEMPTS if complete else 1):
+        inventory = ctx.job['metadata']['checkpoints'].get('setting_inventory') or {}
+        # A write confirmed by Cafe24's PUT response makes a later before value a cached read
+        # (11/2 production: still stale about 20s later), not a manual edit or a failed write.
+        confirmed = inventory.get('status') == 'complete' and inventory.get('responseReceived') is True
+        for attempt in range(VISIBILITY_READ_ATTEMPTS if complete and not confirmed else 1):
             rows, mapping = await self._variants(ctx)
             actual = {row['variantCode']: _inventory(row) for row in rows}
             pending = []
@@ -249,7 +253,7 @@ class Cafe24Adapter:
                     log_confirmation_failure('read_value', actual[code], target)
                     await ctx.checkpoint(dict(resumeBlocked=True))
                     raise Cafe24ApiError('remote_product_changed')
-                if complete:
+                if complete and not confirmed:
                     pending.append((actual[code], target))
             if not pending:
                 return actual

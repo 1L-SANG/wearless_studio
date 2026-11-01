@@ -518,27 +518,25 @@ def test_cached_inventory_before_values_can_catch_up_before_activation(setup_env
     env.hooks['inventory'] = lambda: env.scripts.update(variants=[before, before])
     env.run()
     assert env.stored['result']['setupStatus'] == 'complete'
-    assert env.sleeps == [2, 2]
+    assert env.sleeps == []
     assert len(env.named('create')) == len(env.named('inventory')) == len(env.named('activate')) == 1
 
 
-def test_cached_confirmed_inventory_waits_without_blocking_resume(setup_env, caplog):
+def test_cached_before_values_after_confirmed_inventory_do_not_stop_activation(setup_env, caplog):
+    # 11/2 production: GET variants still returned the before values about 20s after
+    # the PUT response confirmed the write. Proceed instead of waiting on the cache.
     env = setup_env
     before = copy.deepcopy(env.remote_variants)
     env.hooks['inventory'] = lambda: env.scripts.update(variants=[before] * 20)
     env.run()
-    assert env.stored['result']['code'] == 'inventory_confirmation_pending'
-    assert env.stored['result']['retryAction'] == 'resume'
-    assert env.stored['result']['setupStatus'] == 'needs_attention'
-    assert not env.stored['metadata'].get('resumeBlocked') and not env.named('activate')
+    assert env.stored['result']['setupStatus'] == 'complete'
+    assert not env.stored['metadata'].get('resumeBlocked')
     assert env.stored['metadata']['checkpoints']['setting_inventory']['status'] == 'complete'
-    assert env.sleeps == [2, 2]
-    assert 'check=read_value' in caplog.text and 'useInventory' in caplog.text
+    assert len(env.named('create')) == len(env.named('inventory')) == len(env.named('activate')) == 1
+    assert env.sleeps == []
     env.scripts.clear()
     env.hooks.clear()
     restart(env)
-    assert env.stored['result']['setupStatus'] == 'complete'
-    assert len(env.named('create')) == len(env.named('inventory')) == len(env.named('thumbnail')) == 1
 
 
 @pytest.mark.parametrize('confirmed', [False, True])
@@ -695,9 +693,15 @@ def test_lost_activation_response_can_catch_up_without_any_more_writes(setup_env
 
 @pytest.mark.parametrize('gate', ['lease', 'cancel', 'disconnect'])
 def test_visibility_wait_rechecks_job_before_next_read_or_write(setup_env, gate):
+    # Waiting on GET visibility now happens only for an unconfirmed inventory write.
     env = setup_env
     before = copy.deepcopy(env.remote_variants)
-    env.hooks['inventory'] = lambda: env.scripts.update(variants=[before] * 20)
+    env.scripts['thumbnail'] = [status_error(422)]
+    env.run()
+    inventory = env.stored['metadata']['checkpoints']['setting_inventory']
+    inventory.update(status='pending')
+    inventory.pop('responseReceived', None)
+    env.scripts['variants'] = [before] * 20
     def stop():
         if gate == 'lease':
             env.alive = False
@@ -706,21 +710,29 @@ def test_visibility_wait_rechecks_job_before_next_read_or_write(setup_env, gate)
         else:
             env.connection_row['status'] = 'revoked'
     env.hooks['sleep'] = stop
-    env.run()
+    events = len(env.events)
+    restart(env)
     assert env.sleeps == [2] and env.calls[-1][0] == 'variants'
     assert not env.named('activate') and len(env.named('inventory')) == 1
     if gate == 'lease':
-        assert 'finalize' not in env.events
+        assert 'finalize' not in env.events[events:]
     else:
         assert env.stored['result']['code'] == ('cancelled' if gate == 'cancel' else 'connection_changed')
 
 
 def test_activation_rechecks_hidden_state_after_waiting_for_inventory_visibility(setup_env):
+    # An unconfirmed inventory write waits on GET visibility; hidden state is rechecked after the wait.
     env = setup_env
     before = copy.deepcopy(env.remote_variants)
-    env.hooks['thumbnail'] = lambda: env.scripts.update(variants=[copy.deepcopy(env.remote_variants), before])
-    env.hooks['sleep'] = lambda: env.remote_state.update(selling='T')
+    env.scripts['thumbnail'] = [status_error(422)]
     env.run()
+    inventory = env.stored['metadata']['checkpoints']['setting_inventory']
+    inventory.update(status='pending')
+    inventory.pop('responseReceived', None)
+    # The first read serves option mapping; the next one is the visibility check.
+    env.scripts['variants'] = [before, before, copy.deepcopy(env.remote_variants)]
+    env.hooks['sleep'] = lambda: env.remote_state.update(selling='T')
+    restart(env)
     assert env.sleeps == [2]
     assert env.stored['result']['code'] == 'remote_product_changed'
     assert env.stored['metadata']['resumeBlocked'] is True
