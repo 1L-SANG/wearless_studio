@@ -24,6 +24,7 @@ import { applyHookStyle } from '../storyboardHookFrame.js';
 import { createMeasurementFields } from '../measurementSchema.js';
 import { matchingIdsForColor } from '../colorwayMatching.js';
 import {
+  productPresentationOf,
   CONTENT_ROLES,
   SECTION_ROLES,
   STORYBOARD_TAXONOMY_VERSION,
@@ -223,6 +224,7 @@ function storyboardTemplateFingerprint(blocks) {
     cutType: block.cutType ?? null,
     direction: block.direction ?? null,
     shot: block.shot ?? null,
+    productPresentation: productPresentationOf(block),
     detailTargetId: block.detailTargetId ?? null,
     detailTargetOrigin: block.detailTargetOrigin ?? null,
     colorId: block.colorId ?? null,

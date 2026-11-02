@@ -231,6 +231,7 @@ StoryboardBlock {
   cutType: CutType | null          // 생성 레시피. 콘티 인스펙터에서 섹션별 허용 컷을 직접 선택. source='mine'이면 null
   direction?: Direction | ProductDirection | null   // 착용컷은 생성예시에서 파생(ADR-0015). 제품컷은 셀러가 고른 원본 사진의 면이고 대상이 있는 디테일은 대상의 원본 면이다. 예시는 제품컷 방향을 바꾸지 않는다(ADR-0008 2026-10-10 개정)
   shot?: ShotType | ProductShotType
+  productPresentation?: ProductPresentation // product/ghost 전용. 미지정은 기존 예시 주도 표현 유지(ADR-0024)
   detailTargetId?: string | null   // product/detail 촬영 대상. 서버 소유 분석 후보 ID만 선택; 좌표·사실은 서버에서 원본 검증 후 해석
   detailTargetOrigin?: 'auto' | 'user' // 추천 생성과 수동 선택/해제 구별. 사용자 편집을 재추천으로 덮지 않음
   outerClosureState?: OuterClosureState | null       // 아우터 착용컷(styling·horizon) 전용. 누락·모르는 값은 open (ADR-0018)
@@ -459,7 +460,8 @@ Account { name: string, avatar: string, credits: number, plan: PlanTier }
 | Direction | `front` `back` `side` | 정면/뒷면/사이드 | 모델 컷용 |
 | ProductDirection | `front` `back` | 앞면, 뒷면 | 고른 원본 사진의 면. 화면은 `productSourcePhotos`의 사진 고르기로 보여준다(ADR-0008 2026-10-10 개정) |
 | ShotType | `full` `medium` | 풀샷/중간샷 | 서비스 착용컷은 두 값만 쓴다. 생성예시 선별 도구의 `medium_knee`는 수집 원본 `knee`·`medium`을 합치는 선별 전용 토큰이며 서비스 저장값이 아니다(ADR-0007) |
-| ProductShotType | `ghost` `detail` | 고스트샷/디테일샷 | 고스트샷은 옷 전체이며 기본은 입은 듯한 부피, 플랫레이 생성예시를 고르면 펼친 표현·구도를 따른다. 기존 `flatlay` 입력은 `ghost`로 정규화. `detail`은 셀러 원본과 촬영 대상의 확인 가능한 부분을 생성·검수 근거로 사용하며, 별도 Detail 슬롯 사진을 필수로 요구하지 않음(ADR-0012·0014) |
+| ProductShotType | `ghost` `detail` | 고스트샷/디테일샷 | 전체컷의 내부값은 ghost이며, productPresentation 미지정 시 기본은 입은 듯한 부피, 플랫레이 생성예시를 고르면 펼친 표현·구도를 따른다. 기존 `flatlay` 입력은 `ghost`로 정규화. `detail`은 셀러 원본과 촬영 대상의 확인 가능한 부분을 생성·검수 근거로 사용하며, 별도 Detail 슬롯 사진을 필수로 요구하지 않음(ADR-0012·0014) |
+| ProductPresentation | `ghost` `flat` `natural_light` | 고스트컷, 평면컷, 자연광컷 | product/ghost의 선택 촬영 방식. 명시하면 표현, 배경과 조명은 예시보다 우선한다. 원본 상품 사실과 앞뒷면은 유지한다. 평면은 정면 상품사진이며 바닥 플랫레이가 아니다. 미지정·미지값과 다른 컷에서는 키를 생략한다(ADR-0024). |
 | **OuterClosureState** | `closed` `openToChest` `partial` `openToWaist` `open` | 전체 닫힘/가슴까지/반만 열림/배까지/전체 열림 | 아우터 착용컷 전용. 화면 위에서 아래 순서. 누락·모르는 값은 `open`, 그 외 컷·카테고리에서는 무시. `openToChest`·`openToWaist`는 2026-10-10 추가, `partial`은 "명치 아래까지"로 뜻을 좁힘. 두 칸 옷은 `closed`·`open`만 쓴다(ADR-0018) |
 | **ProjectStatus** | `draft` `generating` `done` | 초안/생성 중/완료 | ★ 신설 |
 | **PlanTier** | `basic` `plus` `seller` | Basic/Plus/Seller | ★ 신설 — 라벨 대문자, 토큰 소문자 |
@@ -578,6 +580,7 @@ GenerationExample {
 ```ts
 NewCutRequest {                    // AI 탭 '새 이미지 추가'
   mode: 'new'
+  productPresentation?: ProductPresentation // product/ghost 전용. 예시 없이 원본에서 생성 가능(ADR-0024)
   retryBlockId?: string            // ADR-0017, 저장 콘티의 실제 빈 칸 복원과 활성 작업 합류
   detailTargetId?: string | null   // product/detail만. 서버 소유 detailRecommendations의 ID; 원본 해시·방향 검증 후 해석
   detailTargetOrigin?: 'auto' | 'user' // 콘티 추천/수동 선택 구별. 클라이언트 사실·좌표는 생성 권한이 없음
@@ -585,7 +588,7 @@ NewCutRequest {                    // AI 탭 '새 이미지 추가'
   sectionRole?: StoryboardSectionRole  // 향후 섹션에 바로 삽입하는 경로용. 현재 UI는 의류 탭에 먼저 추가하므로 생략
   contentRole: ContentRole          // inferContentRole(cutType, shot)로 내부 자동 결정 — UI 선택 아님(콘티보드와 동일 규칙).
                                     // '첫 장면(hero)·핵심 장점(benefit)' 목적은 에디터 신규 생성에서 제거(2026-08-13 오너 결정)
-  cutType: CutType                 // 에디터도 콘티보드처럼 컷 종류를 UI에서 직접 선택(2026-08-13 개편). 발행 예시 없는 컷 종류는 비활성
+  cutType: CutType                 // 에디터도 콘티보드처럼 컷 종류를 UI에서 직접 선택(2026-08-13 개편). 발행 예시 없는 컷 종류는 비활성. 단 명시적 productPresentation의 제품 전체컷은 네 의류 종류 모두 원본으로 생성 가능
   direction: Direction | ProductDirection | null   // 제품컷은 고른 원본 사진의 면 (ADR-0008 2026-10-10 개정)
   shot: ShotType | ProductShotType
   modelId: string
@@ -688,7 +691,7 @@ ContextFillRecord {
 }
 ```
 
-모든 에디터 이미지 성공 자산은 `assets.metadata.generation`에 실제 생성 설정을 남긴다. 필드 목록은 서버의 `content_roles.GENERATION_RECIPE_FIELDS` 하나이며 아래 22키를 모두 담고 값이 없으면 `null`이다. 열림 보정, 예시 방향 적용, 시그니처 재배정이 끝난 뒤 값을 쓴다.
+모든 에디터 이미지 성공 자산은 `assets.metadata.generation`에 실제 생성 설정을 남긴다. 필드 목록은 서버의 `content_roles.GENERATION_RECIPE_FIELDS` 하나이며 아래 기본 22키는 값이 없으면 `null`이다. `productPresentation`은 유효한 제품 전체컷에서만 추가하는 선택 키이며 기존 자산에는 자동으로 채우지 않는다. 열림 보정, 예시 방향 적용, 시그니처 재배정이 끝난 뒤 값을 쓴다.
 
 ```ts
 generation: {
@@ -703,6 +706,7 @@ generation: {
     contentRole: ContentRole | null
     cutType: CutType | null
     shot: ShotType | ProductShotType | null
+    productPresentation?: ProductPresentation
     direction: Direction | ProductDirection | null
     sideStyle: string | null
     colorId: string | null

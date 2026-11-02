@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { jobFailure } from '../../src/lib/api/jobFailure.js';
 import { jobFailureMessage } from '../../src/lib/api/jobFailure.js';
 import { createInitialGenerationAttempts } from '../../src/features/mannequin/initialGenerationAttempts.js';
+import { normalizeProductPresentation } from '../../src/lib/storyboardTaxonomy.js';
 
 const require = createRequire(import.meta.url);
 const { parse } = createRequire(require.resolve('vite'))('@babel/parser');
@@ -156,8 +157,8 @@ test('마네킹 생성과 재생성, 에디터 이미지 잡은 오류 종결에
       const pollJob = new Function('http', 'jobFailure', 'DEFAULT_JOB_TIMEOUT_MESSAGE',
         `${pollSource}; return (id, options) => pollJob(id, {...options, timeoutMs: -1});`)(http, jobFailure, '진행 중이에요.');
       const api = new Function('http', 'pollJob', 'LONG_IMAGE_JOB_TIMEOUT_MS', 'MANNEQUIN_JOB_TIMEOUT_MESSAGE',
-        'EDITOR_IMAGE_JOB_TIMEOUT_MS', 'EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE', 'recordClientAction', `return ({${methodSource}});`)(
-        http, pollJob, 1, '계속 만들고 있어요.', 1, '이미지가 아직 만들어지고 있어요.', () => {},
+        'EDITOR_IMAGE_JOB_TIMEOUT_MS', 'EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE', 'recordClientAction', 'normalizeProductPresentation', `return ({${methodSource}});`)(
+        http, pollJob, 1, '계속 만들고 있어요.', 1, '이미지가 아직 만들어지고 있어요.', () => {}, normalizeProductPresentation,
       );
       await assert.rejects(api[method]('p'), { message: outcome === 'error' ? uncharged
         : outcome === 'network' ? '조회가 끊겼어요.'

@@ -1603,6 +1603,8 @@ async def run_detail_page_job(app, job: dict) -> None:
                 'sideStyle': block.get('sideStyle') or block.get('side_style'),
             } for block in storyboard if isinstance(block, dict)}
             loaded_storyboard_digest = _storyboard_digest(storyboard)
+            storyboard = [cut_generator.product_runtime_spec(block) if isinstance(block, dict) else block
+                          for block in storyboard]
             product = await repo.get_product(conn, project_id) or {}
             analysis = await repo.get_analysis(conn, project_id) or {}
             selected_mannequin_id = (

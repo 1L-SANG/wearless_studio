@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 import uuid
 
 from .. import repo
-from . import content_roles
+from . import content_roles, product_photography
 
 
 def project_recipe(value: dict | None) -> dict | None:
@@ -16,9 +16,15 @@ def project_recipe(value: dict | None) -> dict | None:
     cut_type = value.get("cutType") or value.get("cut_type")
     if cut_type and cut_type not in ("styling", "horizon", "product"):
         return None
-    optional = {"outfitSelectionsSnapshot", "outfitReferenceAssets"}
-    return {key: deepcopy(value.get(key)) for key in content_roles.GENERATION_RECIPE_FIELDS
-            if key not in optional or value.get(key) is not None}
+    optional = {"outfitSelectionsSnapshot", "outfitReferenceAssets", "productPresentation"}
+    out = {key: deepcopy(value.get(key)) for key in content_roles.GENERATION_RECIPE_FIELDS
+           if key not in optional or value.get(key) is not None}
+    presentation = product_photography.normalize(
+        value.get("productPresentation"), cut_type=value.get("cutType"), shot=value.get("shot"))
+    out.pop("productPresentation", None)
+    if presentation is not None:
+        out["productPresentation"] = presentation
+    return out
 
 
 def _stored_recipe(value: dict) -> dict:

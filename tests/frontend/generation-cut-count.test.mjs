@@ -202,3 +202,18 @@ test('후보가 하나뿐인 컷에는 셔플을 제안하지 않는다 — 눌�
   // 후보가 2개 이상인 일반 조합은 대상이다.
   assert.equal(canRerollGenerationExample(ai('a'), opts), true);
 });
+
+test('explicit product modes deduplicate inactive art references without changing saved choices', () => {
+  for (const productPresentation of ['ghost', 'flat', 'natural_light']) {
+    const original = ai('explicit', { sectionRole: 'product', contentRole: 'productOverview', cutType: 'product', shot: 'ghost', productPresentation });
+    const retained = { ...original, id: 'retained', exampleId: 'retired-example', refScope: 'bg',
+      refImages: ['/retained-mood.jpg'], refAssetIds: ['retained-reference'], spaceGroupId: 'retired-group', spaceVariation: 'fixed' };
+    const before = structuredClone([original, retained]);
+    assert.equal(uniqueGenerationCutCount([original, retained]), 1);
+    assert.deepEqual([original, retained], before, 'saved references remain available for returning to legacy mode');
+    assert.equal(uniqueGenerationCutCount([original, { ...original, colorId: 'ivory' }]), 2);
+    assert.equal(uniqueGenerationCutCount([original, { ...original, direction: 'back' }]), 2);
+  }
+  const legacy = ai('legacy', { cutType: 'product', shot: 'ghost' });
+  assert.equal(uniqueGenerationCutCount([legacy, { ...legacy, id: 'other', exampleId: 'other-example' }]), 2);
+});

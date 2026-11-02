@@ -37,6 +37,7 @@ import { createEditorRevisionSync } from '@/lib/editorRevisionSync.js';
 import { createStoryboardRevisionSync } from '@/lib/storyboardRevisionSync.js';
 import { mergeAnalysisPatch } from '@/lib/analysisPatch.js';
 import { isSupportedCutType } from '../storyboardTaxonomy.js';
+import { normalizeProductPresentation } from '@/lib/storyboardTaxonomy.js';
 
 export { toMatchItem } from '@/lib/api/matchingItems.js';
 
@@ -1195,7 +1196,8 @@ export const httpAdapter = {
   // AG-06(mode:'new')/AG-07(mode:'vary') — req = NewCutRequest | VaryRequest (계약 §6).
   // 생성 의도의 UUID는 헤더에 싣고, 접수 신호는 폴링 전에 전달한다.
   async generateImage(projectId, req = {}) {
-    const { onProgress, onJobStarted, idempotencyKey, preserveFailureMessage = false, ...body } = req;
+    const { onProgress, onJobStarted, idempotencyKey, preserveFailureMessage = false, ...rawBody } = req;
+    const body = normalizeProductPresentation(rawBody);
     const cutType = body.mode === 'vary' ? body.source?.cutType : body.cutType;
     if (cutType != null && !isSupportedCutType(cutType)) {
       throw Object.assign(new Error('지원하지 않는 컷 종류예요. 새 이미지를 선택해 주세요.'), {

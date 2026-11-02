@@ -8,7 +8,7 @@ import { classifyEditorAssetInfo } from '../../src/lib/editorAssetInfo.js';
 import { generationExampleSelectionPatch } from '../../src/lib/storyboardExampleSelection.js';
 import { hasSelectableGenerationExamples, selectGenerationExamples } from '../../src/lib/generationExamples.js';
 import { buildFailedCutRetry } from '../../src/features/editor/failedCutRetry.js';
-import { isSupportedCutType } from '../../src/lib/storyboardTaxonomy.js';
+import { isSupportedCutType, normalizeProductPresentation } from '../../src/lib/storyboardTaxonomy.js';
 
 const oldCut = { id: 'removed', source: 'ai', cutType: 'mirror', shot: 'full',
   sectionRole: 'styling', contentRole: 'realWear', exampleId: 'old-example', taxonomyVersion: 3 };
@@ -49,8 +49,8 @@ test('HTTP refuses explicit removed cut requests before posting or signaling a j
   const source = readFileSync(new URL('../../src/lib/api/httpAdapter.js', import.meta.url), 'utf8');
   const method = source.slice(source.indexOf('  async generateImage('), source.lastIndexOf('\n};'));
   let calls = 0, started = 0;
-  const adapter = new Function('http', 'pollJob', 'recordClientAction', 'isSupportedCutType',
-    `return ({ ${method} });`)(async () => { calls += 1; return { data: {} }; }, () => {}, () => {}, isSupportedCutType);
+  const adapter = new Function('http', 'pollJob', 'recordClientAction', 'isSupportedCutType', 'normalizeProductPresentation',
+    `return ({ ${method} });`)(async () => { calls += 1; return { data: {} }; }, () => {}, () => {}, isSupportedCutType, normalizeProductPresentation);
   for (const request of [{ mode: 'new', cutType: 'mirror' },
     { mode: 'vary', variationMode: 'similar', source: { src: '/old.png', cutType: 'mirror' } }]) {
     await assert.rejects(adapter.generateImage('p', { ...request, onJobStarted: () => { started += 1; } }),

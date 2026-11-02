@@ -3,6 +3,7 @@ import { failedCutPresentation } from '../../lib/cutFailureMessages.js';
 import { uniqueGenerationCutCount } from '../../lib/generationCutCount.js';
 import { isSupportedCutType } from '../../lib/storyboardTaxonomy.js';
 import { referenceScopeForBlock } from '../../lib/referenceMode.js';
+import { normalizeProductPresentation } from '../../lib/storyboardTaxonomy.js';
 
 const RETRY_FIELDS = Object.freeze([
   'contentRole',
@@ -11,6 +12,7 @@ const RETRY_FIELDS = Object.freeze([
   'direction',
   'sideStyle',
   'shot',
+  'productPresentation',
   'detailTargetId',
   'detailTargetOrigin',
   'faceExposure',
@@ -89,7 +91,7 @@ export function buildFailedCutRetry(storyboard, sourceBlockId, modelSelection = 
   }
 
   return {
-    request, retryable, guidance, fillImage,
+    request: normalizeProductPresentation(request), retryable, guidance, fillImage,
     sourceBlockId,
     title: block.title || '이 컷',
     thumb: detailTargetPresentation(block, product, modelSelection?.detailRecommendations)?.src || (block.shot === 'detail' ? null : block.thumb) || null,

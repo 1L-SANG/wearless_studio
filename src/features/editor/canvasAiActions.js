@@ -5,6 +5,7 @@ import { OUTER_CLOSURE_VALUES, outerClosureRange, outerClosureDisplayValue, oute
 import { productSourcePhotos } from '../../lib/productSourcePhotos.js';
 import { selectableDetailTargets, detailTargetPresentation } from '../../lib/detailRecommendations.js';
 import { editorImageCreditCost } from '../../lib/limits.js';
+import { normalizeProductPresentation } from '../../lib/storyboardTaxonomy.js';
 
 export function canvasAiActionCreditCost(kind, action, creditCosts) {
   return editorImageCreditCost({ mode: ['worn', 'upload'].includes(kind) ? 'vary' : 'new',
@@ -12,7 +13,7 @@ export function canvasAiActionCreditCost(kind, action, creditCosts) {
 }
 
 const RECIPE_FIELDS = Object.freeze([
-  'sectionRole', 'contentRole', 'cutType', 'shot', 'direction', 'sideStyle', 'colorId',
+  'sectionRole', 'contentRole', 'cutType', 'shot', 'productPresentation', 'direction', 'sideStyle', 'colorId',
   'faceExposure', 'modelId', 'matchIds', 'matchIdsOrigin', 'refAssetIds', 'refScope',
   'exampleId', 'exampleSelectionOrigin', 'outerClosureState', 'detailTargetId',
   'detailTargetOrigin', 'spaceGroupId', 'spaceVariation', 'spaceSetMemberOrder', 'horizonBackgroundMode',
@@ -130,7 +131,7 @@ export function buildCanvasAiMenu({ block, element, storyboard = [], assetRecipe
 function preservedRecipe(info) {
   const recipe = resolvedRecipe(info);
   if (!recipe) return {};
-  return Object.fromEntries(RECIPE_FIELDS.filter((field) => recipe[field] !== undefined).map((field) => [field, clone(recipe[field])]));
+  return normalizeProductPresentation(Object.fromEntries(RECIPE_FIELDS.filter((field) => recipe[field] !== undefined).map((field) => [field, clone(recipe[field])])));
 }
 
 function productRecipe(info) {
@@ -166,8 +167,8 @@ export function buildCanvasAiRequest({ action, value, source = null, assetRecipe
     if (!candidate) return null;
     const recipe = productRecipe(assetRecipe), colorId = detail.colorId;
     const direction = ['front', 'back'].includes(detail.direction) ? detail.direction : candidate.direction;
-    return { mode: 'new', ...recipe, cutType: 'product', shot: 'detail', ...(colorId !== null ? { colorId } : {}),
-      direction, detailTargetId: candidate.id, detailTargetOrigin: 'user' };
+    return normalizeProductPresentation({ mode: 'new', ...recipe, cutType: 'product', shot: 'detail', ...(colorId !== null ? { colorId } : {}),
+      direction, detailTargetId: candidate.id, detailTargetOrigin: 'user' });
   }
   return null;
 }

@@ -68,6 +68,24 @@ export const ALL_CUT_TYPE_OPTIONS = Object.freeze([...new Map(
     .map((option) => [option.value, option]),
 ).values()]);
 
+export const PRODUCT_PRESENTATION_OPTIONS = Object.freeze([
+  { value: 'ghost', label: '고스트컷' },
+  { value: 'flat', label: '평면컷' },
+  { value: 'natural_light', label: '자연광컷' },
+]);
+
+export function productPresentationOf(block) {
+  return block?.source !== 'mine' && block?.cutType === 'product' && block?.shot === 'ghost'
+    && PRODUCT_PRESENTATION_OPTIONS.some((option) => option.value === block.productPresentation)
+    ? block.productPresentation : null;
+}
+
+export function normalizeProductPresentation(block) {
+  if (!block || !Object.hasOwn(block, 'productPresentation') || productPresentationOf(block)) return block;
+  const { productPresentation: _presentation, ...clean } = block;
+  return clean;
+}
+
 export const CONTENT_ROLES = Object.freeze({
   HERO: 'hero',
   BENEFIT: 'benefit',
@@ -297,6 +315,8 @@ export function normalizedRecipePatch(block, role) {
     cutType,
     direction,
     shot,
+    ...(Object.hasOwn(block || {}, 'productPresentation')
+      ? { productPresentation: productPresentationOf({ ...block, cutType, shot }) } : {}),
     ...(['styling', 'horizon'].includes(cutType)
       && !['same', 'show', 'hide'].includes(block?.faceExposure)
       ? { faceExposure: 'same' } : {}),
@@ -314,7 +334,9 @@ export function assignInternalContentRoles(blocks) {
   const supportedBlocks = filterSupportedStoryboardBlocks(blocks);
   let heroAssigned = false;
   let changed = supportedBlocks !== blocks;
-  const next = supportedBlocks.map((block) => {
+  const next = supportedBlocks.map((raw) => {
+    const block = normalizeProductPresentation(raw);
+    if (block !== raw) changed = true;
     if (!block || block.source === 'mine') return block;
 
     const sectionRole = inferSectionRole(block) || SECTION_ROLES.HOOKING;
@@ -349,7 +371,7 @@ export function assignInternalContentRoles(blocks) {
     if (!recipeChanged && !roleChanged && !productStateChanged) return block;
 
     changed = true;
-    return {
+    return normalizeProductPresentation({
       ...block,
       ...recipePatch,
       sectionRole,
@@ -362,7 +384,7 @@ export function assignInternalContentRoles(blocks) {
         thumb: block.baseThumb || block.thumb,
         baseThumb: null,
       } : {}),
-    };
+    });
   });
   return changed ? next : blocks;
 }

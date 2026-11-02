@@ -6,6 +6,7 @@ import { buildCanvasAiMenu, buildCanvasAiRequest } from '../../src/features/edit
 import { createCanvasAiJobController } from '../../src/features/editor/canvasAiJobs.js';
 import { hasImageSource } from '../../src/features/editor/editorImageSource.js';
 import { isSupportedCutType } from '../../src/lib/storyboardTaxonomy.js';
+import { normalizeProductPresentation } from '../../src/lib/storyboardTaxonomy.js';
 
 const adapter = readFileSync(new URL('../../src/lib/api/httpAdapter.js', import.meta.url), 'utf8');
 test('empty, pending and failed canvas slots never supply a photo variation source', () => {
@@ -47,9 +48,9 @@ function submissionHarness({ error = null, errors = [], hold = false, accept = t
     if (failure) throw failure;
     return { jobId: 'job' };
   };
-  const generateRemote = new Function('http', 'pollJob', 'EDITOR_IMAGE_JOB_TIMEOUT_MS', 'EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE', 'recordClientAction', 'isSupportedCutType',
+  const generateRemote = new Function('http', 'pollJob', 'EDITOR_IMAGE_JOB_TIMEOUT_MS', 'EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE', 'recordClientAction', 'isSupportedCutType', 'normalizeProductPresentation',
     `return ({${adapter.slice(adapter.indexOf('  async generateImage(projectId'), adapter.lastIndexOf('\n};'))}}).generateImage;`)(
-    http, async () => ({ data: { id: 'result', src: '/result.png' }, credits: 90 }), 180000, 'wait', () => {}, isSupportedCutType);
+    http, async () => ({ data: { id: 'result', src: '/result.png' }, credits: 90 }), 180000, 'wait', () => {}, isSupportedCutType, normalizeProductPresentation);
   const schedules = new Map(), completions = new Map();
   let scheduleId = 0;
   const context = { api: { generateImage: generateRemote } };

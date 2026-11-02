@@ -1,6 +1,6 @@
 import publicCombinationTable from '../../data/genexamples_public_combinations.json' with { type: 'json' };
 import { filterExamplesForModel } from './identityScope.js';
-import { exampleDirectionFamilyMatches, isSupportedCutType, poseExampleDirectionCompatible } from './storyboardTaxonomy.js';
+import { exampleDirectionFamilyMatches, isSupportedCutType, poseExampleDirectionCompatible, productPresentationOf } from './storyboardTaxonomy.js';
 import { isSourceBasedDetailRecipe } from './detailRecommendations.js';
 import {
   exampleMoodBucket,
@@ -23,10 +23,16 @@ export function isGenerationCombinationPublic(condition) {
   return PUBLIC_KEYS.has(combinationKey(condition));
 }
 
-// Product details can use seller source photos without an optional example.
-// Keep catalog eligibility and all other recipe gates unchanged.
+// Explicit product presentations and details can use seller photos without an example.
+// Missing presentation keeps the published-example gate for legacy whole products.
+export function isSourceBasedProductRecipe(options = {}) {
+  return ['top', 'bottom', 'outer', 'dress'].includes(options.clothingType)
+    && Boolean(productPresentationOf(options));
+}
+
 export function hasAvailableGenerationRecipe(catalog, options) {
-  return isSourceBasedDetailRecipe(options) || hasSelectableGenerationExamples(catalog, options);
+  return isSourceBasedDetailRecipe(options) || isSourceBasedProductRecipe(options)
+    || hasSelectableGenerationExamples(catalog, options);
 }
 
 const compareText = (left, right) => (left < right ? -1 : left > right ? 1 : 0);

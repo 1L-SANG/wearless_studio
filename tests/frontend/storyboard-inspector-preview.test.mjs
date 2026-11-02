@@ -1,13 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { productPresentationOf } from '../../src/lib/storyboardTaxonomy.js';
+import { productSourcePhotos } from '../../src/lib/productSourcePhotos.js';
 const source = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
 const start = source.indexOf('function storyboardPreviewSource(');
 assert.ok(start >= 0, 'one preview resolver must serve the board and inspector');
 const body = source.slice(start, source.indexOf('\nfunction StoryboardMedia(', start));
-const preview = new Function('detailTargetPresentation', 'generationExampleImageSources', 'mineImageUrl', `${body}; return storyboardPreviewSource;`)(
+const preview = new Function('detailTargetPresentation', 'generationExampleImageSources', 'mineImageUrl', 'productPresentationOf', 'productSourcePhotos', `${body}; return storyboardPreviewSource;`)(
   block => block.detail ? { src: block.detailSrc } : null,
   example => ({ src: example.thumb }), value => typeof value === 'string' ? value : value?.url,
+  productPresentationOf, productSourcePhotos,
 );
 test('new set members show the example image instead of their temporary placeholder', () => {
   const block = { source: 'ai', exampleId: 'new-member', thumb: '/placeholder.svg' };

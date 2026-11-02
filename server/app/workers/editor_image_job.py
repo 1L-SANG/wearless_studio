@@ -513,7 +513,8 @@ async def run_editor_image_job(app, job: dict) -> None:
             generation_recipe = asset_recipe.project_recipe({**payload, **detail_recipe_metadata})
 
         elif mode == "new":
-            new_payload = content_roles.canonicalize_storyboard_block(payload)
+            new_payload = cut_generator.product_runtime_spec(
+                content_roles.canonicalize_storyboard_block(payload))
             requested_color_id = new_payload.get("colorId")
             is_detail = new_payload.get("cutType") == "product" and new_payload.get("shot") == "detail"
             detail_direction = "back" if new_payload.get("direction") == "back" else "front"
@@ -624,7 +625,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                     new_payload.get("outerClosureState"), outer_closure.front_closure_of(analysis))
             cut_spec = {
                 k: new_payload.get(k)
-                for k in ("contentRole", "cutType", "direction", "shot", "faceExposure", "sideStyle",
+                for k in ("contentRole", "cutType", "direction", "shot", "productPresentation", "faceExposure", "sideStyle",
                           "outerClosureState", "exampleId", "modelId", "model_id",
                           "colorId", "matchIds", "refScope", "spaceGroupId", "spaceVariation",
                           "spaceSetMemberOrder", "horizonBackgroundMode")

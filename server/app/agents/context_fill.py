@@ -6,7 +6,7 @@ import math
 from urllib.parse import urlsplit
 import uuid
 
-from . import content_roles, cut_generator, mannequin, outer_closure
+from . import content_roles, cut_generator, mannequin, outer_closure, product_photography
 
 
 _PHOTO_ROWS = {"twocol", "threecol", "grid2x2", "colorcmp"}
@@ -220,7 +220,9 @@ def _ghost_candidates(context, rule="ghost_order", *, allow_repeat=False, rank=0
     colors, pair = context["colors"], context["pair"]
     combos = [(c, "front") for c in colors[:1]] + [(c, "back") for c in colors[:1]] + [(c, "front") for c in colors[1:]] + [(c, "back") for c in colors[1:]]
     other = None
+    presentation = None
     if pair and pair["recipe"].get("cutType") == "product" and pair["recipe"].get("shot") == "ghost":
+        presentation = product_photography.normalize(pair["recipe"].get("productPresentation"))
         other = (pair["recipe"].get("colorId"), "back" if pair["recipe"].get("direction") == "front" else "front")
         combos.sort(key=lambda item: (item[0].get("id"), item[1]) != other)
     result = []
@@ -228,6 +230,8 @@ def _ghost_candidates(context, rule="ghost_order", *, allow_repeat=False, rank=0
         if not any(isinstance(im, dict) and im.get("id") and im.get("slot") == {"front": "Front", "back": "Back"}[direction] for im in color.get("images", [])):
             continue
         recipe = {"contentRole": "productOverview", "cutType": "product", "shot": "ghost", "direction": direction, "colorId": color["id"]}
+        if presentation is not None:
+            recipe["productPresentation"] = presentation
         if not allow_repeat and _repeated(recipe, context):
             continue
         chosen_rule = "ghost_other_face" if rule == "ghost_order" and (color["id"], direction) == other else rule
@@ -258,6 +262,8 @@ def _color_candidates(context):
     present = {p["recipe"].get("colorId") for p in context["row"]}
     pair = context["pair"]
     source = pair["recipe"] if pair else {}
+    presentation = product_photography.normalize(
+        source.get("productPresentation"), cut_type=source.get("cutType"), shot=source.get("shot"))
     result = []
     for color in context["colors"]:
         if color["id"] in present:
@@ -265,6 +271,8 @@ def _color_candidates(context):
         recipe = {key: source[key] for key in ("cutType", "shot", "direction", "sideStyle", "contentRole", "exampleId", "exampleSelectionOrigin")
                   if key in source} if source.get("cutType") and source.get("shot") else {"cutType": "product", "shot": "ghost", "direction": "front"}
         recipe["colorId"] = color["id"]
+        if presentation is not None:
+            recipe["productPresentation"] = presentation
         if recipe.get("cutType") in _WORN:
             public = _examples_for(context, recipe["cutType"], recipe.get("shot"), recipe.get("direction"))
             if not public:

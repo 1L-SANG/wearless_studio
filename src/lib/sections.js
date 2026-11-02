@@ -20,6 +20,7 @@ import {
   inferContentRole,
   inferSectionRole,
   normalizedRecipePatch,
+  productPresentationOf,
   sectionRoleForContentRole,
   sectionTitle,
 } from './storyboardTaxonomy.js';
@@ -61,6 +62,7 @@ export function ensureSections(blocks, { hasDetailImage = null } = {}) {
     b.sectionRole = sectionRole;
     const previousRecipe = { cutType: b.cutType, direction: b.direction, shot: b.shot };
     Object.assign(b, normalizedRecipePatch(b, contentRole, { hasDetailImage }));
+    if (!productPresentationOf(b)) delete b.productPresentation;
     if (previousRecipe.cutType !== b.cutType || previousRecipe.direction !== b.direction || previousRecipe.shot !== b.shot) {
       b.exampleId = null;
       b.exampleSelectionOrigin = null;

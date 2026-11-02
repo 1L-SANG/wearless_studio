@@ -42,25 +42,27 @@ test('real dress shot button is enabled, chooses detail, and preserves a selecte
   assert.equal(saved.exampleId, undefined);
 });
 
-test('real editor product-tab handler chooses source detail when dress has no examples', () => {
+test('real editor product-tab handler chooses explicit whole product when dress has no examples', () => {
   const source = readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8');
   const gates = source.slice(source.indexOf('  const hasSelectableExamples ='), source.indexOf('  // 콘티보드 settingsReset'));
   const handler = source.slice(source.indexOf('  const selectCutType ='), source.indexOf('  const selectExample ='));
   const chosen = {};
   const dependencies = {
-    hasAvailableGenerationRecipe: generation.hasAvailableGenerationRecipe, ALL_CUT_TYPE_OPTIONS,
+    hasAvailableGenerationRecipe: generation.hasAvailableGenerationRecipe,
+    hasSelectableGenerationExamples: generation.hasSelectableGenerationExamples, ALL_CUT_TYPE_OPTIONS,
     catalogs: { genExamples: [], productShotTypes: shots, shotTypes: [{ value: 'full' }, { value: 'medium' }] },
     clothingType: 'dress', modelGender: 'women', cutType: 'styling', NEW_CUT_DEFAULT_SHOT: { product: 'ghost' },
     detailColorOpts: [], colorOpts: [], color: null, product: null,
     productSourceColorPatch: () => ({}), setProductDirection() {},
     setCutType: (value) => { chosen.cutType = value; }, setShot: (value) => { chosen.shot = value; },
+    setProductPresentation: (value) => { chosen.productPresentation = value; },
     setDir() {}, setDetailTargetId() {}, setExampleId() {}, setRefScope() {}, resetRecipeSettings() {},
   };
   const run = new Function(...Object.keys(dependencies), `${gates}\n${handler}\nselectCutType('product'); return cutTypeOptions;`);
   const tabs = run(...Object.values(dependencies));
   assert.equal(tabs.find((tab) => tab.value === 'product').disabled, false);
   assert.ok(tabs.filter((tab) => tab.value !== 'product').every((tab) => tab.disabled));
-  assert.deepEqual(chosen, { cutType: 'product', shot: 'detail' });
+  assert.deepEqual(chosen, { cutType: 'product', shot: 'ghost', productPresentation: 'ghost' });
 });
 
 test('real optional detail gallery renders honest guidance without an empty gallery or retry gate', async () => {

@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, Mapping
-from . import horizon_background
+from . import horizon_background, product_photography
 from .outer_closure import STATES as _CLOSURES
 
 
@@ -89,6 +89,7 @@ class CutPlan:
     signature_framing: SignatureFraming | None = None
     signature_background: Mapping[str, Any] | None = None
     outfit_roles: tuple[str, ...] = ()
+    product_presentation: str | None = None
 
     def uses_styling_all_location_recomposition(self) -> bool:
         """Whether ``all`` is a styling inspiration, not an exact location plate."""
@@ -149,6 +150,8 @@ class CutPlan:
             out["captureMode"] = self.capture_mode
         if self.product_variant is not None:
             out["productVariant"] = self.product_variant
+        if self.product_presentation is not None:
+            out["productPresentation"] = self.product_presentation
         if self.space_set_continuity is not None:
             out["spaceSetContinuity"] = self.space_set_continuity
         if self.reference_face_visibility is not None:
@@ -196,8 +199,11 @@ class CutPlan:
             if attributes:
                 lines.append(f"{owner}: {', '.join(attributes)}")
         lines.extend((
-            "Storyboard color/shot/face/model/matching/closure override the example; "
-            "the selected example owns direction and pose.",
+            ("The selected original photo owns product front/back; the selected mode owns "
+             "support, camera, scene and light. EXAMPLE and MOOD cannot override them."
+             if self.product_presentation is not None else
+             "Storyboard color/shot/face/model/matching/closure override the example; "
+             "the selected example owns direction and pose."),
             "Selected-model inputs own face and body proportions; the example person owns neither.",
             "ProductTruth pixels own construction, length, material, pattern, hardware, "
             "silhouette and garment text/logo. Seller name/category/sales/legacy-fit text owns "
@@ -214,6 +220,12 @@ class CutPlan:
         if self.horizon_background is not None:
             lines.append("The attached EXAMPLE ALL owns its allowed scene/light/captureTone; the wall-color exception does not change pose, framing, garment or identity owners.")
             lines.append(horizon_background.prompt(dict(self.horizon_background)))
+        if self.product_presentation is not None:
+            lines.append(
+                f"Product presentation={self.product_presentation}: the selected mode owns support, "
+                "camera, scene, lighting and capture tone above EXAMPLE and MOOD; the selected "
+                "original owns front/back and PRODUCT pixels retain garment identity and true color."
+            )
         return "\n".join(lines)
 
 
@@ -244,6 +256,9 @@ def _declared_fit_axes(profile: Mapping[str, Any] | None) -> tuple[str, ...]:
 
 def _reference_mode(spec: Mapping[str, Any], recipe_family: RecipeFamily) -> ReferenceMode:
     from .reference_mode import reference_scope
+    if product_photography.normalize(spec.get("productPresentation"),
+            cut_type=spec.get("cutType"), shot=spec.get("shot")) is not None:
+        return "none"
     example_id = spec.get("exampleId")
     space_group_id = spec.get("spaceGroupId")
     if not example_id and not space_group_id:
@@ -310,6 +325,8 @@ def compile_cut_plan(
     signature_framing = _signature_framing(spec, normalized_clothing_type)
     signature_background = horizon_background.signature_decision(dict(spec))
     recipe_family, capture_mode, product_variant = _recipe(spec)
+    product_presentation = product_photography.normalize(
+        spec.get("productPresentation"), cut_type=spec.get("cutType"), shot=spec.get("shot"))
     roles = tuple(outfit_roles or spec.get("_outfitRoles") or ())
     from ..services.outfit_generation import valid_roles
     if not valid_roles(roles):
@@ -358,6 +375,8 @@ def compile_cut_plan(
                 reference_attributes.remove(attribute)
     if recipe_family == "product" and "pose" in reference_attributes:
         reference_attributes.remove("pose")
+    if product_presentation is not None:
+        reference_attributes = []
     if (recipe_family == "horizon" and spec.get("_horizonReferenceShot") in {"full", "medium"}
             and spec["_horizonReferenceShot"] != spec.get("shot") and "camera" in reference_attributes):
         reference_attributes.remove("camera")
@@ -379,6 +398,9 @@ def compile_cut_plan(
     owners.update({attribute: "storyboard" for attribute in _STORYBOARD_ATTRIBUTES})
     owners.update({attribute: "recipe" for attribute in _REFERENCE_CAPABLE_ATTRIBUTES})
     owners.update({attribute: "reference" for attribute in reference_attributes})
+    if product_presentation is not None:
+        owners.update({attribute: "storyboard" for attribute in (
+            "productPresentation", "camera", "scene", "light", "captureTone")})
     background = horizon_background.normalize_runtime(spec.get("_horizonBackground")) if horizon_background.active(dict(spec)) else None
     if background is not None:
         owners["backgroundTone"] = "storyboard"
@@ -405,6 +427,7 @@ def compile_cut_plan(
 
     return CutPlan(
         outfit_roles=roles,
+        product_presentation=product_presentation,
         clothing_type=normalized_clothing_type,
         recipe_family=recipe_family,
         capture_mode=capture_mode,

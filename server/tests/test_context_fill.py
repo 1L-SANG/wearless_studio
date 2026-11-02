@@ -190,6 +190,33 @@ def test_product_pair_prefers_other_face_before_unused_additional_color():
     assert (result["payload"]["colorId"], result["payload"]["direction"], result["contextFill"]["rule"]) == ("base", "back", "ghost_other_face")
 
 
+@pytest.mark.parametrize("mode", ["ghost", "flat", "natural_light"])
+@pytest.mark.parametrize("color_compare,expected_color,expected_direction", [
+    (False, "base", "back"), (True, "black", "front"),
+])
+def test_adjacent_whole_product_keeps_selected_presentation_when_filling(mode, color_compare, expected_color, expected_direction):
+    data = inputs(purpose="productOverview",
+                  elements=[image("front"), image("empty", x=110, filled=False)],
+                  assets={asset_id("front"): asset(recipe(cut="product", shot="ghost", productPresentation=mode))})
+    if color_compare:
+        data["blocks"][0]["kind"] = "colorcmp"
+    result = decide(data)
+    assert result["payload"]["productPresentation"] == mode
+    assert (result["payload"]["colorId"], result["payload"]["direction"]) == (expected_color, expected_direction)
+
+
+@pytest.mark.parametrize("source", [
+    recipe(cut="product", shot="detail", productPresentation="flat"),
+    recipe(cut="horizon", productPresentation="natural_light"),
+    recipe(cut="product", shot="ghost", productPresentation="invalid"),
+])
+def test_fill_does_not_inherit_product_mode_from_an_inapplicable_adjacent_recipe(source):
+    data = inputs(purpose="productOverview",
+                  elements=[image("source"), image("empty", x=110, filled=False)],
+                  assets={asset_id("source"): asset(source)})
+    assert "productPresentation" not in decide(data)["payload"]
+
+
 def test_color_compare_copies_cut_with_missing_row_color_then_ghost_order():
     data = inputs(elements=[image("front"), image("empty", x=110, filled=False)],
                   assets={asset_id("front"): asset(recipe(cut="product", shot="ghost"))})
