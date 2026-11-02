@@ -99,6 +99,23 @@ test('install sends normalized mall id with credentials include and reads start 
   assert.deepEqual(JSON.parse(calls.at(-1).options.body), { mallId: 'myshop' });
 });
 
+test('launch forwards the untouched signed query only in the authenticated credentialed body', async (t) => {
+  const calls = [], query = 'mall_id=myshop&hmac=base64%2Bsignature%3D&timestamp=42';
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    calls.push({ url: String(url), options });
+    return json({ startUrl: '/install/start' });
+  });
+  assert.deepEqual(await adapter.launchCafe24({ query, returnTo: '/editor/project' }), { startUrl: '/install/start' });
+  assert.equal(calls[0].url, '/v1/malls/cafe24/launch');
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.credentials, 'include');
+  assert.equal(calls[0].options.headers.Authorization, 'Bearer local-session');
+  assert.deepEqual(JSON.parse(calls[0].options.body), { query, returnTo: '/editor/project' });
+  await assert.rejects(adapter.launchCafe24({ query, expectedUserId: 'other-account' }), (error) => error.code === 'auth_user_changed');
+  assert.equal(calls.length, 1);
+  assert.deepEqual(await mock.launchCafe24({ query }), { hmacValid: false });
+});
+
 const requestDraft = (patch = {}) => ({ projectId: 'project-local', publicationId: 'publication-local', editorRevision: 4,
   selectedMalls: ['cafe24'], productName: '니트', basePrice: 39000, sizes: ['FREE'], mainAssetId: 'asset-local', ...patch });
 const clock = (t) => t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: new Date('2026-10-26T00:00:00Z') });

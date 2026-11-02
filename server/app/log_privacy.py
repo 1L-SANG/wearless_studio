@@ -11,7 +11,7 @@ _PAYMENT_PATH = re.compile(
     r"|(?P<prefix>/v1/(?:webhooks/toss|billing)/)[^/\s?#'\"<>\x1b]+"
 )
 _CAFE24_QUERY = re.compile(
-    r"(/v1/malls/cafe24/(?:callback|install/[^/\s?]+/start))\?[^\s'\"<>\x1b]*"
+    r"(/v1/malls/cafe24/(?:callback|launch|install/[^/\s?]+/start)|/settings/malls)\?[^\s'\"<>\x1b]*"
 )
 
 

@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { componentModule, hooks } from './helpers/reactHarness.mjs';
 import { readFileSync } from 'node:fs';
 import * as logic from '../../src/lib/mallDefaults.js';
+import * as cafe24Launch from '../../src/lib/cafe24Launch.js';
 
 const walk = (node) => [node, ...React.Children.toArray(node?.props?.children).flatMap(walk)];
 const field = (tree, name) => walk(tree).find((n) => n.props?.name === name);
@@ -16,7 +17,7 @@ async function card(runtime = hooks(), api = {}) {
 }
 async function connections(runtime = hooks(), api = {}, bindings = {}) {
   return componentModule('src/features/settings/MallConnections.jsx', ['MallConnections', 'MallSettings', 'Cafe24Connection'], {
-    ...runtime, ...logic, api, useAuth: () => ({ session: { user: { id: 'local' } } }), useQuery: () => ({ data: [{ id: 'mock-shipping', name: '창고', address: '서울' }] }), styles: {}, Button: 'button', Icon: () => null, Modal: ({ children }) => children,
+    ...runtime, ...logic, ...cafe24Launch, api, useAuth: () => ({ session: { user: { id: 'local' } } }), useQuery: () => ({ data: [{ id: 'mock-shipping', name: '창고', address: '서울' }] }), styles: {}, Button: 'button', Icon: () => null, Modal: ({ children }) => children,
     ExportMenu: () => null, Link: 'a', MallDefaultsForm: () => null, seoulDate: () => '',
     useAuth: () => ({ session: { user: { id: 'local-user' } } }), useLocation: () => ({ search: '' }),
     useQueryClient: () => ({ setQueryData() {}, invalidateQueries() {} }),
@@ -138,13 +139,13 @@ test('detail redirects unsupported or disconnected malls and keeps returnTo thro
   }
 });
 
-test('cafe24 app url mall_id only prefills the mall id field', async () => {
+test('unsigned cafe24 app url mall_id only prefills the mall id field', async () => {
   const previous = globalThis.window;
   try {
     for (const [input, expected] of [['dailymoment2026', 'dailymoment2026'], ['MyShop', 'myshop'], ['bad/other', ''], ['https://myshop.cafe24.com', ''], ['x', ''], ['', '']]) {
       let replaced, starts = 0, userId;
       const stored = new Map(), writes = [];
-      globalThis.window = { location: { href: `https://app.test/settings/malls?mall_id=${encodeURIComponent(input)}&hmac=secret&timestamp=42&returnTo=%2Feditor%2Flocal#cafe24` },
+      globalThis.window = { location: { href: `https://app.test/settings/malls?mall_id=${encodeURIComponent(input)}&extra=secret&timestamp=42&returnTo=%2Feditor%2Flocal#cafe24` },
         history: { state: { idx: 1 }, replaceState: (...args) => {
           replaced = args;
           globalThis.window.location.href = new URL(args[2], globalThis.window.location.href).href;
@@ -179,7 +180,11 @@ test('cafe24 app url mall_id only prefills the mall id field', async () => {
         assert.equal(row.props.state, expected ? 'editing' : 'none');
       }
       assert.equal(starts, 0);
-      assert.deepEqual(writes, expected ? [['cafe24-app-mall-id', expected]] : []);
+      assert.equal(writes.length, expected ? 1 : 0);
+      if (expected) {
+        assert.equal(writes[0][0], 'cafe24-app-launch:v1');
+        assert.equal(JSON.parse(writes[0][1]).mallId, expected);
+      }
       assert.equal(stored.size, 0, 'the ready connection consumes the one-use prefill');
       const later = hooks(), reopened = await connections(later, api);
       later.render(reopened.Cafe24Connection, ready.props); later.flushEffects();

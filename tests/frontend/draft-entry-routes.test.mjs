@@ -6,6 +6,7 @@ import { getDraftDeviceNoun, isMobileDraftWriter } from '../../src/lib/draftDevi
 import { flowScreenName, shouldWarnFlowAbandon, notifyFlowKept } from '../../src/lib/flowAbandon.js';
 import * as entry from '../../src/lib/draftEntry.js';
 import * as mobileGuestSave from '../../src/lib/mobileGuestSave.js';
+import { readCafe24Launch } from '../../src/lib/cafe24Launch.js';
 import { checkDraftEntry, canAutoOpenInput } from '../../src/lib/draftEntryCheck.js';
 import * as flow from '../../src/lib/flowSession.js';
 import { loadDraft as readStoredDraft, clearDraft as clearStoredDraft, hasPendingDraft as hasStoredPendingDraft, saveProductDraft, queueProductDraftSave, flushProductDraftSave } from '../../src/lib/draftStore.js';
@@ -122,6 +123,7 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
   state.adoptProject = (id) => { calls.push(`adopt:${id}`); };
   state.confirmProductInfo = () => { calls.push('confirm'); };
   const bindings = {
+    readCafe24Launch,
     useClientErrorCapture() {}, getMobileGuestDraft: () => null, getMobileGuestSave: (session) => typeof guestSave === 'function' ? guestSave(session) : guestSave, clearMobileGuestSave() { guestSave = null; calls.push('clearGuest'); },
     ...entry, ...flow, canAutoOpenInput, checkDraftEntry: (client, options) => checkDraftEntry(client, { ...options, setTimer: (fn, ms) => ms === 8000 ? setTimeout(fn, ms) : setImmediate(fn), clearTimer: clearTimeout }), getDraftDeviceNoun, isMobileDraftWriter, flowScreenName, shouldWarnFlowAbandon, notifyFlowKept, draftSlot, useAppStore, formatDraftRelativeTime, localDraftMeta,
     flowRouteSeenThisSession: false, flowDocumentEntryId: 'document',
