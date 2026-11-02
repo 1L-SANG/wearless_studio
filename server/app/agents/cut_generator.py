@@ -30,7 +30,7 @@ from .confirmed_gpt_prompt import (
     confirmed_gpt_framing_contract,
 )
 from .cut_plan import compile_cut_plan, render_prompt_contract
-from . import horizon_background, product_photography
+from . import horizon_background, product_photography, product_button_qc
 from .outer_closure import STATES as _OUTER_CLOSURE_STATES, DEFAULT
 from .directing_profile import render_directing_profile
 from .gemini_image import GeminiImageClient, InlineImage
@@ -1904,6 +1904,8 @@ async def generate(
     angle_swap: face_angle_swap.AngleSwapSpec | None = None,
     # 베이스컷 체크포인트(BaseCheckpoint). 없으면 기존 동작 그대로 — provider 1콜 + 후처리.
     base_checkpoint: BaseCheckpoint | None = None,
+    product_button_qc_outcome: dict | None = None,
+    product_button_qc_source_images: list[InlineImage] | None = None,
 ) -> tuple[bytes, str]:
     """컷 1개 생성. 실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리).
     스펙 위반(unknown cutType)은 ValueError — 조용한 styling 폴백을 하지 않는다
@@ -1924,6 +1926,11 @@ async def generate(
         confirmed_prompt_input=confirmed_prompt_input, angle_swap=angle_swap,
     )
     spec, clothing_type = request.spec, request.clothing_type
+    if product_button_qc.eligible(spec):
+        return await product_button_qc.generate_guarded(
+            settings, gemini, request, images, manifest,
+            checkpoint=base_checkpoint, outcome=product_button_qc_outcome,
+            source_images=product_button_qc_source_images)
     if base_checkpoint is not None and base_checkpoint.image is not None:
         # 이미 값을 치른 베이스 — provider 를 부르지 않고 후처리만 다시 한다.
         image, mime = base_checkpoint.image

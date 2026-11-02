@@ -659,8 +659,11 @@ def test_editor_excludes_selected_mannequin_from_product_and_non_base_color(monk
 @pytest.mark.parametrize("mode", ["ghost", "flat", "natural_light"])
 @pytest.mark.parametrize("clothing_type", ["top", "bottom", "outer", "dress"])
 def test_editor_product_presentation_reaches_generator_and_saved_asset_recipe(monkeypatch, mode, clothing_type):
+    from test_product_button_qc import Provider, image, install_observations, observed
+    real_generate = eij.cut_generator.generate
     captured = {}
     _patch_editor_common(monkeypatch, captured)
+    install_observations(monkeypatch, {b"k/product": observed(0), b"OUTPUT": observed(0)})
     resolve_asset = eij.repo.get_asset_for_user
 
     async def no_ignored_asset_lookup(conn, uid, aid):
@@ -679,7 +682,8 @@ def test_editor_product_presentation_reaches_generator_and_saved_asset_recipe(mo
 
     async def fake_generate(settings, gemini, cut_spec, product, images, **kwargs):
         captured["spec"] = dict(cut_spec)
-        return b"OUTPUT", "image/png"
+        refs = [image(ref.data) for ref in images]
+        return await real_generate(settings, Provider([b"OUTPUT"]), cut_spec, product, refs, **kwargs)
 
     monkeypatch.setattr(eij.cut_generator, "generate", fake_generate)
     monkeypatch.setattr(eij.repo, "get_product", fake_product)

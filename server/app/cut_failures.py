@@ -12,6 +12,12 @@ CUT_FAILURE_REASONS = {
         "attempt_budget_exhausted", "detail_attempt_state_changed", "detail_judgment_already_claimed",
         "detail_judgment_state_changed", "detail_judgment_retry_unavailable",
         "detail_judgment_retry_state_changed",
+        "product_button_qc_failed", "product_button_qc_unavailable",
+        "product_button_qc_invalid_inventory", "product_button_source_missing",
+        "product_button_source_manifest_invalid", "product_button_source_uncertain",
+        "product_button_source_disagreement",
+        "product_button_preservation_failed", "product_button_preservation_invalid",
+        "product_button_generation_failed", "product_button_qc_receipt_invalid",
     ), "retryable"),
     **dict.fromkeys((
         "no_garment_photo", "matching_asset_unavailable", "outfit_asset_unavailable", "no_angle_photo",

@@ -150,17 +150,22 @@ def test_shared_prompt_supports_exact_known_model_variants_without_echoing_model
     ("gpt-image-2.5-flare", "Make the smallest necessary change"),
     ("gpt-image-2.5-sunburst", "Follow the priority order"),
 ])
-def test_provider_receives_shared_mode_with_adapter_for_actual_resolved_model(model, adapter):
+def test_provider_receives_shared_mode_with_adapter_for_actual_resolved_model(monkeypatch, model, adapter):
     sent = []
 
     class Provider:
         async def generate_content_image(self, selected, prompt, images, image_size, **kwargs):
             sent.append((selected, prompt))
-            return SimpleNamespace(image=b"PRODUCT", mime="image/png")
+            return SimpleNamespace(image=image(b"PRODUCT").data, mime="image/png")
 
+    from app.agents.gemini_image import InlineImage
+    from test_product_button_qc import image, install_observations, observed
+    install_observations(monkeypatch, {
+        b"SOURCE": observed(0, direction="back"), b"PRODUCT": observed(0, direction="back")})
     result = asyncio.run(cg.generate(make_settings(model_image_high=model), Provider(),
-        spec(productPresentation="flat"), PRODUCT, []))
-    assert result == (b"PRODUCT", "image/png")
+        spec(productPresentation="flat"), PRODUCT, [image()],
+        manifest="1. PRODUCT — back view of the garment"))
+    assert result == (image(b"PRODUCT").data, "image/png")
     assert len(sent) == 1
     assert sent[0][0] == model
     assert "PRODUCT PRESENTATION: flat" in sent[0][1]

@@ -415,9 +415,16 @@ class CutCheckpointStore:
         final_digest = _digest({"base": base_digest, "recipe": _final_recipe(settings)})
         cut = CutCheckpoint(self, base_digest, final_digest, block.get("id"))
         cut.final = await self._load(final_digest, STAGE_FINAL)
-        if cut.final is not None:
+        if cut.final is not None and cut_generator.product_button_qc.eligible(block):
+            # A historical final is only a candidate under the active button policy.
+            # Never list it as retained/publishable until fresh source + result QC pass.
+            saved = cut.final
+            cut.final = None
+            cut.base = PersistedBase(cut, image=(saved.image, saved.mime), key=saved.key, meta=saved.meta)
+            cut.base_reused = True
+        elif cut.final is not None:
             self.note_final(block.get("id"), cut.final.key)
-        if cut.final is None:
+        if cut.final is None and not cut.base_reused:
             base = await self._load(base_digest, STAGE_BASE)
             if base is not None:
                 cut.base = PersistedBase(cut, image=(base.image, base.mime), key=base.key, meta=base.meta)

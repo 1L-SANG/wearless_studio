@@ -30,6 +30,7 @@ from ..agents import (
     real_horizon_neck_repair,
     mannequin,
     outer_closure,
+    product_button_qc,
     space_set_assets,
     similar_cut,
 )
@@ -167,6 +168,7 @@ async def run_editor_image_job(app, job: dict) -> None:
         await facemarket.wait_for_holder(app)
 
     example_warnings: list[dict] = []
+    product_button_audit: dict = {}
     cut_qc_metadata: dict | None = None  # new 모드 shadow 관측 결과; 생성 선택에는 영향 없음
     neck_repair_metadata: dict | None = None
     detail_recipe_metadata: dict | None = None
@@ -1149,11 +1151,17 @@ async def run_editor_image_job(app, job: dict) -> None:
             # pair를 컷 간 인물 연속성 앵커로만 유지하고 얼굴 노출을 강제하지 않는다.
             if fm_face_injected and cut_generator.wants_face(cut_spec, clothing_type):
                 generate_kwargs["has_face"] = True
+            if product_button_qc.eligible(cut_spec):
+                generate_kwargs["product_button_qc_outcome"] = product_button_audit
             try:
                 image, mime = await cut_generator.generate(
                     cut_generation_settings, app.state.gemini, cut_spec, product, images,
                     **generate_kwargs)
                 _remember_outcome(image)
+            except product_button_qc.ProductButtonQCError as e:
+                await _fail("상품의 단추와 디자인을 확인하지 못해 이미지를 저장하지 않았어요. 크레딧은 차감되지 않습니다.",
+                            {"error": e.reason, "productButtonQc": e.audit})
+                return
             except ValueError as e:
                 if str(e) == "detail_reference_required":
                     await _fail(
@@ -1210,6 +1218,13 @@ async def run_editor_image_job(app, job: dict) -> None:
                 image, mime = chosen.data, chosen.mime
                 if not neck_repair_metadata["applied"]:
                     example_warnings.append({"code": "real_horizon_neck_repair_unavailable"})
+            if product_button_qc.eligible(cut_spec):
+                try:
+                    product_button_qc.require_verified(product_button_audit, InlineImage(mime, image))
+                except product_button_qc.ProductButtonQCError as exc:
+                    await _fail("상품의 단추와 디자인을 확인하지 못해 이미지를 저장하지 않았어요. 크레딧은 차감되지 않습니다.",
+                                {"error": exc.reason, "productButtonQc": exc.audit})
+                    return
             group = normalized["colorId"] or None
             cut_type = normalized["cutType"]
 
@@ -1292,6 +1307,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 **({"horizon_background": horizon_decision} if horizon_decision else {}),
                 **({"signature_background": signature_decision} if signature_decision else {}),
                 **({"detail_recipe": detail_recipe_metadata} if detail_recipe_metadata else {}),
+                **({"product_button_qc": product_button_audit} if product_button_audit else {}),
                 **({"neck_repair": neck_repair_metadata}
                    if neck_repair_metadata is not None else {}),
                 # 이 컷의 얼굴이 LoRA 로 바뀐 것인지, 폴백으로 생성 모델 얼굴 그대로인지.
@@ -1313,6 +1329,8 @@ async def run_editor_image_job(app, job: dict) -> None:
             success_metadata["horizonBackground"] = horizon_decision
         if signature_decision:
             success_metadata["signatureBackground"] = signature_decision
+        if product_button_audit:
+            success_metadata["productButtonQc"] = product_button_audit
         if cut_qc_metadata is not None:
             success_metadata["cutQc"] = cut_qc_metadata
         if example_warnings:
