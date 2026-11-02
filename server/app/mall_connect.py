@@ -1,11 +1,13 @@
 """Mall connections and OAuth installation. Registration lives in mall_registration."""
 
+import base64
 import hashlib
+import hmac
 import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field, SecretStr, field_validator
@@ -47,6 +49,38 @@ class ConnectionKeys(BaseModel):
 class Cafe24Install(BaseModel):
     mallId: str = Field(max_length=2048)
     returnTo: str | None = Field(default=None, max_length=2048)
+
+
+class Cafe24Launch(BaseModel):
+    query: SecretStr = Field(max_length=16384)
+    returnTo: str | None = Field(default=None, max_length=2048)
+
+
+def _verify_cafe24_launch(query, secret):
+    # Provisional launch contract: sort decoded query keys, omit hmac, then
+    # base64(HMAC-SHA256(client_secret, "key=value&...")); not officially confirmed.
+    try:
+        pairs = parse_qsl(query, keep_blank_values=True, encoding="utf-8", errors="strict", max_num_fields=100)
+        params = dict(pairs)
+        if len(params) != len(pairs):
+            return None, "duplicate_parameter"
+        if not params.get("hmac"):
+            return None, "missing_hmac"
+        if not secret:
+            return None, "unconfigured"
+        message = "&".join(f"{key}={value}" for key, value in sorted(pairs) if key != "hmac")
+        expected = hmac.digest(secret.encode(), message.encode(), "sha256")
+        supplied = base64.b64decode(params["hmac"], validate=True)
+        if not hmac.compare_digest(expected, supplied):
+            return None, "invalid_hmac"
+        timestamp = params.get("timestamp", "")
+        if not timestamp.isascii() or not timestamp.isdecimal() or len(timestamp) > 12:
+            return None, "invalid_timestamp"
+        if abs(datetime.now(timezone.utc).timestamp() - int(timestamp)) > 3600:
+            return None, "expired_timestamp"
+        return params, "valid"
+    except (ValueError, UnicodeError):
+        return None, "invalid_query"
 
 
 def _require_kek(request):
@@ -222,6 +256,23 @@ async def disconnect_cafe24(request: Request, user_id: str = Depends(require_use
 
 @router.post("/cafe24/install")
 async def install_cafe24(request: Request, body: Cafe24Install, user_id: str = Depends(require_user)):
+    return await _create_cafe24_install(request, body, user_id)
+
+
+@router.post("/cafe24/launch")
+async def launch_cafe24(request: Request, body: Cafe24Launch, user_id: str = Depends(require_user)):
+    params, reason = _verify_cafe24_launch(body.query.get_secret_value(), request.app.state.settings.cafe24_client_secret)
+    logging.getLogger(__name__).info("cafe24_launch hmac_valid=%s reason=%s", "true" if params else "false", reason)
+    if params is None:
+        return JSONResponse({"hmacValid": False}, headers={"Cache-Control": "no-store"})
+    mall_id = normalize_mall_id(params.get("mall_id", ""))
+    if mall_id is None:
+        raise _error("invalid_mall_id", "몰 아이디를 확인해 주세요")
+    return await _create_cafe24_install(request,
+        Cafe24Install(mallId=mall_id, returnTo=body.returnTo), user_id, skip_connected=True)
+
+
+async def _create_cafe24_install(request, body, user_id, *, skip_connected=False):
     settings = _require_cafe24(request)
     async with get_conn(request) as conn:
         allowed = await repo.claim_mall_connection_attempt(conn, user_id=user_id)
@@ -242,6 +293,11 @@ async def install_cafe24(request: Request, body: Cafe24Install, user_id: str = D
             await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:cafe24",))
         if await repo.user_account_purge_closed(conn, user_id):
             raise _error("account_closed", "계정 삭제가 완료되어 사용할 수 없습니다.", 404)
+        if skip_connected:
+            connection = await repo.get_mall_connection(conn, user_id=user_id, mall="cafe24")
+            if (connection and connection["shop_id"] == mall_id
+                    and _connection_result(connection, "cafe24")["status"] == "connected"):
+                return JSONResponse({"alreadyConnected": True}, headers={"Cache-Control": "no-store"})
         await repo.purge_old_install_attempts(conn, user_id=user_id)
         generation = await repo.mall_connection_generation(conn, user_id=user_id, mall="cafe24")
         attempt_id = await repo.create_install_attempt(conn, user_id=user_id, mall="cafe24", mall_id=mall_id,

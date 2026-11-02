@@ -45,6 +45,13 @@ export function startCafe24Install({ mallId, returnTo }) {
   });
 }
 
+export function launchCafe24({ query, returnTo, expectedUserId }) {
+  return http('/v1/malls/cafe24/launch', {
+    method: 'POST', body: { query, returnTo }, expectedUserId,
+    credentials: 'include', suppressErrorLog: true,
+  });
+}
+
 export function disconnectCafe24() {
   return http('/v1/malls/cafe24', { method: 'DELETE' });
 }

@@ -3,6 +3,7 @@ import { Link, Navigate, useLocation, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
+import { captureCafe24Launch, consumeCafe24Launch } from '@/lib/cafe24Launch.js';
 import { Button, Icon, Modal } from '@/components/ui.jsx';
 import { ExportMenu } from '@/features/editor/ExportMenu.jsx';
 import { MallDefaultsForm } from './MallDefaultsChecklist.jsx';
@@ -181,7 +182,6 @@ const CAFE24_INSTALL_COPY = {
 
 const normalizeMallId = (value) => String(value ?? '').trim().toLowerCase().replace(/^https?:\/\//, '')
   .split(/[/?#]/, 1)[0].replace(/\.(cafe24|cafe24api)\.com$/, '');
-const CAFE24_APP_MALL_ID_KEY = 'cafe24-app-mall-id';
 
 function MallIdField({ value, onChange, busy }) {
   return <>
@@ -195,7 +195,7 @@ function MallIdField({ value, onChange, busy }) {
   </>;
 }
 
-export function Cafe24Connection({ connection, onChanged, returnTo, unavailable = false, storageKey = 'cafe24-install-mall-id', detail = false }) {
+export function Cafe24Connection({ connection, onChanged, returnTo, userId, unavailable = false, storageKey = 'cafe24-install-mall-id', detail = false }) {
   const [state, setState] = useState(null);
   const [mallId, setMallId] = useState(connection?.mallId || '');
   const [error, setError] = useState('');
@@ -210,13 +210,8 @@ export function Cafe24Connection({ connection, onChanged, returnTo, unavailable 
   useEffect(() => {
     const url = new URL(window.location.href);
     if (url.searchParams.has('mall_id')) {
-      const candidate = url.searchParams.get('mall_id').trim().toLowerCase();
-      if (/^[a-z0-9][a-z0-9_-]{1,29}$/.test(candidate)) {
-        try { window.sessionStorage.setItem(CAFE24_APP_MALL_ID_KEY, candidate); } catch { /* Prefilling does not require storage. */ }
-        setMallId(candidate); setState('editing');
-      }
-      for (const key of [...url.searchParams.keys()]) if (key !== 'returnTo') url.searchParams.delete(key);
-      window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+      const launch = captureCafe24Launch();
+      if (launch) { setMallId(launch.mallId); setState('editing'); }
       return;
     }
     if (url.searchParams.get('mall') !== 'cafe24' || !url.searchParams.has('result')) return;
@@ -228,15 +223,34 @@ export function Cafe24Connection({ connection, onChanged, returnTo, unavailable 
     window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
   }, [storageKey]);
   useEffect(() => {
-    // 인증 초기화와 연결 조회가 끝나기 전에는 계정 key 변경으로 다시 마운트될 수 있다.
-    if (unavailable) return;
-    try {
-      const candidate = window.sessionStorage.getItem(CAFE24_APP_MALL_ID_KEY);
-      if (candidate == null) return;
-      window.sessionStorage.removeItem(CAFE24_APP_MALL_ID_KEY);
-      if (/^[a-z0-9][a-z0-9_-]{1,29}$/.test(candidate)) { setMallId(candidate); setState('editing'); }
-    } catch { /* Storage may be unavailable. */ }
-  }, [unavailable]);
+    // Wait for the account and connection query before claiming the one-use entry.
+    if (unavailable || detail || locked.current) return;
+    const launch = consumeCafe24Launch();
+    if (!launch) return;
+    setMallId(launch.mallId);
+    const alreadyConnected = connection?.status === 'connected' && connection.mallId === launch.mallId;
+    setState(alreadyConnected ? null : 'editing');
+    if (!new URLSearchParams(launch.query).has('hmac')) return;
+    locked.current = true; setError(''); setState('starting');
+    (async () => {
+      try {
+        try { window.sessionStorage.setItem(storageKey, launch.mallId); } catch { /* Optional input recovery. */ }
+        const result = await api.launchCafe24({ query: launch.query, returnTo, expectedUserId: userId });
+        if (!active.current) return;
+        if (result.startUrl) window.location.assign(result.startUrl);
+        else {
+          locked.current = false; setState(alreadyConnected || result.alreadyConnected ? null : 'editing');
+          if (result.alreadyConnected) onChanged?.();
+        }
+      } catch (failure) {
+        if (active.current) {
+          locked.current = false;
+          setError(CAFE24_INSTALL_COPY[failure.code] || '연결을 시작하지 못했어요. 잠시 뒤 다시 시도해 주세요');
+          setState('failed');
+        }
+      }
+    })();
+  }, [unavailable, detail, userId, storageKey, returnTo, connection, onChanged]);
   const submit = async (event) => {
     event.preventDefault();
     if (locked.current || !mallId.trim() || unavailable) return;
@@ -305,7 +319,7 @@ export function MallConnections() {
         </div>}
         <Cafe24Connection key={`cafe24:${userId}`} connection={data?.items?.find((item) => item.mall === 'cafe24')}
           unavailable={isPending || !!error || !!data?.disabled || data?.items?.find((item) => item.mall === 'cafe24')?.status === 'unavailable'}
-          returnTo={returnTo} storageKey={`cafe24-install-mall-id:${userId}`} onChanged={changed} />
+          returnTo={returnTo} userId={userId} storageKey={`cafe24-install-mall-id:${userId}`} onChanged={changed} />
         <div className={styles.mallRow}>
           <img className={styles.mallLogo} src="/assets/malls/ably-48.png" srcSet="/assets/malls/ably-96.png 2x" alt="" />
           <div className={styles.mallInfo}><h3>에이블리</h3><p className={styles.help}>셀러스 입점만 연결할 수 있어요. 파트너스는 연결할 수 없어요.</p></div>

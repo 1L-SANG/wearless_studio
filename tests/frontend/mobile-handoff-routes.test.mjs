@@ -31,7 +31,7 @@ function harness(mobile, pathname, entry = null) {
   } };
   const href = `https://preview.wearless.test${pathname}?view=saved#page`;
   const bindings = {
-    React, Routes, Route, Outlet, Navigate, useLocation, useDocumentEntry, Suspense: React.Suspense,
+    React, Routes, Route, Outlet, Navigate, useLocation, useDocumentEntry, Suspense: React.Suspense, Cafe24LaunchGate: Outlet,
     useEffect: (effect) => effects.push(effect), document,
     useLayoutEffect: (effect) => layoutEffects.push(effect),
     removeSellerBootBackground: () => { bootRemoved = true; },

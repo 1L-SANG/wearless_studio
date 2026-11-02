@@ -24,6 +24,8 @@ import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
 import { PaymentSuccess, PaymentFail } from '@/features/payments/PaymentResult.jsx';
 import { SubscriptionManage, SubscriptionSuccess, SubscriptionFail } from '@/features/subscription/Subscription.jsx';
 import { MallConnections, MallSettings } from '@/features/settings/MallConnections.jsx';
+import { Cafe24LaunchGate } from '@/features/settings/Cafe24LaunchGate.jsx';
+import { readCafe24Launch } from '@/lib/cafe24Launch.js';
 import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
 import { LegalRedirect } from '@/features/legal/LegalRedirect.jsx';
 import { WEARLESS_LEGAL_URLS } from '@/lib/legalLinks.js';
@@ -742,7 +744,8 @@ function RootRedirect() {
     if (mobile) {
       if (loading) return;
       forgetPostLogin();
-      setDest(target === '/pricing?tab=topup' ? target : '/create/input');
+      const cafe24Return = /^\/settings\/malls(?:\?|$)/.test(target) && readCafe24Launch();
+      setDest(cafe24Return || target === '/pricing?tab=topup' ? target : '/create/input');
       setPhase('done');
       return;
     }
@@ -901,9 +904,11 @@ export default function App() {
               <Route path="library" element={<Library />} />
             </Route>
           </Route>
+          <Route element={<Cafe24LaunchGate />}>
+            <Route path="settings/malls" element={<MallConnections />} />
+          </Route>
           <Route element={<RequireAuth />}>
             <Route path="credits/history" element={<CreditsHistory />} />
-            <Route path="settings/malls" element={<MallConnections />} />
             <Route path="settings/malls/:mall" element={<MallSettings />} />
             {/* 토스 결제 리다이렉트 착지점(WS3) — 승인은 success 화면이 서버에 위임한다 */}
             <Route path="payments/success" element={<PaymentSuccess />} />

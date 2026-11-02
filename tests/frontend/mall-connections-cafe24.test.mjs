@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { componentModule, hooks } from './helpers/reactHarness.mjs';
+import * as cafe24Launch from '../../src/lib/cafe24Launch.js';
 
 const Button = ({ children, ...props }) => React.createElement('button', props, children);
 const connection = { mall: 'cafe24', status: 'connected', mallId: 'myshop', shopName: '니트 스토어', permissions: ['상품 조회와 등록'] };
@@ -11,7 +12,7 @@ const rowOf = (tree) => React.Children.toArray(tree.props.children)[0];
 async function load(runtime = hooks(), api = {}, bindings = {}) {
   return componentModule('src/features/settings/MallConnections.jsx',
     ['MallConnections', 'MallConnectionRow', 'Cafe24Connection', 'MallActionDialog', 'MallIdField'], {
-      ...runtime, api, Button, Icon: () => null, Modal: ({ children }) => children,
+      ...runtime, ...cafe24Launch, api, Button, Icon: () => null, Modal: ({ children }) => children,
       styles: {}, seoulDate: () => '2026.10.26', ExportMenu: () => null, Link: 'a', MallDefaultsForm: () => null,
       ...bindings,
     });
