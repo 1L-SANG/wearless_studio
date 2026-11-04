@@ -7,7 +7,8 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from app.agents import cut_output_qc, detail_output_qc, image_qc, vision_llm
+from app.agents import cut_generator, cut_output_qc, detail_output_qc, image_qc, vision_llm
+from app.agents.cut_plan import compile_cut_plan
 from app.agents.gemini_image import InlineImage
 from conftest import make_settings
 from test_cut_output_qc import _img, _model_refs, _plan, _raw
@@ -225,3 +226,82 @@ def test_same_privileged_policy_preserves_distinct_generic_and_confirmed_field_o
     assert json.loads(policies[1][1])["attributeOwners"]["length"] == "mannequin"
     assert '"length":"productTruth"' in seen[0][1]["messages"][1]["content"][0]["text"]
     assert '"length":"mannequin"' in seen[1][1]["messages"][1]["content"][0]["text"]
+
+
+@pytest.mark.parametrize("provider", ["gpt", "gemini"])
+@pytest.mark.parametrize("presentation", [None, "ghost", "flat", "natural_light"])
+def test_product_presentation_authority_reaches_real_qc_wire(monkeypatch, provider, presentation):
+    seen = offline_http(monkeypatch, lambda host, body: (
+        gpt_response(_raw()) if host == "api.openai.com" else gemini_response(_raw())))
+    config = make_settings(openai_api_key="fake-local", openai_api_key_fallback=None,
+        gemini_api_key="fake-local", analysis_model_order=provider)
+    spec = {"source": "ai", "cutType": "product", "shot": "ghost", "direction": "front",
+            "colorId": "SELLER_TEXT_NOT_AUTHORITY"}
+    if presentation is not None:
+        spec["productPresentation"] = presentation
+    plan = compile_cut_plan(cut_generator.apply_reference_compatibility(
+        cut_generator.normalize_spec(spec)), "top")
+    result = asyncio.run(cut_output_qc.verdict(config, plan,
+        [cut_output_qc.LabeledReference("product", _img(b"PRODUCT"))], _img(b"CURRENT")))
+    assert result["contract"]["contractErrors"] == []
+    assert len(seen) == 1
+    body = seen[0][1]
+    if provider == "gpt":
+        assert body["messages"][0]["role"] == "developer"
+        policy = body["messages"][0]["content"]
+        assert body["messages"][1]["role"] == "user"
+    else:
+        policy = body["systemInstruction"]["parts"][0]["text"]
+        assert body["contents"][0]["role"] == "user"
+    context = json.loads(policy.split("\nVALIDATED_QC_CONTEXT\n", 1)[1])
+    assert context["scope"] == "explicit_fields_only"
+    assert context["attributeOwners"]["construction"] == "productTruth"
+    assert context["attributeOwners"]["textLogo"] == "productTruth"
+    assert "SELLER_TEXT_NOT_AUTHORITY" not in policy
+    if presentation is None:
+        assert set(context) == {"family", "scope", "authorityProfile", "attributeOwners", "referenceAllowedAttributes"}
+        assert context["attributeOwners"]["camera"] == "recipe"
+    else:
+        assert context["productPresentation"] == presentation
+        assert context["recipeFamily"] == "product"
+        assert context["productVariant"] == context["shot"] == "ghost"
+        assert context["referenceAllowedAttributes"] == []
+        for key in ("productPresentation", "camera", "scene", "light", "captureTone"):
+            assert context["attributeOwners"][key] == "storyboard"
+
+
+@pytest.mark.parametrize("change", [
+    "worn", "detail_variant", "detail_shot", "confirmed", "invalid_mode", "null_mode",
+    "missing_mode", "missing_family", "missing_owner", "reference_owner",
+])
+def test_product_presentation_authority_requires_complete_whole_product_binding(change):
+    context = {"authorityProfile": "generic_v1", "recipeFamily": "product",
+        "productVariant": "ghost", "shot": "ghost", "productPresentation": "flat",
+        "referenceAllowedAttributes": [], "attributeOwners": {
+            "construction": "productTruth", "productPresentation": "storyboard",
+            "camera": "storyboard", "scene": "storyboard", "light": "storyboard",
+            "captureTone": "storyboard"}}
+    if change == "worn":
+        context["recipeFamily"] = "styling"
+    elif change == "detail_variant":
+        context["productVariant"] = "detail"
+    elif change == "detail_shot":
+        context["shot"] = "detail"
+    elif change == "confirmed":
+        context["authorityProfile"] = "confirmed_gpt_v1"
+    elif change == "invalid_mode":
+        context["productPresentation"] = "UNTRUSTED_OVERRIDE"
+    elif change == "null_mode":
+        context["productPresentation"] = None
+    elif change == "missing_mode":
+        del context["productPresentation"]
+    elif change == "missing_family":
+        del context["recipeFamily"]
+    elif change == "missing_owner":
+        del context["attributeOwners"]["light"]
+    else:
+        context["attributeOwners"]["camera"] = "reference"
+    policy = vision_llm.qc_system_prompt("cut", context)
+    assert json.loads(policy.split("\nVALIDATED_QC_CONTEXT\n", 1)[1]) == {
+        "family": "cut", "scope": "incomplete_no_additional_authority"}
+    assert "UNTRUSTED_OVERRIDE" not in policy

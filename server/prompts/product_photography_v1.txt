@@ -1,0 +1,37 @@
+[[COMMON]]
+Create one complete, garment-only commerce photograph, preserving the selected original front or back side.
+PRODUCT source pixels are the sole authority for garment identity, true color, silhouette, length, fabric, pattern placement, stitching, hardware counts and permanent lettering or labels. Before editing, visually inventory the visible buttons, fastening points, pockets, tier joins, panels and trim; preserve their exact counts, order and placement. Never add a fastening to fill a gap or another tier to make the garment more regular. Preserve readable marks exactly; retain uncertain visible features rather than redesigning them. Do not invent hidden construction or transfer another garment from an example.
+The selected PRODUCT PRESENTATION owns support, camera relationship, background and lighting above EXAMPLE or MOOD. Ignore conflicting example presentation, scenery, props, framing, color grading and lighting. Keep the complete garment inside the frame with a small clean margin. Every cuff, sleeve tip, strap and hem must be fully inside all four image edges; zoom out instead of clipping the garment. Remove people, body parts and temporary retail tags without deleting permanent sewn labels or garment details. Retouch away all temporary suspension hardware, including transparent plastic hangers, hooks, clips, wires and their reflections. The final image contains no visible support of any material. Add no styling accessories, decorative props, text overlays, watermark or collage. Preserve real fabric depth and texture without artificially sharpening unsupported microtexture. Keep fine stripe colors, spacing, contrast and crochet holes visible at the same relative scale. Neutralize the scene without bleaching the fabric, weakening colored stripes or warming the garment toward cream. Improve temporary wrinkles only; do not straighten away construction, change hem width, taper legs or cinch the waist.
+
+[[ghost]]
+Use invisible support to give the garment believable worn three-dimensional volume and a clean, balanced silhouette. Show genuine cavity depth at openings and a gently rounded fabric cross-section, clearly distinct from the planar flat mode. Preserve the photographed garment's cut and proportions; create support depth rather than a narrower waist or balloon-shaped legs. No visible mannequin, human body, neck, arms, hanger or support. Show openings and naturally visible inner edges without inventing the hidden reverse. Use a clean white or off-white seamless background, soft neutral studio light and restrained physically coherent shadows. Keep product color faithful without a scene tint.
+
+[[flat]]
+Photograph the garment front-on as if on a transparent hanger, with the selected original side facing the camera, then completely remove the hanger and every suspension part in the finished photograph. Keep its naturally relaxed, relatively flat silhouette and gravity-led folds. Avoid exaggerated torso, chest, shoulder or hip volume; preserve the garment's actual cut and width. Keep the waistband and body planar rather than opening them into a hollow cylinder. There is no visible hanger, hook, clip, clear plastic, human or mannequin in the final image. Do not force an overhead or laid-on-floor view. Use a clean white or off-white background and soft neutral light with subtle coherent shadow and no color cast on the garment.
+
+[[natural_light]]
+Use soft window light in a simple believable product-photography setting. Present the complete garment naturally on a clean white or off-white real surface with a coherent soft contact and cast shadow, clear edge depth and relaxed fabric drape. Place the light source outside the frame: only its broad soft illumination and one consistent directional shadow are visible, never the window or its frame. The garment is supported against the surface, not floating above a detached shadow. Keep the selected original side visible. Maintain neutral white balance and the PRODUCT's true colors; do not tint the garment warm, yellow, blue or gray to imitate the scene. No people, body-shaped mannequin volume, busy room, window-frame props, plants or decorative staging. Keep the surface subtle and the garment dominant. Preserve the same construction and full uncropped outline as the other modes while making the directional daylight visibly different from even studio lighting.
+
+[[TYPE:top]]
+Preserve the actual neckline, shoulder and arm-opening construction, sleeve shape and length, chest width and hem. Sleeveless or strapless source garments remain sleeveless or strapless; never add sleeves, straps or shoulders. Change only photographic support and fabric drape required by the selected presentation, not the garment cut.
+
+[[TYPE:bottom]]
+Never add a neckline, shoulders, torso or body legs. For trousers or shorts preserve the waistband, rise, crotch, seat, fly, pockets, seams, leg width and full hem length actually shown. In ghost mode support the waist and seat invisibly without adding anatomy or inflating the crotch. For a skirt preserve its actual continuous skirt panels, pleats, waistband and natural hem drape; do not invent a trouser fork or extra folds. Use only the source garment to decide whether it has divided legs or a continuous skirt.
+
+[[TYPE:outer]]
+Preserve the actual lapels, front opening and closure hardware, collar, shoulders, sleeves, pockets, length and supported lining edges. Do not invent unseen lining, close an opening unsupported by the source, add an inner garment or replace real fasteners. Ghost support must remain inside the garment without visible anatomy or mannequin parts.
+
+[[TYPE:dress]]
+Keep the bodice and skirt as one continuous garment. Preserve the actual neckline, sleeve or strap construction, waist seam, skirt panels, pleats and hem length. Let the skirt drape naturally under its own weight without inventing a narrower waist, fuller skirt, leg split or extra gathers. Sleeveless and strapless designs remain as photographed.
+
+[[MODEL:nano_banana]]
+Apply the requested presentation to the attached original. Treat evidence as product truth; use the visible garment construction to resolve changes and preserve every unrequested product attribute.
+
+[[MODEL:gemini_pro]]
+Read the complete garment silhouette and fine construction evidence together before making the requested presentation. Return one coherent final product photograph.
+
+[[MODEL:flare]]
+Edit the attached garment photo into the requested presentation. Make the smallest necessary change; preserve the product identity and all unrequested construction.
+
+[[MODEL:sunburst]]
+Use the attached original as the edit source. Follow the priority order: garment identity and visible construction, requested presentation, photographic finish. Preserve uncertain source features rather than redesigning them.

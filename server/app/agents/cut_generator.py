@@ -30,7 +30,7 @@ from .confirmed_gpt_prompt import (
     confirmed_gpt_framing_contract,
 )
 from .cut_plan import compile_cut_plan, render_prompt_contract
-from . import horizon_background
+from . import horizon_background, product_photography, product_button_qc
 from .outer_closure import STATES as _OUTER_CLOSURE_STATES, DEFAULT
 from .directing_profile import render_directing_profile
 from .gemini_image import GeminiImageClient, InlineImage
@@ -106,11 +106,25 @@ def _normalize_detail_color_transfer(value) -> dict | None:
     }
 
 
+def product_runtime_spec(raw: dict) -> dict:
+    """Ignore retained art references on a runtime copy of an explicit product mode."""
+    if product_photography.normalize(raw.get("productPresentation"),
+            cut_type=raw.get("cutType") or raw.get("cut_type"), shot=raw.get("shot")) is None:
+        return raw
+    out = {key: value for key, value in raw.items()
+           if key not in {"example_id", "ref_asset_ids", "ref_scope", "space_group_id", "space_variation",
+                          "_exampleRepeatIndex", "_spaceSetContinuity", "_referenceDirectionCompatible",
+                          "_referenceFaceVisibility"}}
+    out.update(exampleId=None, exampleSelectionOrigin=None, refAssetIds=[], refImages=[],
+               spaceGroupId=None, spaceVariation="subtle", refScope="all")
+    return out
+
+
 def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
     """프론트를 믿지 않는다 — 컷 계약(ADR-0004)을 서버에서도 강제.
     UI 정규화와 같은 규칙: product=방향 front/back·샷 ghost/detail,
     착용컷=front/side/back·full/medium."""
-    raw = canonicalize_storyboard_block(raw)
+    raw = product_runtime_spec(canonicalize_storyboard_block(raw))
     cut = raw.get("cutType") or raw.get("cut_type")
     if cut not in CUT_TYPES:
         raise ValueError("unknown_cut_type")
@@ -188,6 +202,9 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         # 계산하는 런타임 값이며 저장 계약이나 클라이언트 입력의 정본이 아니다.
         "_exampleRepeatIndex": example_repeat_index,
     }
+    presentation = product_photography.normalize(raw.get("productPresentation"), cut_type=cut, shot=shot)
+    if presentation is not None:
+        spec["productPresentation"] = presentation
     if cut == "horizon" and raw.get("_horizonReferenceShot") in {"full", "medium"}:
         spec["_horizonReferenceShot"] = raw["_horizonReferenceShot"]
     if horizon_background.active({**raw, "cutType": cut}):
@@ -688,6 +705,7 @@ def render_cut_prompt(
     face_shape_profile: dict | None = None,
     face_pass: bool = False,
     outfit_roles: tuple[str, ...] = (),
+    generation_model: str | None = None,
 ) -> str:
     """섹션 선택 + ${토큰} 치환 + PRODUCT CONTEXT(ground truth) 자동 주입.
 
@@ -701,6 +719,7 @@ def render_cut_prompt(
     """
     sec = _sections(template)
     cut, shot = spec["cutType"], spec["shot"]
+    presentation = product_photography.normalize(spec.get("productPresentation"), cut_type=cut, shot=shot)
     horizon_tone = cut == "horizon" and horizon_background.active(spec)
     # 디테일 컷 2모드 판정(2026-08-07 스펙 §5) — 근거는 컷 방향과 같은 쪽만 인정한다.
     # 방향 디테일 라벨 有 → 정밀 모드(SHOT:detail). 없고 같은 방향 원본 라벨만 有 →
@@ -774,6 +793,26 @@ def render_cut_prompt(
                               + ("_identity" if spec["direction"] == "side" and (
                                   spec.get("sideStyle") == "threeQuarter"
                                   or (face_pass and spec.get("sideStyle") != "profile")) else ""))
+    if presentation is not None:
+        source_label = _SLOT_LABEL["Back" if spec["direction"] == "back" else "Front"]
+        if source_label not in image_manifest:
+            raise ValueError("product_source_photo_required")
+        # Product modes use a compact garment-only task, without generic lifestyle,
+        # mannequin-fit or example-scene instructions that could contradict the mode.
+        product_manifest = "\n".join(
+            line.split(" — ", 1)[0] + " — no authority over product, presentation, camera, scene or light"
+            if "EXAMPLE REFERENCE" in line or "MOOD —" in line else line
+            for line in image_manifest.splitlines()
+        )
+        return "\n\n".join(part for part in (
+            "Create one photorealistic Korean fashion e-commerce product photograph.",
+            authority_plan_line,
+            product_photography.render_prompt(presentation, model=generation_model,
+                                              clothing_type=clothing_type),
+            direction_line,
+            "OUTPUT: one portrait 2:3 photograph. Add no caption, overlay, watermark or collage.",
+            f"ATTACHED IMAGES (in order):\n{product_manifest}",
+        ) if part)
     if use_licensed_face:
         face_line = need("FACE:licensed")
     elif (
@@ -1574,6 +1613,7 @@ def build_prompt(
     face_shape_profile: dict | None = None,
     qc_corrections: tuple[str, ...] = (),
     face_pass: bool = False,
+    generation_model: str | None = None,
 ) -> str:
     """스펙 정규화(ValueError=unknown_cut_type) + 템플릿 렌더. manifest 미지정 시
     일반 컷은 해당 색상 상품 슬롯을, 디테일 컷은 detail_reference_images 정책의 상품 슬롯을
@@ -1615,7 +1655,7 @@ def build_prompt(
         body_profile=body_profile,
         hair_profile=hair_profile,
         face_shape_profile=face_shape_profile,
-        face_pass=face_pass)
+        face_pass=face_pass, generation_model=generation_model)
     if qc_corrections:
         prompt += (
             "\n\nINDEPENDENT QC CORRECTION — regenerate from the original authority "
@@ -1786,6 +1826,7 @@ def _base_request(
             # 각도 교체 컷은 얼굴 패스를 안 탄다 — 옆모습을 3/4 로 바꾸지 않고 진짜 옆모습을 주문한다.
             face_pass=(_face_identity_spec(settings, spec, clothing_type, face_identity_spec) is not None
                        and _angle_swap_direction(spec, clothing_type, angle_swap) is None),
+            generation_model=model,
         )
     provider_kwargs = {"aspect_ratio": settings.mannequin_aspect_ratio}
     if confirmed_prompt_input is not None:
@@ -1863,6 +1904,8 @@ async def generate(
     angle_swap: face_angle_swap.AngleSwapSpec | None = None,
     # 베이스컷 체크포인트(BaseCheckpoint). 없으면 기존 동작 그대로 — provider 1콜 + 후처리.
     base_checkpoint: BaseCheckpoint | None = None,
+    product_button_qc_outcome: dict | None = None,
+    product_button_qc_source_images: list[InlineImage] | None = None,
 ) -> tuple[bytes, str]:
     """컷 1개 생성. 실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리).
     스펙 위반(unknown cutType)은 ValueError — 조용한 styling 폴백을 하지 않는다
@@ -1883,6 +1926,11 @@ async def generate(
         confirmed_prompt_input=confirmed_prompt_input, angle_swap=angle_swap,
     )
     spec, clothing_type = request.spec, request.clothing_type
+    if product_button_qc.eligible(spec):
+        return await product_button_qc.generate_guarded(
+            settings, gemini, request, images, manifest,
+            checkpoint=base_checkpoint, outcome=product_button_qc_outcome,
+            source_images=product_button_qc_source_images)
     if base_checkpoint is not None and base_checkpoint.image is not None:
         # 이미 값을 치른 베이스 — provider 를 부르지 않고 후처리만 다시 한다.
         image, mime = base_checkpoint.image

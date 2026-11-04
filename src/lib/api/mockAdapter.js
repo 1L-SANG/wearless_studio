@@ -8,10 +8,11 @@ import { classifyEditorAssetInfo, extractEditorAssetId } from '@/lib/editorAsset
 import { OUTER_CLOSURE_VALUES, outerClosureDisplayValue, outerClosureRange } from '@/lib/outerClosure.js';
 import { isSupportedCutType } from '@/lib/storyboardTaxonomy.js';
 import { mockQuery, MOCK_TIDY_KNIT } from '@/mock/outfitV18Fixtures.js';
+import { normalizeProductPresentation } from '@/lib/storyboardTaxonomy.js';
 
 // Mirrors ADR-0019's server recipe fields. UI-only canvas and preview fields stay out.
 const RECIPE_FIELDS = [
-  'sectionRole', 'contentRole', 'cutType', 'shot', 'direction', 'sideStyle', 'colorId',
+  'sectionRole', 'contentRole', 'cutType', 'shot', 'productPresentation', 'direction', 'sideStyle', 'colorId',
   'faceExposure', 'modelId', 'matchIds', 'matchIdsOrigin', 'refAssetIds', 'refScope',
   'exampleId', 'exampleSelectionOrigin', 'outerClosureState', 'detailTargetId',
   'detailTargetOrigin', 'spaceGroupId', 'spaceVariation', 'spaceSetMemberOrder', 'horizonBackgroundMode',
@@ -19,7 +20,7 @@ const RECIPE_FIELDS = [
 const clone = (value) => structuredClone(value);
 const error = (code, message, status = 400) => Object.assign(new Error(message), { code, status });
 const hasKey = (key) => typeof key === 'string' && !!key.trim();
-const recipeOf = (recipe) => recipe ? Object.fromEntries(RECIPE_FIELDS.map((key) => [key, clone(recipe[key] ?? null)])) : null;
+const recipeOf = (recipe) => recipe ? normalizeProductPresentation(Object.fromEntries(RECIPE_FIELDS.map((key) => [key, clone(recipe[key] ?? null)]))) : null;
 const states = new WeakMap();
 let draftVisualsScenario = null;
 let productVisualsScenario;
@@ -82,7 +83,7 @@ function normalizedBody(request) {
   if (body.source?.src && extractEditorAssetId(body.source.src)) {
     body.source = { ...body.source, src: `/v1/assets/${encodeURIComponent(extractEditorAssetId(body.source.src))}/file` };
   }
-  return body;
+  return normalizeProductPresentation(body);
 }
 function fingerprint(body) {
   const canonical = (value) => {

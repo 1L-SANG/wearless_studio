@@ -22,7 +22,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { DetailTargetPicker } from './DetailTargetPicker.jsx';
 import { ProductSourcePicker } from './ProductSourcePicker.jsx';
-import { productSourceColorPatch } from '../../lib/productSourcePhotos.js';
+import { productSourceColorPatch, productSourcePhotos } from '../../lib/productSourcePhotos.js';
 import HorizonBackgroundControl from './HorizonBackgroundControl.jsx';
 import SpaceSetHoverPreview from './SpaceSetHoverPreview.jsx';
 import { CATALOG_DRAG_MIME, catalogMemberTarget, createIndependentCatalogMembers, independentSpaceSetChoices, insertCatalogBlocks, resolveCatalogDrag, setCatalogDragImage } from '@/lib/storyboardCatalogDrag.js';
@@ -43,12 +43,14 @@ import {
   SECTION_ROLES,
   SECTION_ROLE_OPTIONS,
   STORYBOARD_TAXONOMY_VERSION,
+  PRODUCT_PRESENTATION_OPTIONS,
   allowedCutTypeOptionsForSection,
   blockPatchForContentRole,
   cutTypeOptionsForSection,
   defaultContentRoleForSection,
   hasDetailSource,
   normalizedRecipePatch,
+  productPresentationOf,
   poseExampleDirectionCompatible,
   sectionRoleForContentRole,
   sectionTitle,
@@ -62,6 +64,7 @@ import {
   generationGalleryPageForKey,
   hasSelectableGenerationExamples,
   hasAvailableGenerationRecipe,
+  isSourceBasedProductRecipe,
   isGenerationCombinationPublic,
   paginateGenerationGalleryItems,
   repeatedAllExampleVariationIds,
@@ -322,7 +325,8 @@ function StoryboardInsertControl({
 function cardLabels(block, catalogs) {
   const isProduct = block.cutType === 'product';
   const shot = isProduct
-    ? (catalogs.productShotTypes.find((item) => item.value === block.shot)?.label || '고스트샷')
+    ? ((block.shot === 'ghost' && { ghost: '고스트컷', flat: '평면컷', natural_light: '자연광컷' }[block.productPresentation])
+      || catalogs.productShotTypes.find((item) => item.value === block.shot)?.label || '고스트샷')
     : (catalogs.shotTypes.find((item) => item.value === block.shot)?.label || '—');
   return { shot: isProduct && block.shot === 'ghost' ? `${shot} · ${block.direction === 'back' ? '뒷면' : '앞면'} 사진` : shot, isProduct };
 }
@@ -482,11 +486,22 @@ function BundleSwapArrows({ move }) {
 
 function storyboardPreviewSource(block, catalogs) {
   if (!block) return null;
-  const detail = detailTargetPresentation(block, catalogs?.detailProduct, catalogs?.detailRecommendations);
-  if (detail) return detail.src;
+  const sourcePhoto = storyboardSourcePhoto(block, catalogs);
+  if (sourcePhoto) return sourcePhoto.src;
   if (block.source === 'mine') return block.thumb || mineImageUrl(block.ownImages?.[0]);
   const example = catalogs?.genExamples?.find((item) => item.id === block.exampleId);
   return block.previewThumb || (example ? generationExampleImageSources(example).src : null) || block.thumb;
+}
+
+function storyboardSourcePhoto(block, catalogs) {
+  const detail = detailTargetPresentation(block, catalogs?.detailProduct, catalogs?.detailRecommendations);
+  if (detail) return detail;
+  if (!productPresentationOf(block)) return null;
+  const direction = block.direction === 'back' ? 'back' : 'front';
+  return {
+    src: productSourcePhotos(catalogs?.detailProduct, block.colorId)[direction]?.src || null,
+    label: direction === 'back' ? '뒷면 사진' : '앞면 사진',
+  };
 }
 
 function StoryboardMedia({
@@ -496,8 +511,8 @@ function StoryboardMedia({
 }) {
   const similarControls = useContext(SimilarCutControlsContext);
   const similarCount = similarControls?.counts.get(block.id) || 0;
-  const detail = detailTargetPresentation(block, catalogs?.detailProduct, catalogs?.detailRecommendations);
-  const missing = detail ? !detail.src : block.source !== 'mine' && !block.exampleId && !block.previewThumb;
+  const sourcePhoto = storyboardSourcePhoto(block, catalogs);
+  const missing = sourcePhoto ? !sourcePhoto.src : block.source !== 'mine' && !block.exampleId && !block.previewThumb;
   const manualEmpty = missing && block.exampleChoice === 'manual';
   const example = block.exampleId
     ? (catalogs?.genExamples || []).find((item) => item.id === block.exampleId)
@@ -525,14 +540,14 @@ function StoryboardMedia({
       {missing ? (
         <span className={`sb-missing-body${manualEmpty ? ' manual-empty' : ''}`}>
           <span className="upload-placeholder-logo" aria-hidden="true" />
-          <i>{detail ? '상품 원본을 불러오지 못했어요' : manualEmpty
+          <i>{sourcePhoto ? '상품 원본을 불러오지 못했어요' : manualEmpty
             ? '분위기 예시를 골라주세요.'
             : '이 조합의 예시를 준비하지 못했어요 — 컷 설정을 바꾸거나 직접 예시를 골라주세요'}</i>
         </span>
       ) : (
-        <img className={detail ? "detail-source-image" : undefined} src={src} srcSet={detail ? undefined : image?.srcSet} alt={detail ? `내 상품 원본 · ${detail.label}` : ""} loading="lazy" decoding="async" />
+        <img className={sourcePhoto ? "detail-source-image" : undefined} src={src} srcSet={sourcePhoto ? undefined : image?.srcSet} alt={sourcePhoto ? `내 상품 원본 · ${sourcePhoto.label}` : ""} loading="lazy" decoding="async" />
       )}
-      {detail && <span className="sb-mine-badge">내 상품 원본 · {detail.label}</span>}
+      {sourcePhoto && <span className="sb-mine-badge">내 상품 원본 · {sourcePhoto.label}</span>}
       {showPoseVariation && (
         <span className="sb-pose-variation-note">약간 다른 포즈 적용</span>
       )}
@@ -626,7 +641,8 @@ function StoryboardCard({
   swapProps = null, canDelete = true, outOfScope = false,
 }) {
   const { block, index } = item;
-  const missing = !isProductDetail(block) && block.source !== 'mine' && !block.exampleId;
+  const missing = productPresentationOf(block) ? !storyboardPreviewSource(block, catalogs)
+    : !isProductDetail(block) && block.source !== 'mine' && !block.exampleId;
   const manualEmpty = missing && block.exampleChoice === 'manual';
   /* 네 컷 구성 격자의 첫 줄과 나란히 선 낱장 컷은 설명을 사진 위로 올린다 — 같은 줄에서
      설명 위치가 엇갈리면 한 덩어리로 안 읽힌다(2026-08-16 오너). 줄 판정은 실제 배치를 잰다. */
@@ -713,7 +729,8 @@ function StoryboardFrame({
         )}
         <div className="sb-frame-box">
           {items.map((item) => {
-            const missing = item.block.source !== 'mine' && !item.block.exampleId;
+            const missing = productPresentationOf(item.block) ? !storyboardPreviewSource(item.block, catalogs)
+              : item.block.source !== 'mine' && !item.block.exampleId;
             const manualEmpty = missing && item.block.exampleChoice === 'manual';
             return (
               <CardDragSurface
@@ -787,7 +804,8 @@ function StoryboardMoodGrid({
       <div className="sb-frame-media">
         <div className="sb-frame-box sb-moodgrid-box">
           {items.map((item) => {
-            const missing = item.block.source !== 'mine' && !item.block.exampleId;
+            const missing = productPresentationOf(item.block) ? !storyboardPreviewSource(item.block, catalogs)
+              : item.block.source !== 'mine' && !item.block.exampleId;
             const manualEmpty = missing && item.block.exampleChoice === 'manual';
             return (
               <CardDragSurface
@@ -832,12 +850,13 @@ function StoryboardStack({ group, total, catalogs, onOpen }) {
             ? (catalogs?.genExamples || []).find((candidate) => candidate.id === item.block.exampleId)
             : null;
           const image = example ? generationExampleImageSources(example) : null;
-          const detail = detailTargetPresentation(item.block, catalogs?.detailProduct, catalogs?.detailRecommendations);
+          const sourcePhoto = storyboardSourcePhoto(item.block, catalogs);
           return (
             <span key={item.block.id} className="sb-stack-cut">
               {stackIndex === 0 && <span className="sb-canvas-number">{cutNumber(item.index, total)}</span>}
-              <img className={detail ? "detail-source-image" : undefined} src={detail ? detail.src : item.block.previewThumb || image?.src || item.block.thumb || item.block.ownImages?.[0]}
-                srcSet={detail ? undefined : image?.srcSet} alt={detail ? `내 상품 원본 · ${detail.label}` : ""} loading="lazy" decoding="async" />
+              {sourcePhoto && !sourcePhoto.src ? <span className="sb-stack-empty">상품 원본을 불러오지 못했어요</span> :
+                <img className={sourcePhoto ? "detail-source-image" : undefined} src={storyboardPreviewSource(item.block, catalogs)}
+                  srcSet={sourcePhoto ? undefined : image?.srcSet} alt={sourcePhoto ? `내 상품 원본 · ${sourcePhoto.label}` : ""} loading="lazy" decoding="async" />}
             </span>
           );
         }) : <span className="sb-stack-empty">＋ 컷 추가</span>}
@@ -1226,11 +1245,12 @@ export function shouldRenderGenerationExampleGuide(block) {
    · 내 사진(refImages) = 샷 종류의 '내 이미지' 탭에서 업로드·선택
    · 카드가 사이드/뒷면이어도 선택한 예시의 전체 연출을 참고하되, 카드의 촬영 방향은 유지
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
-export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onUseMine = null, identityKind = null }) {
+export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onUseMine = null, identityKind = null, productPresentation = null }) {
   const galleryCut = cut;
-  const shotOpts = shotOptions || (cut === 'product' ? catalogs.productShotTypes
-    : catalogs.shotTypes);
+  const shotOpts = (shotOptions || (cut === 'product' ? catalogs.productShotTypes
+    : catalogs.shotTypes)).map((option) => cut === 'product' && option.value === 'ghost' ? { ...option, label: '전체컷' } : option);
   const shotVal = shotOpts.some((s) => s.value === shot) ? shot : shotOpts[0].value;
+  const explicitProduct = cut === 'product' && shotVal === 'ghost' && !!productPresentation;
   // 이 모델로 만들 수 없는 예시는 갤러리에 아예 안 띄운다(판정은 서버 규칙 표).
   const examples = React.useMemo(() => filterExamplesForModel(
     selectGenerationExamples(catalogs.genExamples, {
@@ -1381,7 +1401,7 @@ export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, on
   return (
     <div className="insp-sec">
       <div className="sb-exhead">
-        <label className="lbl">{cut === 'product' && shotVal === 'detail' ? '촬영 연출 예시 (선택)' : cut === 'product' ? '생성 예시' : '분위기 예시'}</label>
+        <label className="lbl">{explicitProduct ? '제품컷 형식' : cut === 'product' && shotVal === 'detail' ? '촬영 연출 예시 (선택)' : cut === 'product' ? '생성 예시' : '분위기 예시'}</label>
         {onShotChange
           ? <ShotSegment options={(cut === 'styling' || cut === 'horizon') ? [
             ...shotOpts, { ...MINE_SHOT_OPTION, disabled: !onRefsChange || !onUseMine },
@@ -1401,10 +1421,13 @@ export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, on
                 sideStyle,
                 appendSetOnly: true,
               },
-            ) : null} />
+            ) : (candidateShot) => hasAvailableGenerationRecipe(catalogs.genExamples, {
+              cutType: cut, shot: candidateShot, clothingType, gender,
+              productPresentation: candidateShot === 'ghost' ? (productPresentation || 'ghost') : null,
+            })} />
           : <span className="sb-exhint">{cut === 'horizon' && exampleId && refScope === 'all' ? '선택한 예시 구도 유지' : '내 사진은 이 프로젝트에서만'}</span>}
       </div>
-      {mineTab ? (
+      {!explicitProduct && (mineTab ? (
         <MineImageTab images={refs} onImagesChange={onRefsChange} onChoose={onUseMine}
           onPickImage={pickReference} />
       ) : <>
@@ -1458,7 +1481,7 @@ export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, on
           </div>
         )}
       </div>}
-      </>}
+      </>)}
     </div>
   );
 }
@@ -1478,7 +1501,9 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
     // block과 requestedRecipe가 둘 다 null이면 undefined===undefined로 참이 되어
     // null.cutType을 읽다 죽는다(같은 카드 재클릭=선택 해제 시 백지 화면의 원인, 2026-07-29)
     setPendingRecipe(requestedRecipe && block && requestedRecipe.blockId === block.id
-      ? { cutType: requestedRecipe.cutType, shot: requestedRecipe.shot } : null);
+      ? { cutType: requestedRecipe.cutType, shot: requestedRecipe.shot,
+        ...(requestedRecipe.cutType === 'product' && requestedRecipe.shot === 'ghost'
+          ? { productPresentation: block.productPresentation || 'ghost' } : {}) } : null);
     setPendingChoice(null); setPendingError(null); setPendingSaving(false);
     setPickerSaveError(null); setPickerSaving(false);
   }, [block?.id, requestedRecipe?.blockId, requestedRecipe?.cutType, requestedRecipe?.shot]);
@@ -1518,6 +1543,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       cutType,
       shot,
       clothingType,
+      ...(cutType === 'product' && shot === 'ghost' ? { productPresentation: 'ghost' } : {}),
       gender: exampleGender,
       appendSetOnly: cutType !== 'product',
     },
@@ -1540,7 +1566,8 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       || block.shot;
     setPendingError(null);
     setPendingChoice(null);
-    setPendingRecipe({ cutType, shot });
+    setPendingRecipe({ cutType, shot,
+      ...(cutType === 'product' && shot === 'ghost' ? { productPresentation: 'ghost' } : {}) });
   };
   const onShotChange = (shot) => {
     if (block.cutType === 'product' && shot === 'detail') {
@@ -1554,7 +1581,8 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       if (block.shot === shot) { setPendingRecipe(null); return; }
       setPendingError(null);
       setPendingChoice(null);
-      setPendingRecipe({ cutType: 'product', shot });
+      setPendingRecipe({ cutType: 'product', shot,
+        ...(shot === 'ghost' ? { productPresentation: 'ghost' } : {}) });
       return;
     }
     onChange((current) => {
@@ -1570,7 +1598,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   const commitPendingRecipe = async (exampleId) => {
     if (!pendingRecipe || pendingSaving) return;
     const example = (catalogs.genExamples || []).find((item) => item.id === exampleId);
-    if (!example) return;
+    if (!example && !isSourceBasedProductRecipe({ ...pendingRecipe, clothingType })) return;
     const current = block;
     const nextRole = pendingRecipe.cutType === 'product'
       ? (pendingRecipe.shot === 'detail' ? CONTENT_ROLES.DETAIL : CONTENT_ROLES.PRODUCT_OVERVIEW)
@@ -1584,6 +1612,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       sectionRole: effectiveSectionRole,
       cutType: pendingRecipe.cutType,
       shot: pendingRecipe.shot,
+      productPresentation: pendingRecipe.productPresentation ?? null,
     }, nextRole, { hasDetailImage });
     const recipePatch = baseRecipePatch;
     const nextColorOpts = nextRole === CONTENT_ROLES.DETAIL ? detailColorOpts : colorOpts;
@@ -1599,7 +1628,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       angle: 'same',
       exampleId,
       baseThumb: current.baseThumb ?? current.thumb,
-      exampleSelectionOrigin: 'user',
+      exampleSelectionOrigin: exampleId ? 'user' : null,
       refScope: pendingInSpace && recipePatch.cutType !== 'horizon' ? 'pose' : 'all',
       outerClosureState: clothingType === 'outer' && WORN_CUT_TYPES.has(recipePatch.cutType)
         ? normalizeOuterClosureState(current.outerClosureState)
@@ -1607,6 +1636,9 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       ...(recipePatch.cutType === 'product' ? { matchIds: [], faceExposure: null } : {}),
       ...(recipePatch.cutType === 'product'
         ? { direction: ['front', 'back'].includes(current.direction) ? current.direction : 'front' } : {}),
+      ...(recipePatch.cutType === 'product' && catalogs.detailProduct
+        ? productSourceColorPatch({ ...current, ...recipePatch,
+          direction: current.direction === 'back' ? 'back' : 'front' }, catalogs.detailProduct, colorId) : {}),
     }, catalogs);
     setPendingChoice(exampleId);
     setPendingSaving(true);
@@ -1704,6 +1736,20 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
 
       {pendingRecipe ? (
         <div className="sb-pending-recipe">
+          {pendingRecipe.cutType === 'product' && pendingRecipe.shot === 'ghost' && (
+            <div className="insp-sec">
+              <label className="lbl">촬영 방식</label>
+              <div className="chips" role="group" aria-label="촬영 방식">
+                {PRODUCT_PRESENTATION_OPTIONS.map((option) => (
+                  <button key={option.value} type="button" className={`chip${pendingRecipe.productPresentation === option.value ? ' on' : ''}`}
+                    aria-pressed={pendingRecipe.productPresentation === option.value}
+                    onClick={() => setPendingRecipe((current) => ({ ...current, productPresentation: option.value }))}>{option.label}</button>
+                ))}
+              </div>
+              <p className="hint">평면컷은 옷을 정면으로 펼쳐 보여줘요.</p>
+              <Button disabled={pendingSaving} onClick={() => commitPendingRecipe(null)}>제품컷 적용</Button>
+            </div>
+          )}
           {requestedRecipe && <button type="button" className="insp-cancel-new" onClick={() => {
             setPendingRecipe(null);
             onCancelRequestedRecipe?.();
@@ -1713,14 +1759,16 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
               direction={block.direction}
               sideStyle={block.sideStyle ?? null}
               shot={pendingRecipe.shot}
+              productPresentation={pendingRecipe.productPresentation}
               shotOptions={pendingRecipe.cutType === 'product' ? productShotOptions : null}
-              onShotChange={(shot) => setPendingRecipe((current) => ({ ...current, shot }))}
+              onShotChange={(shot) => setPendingRecipe((current) => ({ ...current, shot,
+                productPresentation: shot === 'ghost' ? 'ghost' : null }))}
               clothingType={clothingType} gender={exampleGender}
               exampleId={pendingChoice} onExampleChange={commitPendingRecipe} onExampleDrag={onExampleDrag}
               refScope={pendingInSpace && pendingRecipe.cutType !== 'horizon' ? 'pose' : 'all'} />
           )}
           {pendingError && <div className="sb-save-error">{pendingError}
-            <button type="button" disabled={!pendingChoice || pendingSaving}
+            <button type="button" disabled={(!pendingChoice && !isSourceBasedProductRecipe({ ...pendingRecipe, clothingType })) || pendingSaving}
               onClick={() => commitPendingRecipe(pendingChoice)}>다시 시도</button>
           </div>}
         </div>
@@ -1729,8 +1777,24 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
           {isDetail && <DetailTargetPicker block={block} product={catalogs.detailProduct}
             catalogs={catalogs} recommendations={catalogs.detailRecommendations} onChange={onChange} />}
           {isProduct && !isDetail && !block.spaceGroupId && <>
+            <div className="insp-sec">
+              <label className="lbl">촬영 방식</label>
+              <div className="chips" role="group" aria-label="촬영 방식">
+                {[
+                  ...(hasSelectableGenerationExamples(catalogs.genExamples, { cutType: block.cutType, shot: block.shot, clothingType, gender: exampleGender })
+                    ? [{ value: null, label: '생성예시 따르기' }] : []),
+                  ...PRODUCT_PRESENTATION_OPTIONS,
+                ].map((option) => (
+                  <button key={option.value || 'example'} type="button"
+                    className={`chip${(block.productPresentation || null) === option.value ? ' on' : ''}`}
+                    aria-pressed={(block.productPresentation || null) === option.value}
+                    onClick={() => onChange({ productPresentation: option.value })}>{option.label}</button>
+                ))}
+              </div>
+              <p className="hint">평면컷은 옷을 정면으로 펼쳐 보여줘요.</p>
+            </div>
             <ProductSourcePicker block={block} product={catalogs.detailProduct} catalogs={catalogs} onChange={onChange} />
-            <p className="hint">예시 사진은 연출만 참고해요.</p>
+            {!block.productPresentation && <p className="hint">예시 사진은 연출만 참고해요.</p>}
           </>}
           {isSignatureSlot && (
             <SignatureCutGallery
@@ -1755,6 +1819,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
               spaceGroupId: null, spaceVariation: null,
             })} catalogs={catalogs} cut={block.cutType}
               direction={block.direction} sideStyle={block.sideStyle ?? null} shot={block.shot}
+              productPresentation={block.productPresentation}
               shotOptions={isProduct ? productShotOptions : null}
               onShotChange={block.cutType === 'horizon' && block.exampleId && (block.refScope || 'all') === 'all' ? null : onShotChange}
               clothingType={clothingType} gender={exampleGender}

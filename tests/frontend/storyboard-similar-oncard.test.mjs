@@ -6,6 +6,8 @@ import { transformWithEsbuild } from 'vite';
 import { canPlanSimilarCut } from '../../src/lib/storyboardSimilarCuts.js';
 import { detailTargetPresentation, isProductDetail } from '../../src/lib/detailRecommendations.js';
 import { generationExampleImageSources } from '../../src/lib/generationExamples.js';
+import { productPresentationOf } from '../../src/lib/storyboardTaxonomy.js';
+import { productSourcePhotos } from '../../src/lib/productSourcePhotos.js';
 
 const source = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../../src/styles/sellerDesign.css', import.meta.url), 'utf8');
@@ -14,14 +16,14 @@ let cardComponents;
 let controls;
 
 before(async () => {
-  const jsx = source.slice(source.indexOf('function StoryboardMedia('), source.indexOf('function StoryboardStack('));
+  const jsx = source.slice(source.indexOf('function storyboardPreviewSource('), source.indexOf('function StoryboardStack('));
   const { code } = await transformWithEsbuild(jsx, 'cards.jsx', { loader: 'jsx' });
   cardComponents = new Function('scope', `with (scope) { ${code}
     return { StoryboardMedia, StoryboardCard, StoryboardFrame, StoryboardMoodGrid }; }`)({
-    React, canPlanSimilarCut, detailTargetPresentation, isProductDetail, generationExampleImageSources,
+    React, canPlanSimilarCut, detailTargetPresentation, isProductDetail, generationExampleImageSources, productPresentationOf, productSourcePhotos,
     SimilarCutControlsContext: {}, useContext: () => controls,
     useRef: () => ({ current: null }), useState: () => [false, () => {}], useLayoutEffect: () => {},
-    storyboardPreviewSource: block => block.thumb, cutNumber: (index, total) => `${index}/${total}`,
+    mineImageUrl: value => typeof value === 'string' ? value : value?.url, cutNumber: (index, total) => `${index}/${total}`,
     Icon: 'svg', BundleSwapArrows: 'swap-arrows', StoryboardCardActions: 'card-actions',
     StoryboardCaption: 'caption', SelectionRing: 'selection-ring',
   });

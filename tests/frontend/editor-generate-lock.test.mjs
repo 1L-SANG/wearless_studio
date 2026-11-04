@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { normalizeProductPresentation, PRODUCT_PRESENTATION_OPTIONS } from '../../src/lib/storyboardTaxonomy.js';
 import { isRealModelSelection } from '../../src/features/analysis/modelSelection.js';
 import { buildFailedCutRetry } from '../../src/features/editor/failedCutRetry.js';
 import { isSupportedCutType } from '../../src/lib/storyboardTaxonomy.js';
@@ -68,8 +69,8 @@ function harness({ holdPost = false, loseFirstResponse = false, timeout = false,
   const pollJob = new Function('http', 'Date', 'setTimeout', 'jobFailure', `${pollSource}; return pollJob;`)(
     http, { now: () => now }, (fn) => fn(), (job) => Object.assign(new Error(job.errorMessage), { code: 'job_failed' }),
   );
-  const generateRemote = new Function('http', 'pollJob', 'EDITOR_IMAGE_JOB_TIMEOUT_MS', 'EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE', 'recordClientAction', 'isSupportedCutType',
-    `return ({${adapterSource}}).generateImage;`)(http, pollJob, 180_000, '아직 만들고 있어요.', () => {}, isSupportedCutType);
+  const generateRemote = new Function('http', 'pollJob', 'EDITOR_IMAGE_JOB_TIMEOUT_MS', 'EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE', 'recordClientAction', 'isSupportedCutType', 'normalizeProductPresentation',
+    `return ({${adapterSource}}).generateImage;`)(http, pollJob, 180_000, '아직 만들고 있어요.', () => {}, isSupportedCutType, normalizeProductPresentation);
   const context = {
     api: { generateImage: generateRemote, getJob: (id) => http(`/v1/jobs/${id}`) },
     projectId: 'project-1', analysis, brandUseCategorySaving,
@@ -115,7 +116,8 @@ async function previousRequestButton(context, retry) {
     onGenerate: () => assert.fail('현재 칸의 새 요청을 만들지 않는다'),
     onConfirmPendingGenerate: () => retry({ confirmPending: true }),
     colorOpts: [], detailColorOpts: [], ALL_CUT_TYPE_OPTIONS: [],
-    catalogs: { productShotTypes: [], shotTypes: [] }, PanelHead: () => null, Button: () => null };
+    catalogs: { productShotTypes: [], shotTypes: [] }, PRODUCT_PRESENTATION_OPTIONS,
+    PanelHead: () => null, Button: () => null };
   const panel = new Function(...Object.keys(args), `${code}; return Pending;`)(...Object.values(args))();
   return panel.props.children.find(element => element?.props?.icon === 'refresh').props.onClick;
 }

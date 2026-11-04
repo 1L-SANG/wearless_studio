@@ -3516,6 +3516,8 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
         if str(exc) == "invalid_similar_cut_relationship":
             raise _bad_request("invalid_similar_cut_relationship", "비슷한 컷의 원본 사진 카드를 확인해 주세요.")
         raise
+    validation_blocks = [cut_generator.product_runtime_spec(block) if isinstance(block, dict) else block
+                         for block in canonical]
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
@@ -3526,7 +3528,7 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
                 or block.get("spaceGroupId")
                 or block.get("space_group_id")
             )
-            for block in canonical
+            for block in validation_blocks
         ):
             product = await repo.get_product(conn, project_id) or {}
             analysis = await repo.get_analysis(conn, project_id) or {}
@@ -3537,13 +3539,13 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
             )
             gender = mannequin.select_base_gender(analysis, clothing_type)
             error = space_set_assets.validate_storyboard_space_sets(
-                canonical, clothing_type=clothing_type, gender=gender
+                validation_blocks, clothing_type=clothing_type, gender=gender
             )
             if error:
                 raise _bad_request(*error)
             standalone_set_example_blocks = [
                 block
-                for block in canonical
+                for block in validation_blocks
                 if isinstance(block, dict)
                 and str(block.get("exampleId") or "").startswith("ss_")
                 and not (
@@ -3569,7 +3571,7 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
             # 자산의 cutType 과 일치할 수 없다. 자산 존재 여부는 레지스트리 등록으로 보장된다.
             flat_blocks = [
                 block
-                for block in canonical
+                for block in validation_blocks
                 if isinstance(block, dict)
                 and block.get("exampleId")
                 and not str(block.get("exampleId")).startswith("sig_")
@@ -3840,6 +3842,8 @@ async def generate_editor_image(
             and requested_cut_type not in cut_generator.CUT_TYPES)
     ):
         raise _bad_request("unknown_cut_type", "지원하지 않는 컷 종류예요.")
+    if isinstance(body, dict) and body.get("mode") == "new":
+        body = cut_generator.product_runtime_spec(body)
     fill_requested = (body or {}).get("mode") == "fill"
     edit_requested = ((body or {}).get("mode") == "vary"
                       and (body or {}).get("variationMode") in ("color", "closure"))

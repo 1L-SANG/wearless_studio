@@ -231,6 +231,7 @@ StoryboardBlock {
   cutType: CutType | null          // 생성 레시피. 콘티 인스펙터에서 섹션별 허용 컷을 직접 선택. source='mine'이면 null
   direction?: Direction | ProductDirection | null   // 착용컷은 생성예시에서 파생(ADR-0015). 제품컷은 셀러가 고른 원본 사진의 면이고 대상이 있는 디테일은 대상의 원본 면이다. 예시는 제품컷 방향을 바꾸지 않는다(ADR-0008 2026-10-10 개정)
   shot?: ShotType | ProductShotType
+  productPresentation?: ProductPresentation // product/ghost 전용. 미지정은 기존 예시 주도 표현 유지(ADR-0024)
   detailTargetId?: string | null   // product/detail 촬영 대상. 서버 소유 분석 후보 ID만 선택; 좌표·사실은 서버에서 원본 검증 후 해석
   detailTargetOrigin?: 'auto' | 'user' // 추천 생성과 수동 선택/해제 구별. 사용자 편집을 재추천으로 덮지 않음
   outerClosureState?: OuterClosureState | null       // 아우터 착용컷(styling·horizon) 전용. 누락·모르는 값은 open (ADR-0018)
@@ -459,7 +460,8 @@ Account { name: string, avatar: string, credits: number, plan: PlanTier }
 | Direction | `front` `back` `side` | 정면/뒷면/사이드 | 모델 컷용 |
 | ProductDirection | `front` `back` | 앞면, 뒷면 | 고른 원본 사진의 면. 화면은 `productSourcePhotos`의 사진 고르기로 보여준다(ADR-0008 2026-10-10 개정) |
 | ShotType | `full` `medium` | 풀샷/중간샷 | 서비스 착용컷은 두 값만 쓴다. 생성예시 선별 도구의 `medium_knee`는 수집 원본 `knee`·`medium`을 합치는 선별 전용 토큰이며 서비스 저장값이 아니다(ADR-0007) |
-| ProductShotType | `ghost` `detail` | 고스트샷/디테일샷 | 고스트샷은 옷 전체이며 기본은 입은 듯한 부피, 플랫레이 생성예시를 고르면 펼친 표현·구도를 따른다. 기존 `flatlay` 입력은 `ghost`로 정규화. `detail`은 셀러 원본과 촬영 대상의 확인 가능한 부분을 생성·검수 근거로 사용하며, 별도 Detail 슬롯 사진을 필수로 요구하지 않음(ADR-0012·0014) |
+| ProductShotType | `ghost` `detail` | 고스트샷/디테일샷 | 전체컷의 내부값은 ghost이며, productPresentation 미지정 시 기본은 입은 듯한 부피, 플랫레이 생성예시를 고르면 펼친 표현·구도를 따른다. 기존 `flatlay` 입력은 `ghost`로 정규화. `detail`은 셀러 원본과 촬영 대상의 확인 가능한 부분을 생성·검수 근거로 사용하며, 별도 Detail 슬롯 사진을 필수로 요구하지 않음(ADR-0012·0014) |
+| ProductPresentation | `ghost` `flat` `natural_light` | 고스트컷, 평면컷, 자연광컷 | product/ghost의 선택 촬영 방식. 명시하면 표현, 배경과 조명은 예시보다 우선한다. 원본 상품 사실과 앞뒷면은 유지한다. 평면은 정면 상품사진이며 바닥 플랫레이가 아니다. 미지정·미지값과 다른 컷에서는 키를 생략한다(ADR-0024). |
 | **OuterClosureState** | `closed` `openToChest` `partial` `openToWaist` `open` | 전체 닫힘/가슴까지/반만 열림/배까지/전체 열림 | 아우터 착용컷 전용. 화면 위에서 아래 순서. 누락·모르는 값은 `open`, 그 외 컷·카테고리에서는 무시. `openToChest`·`openToWaist`는 2026-10-10 추가, `partial`은 "명치 아래까지"로 뜻을 좁힘. 두 칸 옷은 `closed`·`open`만 쓴다(ADR-0018) |
 | **ProjectStatus** | `draft` `generating` `done` | 초안/생성 중/완료 | ★ 신설 |
 | **PlanTier** | `basic` `plus` `seller` | Basic/Plus/Seller | ★ 신설 — 라벨 대문자, 토큰 소문자 |
@@ -578,6 +580,7 @@ GenerationExample {
 ```ts
 NewCutRequest {                    // AI 탭 '새 이미지 추가'
   mode: 'new'
+  productPresentation?: ProductPresentation // product/ghost 전용. 예시 없이 원본에서 생성 가능(ADR-0024)
   retryBlockId?: string            // ADR-0017, 저장 콘티의 실제 빈 칸 복원과 활성 작업 합류
   detailTargetId?: string | null   // product/detail만. 서버 소유 detailRecommendations의 ID; 원본 해시·방향 검증 후 해석
   detailTargetOrigin?: 'auto' | 'user' // 콘티 추천/수동 선택 구별. 클라이언트 사실·좌표는 생성 권한이 없음
@@ -585,7 +588,7 @@ NewCutRequest {                    // AI 탭 '새 이미지 추가'
   sectionRole?: StoryboardSectionRole  // 향후 섹션에 바로 삽입하는 경로용. 현재 UI는 의류 탭에 먼저 추가하므로 생략
   contentRole: ContentRole          // inferContentRole(cutType, shot)로 내부 자동 결정 — UI 선택 아님(콘티보드와 동일 규칙).
                                     // '첫 장면(hero)·핵심 장점(benefit)' 목적은 에디터 신규 생성에서 제거(2026-08-13 오너 결정)
-  cutType: CutType                 // 에디터도 콘티보드처럼 컷 종류를 UI에서 직접 선택(2026-08-13 개편). 발행 예시 없는 컷 종류는 비활성
+  cutType: CutType                 // 에디터도 콘티보드처럼 컷 종류를 UI에서 직접 선택(2026-08-13 개편). 발행 예시 없는 컷 종류는 비활성. 단 명시적 productPresentation의 제품 전체컷은 네 의류 종류 모두 원본으로 생성 가능
   direction: Direction | ProductDirection | null   // 제품컷은 고른 원본 사진의 면 (ADR-0008 2026-10-10 개정)
   shot: ShotType | ProductShotType
   modelId: string
@@ -688,7 +691,7 @@ ContextFillRecord {
 }
 ```
 
-모든 에디터 이미지 성공 자산은 `assets.metadata.generation`에 실제 생성 설정을 남긴다. 필드 목록은 서버의 `content_roles.GENERATION_RECIPE_FIELDS` 하나이며 아래 22키를 모두 담고 값이 없으면 `null`이다. 열림 보정, 예시 방향 적용, 시그니처 재배정이 끝난 뒤 값을 쓴다.
+모든 에디터 이미지 성공 자산은 `assets.metadata.generation`에 실제 생성 설정을 남긴다. 필드 목록은 서버의 `content_roles.GENERATION_RECIPE_FIELDS` 하나이며 아래 기본 22키는 값이 없으면 `null`이다. `productPresentation`은 유효한 제품 전체컷에서만 추가하는 선택 키이며 기존 자산에는 자동으로 채우지 않는다. 열림 보정, 예시 방향 적용, 시그니처 재배정이 끝난 뒤 값을 쓴다.
 
 ```ts
 generation: {
@@ -703,6 +706,7 @@ generation: {
     contentRole: ContentRole | null
     cutType: CutType | null
     shot: ShotType | ProductShotType | null
+    productPresentation?: ProductPresentation
     direction: Direction | ProductDirection | null
     sideStyle: string | null
     colorId: string | null
@@ -962,3 +966,13 @@ partial?: {
 유료 실행 시작을 잡 행에 먼저 커밋한다. 응답 유실이나 리스 회수 뒤 같은 유료 요청은 재발행하지 않으며, 초안 모드에서는 제공자의 5xx 응답도 자동 재호출하지 않는다. Qwen 원출력은 후속 마스크 호출 전에 저장한다. 승격 요청과 워커 완료는 같은 잡 행을 `FOR UPDATE`로 잠가 완료 순서와 관계없이 결과를 전달한다. 상품 누끼와 정돈본은 프로젝트 소유의 별도 키로 복사하고, 내 옷은 grid와 썸네일과 보드 PNG를 연결한다. 기존 전역 캐노니컬 파일은 변경하거나 소유 자산 행을 빌려오지 않는다. 상품 저장과 내 옷 등록은 클라이언트 잡 ID가 없어도 소유 사용자, 순서 있는 원본 바이트 해시, 역할, 처리 버전으로 기존 잡을 찾아 연결한다. 준비 후 스위치가 off로 바뀌어도 기존 사용자 작업이 있으면 이 조회를 유지한다. 유료 결과의 `result.state=ready`와 대상별 `applied/deliveryState`는 별도로 보존한다. 복사 실패는 대상의 `deliveryState=pending`을 유지하며 프로젝트 visuals 조회, 매칭 후보 조회, 상품 저장 큐잉에서 모델 호출 없이 전달만 재시도한다. 전달 완료, 유료 작업 진행 중, 또는 보존된 ready 결과의 전달 대기일 때만 프로젝트 앞면 정돈을 생략하고 필요한 뒷면만 처리한다. 실패한 잡의 승격 기록만으로는 앞면을 생략하지 않는다. 연결 실패는 프로젝트 확정을 막지 않는다.
 
 확정의 `DELETE /v1/draft-slot?promote=1`은 기존 토큰 소비 순서를 유지하면서 관련 잡에 30분간 승격 대기 표시를 남긴다. 그 사이 워커가 현재 원본을 잃지 않는다. 일반 삭제에는 이 표시를 남기지 않는다. 7일 회수는 내 옷 원본과 초안 파생 결과까지 포함하고, 활성 잡, 승격 대기와 연결, 현재 슬롯과 프로젝트 참조, 전역 캐노니컬 파일을 보존한다. DB 마이그레이션은 추가하지 않는다. 신규 요청을 켜기 전에 모든 서버와 워커를 교체해야 한다. 실연동과 화면 검사는 샌드박스 밖에서 진행한다.
+
+## 명시적 제품 전체컷 단추 검수 (2026-11-02, ADR-0024)
+
+일반 컷 QC의 검사 기준에도 서버에서 정규화한 `productPresentation`을 전달한다. `generic_v1`, `recipeFamily=product`, `productVariant=ghost`, `shot=ghost`와 유효한 촬영 방식이 모두 확인된 경우에만 촬영 방식과 camera, scene, light, captureTone의 `storyboard` 권한을 허용한다. 상품 구조와 소재, 부자재, 글자는 계속 상품 원본의 권한이다. 값이 없거나 착용컷과 디테일컷인 경우에는 기존 권한 검증을 유지한다.
+
+`productPresentation`을 지정한 `product/ghost` 생성에는 서버의 필수 단추 검수가 적용된다. 클라이언트는 기대 개수나 검수 통과 여부를 지정하지 않는다. 원본과 독립 반전 관찰의 부위별 개수·배열·방향이 명확하게 일치해야 생성하며 후보도 같은 방식으로 확인한다. 후보가 불일치하거나 불확실하면 원본에서 최대 한 번 재생성하고 재검수한다. 끝내 통과하지 못하면 최초 후보로 폴백하지 않는다.
+
+성공 자산은 `assets.metadata.product_button_qc`에 정책 버전, 원본 해시·선택 면·관찰 결과, 독립 관찰의 사용량, 시도별 후보 해시·판정, 최종 통과 해시를 기록한다. 생성 job 메타 요약 키는 `productButtonQc`다. 검수 결과는 서버 내부 관찰 기록이며 상품 사실이나 사람의 검수 인증으로 취급하지 않는다.
+
+`product_button_source_uncertain`, `product_button_source_disagreement`, `product_button_qc_failed`, `product_button_preservation_failed` 및 검수 불가 오류는 컷 실패로 처리한다. 이미지와 검수 영수증의 해시가 맞지 않아도 저장하지 않는다. 에디터는 실패와 미차감을 알리고 상세페이지는 기존 부분 발행·정산 규칙을 사용한다. 전체컷 슬롯 가격은 바뀌지 않는다.

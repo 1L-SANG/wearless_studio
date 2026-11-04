@@ -4,15 +4,28 @@ import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { createServer } from 'vite';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-test('F1 Storyboard 첫 렌더는 업로드 훅을 실행해도 ReferenceError 없이 로딩 화면을 그린다', async (t) => {
+async function createSsrVite(t) {
+  const cacheDir = await mkdtemp(join(tmpdir(), 'wearless-pr156-'));
   const vite = await createServer({
+    cacheDir,
     optimizeDeps: { noDiscovery: true, include: [] },
     root: new URL('../..', import.meta.url).pathname,
-    server: { middlewareMode: true, watch: null },
+    server: { middlewareMode: true, watch: null, hmr: false, ws: false },
     appType: 'custom',
   });
-  t.after(() => vite.close());
+  t.after(async () => {
+    await vite.close();
+    await rm(cacheDir, { recursive: true, force: true });
+  });
+  return vite;
+}
+
+test('F1 Storyboard 첫 렌더는 업로드 훅을 실행해도 ReferenceError 없이 로딩 화면을 그린다', async (t) => {
+  const vite = await createSsrVite(t);
 
   const { Storyboard } = await vite.ssrLoadModule('/src/features/storyboard/Storyboard.jsx');
   const { useAppStore } = await vite.ssrLoadModule('/src/store/useAppStore.js');
@@ -316,13 +329,7 @@ test('정리1 상품 사진 total은 시작 인자가 아니라 실제 진행률
 });
 
 test('정리2·3 업로드 로딩은 공용 ProgressBar와 결합된 status 영역을 실제로 렌더한다', async (t) => {
-  const vite = await createServer({
-    optimizeDeps: { noDiscovery: true, include: [] },
-    root: new URL('../..', import.meta.url).pathname,
-    server: { middlewareMode: true, watch: null },
-    appType: 'custom',
-  });
-  t.after(() => vite.close());
+  const vite = await createSsrVite(t);
   const { StoryboardLoadingState } = await vite.ssrLoadModule(
     '/src/features/storyboard/Storyboard.jsx'
   );

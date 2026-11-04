@@ -6,7 +6,7 @@ order and those choices keep the hidden role aligned. A missing role may be
 inferred defensively from ``cutType``; retired kind values are not interpreted.
 """
 
-from . import horizon_background
+from . import horizon_background, product_photography
 
 CONTENT_ROLES = (
     "hero",
@@ -66,7 +66,7 @@ GENERATION_RECIPE_FIELDS = (
     "faceExposure", "modelId", "matchIds", "matchIdsOrigin", "refAssetIds", "refScope",
     "exampleId", "exampleSelectionOrigin", "outerClosureState", "detailTargetId",
     "detailTargetOrigin", "spaceGroupId", "spaceVariation", "spaceSetMemberOrder",
-    "horizonBackgroundMode", "outfitSelectionsSnapshot", "outfitReferenceAssets",
+    "horizonBackgroundMode", "outfitSelectionsSnapshot", "outfitReferenceAssets", "productPresentation",
 )
 
 _SIMILAR_RECIPE_FIELDS = (
@@ -136,6 +136,11 @@ def _canonicalize_example_selection(out: dict) -> dict:
     if 'refScope' in out or 'ref_scope' in out or out.get('spaceGroupId') or out.get('space_group_id'):
         out['refScope'] = reference_scope(out)
     out.pop('ref_scope', None)
+    presentation = product_photography.normalize(
+        out.get("productPresentation"), cut_type=out.get("cutType"), shot=out.get("shot"))
+    out.pop("productPresentation", None)
+    if presentation is not None:
+        out["productPresentation"] = presentation
     example_id = out.get("exampleId") or out.get("example_id")
     origin = out.get("exampleSelectionOrigin")
     if origin is not None and origin not in ("auto", "user"):

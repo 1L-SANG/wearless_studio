@@ -31,6 +31,7 @@ from ..openai_key_fallback import (
     request_with_openai_key_fallback,
 )
 from .gemini_image import InlineImage, run_cpu_bound
+from . import product_photography
 
 logger = logging.getLogger("wearless.vision_llm")
 
@@ -83,6 +84,7 @@ _QC_OWNER_CHOICES = {
     "sceneContinuity": {"spaceSet"},
 }
 _QC_REFERENCE_ATTRIBUTES = {"pose", "camera", "scene", "light", "captureTone"}
+_QC_PRODUCT_PRESENTATION_ATTRIBUTES = {"productPresentation", "camera", "scene", "light", "captureTone"}
 _QC_IMAGE_ROLES = {"PRODUCT", "MATCHING", "BEFORE", "CURRENT", "CANDIDATE", "PLATE"}
 _QC_DETAIL_ROLES = {"SOURCE", "TARGET_CROP", "SOURCE_TILE", "CURRENT", "CURRENT_TILE"}
 _QC_DETAIL_KINDS = {"neckline", "closure", "pocket", "waist", "cuff", "hem", "construction", "surface", "fabric", "label"}
@@ -119,20 +121,35 @@ def qc_system_prompt(family: str, context=None) -> str:
             raise ValueError("missing_qc_authority_context")
         if family == "cut":
             profile = _qc_choice(context["authorityProfile"], {"generic_v1", "confirmed_gpt_v1"})
+            presentation = {}
+            if "productPresentation" in context:
+                if profile != "generic_v1":
+                    raise ValueError("invalid_qc_product_presentation_profile")
+                presentation = {
+                    "recipeFamily": _qc_choice(context["recipeFamily"], {"product"}),
+                    "productVariant": _qc_choice(context["productVariant"], {"ghost"}),
+                    "shot": _qc_choice(context["shot"], {"ghost"}),
+                    "productPresentation": _qc_choice(context["productPresentation"], product_photography.PRESENTATIONS),
+                }
             raw_owners = context["attributeOwners"]
             if not isinstance(raw_owners, dict) or not raw_owners:
                 raise ValueError("missing_qc_owners")
             owners = {}
             for attribute, owner in raw_owners.items():
-                if attribute in _QC_OWNER_CHOICES:
-                    owners[attribute] = _qc_choice(owner, _QC_OWNER_CHOICES[attribute])
+                allowed = ({"storyboard"} if presentation and attribute in _QC_PRODUCT_PRESENTATION_ATTRIBUTES
+                           else _QC_OWNER_CHOICES.get(attribute))
+                if allowed is not None:
+                    owners[attribute] = _qc_choice(owner, allowed)
                     if owner == "mannequin" and profile != "confirmed_gpt_v1":
                         raise ValueError("invalid_qc_mannequin_authority")
+            if presentation and any(owners.get(key) != "storyboard" for key in _QC_PRODUCT_PRESENTATION_ATTRIBUTES):
+                raise ValueError("missing_qc_product_presentation_authority")
             references = context["referenceAllowedAttributes"]
             if not owners or not isinstance(references, list):
                 raise ValueError("missing_qc_reference_contract")
             safe = {"authorityProfile": profile, "attributeOwners": owners,
-                    "referenceAllowedAttributes": sorted({_qc_choice(value, _QC_REFERENCE_ATTRIBUTES) for value in references})}
+                    "referenceAllowedAttributes": sorted({_qc_choice(value, _QC_REFERENCE_ATTRIBUTES) for value in references}),
+                    **presentation}
         elif family == "image":
             count = _qc_count(context["productCount"], minimum=0)
             roles = _qc_roles(context["imageRoles"], _QC_IMAGE_ROLES)

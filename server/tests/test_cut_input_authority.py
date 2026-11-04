@@ -656,6 +656,97 @@ def test_editor_excludes_selected_mannequin_from_product_and_non_base_color(monk
     assert "mannequin" not in other_color_cut["manifest"].lower()
 
 
+@pytest.mark.parametrize("mode", ["ghost", "flat", "natural_light"])
+@pytest.mark.parametrize("clothing_type", ["top", "bottom", "outer", "dress"])
+def test_editor_product_presentation_reaches_generator_and_saved_asset_recipe(monkeypatch, mode, clothing_type):
+    from test_product_button_qc import Provider, image, install_observations, observed
+    real_generate = eij.cut_generator.generate
+    captured = {}
+    _patch_editor_common(monkeypatch, captured)
+    install_observations(monkeypatch, {b"k/product": observed(0), b"OUTPUT": observed(0)})
+    resolve_asset = eij.repo.get_asset_for_user
+
+    async def no_ignored_asset_lookup(conn, uid, aid):
+        assert aid != "retired-mood", "explicit modes must not resolve ignored mood assets"
+        return await resolve_asset(conn, uid, aid)
+
+    def no_example_lookup(*args, **kwargs):
+        raise AssertionError("explicit modes must not check ignored example assets")
+
+    async def no_example_fetch(*args, **kwargs):
+        raise AssertionError("explicit modes must not fetch ignored example assets")
+
+    async def fake_product(conn, pid):
+        return {"clothingType": clothing_type, "colors": [{"id": "base", "isBase": True,
+                "images": [{"slot": "Front", "id": "product"}]}]}
+
+    async def fake_generate(settings, gemini, cut_spec, product, images, **kwargs):
+        captured["spec"] = dict(cut_spec)
+        refs = [image(ref.data) for ref in images]
+        return await real_generate(settings, Provider([b"OUTPUT"]), cut_spec, product, refs, **kwargs)
+
+    monkeypatch.setattr(eij.cut_generator, "generate", fake_generate)
+    monkeypatch.setattr(eij.repo, "get_product", fake_product)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", no_ignored_asset_lookup)
+    monkeypatch.setattr(eij.cut_generator, "example_asset_status", no_example_lookup)
+    monkeypatch.setattr(eij.cut_generator, "load_example_image", no_example_fetch)
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"), r2=_TrackingR2())
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "new", "cutType": "product", "shot": "ghost",
+        "productPresentation": mode, "direction": "front",
+        "exampleId": "retired-example", "refAssetIds": ["retired-mood"],
+    })))
+
+    assert captured["spec"]["productPresentation"] == mode
+    final = captured["finalize"]
+    assert final["image"]["metadata"]["generation"]["recipe"]["productPresentation"] == mode
+
+
+@pytest.mark.parametrize("mode", ["ghost", "flat", "natural_light"])
+@pytest.mark.parametrize("clothing_type", ["top", "bottom", "outer", "dress"])
+def test_page_prepares_every_product_presentation_without_published_example(monkeypatch, mode, clothing_type):
+    captured = {}
+    block = {"id": "product", "source": "ai", "cutType": "product", "shot": "ghost",
+             "productPresentation": mode, "direction": "back", "colorId": "base",
+             "exampleId": "retired-example", "refAssetIds": ["retired-mood"]}
+
+    async def project(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def storyboard(conn, pid):
+        return [dict(block)]
+
+    async def product(conn, pid):
+        return {"clothingType": clothing_type, "colors": [{"id": "base", "isBase": True,
+                "images": [{"slot": "Back", "id": "product"}]}]}
+
+    async def analysis(conn, pid):
+        return {}
+
+    async def asset(conn, uid, aid):
+        assert aid != "retired-mood", "explicit modes must not resolve ignored mood assets"
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    async def unexpected_example(*args, **kwargs):
+        raise AssertionError("explicit product modes do not need a published example")
+
+    for name, stub in (("get_project", project), ("get_storyboard", storyboard),
+                       ("get_product", product), ("get_analysis", analysis),
+                       ("get_asset_for_user", asset)):
+        monkeypatch.setattr(dpj.repo, name, stub)
+    monkeypatch.setattr(dpj.cut_generator, "load_example_image", unexpected_example)
+    _patch_detail_terminal(monkeypatch, captured)
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"), r2=_TrackingR2())
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+
+    prepared = _prepared_by_id(captured)["product"]
+    assert prepared[0]["productPresentation"] == mode
+    assert prepared[0]["direction"] == "back"
+    assert [image.data for image in prepared[1]] == [b"k/product"]
+    assert "PRODUCT — back view" in prepared[2]
+    assert "EXAMPLE" not in prepared[2]
+
+
 def test_editor_selected_mannequin_r2_failure_does_not_fall_back(monkeypatch):
     captured = {}
     _patch_editor_common(monkeypatch, captured)

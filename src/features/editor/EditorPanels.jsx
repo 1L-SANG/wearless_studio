@@ -20,9 +20,10 @@ import { SHAPE_D } from '@/features/editor/shapes.js';
 import { OBJECT_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
 import {
   ALL_CUT_TYPE_OPTIONS,
+  PRODUCT_PRESENTATION_OPTIONS,
   inferContentRole,
 } from '@/lib/storyboardTaxonomy.js';
-import { hasAvailableGenerationRecipe } from '@/lib/generationExamples.js';
+import { hasAvailableGenerationRecipe, hasSelectableGenerationExamples } from '@/lib/generationExamples.js';
 import { BRAND_USE_CATEGORIES } from '@/lib/brandUseCategories.js';
 import { directionSpecFromExample } from '@/lib/storyboardExampleSelection.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
@@ -265,6 +266,7 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
   const [productDirection, setProductDirection] = useState('front');
   const selectedDetailTarget = detailTargetById(detailRecommendations, detailTargetId);
   const [shot, setShot] = useState('full');
+  const [productPresentation, setProductPresentation] = useState(null);
   const [color, setColor] = useState(null);
   const virtualModels = catalogs.models || [];
   const initialModel = virtualModels.find((m) => m.recommended) || virtualModels[0];
@@ -329,6 +331,7 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
   // 원본 기반 디테일은 예시 없이 제공한다. 나머지 컷은 기존 발행 예시 게이트를 따른다.
   const hasSelectableExamples = (cut, shotValue) => hasAvailableGenerationRecipe(catalogs.genExamples, {
     cutType: cut, shot: shotValue, clothingType, gender: modelGender,
+    ...(cut === 'product' && shotValue === 'ghost' ? { productPresentation: 'ghost' } : {}),
     appendSetOnly: cut !== 'product',
   });
   const cutTypeOptions = ALL_CUT_TYPE_OPTIONS.map((option) => {
@@ -348,6 +351,9 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
     const nextShot = hasSelectableExamples(value, preferred) ? preferred
       : nextShotOpts.find((option) => hasSelectableExamples(value, option.value))?.value || preferred;
     setCutType(value); setShot(nextShot); setDetailTargetId(null);
+    setProductPresentation(value === 'product' && nextShot === 'ghost'
+      && !hasSelectableGenerationExamples(catalogs.genExamples, { cutType: value, shot: nextShot, clothingType, gender: modelGender })
+      ? 'ghost' : null);
     if (value === 'product') {
       const nextColors = nextShot === 'detail' ? detailColorOpts : colorOpts;
       const nextColorId = nextColors.some((option) => option.id === color) ? color : nextColors[0]?.id;
@@ -380,7 +386,9 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
     const cutLabel = ALL_CUT_TYPE_OPTIONS.find((option) => option.value === previous.cutType)?.label
       || '이미지';
     const shots = previous.cutType === 'product' ? catalogs.productShotTypes : catalogs.shotTypes;
-    const shotLabel = shots.find((option) => option.value === previous.shot)?.label;
+    const shotLabel = (previous.cutType === 'product' && previous.shot === 'ghost'
+      ? PRODUCT_PRESENTATION_OPTIONS.find((option) => option.value === previous.productPresentation)?.label : null)
+      || shots.find((option) => option.value === previous.shot)?.label;
     return (
       <div className="ai-failed-retry">
         <PanelHead title="이전 요청을 확인해 주세요" sub="접수 확인 후 새 이미지를 만들 수 있어요." />
@@ -406,15 +414,31 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
         shotOptions={galleryIsProduct ? galleryShotOptions : null}
         onShotChange={(v) => {
           setShot(v); setExampleId(null); setDetailTargetId(null);
+          if (v !== 'ghost') setProductPresentation(null);
+          else if (galleryIsProduct && !hasSelectableGenerationExamples(catalogs.genExamples,
+            { cutType: galleryCutType, shot: v, clothingType, gender: modelGender })) setProductPresentation('ghost');
           if (galleryIsProduct) {
             const patch = productSourceColorPatch({ cutType: galleryCutType, shot: v, direction: directionSpec.direction }, product, colorVal);
             setProductDirection(patch.direction || directionSpec.direction);
           }
         }} clothingType={clothingType} gender={modelGender}
         exampleId={exampleId} onExampleChange={selectExample}
+        productPresentation={productPresentation}
         refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
-      {isProduct && !isDetail && <ProductSourcePicker block={{ ...effectiveRecipe, colorId: colorVal }} product={product}
-        catalogs={catalogs} onChange={({ direction }) => setProductDirection(direction)} />}
+      {isProduct && !isDetail && <>
+        <div className="insp-sec">
+          <label className="lbl">촬영 방식</label>
+          <Chips options={[
+            ...(hasSelectableGenerationExamples(catalogs.genExamples, { cutType: effectiveCutType, shot: effectiveShotVal, clothingType, gender: modelGender })
+              ? [{ value: null, label: '생성예시 따르기' }] : []),
+            ...PRODUCT_PRESENTATION_OPTIONS,
+          ]}
+            value={productPresentation} allowDeselect={false} onChange={setProductPresentation} />
+          <p className="hint">평면컷은 옷을 정면으로 펼쳐 보여줘요.</p>
+        </div>
+        <ProductSourcePicker block={{ ...effectiveRecipe, colorId: colorVal }} product={product}
+          catalogs={catalogs} onChange={({ direction }) => setProductDirection(direction)} />
+      </>}
       {isDetail && <DetailTargetPicker block={{ ...effectiveRecipe, detailTargetId, colorId: colorVal }} product={product}
         catalogs={catalogs} recommendations={detailRecommendations} onChange={(patch) => {
           if ('detailTargetId' in patch) setDetailTargetId(patch.detailTargetId);
@@ -487,6 +511,7 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
         direction: directionSpec.direction,
         sideStyle: directionSpec.sideStyle,
         shot: effectiveShotVal, modelId: model, exampleId, refScope: 'all',
+        ...(isProduct && effectiveShotVal === 'ghost' && productPresentation ? { productPresentation } : {}),
         ...(isDetail ? { detailTargetId, detailTargetOrigin: 'user' } : {}),
         outerClosureState: showOuterClosure ? outerClosure : null,
         matchIds: isProduct ? [] : matchIds,

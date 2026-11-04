@@ -41,6 +41,7 @@ from ..agents import (
     outer_closure,
     page_assembler,
     page_output_qc,
+    product_button_qc,
     real_horizon_neck_repair,
     similar_cut,
     space_set_assets,
@@ -607,6 +608,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                  **({"fallback": list(b["_fallback"])} if b.get("_fallback") else {}),
                  **({"similar_cut": similar_metadata} if similar_metadata else {}),
                  **_background_result_metadata(b),
+                 **({"product_button_qc": cut_qc["productButtons"]}
+                    if isinstance(cut_qc, dict) and cut_qc.get("productButtons") else {}),
                  **({"detail_recipe": detail_shot_runtime.recipe(b)}
                     if b.get("cutType") == "product" and b.get("shot") == "detail" else {}),
                  **({"neck_repair": neck_repair_metadata}
@@ -745,6 +748,11 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                         back=angle_photos.get("sh_back")), pod_id=_angle_pod)
                     if _angle_spec is not None:
                         generate_kwargs["angle_swap"] = _angle_spec
+            button_guard = product_button_qc.eligible(b)
+            button_audit: dict = {}
+            if button_guard:
+                generate_kwargs["product_button_qc_outcome"] = button_audit
+                generate_kwargs["product_button_qc_source_images"] = qc_images
             # 결정적 실패는 베이스 값을 내기 **전에** 끝낸다(2026-09-23). 각도 교체로 갈 컷인데
             # 쓸 등록 사진이 없으면 swap 이 베이스를 다 그린 뒤 no_angle_photo 로 떨어진다 —
             # 결과는 같고 gpt-image 값만 나간다. 같은 사유·같은 빈 슬롯(미차감)으로 닫는다.
@@ -828,6 +836,11 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     img, mime = await _primary_generate()
                     _remember_outcome(img)
                     break
+                except product_button_qc.ProductButtonQCError as e:
+                    await _cut_failed(b, e.reason)
+                    if failed_cuts is not None:
+                        failed_cuts[str(b.get("id"))]["productButtonQc"] = e.audit
+                    return None
                 except ValueError as e:  # 입력 계약 위반은 작업당 한 번 운영 알림으로 모은다.
                     invalid_contracts.append({"blockId": b.get("id"),
                         "exceptionType": type(e).__name__, "message": str(e)[:200]})
@@ -946,7 +959,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                         **verdict_kwargs,
                     )
 
-                    if s.cut_output_qc_mode == "repair":
+                    if s.cut_output_qc_mode == "repair" and not button_guard:
                         route = cut_output_qc.repair_route(cut_qc)
                         repair = {
                             "attempted": False,
@@ -1057,6 +1070,13 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 if not neck_repair_metadata["applied"]:
                     cut_warnings.append({"code": "real_horizon_neck_repair_unavailable"})
 
+            if button_guard:
+                try:
+                    product_button_qc.require_verified(button_audit, InlineImage(mime, img))
+                except product_button_qc.ProductButtonQCError as exc:
+                    await _cut_failed(b, exc.reason)
+                    return None
+                cut_qc = {**(cut_qc or {}), "productButtons": button_audit}
             img_sha256 = hashlib.sha256(img).hexdigest()
             # 원장·자산 메타의 face_pass = **채택본**을 만든 호출의 결과(마지막 호출의 것이 아니라).
             face_pass_outcome.clear()
@@ -1603,6 +1623,8 @@ async def run_detail_page_job(app, job: dict) -> None:
                 'sideStyle': block.get('sideStyle') or block.get('side_style'),
             } for block in storyboard if isinstance(block, dict)}
             loaded_storyboard_digest = _storyboard_digest(storyboard)
+            storyboard = [cut_generator.product_runtime_spec(block) if isinstance(block, dict) else block
+                          for block in storyboard]
             product = await repo.get_product(conn, project_id) or {}
             analysis = await repo.get_analysis(conn, project_id) or {}
             selected_mannequin_id = (

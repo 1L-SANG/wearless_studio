@@ -28,7 +28,7 @@ from .confirmed_gpt_prompt import (
 from .gemini_image import InlineImage
 from .prompts import clean_text
 from .vision_llm import VisionError, analyze_with_fallback, qc_system_prompt
-from . import horizon_background
+from . import horizon_background, product_photography
 from .outer_closure import STATES as _CLOSURES
 
 
@@ -175,7 +175,7 @@ _OWNER_ATTRIBUTES = frozenset({
     "textLogo", "color",
     "direction", "shot", "face", "model", "matching", "outerClosure", "pose",
     "camera", "scene", "light", "captureTone", "sceneContinuity", "faceIdentity",
-    "bodyProportions", "backgroundTone",
+    "bodyProportions", "backgroundTone", "productPresentation",
 })
 _REFERENCE_ATTRIBUTES = frozenset({"pose", "camera", "scene", "light", "captureTone"})
 
@@ -486,6 +486,9 @@ def normalize_plan(plan: Any) -> dict:
     capture = _enum(capture, _CAPTURE_MODES)
     variant = source.get("productVariant") or recipe_block.get("productVariant")
     variant = _enum(variant, _PRODUCT_VARIANTS)
+    presentation = product_photography.normalize(
+        source.get("productPresentation"), cut_type=recipe,
+        shot=storyboard.get("shot", source.get("shot")))
 
     reference_mode = source.get("referenceMode", source.get("refScope", "none"))
     reference_mode = _enum(reference_mode, _REFERENCE_MODES)
@@ -604,6 +607,7 @@ def normalize_plan(plan: Any) -> dict:
         "clothingType": clothing_type or "unknown",
         "captureMode": capture or "none",
         "productVariant": variant or "none",
+        **({"productPresentation": presentation} if presentation is not None else {}),
         "referenceMode": reference_mode,
         "storyboard": {
             "shot": shot or "unknown",
@@ -738,6 +742,17 @@ def build_prompt(
         prompt += "\n\n" + _SIGNATURE_FRAMING_GUIDANCE[signature_framing]
     if contract.get("signatureBackground") is not None:
         prompt += "\n\n" + _SIGNATURE_BACKGROUND_EXCEPTION
+    if contract.get("productPresentation") is not None:
+        prompt += (
+            "\n\nPRODUCT PRESENTATION CHECK: Judge recipeIntent, framingCrop, "
+            "referenceScopeCaptureClass and lightingShadowReflectionDrape against the selected "
+            "mode below. EXAMPLE and MOOD cannot override it. Flat means front-on transparent-hanger "
+            "presentation, not a required overhead flatlay. For a flat or natural-light garment, "
+            "do not demand worn torso volume; still require source-supported fabric and edge depth. "
+            "PRODUCT source side, true color and construction remain authoritative.\n"
+            + product_photography.render_prompt(contract["productPresentation"],
+                                                clothing_type=contract.get("clothingType"))
+        )
     if contract.get("outfitRoles"):
         prompt = prompt.replace("NA only when matchingCount=0.", "NA only when the applicability table says false.")
         prompt += (
@@ -1178,6 +1193,10 @@ async def verdict(
         "attributeOwners": contract["attributeOwners"],
         "referenceAllowedAttributes": contract["referenceAllowedAttributes"],
     }
+    if authority_context is not None and contract.get("productPresentation") is not None:
+        authority_context.update(
+            recipeFamily=contract["recipeFamily"], productVariant=contract["productVariant"],
+            shot=contract["storyboard"]["shot"], productPresentation=contract["productPresentation"])
     raw, provider = await analyze_with_fallback(
         settings, prompt, images, qc_schema(), require_complete_envelope=True,
         timeout_seconds=settings.background_ai_timeout_seconds,

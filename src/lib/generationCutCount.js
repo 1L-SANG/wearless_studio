@@ -12,6 +12,7 @@
 
 import scopes from '../data/identityScopes.json' with { type: 'json' };
 import { filterSupportedStoryboardBlocks } from './storyboardTaxonomy.js';
+import { productPresentationOf } from './storyboardTaxonomy.js';
 
 const CLOSURES = ['closed', 'openToChest', 'partial', 'openToWaist', 'open'];
 const WORN_CUTS = new Set(['styling', 'horizon']);
@@ -57,23 +58,25 @@ export function uniqueGenerationCutCount(blocks, { clothingType, frontClosure } 
   let count = 0;
   for (const block of filterSupportedStoryboardBlocks(Array.isArray(blocks) ? blocks : [])) {
     if (!block || block.source === 'mine') continue;
-    if (block.spaceGroupId || block.similarSourceBlockId) { count += 1; continue; }
+    const productPresentation = productPresentationOf(block);
+    if ((block.spaceGroupId && !productPresentation) || block.similarSourceBlockId) { count += 1; continue; }
     const key = JSON.stringify({
       cutType: block.cutType ?? null,
       shot: block.shot ?? null,
+      productPresentation,
       detailTargetId: block.detailTargetId ?? null,
       direction: block.direction ?? null,
       colorId: block.colorId ?? null,
       colorIds: block.colorIds || [],
-      exampleId: block.exampleId ?? null,
+      exampleId: productPresentation ? null : block.exampleId ?? null,
       pose: block.pose ?? 'auto',
-      refScope: block.refScope ?? 'all',
+      refScope: productPresentation ? 'all' : block.refScope ?? 'all',
       matchIds: [...(block.matchIds || [])].sort(),
       faceExposure: block.faceExposure ?? null,
       angle: block.angle ?? null,
       outerClosureState: effectiveClosure(block, clothingType, frontClosure),
-      refAssetIds: block.refAssetIds || [],
-      refImages: block.refImages || [],
+      refAssetIds: productPresentation ? [] : block.refAssetIds || [],
+      refImages: productPresentation ? [] : block.refImages || [],
       contentRole: block.contentRole ?? null,
       sectionRole: block.sectionRole ?? null,
     });
