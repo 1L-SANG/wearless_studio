@@ -1193,6 +1193,10 @@ async def verdict(
         "attributeOwners": contract["attributeOwners"],
         "referenceAllowedAttributes": contract["referenceAllowedAttributes"],
     }
+    if authority_context is not None and contract.get("productPresentation") is not None:
+        authority_context.update(
+            recipeFamily=contract["recipeFamily"], productVariant=contract["productVariant"],
+            shot=contract["storyboard"]["shot"], productPresentation=contract["productPresentation"])
     raw, provider = await analyze_with_fallback(
         settings, prompt, images, qc_schema(), require_complete_envelope=True,
         timeout_seconds=settings.background_ai_timeout_seconds,

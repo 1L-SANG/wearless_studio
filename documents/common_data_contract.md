@@ -969,6 +969,8 @@ partial?: {
 
 ## 명시적 제품 전체컷 단추 검수 (2026-11-02, ADR-0024)
 
+일반 컷 QC의 검사 기준에도 서버에서 정규화한 `productPresentation`을 전달한다. `generic_v1`, `recipeFamily=product`, `productVariant=ghost`, `shot=ghost`와 유효한 촬영 방식이 모두 확인된 경우에만 촬영 방식과 camera, scene, light, captureTone의 `storyboard` 권한을 허용한다. 상품 구조와 소재, 부자재, 글자는 계속 상품 원본의 권한이다. 값이 없거나 착용컷과 디테일컷인 경우에는 기존 권한 검증을 유지한다.
+
 `productPresentation`을 지정한 `product/ghost` 생성에는 서버의 필수 단추 검수가 적용된다. 클라이언트는 기대 개수나 검수 통과 여부를 지정하지 않는다. 원본과 독립 반전 관찰의 부위별 개수·배열·방향이 명확하게 일치해야 생성하며 후보도 같은 방식으로 확인한다. 후보가 불일치하거나 불확실하면 원본에서 최대 한 번 재생성하고 재검수한다. 끝내 통과하지 못하면 최초 후보로 폴백하지 않는다.
 
 성공 자산은 `assets.metadata.product_button_qc`에 정책 버전, 원본 해시·선택 면·관찰 결과, 독립 관찰의 사용량, 시도별 후보 해시·판정, 최종 통과 해시를 기록한다. 생성 job 메타 요약 키는 `productButtonQc`다. 검수 결과는 서버 내부 관찰 기록이며 상품 사실이나 사람의 검수 인증으로 취급하지 않는다.
