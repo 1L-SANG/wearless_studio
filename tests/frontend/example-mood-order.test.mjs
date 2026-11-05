@@ -29,14 +29,14 @@ test('the first matching place bucket wins and detailSubject/id participate', ()
 });
 
 test('released heritage examples beat broad plaza and wall keywords', () => {
+  assert.equal(bucket('heritage-plaza phone-snapshot'), 'heritage');
+  assert.equal(bucket('heritage-plaza phone-snapshot'), 'heritage');
   const ids = [
-    'ex_styling_men_top_full_snapshot_01',
-    'ex_styling_men_top_medium_snapshot_01',
     'ex_styling_women_top_medium_snapshot_04',
   ];
   assert.deepEqual(ids.map((id) => exampleMoodBucket(
     genExamples.find((example) => example.id === id),
-  ).id), ['heritage', 'heritage', 'heritage']);
+  ).id), ['heritage']);
 });
 
 test('mood ordering is deterministic by bucket, then rank, then id', () => {
@@ -52,9 +52,9 @@ test('mood ordering is deterministic by bucket, then rank, then id', () => {
   assert.deepEqual(orderExamplesByMood([...input].reverse()).map((item) => item.id), expected);
 });
 
-test('all 72 released free-text moods are exercised', () => {
+test('all 55 released free-text moods are exercised', () => {
   const moods = new Set(genExamples.map((example) => example.mood).filter(Boolean));
-  assert.equal(moods.size, 72);
+  assert.equal(moods.size, 55);
 });
 
 test('runtime styling and horizon examples keep ordinary other coverage at or below 15%', () => {

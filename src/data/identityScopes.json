@@ -11,20 +11,16 @@
  "confirmedGptExcludedExampleIds": [
   "ex_styling_men_bottom_full_snapshot_01",
   "ex_styling_men_bottom_full_snapshot_03",
-  "ex_styling_men_bottom_full_snapshot_04",
   "ex_styling_men_bottom_full_snapshot_05",
   "ex_styling_men_bottom_medium_snapshot_01",
   "ex_styling_men_bottom_medium_snapshot_02",
   "ex_styling_men_bottom_medium_snapshot_04",
   "ex_styling_men_bottom_medium_snapshot_06",
-  "ex_styling_men_top_full_snapshot_04",
   "ex_styling_men_top_full_snapshot_06",
-  "ex_styling_men_top_medium_snapshot_01",
   "ex_styling_men_top_medium_snapshot_02",
   "ex_styling_men_top_medium_snapshot_03",
   "ex_styling_men_top_medium_snapshot_04",
   "ex_styling_men_top_medium_snapshot_05",
-  "ex_styling_men_top_medium_snapshot_06",
   "sig_men_01",
   "sig_men_02",
   "sig_men_03",
@@ -115,27 +111,19 @@
      "ex_product_top_detail_polo_collar_open_two_01",
      "ex_product_top_ghost_01",
      "ex_styling_men_bottom_full_snapshot_02",
-     "ex_styling_men_bottom_medium_snapshot_03",
      "ex_styling_men_bottom_medium_snapshot_05",
      "ex_styling_men_outer_full_01",
-     "ex_styling_men_outer_full_02",
      "ex_styling_men_outer_full_03",
-     "ex_styling_men_outer_full_04",
      "ex_styling_men_outer_full_05",
      "ex_styling_men_outer_full_06",
      "ex_styling_men_outer_full_07",
      "ex_styling_men_outer_full_08",
      "ex_styling_men_outer_medium_01",
-     "ex_styling_men_outer_medium_02",
      "ex_styling_men_outer_medium_03",
-     "ex_styling_men_outer_medium_04",
      "ex_styling_men_outer_medium_05",
      "ex_styling_men_outer_medium_06",
      "ex_styling_men_outer_medium_07",
      "ex_styling_men_outer_medium_08",
-     "ex_styling_men_top_full_snapshot_01",
-     "ex_styling_men_top_full_snapshot_02",
-     "ex_styling_men_top_full_snapshot_03",
      "ex_styling_women_bottom_full_snapshot_01",
      "ex_styling_women_bottom_full_snapshot_03",
      "ex_styling_women_bottom_full_snapshot_04",
@@ -147,35 +135,21 @@
      "ex_styling_women_bottom_medium_snapshot_04",
      "ex_styling_women_bottom_medium_snapshot_05",
      "ex_styling_women_bottom_medium_snapshot_06",
-     "ex_styling_women_dress_full_cafe_shop_09",
      "ex_styling_women_dress_full_city_03",
-     "ex_styling_women_dress_full_city_10",
-     "ex_styling_women_dress_full_home_01",
      "ex_styling_women_dress_full_home_04",
      "ex_styling_women_dress_full_home_07",
      "ex_styling_women_dress_full_home_08",
-     "ex_styling_women_dress_full_park_05",
-     "ex_styling_women_dress_full_resort_06",
-     "ex_styling_women_dress_medium_cafe_shop_09",
      "ex_styling_women_dress_medium_city_03",
-     "ex_styling_women_dress_medium_city_10",
-     "ex_styling_women_dress_medium_home_01",
      "ex_styling_women_dress_medium_home_04",
      "ex_styling_women_dress_medium_home_08",
-     "ex_styling_women_dress_medium_resort_06",
      "ex_styling_women_outer_full_alley_01",
      "ex_styling_women_outer_full_bakery_storefront_01",
      "ex_styling_women_outer_full_coffee_shop_entry_01",
      "ex_styling_women_outer_full_garden_01",
      "ex_styling_women_outer_full_night_city_01",
      "ex_styling_women_outer_full_rain_street_01",
-     "ex_styling_women_outer_full_stone_doorway_replacement_01",
      "ex_styling_women_outer_full_terrace_back_01",
-     "ex_styling_women_outer_medium_building_01",
-     "ex_styling_women_outer_medium_cafe_01",
-     "ex_styling_women_outer_medium_market_01",
      "ex_styling_women_outer_medium_rainy_city_01",
-     "ex_styling_women_outer_medium_record_store_01",
      "ex_styling_women_top_full_mia_cafe_snapshot_01",
      "ex_styling_women_top_full_snapshot_01",
      "ex_styling_women_top_full_snapshot_02",
@@ -184,7 +158,6 @@
      "ex_styling_women_top_full_snapshot_05",
      "ex_styling_women_top_full_snapshot_06",
      "ex_styling_women_top_medium_snapshot_01",
-     "ex_styling_women_top_medium_snapshot_02",
      "ex_styling_women_top_medium_snapshot_03",
      "ex_styling_women_top_medium_snapshot_04",
      "ex_styling_women_top_medium_snapshot_05",
@@ -1888,99 +1861,6 @@
   },
   {
    "block": {
-    "exampleId": "ex_styling_men_bottom_full_snapshot_04",
-    "cutType": "horizon",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all",
-    "sectionRole": "studio"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_full_snapshot_04",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all",
-    "sectionRole": "styling"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_full_snapshot_04",
-    "cutType": "product",
-    "direction": "front",
-    "shot": "ghost",
-    "refScope": "all",
-    "sectionRole": "product"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_full_snapshot_04",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_full_snapshot_04",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_full_snapshot_04",
-    "cutType": "styling",
-    "direction": "back",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_full_snapshot_04",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "pose"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_full_snapshot_04",
-    "cutType": "horizon",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_full_snapshot_04",
-    "cutType": "product",
-    "direction": "front",
-    "shot": "ghost",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
     "exampleId": "ex_styling_men_bottom_full_snapshot_05",
     "cutType": "horizon",
     "direction": "front",
@@ -2251,99 +2131,6 @@
   {
    "block": {
     "exampleId": "ex_styling_men_bottom_medium_snapshot_02",
-    "cutType": "product",
-    "direction": "front",
-    "shot": "ghost",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_medium_snapshot_03",
-    "cutType": "horizon",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all",
-    "sectionRole": "studio"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_medium_snapshot_03",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all",
-    "sectionRole": "styling"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_medium_snapshot_03",
-    "cutType": "product",
-    "direction": "front",
-    "shot": "ghost",
-    "refScope": "all",
-    "sectionRole": "product"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_medium_snapshot_03",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_medium_snapshot_03",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
-    "refScope": "all"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_medium_snapshot_03",
-    "cutType": "styling",
-    "direction": "back",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_medium_snapshot_03",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "pose"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_medium_snapshot_03",
-    "cutType": "horizon",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_medium_snapshot_03",
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
@@ -2725,99 +2512,6 @@
   },
   {
    "block": {
-    "exampleId": "ex_styling_men_outer_full_02",
-    "cutType": "horizon",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all",
-    "sectionRole": "studio"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_02",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all",
-    "sectionRole": "styling"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_02",
-    "cutType": "product",
-    "direction": "front",
-    "shot": "ghost",
-    "refScope": "all",
-    "sectionRole": "product"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_02",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_02",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
-    "refScope": "all"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_02",
-    "cutType": "styling",
-    "direction": "back",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_02",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "pose"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_02",
-    "cutType": "horizon",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_02",
-    "cutType": "product",
-    "direction": "front",
-    "shot": "ghost",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
     "exampleId": "ex_styling_men_outer_full_03",
     "cutType": "horizon",
     "direction": "front",
@@ -2902,99 +2596,6 @@
   {
    "block": {
     "exampleId": "ex_styling_men_outer_full_03",
-    "cutType": "product",
-    "direction": "front",
-    "shot": "ghost",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_04",
-    "cutType": "horizon",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all",
-    "sectionRole": "studio"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_04",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all",
-    "sectionRole": "styling"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_04",
-    "cutType": "product",
-    "direction": "front",
-    "shot": "ghost",
-    "refScope": "all",
-    "sectionRole": "product"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_04",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_04",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
-    "refScope": "all"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_04",
-    "cutType": "styling",
-    "direction": "back",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_04",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "pose"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_04",
-    "cutType": "horizon",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_04",
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
@@ -3469,99 +3070,6 @@
   },
   {
    "block": {
-    "exampleId": "ex_styling_men_outer_medium_02",
-    "cutType": "horizon",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all",
-    "sectionRole": "studio"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_medium_02",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all",
-    "sectionRole": "styling"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_medium_02",
-    "cutType": "product",
-    "direction": "front",
-    "shot": "ghost",
-    "refScope": "all",
-    "sectionRole": "product"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_medium_02",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_medium_02",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
-    "refScope": "all"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_medium_02",
-    "cutType": "styling",
-    "direction": "back",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_medium_02",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "pose"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_medium_02",
-    "cutType": "horizon",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_medium_02",
-    "cutType": "product",
-    "direction": "front",
-    "shot": "ghost",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
     "exampleId": "ex_styling_men_outer_medium_03",
     "cutType": "horizon",
     "direction": "front",
@@ -3646,99 +3154,6 @@
   {
    "block": {
     "exampleId": "ex_styling_men_outer_medium_03",
-    "cutType": "product",
-    "direction": "front",
-    "shot": "ghost",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_medium_04",
-    "cutType": "horizon",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all",
-    "sectionRole": "studio"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_medium_04",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all",
-    "sectionRole": "styling"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_medium_04",
-    "cutType": "product",
-    "direction": "front",
-    "shot": "ghost",
-    "refScope": "all",
-    "sectionRole": "product"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_medium_04",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_medium_04",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
-    "refScope": "all"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_medium_04",
-    "cutType": "styling",
-    "direction": "back",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_medium_04",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "pose"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_medium_04",
-    "cutType": "horizon",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "all"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_medium_04",
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
@@ -4111,6 +3526,564 @@
   {
    "block": {
     "exampleId": "ex_styling_men_outer_medium_08",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_full_snapshot_06",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "sectionRole": "studio"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_full_snapshot_06",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "sectionRole": "styling"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_full_snapshot_06",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "sectionRole": "product"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_full_snapshot_06",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_full_snapshot_06",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_full_snapshot_06",
+    "cutType": "styling",
+    "direction": "back",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_full_snapshot_06",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "pose"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_full_snapshot_06",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_full_snapshot_06",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_02",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "sectionRole": "studio"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_02",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "sectionRole": "styling"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_02",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "sectionRole": "product"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_02",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_02",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_02",
+    "cutType": "styling",
+    "direction": "back",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_02",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "pose"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_02",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_02",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_03",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "sectionRole": "studio"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_03",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "sectionRole": "styling"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_03",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "sectionRole": "product"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_03",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_03",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_03",
+    "cutType": "styling",
+    "direction": "back",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_03",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "pose"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_03",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_03",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_04",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "sectionRole": "studio"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_04",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "sectionRole": "styling"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_04",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "sectionRole": "product"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_04",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_04",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_04",
+    "cutType": "styling",
+    "direction": "back",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_04",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "pose"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_04",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_04",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_05",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "sectionRole": "studio"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_05",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "sectionRole": "styling"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_05",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "sectionRole": "product"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_05",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_05",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_05",
+    "cutType": "styling",
+    "direction": "back",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_05",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "pose"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_05",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_top_medium_snapshot_05",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_women_bottom_full_snapshot_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "sectionRole": "studio"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_women_bottom_full_snapshot_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_women_bottom_full_snapshot_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "sectionRole": "product"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_women_bottom_full_snapshot_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_women_bottom_full_snapshot_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_women_bottom_full_snapshot_01",
+    "cutType": "styling",
+    "direction": "back",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_women_bottom_full_snapshot_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "pose"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_women_bottom_full_snapshot_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_women_bottom_full_snapshot_01",
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
