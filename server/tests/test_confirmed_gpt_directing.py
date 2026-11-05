@@ -21,7 +21,6 @@ _HISTORICAL_SOURCE_IDS = {
 }
 _CURATED_HEAD_CROPPED_FULL_IDS = {
     "ex_styling_men_outer_full_06",
-    "ex_styling_women_dress_full_home_01",
     "ex_styling_women_outer_full_alley_01",
     "ex_styling_women_top_full_mia_cafe_snapshot_01",
     "ex_styling_women_top_full_snapshot_04",
@@ -95,8 +94,8 @@ def test_live_catalog_covers_every_compatible_visually_verified_example():
     }
     catalog = load_confirmed_gpt_directing_catalog()
 
-    assert len(structurally_eligible) == 55
-    assert len(catalog) == 55
+    assert len(structurally_eligible) == 42
+    assert len(catalog) == 42
     assert structurally_eligible - set(catalog) == set()
     assert set(catalog) - structurally_eligible == set()
     assert _HISTORICAL_SOURCE_IDS <= set(catalog)

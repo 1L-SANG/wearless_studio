@@ -22,7 +22,7 @@ import SCOPES from '../../src/data/identityScopes.json' with { type: 'json' };
 
 const PROFILE_BLOCK = {
   cutType: 'styling', direction: 'front', shot: 'full', refScope: 'all', pose: 'auto',
-  exampleId: 'ex_styling_men_top_full_snapshot_03',
+  exampleId: 'ex_styling_women_dress_full_home_07',
 };
 const STUDIO_SET = 'set_horizon_men_bottom_hatchingroom_2161_prod01';
 

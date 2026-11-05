@@ -328,26 +328,6 @@
     "detailSubject": null,
     "direction": "front",
     "gender": "men",
-    "id": "ex_styling_men_bottom_full_snapshot_04",
-    "mood": "building-entrance phone-snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_bottom_full_snapshot_04.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "bottom"
-    ],
-    "clothingType": "bottom",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
     "id": "ex_styling_men_bottom_full_snapshot_05",
     "mood": "residential-alley phone-snapshot",
     "presentationMethod": null,
@@ -395,26 +375,6 @@
     "shot": "medium",
     "sideStyle": null,
     "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_bottom_medium_snapshot_02.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "bottom"
-    ],
-    "clothingType": "bottom",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "side",
-    "gender": "men",
-    "id": "ex_styling_men_bottom_medium_snapshot_03",
-    "mood": "roadside phone-snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "sideStyle": "threeQuarter",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_bottom_medium_snapshot_03.webp",
     "variants": [
       "all"
     ]
@@ -508,26 +468,6 @@
     "detailSubject": null,
     "direction": "front",
     "gender": "men",
-    "id": "ex_styling_men_outer_full_02",
-    "mood": "planted café seated phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_02.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
     "id": "ex_styling_men_outer_full_03",
     "mood": "dim workshop café standing phone snap",
     "presentationMethod": null,
@@ -535,26 +475,6 @@
     "shot": "full",
     "sideStyle": null,
     "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_03.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
-    "id": "ex_styling_men_outer_full_04",
-    "mood": "shaded urban building-entrance phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_04.webp",
     "variants": [
       "all"
     ]
@@ -666,26 +586,6 @@
     "clothingType": "outer",
     "cutType": "styling",
     "detailSubject": null,
-    "direction": "side",
-    "gender": "men",
-    "id": "ex_styling_men_outer_medium_02",
-    "mood": "seated café conversational phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_medium_02.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
     "direction": "front",
     "gender": "men",
     "id": "ex_styling_men_outer_medium_03",
@@ -695,26 +595,6 @@
     "shot": "medium",
     "sideStyle": null,
     "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_medium_03.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "back",
-    "gender": "men",
-    "id": "ex_styling_men_outer_medium_04",
-    "mood": "building-entrance back three-quarter phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_medium_04.webp",
     "variants": [
       "all"
     ]
@@ -806,86 +686,6 @@
     "clothingType": "top",
     "cutType": "styling",
     "detailSubject": null,
-    "direction": "side",
-    "gender": "men",
-    "id": "ex_styling_men_top_full_snapshot_01",
-    "mood": "heritage-plaza phone-snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "sideStyle": "threeQuarter",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_top_full_snapshot_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "top"
-    ],
-    "clothingType": "top",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "side",
-    "gender": "men",
-    "id": "ex_styling_men_top_full_snapshot_02",
-    "mood": "building-stairs phone-snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "sideStyle": "threeQuarter",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_top_full_snapshot_02.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "top"
-    ],
-    "clothingType": "top",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "side",
-    "gender": "men",
-    "id": "ex_styling_men_top_full_snapshot_03",
-    "mood": "office-plaza phone-snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "sideStyle": "profile",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_top_full_snapshot_03.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "top"
-    ],
-    "clothingType": "top",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
-    "id": "ex_styling_men_top_full_snapshot_04",
-    "mood": "building-corridor phone-snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_top_full_snapshot_04.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "top"
-    ],
-    "clothingType": "top",
-    "cutType": "styling",
-    "detailSubject": null,
     "direction": "front",
     "gender": "men",
     "id": "ex_styling_men_top_full_snapshot_06",
@@ -895,26 +695,6 @@
     "shot": "full",
     "sideStyle": null,
     "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_top_full_snapshot_06.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "top"
-    ],
-    "clothingType": "top",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
-    "id": "ex_styling_men_top_medium_snapshot_01",
-    "mood": "heritage-plaza phone-snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_top_medium_snapshot_01.webp",
     "variants": [
       "all"
     ]
@@ -995,26 +775,6 @@
     "shot": "medium",
     "sideStyle": null,
     "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_top_medium_snapshot_05.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "top"
-    ],
-    "clothingType": "top",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
-    "id": "ex_styling_men_top_medium_snapshot_06",
-    "mood": "building-corridor phone-snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_top_medium_snapshot_06.webp",
     "variants": [
       "all"
     ]
@@ -1246,26 +1006,6 @@
     "clothingType": "dress",
     "cutType": "styling",
     "detailSubject": null,
-    "direction": "side",
-    "gender": "women",
-    "id": "ex_styling_women_dress_full_cafe_shop_09",
-    "mood": "cafe-shop",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_cafe_shop_09.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
     "direction": "front",
     "gender": "women",
     "id": "ex_styling_women_dress_full_city_03",
@@ -1275,46 +1015,6 @@
     "shot": "full",
     "sideStyle": null,
     "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_city_03.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_full_city_10",
-    "mood": "city",
-    "presentationMethod": null,
-    "rank": 2,
-    "shot": "full",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_city_10.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_full_home_01",
-    "mood": "home",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_home_01.webp",
     "variants": [
       "all"
     ]
@@ -1388,66 +1088,6 @@
     "detailSubject": null,
     "direction": "front",
     "gender": "women",
-    "id": "ex_styling_women_dress_full_park_05",
-    "mood": "park",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_park_05.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_full_resort_06",
-    "mood": "resort",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_resort_06.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "side",
-    "gender": "women",
-    "id": "ex_styling_women_dress_medium_cafe_shop_09",
-    "mood": "cafe-shop",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_cafe_shop_09.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
     "id": "ex_styling_women_dress_medium_city_03",
     "mood": "city",
     "presentationMethod": null,
@@ -1455,46 +1095,6 @@
     "shot": "medium",
     "sideStyle": null,
     "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_city_03.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_medium_city_10",
-    "mood": "city",
-    "presentationMethod": null,
-    "rank": 2,
-    "shot": "medium",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_city_10.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_medium_home_01",
-    "mood": "home",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_home_01.webp",
     "variants": [
       "all"
     ]
@@ -1535,26 +1135,6 @@
     "shot": "medium",
     "sideStyle": null,
     "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_home_08.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_medium_resort_06",
-    "mood": "resort",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_resort_06.webp",
     "variants": [
       "all"
     ]
@@ -1686,26 +1266,6 @@
     "clothingType": "outer",
     "cutType": "styling",
     "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_outer_full_stone_doorway_replacement_01",
-    "mood": "ordinary backlit stone-wall doorway bag-checking phone snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_full_stone_doorway_replacement_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
     "direction": "back",
     "gender": "women",
     "id": "ex_styling_women_outer_full_terrace_back_01",
@@ -1728,66 +1288,6 @@
     "detailSubject": null,
     "direction": "front",
     "gender": "women",
-    "id": "ex_styling_women_outer_medium_building_01",
-    "mood": "neutral everyday building-entry detail snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_medium_building_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_outer_medium_cafe_01",
-    "mood": "playful bright-cafe phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_medium_cafe_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "back",
-    "gender": "women",
-    "id": "ex_styling_women_outer_medium_market_01",
-    "mood": "ordinary fruit-market browsing phone snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_medium_market_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
     "id": "ex_styling_women_outer_medium_rainy_city_01",
     "mood": "rainy neighborhood-crosswalk phone snapshot",
     "presentationMethod": null,
@@ -1795,26 +1295,6 @@
     "shot": "medium",
     "sideStyle": null,
     "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_medium_rainy_city_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "side",
-    "gender": "women",
-    "id": "ex_styling_women_outer_medium_record_store_01",
-    "mood": "record-store browsing snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_medium_record_store_01.webp",
     "variants": [
       "all"
     ]
@@ -1976,26 +1456,6 @@
     "shot": "medium",
     "sideStyle": null,
     "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_medium_snapshot_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "top"
-    ],
-    "clothingType": "top",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_top_medium_snapshot_02",
-    "mood": "small-cafe-seated-candid",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_medium_snapshot_02.webp",
     "variants": [
       "all"
     ]

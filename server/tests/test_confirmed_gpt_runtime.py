@@ -538,7 +538,6 @@ def test_signature_example_does_not_enter_the_confirmed_detail_profile():
     "example_id",
     (
         "ex_styling_men_outer_full_06",
-        "ex_styling_women_dress_full_home_01",
         "ex_styling_women_outer_full_alley_01",
         "ex_styling_women_top_full_mia_cafe_snapshot_01",
         "ex_styling_women_top_full_snapshot_04",
