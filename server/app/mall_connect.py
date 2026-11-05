@@ -30,6 +30,7 @@ from .services.mall_catalog import connection_version, registration_capability, 
 router = APIRouter(prefix="/v1/malls", tags=["Mall connections"])
 _INSTALL_COOKIE = "wl_cafe24_install"
 _INSTALL_PATH = "/v1/malls/cafe24"
+_PENDING_COOKIE = "wl_cafe24_pending"
 
 
 def _error(code, message, status=400):
@@ -57,8 +58,8 @@ class Cafe24Launch(BaseModel):
 
 
 def _verify_cafe24_launch(query, secret):
-    # Provisional launch contract: sort decoded query keys, omit hmac, then
-    # base64(HMAC-SHA256(client_secret, "key=value&...")); not officially confirmed.
+    # Official runappauth Java example signs the received, URL-encoded query
+    # before the final &hmac=. Never decode, sort, or re-encode that message.
     try:
         pairs = parse_qsl(query, keep_blank_values=True, encoding="utf-8", errors="strict", max_num_fields=100)
         params = dict(pairs)
@@ -68,7 +69,9 @@ def _verify_cafe24_launch(query, secret):
             return None, "missing_hmac"
         if not secret:
             return None, "unconfigured"
-        message = "&".join(f"{key}={value}" for key, value in sorted(pairs) if key != "hmac")
+        message, separator, signature = query.rpartition("&hmac=")
+        if not separator or "&" in signature or pairs[-1][0] != "hmac":
+            return None, "invalid_hmac_position"
         expected = hmac.digest(secret.encode(), message.encode(), "sha256")
         supplied = base64.b64decode(params["hmac"], validate=True)
         if not hmac.compare_digest(expected, supplied):
@@ -76,7 +79,7 @@ def _verify_cafe24_launch(query, secret):
         timestamp = params.get("timestamp", "")
         if not timestamp.isascii() or not timestamp.isdecimal() or len(timestamp) > 12:
             return None, "invalid_timestamp"
-        if abs(datetime.now(timezone.utc).timestamp() - int(timestamp)) > 3600:
+        if abs(datetime.now(timezone.utc).timestamp() - int(timestamp)) >= 7200:
             return None, "expired_timestamp"
         return params, "valid"
     except (ValueError, UnicodeError):
@@ -183,7 +186,7 @@ def _return_path(value):
     return value if value and value.startswith("/") and not value.startswith("//") else None
 
 
-def _install_result(request, code, *, return_to=None, clear_cookie=True):
+def _install_result(request, code, *, return_to=None, clear_cookie=True, cookie_name=_INSTALL_COOKIE):
     query = {"mall": "cafe24", "result": code}
     if path := _return_path(return_to):
         query["returnTo"] = path
@@ -191,15 +194,15 @@ def _install_result(request, code, *, return_to=None, clear_cookie=True):
         + "/settings/malls?" + urlencode(query), status_code=302,
         headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
     if clear_cookie:
-        response.delete_cookie(_INSTALL_COOKIE, path=_INSTALL_PATH, secure=True, httponly=True, samesite="lax")
+        response.delete_cookie(cookie_name, path=_INSTALL_PATH, secure=True, httponly=True, samesite="lax")
     return response
 
 
-def _install_cookie_hash(request, attempt_id):
+def _install_cookie_hash(request, attempt_id, cookie_name=_INSTALL_COOKIE):
     try:
         if str(uuid.UUID(attempt_id)) != attempt_id:
             return None
-        cookie_attempt_id, secret = request.cookies.get(_INSTALL_COOKIE, "").split(".", 1)
+        cookie_attempt_id, secret = request.cookies.get(cookie_name, "").split(".", 1)
         if cookie_attempt_id == attempt_id and secret:
             return hashlib.sha256(secret.encode()).digest()
     except (ValueError, TypeError, AttributeError):
@@ -260,7 +263,7 @@ async def install_cafe24(request: Request, body: Cafe24Install, user_id: str = D
 
 
 @router.post("/cafe24/launch")
-async def launch_cafe24(request: Request, body: Cafe24Launch, user_id: str = Depends(require_user)):
+async def launch_cafe24(request: Request, body: Cafe24Launch):
     params, reason = _verify_cafe24_launch(body.query.get_secret_value(), request.app.state.settings.cafe24_client_secret)
     logging.getLogger(__name__).info("cafe24_launch hmac_valid=%s reason=%s", "true" if params else "false", reason)
     if params is None:
@@ -268,11 +271,27 @@ async def launch_cafe24(request: Request, body: Cafe24Launch, user_id: str = Dep
     mall_id = normalize_mall_id(params.get("mall_id", ""))
     if mall_id is None:
         raise _error("invalid_mall_id", "몰 아이디를 확인해 주세요")
-    return await _create_cafe24_install(request,
-        Cafe24Install(mallId=mall_id, returnTo=body.returnTo), user_id, skip_connected=True)
+    settings = _require_cafe24(request)
+    if not is_allowed_mall(settings, mall_id):
+        raise _error("cafe24_not_allowed", "지금은 시범 운영 중이라 등록된 몰만 연결할 수 있어요", 403)
+    secret = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+    async with get_conn(request) as conn:
+        pending_id = await repo.create_cafe24_pending_install(conn, mall_id=mall_id,
+            return_to=_return_path(body.returnTo), cookie_hash=hashlib.sha256(secret.encode()).digest(),
+            expires_at=expires_at)
+        await conn.commit()
+    state = make_signed(derive_state_key(settings.cafe24_client_secret),
+        {"p": pending_id, "e": expires_at.timestamp()}, now=datetime.now(timezone.utc).timestamp())
+    response = JSONResponse({"startUrl": build_authorize_url(mall_id, client_id=settings.cafe24_client_id,
+        redirect_uri=settings.cafe24_redirect_uri, scopes=settings.cafe24_scopes, state=state)},
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+    response.set_cookie(_PENDING_COOKIE, f"{pending_id}.{secret}", max_age=600, path=_INSTALL_PATH,
+                        secure=True, httponly=True, samesite="lax")
+    return response
 
 
-async def _create_cafe24_install(request, body, user_id, *, skip_connected=False):
+async def _create_cafe24_install(request, body, user_id):
     settings = _require_cafe24(request)
     async with get_conn(request) as conn:
         allowed = await repo.claim_mall_connection_attempt(conn, user_id=user_id)
@@ -293,11 +312,6 @@ async def _create_cafe24_install(request, body, user_id, *, skip_connected=False
             await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:cafe24",))
         if await repo.user_account_purge_closed(conn, user_id):
             raise _error("account_closed", "계정 삭제가 완료되어 사용할 수 없습니다.", 404)
-        if skip_connected:
-            connection = await repo.get_mall_connection(conn, user_id=user_id, mall="cafe24")
-            if (connection and connection["shop_id"] == mall_id
-                    and _connection_result(connection, "cafe24")["status"] == "connected"):
-                return JSONResponse({"alreadyConnected": True}, headers={"Cache-Control": "no-store"})
         await repo.purge_old_install_attempts(conn, user_id=user_id)
         generation = await repo.mall_connection_generation(conn, user_id=user_id, mall="cafe24")
         attempt_id = await repo.create_install_attempt(conn, user_id=user_id, mall="cafe24", mall_id=mall_id,
@@ -350,32 +364,43 @@ async def cafe24_callback(request: Request):
     try:
         state = parse_signed(derive_state_key(settings.cafe24_client_secret),
             request.query_params.get("state", ""), now=datetime.now(timezone.utc).timestamp())
-        if set(state) != {"a", "e"}:
+        if set(state) not in ({"a", "e"}, {"p", "e"}):
             raise SignatureInvalid()
     except SignatureInvalid:
         return _install_result(request, "state_invalid")
-    cookie_hash = _install_cookie_hash(request, state["a"])
+    pending = "p" in state
+
+    def _callback_result(code, **kwargs):
+        return _install_result(request, code, cookie_name=_PENDING_COOKIE if pending else _INSTALL_COOKIE, **kwargs)
+
+    attempt_id = state["p"] if pending else state["a"]
+    cookie_hash = _install_cookie_hash(request, attempt_id, _PENDING_COOKIE if pending else _INSTALL_COOKIE)
     if cookie_hash is None:
-        return _install_result(request, "state_invalid")
+        return _callback_result("state_invalid")
     try:
         async with get_conn(request) as conn:
-            attempt = await repo.consume_install_attempt(conn, attempt_id=state["a"], cookie_hash=cookie_hash)
+            if pending:
+                attempt = await repo.consume_cafe24_pending_callback(conn, pending_id=attempt_id, cookie_hash=cookie_hash)
+            else:
+                attempt = await repo.consume_install_attempt(conn, attempt_id=attempt_id, cookie_hash=cookie_hash)
             # Release the one-use gate durably before any token request.
             await conn.commit()
     except Exception:
-        return _install_result(request, "token_exchange_failed")
+        return _callback_result("token_exchange_failed")
     if not attempt:
-        return _install_result(request, "state_invalid")
+        return _callback_result("state_invalid")
     if request.query_params.get("error") == "access_denied":
-        return _install_result(request, "cancelled")
+        return _callback_result("cancelled")
     code = request.query_params.get("code")
     if not code or request.query_params.get("error"):
-        return _install_result(request, "token_exchange_failed")
+        return _callback_result("token_exchange_failed")
+    if pending and not is_allowed_mall(settings, attempt["mall_id"]):
+        return _callback_result("not_allowed")
     client = _cafe24_client(settings, attempt["mall_id"])
     try:
         tokens = await client.exchange_code(code, settings.cafe24_redirect_uri)
     except Exception:
-        return _install_result(request, "token_exchange_failed")
+        return _callback_result("token_exchange_failed")
     received_at = datetime.now(timezone.utc)
     scopes = tokens.get("scopes")
     failure = None
@@ -388,12 +413,30 @@ async def cafe24_callback(request: Request):
         failure = "missing_permission"
     if failure:
         await _revoke_cafe24_token(client, tokens)
-        return _install_result(request, failure)
+        return _callback_result(failure)
     shop_name = attempt["mall_id"]
     try:
         shop_name = (await client.store(tokens["access_token"])).get("shop_name") or shop_name
     except Exception:
         pass
+    if pending:
+        try:
+            async with get_conn(request) as conn:
+                saved = await repo.save_cafe24_pending_tokens(conn, pending_id=attempt_id, shop_name=shop_name,
+                    access_token=tokens["access_token"], refresh_token=tokens["refresh_token"],
+                    token_expires_at=received_at + timedelta(hours=2, seconds=-60),
+                    refresh_expires_at=received_at + timedelta(days=14, hours=-1), scopes=scopes,
+                    kek=settings.mall_keys_kek)
+                await conn.commit()
+            if not saved:
+                raise ValueError("pending install unavailable")
+        except Exception:
+            await _revoke_cafe24_token(client, tokens)
+            return _callback_result("token_exchange_failed")
+        response = _callback_result("pending", return_to=attempt["return_to"], clear_cookie=False)
+        response.set_cookie(_PENDING_COOKIE, request.cookies[_PENDING_COOKIE], max_age=1800, path=_INSTALL_PATH,
+                            secure=True, httponly=True, samesite="lax")
+        return response
     permissions = ["상품 조회와 등록", "쇼핑몰 정보 조회"]
     if "mall.read_category" in scopes:
         permissions.append("상품 분류 조회")
@@ -412,9 +455,34 @@ async def cafe24_callback(request: Request):
         failure = "token_exchange_failed"
     if failure:
         await _revoke_cafe24_token(client, tokens)
-        return _install_result(request, failure)
+        return _callback_result(failure)
     invalidate_catalog(request.app, attempt["user_id"], "cafe24")
-    return _install_result(request, "connected", return_to=attempt["return_to"])
+    return _callback_result("connected", return_to=attempt["return_to"])
+
+
+@router.post("/cafe24/pending/claim")
+async def claim_cafe24_pending(request: Request, user_id: str = Depends(require_user)):
+    settings = _require_cafe24(request)
+    pending_id = request.cookies.get(_PENDING_COOKIE, "").split(".", 1)[0]
+    cookie_hash = _install_cookie_hash(request, pending_id, _PENDING_COOKIE)
+    if cookie_hash is None:
+        raise _error("state_invalid", "같은 브라우저에서 앱을 다시 설치해 주세요", 409)
+    try:
+        async with get_conn(request) as conn:
+            row = await repo.claim_cafe24_pending_install(conn, pending_id=pending_id,
+                cookie_hash=cookie_hash, user_id=user_id,
+                allowed_mall_ids=settings.cafe24_allowed_mall_ids)
+            await conn.commit()
+    except repo.MallAccountClosed:
+        raise _error("account_closed", "계정 삭제가 완료되어 사용할 수 없습니다.", 404) from None
+    except repo.Cafe24MallNotAllowed:
+        raise _error("cafe24_not_allowed", "지금은 시범 운영 중이라 등록된 몰만 연결할 수 있어요", 403) from None
+    if row is None:
+        raise _error("state_invalid", "설치 확인이 만료됐어요. 앱을 다시 설치해 주세요", 409)
+    invalidate_catalog(request.app, user_id, "cafe24")
+    response = JSONResponse({"connected": True}, headers={"Cache-Control": "no-store"})
+    response.delete_cookie(_PENDING_COOKIE, path=_INSTALL_PATH, secure=True, httponly=True, samesite="lax")
+    return response
 
 
 @router.post("/zigzag/connect")

@@ -3,7 +3,7 @@ import { Link, Navigate, useLocation, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
-import { captureCafe24Launch, consumeCafe24Launch } from '@/lib/cafe24Launch.js';
+import { CAFE24_INSTALL_COPY, captureCafe24Launch, consumeCafe24Launch } from '@/lib/cafe24Launch.js';
 import { Button, Icon, Modal } from '@/components/ui.jsx';
 import { ExportMenu } from '@/features/editor/ExportMenu.jsx';
 import { MallDefaultsForm } from './MallDefaultsChecklist.jsx';
@@ -167,19 +167,6 @@ export function ZigzagConnection({ connection, onChanged, detail = false, return
   </>;
 }
 
-const CAFE24_INSTALL_COPY = {
-  cancelled: '설치를 취소했어요. 다시 시도하면 돼요',
-  state_invalid: '설치 확인이 만료됐어요. 같은 브라우저에서 다시 시작해 주세요',
-  mall_mismatch: '입력한 몰 아이디와 로그인한 몰이 달라요. 몰 아이디를 확인해 주세요',
-  missing_permission: '권한을 모두 허용해야 등록할 수 있어요. 다시 설치하며 권한을 허용해 주세요',
-  not_allowed: '지금은 시범 운영 중이라 등록된 몰만 연결할 수 있어요',
-  cafe24_not_allowed: '지금은 시범 운영 중이라 등록된 몰만 연결할 수 있어요',
-  invalid_mall_id: '몰 아이디를 확인해 주세요',
-  connection_changed: '그 사이 연결이 바뀌었어요. 지금 상태를 확인한 뒤 다시 시도해 주세요',
-  token_exchange_failed: '카페24에서 인증을 마치지 못했어요. 잠시 뒤 다시 시도해 주세요',
-  account_closed: '계정 삭제가 완료되어 사용할 수 없습니다.',
-};
-
 const normalizeMallId = (value) => String(value ?? '').trim().toLowerCase().replace(/^https?:\/\//, '')
   .split(/[/?#]/, 1)[0].replace(/\.(cafe24|cafe24api)\.com$/, '');
 
@@ -223,34 +210,10 @@ export function Cafe24Connection({ connection, onChanged, returnTo, userId, unav
     window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
   }, [storageKey]);
   useEffect(() => {
-    // Wait for the account and connection query before claiming the one-use entry.
-    if (unavailable || detail || locked.current) return;
+    if (unavailable || detail) return;
     const launch = consumeCafe24Launch();
-    if (!launch) return;
-    setMallId(launch.mallId);
-    const alreadyConnected = connection?.status === 'connected' && connection.mallId === launch.mallId;
-    setState(alreadyConnected ? null : 'editing');
-    if (!new URLSearchParams(launch.query).has('hmac')) return;
-    locked.current = true; setError(''); setState('starting');
-    (async () => {
-      try {
-        try { window.sessionStorage.setItem(storageKey, launch.mallId); } catch { /* Optional input recovery. */ }
-        const result = await api.launchCafe24({ query: launch.query, returnTo, expectedUserId: userId });
-        if (!active.current) return;
-        if (result.startUrl) window.location.assign(result.startUrl);
-        else {
-          locked.current = false; setState(alreadyConnected || result.alreadyConnected ? null : 'editing');
-          if (result.alreadyConnected) onChanged?.();
-        }
-      } catch (failure) {
-        if (active.current) {
-          locked.current = false;
-          setError(CAFE24_INSTALL_COPY[failure.code] || '연결을 시작하지 못했어요. 잠시 뒤 다시 시도해 주세요');
-          setState('failed');
-        }
-      }
-    })();
-  }, [unavailable, detail, userId, storageKey, returnTo, connection, onChanged]);
+    if (launch) { setMallId(launch.mallId); setState('editing'); }
+  }, [unavailable, detail, userId]);
   const submit = async (event) => {
     event.preventDefault();
     if (locked.current || !mallId.trim() || unavailable) return;

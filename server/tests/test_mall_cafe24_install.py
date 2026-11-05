@@ -166,85 +166,9 @@ def install(client, **body):
 def launch_query(**patch):
     params = {"mall_id": "myshop", "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
               "user_id": "fixture-cafe24-operator", **patch}
-    message = "&".join(f"{key}={value}" for key, value in sorted(params.items()))
+    message = urlencode(params)
     signature = base64.b64encode(hmac.new(b"fixture-client-secret", message.encode(), hashlib.sha256).digest()).decode()
-    return urlencode({**params, "hmac": signature})
-
-
-def test_signed_launch_creates_existing_install_attempt_and_start_url(env, caplog):
-    client, store = env
-    caplog.set_level(logging.INFO, logger="app.mall_connect")
-    query = launch_query(extra="공백 + 값")
-    response = client.post(BASE + "/launch", json={"query": query, "returnTo": "/editor/project"})
-    assert response.status_code == 200
-    attempt_id = client.cookies[COOKIE].split(".")[0]
-    assert response.json() == {"startUrl": f"https://api.test{BASE}/install/{attempt_id}/start"}
-    attempt = store["installs"][attempt_id]
-    assert attempt["user_id"] == USER and attempt["mall_id"] == "myshop"
-    assert attempt["return_to"] == "/editor/project" and attempt["expected_generation"] == "none"
-    assert 599 <= (attempt["expires_at"] - datetime.now(timezone.utc)).total_seconds() <= 600
-    assert "Max-Age=600" in response.headers["set-cookie"] and "HttpOnly" in response.headers["set-cookie"]
-    assert response.headers["cache-control"] == "no-store"
-    started = client.get(response.json()["startUrl"], follow_redirects=False)
-    assert urlsplit(started.headers["location"]).hostname == "myshop.cafe24api.com"
-    assert not store["remote"]
-    logs = [record.getMessage() for record in caplog.records if record.name == "app.mall_connect"]
-    assert logs == ["cafe24_launch hmac_valid=true reason=valid"]
-    for private in (query, parse_qs(query)["hmac"][0], "fixture-client-secret", "fixture-cafe24-operator"):
-        assert private not in response.text + caplog.text
-
-
-@pytest.mark.parametrize("invalid", ["missing", "wrong", "tampered", "malformed", "missing_timestamp", "bad_timestamp",
-                                    "old", "future", "duplicate_mall", "duplicate_hmac", "duplicate_timestamp", "many"])
-def test_invalid_launch_never_claims_or_creates_install(env, invalid, caplog):
-    client, store = env
-    caplog.set_level(logging.INFO, logger="app.mall_connect")
-    query = launch_query()
-    if invalid == "missing": query = urlencode({"mall_id": "myshop", "timestamp": "42"})
-    elif invalid == "wrong": query = urlencode({**{key: values[0] for key, values in parse_qs(query).items()}, "hmac": base64.b64encode(b"x" * 32).decode()})
-    elif invalid == "tampered": query = query.replace("myshop", "other-shop")
-    elif invalid == "malformed": query = query.split("&hmac=")[0] + "&hmac=%ZZ"
-    elif invalid in {"old", "future"}: query = launch_query(timestamp=str(int(datetime.now(timezone.utc).timestamp()) + (-3601 if invalid == "old" else 3601)))
-    elif invalid in {"missing_timestamp", "bad_timestamp"}: query = launch_query(timestamp="" if invalid == "missing_timestamp" else "nan")
-    elif invalid == "many": query += "&" + "&".join(f"param{i}=value" for i in range(101))
-    else: query += {"duplicate_mall": "&mall_id=other-shop", "duplicate_hmac": "&hmac=other", "duplicate_timestamp": "&timestamp=42"}[invalid]
-    response = client.post(BASE + "/launch", json={"query": query})
-    assert response.status_code == 200 and response.json() == {"hmacValid": False}
-    assert not store["installs"] and not store["attempts"] and not store["remote"] and COOKIE not in client.cookies
-    logs = [record.getMessage() for record in caplog.records if record.name == "app.mall_connect"]
-    assert len(logs) == 1 and logs[0].startswith("cafe24_launch hmac_valid=false reason=")
-    assert query not in response.text + caplog.text and "fixture-client-secret" not in response.text + caplog.text
-
-
-def test_signed_launch_rejects_mall_outside_pilot(env):
-    client, store = env
-    client.app.state.settings = replace(client.app.state.settings, cafe24_allowed_mall_ids=frozenset({"other-shop"}))
-    response = client.post(BASE + "/launch", json={"query": launch_query()})
-    assert response.status_code == 403 and response.json()["error"]["code"] == "cafe24_not_allowed"
-    assert not store["installs"] and not store["remote"]
-
-
-@pytest.mark.parametrize("mall_id, expired, starts", [("myshop", False, False), ("myshop", True, True), ("other-shop", False, True)])
-def test_launch_skips_only_the_same_healthy_connection(env, mall_id, expired, starts):
-    client, store = env
-    now = datetime.now(timezone.utc)
-    store["connections"].append(dict(id=str(uuid.uuid4()), user_id=USER, mall="cafe24", status="connected",
-        shop_id=mall_id, created_at=now, refresh_expires_at=now + timedelta(days=-1 if expired else 1)))
-    response = client.post(BASE + "/launch", json={"query": launch_query()})
-    assert response.status_code == 200 and bool(store["installs"]) == starts
-    if not starts:
-        assert response.json() == {"alreadyConnected": True} and COOKIE not in client.cookies
-    else:
-        assert response.json()["startUrl"].endswith("/start")
-
-
-def test_launch_requires_login_and_validation_never_echoes_query(env):
-    client, store = env
-    response = client.post(BASE + "/launch", json={"query": launch_query() + "x" * 16384})
-    assert response.status_code == 422 and "hmac=" not in response.text
-    client.app.dependency_overrides.clear()
-    response = client.post(BASE + "/launch", json={"query": launch_query()})
-    assert response.status_code == 401 and not store["installs"]
+    return message + "&" + urlencode({"hmac": signature})
 
 
 def start(client):

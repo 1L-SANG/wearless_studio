@@ -242,6 +242,93 @@ async def purge_old_install_attempts(conn, *, user_id) -> int:
         return cur.rowcount
 
 
+class Cafe24MallNotAllowed(Exception):
+    """The pending mall is no longer in the installation allowlist."""
+
+
+async def create_cafe24_pending_install(conn, *, mall_id, return_to, cookie_hash, expires_at) -> str:
+    async with conn.cursor() as cur:
+        await cur.execute("delete from cafe24_pending_installs where expires_at <= now()")
+        await cur.execute("""insert into cafe24_pending_installs (mall_id, return_to, cookie_hash, expires_at)
+            values (%s, %s, %s, %s) returning id::text""", (mall_id, return_to, cookie_hash, expires_at))
+        return (await cur.fetchone())["id"]
+
+
+async def consume_cafe24_pending_callback(conn, *, pending_id, cookie_hash) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute("""update cafe24_pending_installs set callback_at = now()
+            where id = %s and cookie_hash = %s and callback_at is null and expires_at > now()
+            returning mall_id, return_to""", (pending_id, cookie_hash))
+        return await cur.fetchone()
+
+
+async def save_cafe24_pending_tokens(conn, *, pending_id, shop_name, access_token, refresh_token,
+                                     token_expires_at, refresh_expires_at, scopes, kek) -> bool:
+    async with conn.cursor() as cur:
+        await cur.execute("""update cafe24_pending_installs set
+            access_token_enc = public.wl_billing_encrypt(%s, %s),
+            refresh_token_enc = public.wl_billing_encrypt(%s, %s),
+            token_expires_at = %s, refresh_expires_at = %s, scopes = %s, shop_name = %s,
+            expires_at = now() + interval '30 minutes'
+            where id = %s and callback_at is not null and access_token_enc is null and expires_at > now()""",
+            (access_token, kek, refresh_token, kek, token_expires_at, refresh_expires_at, scopes, shop_name, pending_id))
+        return cur.rowcount == 1
+
+
+async def claim_cafe24_pending_install(conn, *, pending_id, cookie_hash, user_id, allowed_mall_ids) -> dict | None:
+    # Same lock order and account-closure gate as settings installs and deletion.
+    # The existing policy allows the same shop on different Wearless accounts.
+    async with conn.transaction():
+        async with conn.cursor() as cur:
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall-account:{user_id}",))
+        if await user_account_purge_closed(conn, user_id):
+            raise MallAccountClosed()
+        async with conn.cursor() as cur:
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:cafe24",))
+            # Delete and transfer in one transaction. Rollback restores the pending
+            # installation if any write fails; competing claims cannot both win.
+            await cur.execute("""delete from cafe24_pending_installs
+                where id = %s and cookie_hash = %s and expires_at > clock_timestamp()
+                  and access_token_enc is not null and refresh_token_enc is not null
+                returning *""", (pending_id, cookie_hash))
+            pending = await cur.fetchone()
+        if not pending:
+            return None
+        mall_id = pending["mall_id"]
+        if allowed_mall_ids and mall_id not in allowed_mall_ids:
+            raise Cafe24MallNotAllowed()
+        permissions = ["상품 조회와 등록", "쇼핑몰 정보 조회"]
+        if "mall.read_category" in pending["scopes"]:
+            permissions.append("상품 분류 조회")
+        await void_install_attempts(conn, user_id=user_id, mall="cafe24")
+        previous = await get_mall_connection(conn, user_id=user_id, mall="cafe24")
+        async with conn.cursor() as cur:
+            if previous and previous["shop_id"] == mall_id:
+                # Re-consent refreshes credentials without creating a duplicate.
+                await cur.execute(f"""update mall_connections set access_key_enc = %s, secret_key_enc = %s,
+                    token_expires_at = %s, refresh_expires_at = %s, scopes = %s, permissions = %s, shop_name = %s,
+                    updated_at = now() where id = %s and user_id = %s and mall = 'cafe24' and status = 'connected'
+                    returning {_MALL_CONNECTION_COLS}""",
+                    (pending["access_token_enc"], pending["refresh_token_enc"], pending["token_expires_at"],
+                     pending["refresh_expires_at"], pending["scopes"], permissions, pending["shop_name"], previous["id"], user_id))
+            else:
+                await revoke_mall_connection(conn, user_id=user_id, mall="cafe24")
+                await cur.execute(f"""insert into mall_connections
+                    (user_id, mall, shop_id, shop_name, access_key_enc, secret_key_enc,
+                     token_expires_at, refresh_expires_at, scopes, permissions)
+                    values (%s, 'cafe24', %s, %s, %s, %s, %s, %s, %s, %s)
+                    returning {_MALL_CONNECTION_COLS}""",
+                    (user_id, mall_id, pending["shop_name"], pending["access_token_enc"], pending["refresh_token_enc"],
+                     pending["token_expires_at"], pending["refresh_expires_at"], pending["scopes"], permissions))
+            row = await cur.fetchone()
+            await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall-defaults:{user_id}:cafe24",))
+            await cur.execute("""insert into mall_defaults (user_id, mall, shop_id) values (%s, 'cafe24', %s)
+                on conflict (user_id, mall) do update set shop_id = excluded.shop_id, addresses = '{}',
+                  revision = mall_defaults.revision + 1, updated_at = now()
+                where mall_defaults.shop_id is distinct from excluded.shop_id""", (user_id, mall_id))
+            return row
+
+
 async def void_install_attempts(conn, *, user_id, mall="cafe24") -> int:
     async with conn.cursor() as cur:
         await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:{mall}",))

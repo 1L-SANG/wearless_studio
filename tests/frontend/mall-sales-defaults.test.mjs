@@ -145,10 +145,12 @@ test('unsigned cafe24 app url mall_id only prefills the mall id field', async ()
     for (const [input, expected] of [['dailymoment2026', 'dailymoment2026'], ['MyShop', 'myshop'], ['bad/other', ''], ['https://myshop.cafe24.com', ''], ['x', ''], ['', '']]) {
       let replaced, starts = 0, userId;
       const stored = new Map(), writes = [];
-      globalThis.window = { location: { href: `https://app.test/settings/malls?mall_id=${encodeURIComponent(input)}&extra=secret&timestamp=42&returnTo=%2Feditor%2Flocal#cafe24` },
+      globalThis.window = { location: { href: `https://app.test/settings/malls?mall_id=${encodeURIComponent(input)}&extra=secret&timestamp=42&returnTo=%2Feditor%2Flocal#cafe24`,
+        search: `?mall_id=${encodeURIComponent(input)}&extra=secret&timestamp=42&returnTo=%2Feditor%2Flocal` },
         history: { state: { idx: 1 }, replaceState: (...args) => {
           replaced = args;
           globalThis.window.location.href = new URL(args[2], globalThis.window.location.href).href;
+          globalThis.window.location.search = new URL(globalThis.window.location.href).search;
         } }, sessionStorage: {
           getItem: (key) => stored.get(key) ?? null,
           setItem: (key, value) => { writes.push([key, value]); stored.set(key, value); },

@@ -16,7 +16,7 @@ export function captureCafe24Launch() {
   const url = new URL(window.location.href);
   if (!url.searchParams.has('mall_id')) return readCafe24Launch();
   const mallId = url.searchParams.get('mall_id').trim().toLowerCase();
-  const launch = validMallId(mallId) ? { mallId, query: url.search.slice(1), expiresAt: Date.now() + TTL } : null;
+  const launch = validMallId(mallId) ? { mallId, query: window.location.search.slice(1), expiresAt: Date.now() + TTL } : null;
   try {
     window.sessionStorage.removeItem(LAUNCH_KEY);
     if (launch) {
@@ -36,3 +36,16 @@ export function consumeCafe24Launch() {
     return launch;
   } catch { return null; }
 }
+
+export const CAFE24_INSTALL_COPY = {
+  cancelled: '설치를 취소했어요. 다시 시도하면 돼요',
+  state_invalid: '설치 확인이 만료됐어요. 같은 브라우저에서 앱을 다시 설치해 주세요',
+  mall_mismatch: '입력한 몰 아이디와 로그인한 몰이 달라요. 몰 아이디를 확인해 주세요',
+  missing_permission: '권한을 모두 허용해야 등록할 수 있어요. 다시 설치하며 권한을 허용해 주세요',
+  not_allowed: '지금은 시범 운영 중이라 등록된 몰만 연결할 수 있어요',
+  cafe24_not_allowed: '지금은 시범 운영 중이라 등록된 몰만 연결할 수 있어요',
+  invalid_mall_id: '몰 아이디를 확인해 주세요',
+  connection_changed: '그 사이 연결이 바뀌었어요. 지금 상태를 확인한 뒤 다시 시도해 주세요',
+  token_exchange_failed: '카페24에서 인증을 마치지 못했어요. 잠시 뒤 다시 시도해 주세요',
+  account_closed: '계정 삭제가 완료되어 사용할 수 없습니다.',
+};

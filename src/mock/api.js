@@ -503,6 +503,7 @@ export const api = {
     persistMockMalls(); return api.getMallDefaults(mall);
   },
   async launchCafe24() { return { hmacValid: false }; },
+  async claimCafe24Pending() { throw mallError('state_invalid', '같은 브라우저에서 앱을 다시 설치해 주세요', 409); },
   async startCafe24Install({ mallId }) {
     const normalized = String(mallId ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').split(/[/?#]/, 1)[0].replace(/\.(cafe24|cafe24api)\.com$/, '');
     if (!/^[a-z0-9][a-z0-9_-]{1,29}$/.test(normalized) || normalized.startsWith('bad')) throw mallError('invalid_mall_id', '몰 아이디를 확인해 주세요');

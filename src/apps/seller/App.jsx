@@ -25,7 +25,6 @@ import { PaymentSuccess, PaymentFail } from '@/features/payments/PaymentResult.j
 import { SubscriptionManage, SubscriptionSuccess, SubscriptionFail } from '@/features/subscription/Subscription.jsx';
 import { MallConnections, MallSettings } from '@/features/settings/MallConnections.jsx';
 import { Cafe24LaunchGate } from '@/features/settings/Cafe24LaunchGate.jsx';
-import { readCafe24Launch } from '@/lib/cafe24Launch.js';
 import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
 import { LegalRedirect } from '@/features/legal/LegalRedirect.jsx';
 import { WEARLESS_LEGAL_URLS } from '@/lib/legalLinks.js';
@@ -744,7 +743,7 @@ function RootRedirect() {
     if (mobile) {
       if (loading) return;
       forgetPostLogin();
-      const cafe24Return = /^\/settings\/malls(?:\?|$)/.test(target) && readCafe24Launch();
+      const cafe24Return = /^\/settings\/malls(?:\?|$)/.test(target) && new URLSearchParams(target.split('?')[1]).get('result') === 'pending';
       setDest(cafe24Return || target === '/pricing?tab=topup' ? target : '/create/input');
       setPhase('done');
       return;
@@ -811,7 +810,8 @@ function RootRedirect() {
    등록해 두던 서브트리는 도달 불가능한 죽은 가지였다 — 번들만 무겁게 했다. 되살리지 마라. */
 
 export default function App() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
+  const cafe24Launching = pathname === '/settings/malls' && new URLSearchParams(search).has('mall_id');
   const initialEntry = useDocumentEntry(pathname);
   useLayoutEffect(() => {
     // 사본은 ChromeLayout이 마운트되며 지운다. 여기서는 ChromeLayout 밖 경로(에디터, 공개 확인, 콜백)를 위한 안전장치만 둔다.
@@ -877,8 +877,8 @@ export default function App() {
     <>
       <ResumeTracker />
       {/* 가입 완료 화면 — 회원가입 탭을 지나지 않고 들어온 신규만 본다(개정 재동의도 여기) */}
-      <SignupCompletion />
-      <LoginQueryGate />
+      {!cafe24Launching && <SignupCompletion />}
+      {!cafe24Launching && <LoginQueryGate />}
       <Routes>
         <Route element={<ChromeLayout initialEntry={initialEntry} />}>
           <Route index element={<RootRedirect />} />
