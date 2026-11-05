@@ -35,6 +35,28 @@ class PendingCursor(InstallCursor):
         now = datetime.now(timezone.utc)
         if q.startswith('update mall_install_attempts set voided_at'):
             return await FakeCursor.execute(self, sql, args)
+        if q.startswith('select exists') and 'from mall_connections' in q:
+            user, created, revoked = args
+            self.result = [{'changed': any(row['user_id'] == user and row['mall'] == 'cafe24'
+                and (row['created_at'] >= created or row.get('revoked_at') is not None and row['revoked_at'] >= revoked)
+                for row in self.store['connections'])}]
+            return
+        if q.startswith('update mall_connections set status'):
+            active = [row for row in self.store['connections'] if row['user_id'] == args[0]
+                      and row['mall'] == args[1] and row['status'] == 'connected']
+            await super().execute(sql, args)
+            for row in active: row['revoked_at'] = now
+            return
+        if 'from mall_connections' in q and 'as refresh_token' in q:
+            kek, kek2, user, key = args
+            assert kek == kek2 == 'mall-test-kek'
+            row = next((row for row in self.store['connections'] if row['user_id'] == user
+                        and row['id'] == key and row['mall'] == 'cafe24' and row['status'] == 'connected'), None)
+            if row:
+                self.result = [{**self.safe(row),
+                    'access_token': row['access_key_enc'].decode().removeprefix('encrypted:'),
+                    'refresh_token': row['secret_key_enc'].decode().removeprefix('encrypted:')}]
+            return
         if 'cafe24_pending_installs' in q:
             self.store['sql'].append(q)
             rows = self.store['pending']
@@ -42,15 +64,18 @@ class PendingCursor(InstallCursor):
                 mall, back, cookie_hash, expires = args
                 key = str(uuid.uuid4())
                 rows[key] = dict(id=key, mall_id=mall, return_to=back, cookie_hash=cookie_hash,
-                    expires_at=expires, callback_at=None, access_token_enc=None, refresh_token_enc=None)
+                    expires_at=expires, callback_at=None, access_token_enc=None, refresh_token_enc=None, created_at=now)
                 self.result = [{'id': key}]
             elif q.startswith('delete') and not args:
                 for key, row in list(rows.items()):
                     if row['expires_at'] <= now: del rows[key]
             elif q.startswith('delete'):
                 row = rows.get(args[0])
-                assert 'expires_at > clock_timestamp()' in q and 'cookie_hash = %s' in q
-                if row and row['cookie_hash'] == args[1] and row['expires_at'] > now and row['access_token_enc'] and row['refresh_token_enc']:
+                assert 'cookie_hash = %s' in q
+                claiming = 'access_token_enc is not null' in q
+                if claiming: assert 'expires_at > clock_timestamp()' in q
+                if row and row['cookie_hash'] == args[1] and (not claiming or
+                        row['expires_at'] > now and row['access_token_enc'] and row['refresh_token_enc']):
                     self.result, self.rowcount = [rows.pop(args[0])], 1
             elif 'set callback_at' in q:
                 row = rows.get(args[0])
@@ -114,12 +139,16 @@ def env(monkeypatch):
         assert request.url.host == 'myshop.cafe24api.com'
         if request.url.path.endswith('/oauth/token'):
             assert store['pending_committed'], 'callback gate must commit before exchange'
+            if hook := store.get('on_token_exchange'):
+                hook()
             return httpx.Response(store['token_status'], json=store.get('token_payload', dict(
                 mall_id='myshop', access_token=ACCESS, refresh_token=REFRESH, scopes=SCOPES)))
         if request.url.path.endswith('/admin/store'):
             assert request.method == 'GET' and request.headers['Authorization'] == f'Bearer {ACCESS}'
             return httpx.Response(store.get('store_status', 200), json={'store': {'shop_name': store.get('shop_name', '테스트 쇼핑몰')}})
         assert request.url.path.endswith('/oauth/revoke'), 'unexpected pending-install resource API'
+        if hook := store.get('on_revoke'):
+            hook()
         return httpx.Response(200)
     monkeypatch.setattr(mall_connect, 'Cafe24Client', lambda *a, **kw: Cafe24Client(*a, **kw, transport=httpx.MockTransport(respond)))
     return TestClient(app, base_url='https://api.test'), store
@@ -163,11 +192,83 @@ def test_launch_immediately_authorizes_before_login_with_raw_korean_and_auth_con
     caplog.set_level(logging.INFO, logger='app.mall_connect')
     state = launch(client, user_name='부운영자 + 이름', auth_config='{"Fabc1":"T","space":"a b"}')
     assert state and len(store['pending']) == 1 and not store['installs'] and not store['remote']
-    assert not store['connections'] and not store['attempts']
+    assert not store['connections']
+    assert store['attempts'] == {'mall-launch:myshop': 1}
     row = next(iter(store['pending'].values()))
     assert 'user_id' not in row and row['access_token_enc'] is None
     assert client.cookies[COOKIE].split('.')[0] == row['id']
     assert [r.getMessage() for r in caplog.records if r.name == 'app.mall_connect'] == ['cafe24_launch hmac_valid=true reason=valid']
+
+
+def test_anonymous_launch_limit_is_shared_by_mall_even_when_query_changes(env):
+    client, store = env
+    for _ in range(10):
+        launch(client)
+    for query in (launch_query(), launch_query(user_name='다른 서명')):
+        response = client.post(BASE+'/launch', json={'query': query})
+        assert response.status_code == 429
+        assert response.json()['error']['code'] == 'rate_limited'
+        assert COOKIE not in response.headers.get('set-cookie', '')
+    assert len(store['pending']) == 10 and not store['remote']
+    assert client.post(BASE+'/launch', json={'query': launch_query(mall_id='other-shop')}).status_code == 200
+
+
+@pytest.mark.parametrize('phase', ['before_callback', 'after_callback', 'during_exchange'])
+def test_disconnect_voids_pending_consent_including_inflight_token_exchange(env, phase):
+    client, store = env
+    login(client)
+    consent(client)
+    assert client.post(BASE+'/pending/claim').status_code == 200
+    state = launch(client)
+    if phase == 'after_callback':
+        assert parse_qs(urlsplit(client.get(BASE+'/callback', params={'state': state, 'code': CODE},
+            follow_redirects=False).headers['location']).query)['result'] == ['pending']
+    if phase == 'during_exchange':
+        def disconnect():
+            store.pop('on_token_exchange')
+            assert client.delete(BASE).status_code == 204
+        store['on_token_exchange'] = disconnect
+    else:
+        assert client.delete(BASE).status_code == 204
+    if phase != 'after_callback':
+        callback = client.get(BASE+'/callback', params={'state': state, 'code': CODE}, follow_redirects=False)
+        result = parse_qs(urlsplit(callback.headers['location']).query)['result']
+        assert result in (['state_invalid'], ['token_exchange_failed'])
+    assert client.post(BASE+'/pending/claim').status_code == 409
+    assert not [row for row in store['connections'] if row['status'] == 'connected']
+    assert not store['pending']
+
+
+def test_disconnect_in_another_browser_blocks_older_pending_claim(env):
+    client, store = env
+    login(client)
+    consent(client)
+    assert client.post(BASE+'/pending/claim').status_code == 200
+    state = launch(client)
+    pending_cookie = client.cookies[COOKIE]
+    client.cookies.delete(COOKIE)
+    assert client.delete(BASE).status_code == 204
+    client.cookies.set(COOKIE, pending_cookie, domain='api.test', path=BASE)
+    callback = client.get(BASE+'/callback', params={'state': state, 'code': CODE}, follow_redirects=False)
+    assert parse_qs(urlsplit(callback.headers['location']).query)['result'] == ['pending']
+    response = client.post(BASE+'/pending/claim')
+    assert response.status_code == 409 and response.json()['error']['code'] == 'connection_changed'
+    assert not [row for row in store['connections'] if row['status'] == 'connected']
+
+
+def test_fresh_launch_during_remote_revoke_keeps_its_cookie_and_can_connect(env):
+    client, store = env
+    login(client)
+    consent(client)
+    assert client.post(BASE+'/pending/claim').status_code == 200
+    fresh = []
+    store['on_revoke'] = lambda: fresh.append(launch(client))
+    assert client.delete(BASE).status_code == 204
+    store.pop('on_revoke')
+    assert len(fresh) == 1 and COOKIE in client.cookies
+    callback = client.get(BASE+'/callback', params={'state': fresh[0], 'code': CODE}, follow_redirects=False)
+    assert parse_qs(urlsplit(callback.headers['location']).query)['result'] == ['pending']
+    assert client.post(BASE+'/pending/claim').status_code == 200
 
 
 @pytest.mark.parametrize('age', [-7199, -3601, 3601, 7199])

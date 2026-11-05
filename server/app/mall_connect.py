@@ -234,6 +234,8 @@ def derive_outcome(job):
 async def disconnect_cafe24(request: Request, user_id: str = Depends(require_user)):
     settings = request.app.state.settings
     refresh_token = None
+    pending_id = request.cookies.get(_PENDING_COOKIE, "").split(".", 1)[0]
+    pending_cookie_hash = _install_cookie_hash(request, pending_id, _PENDING_COOKIE)
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
             await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:cafe24",))
@@ -243,6 +245,8 @@ async def disconnect_cafe24(request: Request, user_id: str = Depends(require_use
             refresh_token = tokens["refresh_token"] if tokens else None
         await repo.revoke_mall_connection(conn, user_id=user_id, mall="cafe24")
         await repo.void_install_attempts(conn, user_id=user_id, mall="cafe24")
+        if pending_cookie_hash is not None:
+            await repo.void_cafe24_pending_install(conn, pending_id=pending_id, cookie_hash=pending_cookie_hash)
         await conn.commit()
     invalidate_catalog(request.app, user_id, "cafe24")
     if refresh_token:
@@ -277,6 +281,8 @@ async def launch_cafe24(request: Request, body: Cafe24Launch):
     secret = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
     async with get_conn(request) as conn:
+        if not await repo.claim_cafe24_launch_attempt(conn, mall_id=mall_id):
+            raise _error("rate_limited", "설치 시도가 많아요. 1시간 뒤에 다시 시도해 주세요", 429)
         pending_id = await repo.create_cafe24_pending_install(conn, mall_id=mall_id,
             return_to=_return_path(body.returnTo), cookie_hash=hashlib.sha256(secret.encode()).digest(),
             expires_at=expires_at)
@@ -477,6 +483,8 @@ async def claim_cafe24_pending(request: Request, user_id: str = Depends(require_
         raise _error("account_closed", "계정 삭제가 완료되어 사용할 수 없습니다.", 404) from None
     except repo.Cafe24MallNotAllowed:
         raise _error("cafe24_not_allowed", "지금은 시범 운영 중이라 등록된 몰만 연결할 수 있어요", 403) from None
+    except repo.Cafe24ConnectionChanged:
+        raise _error("connection_changed", "그 사이 연결이 바뀌었어요. 카페24에서 앱을 다시 열어 주세요", 409) from None
     if row is None:
         raise _error("state_invalid", "설치 확인이 만료됐어요. 앱을 다시 설치해 주세요", 409)
     invalidate_catalog(request.app, user_id, "cafe24")

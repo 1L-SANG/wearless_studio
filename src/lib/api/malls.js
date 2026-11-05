@@ -59,7 +59,7 @@ export function claimCafe24Pending({ expectedUserId }) {
 }
 
 export function disconnectCafe24() {
-  return http('/v1/malls/cafe24', { method: 'DELETE' });
+  return http('/v1/malls/cafe24', { method: 'DELETE', credentials: 'include' });
 }
 
 export function getMallRegistrationCatalog(mall) {

@@ -120,6 +120,18 @@ test('a launch without hmac is still verified and rejected before service login'
   assert.ok(allNodes(runtime.render(Cafe24LaunchGate)).some((node) => node.props?.role === 'alert'));
 });
 
+test('rate-limited launch tells the seller when to retry without opening login', async (t) => {
+  browser(t);
+  const runtime = hooks();
+  const { Cafe24LaunchGate } = await gate(runtime, { loading: false, session: null,
+    openLogin: () => assert.fail('rate-limited launch opened login') }, {
+    launchCafe24: async () => { throw Object.assign(new Error(), { code: 'rate_limited' }); },
+  });
+  runtime.render(Cafe24LaunchGate); runtime.flushEffects(); await tick();
+  const alert = allNodes(runtime.render(Cafe24LaunchGate)).find(node => node.props?.role === 'alert');
+  assert.equal(alert?.props.children, '설치 시도가 많아요. 1시간 뒤에 다시 시도해 주세요');
+});
+
 for (const code of ['cancelled', 'state_invalid', 'missing_permission', 'not_allowed', 'mall_mismatch', 'token_exchange_failed']) {
   test(`anonymous callback ${code} displays the failure before optional login`, async (t) => {
     browser(t, `https://app.test/settings/malls?mall=cafe24&result=${code}`);

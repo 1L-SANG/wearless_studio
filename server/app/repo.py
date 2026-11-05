@@ -116,7 +116,7 @@ async def upsert_mall_connection(conn, *, user_id, mall, shop_id, shop_name, key
 async def revoke_mall_connection(conn, *, user_id, mall) -> bool:
     async with conn.cursor() as cur:
         await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mall:{user_id}:{mall}",))
-        await cur.execute("""update mall_connections set status = 'revoked', revoked_at = now(),
+        await cur.execute("""update mall_connections set status = 'revoked', revoked_at = clock_timestamp(),
             updated_at = now(), access_key_enc = null, secret_key_enc = null
             where user_id = %s and mall = %s and status = 'connected'""", (user_id, mall))
         return cur.rowcount > 0
@@ -143,6 +143,20 @@ async def claim_mall_connection_attempt(conn, *, user_id) -> bool:
             return False
         await cur.execute("""insert into client_event_rate_limits (scope, key, window_start, request_count)
             values ('user', %s, clock_timestamp(), 1)""", (key,))
+        return True
+
+
+async def claim_cafe24_launch_attempt(conn, *, mall_id) -> bool:
+    """Share the pre-login installation limit across users, signatures and API processes."""
+    key = f"mall-launch:{mall_id}"
+    async with conn.cursor() as cur:
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (key,))
+        await cur.execute("""select coalesce(sum(request_count), 0) as count from client_event_rate_limits
+            where scope = 'global' and key = %s and window_start > clock_timestamp() - interval '1 hour'""", (key,))
+        if (await cur.fetchone())["count"] >= 10:
+            return False
+        await cur.execute("""insert into client_event_rate_limits (scope, key, window_start, request_count)
+            values ('global', %s, clock_timestamp(), 1)""", (key,))
         return True
 
 
@@ -219,9 +233,9 @@ async def save_cafe24_connection(conn, *, attempt_id, user_id, mall_id, shop_nam
         async with conn.cursor() as cur:
             await cur.execute(f"""insert into mall_connections
                 (user_id, mall, shop_id, shop_name, key_hint, access_key_enc, secret_key_enc,
-                 token_expires_at, refresh_expires_at, scopes, permissions)
+                 token_expires_at, refresh_expires_at, scopes, permissions, created_at)
                 values (%s, 'cafe24', %s, %s, null, public.wl_billing_encrypt(%s, %s),
-                        public.wl_billing_encrypt(%s, %s), %s, %s, %s, %s)
+                        public.wl_billing_encrypt(%s, %s), %s, %s, %s, %s, clock_timestamp())
                 returning {_MALL_CONNECTION_COLS}""",
                 (user_id, mall_id, shop_name, access_token, kek, refresh_token, kek,
                  token_expires_at, refresh_expires_at, scopes, permissions))
@@ -246,12 +260,23 @@ class Cafe24MallNotAllowed(Exception):
     """The pending mall is no longer in the installation allowlist."""
 
 
+class Cafe24ConnectionChanged(Exception):
+    """A connection change after consent started prevents restoring stale credentials."""
+
+
 async def create_cafe24_pending_install(conn, *, mall_id, return_to, cookie_hash, expires_at) -> str:
     async with conn.cursor() as cur:
         await cur.execute("delete from cafe24_pending_installs where expires_at <= now()")
-        await cur.execute("""insert into cafe24_pending_installs (mall_id, return_to, cookie_hash, expires_at)
-            values (%s, %s, %s, %s) returning id::text""", (mall_id, return_to, cookie_hash, expires_at))
+        await cur.execute("""insert into cafe24_pending_installs (mall_id, return_to, cookie_hash, expires_at, created_at)
+            values (%s, %s, %s, %s, clock_timestamp()) returning id::text""", (mall_id, return_to, cookie_hash, expires_at))
         return (await cur.fetchone())["id"]
+
+
+async def void_cafe24_pending_install(conn, *, pending_id, cookie_hash) -> bool:
+    async with conn.cursor() as cur:
+        await cur.execute("delete from cafe24_pending_installs where id = %s and cookie_hash = %s",
+                          (pending_id, cookie_hash))
+        return cur.rowcount == 1
 
 
 async def consume_cafe24_pending_callback(conn, *, pending_id, cookie_hash) -> dict | None:
@@ -297,6 +322,15 @@ async def claim_cafe24_pending_install(conn, *, pending_id, cookie_hash, user_id
         mall_id = pending["mall_id"]
         if allowed_mall_ids and mall_id not in allowed_mall_ids:
             raise Cafe24MallNotAllowed()
+        async with conn.cursor() as cur:
+            # Include revoked history: another browser can disconnect while this
+            # anonymous consent is pending. Token refresh timestamps are irrelevant.
+            await cur.execute("""select exists (select 1 from mall_connections
+                where user_id = %s and mall = 'cafe24'
+                  and (created_at >= %s or revoked_at >= %s)) as changed""",
+                (user_id, pending["created_at"], pending["created_at"]))
+            if (await cur.fetchone())["changed"]:
+                raise Cafe24ConnectionChanged()
         permissions = ["상품 조회와 등록", "쇼핑몰 정보 조회"]
         if "mall.read_category" in pending["scopes"]:
             permissions.append("상품 분류 조회")
@@ -315,8 +349,8 @@ async def claim_cafe24_pending_install(conn, *, pending_id, cookie_hash, user_id
                 await revoke_mall_connection(conn, user_id=user_id, mall="cafe24")
                 await cur.execute(f"""insert into mall_connections
                     (user_id, mall, shop_id, shop_name, access_key_enc, secret_key_enc,
-                     token_expires_at, refresh_expires_at, scopes, permissions)
-                    values (%s, 'cafe24', %s, %s, %s, %s, %s, %s, %s, %s)
+                     token_expires_at, refresh_expires_at, scopes, permissions, created_at)
+                    values (%s, 'cafe24', %s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp())
                     returning {_MALL_CONNECTION_COLS}""",
                     (user_id, mall_id, pending["shop_name"], pending["access_token_enc"], pending["refresh_token_enc"],
                      pending["token_expires_at"], pending["refresh_expires_at"], pending["scopes"], permissions))

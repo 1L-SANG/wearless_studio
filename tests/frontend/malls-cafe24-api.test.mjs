@@ -116,6 +116,20 @@ test('launch forwards the untouched signed query without service authentication'
   assert.deepEqual(await mock.launchCafe24({ query }), { hmacValid: false });
 });
 
+test('disconnect sends the pending browser cookie as well as service authentication', async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    calls.push({ url: String(url), options });
+    return new Response(null, { status: 204 });
+  });
+  await adapter.disconnectCafe24();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/v1/malls/cafe24');
+  assert.equal(calls[0].options.method, 'DELETE');
+  assert.equal(calls[0].options.headers.Authorization, 'Bearer local-session');
+  assert.equal(calls[0].options.credentials, 'include');
+});
+
 const requestDraft = (patch = {}) => ({ projectId: 'project-local', publicationId: 'publication-local', editorRevision: 4,
   selectedMalls: ['cafe24'], productName: '니트', basePrice: 39000, sizes: ['FREE'], mainAssetId: 'asset-local', ...patch });
 const clock = (t) => t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: new Date('2026-10-26T00:00:00Z') });
