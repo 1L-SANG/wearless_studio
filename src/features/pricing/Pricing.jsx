@@ -371,8 +371,9 @@ export function Pricing() {
         <section id="topup" ref={topupRef} className={s.topupSection} aria-labelledby="topup-title">
           <div className={s.topupHead}>
             <h2 id="topup-title" className={s.topupTitle}>크레딧 충전</h2>
-            <span className={s.topupMeta}>1회 결제 · 결제 완료 즉시 지급 · {TOPUP_VALIDITY_EFFECTIVE_DATE_KO} 결제건부터 12개월 사용</span>
+            <span className={s.topupMeta}>1회 결제 · 결제 완료 즉시 지급 · 활성 구독 전용</span>
           </div>
+          <p className={`${s.topupMeta} ${s.topupBonusNotice}`}>AI 상세페이지의 이미지·문구·콘티 생성에 사용해요.</p>
           {topupBonusEnabled && <p className={`${s.topupMeta} ${s.topupBonusNotice}`}>Seller는 충전할 때마다 <span className={s.bonusRate}>5%,</span> Pro는 10%를 더 드려요.</p>}
           {entry.need > 0 && (
             <p className={s.needLine}><PIcon name="alert" size={16} />지금 {num(entry.need)} 크레딧이 부족해요</p>
@@ -421,8 +422,9 @@ export function Pricing() {
             })}
           </div>
           <p className={s.purchaseConsent}>
-            {TOPUP_VALIDITY_EFFECTIVE_DATE_KO} 이후 결제한 추가구매 크레딧은 결제일부터 12개월 뒤 남은 수량이 소멸해요. 그 전 결제건은 기존 조건을 유지해요. 크레딧은 계정에서만 사용할 수 있고 다른 사람에게 양도하거나 현금으로 전환할 수 없어요.
+            {TOPUP_VALIDITY_EFFECTIVE_DATE_KO} 이후 결제한 추가구매 크레딧은 구독 이용기간 종료 또는 결제일부터 1년 뒤 중 먼저 오는 날에 남은 수량이 소멸해요. 그 전 결제건은 기존 조건을 유지해요. 환불은 결제했던 수단으로 처리해요. 크레딧은 계정에서만 사용할 수 있고 다른 사람에게 양도하거나 현금으로 전환할 수 없어요.
           </p>
+          <p className={s.purchaseConsent}><a href="/create/input">상세페이지 제작에서 사용하기</a></p>
         </section>
       )}
 

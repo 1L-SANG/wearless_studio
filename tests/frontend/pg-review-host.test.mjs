@@ -144,9 +144,11 @@ test('일반결제 심사 호스트는 단건 크레딧 두 상품과 토스 결
   assert.match(html, /₩26,000/);
   assert.equal((html.match(/>충전하기<\/button>/g) || []).length, 2);
   assert.doesNotMatch(html, /Starter|Seller|Pro|정기 구독|매월 자동 결제|계좌이체/);
-  assert.match(html, /1회 결제 · 결제 완료 즉시 지급 · 2026년 11월 23일 결제건부터 12개월 사용/);
-  assert.match(html, /결제일부터 12개월 뒤 남은 수량이 소멸해요/);
+  assert.match(html, /AI 상세페이지의 이미지·문구·콘티 생성에 사용해요/);
+  assert.match(html, /구독 이용기간 종료 또는 결제일부터 1년 뒤 중 먼저 오는 날/);
+  assert.match(html, /환불은 결제했던 수단으로 처리해요/);
   assert.match(html, /다른 사람에게 양도하거나 현금으로 전환할 수 없어요/);
+  assert.match(html, /상세페이지 제작에서 사용하기/);
   assert.match(html, /결제하면 .*이용약관.*환불 정책/);
 });
 
