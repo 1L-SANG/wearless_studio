@@ -6,6 +6,7 @@
 uuid 컬럼은 ::text 캐스트해 Pydantic str 필드와 맞춘다.
 """
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
 
@@ -146,6 +147,21 @@ async def claim_mall_connection_attempt(conn, *, user_id) -> bool:
         return True
 
 
+async def claim_cafe24_launch_signature(conn, *, signature: bytes) -> bool:
+    """Consume a verified launch signature once across API processes for two hours."""
+    key = f"mall-launch-sig:{hashlib.sha256(signature).hexdigest()}"
+    async with conn.cursor() as cur:
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (key,))
+        await cur.execute("""select 1 from client_event_rate_limits
+            where scope = 'global' and key = %s and window_start > clock_timestamp() - interval '2 hours'
+            limit 1""", (key,))
+        if await cur.fetchone():
+            return False
+        await cur.execute("""insert into client_event_rate_limits (scope, key, window_start, request_count)
+            values ('global', %s, clock_timestamp(), 1)""", (key,))
+        return True
+
+
 async def claim_cafe24_launch_attempt(conn, *, mall_id) -> bool:
     """Share the pre-login installation limit across users, signatures and API processes."""
     key = f"mall-launch:{mall_id}"
@@ -153,7 +169,7 @@ async def claim_cafe24_launch_attempt(conn, *, mall_id) -> bool:
         await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (key,))
         await cur.execute("""select coalesce(sum(request_count), 0) as count from client_event_rate_limits
             where scope = 'global' and key = %s and window_start > clock_timestamp() - interval '1 hour'""", (key,))
-        if (await cur.fetchone())["count"] >= 10:
+        if (await cur.fetchone())["count"] >= 30:
             return False
         await cur.execute("""insert into client_event_rate_limits (scope, key, window_start, request_count)
             values ('global', %s, clock_timestamp(), 1)""", (key,))

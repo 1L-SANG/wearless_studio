@@ -132,6 +132,18 @@ test('rate-limited launch tells the seller when to retry without opening login',
   assert.equal(alert?.props.children, '설치 시도가 많아요. 1시간 뒤에 다시 시도해 주세요');
 });
 
+test('reused launch tells the seller to reopen the app in Cafe24', async (t) => {
+  const page = browser(t), runtime = hooks();
+  const { Cafe24LaunchGate } = await gate(runtime, { loading: false, session: null,
+    openLogin: () => assert.fail('reused launch opened login') }, {
+    launchCafe24: async () => { throw Object.assign(new Error(), { code: 'launch_reused' }); },
+  });
+  runtime.render(Cafe24LaunchGate); runtime.flushEffects(); await tick();
+  const alert = allNodes(runtime.render(Cafe24LaunchGate)).find(node => node.props?.role === 'alert');
+  assert.equal(alert?.props.children, '이미 쓴 실행 주소예요. 카페24에서 앱을 다시 열어 주세요');
+  assert.deepEqual(page.assigned, []); assert.deepEqual(page.replaced, []);
+});
+
 for (const code of ['cancelled', 'state_invalid', 'missing_permission', 'not_allowed', 'mall_mismatch', 'token_exchange_failed']) {
   test(`anonymous callback ${code} displays the failure before optional login`, async (t) => {
     browser(t, `https://app.test/settings/malls?mall=cafe24&result=${code}`);

@@ -33,6 +33,15 @@ class PendingCursor(InstallCursor):
         q = ' '.join(sql.lower().split())
         self.result, self.rowcount = [], 0
         now = datetime.now(timezone.utc)
+        if 'client_event_rate_limits' in q and args[0].startswith('mall-launch-sig:'):
+            assert "scope = 'global'" in q or "values ('global'" in q
+            if q.startswith('select'):
+                assert "interval '2 hours'" in q
+                used_at = self.store['signatures'].get(args[0])
+                self.result = [{'used': 1}] if used_at and used_at > now - timedelta(hours=2) else []
+            elif q.startswith('insert'):
+                self.store['signatures'][args[0]] = now
+            return
         if q.startswith('update mall_install_attempts set voided_at'):
             return await FakeCursor.execute(self, sql, args)
         if q.startswith('select exists') and 'from mall_connections' in q:
@@ -118,12 +127,13 @@ class PendingConn(InstallConn):
     async def commit(self):
         await super().commit()
         self.store['pending_committed'] = {r['id'] for r in self.store['pending'].values() if r['callback_at']}
+        self.store['committed_signatures'] = set(self.store['signatures'])
 
 
 @pytest.fixture
 def env(monkeypatch):
     store = dict(connections=[], defaults={}, attempts={}, sql=[], closed_accounts=set(),
-        installs={}, pending={}, committed=set(), pending_committed=set(), locks=[], remote=[], token_status=200)
+        installs={}, pending={}, signatures={}, committed=set(), pending_committed=set(), locks=[], remote=[], token_status=200)
     app = create_app(make_settings(mall_connect_enabled=True, cafe24_enabled=True, mall_keys_kek='mall-test-kek',
         cafe24_client_id='fixture-client', cafe24_client_secret='fixture-client-secret',
         cafe24_redirect_uri='https://api.test/v1/malls/cafe24/callback', public_web_origin='https://web.test'))
@@ -155,6 +165,7 @@ def env(monkeypatch):
 
 
 def launch(client, **patch):
+    patch.setdefault('user_id', 'fixture-cafe24-operator-' + uuid.uuid4().hex)
     response = client.post(BASE+'/launch', json={'query': launch_query(**patch), 'returnTo': '/editor/project'})
     assert response.status_code == 200, response.text
     authorize = urlsplit(response.json()['startUrl'])
@@ -202,15 +213,47 @@ def test_launch_immediately_authorizes_before_login_with_raw_korean_and_auth_con
 
 def test_anonymous_launch_limit_is_shared_by_mall_even_when_query_changes(env):
     client, store = env
-    for _ in range(10):
+    for _ in range(30):
         launch(client)
     for query in (launch_query(), launch_query(user_name='다른 서명')):
         response = client.post(BASE+'/launch', json={'query': query})
         assert response.status_code == 429
         assert response.json()['error']['code'] == 'rate_limited'
         assert COOKIE not in response.headers.get('set-cookie', '')
-    assert len(store['pending']) == 10 and not store['remote']
+        signature = base64.b64decode(parse_qs(query)['hmac'][0])
+        assert 'mall-launch-sig:' + hashlib.sha256(signature).hexdigest() in store['committed_signatures']
+        reused = client.post(BASE+'/launch', json={'query': query})
+        assert reused.status_code == 409 and reused.json()['error']['code'] == 'launch_reused'
+    assert len(store['pending']) == 30 and not store['remote']
+    assert store['attempts'] == {'mall-launch:myshop': 30}
     assert client.post(BASE+'/launch', json={'query': launch_query(mall_id='other-shop')}).status_code == 200
+
+
+@pytest.mark.parametrize('reencode_hmac', [False, True])
+def test_reused_launch_is_one_use_and_does_not_consume_mall_attempts(env, caplog, reencode_hmac):
+    client, store = env
+    caplog.set_level(logging.INFO, logger='app.mall_connect')
+    query = launch_query()
+    first = client.post(BASE+'/launch', json={'query': query})
+    assert first.status_code == 200
+    signature = base64.b64decode(parse_qs(query)['hmac'][0])
+    signature_hash = hashlib.sha256(signature).hexdigest()
+    assert set(store['signatures']) == {'mall-launch-sig:' + signature_hash}
+    if reencode_hmac:
+        query = query.replace('%3D', '=')
+    for _ in range(40):
+        response = client.post(BASE+'/launch', json={'query': query})
+        assert response.status_code == 409
+        assert response.json()['error'] == {'code': 'launch_reused',
+            'message': '이미 쓴 실행 주소예요. 카페24에서 앱을 다시 열어 주세요'}
+        assert COOKIE not in response.headers.get('set-cookie', '')
+    assert len(store['pending']) == 1 and store['attempts'] == {'mall-launch:myshop': 1}
+    assert len(store['signatures']) == 1 and not store['remote']
+    assert 'reason=launch_reused' in caplog.text
+    assert all(value not in caplog.text + first.text + response.text
+               for value in (query, parse_qs(query)['hmac'][0], signature_hash))
+    launch(client)
+    assert len(store['pending']) == 2 and store['attempts'] == {'mall-launch:myshop': 2}
 
 
 @pytest.mark.parametrize('phase', ['before_callback', 'after_callback', 'during_exchange'])
@@ -294,6 +337,7 @@ def test_invalid_launch_is_rejected_without_any_side_effect(env, invalid, caplog
     response = client.post(BASE+'/launch', json={'query': query})
     assert response.json() == {'hmacValid': False}
     assert not store['pending'] and not store['remote']
+    assert not store['signatures'] and not store['attempts'] and not store['locks']
     assert query not in caplog.text+response.text
 
 

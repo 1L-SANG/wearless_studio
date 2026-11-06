@@ -2,12 +2,16 @@
 
 import asyncio
 import hashlib
+from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import httpx
 import pytest
 
-from app import repo
+from app import mall_connect, repo
+from test_mall_cafe24_install import BASE, launch_query
 from test_mall_connect import USER, OTHER
 from test_mall_connect_postgres import mall_pg
 from test_mall_cafe24_install_postgres import install_pg
@@ -50,10 +54,10 @@ async def wait_for_blocked(admin, blocker, waiter, task):
     await asyncio.wait_for(blocked(), timeout=5)
 
 
-def test_launch_limit_serializes_tenth_attempt_and_keeps_other_malls_independent(pending_pg):
+def test_launch_limit_serializes_thirtieth_attempt_and_keeps_other_malls_independent(pending_pg):
     admin, pool = pending_pg
     admin.execute("""insert into client_event_rate_limits (scope, key, window_start, request_count)
-        values ('global', 'mall-launch:myshop', clock_timestamp(), 9)""")
+        values ('global', 'mall-launch:myshop', clock_timestamp(), 29)""")
     async def scenario():
         async with pool.connection() as first, pool.connection() as second:
             await first.execute('select 1')
@@ -72,7 +76,7 @@ def test_launch_limit_serializes_tenth_attempt_and_keeps_other_malls_independent
         rows = admin.execute("""select scope, key, sum(request_count) as count
             from client_event_rate_limits group by scope, key order by key""").fetchall()
         assert rows == [
-            {'scope': 'global', 'key': 'mall-launch:myshop', 'count': 10},
+            {'scope': 'global', 'key': 'mall-launch:myshop', 'count': 30},
             {'scope': 'global', 'key': 'mall-launch:othershop', 'count': 1},
         ]
     asyncio.run(scenario())
@@ -81,7 +85,7 @@ def test_launch_limit_serializes_tenth_attempt_and_keeps_other_malls_independent
 def test_launch_limit_uses_only_its_live_global_hourly_window(pending_pg):
     admin, pool = pending_pg
     admin.execute("""insert into client_event_rate_limits (scope, key, window_start, request_count)
-        values ('global', 'mall-launch:myshop', clock_timestamp() - interval '61 minutes', 10),
+        values ('global', 'mall-launch:myshop', clock_timestamp() - interval '61 minutes', 30),
                ('user', 'mall-launch:myshop', clock_timestamp(), 100)""")
     async def scenario():
         async with pool.connection() as conn:
@@ -90,6 +94,94 @@ def test_launch_limit_uses_only_its_live_global_hourly_window(pending_pg):
     assert admin.execute("""select sum(request_count) as count from client_event_rate_limits
         where scope = 'global' and key = 'mall-launch:myshop'
           and window_start > clock_timestamp() - interval '1 hour'""").fetchone()['count'] == 1
+
+
+def test_concurrent_launches_with_same_signature_create_only_one_pending_install(pending_pg, mall_pg, monkeypatch):
+    admin, pool = pending_pg
+    app = mall_pg[0]
+    app.state.settings = replace(app.state.settings, cafe24_enabled=True, cafe24_client_id='fixture-client',
+        cafe24_client_secret='fixture-client-secret', cafe24_redirect_uri='https://api.test/v1/malls/cafe24/callback')
+    create_pending = repo.create_cafe24_pending_install
+
+    async def scenario():
+        inserted, release = asyncio.Event(), asyncio.Event()
+        async with pool.connection() as first, pool.connection() as second:
+            # Keep the first request's locks until its explicit commit, including nested transactions.
+            await first.execute('select 1')
+            connections = iter((first, second))
+            @asynccontextmanager
+            async def get_conn(_request):
+                yield next(connections)
+            async def hold_insert(conn, **kwargs):
+                key = await create_pending(conn, **kwargs)
+                if conn is first:
+                    inserted.set()
+                    await release.wait()
+                return key
+            monkeypatch.setattr(mall_connect, 'get_conn', get_conn)
+            monkeypatch.setattr(repo, 'create_cafe24_pending_install', hold_insert)
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='https://api.test') as client:
+                body = {'query': launch_query()}
+                winning = asyncio.create_task(client.post(BASE+'/launch', json=body))
+                pending = None
+                try:
+                    await asyncio.wait_for(inserted.wait(), timeout=5)
+                    pending = asyncio.create_task(client.post(BASE+'/launch', json=body))
+                    await wait_for_blocked(admin, first, second, pending)
+                    release.set()
+                    assert (await asyncio.wait_for(winning, timeout=5)).status_code == 200
+                    reused = await asyncio.wait_for(pending, timeout=5)
+                    assert reused.status_code == 409 and reused.json()['error']['code'] == 'launch_reused'
+                finally:
+                    release.set()
+                    tasks = [task for task in (winning, pending) if task is not None]
+                    for task in tasks:
+                        if not task.done(): task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+        assert admin.execute('select count(*) as n from cafe24_pending_installs').fetchone()['n'] == 1
+        assert admin.execute("""select key, request_count from client_event_rate_limits
+            where key = 'mall-launch:myshop'""").fetchall() == [{'key': 'mall-launch:myshop', 'request_count': 1}]
+        assert admin.execute("""select count(*) as n from client_event_rate_limits
+            where scope = 'global' and key like 'mall-launch-sig:%%'""").fetchone()['n'] == 1
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('age_minutes, allowed', [(119, False), (121, True)])
+def test_launch_signature_uses_only_its_live_global_two_hour_window(pending_pg, age_minutes, allowed):
+    admin, pool = pending_pg
+    signature = hashlib.sha256(b'fixture-launch-signature').digest()
+    key = 'mall-launch-sig:' + hashlib.sha256(signature).hexdigest()
+    admin.execute("""insert into client_event_rate_limits (scope, key, window_start, request_count)
+        values ('global', %s, clock_timestamp() - %s * interval '1 minute', 1),
+               ('user', %s, clock_timestamp(), 1),
+               ('global', 'mall-launch-sig:other', clock_timestamp(), 1)""", (key, age_minutes, key))
+    async def scenario():
+        async with pool.connection() as conn:
+            assert await repo.claim_cafe24_launch_signature(conn, signature=signature) is allowed
+    asyncio.run(scenario())
+    assert admin.execute("""select count(*) as n from client_event_rate_limits
+        where scope = 'global' and key = %s""", (key,)).fetchone()['n'] == (2 if allowed else 1)
+
+
+def test_rate_limited_launch_commits_signature_before_returning_error(pending_pg, mall_pg):
+    admin, pool = pending_pg
+    app = mall_pg[0]
+    app.state.settings = replace(app.state.settings, cafe24_enabled=True, cafe24_client_id='fixture-client',
+        cafe24_client_secret='fixture-client-secret', cafe24_redirect_uri='https://api.test/v1/malls/cafe24/callback')
+    app.state.pool = pool
+    admin.execute("""insert into client_event_rate_limits (scope, key, window_start, request_count)
+        values ('global', 'mall-launch:myshop', clock_timestamp(), 30)""")
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='https://api.test') as client:
+            body = {'query': launch_query()}
+            limited = await client.post(BASE+'/launch', json=body)
+            assert limited.status_code == 429 and limited.json()['error']['code'] == 'rate_limited'
+            reused = await client.post(BASE+'/launch', json=body)
+            assert reused.status_code == 409 and reused.json()['error']['code'] == 'launch_reused'
+        assert admin.execute('select count(*) as n from cafe24_pending_installs').fetchone()['n'] == 0
+        assert admin.execute("""select sum(request_count) as n from client_event_rate_limits
+            where key = 'mall-launch:myshop'""").fetchone()['n'] == 30
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize('stage', ['before_callback', 'callback_consumed', 'tokens_saved'])
