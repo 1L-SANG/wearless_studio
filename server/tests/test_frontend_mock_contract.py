@@ -170,6 +170,15 @@ def test_horizon_catalog_uses_the_owner_confirmed_shared_clothing_scopes():
         "women": ["top", "outer", "dress"],
         "men": ["top", "outer"],
     }
+    verified_exclusions = {
+        change["id"]: set(change["excludeClothingTypes"])
+        for change in json.loads(
+            (REPO_ROOT / "tests/fixtures/verified-example-tags-20261106.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        if change.get("excludeClothingTypes")
+    }
 
     horizon = [item for item in catalog if item["cutType"] == "horizon"]
     assert horizon
@@ -180,6 +189,8 @@ def test_horizon_catalog_uses_the_owner_confirmed_shared_clothing_scopes():
             expected = ["bottom"]
         else:
             expected = upper_by_gender[item["gender"]]
+        excluded = verified_exclusions.get(item["id"], set())
+        expected = [clothing for clothing in expected if clothing not in excluded]
         assert item["applicableClothingTypes"] == expected, item["id"]
 
 

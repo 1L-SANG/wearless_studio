@@ -12,6 +12,14 @@ from app.agents import cut_generator
 from app.agents import space_set_assets as sets
 
 
+@pytest.fixture(autouse=True)
+def isolate_space_registry_cache():
+    loader = sets.load_space_set_registry
+    loader.cache_clear()
+    yield
+    loader.cache_clear()
+
+
 def _asset(variant, filename, *, release_id="test-release", sha256="a" * 64):
     return {
         "key": (
