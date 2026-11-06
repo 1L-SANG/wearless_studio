@@ -99,7 +99,7 @@ test('install sends normalized mall id with credentials include and reads start 
   assert.deepEqual(JSON.parse(calls.at(-1).options.body), { mallId: 'myshop' });
 });
 
-test('launch forwards the untouched signed query only in the authenticated credentialed body', async (t) => {
+test('launch forwards the untouched signed query without service authentication', async (t) => {
   const calls = [], query = 'mall_id=myshop&hmac=base64%2Bsignature%3D&timestamp=42';
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     calls.push({ url: String(url), options });
@@ -109,11 +109,25 @@ test('launch forwards the untouched signed query only in the authenticated crede
   assert.equal(calls[0].url, '/v1/malls/cafe24/launch');
   assert.equal(calls[0].options.method, 'POST');
   assert.equal(calls[0].options.credentials, 'include');
-  assert.equal(calls[0].options.headers.Authorization, 'Bearer local-session');
+  assert.equal(calls[0].options.headers.Authorization, undefined);
   assert.deepEqual(JSON.parse(calls[0].options.body), { query, returnTo: '/editor/project' });
-  await assert.rejects(adapter.launchCafe24({ query, expectedUserId: 'other-account' }), (error) => error.code === 'auth_user_changed');
+  await assert.rejects(adapter.claimCafe24Pending({ expectedUserId: 'other-account' }), (error) => error.code === 'auth_user_changed');
   assert.equal(calls.length, 1);
   assert.deepEqual(await mock.launchCafe24({ query }), { hmacValid: false });
+});
+
+test('disconnect sends the pending browser cookie as well as service authentication', async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    calls.push({ url: String(url), options });
+    return new Response(null, { status: 204 });
+  });
+  await adapter.disconnectCafe24();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/v1/malls/cafe24');
+  assert.equal(calls[0].options.method, 'DELETE');
+  assert.equal(calls[0].options.headers.Authorization, 'Bearer local-session');
+  assert.equal(calls[0].options.credentials, 'include');
 });
 
 const requestDraft = (patch = {}) => ({ projectId: 'project-local', publicationId: 'publication-local', editorRevision: 4,
@@ -218,4 +232,20 @@ test('mock history finds older recoveries for the current store beyond recent fi
   await mock.startCafe24Install({ mallId: 'othershop' });
   assert.deepEqual((await mock.listMallRegistrations('project-local')).recoveries.cafe24, []);
   await assert.rejects(mock.verifyMallRegistration(old.jobId), (error) => error.code === 'connection_changed');
+});
+
+test('launch bypasses failing authentication bootstrap and pending claim requires login plus credentials', async (t) => {
+  const { supabase } = await vite.ssrLoadModule('/src/lib/supabase.js');
+  let sessionReads = 0; const calls = [];
+  const session = t.mock.method(supabase.auth, 'getSession', async () => { sessionReads++; throw Error('fixture-bootstrap-failure'); });
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    calls.push({ url, options }); return json({ connected: true });
+  });
+  await adapter.launchCafe24({ query: 'mall_id=myshop&hmac=x' });
+  assert.equal(sessionReads, 0);
+  session.mock.mockImplementation(async () => ({ data: { session: { user: { id: 'seller-one' }, access_token: 'local-session' } } }));
+  assert.deepEqual(await adapter.claimCafe24Pending({ expectedUserId: 'seller-one' }), { connected: true });
+  assert.equal(calls[1].url, '/v1/malls/cafe24/pending/claim');
+  assert.equal(calls[1].options.credentials, 'include');
+  assert.equal(calls[1].options.headers.Authorization, 'Bearer local-session');
 });

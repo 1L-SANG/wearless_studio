@@ -45,15 +45,21 @@ export function startCafe24Install({ mallId, returnTo }) {
   });
 }
 
-export function launchCafe24({ query, returnTo, expectedUserId }) {
+export function launchCafe24({ query, returnTo }) {
   return http('/v1/malls/cafe24/launch', {
-    method: 'POST', body: { query, returnTo }, expectedUserId,
+    method: 'POST', body: { query, returnTo }, requireAuth: false, anonymous: true,
     credentials: 'include', suppressErrorLog: true,
   });
 }
 
+export function claimCafe24Pending({ expectedUserId }) {
+  return http('/v1/malls/cafe24/pending/claim', {
+    method: 'POST', expectedUserId, credentials: 'include', suppressErrorLog: true,
+  });
+}
+
 export function disconnectCafe24() {
-  return http('/v1/malls/cafe24', { method: 'DELETE' });
+  return http('/v1/malls/cafe24', { method: 'DELETE', credentials: 'include' });
 }
 
 export function getMallRegistrationCatalog(mall) {

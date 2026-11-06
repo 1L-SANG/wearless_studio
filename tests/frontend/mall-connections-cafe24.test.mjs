@@ -117,7 +117,7 @@ test('callback result query shows seller copy and clears query', async () => {
     expiredRuntime.render(expired.Cafe24Connection, props); expiredRuntime.flushEffects();
     const expiredRow = rowOf(expiredRuntime.render(expired.Cafe24Connection, props));
     assert.equal(expiredRow.props.state, 'failed');
-    assert.equal(expiredRow.props.error, '설치 확인이 만료됐어요. 같은 브라우저에서 다시 시작해 주세요');
+    assert.equal(expiredRow.props.error, '설치 확인이 만료됐어요. 같은 브라우저에서 앱을 다시 설치해 주세요');
   } finally { globalThis.window = previous; }
 });
 
