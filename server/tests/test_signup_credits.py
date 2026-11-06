@@ -77,6 +77,11 @@ class CreditCursor(Cursor):
             s.ledger.append({"user": p[0], "source": p[1], "action": "expire_topup",
                              "delta": p[2], "balance_after": p[3],
                              "available_after": p[4], "metadata": p[5].obj})
+        elif (q.startswith("insert into credit_ledger") and len(p) >= 7
+              and p[2] in {"expire_subscription", "expire_topup"}):
+            s.ledger.append({"user": p[0], "source": p[1], "action": p[2],
+                             "delta": p[3], "balance_after": p[4],
+                             "available_after": p[5], "metadata": p[6].obj})
         elif (q.startswith("select id::text as id, remaining_credits from credit_sources")
               and "source_type = 'topup'" in q and "period_end <= %s" in q):
             due = [b for b in s.sources.values() if b["user_id"] == p[0]
@@ -84,6 +89,23 @@ class CreditCursor(Cursor):
                    and b["remaining"] > 0 and b.get("period_end") is not None
                    and b["period_end"] <= p[1]]
             self._set([{"id": b["id"], "remaining_credits": b["remaining"]} for b in due])
+        elif (q.startswith("select id::text as id, source_type, remaining_credits from credit_sources")
+              and "source_type = 'subscription'" in q and "source_type = 'topup'" in q):
+            expiring = [b for b in s.sources.values() if b["user_id"] == p[0]
+                        and b["status"] == "active" and b["remaining"] > 0
+                        and (b["type"] == "subscription"
+                             or (b["type"] == "topup" and b.get("period_end") is not None))]
+            self._set([{"id": b["id"], "source_type": b["type"],
+                        "remaining_credits": b["remaining"]} for b in expiring])
+        elif q.startswith("select coalesce(sum(case when source_type"):
+            included = [b for b in s.sources.values() if b["user_id"] == p[0]
+                        and b["status"] == "active"
+                        and (b["type"] == "subscription"
+                             or (b["type"] == "topup" and b.get("period_end") is not None))]
+            sub_expiries = [b.get("period_end") for b in included
+                            if b["type"] == "subscription" and b.get("period_end") is not None]
+            self._set([{"credits": sum(b["remaining"] for b in included),
+                        "expires_at": max(sub_expiries) if sub_expiries else None}])
         elif q.startswith("select coalesce(sum(remaining_credits), 0) as s from credit_sources"):
             total = sum(b["remaining"] for b in s.sources.values()
                         if b["user_id"] == p[0] and b["status"] == "active")
@@ -292,15 +314,45 @@ def test_unused_bonus_topup_refund_removes_total(credits_store):
     assert credits_store.ledger[-1]["delta"] == -550
 
 
-def test_subscription_expiration_preserves_free_and_topup(credits_store):
+def test_subscription_expiration_removes_post_policy_topup_but_preserves_legacy(credits_store):
     asyncio.run(repo.grant_signup_credits(credits_store, user_id=USER, credits=150))
     credits_store.sources["sub"] = {"id": "sub", "type": "subscription", "user_id": USER,
                                      "status": "active", "remaining": 10, "initial": 10}
-    credits_store.accounts[USER]["balance"] += 10
+    credits_store.sources["new-topup"] = {
+        "id": "new-topup", "type": "topup", "user_id": USER, "status": "active",
+        "remaining": 20, "initial": 20, "period_end": credits_store.now + timedelta(days=300),
+    }
+    credits_store.sources["legacy-topup"] = {
+        "id": "legacy-topup", "type": "topup", "user_id": USER, "status": "active",
+        "remaining": 30, "initial": 30, "period_end": None,
+    }
+    credits_store.accounts[USER]["balance"] += 60
     result = asyncio.run(repo.expire_subscription_buckets(credits_store, user_id=USER, reason="canceled"))
-    assert result["expired"] == 10
-    assert credits_store.accounts[USER]["balance"] == 150
+    assert result == {"expired": 30, "subscriptionExpired": 10, "topupExpired": 20,
+                      "available": 180}
+    assert credits_store.accounts[USER]["balance"] == 180
     assert next(iter(credits_store.sources.values()))["status"] == "active"
+    assert credits_store.sources["sub"]["status"] == "expired"
+    assert credits_store.sources["new-topup"]["status"] == "expired"
+    assert credits_store.sources["legacy-topup"]["status"] == "active"
+    assert [e["action"] for e in credits_store.ledger[-2:]] == ["expire_subscription", "expire_topup"]
+
+
+def test_subscription_expiry_summary_includes_only_subscription_bound_balances(credits_store):
+    expiry = credits_store.now + timedelta(days=20)
+    credits_store.sources = {
+        "sub": {"id": "sub", "type": "subscription", "user_id": USER, "status": "active",
+                "remaining": 10, "initial": 10, "period_end": expiry},
+        "new-topup": {"id": "new-topup", "type": "topup", "user_id": USER, "status": "active",
+                      "remaining": 20, "initial": 20, "period_end": expiry + timedelta(days=300)},
+        "legacy-topup": {"id": "legacy-topup", "type": "topup", "user_id": USER,
+                         "status": "active", "remaining": 30, "initial": 30, "period_end": None},
+        "free": {"id": "free", "type": "free", "user_id": USER, "status": "active",
+                 "remaining": 40, "initial": 40, "period_end": None},
+    }
+    assert asyncio.run(repo.subscription_bucket_summary(credits_store, USER)) == {
+        "credits": 30, "expiresAt": expiry,
+    }
 
 
 def test_due_topups_expire_but_legacy_and_future_purchases_remain(credits_store):

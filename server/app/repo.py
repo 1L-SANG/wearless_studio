@@ -5233,10 +5233,10 @@ async def grant_subscription(
 async def expire_subscription_buckets(
     conn: AsyncConnection, *, user_id: str, reason: str
 ) -> dict:
-    """구독 버킷 전량 소멸 — 해지 주기 종료·유예 만료에서만 부른다(계획서 §0.1).
+    """구독 종료에 묶인 버킷 전량 소멸 — 해지 주기 종료·유예 만료에서만 부른다.
 
-    이월분까지 전부 지운다. 사용자에게는 큰 금액이 한 번에 사라지는 사건이므로,
-    호출 전에 화면이 소멸 예정 수량·날짜를 이미 보여줬어야 한다.
+    구독 크레딧과 정책 시행 후 추가구매(period_end 있음)를 함께 지운다. 시행 전 무기한
+    추가구매(period_end 없음)와 무료 크레딧은 보존한다.
     """
     async with conn.cursor() as cur:
         await cur.execute(
@@ -5247,12 +5247,14 @@ async def expire_subscription_buckets(
             raise CreditError("account_missing", "크레딧 계정이 없어요.", 404)
         running = acct["balance"]
         await cur.execute(
-            "select id::text as id, remaining_credits from credit_sources "
-            "where user_id = %s and source_type = 'subscription' and status = 'active' for update",
+            "select id::text as id, source_type, remaining_credits from credit_sources "
+            "where user_id = %s and status = 'active' and remaining_credits > 0 "
+            "and (source_type = 'subscription' "
+            "or (source_type = 'topup' and period_end is not null)) for update",
             (user_id,),
         )
         buckets = await cur.fetchall()
-        expired = 0
+        expired = subscription_expired = topup_expired = 0
         for bucket in buckets:
             await cur.execute(
                 "update credit_sources set status = 'expired', remaining_credits = 0 where id = %s",
@@ -5260,18 +5262,25 @@ async def expire_subscription_buckets(
             )
             running -= bucket["remaining_credits"]
             expired += bucket["remaining_credits"]
+            if bucket["source_type"] == "subscription":
+                subscription_expired += bucket["remaining_credits"]
+                action_key = "expire_subscription"
+            else:
+                topup_expired += bucket["remaining_credits"]
+                action_key = "expire_topup"
             await cur.execute(
                 "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
                 "balance_after, available_after, metadata) "
-                "values (%s,%s,'expire_subscription',%s,%s,%s,%s)",
-                (user_id, bucket["id"], -bucket["remaining_credits"], running,
+                "values (%s,%s,%s,%s,%s,%s,%s)",
+                (user_id, bucket["id"], action_key, -bucket["remaining_credits"], running,
                  running - acct["reserved"], Json({"reason": reason})),
             )
         if buckets:
             await cur.execute(
                 "update credit_accounts set balance = %s where user_id = %s", (running, user_id)
             )
-    return {"expired": expired, "available": running - acct["reserved"]}
+    return {"expired": expired, "subscriptionExpired": subscription_expired,
+            "topupExpired": topup_expired, "available": running - acct["reserved"]}
 
 
 async def _expire_due_topup_buckets_locked(
@@ -5353,9 +5362,11 @@ async def subscription_bucket_summary(conn: AsyncConnection, user_id: str) -> di
     """해지 화면이 '무엇이 언제 사라지는지' 를 숫자로 보여주기 위한 조회."""
     async with conn.cursor() as cur:
         await cur.execute(
-            "select coalesce(sum(remaining_credits), 0) as credits, max(period_end) as expires_at "
-            "from credit_sources "
-            "where user_id = %s and source_type = 'subscription' and status = 'active'",
+            "select coalesce(sum(case when source_type = 'subscription' "
+            "or (source_type = 'topup' and period_end is not null) "
+            "then remaining_credits else 0 end), 0) as credits, "
+            "max(period_end) filter (where source_type = 'subscription') as expires_at "
+            "from credit_sources where user_id = %s and status = 'active'",
             (user_id,),
         )
         row = await cur.fetchone() or {}
