@@ -190,6 +190,7 @@ export function Pricing() {
   const subs = SUBSCRIPTION_PRODUCTS_ENABLED ? plans.filter((p) => p.kind === 'subscription') : [];
   const topups = topupVisible ? plans.filter((p) => p.kind === 'topup'
     && (!IS_GENERAL_PAYMENT_REVIEW_HOST || isGeneralPaymentReviewProduct(p))) : [];
+  const canBuyTopup = ['starter', 'seller', 'pro'].includes(currentPlan);
   // 부족분이 있으면 그걸 채우는 가장 작은 팩, 어느 팩으로도 못 채우면 가장 큰 팩.
   const recommendedCode = entry.need > 0 && topups.length
     ? ([...topups].sort((a, b) => a.credits - b.credits).find((p) => p.credits >= entry.need)
@@ -410,11 +411,13 @@ export function Pricing() {
                   ) : (
                     <button
                       type="button" className={s.topupButton}
-                      disabled={session ? (!TOSS_CLIENT_KEY || buying !== null) : false}
-                      title={!session || TOSS_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
+                      disabled={session ? (!canBuyTopup || !TOSS_CLIENT_KEY || buying !== null) : false}
+                      title={!session ? undefined : (!canBuyTopup ? '구독 중인 회원만 추가구매할 수 있어요'
+                        : (TOSS_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'))}
                       onClick={() => buyTopup(p.code)}
                     >
-                      {!session ? '로그인하고 충전하기' : (buying === p.code ? '결제창 여는 중…' : '충전하기')}
+                      {!session ? '로그인하고 충전하기' : (!canBuyTopup ? '구독 후 충전하기'
+                        : (buying === p.code ? '결제창 여는 중…' : '충전하기'))}
                     </button>
                   )}
                 </div>

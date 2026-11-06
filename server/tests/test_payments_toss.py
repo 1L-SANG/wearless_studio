@@ -29,7 +29,11 @@ class _Cur:
     async def execute(self, sql, params=None):
         q = " ".join(sql.split())
         if "from pricing_plans" in q:
-            self._row = {**PLAN, "credits": self.s["sku_credits"]} if params[0] == PLAN["code"] and self.s["plan_ok"] else None
+            self._row = {**PLAN, "credits": self.s["sku_credits"], "price": self.s["sku_price"]} if params[0] == PLAN["code"] and self.s["plan_ok"] else None
+        elif "from subscriptions" in q:
+            sub = self.s["subscription"]
+            self._row = sub if (sub and sub["status"] in {"active", "canceled"}
+                                and str(sub["current_period_end"]).startswith("2099-")) else None
         elif q.startswith("select plan from profiles"):
             self.s["profile_reads"] += 1
             self._row = {"plan": self.s["profile_plan"]}
@@ -78,6 +82,8 @@ def pay(monkeypatch, keypair):
     private_key, public_key = keypair
     state = {"orders": {}, "plan_ok": True, "commits": 0,
              "profile_plan": "free", "profile_reads": 0, "sku_credits": PLAN["credits"],
+             "sku_price": PLAN["price"],
+             "subscription": {"status": "active", "current_period_end": "2099-01-01T00:00:00+00:00"},
              "toss_calls": [], "toss_response": (200, {}), "grants": [], "balance": 1000,
              # 실제 승인 함수 — 에러 처리(타임아웃→재시도 유지)를 검증할 때 되살려 쓴다
              "real_confirm": payments._confirm_with_toss}
@@ -180,6 +186,33 @@ def test_checkout_unknown_plan_is_404(pay, make_token):
     res = client.post("/v1/payments/toss/checkout", headers=_auth(make_token),
                       json={"planCode": "nope"})
     assert res.status_code == 404 and res.json()["error"]["code"] == "unknown_plan"
+
+
+@pytest.mark.parametrize("subscription", [None, {"status": "ended", "current_period_end": "2026-01-01T00:00:00+00:00"}])
+def test_checkout_requires_a_current_paid_subscription(pay, make_token, subscription):
+    client, state = pay
+    state["subscription"] = subscription
+    res = client.post("/v1/payments/toss/checkout", headers=_auth(make_token),
+                      json={"planCode": PLAN["code"]})
+    assert res.status_code == 403
+    assert res.json()["error"]["code"] == "active_subscription_required"
+    assert state["orders"] == {}
+
+
+def test_checkout_accepts_canceled_subscription_until_paid_period_ends(pay, make_token):
+    client, state = pay
+    state["subscription"] = {"status": "canceled", "current_period_end": "2099-01-01T00:00:00+00:00"}
+    assert _checkout(client, make_token)["amount"] == PLAN["price"]
+
+
+def test_checkout_rejects_sku_above_point_industry_limit(pay, make_token):
+    client, state = pay
+    state["sku_price"] = 100001
+    res = client.post("/v1/payments/toss/checkout", headers=_auth(make_token),
+                      json={"planCode": PLAN["code"]})
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "topup_amount_limit"
+    assert state["orders"] == {}
 
 
 def test_checkout_without_secret_key_is_503_not_mock_success(monkeypatch, keypair):

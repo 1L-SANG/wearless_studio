@@ -95,7 +95,7 @@ after(async () => {
 
 /* 호스트 판정은 모듈을 읽는 순간 한 번 정해지는 상수다. 그래서 호스트마다 모듈 그래프를
    비우고 새 window 로 다시 읽는다. */
-async function loadAs(hostname, { extraPlans = [] } = {}) {
+async function loadAs(hostname, { extraPlans = [], accountPlan = 'free' } = {}) {
   globalThis.window = { location: { hostname, search: '', origin: `https://${hostname}` } };
   await vite?.close();
   vite = await createHarnessServer();
@@ -107,7 +107,7 @@ async function loadAs(hostname, { extraPlans = [] } = {}) {
 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(['pricingPlans'], plans);
-  runtime.account = { plan: 'free' };
+  runtime.account = { plan: accountPlan };
   runtime.session = { user: { id: 'pg-review-user' } };
   try {
     const html = renderToStaticMarkup(
@@ -133,7 +133,7 @@ test('심사 호스트에서는 구독 카드가 토스 결제창을 연다', as
 });
 
 test('일반결제 심사 호스트는 단건 크레딧 두 상품과 토스 결제 버튼만 보여준다', async () => {
-  const { tossKeys, html } = await loadAs('pay.wearless.kr');
+  const { tossKeys, html } = await loadAs('pay.wearless.kr', { accountPlan: 'seller' });
   assert.equal(tossKeys.BANK_TRANSFER_ENABLED, false);
   assert.equal(tossKeys.TOPUP_ENABLED, true);
   assert.equal(tossKeys.SUBSCRIPTION_PRODUCTS_ENABLED, false);
@@ -152,8 +152,15 @@ test('일반결제 심사 호스트는 단건 크레딧 두 상품과 토스 결
   assert.match(html, /결제하면 .*이용약관.*환불 정책/);
 });
 
+test('일반결제 충전은 활성 구독 계정에만 열린다', async () => {
+  const { html } = await loadAs('pay.wearless.kr', { accountPlan: 'free' });
+  assert.equal((html.match(/>구독 후 충전하기<\/button>/g) || []).length, 2);
+  assert.equal((html.match(/disabled=""/g) || []).length, 2);
+  assert.doesNotMatch(html, />충전하기<\/button>/);
+});
+
 test('일반결제 심사 호스트는 승인한 두 SKU와 정확한 가격만 허용한다', async () => {
-  const { html } = await loadAs('pay.wearless.kr', { extraPlans: [
+  const { html } = await loadAs('pay.wearless.kr', { accountPlan: 'seller', extraPlans: [
     { id: 'legacy', code: 'topup_legacy', kind: 'topup', name: '옛 충전', credits: 50,
       price: 3000, billingPeriod: 'once', sortOrder: 1 },
     { id: 'wrong-price', code: 'topup_100', kind: 'topup', name: '가격이 바뀐 100 크레딧',

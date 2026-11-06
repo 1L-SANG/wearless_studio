@@ -32,6 +32,7 @@ router = APIRouter(prefix="/v1/payments", tags=["Payments"])
 
 _ORDER_ID_BYTES = 24          # token_urlsafe → 32자 안팎(토스 계약 6~64자 내)
 _TOSS_OK_STATUS = "DONE"
+_MAX_TOPUP_AMOUNT = 100_000   # 토스 포인트충전 업종 1회 결제 한도
 
 
 class CheckoutBody(BaseModel):
@@ -95,6 +96,20 @@ async def create_checkout(
             plan = await cur.fetchone()
             if plan is None:
                 raise _err("unknown_plan", "추가구매 상품을 찾을 수 없어요.", 404)
+            if int(plan["price"]) > _MAX_TOPUP_AMOUNT:
+                raise _err("topup_amount_limit", "추가구매는 한 번에 10만원 이하만 가능해요.")
+            await cur.execute(
+                "select status, current_period_end from subscriptions "
+                "where user_id = %s and status in ('active', 'canceled') "
+                "and current_period_end > now()",
+                (user_id,),
+            )
+            if await cur.fetchone() is None:
+                raise _err(
+                    "active_subscription_required",
+                    "추가구매 크레딧은 이용 중인 구독이 있어야 구매할 수 있어요.",
+                    403,
+                )
             await cur.execute("select plan from profiles where user_id = %s", (user_id,))
             profile = await cur.fetchone()
             plan_at_order = plan_of((profile or {}).get("plan"))
