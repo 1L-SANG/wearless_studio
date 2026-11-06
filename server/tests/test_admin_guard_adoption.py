@@ -81,7 +81,6 @@ def test_audit_write_happens_before_commit():
     inline_cases = (
         (APPLICATIONS, "admin_approve_application"),
         (APPLICATIONS, "admin_reject_application"),
-        (ROUTES, "approve_refund"),
         (ROUTES, "reject_refund"),
         # 사용자 목록은 **읽기인데도** 원장에 남긴다 — 콘솔에서 유일하게 가입자 이메일을
         # 전수로 보여주는 화면이라, 누가 언제 무엇으로 훑었는지가 사후에 필요하다.
@@ -92,6 +91,15 @@ def test_audit_write_happens_before_commit():
         audit_at = body.index("write_audit(")
         commit_at = body.index("await conn.commit()")
         assert audit_at < commit_at, f"{route}: 감사 기록이 commit 뒤에 있다"
+
+    # 환불 승인은 토스 취소 전에 canceling 상태를 먼저 확정하는 2단계 트랜잭션이다.
+    # 따라서 첫 commit 은 외부 취소의 재시도 안전성을 위한 것이고, 감사 기록은 최종
+    # 승인 변경과 같은 두 번째 트랜잭션에서 마지막 commit 전에 기록되어야 한다.
+    approve_body = ROUTES.split("async def approve_refund(")[1].split("@router.")[0]
+    approve_audit_at = approve_body.index("write_audit(")
+    approve_commit_positions = [m.start() for m in re.finditer("await conn.commit\\(\\)", approve_body)]
+    assert len(approve_commit_positions) == 2
+    assert approve_commit_positions[0] < approve_audit_at < approve_commit_positions[1]
 
     # 관리자 콘솔의 승격/정지/해제 라우트는 write_audit 을 라우트 안이 아니라 위임한 순수
     # 함수(set_role·suspend_model·unsuspend_model) 안에서 부른다 — 그 함수들이 실제로
