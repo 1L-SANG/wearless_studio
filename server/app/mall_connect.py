@@ -281,7 +281,13 @@ async def launch_cafe24(request: Request, body: Cafe24Launch):
     secret = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
     async with get_conn(request) as conn:
+        signature = base64.b64decode(params["hmac"], validate=True)
+        if not await repo.claim_cafe24_launch_signature(conn, signature=signature):
+            logging.getLogger(__name__).info("cafe24_launch hmac_valid=true reason=launch_reused")
+            raise _error("launch_reused", "이미 쓴 실행 주소예요. 카페24에서 앱을 다시 열어 주세요", 409)
         if not await repo.claim_cafe24_launch_attempt(conn, mall_id=mall_id):
+            # A rate-limited signature stays consumed, so retrying requires a fresh launch.
+            await conn.commit()
             raise _error("rate_limited", "설치 시도가 많아요. 1시간 뒤에 다시 시도해 주세요", 429)
         pending_id = await repo.create_cafe24_pending_install(conn, mall_id=mall_id,
             return_to=_return_path(body.returnTo), cookie_hash=hashlib.sha256(secret.encode()).digest(),

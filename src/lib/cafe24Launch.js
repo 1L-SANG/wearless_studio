@@ -49,4 +49,5 @@ export const CAFE24_INSTALL_COPY = {
   token_exchange_failed: '카페24에서 인증을 마치지 못했어요. 잠시 뒤 다시 시도해 주세요',
   account_closed: '계정 삭제가 완료되어 사용할 수 없습니다.',
   rate_limited: '설치 시도가 많아요. 1시간 뒤에 다시 시도해 주세요',
+  launch_reused: '이미 쓴 실행 주소예요. 카페24에서 앱을 다시 열어 주세요',
 };
