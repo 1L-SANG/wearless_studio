@@ -606,7 +606,7 @@
         {
           "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s21_02_v2.png",
           "cutType": "horizon",
-          "direction": "front",
+          "direction": "side",
           "exampleId": "ss_horizon_zara_s21_02_v2",
           "order": 2,
           "shot": "full",
@@ -1282,7 +1282,7 @@
         {
           "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_botanical_attrangs_160835_root01_03.png",
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_style_women_dress_botanical_attrangs_160835_root01_03",
           "order": 3,
           "shot": "medium",
@@ -1360,7 +1360,7 @@
         {
           "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_cafe_garden_attrangs_160544_root03_01.png",
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_style_women_dress_cafe_garden_attrangs_160544_root03_01",
           "order": 1,
           "shot": "full",
@@ -1570,7 +1570,7 @@
         {
           "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_night_riverwalk_maybins_40948_root07_03.png",
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_style_women_dress_night_riverwalk_maybins_40948_root07_03",
           "order": 3,
           "shot": "medium",
@@ -1810,7 +1810,7 @@
         {
           "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_home_hotping_48041_prod02_03.png",
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_style_women_top_home_hotping_48041_prod02_03",
           "order": 3,
           "shot": "medium",
@@ -1906,7 +1906,7 @@
         {
           "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_outer_storefront_lowclassic_6495851_prod02_03.png",
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_style_women_outer_storefront_lowclassic_6495851_prod02_03",
           "order": 3,
           "shot": "medium",
@@ -1936,7 +1936,7 @@
         {
           "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_park_realcoco_161014511_prod02_01.png",
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_style_women_top_park_realcoco_161014511_prod02_01",
           "order": 1,
           "shot": "full",
@@ -2089,7 +2089,7 @@
         {
           "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_convenience_beidelli_5067_prod03_02.png",
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_style_women_top_convenience_beidelli_5067_prod03_02",
           "order": 2,
           "shot": "medium",
@@ -2217,7 +2217,7 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "compositionLabel": "풀샷 3장",
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
       "gender": "women",
       "id": "set-01-women-bottom-street-slowand-10666",
       "members": [
@@ -2236,16 +2236,16 @@
           "direction": "front",
           "exampleId": "ss_set_01_women_bottom_street_slowand_10666_02",
           "order": 2,
-          "shot": "full",
+          "shot": "medium",
           "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_01_women_bottom_street_slowand_10666_02.webp"
         },
         {
           "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_01_women_bottom_street_slowand_10666_03.png",
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_01_women_bottom_street_slowand_10666_03",
           "order": 3,
-          "shot": "full",
+          "shot": "medium",
           "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_01_women_bottom_street_slowand_10666_03.webp"
         }
       ],
@@ -2265,7 +2265,7 @@
       "applicableClothingTypes": [
         "dress"
       ],
-      "compositionLabel": "풀샷 3장",
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
       "gender": "women",
       "id": "set-03-women-dress-bright-interior-hotping-47530",
       "members": [
@@ -2293,7 +2293,7 @@
           "direction": "front",
           "exampleId": "ss_set_03_women_dress_bright_interior_hotping_47530_03",
           "order": 3,
-          "shot": "full",
+          "shot": "medium",
           "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_03_women_dress_bright_interior_hotping_47530_03.webp"
         }
       ],
@@ -2409,7 +2409,7 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "compositionLabel": "풀샷 3장",
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
       "gender": "women",
       "id": "set-06-women-bottom-corridor-musinsa-6495795",
       "members": [
@@ -2425,7 +2425,7 @@
         {
           "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_06_women_bottom_corridor_musinsa_6495795_02.png",
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_06_women_bottom_corridor_musinsa_6495795_02",
           "order": 2,
           "shot": "full",
@@ -2437,7 +2437,7 @@
           "direction": "front",
           "exampleId": "ss_set_06_women_bottom_corridor_musinsa_6495795_03",
           "order": 3,
-          "shot": "full",
+          "shot": "medium",
           "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_06_women_bottom_corridor_musinsa_6495795_03.webp"
         }
       ],
@@ -2457,7 +2457,7 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "compositionLabel": "풀샷 3장",
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
       "gender": "women",
       "id": "set-07-women-bottom-riverside-bbibbongunni-22538",
       "members": [
@@ -2485,7 +2485,7 @@
           "direction": "front",
           "exampleId": "ss_set_07_women_bottom_riverside_bbibbongunni_22538_03",
           "order": 3,
-          "shot": "full",
+          "shot": "medium",
           "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_07_women_bottom_riverside_bbibbongunni_22538_03.webp"
         }
       ],
@@ -2848,7 +2848,7 @@
         {
           "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_07_men_top_indoor_small_shop_upnormal_7126_01.png",
           "cutType": "styling",
-          "direction": "front",
+          "direction": "side",
           "exampleId": "ss_set_07_men_top_indoor_small_shop_upnormal_7126_01",
           "order": 1,
           "shot": "full",
@@ -3609,7 +3609,7 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
       "gender": "men",
       "id": "set-14-car-wash",
       "members": [
@@ -3619,7 +3619,7 @@
           "direction": "front",
           "exampleId": "ss_set_14_car_wash_01",
           "order": 1,
-          "shot": "full",
+          "shot": "medium",
           "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_14_car_wash_01.webp"
         },
         {
@@ -3769,7 +3769,7 @@
       "applicableClothingTypes": [
         "outer"
       ],
-      "compositionLabel": "풀샷 4장 + 미디움샷 1장",
+      "compositionLabel": "풀샷 3장 + 미디움샷 2장",
       "gender": "women",
       "id": "horizon-set-01-women-scarf-outer",
       "members": [
@@ -3794,16 +3794,16 @@
         {
           "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_01_women_scarf_outer_03.png",
           "cutType": "horizon",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_horizon_set_01_women_scarf_outer_03",
           "order": 3,
-          "shot": "full",
+          "shot": "medium",
           "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_01_women_scarf_outer_03.webp"
         },
         {
           "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_01_women_scarf_outer_04.png",
           "cutType": "horizon",
-          "direction": "front",
+          "direction": "side",
           "exampleId": "ss_horizon_set_01_women_scarf_outer_04",
           "order": 4,
           "shot": "full",
@@ -3867,7 +3867,7 @@
         {
           "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_02_women_fluid_trousers_04.png",
           "cutType": "horizon",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_horizon_set_02_women_fluid_trousers_04",
           "order": 4,
           "shot": "medium",
@@ -3913,7 +3913,7 @@
         {
           "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_03_men_tonal_outer_03.png",
           "cutType": "horizon",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_horizon_set_03_men_tonal_outer_03",
           "order": 3,
           "shot": "medium",
@@ -3977,7 +3977,7 @@
         {
           "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_04_men_chino_focus_03.png",
           "cutType": "horizon",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_horizon_set_04_men_chino_focus_03",
           "order": 3,
           "shot": "medium",
@@ -3986,7 +3986,7 @@
         {
           "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_04_men_chino_focus_04.png",
           "cutType": "horizon",
-          "direction": "front",
+          "direction": "side",
           "exampleId": "ss_horizon_set_04_men_chino_focus_04",
           "order": 4,
           "shot": "full",

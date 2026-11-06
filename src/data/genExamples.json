@@ -1654,9 +1654,7 @@
   {
     "applicableClothingTypes": [
       "top",
-      "bottom",
-      "outer",
-      "dress"
+      "outer"
     ],
     "clothingType": "top",
     "cutType": "horizon",
@@ -1745,8 +1743,7 @@
   {
     "applicableClothingTypes": [
       "top",
-      "outer",
-      "dress"
+      "outer"
     ],
     "clothingType": "top",
     "cutType": "horizon",
@@ -1767,8 +1764,7 @@
   {
     "applicableClothingTypes": [
       "top",
-      "outer",
-      "dress"
+      "outer"
     ],
     "clothingType": "top",
     "cutType": "horizon",
@@ -1789,8 +1785,7 @@
   {
     "applicableClothingTypes": [
       "top",
-      "outer",
-      "dress"
+      "outer"
     ],
     "clothingType": "top",
     "cutType": "horizon",
@@ -2103,9 +2098,7 @@
   {
     "applicableClothingTypes": [
       "top",
-      "bottom",
-      "outer",
-      "dress"
+      "outer"
     ],
     "clothingType": "top",
     "cutType": "horizon",
@@ -2126,9 +2119,7 @@
   {
     "applicableClothingTypes": [
       "top",
-      "bottom",
-      "outer",
-      "dress"
+      "outer"
     ],
     "clothingType": "top",
     "cutType": "horizon",
@@ -2149,8 +2140,7 @@
   {
     "applicableClothingTypes": [
       "top",
-      "outer",
-      "dress"
+      "outer"
     ],
     "clothingType": "top",
     "cutType": "horizon",
@@ -2171,8 +2161,7 @@
   {
     "applicableClothingTypes": [
       "top",
-      "outer",
-      "dress"
+      "outer"
     ],
     "clothingType": "top",
     "cutType": "horizon",

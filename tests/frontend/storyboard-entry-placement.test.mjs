@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
+import { componentModule } from './helpers/reactHarness.mjs';
 import { applySeededHookStyle, defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
 import { applyHookStyle } from '../../src/lib/storyboardHookFrame.js';
+import { filterSpaceSetsForModel } from '../../src/lib/identityScope.js';
 import {
   applyOpeningRow,
   entryStylingMembers,
@@ -15,6 +17,7 @@ import {
   seededPick,
 } from '../../src/lib/storyboardEntryPlacement.js';
 import {
+  isStoryboardSpaceSetEligible,
   spaceSetIdFromGroupId,
   storyboardSpaceSetById,
   storyboardSpaceSetsFor,
@@ -185,15 +188,34 @@ test('all-full styling sets still seed two members and prefer different directio
   );
 });
 
-test('women bottom soft preference falls back to all-full sets to preserve a fourth place', () => {
-  const picked = pickEntrySets({
+test('women bottom soft preference falls back to all-full sets to preserve a fourth place', async () => {
+  // 실제 카탈로그의 구도 교정과 무관하게, 혼합 구도가 없는 네 번째 장소도 배치한다.
+  const sets = ['cafe', 'home', 'nature', 'coast'].map((placeType, index) => ({
+    id: `fallback-${placeType}`,
+    setType: 'styling',
+    placeType,
+    gender: 'women',
+    applicableClothingTypes: ['bottom'],
+    setApplicableClothingTypes: ['bottom'],
+    members: [
+      { order: 1, exampleId: `${placeType}-full`, shot: 'full', direction: 'front' },
+      { order: 2, exampleId: `${placeType}-second`, shot: index === 3 ? 'full' : 'medium', direction: 'back' },
+    ],
+  }));
+  const { pickEntrySets: pickFixtureSets } = await componentModule(
+    'src/lib/storyboardEntryPlacement.js', ['pickEntrySets'], {
+      filterSpaceSetsForModel,
+      storyboardSpaceSetsFor: (options) => sets.filter((set) => isStoryboardSpaceSetEligible(set, options)),
+    },
+  );
+  const picked = pickFixtureSets({
     gender: 'women', clothingType: 'bottom', projectId: 'soft-place-fallback', stylingCount: 4,
   }).stylingSets;
   const places = picked.map((set) => normalizePlaceType(set.placeType, set.setType));
   assert.equal(picked.filter(Boolean).length, 4);
   assert.equal(new Set(places).size, 4);
   assert.equal(picked.filter(hasFullAndMediumMembers).length, 3);
-  assert.equal(picked.some((set) => !hasFullAndMediumMembers(set)), true);
+  assert.equal(picked[3].id, 'fallback-coast');
 });
 
 test('category filters stay server-consistent for styling and horizon pools', () => {

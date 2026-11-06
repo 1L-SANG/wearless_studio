@@ -725,7 +725,7 @@
             "width": 1024
           },
           "cutType": "horizon",
-          "direction": "front",
+          "direction": "side",
           "exampleId": "ss_horizon_zara_s21_02_v2",
           "order": 2,
           "pose": null,
@@ -1890,7 +1890,7 @@
             "width": 1086
           },
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_style_women_dress_botanical_attrangs_160835_root01_03",
           "order": 3,
           "pose": {
@@ -2020,7 +2020,7 @@
             "width": 1086
           },
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_style_women_dress_cafe_garden_attrangs_160544_root03_01",
           "order": 1,
           "pose": {
@@ -2406,7 +2406,7 @@
             "width": 1023
           },
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_style_women_dress_night_riverwalk_maybins_40948_root07_03",
           "order": 3,
           "pose": {
@@ -2836,7 +2836,7 @@
             "width": 1023
           },
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_style_women_top_home_hotping_48041_prod02_03",
           "order": 3,
           "pose": {
@@ -3008,7 +3008,7 @@
             "width": 941
           },
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_style_women_outer_storefront_lowclassic_6495851_prod02_03",
           "order": 3,
           "pose": {
@@ -3052,7 +3052,7 @@
             "width": 1086
           },
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_style_women_top_park_realcoco_161014511_prod02_01",
           "order": 1,
           "pose": {
@@ -3331,7 +3331,7 @@
             "width": 863
           },
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_style_women_top_convenience_beidelli_5067_prod03_02",
           "order": 2,
           "pose": {
@@ -3556,7 +3556,7 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "compositionLabel": "풀샷 3장",
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
       "gender": "women",
       "members": [
         {
@@ -3599,7 +3599,7 @@
             "sha256": "401b91e1c2453e28db6778e4dc6d71ce40e65900d542c51c597b5e0bed99779c",
             "width": 896
           },
-          "shot": "full"
+          "shot": "medium"
         },
         {
           "all": {
@@ -3610,7 +3610,7 @@
             "width": 1059
           },
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_01_women_bottom_street_slowand_10666_03",
           "order": 3,
           "pose": {
@@ -3620,7 +3620,7 @@
             "sha256": "b273f9b260be0588d3a7d56b70c85684e3a23b36202867a475a53197eb1e56cd",
             "width": 896
           },
-          "shot": "full"
+          "shot": "medium"
         }
       ],
       "name": "도심 골목의 자연스러운 거리 스냅",
@@ -3642,7 +3642,7 @@
       "applicableClothingTypes": [
         "dress"
       ],
-      "compositionLabel": "풀샷 3장",
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
       "gender": "women",
       "members": [
         {
@@ -3706,7 +3706,7 @@
             "sha256": "30f59d888ceb9942101982ea01b55cf8e4600051824bf174871a00a5686acf41",
             "width": 896
           },
-          "shot": "full"
+          "shot": "medium"
         }
       ],
       "name": "밝은 실내의 편안한 원피스 스냅",
@@ -3900,7 +3900,7 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "compositionLabel": "풀샷 3장",
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
       "gender": "women",
       "members": [
         {
@@ -3933,7 +3933,7 @@
             "width": 1086
           },
           "cutType": "styling",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_set_06_women_bottom_corridor_musinsa_6495795_02",
           "order": 2,
           "pose": {
@@ -3964,7 +3964,7 @@
             "sha256": "b15b79f3051aaeb6a04138f61f1e712778b32a9b78e2241b76e93ca764fe841d",
             "width": 896
           },
-          "shot": "full"
+          "shot": "medium"
         }
       ],
       "name": "오래된 소형 건물 복도의 창가 스냅",
@@ -3986,7 +3986,7 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "compositionLabel": "풀샷 3장",
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
       "gender": "women",
       "members": [
         {
@@ -4050,7 +4050,7 @@
             "sha256": "75272894471ab33336ee68ba1a043b931141f0d8418d3cf75c0dec06d36aac54",
             "width": 896
           },
-          "shot": "full"
+          "shot": "medium"
         }
       ],
       "name": "흐린 날 강변 산책로의 나들이 스냅",
@@ -4686,7 +4686,7 @@
             "width": 1086
           },
           "cutType": "styling",
-          "direction": "front",
+          "direction": "side",
           "exampleId": "ss_set_07_men_top_indoor_small_shop_upnormal_7126_01",
           "order": 1,
           "pose": {
@@ -6050,7 +6050,7 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
       "gender": "men",
       "members": [
         {
@@ -6072,7 +6072,7 @@
             "sha256": "79a0202cc64a8d1c5d1b70ea2df02c0f07ac0b2d5e4fb3e739fe460d4f5d5734",
             "width": 896
           },
-          "shot": "full"
+          "shot": "medium"
         },
         {
           "all": {
@@ -6324,7 +6324,7 @@
       "applicableClothingTypes": [
         "outer"
       ],
-      "compositionLabel": "풀샷 4장 + 미디움샷 1장",
+      "compositionLabel": "풀샷 3장 + 미디움샷 2장",
       "gender": "women",
       "members": [
         {
@@ -6378,7 +6378,7 @@
             "width": 1024
           },
           "cutType": "horizon",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_horizon_set_01_women_scarf_outer_03",
           "order": 3,
           "pose": {
@@ -6388,7 +6388,7 @@
             "sha256": "9bc7620faaff5d36ab37e158ec86aa87657b008e093f828509f342e5b494f682",
             "width": 896
           },
-          "shot": "full"
+          "shot": "medium"
         },
         {
           "all": {
@@ -6399,7 +6399,7 @@
             "width": 1024
           },
           "cutType": "horizon",
-          "direction": "front",
+          "direction": "side",
           "exampleId": "ss_horizon_set_01_women_scarf_outer_04",
           "order": 4,
           "pose": {
@@ -6521,7 +6521,7 @@
             "width": 1024
           },
           "cutType": "horizon",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_horizon_set_02_women_fluid_trousers_04",
           "order": 4,
           "pose": {
@@ -6601,7 +6601,7 @@
             "width": 1024
           },
           "cutType": "horizon",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_horizon_set_03_men_tonal_outer_03",
           "order": 3,
           "pose": {
@@ -6723,7 +6723,7 @@
             "width": 1024
           },
           "cutType": "horizon",
-          "direction": "front",
+          "direction": "back",
           "exampleId": "ss_horizon_set_04_men_chino_focus_03",
           "order": 3,
           "pose": {
@@ -6744,7 +6744,7 @@
             "width": 1024
           },
           "cutType": "horizon",
-          "direction": "front",
+          "direction": "side",
           "exampleId": "ss_horizon_set_04_men_chino_focus_04",
           "order": 4,
           "pose": {

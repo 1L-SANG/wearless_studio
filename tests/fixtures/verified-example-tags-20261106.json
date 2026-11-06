@@ -1,0 +1,173 @@
+[
+  {
+    "label": "P1",
+    "id": "ex_horizon_women_top_full_front_02",
+    "excludeClothingTypes": [
+      "dress",
+      "bottom"
+    ]
+  },
+  {
+    "label": "P2",
+    "id": "ex_horizon_women_top_medium_front_01",
+    "excludeClothingTypes": [
+      "dress"
+    ]
+  },
+  {
+    "label": "P3",
+    "id": "ex_horizon_women_top_medium_profile_01",
+    "excludeClothingTypes": [
+      "dress"
+    ]
+  },
+  {
+    "label": "P4",
+    "id": "ex_horizon_women_top_medium_profile_right_01",
+    "excludeClothingTypes": [
+      "dress"
+    ]
+  },
+  {
+    "label": "P5",
+    "id": "ex_horizon_women_top_full_side_03",
+    "excludeClothingTypes": [
+      "dress",
+      "bottom"
+    ]
+  },
+  {
+    "label": "P6",
+    "id": "ex_horizon_women_top_full_side_right_03",
+    "excludeClothingTypes": [
+      "dress",
+      "bottom"
+    ]
+  },
+  {
+    "label": "P7",
+    "id": "ex_horizon_women_top_medium_side_02",
+    "excludeClothingTypes": [
+      "dress"
+    ]
+  },
+  {
+    "label": "P8",
+    "id": "ex_horizon_women_top_medium_side_right_02",
+    "excludeClothingTypes": [
+      "dress"
+    ]
+  },
+  {
+    "label": "A05.3",
+    "id": "ss_set_style_women_dress_botanical_attrangs_160835_root01_03",
+    "direction": "back"
+  },
+  {
+    "label": "A07.1",
+    "id": "ss_set_style_women_dress_cafe_garden_attrangs_160544_root03_01",
+    "direction": "back"
+  },
+  {
+    "label": "A11.3",
+    "id": "ss_set_style_women_dress_night_riverwalk_maybins_40948_root07_03",
+    "direction": "back"
+  },
+  {
+    "label": "A16.3",
+    "id": "ss_set_style_women_top_home_hotping_48041_prod02_03",
+    "direction": "back"
+  },
+  {
+    "label": "A18.3",
+    "id": "ss_set_style_women_outer_storefront_lowclassic_6495851_prod02_03",
+    "direction": "back"
+  },
+  {
+    "label": "A19.1",
+    "id": "ss_set_style_women_top_park_realcoco_161014511_prod02_01",
+    "direction": "back"
+  },
+  {
+    "label": "A22.2",
+    "id": "ss_set_style_women_top_convenience_beidelli_5067_prod03_02",
+    "direction": "back"
+  },
+  {
+    "label": "A29.2",
+    "id": "ss_set_06_women_bottom_corridor_musinsa_6495795_02",
+    "direction": "back"
+  },
+  {
+    "label": "H17.3",
+    "id": "ss_horizon_set_01_women_scarf_outer_03",
+    "direction": "back",
+    "shot": "medium"
+  },
+  {
+    "label": "H18.4",
+    "id": "ss_horizon_set_02_women_fluid_trousers_04",
+    "direction": "back"
+  },
+  {
+    "label": "H19.3",
+    "id": "ss_horizon_set_03_men_tonal_outer_03",
+    "direction": "back"
+  },
+  {
+    "label": "H20.3",
+    "id": "ss_horizon_set_04_men_chino_focus_03",
+    "direction": "back"
+  },
+  {
+    "label": "A38.1",
+    "id": "ss_set_07_men_top_indoor_small_shop_upnormal_7126_01",
+    "direction": "side"
+  },
+  {
+    "label": "H08.2",
+    "id": "ss_horizon_zara_s21_02_v2",
+    "direction": "side"
+  },
+  {
+    "label": "H17.4",
+    "id": "ss_horizon_set_01_women_scarf_outer_04",
+    "direction": "side"
+  },
+  {
+    "label": "H20.4",
+    "id": "ss_horizon_set_04_men_chino_focus_04",
+    "direction": "side"
+  },
+  {
+    "label": "A25.2",
+    "id": "ss_set_01_women_bottom_street_slowand_10666_02",
+    "shot": "medium"
+  },
+  {
+    "label": "A29.3",
+    "id": "ss_set_06_women_bottom_corridor_musinsa_6495795_03",
+    "shot": "medium"
+  },
+  {
+    "label": "A30.3",
+    "id": "ss_set_07_women_bottom_riverside_bbibbongunni_22538_03",
+    "shot": "medium"
+  },
+  {
+    "label": "A54.1",
+    "id": "ss_set_14_car_wash_01",
+    "shot": "medium"
+  },
+  {
+    "label": "A25.3",
+    "id": "ss_set_01_women_bottom_street_slowand_10666_03",
+    "direction": "back",
+    "shot": "medium"
+  },
+  {
+    "label": "A26.3",
+    "id": "ss_set_03_women_dress_bright_interior_hotping_47530_03",
+    "shot": "medium"
+  }
+]
