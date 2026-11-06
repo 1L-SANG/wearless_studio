@@ -32,6 +32,7 @@ router = APIRouter(prefix="/v1/payments", tags=["Payments"])
 
 _ORDER_ID_BYTES = 24          # token_urlsafe → 32자 안팎(토스 계약 6~64자 내)
 _TOSS_OK_STATUS = "DONE"
+_MAX_TOPUP_AMOUNT = 100_000   # 토스 포인트충전 업종 1회 결제 한도
 
 
 class CheckoutBody(BaseModel):
@@ -61,6 +62,16 @@ class _RetryableConfirm(Exception):
         self.message = message
 
 
+class TossCancelError(Exception):
+    """원 결제 취소 실패. 라우터가 요청을 pending 으로 유지할 수 있게 상태를 보존한다."""
+
+    def __init__(self, code: str, message: str, status_code: int):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+
+
 def _require_secret(request: Request) -> str:
     secret = request.app.state.settings.toss_secret_key
     if not secret:
@@ -72,6 +83,24 @@ def _require_secret(request: Request) -> str:
 def _new_order_id() -> str:
     """토스 계약: 영문 대소문자·숫자·'-','_','=' 6~64자. token_urlsafe 는 이 문자셋 안에 있다."""
     return f"wl-{secrets.token_urlsafe(_ORDER_ID_BYTES)}"[:64]
+
+
+async def _has_paid_access(cur, user_id: str) -> bool:
+    """현재 유료 이용기간을 잠가 확인한다. confirm 중 종료 워커와의 경합도 막는다."""
+    await cur.execute(
+        "select status, current_period_end from subscriptions "
+        "where user_id = %s and status in ('active', 'canceled') "
+        "and current_period_end > now() for share",
+        (user_id,),
+    )
+    if await cur.fetchone() is not None:
+        return True
+    await cur.execute(
+        "select status, ends_at from manual_plan_grants "
+        "where user_id = %s and status = 'active' and ends_at > now() for share",
+        (user_id,),
+    )
+    return await cur.fetchone() is not None
 
 
 @router.post("/toss/checkout", summary="크레딧 추가구매 주문 생성")
@@ -95,6 +124,14 @@ async def create_checkout(
             plan = await cur.fetchone()
             if plan is None:
                 raise _err("unknown_plan", "추가구매 상품을 찾을 수 없어요.", 404)
+            if int(plan["price"]) > _MAX_TOPUP_AMOUNT:
+                raise _err("topup_amount_limit", "추가구매는 한 번에 10만원 이하만 가능해요.")
+            if not await _has_paid_access(cur, user_id):
+                raise _err(
+                    "active_subscription_required",
+                    "추가구매 크레딧은 이용 중인 구독이 있어야 구매할 수 있어요.",
+                    403,
+                )
             await cur.execute("select plan from profiles where user_id = %s", (user_id,))
             profile = await cur.fetchone()
             plan_at_order = plan_of((profile or {}).get("plan"))
@@ -159,6 +196,45 @@ async def _confirm_with_toss(request: Request, *, secret: str, body: ConfirmBody
     return res.json()
 
 
+async def cancel_topup_payment(
+    request: Request, *, payment_key: str, reason: str, idempotency_key: str,
+) -> dict:
+    """토스 원 결제를 전액 취소한다. 동일 환불 요청은 같은 멱등키로 안전하게 재시도한다."""
+    secret = _require_secret(request)
+    s = request.app.state.settings
+    try:
+        async with httpx.AsyncClient(timeout=s.toss_confirm_timeout) as client:
+            res = await client.post(
+                f"{s.toss_api_base}/v1/payments/{payment_key}/cancel",
+                json={"cancelReason": reason[:200]},
+                headers={"Idempotency-Key": idempotency_key},
+                auth=httpx.BasicAuth(secret, ""),
+            )
+    except httpx.HTTPError as exc:
+        log.warning("toss cancel unreachable refund=%s: %r", idempotency_key, exc)
+        raise TossCancelError(
+            "refund_gateway_unreachable", "환불 처리가 지연되고 있어요. 잠시 후 다시 시도해 주세요.", 503
+        ) from exc
+    if res.status_code != 200:
+        try:
+            payload = res.json()
+        except Exception:
+            payload = {}
+        code = str(payload.get("code") or "refund_cancel_failed")
+        message = str(payload.get("message") or "원 결제 취소에 실패했어요.")
+        status_code = 503 if res.status_code >= 500 else 409
+        log.warning("toss cancel rejected refund=%s status=%s code=%s",
+                    idempotency_key, res.status_code, code)
+        raise TossCancelError(code, message, status_code)
+    payload = res.json()
+    cancels = payload.get("cancels") or []
+    if payload.get("status") != "CANCELED" or not any(
+        cancel.get("cancelStatus") == "DONE" for cancel in cancels
+    ):
+        raise TossCancelError("refund_not_completed", "원 결제 취소가 완료되지 않았어요.", 503)
+    return payload
+
+
 @router.post("/toss/confirm", summary="결제 승인 + 크레딧 적립")
 async def confirm_payment(
     request: Request, body: ConfirmBody, user_id: str = Depends(require_user),
@@ -201,6 +277,12 @@ async def confirm_payment(
             if body.amount != order["amount"]:
                 log.warning("toss confirm amount mismatch order=%s", order["order_id"])
                 raise _err("amount_mismatch", "결제 금액이 주문과 달라요.")
+            if not await _has_paid_access(cur, user_id):
+                raise _err(
+                    "subscription_ended_before_payment",
+                    "구독 이용기간이 끝나 추가구매 결제를 진행할 수 없어요.",
+                    409,
+                )
 
             try:
                 payment = await _confirm_with_toss(

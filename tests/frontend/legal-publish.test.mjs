@@ -186,6 +186,16 @@ test('published model-license terms do not retain duration-based rights or refun
   assert.match(answers, /허용 품목·제외 품목\)과 플랫폼 표준가/);
 });
 
+test('published topup policy states Toss point-industry limits', () => {
+  const terms = readFileSync(join(source, 'public/legal/terms-seller.md'), 'utf8');
+  const refund = readFileSync(join(source, 'public/legal/refund.md'), 'utf8');
+  for (const text of [terms, refund]) {
+    assert.match(text, /충전된 포인트의 이용기간과 환불가능기간은 결제시점으로부터 1년 이내로 제한됩니다/);
+    assert.match(text, /구독 이용기간[^\n]*종료[^\n]*소멸/);
+    assert.match(text, /환불[^\n]*원 결제수단|원 결제수단[^\n]*환불/);
+  }
+});
+
 
 test('협찬 발행본은 게시 기한과 유지 기간만 개정하고 게시 매체와 횟수를 유지해요', t => {
   const f = fixture(t);

@@ -206,15 +206,16 @@ export function SubscriptionManage() {
             <div className={s.row}><dt>상태</dt><dd>계좌이체 이용권</dd></div>
             <div className={s.row}><dt>요금제</dt><dd>{manual.planCode}</dd></div>
             <div className={s.row}><dt>이용 종료일</dt><dd>{seoulDate(manual.endsAt)} · 자동 갱신 없음</dd></div>
-            <div className={s.row}><dt>구독 크레딧</dt><dd>{num(manual.credits)}</dd></div>
+            <div className={s.row}><dt>종료 시 소멸 예정 크레딧</dt><dd>{num(manual.credits)}</dd></div>
           </dl>
           <div className={s.actions}>
             <Link to="/pricing"><Button variant="primary">1개월 연장 신청</Button></Link>
           </div>
         </div>
         <div className={s.note}>
-          이용권이 끝나면 남은 구독 크레딧 <strong>{num(manual.credits)}</strong>이 소멸하고 요금제가 무료로 돌아가요.
-          연장하려면 종료 전에 요금제에서 같은 요금제로 다시 신청해 주세요. 추가 구매한 크레딧은 소멸하지 않아요.
+          이용권이 끝나면 남은 구독 크레딧과 정책 시행 후 추가 구매한 크레딧
+          <strong> {num(manual.credits)}</strong>이 소멸하고 요금제가 무료로 돌아가요.
+          연장하려면 종료 전에 요금제에서 같은 요금제로 다시 신청해 주세요.
         </div>
       </div>
     );
@@ -290,7 +291,7 @@ export function SubscriptionManage() {
               : (data.method === 'TRANSFER' ? '계좌 등록됨' : '등록된 카드 없음')}</dd>
           </div>
           <div className={s.row}>
-            <dt>구독 크레딧</dt>
+            <dt>종료 시 소멸 예정 크레딧</dt>
             <dd>{num(expiring.credits)}</dd>
           </div>
         </dl>
@@ -320,7 +321,8 @@ export function SubscriptionManage() {
       {data.status === 'canceled' && (
         <div className={s.note}>
           {seoulDate(data.currentPeriodEnd)}까지 그대로 쓸 수 있어요. 그날
-          구독 크레딧 <strong>{num(expiring.credits)}</strong>이 이월분까지 모두 소멸해요.
+          구독 크레딧과 정책 시행 후 추가 구매한 크레딧
+          <strong> {num(expiring.credits)}</strong>이 모두 소멸해요.
         </div>
       )}
 
@@ -331,11 +333,11 @@ export function SubscriptionManage() {
             {/* 계획서 §0.1 — 소멸 예정 수량·날짜를 숫자로 보여주지 않으면 환불 분쟁이 난다. */}
             <p className={s.warn}>
               해지해도 <strong>{seoulDate(data.currentPeriodEnd)}</strong>까지는 그대로 쓸 수 있어요.
-              그날 구독 크레딧 <strong>{num(expiring.credits)}</strong>이
+              그날 구독 크레딧과 정책 시행 후 추가 구매한 크레딧 <strong>{num(expiring.credits)}</strong>이
               {expiring.expiresAt ? ` ${seoulDate(expiring.expiresAt)}에` : ''} 모두 사라져요.
               <strong> 이월된 크레딧도 함께 소멸해요.</strong>
             </p>
-            <p className={s.modalSub}>추가 구매한 크레딧은 소멸하지 않아요.</p>
+            <p className={s.modalSub}>정책 시행 후 추가 구매한 크레딧도 함께 소멸해요. 적용일 전에 구매한 무기한 크레딧과 무료 크레딧은 유지돼요.</p>
             <div className={s.actions}>
               <Button variant="ghost" onClick={() => setConfirming(false)}>돌아가기</Button>
               <Button variant="primary" onClick={() => cancel.mutate()} disabled={cancel.isPending}>

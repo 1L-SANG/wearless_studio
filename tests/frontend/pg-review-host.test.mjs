@@ -95,7 +95,7 @@ after(async () => {
 
 /* 호스트 판정은 모듈을 읽는 순간 한 번 정해지는 상수다. 그래서 호스트마다 모듈 그래프를
    비우고 새 window 로 다시 읽는다. */
-async function loadAs(hostname, { extraPlans = [] } = {}) {
+async function loadAs(hostname, { extraPlans = [], accountPlan = 'free' } = {}) {
   globalThis.window = { location: { hostname, search: '', origin: `https://${hostname}` } };
   await vite?.close();
   vite = await createHarnessServer();
@@ -107,7 +107,7 @@ async function loadAs(hostname, { extraPlans = [] } = {}) {
 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(['pricingPlans'], plans);
-  runtime.account = { plan: 'free' };
+  runtime.account = { plan: accountPlan };
   runtime.session = { user: { id: 'pg-review-user' } };
   try {
     const html = renderToStaticMarkup(
@@ -133,7 +133,7 @@ test('심사 호스트에서는 구독 카드가 토스 결제창을 연다', as
 });
 
 test('일반결제 심사 호스트는 단건 크레딧 두 상품과 토스 결제 버튼만 보여준다', async () => {
-  const { tossKeys, html } = await loadAs('pay.wearless.kr');
+  const { tossKeys, html } = await loadAs('pay.wearless.kr', { accountPlan: 'seller' });
   assert.equal(tossKeys.BANK_TRANSFER_ENABLED, false);
   assert.equal(tossKeys.TOPUP_ENABLED, true);
   assert.equal(tossKeys.SUBSCRIPTION_PRODUCTS_ENABLED, false);
@@ -144,14 +144,23 @@ test('일반결제 심사 호스트는 단건 크레딧 두 상품과 토스 결
   assert.match(html, /₩26,000/);
   assert.equal((html.match(/>충전하기<\/button>/g) || []).length, 2);
   assert.doesNotMatch(html, /Starter|Seller|Pro|정기 구독|매월 자동 결제|계좌이체/);
-  assert.match(html, /1회 결제 · 결제 완료 즉시 지급 · 2026년 11월 23일 결제건부터 12개월 사용/);
-  assert.match(html, /결제일부터 12개월 뒤 남은 수량이 소멸해요/);
+  assert.match(html, /AI 상세페이지의 이미지·문구·콘티 생성에 사용해요/);
+  assert.match(html, /구독 이용기간 종료 또는 결제일부터 1년 뒤 중 먼저 오는 날/);
+  assert.match(html, /환불은 결제했던 수단으로 처리해요/);
   assert.match(html, /다른 사람에게 양도하거나 현금으로 전환할 수 없어요/);
+  assert.match(html, /상세페이지 제작에서 사용하기/);
   assert.match(html, /결제하면 .*이용약관.*환불 정책/);
 });
 
+test('일반결제 충전은 활성 구독 계정에만 열린다', async () => {
+  const { html } = await loadAs('pay.wearless.kr', { accountPlan: 'free' });
+  assert.equal((html.match(/>구독 후 충전하기<\/button>/g) || []).length, 2);
+  assert.equal((html.match(/disabled=""/g) || []).length, 2);
+  assert.doesNotMatch(html, />충전하기<\/button>/);
+});
+
 test('일반결제 심사 호스트는 승인한 두 SKU와 정확한 가격만 허용한다', async () => {
-  const { html } = await loadAs('pay.wearless.kr', { extraPlans: [
+  const { html } = await loadAs('pay.wearless.kr', { accountPlan: 'seller', extraPlans: [
     { id: 'legacy', code: 'topup_legacy', kind: 'topup', name: '옛 충전', credits: 50,
       price: 3000, billingPeriod: 'once', sortOrder: 1 },
     { id: 'wrong-price', code: 'topup_100', kind: 'topup', name: '가격이 바뀐 100 크레딧',

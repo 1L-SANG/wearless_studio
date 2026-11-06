@@ -29,7 +29,15 @@ class _Cur:
     async def execute(self, sql, params=None):
         q = " ".join(sql.split())
         if "from pricing_plans" in q:
-            self._row = {**PLAN, "credits": self.s["sku_credits"]} if params[0] == PLAN["code"] and self.s["plan_ok"] else None
+            self._row = {**PLAN, "credits": self.s["sku_credits"], "price": self.s["sku_price"]} if params[0] == PLAN["code"] and self.s["plan_ok"] else None
+        elif "from subscriptions" in q:
+            sub = self.s["subscription"]
+            self._row = sub if (sub and sub["status"] in {"active", "canceled"}
+                                and str(sub["current_period_end"]).startswith("2099-")) else None
+        elif "from manual_plan_grants" in q:
+            grant = self.s["manual_grant"]
+            self._row = grant if (grant and grant["status"] == "active"
+                                  and str(grant["ends_at"]).startswith("2099-")) else None
         elif q.startswith("select plan from profiles"):
             self.s["profile_reads"] += 1
             self._row = {"plan": self.s["profile_plan"]}
@@ -78,6 +86,9 @@ def pay(monkeypatch, keypair):
     private_key, public_key = keypair
     state = {"orders": {}, "plan_ok": True, "commits": 0,
              "profile_plan": "free", "profile_reads": 0, "sku_credits": PLAN["credits"],
+             "sku_price": PLAN["price"],
+             "subscription": {"status": "active", "current_period_end": "2099-01-01T00:00:00+00:00"},
+             "manual_grant": None,
              "toss_calls": [], "toss_response": (200, {}), "grants": [], "balance": 1000,
              # 실제 승인 함수 — 에러 처리(타임아웃→재시도 유지)를 검증할 때 되살려 쓴다
              "real_confirm": payments._confirm_with_toss}
@@ -182,6 +193,40 @@ def test_checkout_unknown_plan_is_404(pay, make_token):
     assert res.status_code == 404 and res.json()["error"]["code"] == "unknown_plan"
 
 
+@pytest.mark.parametrize("subscription", [None, {"status": "ended", "current_period_end": "2026-01-01T00:00:00+00:00"}])
+def test_checkout_requires_a_current_paid_subscription(pay, make_token, subscription):
+    client, state = pay
+    state["subscription"] = subscription
+    res = client.post("/v1/payments/toss/checkout", headers=_auth(make_token),
+                      json={"planCode": PLAN["code"]})
+    assert res.status_code == 403
+    assert res.json()["error"]["code"] == "active_subscription_required"
+    assert state["orders"] == {}
+
+
+def test_checkout_accepts_canceled_subscription_until_paid_period_ends(pay, make_token):
+    client, state = pay
+    state["subscription"] = {"status": "canceled", "current_period_end": "2099-01-01T00:00:00+00:00"}
+    assert _checkout(client, make_token)["amount"] == PLAN["price"]
+
+
+def test_checkout_accepts_current_manual_paid_entitlement(pay, make_token):
+    client, state = pay
+    state["subscription"] = None
+    state["manual_grant"] = {"status": "active", "ends_at": "2099-01-01T00:00:00+00:00"}
+    assert _checkout(client, make_token)["amount"] == PLAN["price"]
+
+
+def test_checkout_rejects_sku_above_point_industry_limit(pay, make_token):
+    client, state = pay
+    state["sku_price"] = 100001
+    res = client.post("/v1/payments/toss/checkout", headers=_auth(make_token),
+                      json={"planCode": PLAN["code"]})
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "topup_amount_limit"
+    assert state["orders"] == {}
+
+
 def test_checkout_without_secret_key_is_503_not_mock_success(monkeypatch, keypair):
     # 키가 없는데 목 성공을 주면 결제 없이 크레딧이 늘어난다 → 반드시 거절
     _, public_key = keypair
@@ -208,6 +253,18 @@ def test_confirm_rejects_amount_tampering_before_calling_toss(pay, make_token):
     assert state["toss_calls"] == []          # 토스 호출 전에 차단
     assert state["grants"] == []              # 크레딧 미적립
     assert state["orders"][order["orderId"]]["status"] == "pending"
+
+
+def test_confirm_rechecks_subscription_before_approving_card(pay, make_token):
+    client, state = pay
+    order = _checkout(client, make_token)
+    state["subscription"] = None
+    res = client.post("/v1/payments/toss/confirm", headers=_auth(make_token),
+                      json={"paymentKey": "pk_1", "orderId": order["orderId"],
+                            "amount": order["amount"]})
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "subscription_ended_before_payment"
+    assert state["toss_calls"] == [] and state["grants"] == []
 
 
 def test_confirm_other_users_order_is_404(pay, make_token):
@@ -393,3 +450,34 @@ def test_purchase_topup_defaults_to_test_provider(pay):
     sig = inspect.signature(repo_module.purchase_topup)
     assert sig.parameters["provider"].default == "test"
     assert sig.parameters["provider_ref"].default is None
+
+
+def test_toss_cancel_uses_original_payment_and_idempotency(monkeypatch):
+    calls = []
+
+    class _Response:
+        status_code = 200
+        def json(self):
+            return {"status": "CANCELED", "cancels": [{"cancelStatus": "DONE"}]}
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        async def post(self, url, **kwargs):
+            calls.append({"url": url, **kwargs})
+            return _Response()
+
+    monkeypatch.setattr(payments.httpx, "AsyncClient", _Client)
+    request = type("Request", (), {"app": type("App", (), {"state": type("State", (), {
+        "settings": make_settings(toss_secret_key=SECRET),
+    })()})()})()
+    result = __import__('asyncio').run(payments.cancel_topup_payment(
+        request, payment_key="pk_original", reason="구매 취소", idempotency_key="refund-1"))
+    assert result["status"] == "CANCELED"
+    assert calls[0]["url"].endswith("/v1/payments/pk_original/cancel")
+    assert calls[0]["json"] == {"cancelReason": "구매 취소"}
+    assert calls[0]["headers"] == {"Idempotency-Key": "refund-1"}
