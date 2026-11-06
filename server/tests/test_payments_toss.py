@@ -426,3 +426,34 @@ def test_purchase_topup_defaults_to_test_provider(pay):
     sig = inspect.signature(repo_module.purchase_topup)
     assert sig.parameters["provider"].default == "test"
     assert sig.parameters["provider_ref"].default is None
+
+
+def test_toss_cancel_uses_original_payment_and_idempotency(monkeypatch):
+    calls = []
+
+    class _Response:
+        status_code = 200
+        def json(self):
+            return {"status": "CANCELED", "cancels": [{"cancelStatus": "DONE"}]}
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        async def post(self, url, **kwargs):
+            calls.append({"url": url, **kwargs})
+            return _Response()
+
+    monkeypatch.setattr(payments.httpx, "AsyncClient", _Client)
+    request = type("Request", (), {"app": type("App", (), {"state": type("State", (), {
+        "settings": make_settings(toss_secret_key=SECRET),
+    })()})()})()
+    result = __import__('asyncio').run(payments.cancel_topup_payment(
+        request, payment_key="pk_original", reason="구매 취소", idempotency_key="refund-1"))
+    assert result["status"] == "CANCELED"
+    assert calls[0]["url"].endswith("/v1/payments/pk_original/cancel")
+    assert calls[0]["json"] == {"cancelReason": "구매 취소"}
+    assert calls[0]["headers"] == {"Idempotency-Key": "refund-1"}

@@ -62,6 +62,16 @@ class _RetryableConfirm(Exception):
         self.message = message
 
 
+class TossCancelError(Exception):
+    """원 결제 취소 실패. 라우터가 요청을 pending 으로 유지할 수 있게 상태를 보존한다."""
+
+    def __init__(self, code: str, message: str, status_code: int):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+
+
 def _require_secret(request: Request) -> str:
     secret = request.app.state.settings.toss_secret_key
     if not secret:
@@ -172,6 +182,45 @@ async def _confirm_with_toss(request: Request, *, secret: str, body: ConfirmBody
             raise _RetryableConfirm(code, "결제 확인이 지연되고 있어요. 잠시 후 다시 시도해 주세요.")
         raise _err(code, message, 402)   # 4xx = 토스의 확정적 거절(카드사 거절 등)
     return res.json()
+
+
+async def cancel_topup_payment(
+    request: Request, *, payment_key: str, reason: str, idempotency_key: str,
+) -> dict:
+    """토스 원 결제를 전액 취소한다. 동일 환불 요청은 같은 멱등키로 안전하게 재시도한다."""
+    secret = _require_secret(request)
+    s = request.app.state.settings
+    try:
+        async with httpx.AsyncClient(timeout=s.toss_confirm_timeout) as client:
+            res = await client.post(
+                f"{s.toss_api_base}/v1/payments/{payment_key}/cancel",
+                json={"cancelReason": reason[:200]},
+                headers={"Idempotency-Key": idempotency_key},
+                auth=httpx.BasicAuth(secret, ""),
+            )
+    except httpx.HTTPError as exc:
+        log.warning("toss cancel unreachable refund=%s: %r", idempotency_key, exc)
+        raise TossCancelError(
+            "refund_gateway_unreachable", "환불 처리가 지연되고 있어요. 잠시 후 다시 시도해 주세요.", 503
+        ) from exc
+    if res.status_code != 200:
+        try:
+            payload = res.json()
+        except Exception:
+            payload = {}
+        code = str(payload.get("code") or "refund_cancel_failed")
+        message = str(payload.get("message") or "원 결제 취소에 실패했어요.")
+        status_code = 503 if res.status_code >= 500 else 409
+        log.warning("toss cancel rejected refund=%s status=%s code=%s",
+                    idempotency_key, res.status_code, code)
+        raise TossCancelError(code, message, status_code)
+    payload = res.json()
+    cancels = payload.get("cancels") or []
+    if payload.get("status") != "CANCELED" or not any(
+        cancel.get("cancelStatus") == "DONE" for cancel in cancels
+    ):
+        raise TossCancelError("refund_not_completed", "원 결제 취소가 완료되지 않았어요.", 503)
+    return payload
 
 
 @router.post("/toss/confirm", summary="결제 승인 + 크레딧 적립")

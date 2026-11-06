@@ -20,7 +20,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPExcep
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from psycopg import errors
 
-from . import admin_guard, app_origin, detail_cut_preview, facemarket, legal_versions, personalization, plan_pricing, rate_limit, repo
+from . import admin_guard, app_origin, detail_cut_preview, facemarket, legal_versions, payments, personalization, plan_pricing, rate_limit, repo
 from .agents import (
     color_harmony,
     content_roles,
@@ -864,7 +864,19 @@ async def approve_refund(
     async with get_conn(request) as conn:
         await admin_guard.require_admin(conn, user_id, request)
         try:
+            payment = await repo.get_refund_payment_for_approval(conn, request_id=request_id)
+            await payments.cancel_topup_payment(
+                request,
+                payment_key=payment["paymentKey"],
+                reason=payment["reason"],
+                idempotency_key=request_id,
+            )
             result = await repo.approve_refund(conn, request_id=request_id, resolved_by=user_id)
+        except payments.TossCancelError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": exc.message},
+            ) from exc
         except repo.CreditError as e:
             raise _credit_error(e)
         await admin_guard.write_audit(

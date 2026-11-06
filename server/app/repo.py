@@ -5593,6 +5593,31 @@ async def _load_refund_for_resolve(cur, request_id: str) -> tuple[dict, dict, di
     return req, acct, b
 
 
+async def get_refund_payment_for_approval(conn: AsyncConnection, *, request_id: str) -> dict:
+    """pending 환불과 원 결제 식별자를 잠가 반환한다. 외부 취소 전 상태 검증용."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select rr.id::text as request_id, rr.status, rr.reason, "
+            "ph.provider, ph.provider_ref as payment_key, ph.amount "
+            "from refund_requests rr "
+            "join credit_sources cs on cs.id = rr.credit_source_id "
+            "join payment_history ph on ph.id = cs.payment_id "
+            "where rr.id = %s for update",
+            (request_id,),
+        )
+        row = await cur.fetchone()
+    if row is None:
+        raise CreditError("refund_not_found", "환불 요청을 찾을 수 없어요.", 404)
+    if row["status"] != "pending":
+        raise CreditError("refund_not_pending", "이미 처리된 요청이에요.", 409)
+    if row["provider"] != "toss" or not row["payment_key"]:
+        raise CreditError("refund_provider_unavailable", "원 결제수단으로 취소할 수 없는 결제예요.", 409)
+    return {"requestId": row["request_id"], "status": row["status"],
+            "reason": row.get("reason") or "크레딧 추가구매 환불",
+            "provider": row["provider"], "paymentKey": row["payment_key"],
+            "amount": row["amount"]}
+
+
 async def approve_refund(conn: AsyncConnection, *, request_id: str, resolved_by: str) -> dict:
     """관리자 승인(§3.4): 버킷 refunded(가용 재차감 없음 — 요청 시 이미 제외, 불변식 4) +
     delta=0 원장 마커 + payment refunded. 실제 환불은 PG 단계."""
