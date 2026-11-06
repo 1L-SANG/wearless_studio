@@ -37,9 +37,12 @@ class _Cur:
             self.s["expired"].append(params)
             self._rows = []
         elif "insert into credit_ledger" in q:
-            # action_key 는 SQL 문자열에 박혀 있다(파라미터가 아니다) — 문장에서 뽑는다.
-            action = next(k for k in ("grant_subscription", "expire_subscription") if k in q)
-            self.s["ledger"].append({"action_key": action, "delta": params[2]})
+            if len(params) >= 7 and params[2] in {"expire_subscription", "expire_topup"}:
+                action, delta = params[2], params[3]
+            else:
+                action = next(k for k in ("grant_subscription", "expire_subscription") if k in q)
+                delta = params[2]
+            self.s["ledger"].append({"action_key": action, "delta": delta})
             self._rows = []
         elif "update credit_accounts" in q:
             self.s["balance"] = params[0]
@@ -71,7 +74,8 @@ class _Conn:
 @pytest.fixture()
 def state():
     return {"sql": [], "plan_ok": True, "balance": 500, "inserted": [], "expired": [],
-            "ledger": [], "buckets": [{"id": "src-old", "remaining_credits": 500}]}
+            "ledger": [], "buckets": [{"id": "src-old", "source_type": "subscription",
+                                          "remaining_credits": 500}]}
 
 
 def test_renewal_keeps_existing_subscription_buckets(state):
@@ -89,6 +93,8 @@ def test_expire_buckets_zeroes_all_subscription_credits(state):
         repo.expire_subscription_buckets(_Conn(state), user_id="u1", reason="canceled"))
     assert len(state["expired"]) == 1
     assert result["expired"] == 500
+    assert result["subscriptionExpired"] == 500
+    assert result["topupExpired"] == 0
     assert result["available"] == 0
     assert [entry["action_key"] for entry in state["ledger"]] == ["expire_subscription"]
     assert state["ledger"][0]["delta"] == -500

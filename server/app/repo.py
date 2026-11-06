@@ -5566,7 +5566,9 @@ async def request_refund(
             "credits": b["remaining_credits"], "available": new_balance - acct["reserved"]}
 
 
-async def _load_refund_for_resolve(cur, request_id: str) -> tuple[dict, dict, dict]:
+async def _load_refund_for_resolve(
+    cur, request_id: str, *, expected_status: str,
+) -> tuple[dict, dict, dict]:
     """승인/거부 공통: 요청·계정·버킷을 FOR UPDATE 로드 + 종결 비가역 가드(불변식 4)."""
     await cur.execute(
         "select id::text as id, user_id::text as user_id, credit_source_id::text as credit_source_id, "
@@ -5576,14 +5578,14 @@ async def _load_refund_for_resolve(cur, request_id: str) -> tuple[dict, dict, di
     req = await cur.fetchone()
     if req is None:
         raise CreditError("refund_not_found", "환불 요청을 찾을 수 없어요.", 404)
-    if req["status"] != "pending":  # 종결 요청 비가역
+    if req["status"] != expected_status:  # 종결 요청 비가역 + canceling 은 반려 금지
         raise CreditError("refund_not_pending", "이미 처리된 요청이에요.", 409)
     await cur.execute(
         "select balance, reserved from credit_accounts where user_id = %s for update", (req["user_id"],)
     )
     acct = await cur.fetchone()
     await cur.execute(
-        "select id::text as id, status, remaining_credits, payment_id::text as payment_id "
+        "select id::text as id, status, remaining_credits, period_end, payment_id::text as payment_id "
         "from credit_sources where id = %s for update",
         (req["credit_source_id"],),
     )
@@ -5593,8 +5595,8 @@ async def _load_refund_for_resolve(cur, request_id: str) -> tuple[dict, dict, di
     return req, acct, b
 
 
-async def get_refund_payment_for_approval(conn: AsyncConnection, *, request_id: str) -> dict:
-    """pending 환불과 원 결제 식별자를 잠가 반환한다. 외부 취소 전 상태 검증용."""
+async def begin_refund_cancel(conn: AsyncConnection, *, request_id: str) -> dict:
+    """환불을 canceling 으로 잠그고 원 결제 식별자를 반환한다. 같은 요청은 재시도 가능하다."""
     async with conn.cursor() as cur:
         await cur.execute(
             "select rr.id::text as request_id, rr.status, rr.reason, "
@@ -5602,16 +5604,21 @@ async def get_refund_payment_for_approval(conn: AsyncConnection, *, request_id: 
             "from refund_requests rr "
             "join credit_sources cs on cs.id = rr.credit_source_id "
             "join payment_history ph on ph.id = cs.payment_id "
-            "where rr.id = %s for update",
+            "where rr.id = %s and rr.status in ('pending', 'canceling') for update",
             (request_id,),
         )
         row = await cur.fetchone()
     if row is None:
         raise CreditError("refund_not_found", "환불 요청을 찾을 수 없어요.", 404)
-    if row["status"] != "pending":
-        raise CreditError("refund_not_pending", "이미 처리된 요청이에요.", 409)
     if row["provider"] != "toss" or not row["payment_key"]:
         raise CreditError("refund_provider_unavailable", "원 결제수단으로 취소할 수 없는 결제예요.", 409)
+    if row["status"] == "pending":
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update refund_requests set status = 'canceling' "
+                "where id = %s and status = 'pending'",
+                (request_id,),
+            )
     return {"requestId": row["request_id"], "status": row["status"],
             "reason": row.get("reason") or "크레딧 추가구매 환불",
             "provider": row["provider"], "paymentKey": row["payment_key"],
@@ -5622,7 +5629,8 @@ async def approve_refund(conn: AsyncConnection, *, request_id: str, resolved_by:
     """관리자 승인(§3.4): 버킷 refunded(가용 재차감 없음 — 요청 시 이미 제외, 불변식 4) +
     delta=0 원장 마커 + payment refunded. 실제 환불은 PG 단계."""
     async with conn.cursor() as cur:
-        req, acct, b = await _load_refund_for_resolve(cur, request_id)
+        req, acct, b = await _load_refund_for_resolve(
+            cur, request_id, expected_status="canceling")
         await cur.execute("update credit_sources set status = 'refunded' where id = %s", (b["id"],))
         if b["payment_id"]:
             await cur.execute(
@@ -5645,24 +5653,53 @@ async def approve_refund(conn: AsyncConnection, *, request_id: str, resolved_by:
 async def reject_refund(conn: AsyncConnection, *, request_id: str, resolved_by: str) -> dict:
     """관리자 거부(§3.4): 버킷 active 복귀 + 가용 복원(balance += remaining) + 원장 행."""
     async with conn.cursor() as cur:
-        req, acct, b = await _load_refund_for_resolve(cur, request_id)
-        new_balance = acct["balance"] + b["remaining_credits"]
-        await cur.execute("update credit_sources set status = 'active' where id = %s", (b["id"],))
+        req, acct, b = await _load_refund_for_resolve(
+            cur, request_id, expected_status="pending")
         await cur.execute(
-            "update credit_accounts set balance = %s where user_id = %s", (new_balance, req["user_id"])
+            "select exists (select 1 from subscriptions where user_id = %s "
+            "and status in ('active', 'canceled') and current_period_end > now()) "
+            "or exists (select 1 from manual_plan_grants where user_id = %s "
+            "and status = 'active' and ends_at > now()) as has_paid_access",
+            (req["user_id"], req["user_id"]),
         )
+        access = await cur.fetchone() or {}
+        restore = should_restore_rejected_topup(
+            period_end=b.get("period_end"),
+            has_paid_access=bool(access.get("has_paid_access")),
+            now=datetime.now(timezone.utc),
+        )
+        new_balance = acct["balance"] + (b["remaining_credits"] if restore else 0)
+        if restore:
+            await cur.execute("update credit_sources set status = 'active' where id = %s", (b["id"],))
+            await cur.execute(
+                "update credit_accounts set balance = %s where user_id = %s",
+                (new_balance, req["user_id"]),
+            )
+        else:
+            await cur.execute(
+                "update credit_sources set status = 'expired', remaining_credits = 0 where id = %s",
+                (b["id"],),
+            )
         await cur.execute(
             "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
             "balance_after, available_after, metadata) values (%s,%s,'refund_rejected',%s,%s,%s,%s)",
-            (req["user_id"], b["id"], b["remaining_credits"], new_balance,
-             new_balance - acct["reserved"], Json({"requestId": req["id"]})),
+            (req["user_id"], b["id"], b["remaining_credits"] if restore else 0, new_balance,
+             new_balance - acct["reserved"],
+             Json({"requestId": req["id"], "expired": not restore})),
         )
         await cur.execute(
             "update refund_requests set status = 'rejected', resolved_at = now(), resolved_by = %s "
             "where id = %s",
             (resolved_by, req["id"]),
         )
-    return {"refundRequestId": req["id"], "status": "rejected", "creditsRestored": b["remaining_credits"]}
+    return {"refundRequestId": req["id"], "status": "rejected",
+            "creditsRestored": b["remaining_credits"] if restore else 0,
+            "creditsExpired": 0 if restore else b["remaining_credits"]}
+
+
+def should_restore_rejected_topup(*, period_end, has_paid_access: bool, now: datetime) -> bool:
+    """Legacy top-ups survive; policy top-ups require both time and paid access to remain."""
+    return period_end is None or (period_end > now and has_paid_access)
 
 
 async def list_pricing_plans(conn: AsyncConnection) -> list[dict]:

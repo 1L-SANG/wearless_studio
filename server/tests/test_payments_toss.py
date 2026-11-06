@@ -255,6 +255,18 @@ def test_confirm_rejects_amount_tampering_before_calling_toss(pay, make_token):
     assert state["orders"][order["orderId"]]["status"] == "pending"
 
 
+def test_confirm_rechecks_subscription_before_approving_card(pay, make_token):
+    client, state = pay
+    order = _checkout(client, make_token)
+    state["subscription"] = None
+    res = client.post("/v1/payments/toss/confirm", headers=_auth(make_token),
+                      json={"paymentKey": "pk_1", "orderId": order["orderId"],
+                            "amount": order["amount"]})
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "subscription_ended_before_payment"
+    assert state["toss_calls"] == [] and state["grants"] == []
+
+
 def test_confirm_other_users_order_is_404(pay, make_token):
     client, state = pay
     order = _checkout(client, make_token, sub="user-1")

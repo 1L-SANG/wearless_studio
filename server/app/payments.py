@@ -85,6 +85,24 @@ def _new_order_id() -> str:
     return f"wl-{secrets.token_urlsafe(_ORDER_ID_BYTES)}"[:64]
 
 
+async def _has_paid_access(cur, user_id: str) -> bool:
+    """현재 유료 이용기간을 잠가 확인한다. confirm 중 종료 워커와의 경합도 막는다."""
+    await cur.execute(
+        "select status, current_period_end from subscriptions "
+        "where user_id = %s and status in ('active', 'canceled') "
+        "and current_period_end > now() for share",
+        (user_id,),
+    )
+    if await cur.fetchone() is not None:
+        return True
+    await cur.execute(
+        "select status, ends_at from manual_plan_grants "
+        "where user_id = %s and status = 'active' and ends_at > now() for share",
+        (user_id,),
+    )
+    return await cur.fetchone() is not None
+
+
 @router.post("/toss/checkout", summary="크레딧 추가구매 주문 생성")
 async def create_checkout(
     request: Request, body: CheckoutBody, user_id: str = Depends(require_user),
@@ -108,21 +126,7 @@ async def create_checkout(
                 raise _err("unknown_plan", "추가구매 상품을 찾을 수 없어요.", 404)
             if int(plan["price"]) > _MAX_TOPUP_AMOUNT:
                 raise _err("topup_amount_limit", "추가구매는 한 번에 10만원 이하만 가능해요.")
-            await cur.execute(
-                "select status, current_period_end from subscriptions "
-                "where user_id = %s and status in ('active', 'canceled') "
-                "and current_period_end > now()",
-                (user_id,),
-            )
-            paid_access = await cur.fetchone()
-            if paid_access is None:
-                await cur.execute(
-                    "select status, ends_at from manual_plan_grants "
-                    "where user_id = %s and status = 'active' and ends_at > now()",
-                    (user_id,),
-                )
-                paid_access = await cur.fetchone()
-            if paid_access is None:
+            if not await _has_paid_access(cur, user_id):
                 raise _err(
                     "active_subscription_required",
                     "추가구매 크레딧은 이용 중인 구독이 있어야 구매할 수 있어요.",
@@ -273,6 +277,12 @@ async def confirm_payment(
             if body.amount != order["amount"]:
                 log.warning("toss confirm amount mismatch order=%s", order["order_id"])
                 raise _err("amount_mismatch", "결제 금액이 주문과 달라요.")
+            if not await _has_paid_access(cur, user_id):
+                raise _err(
+                    "subscription_ended_before_payment",
+                    "구독 이용기간이 끝나 추가구매 결제를 진행할 수 없어요.",
+                    409,
+                )
 
             try:
                 payment = await _confirm_with_toss(

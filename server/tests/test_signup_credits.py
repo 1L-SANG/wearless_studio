@@ -355,6 +355,17 @@ def test_subscription_expiry_summary_includes_only_subscription_bound_balances(c
     }
 
 
+def test_refund_reject_never_restores_expired_subscription_bound_topup():
+    now = datetime(2026, 11, 6, tzinfo=timezone.utc)
+    assert repo.should_restore_rejected_topup(period_end=None, has_paid_access=False, now=now)
+    assert repo.should_restore_rejected_topup(
+        period_end=now + timedelta(days=1), has_paid_access=True, now=now)
+    assert not repo.should_restore_rejected_topup(
+        period_end=now + timedelta(days=1), has_paid_access=False, now=now)
+    assert not repo.should_restore_rejected_topup(
+        period_end=now - timedelta(seconds=1), has_paid_access=True, now=now)
+
+
 def test_due_topups_expire_but_legacy_and_future_purchases_remain(credits_store):
     credits_store.accounts[USER]["balance"] = 100
     credits_store.sources = {

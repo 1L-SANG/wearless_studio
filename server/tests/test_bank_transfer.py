@@ -244,6 +244,14 @@ class Cursor:
             for src in s.sources.values():
                 if src["user_id"] == p[1] and src["type"] == "subscription" and src["status"] == "active" and src["id"] != p[2]:
                     src["period_end"] = p[0]
+        elif "select id::text as id, source_type, remaining_credits from credit_sources" in q:
+            if p[0] in s.fail_expire_for:
+                raise RuntimeError("check constraint reserved <= balance")
+            self._set([{"id": src["id"], "source_type": src["type"],
+                        "remaining_credits": src["remaining"]} for src in s.sources.values()
+                       if src["user_id"] == p[0] and src["status"] == "active"
+                       and (src["type"] == "subscription"
+                            or (src["type"] == "topup" and src.get("period_end") is not None))])
         elif "select id::text as id, remaining_credits from credit_sources" in q:
             if p[0] in s.fail_expire_for:
                 raise RuntimeError("check constraint reserved <= balance")
@@ -251,11 +259,18 @@ class Cursor:
                        if src["user_id"] == p[0] and src["type"] == "subscription" and src["status"] == "active"])
         elif q.startswith("update credit_sources set status = 'expired'"):
             s.sources[p[0]].update({"status": "expired", "remaining": 0})
-        elif "coalesce(sum(remaining_credits), 0) as credits" in q:
+        elif "as credits, max(period_end) filter" in q:
             mine = [src for src in s.sources.values()
-                    if src["user_id"] == p[0] and src["type"] == "subscription" and src["status"] == "active"]
+                    if src["user_id"] == p[0] and src["status"] == "active"
+                    and (src["type"] == "subscription"
+                         or (src["type"] == "topup" and src.get("period_end") is not None))]
+            subscriptions = [src for src in mine if src["type"] == "subscription"]
             self._set([{"credits": sum(x["remaining"] for x in mine),
-                        "expires_at": max((x["period_end"] for x in mine), default=None)}])
+                        "expires_at": max((x["period_end"] for x in subscriptions), default=None)}])
+        elif (q.startswith("insert into credit_ledger") and len(p) >= 7
+              and p[2] in {"expire_subscription", "expire_topup"}):
+            s.ledger.append({"user": p[0], "source": p[1], "action": p[2],
+                             "delta": p[3], "key": None, "metadata": p[6].obj})
         elif q.startswith("insert into credit_ledger"):
             entry = {"user": p[0], "source": p[1], "delta": p[2], "key": None}
             if "idempotency_key" in q:

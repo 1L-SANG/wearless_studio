@@ -864,7 +864,10 @@ async def approve_refund(
     async with get_conn(request) as conn:
         await admin_guard.require_admin(conn, user_id, request)
         try:
-            payment = await repo.get_refund_payment_for_approval(conn, request_id=request_id)
+            payment = await repo.begin_refund_cancel(conn, request_id=request_id)
+            # 외부 취소 전 canceling 을 먼저 확정한다. 이후 응답·DB 커밋이 유실돼도 반려로
+            # 크레딧을 되살릴 수 없고, 같은 요청 ID로 안전하게 재시도할 수 있다.
+            await conn.commit()
             await payments.cancel_topup_payment(
                 request,
                 payment_key=payment["paymentKey"],
