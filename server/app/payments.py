@@ -114,7 +114,15 @@ async def create_checkout(
                 "and current_period_end > now()",
                 (user_id,),
             )
-            if await cur.fetchone() is None:
+            paid_access = await cur.fetchone()
+            if paid_access is None:
+                await cur.execute(
+                    "select status, ends_at from manual_plan_grants "
+                    "where user_id = %s and status = 'active' and ends_at > now()",
+                    (user_id,),
+                )
+                paid_access = await cur.fetchone()
+            if paid_access is None:
                 raise _err(
                     "active_subscription_required",
                     "추가구매 크레딧은 이용 중인 구독이 있어야 구매할 수 있어요.",

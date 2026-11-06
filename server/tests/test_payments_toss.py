@@ -34,6 +34,10 @@ class _Cur:
             sub = self.s["subscription"]
             self._row = sub if (sub and sub["status"] in {"active", "canceled"}
                                 and str(sub["current_period_end"]).startswith("2099-")) else None
+        elif "from manual_plan_grants" in q:
+            grant = self.s["manual_grant"]
+            self._row = grant if (grant and grant["status"] == "active"
+                                  and str(grant["ends_at"]).startswith("2099-")) else None
         elif q.startswith("select plan from profiles"):
             self.s["profile_reads"] += 1
             self._row = {"plan": self.s["profile_plan"]}
@@ -84,6 +88,7 @@ def pay(monkeypatch, keypair):
              "profile_plan": "free", "profile_reads": 0, "sku_credits": PLAN["credits"],
              "sku_price": PLAN["price"],
              "subscription": {"status": "active", "current_period_end": "2099-01-01T00:00:00+00:00"},
+             "manual_grant": None,
              "toss_calls": [], "toss_response": (200, {}), "grants": [], "balance": 1000,
              # 실제 승인 함수 — 에러 처리(타임아웃→재시도 유지)를 검증할 때 되살려 쓴다
              "real_confirm": payments._confirm_with_toss}
@@ -202,6 +207,13 @@ def test_checkout_requires_a_current_paid_subscription(pay, make_token, subscrip
 def test_checkout_accepts_canceled_subscription_until_paid_period_ends(pay, make_token):
     client, state = pay
     state["subscription"] = {"status": "canceled", "current_period_end": "2099-01-01T00:00:00+00:00"}
+    assert _checkout(client, make_token)["amount"] == PLAN["price"]
+
+
+def test_checkout_accepts_current_manual_paid_entitlement(pay, make_token):
+    client, state = pay
+    state["subscription"] = None
+    state["manual_grant"] = {"status": "active", "ends_at": "2099-01-01T00:00:00+00:00"}
     assert _checkout(client, make_token)["amount"] == PLAN["price"]
 
 
