@@ -1,4 +1,5 @@
 """Backdrop changes must survive normalization without changing other cut families."""
+from storyboard_v4_cases import v4_blocks
 import pytest
 import asyncio
 import math
@@ -205,7 +206,7 @@ def test_palette_is_shared_within_color_but_not_taken_from_other_color():
 @pytest.mark.parametrize("clothing", ["top", "bottom", "outer", "dress"])
 def test_saved_selection_worker_palette_prompt_and_qc_keep_one_contract(clothing):
     product = {"clothingType": clothing, "colors": [{"id": "base", "swatchId": "blue"}]}
-    saved = content_roles.canonicalize_storyboard([block(_horizonBackground={"wallHex": "#ff0000"})], for_storage=True)[0]
+    saved = content_roles.canonicalize_storyboard(v4_blocks([block(_horizonBackground={"wallHex": "#ff0000"})]), for_storage=True)[0]
     assert saved["horizonBackgroundMode"] == "garment-tone"
     assert "_horizonBackground" not in saved
     analysis, sources = measurement_fixture([("base", "#2a5db0")], clothing)
@@ -332,7 +333,7 @@ def test_editor_route_rejects_invalid_set_retry_before_job_or_credit(client, mak
     else:
         payload.pop("retryBlockId")
     async def project(*args): return {"id": "p1"}
-    async def storyboard(*args): return [saved]
+    async def storyboard(*args): return v4_blocks([saved])
     async def editor_blocks(*args): return editor
     async def forbidden(*args, **kwargs): raise AssertionError("invalid retry must not create a job or reserve credits")
     monkeypatch.setattr(routes.repo, "get_project", project)
@@ -356,7 +357,7 @@ def test_valid_retry_route_keeps_saved_contract_and_existing_idempotent_charge(c
     editor = [{"elements": [{"type": "image", "src": None, "sourceBlockId": "cut"}]}]
     seen = {"reservations": []}
     async def project(*args): return {"id": "p1"}
-    async def storyboard(*args): return [saved]
+    async def storyboard(*args): return v4_blocks([saved])
     async def editor_blocks(*args): return editor
     async def product(*args): return {"clothingType": "top", "colors": [{"id": "base", "swatchId": "blue"}]}
     async def analysis(*args): return {"targetGenders": ["women"]}
@@ -417,8 +418,15 @@ def test_actual_worker_keeps_geometry_inputs_and_selected_color_contract(monkeyp
     async def get_product(*args): return product
     async def get_analysis(*args): return {"targetGenders": ["women"], **measured}
     async def get_project(*args): return {"copywriting": False}
-    async def get_storyboard(*args): return [saved]
+    async def get_storyboard(*args): return v4_blocks([saved])
     async def get_asset(conn, user, asset_id): return {"id": asset_id, "mime_type": "image/png", "r2_key": "product/" + asset_id}
+    async def get_project_asset(conn, user, project_id, asset_id):
+        return await get_asset(conn, user, asset_id)
+    async def color_stage(settings, provider, master, target, plan, **kwargs):
+        captured["colorStage"] = (master.data, target.data)
+        return b"COLORED", "image/png"
+    async def create_asset(conn, **kwargs):
+        return {"id": kwargs["asset_id"]}
     async def load_image(settings, asset, *, role): return InlineImage("image/png", asset["key"].encode())
     async def emit(*args, **kwargs): return None
     async def fail(*args, **kwargs): return None
@@ -436,6 +444,7 @@ def test_actual_worker_keeps_geometry_inputs_and_selected_color_contract(monkeyp
         return [], [], 0, [], None, []
     for name, function in {"get_product": get_product, "get_analysis": get_analysis, "get_project": get_project,
                            "get_storyboard": get_storyboard, "get_asset_for_user": get_asset,
+                           "get_project_asset_for_user": get_project_asset, "create_asset": create_asset,
                            "finalize_detail_page_failure": fail, "finalize_editor_image_success": finalize,
                            "replace_garment_color_evidence": replace_evidence}.items():
         monkeypatch.setattr(dpj.repo, name, function)
@@ -445,6 +454,7 @@ def test_actual_worker_keeps_geometry_inputs_and_selected_color_contract(monkeyp
     monkeypatch.setattr(eij, "_emit", emit)
     monkeypatch.setattr(dpj, "_gen_cuts", cuts)
     monkeypatch.setattr(cg, "generate", provider)
+    monkeypatch.setattr(eij.garment_color, "apply", color_stage)
     monkeypatch.setattr(image_qc, "scene_verdict", scene)
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
     app.state.r2.get_bytes = lambda key: measured_sources[0]["data"] if key == "product/selected-photo" else key.encode()
@@ -456,6 +466,13 @@ def test_actual_worker_keeps_geometry_inputs_and_selected_color_contract(monkeyp
         asyncio.run(eij.run_editor_image_job(app, worker_job({**saved, "mode": "new", "retryBlockId": "cut"})))
         assert captured["finalized"]["image"]["metadata"]["retryBlockId"] == "cut"
     assert captured, "worker must reach actual generation preparation"
+    assert captured["images"][0].data == b"product/base-photo"
+    if pipeline == "editor":
+        assert captured["spec"]["colorId"] == "base"
+        assert captured["finalized"]["group"] == "selected"
+        assert captured["colorStage"] == (b"GENERATED", measured_sources[0]["data"])
+    else:
+        assert captured["spec"]["colorId"] == "selected"
     assert len(saves) == int(backstop)
     assert captured["images"][-1].data == member["all"]["key"].encode()
     assert "EXAMPLE REFERENCE (scope: all)" in captured["manifest"]

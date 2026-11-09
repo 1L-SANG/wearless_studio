@@ -1,3 +1,6 @@
+import { identityKindOf } from '@/lib/identityScope.js';
+import { isRealModelSelection } from '@/features/analysis/modelSelection.js';
+import { validateStoryboardV4 } from '@/lib/pageTemplates/validateStoryboard.js';
 import { uploadWardrobeGif, mergeWardrobeGifs } from '../lib/api/gifWardrobe.js';
 import { inheritSimilarCutRecipes } from '@/lib/storyboardSimilarCuts.js';
 import { acceptMockClientEvent } from './clientEvents.js';
@@ -51,9 +54,9 @@ import { normalizeTargetGendersForClothingType } from '@/lib/productGender.js';
 import { createMeasurementFields } from '@/lib/measurementSchema.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import { mergeAnalysisPatch } from '@/lib/analysisPatch.js';
-import { migrateLegacyEntryStylingRuns } from '@/lib/storyboardEntryPlacement.js';
-import { deriveHookFrame } from '@/lib/storyboardHookFrame.js';
-import { applySeededHookStyle } from '@/lib/api/shapes.js';
+import { resolveStoryboardEntry } from '@/lib/pageTemplates/seed.js';
+import { analysisPageStyle, defaultPageStyle, validPageStyle } from '@/lib/pageTemplates/pageStyle.js';
+import { setStoryboardEntryNotice, storyboardEntryNotice } from '@/lib/pageTemplates/entryNotices.js';
 import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
 import { isSupportedCutType } from '@/lib/storyboardTaxonomy.js';
 import { createDraftSlotMemory } from './draftSlotMemory.js';
@@ -61,6 +64,7 @@ import { applyOutfitSet, complementaryOutfitSlot, mergeOutfitAnalysis, normalize
   outfitSlotsFor, syncOutfitLegacySelection } from '@/lib/outfitSelections.js';
 import { mockQuery, outfitScenarioFromQuery, v18FixtureCandidates, v18FixtureRecommendation } from './outfitV18Fixtures.js';
 
+let lastPageStyle = null;
 const clone = (x) => JSON.parse(JSON.stringify(x));
 // 가짜 지연 배율. 테스트는 MOCK_API_LATENCY_SCALE=0 으로 돌린다 — 지연을 실제로 기다리면
 // 프론트 테스트 한 바퀴가 CI 에서 4분 41초 걸리고, 그중 89% 가 이 setTimeout 이었다(2026-09-22).
@@ -701,26 +705,9 @@ export const api = {
     if ('composeMode' in patch && !['basic', 'extended'].includes(patch.composeMode)) {
       throw new Error("composeMode는 basic 또는 extended여야 합니다.");
     }
-    const modeChanged = patch.composeMode && patch.composeMode !== DB.project.composeMode;
     Object.assign(DB.project, patch); touch();
     if ('selectedMannequinId' in patch) syncSelectedCut(patch.selectedMannequinId);
     if ('fitProfile' in patch) DB.analysis.fitProfile = clone(patch.fitProfile);
-    // 사진 양 변경 시, 사용자가 콘티를 손대기 전이면 기본 콘티를 새 모드로 재구성 (PRD §7.7)
-    if (modeChanged && !DB.storyboardDirty) {
-      const keepPairFrame = deriveHookFrame(DB.storyboard)?.style === 'pair';
-      const seeded = buildStoryboard(DB.project.composeMode, DB.product.colors, {
-        projectId: DB.project.id,
-        clothingType: DB.product.clothingType,
-        targetGenders: DB.analysis.targetGenders,
-        subCategory: DB.analysis.subCategory,
-        customCategory: DB.analysis.customCategory,
-        matchClothing: DB.analysis.matchClothing,
-        detailRecommendations: DB.analysis.detailRecommendations,
-        sellingPoints: DB.analysis.sellingPoints,
-        previewProductName: DB.product.name,
-      });
-      DB.storyboard = keepPairFrame ? applySeededHookStyle(seeded, 'pair', DB.product.colors) : seeded;
-    }
     return clone(DB.project);
   },
 
@@ -1106,6 +1093,14 @@ export const api = {
   async saveAnalysis(_projectId, patch, { isCurrent, product, serverCatalog = false, preserveCatalog = false } = {}) {
     await wait(180);
     if (isCurrent && !await isCurrent()) return null;
+    if (Object.hasOwn(patch, 'pageStyle')) {
+      if (!validPageStyle(patch.pageStyle)) throw Object.assign(new Error('페이지 스타일을 다시 골라 주세요.'), { status: 400, code: 'invalid_page_style' });
+      if (_projectId && JSON.stringify(patch.pageStyle) !== JSON.stringify(DB.analysis.pageStyle)
+        && (DB.mannequins?.some(cut => !cut.previewOnly) || DB.project.latestJobs?.mannequin)) {
+        throw Object.assign(new Error('마네킹컷을 만든 뒤에는 페이지 스타일을 바꿀 수 없어요.'), { status: 409, code: 'page_style_locked' });
+      }
+      lastPageStyle = clone(patch.pageStyle);
+    }
     const clothingTypeChanged = patch.clothingType != null && patch.clothingType !== DB.analysis.clothingType;
     if (clothingTypeChanged && !patch.outfitSelections) {
       patch = { ...patch, outfitSelections: outfitSelectionsForTypeChange(DB.analysis, patch.clothingType) };
@@ -1140,15 +1135,6 @@ export const api = {
     const { matchClothing: matchPatch, ...rest } = changed;
     DB.analysis = mergeAnalysisPatch(DB.analysis, rest);
     if (matchPatch === null) delete DB.analysis.matchClothing;
-    if (!DB.storyboardDirty && ('detailRecommendations' in rest || 'sellingPoints' in rest)) {
-      DB.storyboard = buildStoryboard(DB.project.composeMode, DB.product.colors, {
-        projectId: DB.project.id, clothingType: DB.product.clothingType,
-        targetGenders: DB.analysis.targetGenders, matchClothing: DB.analysis.matchClothing,
-        subCategory: DB.analysis.subCategory, customCategory: DB.analysis.customCategory,
-        detailRecommendations: DB.analysis.detailRecommendations, sellingPoints: DB.analysis.sellingPoints,
-        previewProductName: DB.product.name,
-      });
-    }
     if ('targetGenders' in rest && rest.targetGenders !== null) {
       DB.analysis.targetGenders = normalizeTargetGendersForClothingType(
         DB.product.clothingType, DB.analysis.targetGenders,
@@ -1452,12 +1438,20 @@ export const api = {
   /* ---- storyboard (PRD §8) ---- */
   async getStoryboard(/* projectId */) {
     await wait(160);
-    const migrated = migrateLegacyEntryStylingRuns(DB.storyboard);
-    if (migrated.changed) DB.storyboard = migrated.blocks;
-    return clone(DB.storyboard);
+    const effectiveAnalysis = DB.analysis.pageStyle ? DB.analysis : { ...DB.analysis, pageStyle: await this.getLastPageStyle() };
+    const resolved = resolveStoryboardEntry(DB.storyboard, DB.product, effectiveAnalysis, {
+      projectId: DB.project.id, generated: DB.project.status === 'done' || DB.project.latestJobs?.detailPage?.status === 'done',
+      identityKind: identityKindOf(isRealModelSelection(DB.analysis.selectedModelId)),
+    });
+    setStoryboardEntryNotice(DB.project.id, resolved.notice);
+    if (resolved.notice !== 'legacyGenerated') DB.storyboard = resolved.blocks;
+    return clone(resolved.notice === 'legacyGenerated' ? [] : resolved.blocks);
   },
+  storyboardEntryNotice,
+  async getLastPageStyle() { return clone(lastPageStyle || defaultPageStyle()); },
   async saveStoryboard(_projectId, blocks, { autoAssignment = false, keepalive: _keepalive = false } = {}) {
     await wait(150);
+    validateStoryboardV4(blocks);
     DB.storyboard = clone(inheritSimilarCutRecipes(blocks));
     // 자동 예시 배정은 기본 콘티의 일부다. 이미 생긴 사용자 dirty는 유지한다.
     if (shouldMarkStoryboardDirty({ autoAssignment })) DB.storyboardDirty = true;
@@ -1479,6 +1473,7 @@ export const api = {
       return { data: clone(DB.editorBlocks), credits: DB.account.credits };  // 완료 재호출(멱등)
     }
     if (ewSim?.status === 'running' && ewSim.projectId === DB.project.id) return { jobId: ewSim.jobId };
+    validateStoryboardV4(DB.storyboard);
     assertSupportedStoryboardCuts();
     DB.project.status = 'generating'; touch();
     const job = { projectId: DB.project.id, jobId: uid('job'), events: [], nextId: 1, status: 'running', progress: 0, result: null };
@@ -1574,6 +1569,7 @@ export const api = {
       onProgress && onProgress(100);
       return { data: clone(DB.editorBlocks), credits: DB.account.credits };
     }
+    validateStoryboardV4(DB.storyboard);
     assertSupportedStoryboardCuts();
     const job = joinable('detailPage', (listeners) => (async () => {
       const ownerId = DB.project.id;

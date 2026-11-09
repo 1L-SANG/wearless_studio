@@ -63,7 +63,7 @@ export function rejectionOfSection(sectionRole, identityKind) {
 export function blocksForModel(blocks, identityKind) {
   if (!identityKind) return blocks || [];
   return (blocks || []).filter(
-    (block) => block?.source === 'mine' || blockAllowedForModel(block, identityKind),
+    (block) => block?.source !== 'ai' || blockAllowedForModel(block, identityKind),
   );
 }
 

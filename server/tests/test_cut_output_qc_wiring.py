@@ -1,3 +1,4 @@
+from storyboard_v4_cases import v4_blocks
 import asyncio
 from types import SimpleNamespace
 
@@ -489,7 +490,7 @@ def test_detail_job_persists_cut_qc_per_block(monkeypatch):
         return {"copywriting": False}
 
     async def fake_storyboard(conn, pid):
-        return [{"id": "b1", "source": "ai", "cutType": "product", "shot": "ghost"}]
+        return v4_blocks([{"id": "b1", "source": "ai", "cutType": "product", "shot": "ghost"}])
 
     async def fake_product(conn, pid):
         return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}

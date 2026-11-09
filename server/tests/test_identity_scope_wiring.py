@@ -3,6 +3,7 @@
 실제 모델에 가상 전용 컷을 억지로 만들지 않는다(2026-09-11 사용자 결정). 콘티보드가 1차로
 거르지만, 저장된 콘티에서 모델만 바꾸면 범위 밖 블록이 남는다 — 서버가 마지막 방어선이다.
 """
+from storyboard_v4_cases import v4_blocks
 import asyncio
 from dataclasses import replace
 
@@ -41,7 +42,7 @@ def test_detail_requires_every_requested_cut_to_be_supported(
         return {"selectedModelId": model_id, "brandUseCategory": CATEGORY}
 
     async def fake_storyboard(conn, project_id):
-        return [dict(BOTH_BLOCK), dict(VIRTUAL_ONLY)]
+        return v4_blocks([dict(BOTH_BLOCK), dict(VIRTUAL_ONLY)])
 
     async def fake_product(conn, project_id):
         return {"clothing_type": "top"}
@@ -183,7 +184,7 @@ def test_worker_rejects_page_with_out_of_scope_block(monkeypatch):
         return {"id": pid, "copywriting": False}
 
     async def fake_storyboard(conn, pid):
-        return [dict(BOTH_BLOCK), dict(VIRTUAL_ONLY)]
+        return v4_blocks([dict(BOTH_BLOCK), dict(VIRTUAL_ONLY)])
 
     async def fake_product(conn, pid):
         return {"clothing_type": "top", "colors": [{"id": "col1", "isBase": True}]}

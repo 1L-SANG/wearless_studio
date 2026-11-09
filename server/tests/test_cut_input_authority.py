@@ -1,3 +1,4 @@
+from storyboard_v4_cases import v4_blocks
 import asyncio
 from datetime import datetime, timedelta, timezone
 
@@ -177,7 +178,7 @@ def test_detail_product_prunes_mannequin_model_matching_and_owned_mood(monkeypat
         return {"copywriting": False, "selected_mannequin_id": "candidate-1"}
 
     async def fake_storyboard(conn, pid):
-        return [{
+        return v4_blocks([{
             "id": "product",
             "source": "ai",
             "cutType": "product",
@@ -186,7 +187,7 @@ def test_detail_product_prunes_mannequin_model_matching_and_owned_mood(monkeypat
             "refAssetIds": ["mood"],
             "exampleId": "example-all",
             "refScope": "all",
-        }]
+        }])
 
     async def fake_product(conn, pid):
         return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "product"}]}]}
@@ -278,10 +279,10 @@ def test_detail_non_base_color_prunes_base_color_mannequin(monkeypatch):
             "source": "ai", "cutType": "styling", "shot": "full",
             "direction": "front", "faceExposure": "same",
         }
-        return [
+        return v4_blocks([
             {**common, "id": "base", "colorId": "base-color"},
             {**common, "id": "other", "colorId": "other-color"},
-        ]
+        ])
 
     async def fake_product(conn, pid):
         return {
@@ -314,6 +315,9 @@ def test_detail_non_base_color_prunes_base_color_mannequin(monkeypatch):
     monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(dpj.repo, "list_mannequin_cuts", fake_mannequins)
     monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    async def owned_target(conn, uid, pid, aid):
+        return await fake_asset(conn, uid, aid)
+    monkeypatch.setattr(dpj.repo, "get_project_asset_for_user", owned_target)
     _patch_detail_terminal(monkeypatch, captured)
 
     app = fake_worker_app(
@@ -326,9 +330,10 @@ def test_detail_non_base_color_prunes_base_color_mannequin(monkeypatch):
     assert [image.data for image in prepared["base"][1]] == [
         b"k/tone-mannequin", b"k/base-product",
     ]
-    assert [image.data for image in prepared["other"][1]] == [b"k/other-product"]
+    assert [image.data for image in prepared["other"][1]] == [b"k/tone-mannequin", b"k/base-product"]
     assert "mannequin" in prepared["base"][2].lower()
-    assert "mannequin" not in prepared["other"][2].lower()
+    assert "mannequin" in prepared["other"][2].lower()
+    assert prepared["other"][0]["colorId"] == "other-color"
 
 
 def test_detail_old_scopes_load_complete_examples_without_competing_mood(monkeypatch):
@@ -345,7 +350,7 @@ def test_detail_old_scopes_load_complete_examples_without_competing_mood(monkeyp
         return {"copywriting": False}
 
     async def fake_storyboard(conn, pid):
-        return blocks
+        return v4_blocks(blocks)
 
     async def fake_product(conn, pid):
         return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "product"}]}]}
@@ -398,7 +403,7 @@ def test_detail_space_binding_prunes_mood_with_or_without_plate(monkeypatch):
         return {"copywriting": False}
 
     async def fake_storyboard(conn, pid):
-        return blocks
+        return v4_blocks(blocks)
 
     async def fake_product(conn, pid):
         return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "product"}]}]}
@@ -465,7 +470,7 @@ def test_detail_selected_all_example_load_failure_fails_closed(monkeypatch):
         return {"copywriting": False}
 
     async def fake_storyboard(conn, pid):
-        return [{
+        return v4_blocks([{
             "id": "all-missing",
             "source": "ai",
             "cutType": "styling",
@@ -473,7 +478,7 @@ def test_detail_selected_all_example_load_failure_fails_closed(monkeypatch):
             "refAssetIds": ["mood"],
             "exampleId": "example-all",
             "refScope": "all",
-        }]
+        }])
 
     async def fake_product(conn, pid):
         return {
@@ -637,6 +642,16 @@ def test_editor_excludes_selected_mannequin_from_product_and_non_base_color(monk
             ],
         }
 
+    async def owned_target(conn, uid, pid, aid):
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+    async def color_stage(settings, provider, master, target, plan, **kwargs):
+        captured["colorStage"] = (master.data, target.data)
+        return b"COLORED", "image/png"
+    async def create_asset(conn, **kwargs):
+        return {"id": kwargs["asset_id"]}
+    monkeypatch.setattr(eij.repo, "get_project_asset_for_user", owned_target)
+    monkeypatch.setattr(eij.repo, "create_asset", create_asset)
+    monkeypatch.setattr(eij.garment_color, "apply", color_stage)
     monkeypatch.setattr(eij.repo, "get_product", fake_product)
     app = fake_worker_app(
         make_settings(gemini_api_key="x", r2_bucket="b"), r2=_TrackingR2()
@@ -651,9 +666,11 @@ def test_editor_excludes_selected_mannequin_from_product_and_non_base_color(monk
 
     product_cut, other_color_cut = captured["generations"]
     assert product_cut["images"] == [b"k/base-product"]
-    assert other_color_cut["images"] == [b"k/other-product"]
+    assert other_color_cut["images"] == [b"k/mannequin", b"k/base-product"]
     assert "mannequin" not in product_cut["manifest"].lower()
-    assert "mannequin" not in other_color_cut["manifest"].lower()
+    assert "mannequin" in other_color_cut["manifest"].lower()
+    assert captured["colorStage"] == (b"OUTPUT", b"k/other-product")
+    assert captured["finalize"]["group"] == "other"
 
 
 @pytest.mark.parametrize("mode", ["ghost", "flat", "natural_light"])
@@ -714,7 +731,7 @@ def test_page_prepares_every_product_presentation_without_published_example(monk
         return {"copywriting": False}
 
     async def storyboard(conn, pid):
-        return [dict(block)]
+        return v4_blocks([dict(block)])
 
     async def product(conn, pid):
         return {"clothingType": clothing_type, "colors": [{"id": "base", "isBase": True,

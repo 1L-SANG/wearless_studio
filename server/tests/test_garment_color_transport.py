@@ -1,4 +1,5 @@
 """Garment color is measured lazily after login, never inside product analysis."""
+from storyboard_v4_cases import v4_blocks
 import asyncio
 import json
 from dataclasses import replace
@@ -190,7 +191,7 @@ def _measure_env(client, monkeypatch, *, blocks, analysis=None, owner=True, obse
     async def project(*args): return {"id": "p"} if owner else None
     async def get_product(*args): return product
     async def get_analysis(*args): return analysis or {}
-    async def storyboard(*args): return blocks
+    async def storyboard(*args): return v4_blocks(blocks)
     async def asset(conn, user, aid): return {"id": aid, "r2_key": "seller/" + aid, "mime_type": "image/png"}
     async def fake_observe(settings, sources, *, product=None):
         seen["observe"] += 1
@@ -231,7 +232,7 @@ def test_measure_skips_without_needed_colors(client, make_token, monkeypatch, bl
 
 
 def test_measure_reads_original_first_front_back_and_saves_once(client, make_token, monkeypatch):
-    seen, photos = _measure_env(client, monkeypatch, blocks=[tone_block(colorId=None), tone_block()])
+    seen, photos = _measure_env(client, monkeypatch, blocks=[tone_block(id="one", colorId=None), tone_block(id="two")])
     response = _post(client, make_token)
     assert response.status_code == 200, response.text
     body = response.json()

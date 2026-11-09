@@ -1,5 +1,6 @@
 import { isSupportedCutType } from './storyboardTaxonomy.js';
 import { referenceScopeForBlock } from './referenceMode.js';
+import { spaceSetSelectionPatch } from './storyboardSetSelection.js';
 
 const WORN_CUT_TYPES = new Set(['styling', 'horizon']);
 
@@ -42,6 +43,8 @@ export function generationExampleSelectionPatch(block, example, {
     exampleChoice: null,
     exampleSelectionOrigin: exampleId ? 'user' : null,
     refScope: scope,
+    ...spaceSetSelectionPatch(block, exampleId),
+    ...(exampleId && WORN_CUT_TYPES.has(cutType) && example.shot ? { shot: example.shot } : {}),
     ...(exampleId ? wornDirectionPatch(cutType, example) : {}),
   };
   if (!replacing) return { patch, settingsReset: false };

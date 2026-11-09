@@ -2,12 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { selectStoryboardCopywriting } from '../../src/features/storyboard/copywritingSelection.js';
+import { ensureV4StoryboardCopywriting } from '../../src/features/storyboard/v4Copywriting.js';
 import {
   classifyStoryboardLoadError,
   storyboardNotFoundError,
 } from '../../src/features/storyboard/storyboardLoadError.js';
-import { storyboardOverlayTop } from '../../src/features/storyboard/storyboardOverlayTop.js';
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const storyboardSource = read('../../src/features/storyboard/Storyboard.jsx');
@@ -16,15 +15,13 @@ const storeSource = read('../../src/store/useAppStore.js');
 const featureStyles = read('../../src/styles/features.css');
 const appStyles = read('../../src/styles/app.css');
 
-test('1-02 missing examples use the owner-approved explanatory copy', () => {
-  assert.match(
-    storyboardSource,
-    /이 조합의 예시를 준비하지 못했어요 — 컷 설정을 바꾸거나 직접 예시를 골라주세요/,
-  );
-  assert.doesNotMatch(storyboardSource, /카드를 열어 다시 시도/);
+test('1-02 missing examples use the owner-approved explanatory copy', async () => {
+  const { storyboardStage, stagePhoto } = await import('./helpers/storyboardStageHarness.mjs');
+  const { textOf } = await import('./helpers/storyboardComponents.mjs');
+  const tree = await storyboardStage([stagePhoto('missing', { exampleId: null, thumb: null })]);
+  assert.ok(textOf(tree).includes('사진 설정을 확인해주세요'));
 });
-
-test('1-09 copywriting uses a native keyboard-operable switch and returns its PATCH promise', () => {
+test('legacy copywriting preferences retain serialized PATCH promises and accessible shared toggles', () => {
   const toggle = uiSource.slice(
     uiSource.indexOf('export function Toggle'),
     uiSource.indexOf('export function ProgressBar'),
@@ -42,40 +39,61 @@ test('1-09 copywriting uses a native keyboard-operable switch and returns its PA
   assert.match(setter, /restoreCopywriting\(copywriting\)/);
 });
 
-test('1-09 only the latest copywriting failure rolls back and emits one toast', async () => {
-  const selectionState = { current: { requestId: 0, pending: 0, confirmedValue: true } };
-  const pending = [];
-  const restored = [];
-  const failures = [];
-  const setCopywriting = (value) => new Promise((resolve, reject) => {
-    pending.push({ value, resolve, reject });
-  });
-  const shared = {
-    setCopywriting,
-    restoreCopywriting: (value) => restored.push(value),
-    selectionState,
-    onFailure: (error) => failures.push(error.message),
-  };
+test('v4 always enables copywriting and shares the pending server patch before continuing', async () => {
+  let finish;
+  const patches = [];
+  const state = { projectId: 'copy-enabled', copywriting: false,
+    setCopywriting(value) { state.copywriting = value; patches.push(value); return new Promise(resolve => { finish = resolve; }); },
+    restoreCopywriting(value) { state.copywriting = value; } };
+  const first = ensureV4StoryboardCopywriting(state.projectId, () => state);
+  await Promise.resolve();
+  const nextStep = ensureV4StoryboardCopywriting(state.projectId, () => state);
+  assert.equal(first, nextStep); assert.deepEqual(patches, [true]);
+  let saved = false; nextStep.then(() => { saved = true; });
+  await Promise.resolve(); assert.equal(saved, false);
+  finish(); await first; assert.equal(saved, true);
+  await ensureV4StoryboardCopywriting(state.projectId, () => state);
+  assert.deepEqual(patches, [true]);
+});
 
-  const first = selectStoryboardCopywriting({
-    ...shared, currentValue: true, nextValue: false,
-  });
-  const latest = selectStoryboardCopywriting({
-    ...shared, currentValue: false, nextValue: true,
-  });
-  pending[0].resolve();
-  await first;
-  pending[1].reject(new Error('latest failed'));
-  assert.equal(await latest, false);
+test('v4 copywriting failures restore the local value and can be retried', async () => {
+  let fail = true;
+  const patches = [];
+  const state = { projectId: 'copy-retry', copywriting: false,
+    async setCopywriting(value) { state.copywriting = value; patches.push(value); if (fail) throw new Error('save failed'); },
+    restoreCopywriting(value) { state.copywriting = value; } };
+  await assert.rejects(ensureV4StoryboardCopywriting(state.projectId, () => state), /save failed/);
+  assert.equal(state.copywriting, false);
+  fail = false; await ensureV4StoryboardCopywriting(state.projectId, () => state);
+  assert.equal(state.copywriting, true); assert.deepEqual(patches, [true, true]);
+});
 
-  assert.deepEqual(restored, [false]);
-  assert.deepEqual(failures, ['latest failed']);
+test('v4 entry confirms true on the server even when the restored local flag is already true', async () => {
+  const patches = [];
+  const state = { projectId: 'copy-restore', copywriting: true,
+    async setCopywriting(value) { patches.push(value); }, restoreCopywriting() {} };
+  await ensureV4StoryboardCopywriting(state.projectId, () => state, { force: true });
+  assert.deepEqual(patches, [true]);
+});
 
-  const retry = selectStoryboardCopywriting({
-    ...shared, currentValue: false, nextValue: true,
-  });
-  pending[2].resolve();
-  assert.equal(await retry, true);
+test('a failed entry confirmation must retry before leaving even if the local flag was true', async () => {
+  let fail = true;
+  const patches = [];
+  const state = { projectId: 'copy-unconfirmed', copywriting: true,
+    async setCopywriting(value) { patches.push(value); if (fail) throw new Error('not confirmed'); }, restoreCopywriting() {} };
+  await assert.rejects(ensureV4StoryboardCopywriting(state.projectId, () => state, { force: true }), /not confirmed/);
+  fail = false;
+  await ensureV4StoryboardCopywriting(state.projectId, () => state);
+  assert.deepEqual(patches, [true, true]);
+});
+
+test('an old project copywriting failure cannot roll back another project', async () => {
+  let reject, state = { projectId: 'old-copy', copywriting: false,
+    setCopywriting() { return new Promise((_resolve, fail) => { reject = fail; }); },
+    restoreCopywriting() { assert.fail('changed the current project'); } };
+  const saving = ensureV4StoryboardCopywriting(state.projectId, () => state);
+  await Promise.resolve(); state = { projectId: 'new-copy', copywriting: true };
+  reject(new Error('old failed')); await assert.rejects(saving, /old failed/);
 });
 
 test('1-10 card actions use a non-overflowing 2 by 2 grid with 44px hit targets', () => {
@@ -90,23 +108,12 @@ test('1-10 card actions use a non-overflowing 2 by 2 grid with 44px hit targets'
   assert.ok((44 * 2) + 2 <= 136, 'the action grid must fit the smallest 136px card');
 });
 
-test('1-11 credit cost remains a separate visible label at 899px and 560px', () => {
-  const actionbar = storyboardSource.slice(
-    storyboardSource.indexOf('<div className="sb-actionbar">'),
-    storyboardSource.indexOf('</div>\n  );', storyboardSource.indexOf('<div className="sb-actionbar">')),
-  );
-  assert.match(actionbar, /<div className="sb-ab-count">[\s\S]*?<\/div>[\s\S]*?<span className="sb-ab-cost"/);
-  assert.match(actionbar, /unsupportedAiBlock \? 'AI 컷 설정 확인 필요' : `생성 \$\{detailPageCreditCost\(generationCutCount\)\} 크레딧`/);
-  const actionbarCssStart = featureStyles.indexOf('.sb-actionbar {');
-  const compact = featureStyles.slice(
-    featureStyles.indexOf('@media (max-width: 900px)', actionbarCssStart),
-    featureStyles.indexOf('@media (max-width: 640px)', actionbarCssStart),
-  );
-  assert.match(compact, /\.sb-ab-count \{ display: none; \}/);
-  assert.doesNotMatch(compact, /\.sb-ab-cost \{[^}]*display: none/);
-  assert.match(compact, /\.sb-ab-cost \{ margin-left: auto; \}/);
+test('v5 floating action keeps the cut count and credit estimate alongside the next-step action', async () => {
+  const { loadStoryboardComponent, textOf } = await import('./helpers/storyboardComponents.mjs');
+  const Continue = await loadStoryboardComponent('StoryboardContinue.jsx', 'StoryboardContinue', { Toggle: 'toggle' });
+  const tree = Continue({ count: 7, credits: 88, copyOn: true });
+  const text = textOf(tree); assert.ok(text.includes('구성컷 7개')); assert.ok(text.includes('예상 88크레딧')); assert.ok(text.includes('다음: 마네킹컷 선택'));
 });
-
 test('1-12 classifies 404 separately from retryable network errors', () => {
   assert.deepEqual(storyboardNotFoundError(), {
     kind: 'notFound', message: '작업을 찾을 수 없어요',
@@ -136,15 +143,11 @@ test('N1 collapsed decks use the same card width and 3 by 4 ratio as expanded ca
   assert.doesNotMatch(stack, /width: 200px|height: 258px/);
 });
 
-test('N3 undo top shares the measured topnav and ribbon-stack offset', () => {
-  assert.equal(storyboardOverlayTop(62, 0), 72);
-  assert.equal(storyboardOverlayTop(62, 28), 100);
-  assert.equal(storyboardOverlayTop(62, 56), 128);
-  assert.match(storyboardSource, /querySelector\('\.job-ribbon-stack'\)[\s\S]*?storyboardOverlayTop\(topnavHeight, ribbonHeight\)/);
-  assert.match(storyboardSource, /resizeObserver\.observe\(element\)/);
-  assert.match(storyboardSource, /className=\{`sb-undo-bar[\s\S]*?style=\{\{ top: `\$\{inspectorTop\}px` \}\}/);
+test('v5 overlay starts twelve pixels from the viewport top with a 520px width', () => {
+  const css = readFileSync(new URL('../../src/features/storyboard/StoryboardPanels.module.css', import.meta.url), 'utf8');
+  assert.match(css, /\.drawer[^}]*top: var\(--sp-12\)/);
+  assert.match(css, /width: min\(520px, 40vw\)/);
 });
-
 test('N9 undo text is compact and dismissal fades before DOM removal', () => {
   assert.match(storyboardSource, /const message = `\$\{operationCount\}건 변경`/);
   assert.doesNotMatch(storyboardSource, /생성예시를 바꾸며 방향·색상 등 설정을 초기화했어요/);
@@ -155,7 +158,7 @@ test('N9 undo text is compact and dismissal fades before DOM removal', () => {
   );
   assert.match(dismiss, /if \(prefersReducedMotion\(\)\) finishUndoDismiss\(\);\s*\n\s*else setUndoExiting\(true\)/);
   assert.doesNotMatch(dismiss, /setUndoEntry\(null\)/);
-  assert.match(storyboardSource, /onAnimationEnd=\{\(event\) => \{[\s\S]*?event\.target === event\.currentTarget && undoExiting[\s\S]*?finishUndoDismiss\(\)/);
+  assert.match(storyboardSource, /onUndoAnimationEnd=\{event => \{[\s\S]*?event\.target === event\.currentTarget && undoExiting[\s\S]*?finishUndoDismiss\(\)/);
   assert.match(featureStyles, /\.sb-undo-bar\.exiting \{[\s\S]*?animation: sb-undo-out \.18s ease-in both/);
   assert.match(featureStyles, /prefers-reduced-motion: reduce[\s\S]*?\.sb-undo-bar, \.sb-undo-bar\.exiting \{ animation: none; \}/);
 });

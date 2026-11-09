@@ -1,3 +1,4 @@
+import { readStoryboardSources } from './helpers/storyboardComponents.mjs';
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
@@ -206,15 +207,15 @@ test('closure arrows do not move the selected editor image through the global sh
 });
 
 async function storyboardKeyboardGuard(saving) {
-  const source = read('src/features/storyboard/Storyboard.jsx');
+  const source = readStoryboardSources();
   const start = source.indexOf('<div className={`wizard wide sb-page');
-  const end = source.indexOf('>\n      {/* 완료 가드', start);
+  const end = source.indexOf('>\n    <StoryboardBackdrop', start);
   const { code } = await transformWithEsbuild(
     `const tree = ${source.slice(start, end + 1)}null</div>;`, 'StoryboardKeyboardGuard.jsx',
     { jsx: 'transform' },
   );
-  return new Function('React', 'atomicSaving', 'initialBoardRevealed', `${code}; return tree;`)(
-    React, saving, true,
+  return new Function('React', 'atomicSaving', 'initialBoardRevealed', 'styles', 'drawer', `${code}; return tree;`)(
+    React, saving, true, {}, null,
   ).props.onKeyDownCapture;
 }
 
@@ -296,11 +297,10 @@ test('nearest stops clamp both rails and reduced motion snaps without a frame', 
 });
 
 test('storyboard and editor pass analysis to Field while preserving the request value', () => {
-  const storyboard = read('src/features/storyboard/Storyboard.jsx');
+  const storyboard = readStoryboardSources();
   const panel = read('src/features/editor/EditorPanels.jsx');
   assert.match(storyboard, /<OuterClosureField[\s\S]*?frontClosure=\{catalogs\.frontClosure\}/);
   assert.match(storyboard, /frontClosure: a\?\.frontClosure/);
-  assert.match(storyboard, /outerClosureCaption\(block\.outerClosureState/);
   assert.match(storyboard, /normalizeOuterClosureState\(current\.outerClosureState\)/);
   assert.match(panel, /<OuterClosureField[\s\S]*?frontClosure=\{frontClosure\}/);
   assert.match(panel, /outerClosureState: showOuterClosure \? outerClosure : null/);
@@ -312,25 +312,13 @@ test('example gallery has exactly the requested two pixel top gap', () => {
   assert.match(rule, /margin-top:\s*2px\s*;/);
 });
 
-test('actual storyboard cards show long captions and remove hidden or product closure text', async () => {
-  const source = read('src/features/storyboard/Storyboard.jsx');
-  const captionSource = source.slice(source.indexOf('function cardLabels('), source.indexOf('/* 컷 이동 손잡이 아이콘'));
-  const { code } = await transformWithEsbuild(captionSource, 'StoryboardCaption.jsx', { jsx: 'transform' });
-  const context = { React, useContext: React.useContext, ...closure, WORN_CUT_TYPES: new Set(['styling', 'horizon']) };
-  const Caption = new Function(...Object.keys(context), `${code}; return StoryboardCaption;`)(...Object.values(context));
-  const render = (value, frontClosure, cutType = 'styling', source = 'ai') => renderToStaticMarkup(React.createElement(Caption, {
-    block: { source, cutType, shot: 'full', outerClosureState: value },
-    catalogs: { ...DB.catalogs, frontClosure }, colorOpts: [], clothingType: 'outer',
-  }));
-  assert.match(render('openToChest', front('zipper')), /가슴까지 열림/);
-  assert.match(render('openToWaist', front('zipper')), /배까지 열림/);
-  assert.match(render('partial', front('button', 'binary')), /전체 닫힘/);
-  assert.match(render('openToWaist', front('belt', null), 'horizon'), /전체 열림/);
-  assert.doesNotMatch(render('open', front('none', null)), /아우터 열림 정도|전체 열림/);
-  assert.doesNotMatch(render('open', front('zipper'), 'product'), /아우터 열림 정도|전체 열림/);
-  assert.equal(render('open', front('zipper'), 'styling', 'mine'), '<div class="sb-canvas-caption mine">내 사진</div>');
+test('v5 stage captions leave closure editing in the photo panel and keep the cut ordinal', async () => {
+  const { storyboardStage, stagePhoto } = await import('./helpers/storyboardStageHarness.mjs');
+  const { textOf } = await import('./helpers/storyboardComponents.mjs');
+  const tree = await storyboardStage([stagePhoto('outer', { outerClosureState: 'openToChest' })]);
+  assert.ok(textOf(tree).includes('1번째 컷'));
+  assert.ok(!textOf(tree).includes('가슴까지 열림'));
 });
-
 test('actual AI form keeps hidden closure state in worn requests and sends null for product', async () => {
   const panel = read('src/features/editor/EditorPanels.jsx');
   const source = panel.slice(panel.indexOf('const NEW_CUT_DEFAULT_SHOT'), panel.indexOf('/* ---------- 의류 (wardrobe library)'))
@@ -350,8 +338,9 @@ test('actual AI form keeps hidden closure state in worn requests and sends null 
     ...await vite.ssrLoadModule('/src/lib/generationExamples.js'),
     ...await vite.ssrLoadModule('/src/features/analysis/modelSelection.js'),
     ...await vite.ssrLoadModule('/src/lib/productSourcePhotos.js'),
+    ...await vite.ssrLoadModule('/src/lib/garmentColors.js'),
   };
-  for (const name of ['Button', 'Icon', 'Chips', 'UnderlineTabs', 'ColorDots', 'MoodGuide', 'PanelHead', 'DetailTargetPicker', 'ProductSourcePicker']) context[name] = () => null;
+  for (const name of ['Button', 'Icon', 'Chips', 'UnderlineTabs', 'GarmentColorField', 'MoodGuide', 'PanelHead', 'DetailTargetPicker', 'ProductSourcePicker']) context[name] = () => null;
   const AIPanel = new Function(...Object.keys(context), `${code}; return AIPanel;`)(...Object.values(context));
   const find = (node, predicate) => {
     if (!node || typeof node !== 'object') return null;

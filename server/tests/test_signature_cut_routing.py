@@ -732,51 +732,6 @@ def test_headless_signature_never_enters_angle_swap_or_missing_photo_preflight(
     ) is None
 
 
-def test_detail_page_worker_safety_net_remaps_and_logs(caplog):
-    storyboard = [{
-        "id": "opening",
-        "source": "ai",
-        "cutType": "horizon",
-        "shot": "medium",
-        "exampleId": "sig_women_01",
-        "exampleSelectionOrigin": "user",
-    }]
-    with caplog.at_level("WARNING", logger="wearless.detail_page_job"):
-        repaired = detail_page_job._repair_signature_storyboard(
-            storyboard,
-            product={"clothingType": "bottom"},
-            analysis={"targetGenders": ["women"], "subCategory": "mini_skirt"},
-            project_id="server-safety-project",
-        )
-
-    assert repaired[0]["exampleId"].startswith("sig_women_bottom_skirt_")
-    assert repaired[0]["exampleSelectionOrigin"] == "user"
-    assert "signature example remapped" in caplog.text
-    assert "sig_women_01" in caplog.text
-    assert repaired[0]["exampleId"] in caplog.text
-
-
-def test_detail_page_worker_safety_net_remaps_dress_to_dress_pool(caplog):
-    storyboard = [{
-        "id": "opening-dress",
-        "source": "ai",
-        "cutType": "horizon",
-        "shot": "medium",
-        "exampleId": "sig_women_01",
-        "exampleSelectionOrigin": "user",
-    }]
-    with caplog.at_level("WARNING", logger="wearless.detail_page_job"):
-        repaired = detail_page_job._repair_signature_storyboard(
-            storyboard,
-            product={"clothingType": "dress"},
-            analysis={"targetGenders": ["women"]},
-            project_id="server-dress-project",
-        )
-
-    assert repaired[0]["exampleId"] in {"sig_women_dress_01", "sig_women_dress_02"}
-    assert repaired[0]["exampleSelectionOrigin"] == "user"
-    assert "signature example remapped" in caplog.text
-
 
 def test_signature_registry_has_the_exact_frontend_pools_and_metadata():
     registry_path = Path(__file__).parents[1] / "app" / "data" / "example_assets.json"

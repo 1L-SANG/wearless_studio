@@ -57,7 +57,7 @@ export function uniqueGenerationCutCount(blocks, { clothingType, frontClosure } 
   const seen = new Set();
   let count = 0;
   for (const block of filterSupportedStoryboardBlocks(Array.isArray(blocks) ? blocks : [])) {
-    if (!block || block.source === 'mine') continue;
+    if (!block || block.source !== 'ai') continue;
     const productPresentation = productPresentationOf(block);
     if ((block.spaceGroupId && !productPresentation) || block.similarSourceBlockId) { count += 1; continue; }
     const key = JSON.stringify({

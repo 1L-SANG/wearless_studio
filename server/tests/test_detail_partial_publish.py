@@ -1,11 +1,12 @@
 """ADR-0017, 실제 부분 완료와 정산 및 저장 계약을 검증한다."""
+from storyboard_v4_cases import v4_blocks
 import asyncio
 import contextlib
 
 import pytest
 
 from app import repo
-from app.agents import horizon_background, page_assembler
+from app.agents import content_roles, horizon_background, page_assembler
 from app.workers import detail_page_job as dpj
 from test_detail_incomplete_cuts_partial import _IntentDB, _R2, _run_job
 from test_detail_incomplete_cuts_partial import _SqlConn
@@ -69,8 +70,8 @@ def test_partial_lease_loss_retains_checkpoints_and_removes_unpublished_output(m
 
 
 def test_assembler_marks_only_failed_empty_images_without_changing_geometry():
-    storyboard = [{"id": "b1", "source": "ai", "cutType": "product"},
-                  {"id": "b2", "source": "ai", "cutType": "product"}]
+    storyboard = v4_blocks([{"id": "b1", "source": "ai", "cutType": "product"},
+                  {"id": "b2", "source": "ai", "cutType": "product"}])
     cuts = [{"blockId": "b1", "imageUrl": "/v1/assets/a/file"}]
     baseline = page_assembler.assemble(storyboard, cuts, [], {}, False)
     import inspect
@@ -211,11 +212,9 @@ def test_joined_request_key_replays_the_terminal_job_without_another_reservation
     class RequestsDB:
         def __init__(self):
             self.jobs = [{"id": "job-a", "status": "running", "idempotency_key": "p1:editor_image:A",
-                          "payload": {"id": "cut", "source": "ai", "cutType": "product", "taxonomyVersion": 3,
-                                      "contentRole": "productOverview", "sectionRole": "product", "direction": "front",
-                                      "shot": "ghost", "sideStyle": None, "faceExposure": None, "matchIds": [],
-                                      "outerClosureState": None, "exampleId": None, "exampleSelectionOrigin": None,
-                                      "mode": "new", "retryBlockId": "cut"}, "metadata": {}}]
+                          "payload": {**content_roles.canonicalize_storyboard_block(v4_blocks([
+                              {"id": "cut", "source": "ai", "cutType": "product"}])[0]),
+                              "mode": "new", "retryBlockId": "cut"}, "metadata": {}}]
             self.inserts = 0
             self.current = None
         def cursor(self): return self
@@ -246,13 +245,13 @@ def test_joined_request_key_replays_the_terminal_job_without_another_reservation
     db = RequestsDB()
     reserved = []
     async def project(*args): return {"id": "p1"}
-    async def storyboard(*args): return [{"id": "cut", "source": "ai", "cutType": "product"}]
+    async def storyboard(*args): return v4_blocks([{"id": "cut", "source": "ai", "cutType": "product"}])
     async def blocks(*args): return [{"elements": [{"type": "image", "sourceBlockId": "cut", "src": None}]}]
     async def analysis(*args): return {}
     async def reserve(conn, user, amount): reserved.append(amount); return 100
     @contextlib.asynccontextmanager
     async def connection(request): yield db
-    for name, fn in (("get_project", project), ("get_storyboard", storyboard), ("get_editor_blocks", blocks),
+    for name, fn in (("get_project", project), ("get_storyboard", v4_blocks(storyboard)), ("get_editor_blocks", blocks),
                      ("get_analysis", analysis), ("reserve_credits", reserve)):
         monkeypatch.setattr(repo, name, fn)
     monkeypatch.setattr(routes, "get_conn", connection)
@@ -283,7 +282,7 @@ def test_retry_route_restores_saved_settings_and_reserves_only_for_a_new_job(
     editor = [{"elements": [{"type": "image", "sourceBlockId": "b", "src": None}]}] if slot_exists else []
     seen = {"reserved": []}
     async def project(*args): return {"id": "p"}
-    async def storyboard(*args): return [saved]
+    async def storyboard(*args): return v4_blocks([saved])
     async def blocks(*args): return editor
     async def analysis(*args): return {}
     async def create(conn, **kwargs):
@@ -294,7 +293,7 @@ def test_retry_route_restores_saved_settings_and_reserves_only_for_a_new_job(
         assert slot_exists
         seen["reserved"].append(amount)
         return 99
-    for name, fn in (("get_project", project), ("get_storyboard", storyboard), ("get_editor_blocks", blocks),
+    for name, fn in (("get_project", project), ("get_storyboard", v4_blocks(storyboard)), ("get_editor_blocks", blocks),
                      ("get_analysis", analysis), ("create_job", create), ("reserve_credits", reserve)):
         monkeypatch.setattr(repo, name, fn)
     patch_route_db(monkeypatch, routes)

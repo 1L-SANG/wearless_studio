@@ -78,17 +78,15 @@ test('real optional detail gallery renders honest guidance without an empty gall
 let components;
 async function loadGalleryComponents() {
   if (components) return components;
-  const source = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
-  const segment = source.slice(source.indexOf('function ShotSegment('), source.indexOf('const MINE_SHOT_OPTION'));
-  const gallery = source.slice(source.indexOf('export function MoodGuide('), source.indexOf('function Inspector('));
-  const dependencies = { React, useState, useRef, useEffect, ...generation, ...detail, filterExamplesForModel, poseExampleDirectionCompatible };
-  globalThis.__detailGalleryDependencies = dependencies;
-  try {
-    const code = `const { ${Object.keys(dependencies).join(', ')} } = globalThis.__detailGalleryDependencies;\n${segment}\n${gallery}\nexport { ShotSegment };`;
-    const transformed = await transformWithEsbuild(code, 'detail-gallery-test.jsx', { loader: 'jsx', jsx: 'transform' });
-    components = await import(`data:text/javascript;base64,${Buffer.from(transformed.code).toString('base64')}`);
-    return components;
-  } finally {
-    delete globalThis.__detailGalleryDependencies;
-  }
+  const { loadStoryboardComponent, componentStyles } = await import('./helpers/storyboardComponents.mjs');
+  const { filterSpaceSetsForModel } = await import('../../src/lib/identityScope.js');
+  const { storyboardSpaceSetsFor } = await import('../../src/lib/storyboardSpaceSetCatalog.js');
+  const { examplePlace, filterGalleryExamples, visiblePlaceTabs } = await import('../../src/lib/pageTemplates/storyboardGallery.js');
+  const ShotSegment = await loadStoryboardComponent('StoryboardControls.jsx', 'ShotSegment', { React, useState, useEffect, ...detail, ...generation });
+  const MoodGuide = await loadStoryboardComponent('StoryboardExampleGallery.jsx', 'MoodGuide', {
+    React, useState, useRef, useEffect, useMemo: React.useMemo, ...generation, ...detail, filterExamplesForModel,
+    filterSpaceSetsForModel, storyboardSpaceSetsFor, examplePlace, filterGalleryExamples, visiblePlaceTabs,
+    ShotSegment, Icon: () => null, ExampleThumb: () => null, MineImageTab: () => null,
+  });
+  components = { ShotSegment, MoodGuide }; return components;
 }

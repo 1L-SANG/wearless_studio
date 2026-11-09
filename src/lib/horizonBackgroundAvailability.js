@@ -14,7 +14,7 @@ const hasMeasurablePhoto = color => (color?.images || []).some(image => !image?.
 // 행이 없는 색, 정책 버전 차이)은 'pending'으로 선택을 허용하고, 실제로 잰 결과가 실패일 때만 'unavailable'.
 export function horizonBackgroundAvailability(members, product, evidence, setId) {
   const set = storyboardSpaceSetById(setId);
-  const horizon = (members || []).filter(block => block.cutType === 'horizon' && block.source !== 'mine');
+  const horizon = (members || []).filter(block => block.cutType === 'horizon' && block.source === 'ai');
   if (!set?.setType.startsWith('horizon') || !horizon.length) {
     return { state: 'unavailable', available: false, reason: '이 세트는 기존 배경을 사용해요.' };
   }

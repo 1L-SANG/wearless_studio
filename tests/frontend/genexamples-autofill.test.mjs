@@ -1,3 +1,4 @@
+import { readStoryboardSources } from './helpers/storyboardComponents.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -6,7 +7,7 @@ import {
   hasSelectableGenerationExamples, isGenerationCombinationPublic, selectGenerationExamples, shouldMarkStoryboardDirty,
   storedExampleConditionStatus, repeatedAllExampleVariationIds,
 } from '../../src/lib/generationExamples.js';
-import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
+import { seedTemplateFixture as defaultStoryboard, isDefaultTemplateFixture as isDefaultStoryboardForMode } from './helpers/templateStoryboard.mjs';
 import { entryStylingMembers, pickEntrySets } from '../../src/lib/storyboardEntryPlacement.js';
 import {
   genderForClothingType,
@@ -57,10 +58,7 @@ const releasedStylingSet = storyboardSpaceSetsFor({
   clothingType: 'outer',
 }).find((set) => set.setType === 'styling');
 const releasedSpaceGroupId = spaceSetGroupId(releasedStylingSet.id, 'autofill-test');
-const storyboardSource = readFileSync(
-  new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url),
-  'utf8',
-);
+const storyboardSource = readStoryboardSources();
 const editorSource = readFileSync(
   new URL('../../src/features/editor/Editor.jsx', import.meta.url),
   'utf8',
@@ -134,7 +132,6 @@ test('existence checks share selection eligibility without requiring an ordered 
   };
   assert.equal(hasSelectableGenerationExamples(catalog, options), true);
   assert.equal(hasSelectableGenerationExamples(catalog, { ...options, clothingType: 'bottom' }), false);
-  assert.match(storyboardSource, /isOptionPublished=\{cut !== 'product' \? \(candidateShot\) => candidateShot === 'mine' \|\| hasSelectableGenerationExamples/);
 });
 
 test('space-set-only examples stay out of the default selector and autofill pool', () => {
@@ -371,59 +368,19 @@ test('auto examples are fingerprint-neutral and auto saves are mock-dirty neutra
 test('a storyboard containing only auto assignments still matches the untouched default fingerprint', () => {
   const colors = [{ id: 'color-1', isBase: true, images: [] }];
   const automatic = defaultStoryboard(colors, 'basic').map((item) => ({
-    ...item, exampleId: `example-`, exampleSelectionOrigin: 'auto',
-    refScope: item.spaceGroupId ? 'pose' : 'all',
+    ...item, ...(item.source === 'ai' ? { exampleId: `example-`, exampleSelectionOrigin: 'auto' } : {}),
+    refScope: item.spaceGroupId && item.cutType !== 'horizon' ? 'pose' : 'all',
   }));
   assert.equal(isDefaultStoryboardForMode(automatic, colors, 'basic'), true);
   automatic[0] = { ...automatic[0], exampleSelectionOrigin: 'user' };
   assert.equal(isDefaultStoryboardForMode(automatic, colors, 'basic'), false);
 });
 
-test('every supported gender and clothing category seeds styling and horizon sets', () => {
-  const colors = [{ id: 'color-1', isBase: true, images: [] }];
-  const fourColorsWithDetail = Array.from({ length: 4 }, (_, index) => ({
-    id: `color-${index + 1}`,
-    isBase: index === 0,
-    images: index === 0 ? [{ slot: 'Detail' }] : [],
-  }));
-  const supported = [
-    ['women', 'top'], ['women', 'bottom'], ['women', 'outer'], ['women', 'dress'],
-    ['men', 'top'], ['men', 'bottom'], ['men', 'outer'],
-  ];
-
-  for (const [gender, clothingType] of supported) {
-    const context = { projectId: `test-${gender}-${clothingType}`, clothingType, targetGenders: [gender] };
-    const basic = defaultStoryboard(colors, 'basic', context);
-    const setMembers = basic.filter((item) => item.spaceGroupId);
-    const stylingMembers = setMembers.filter((item) => item.cutType === 'styling');
-    const horizonMembers = setMembers.filter((item) => item.cutType === 'horizon');
-
-    // 회전 세트는 별도 세트 범위로 성별 내 모든 지원 의류에 배치된다.
-    // 후킹 시그니처 1컷(2026-08-14) + 낱장 스타일링컷 제거(2026-08-16) — 추천 디테일이 없는 경우 총 9컷.
-    assert.equal(basic.length, 9, `${gender}/${clothingType} basic`);
-    assert.equal(stylingMembers.length, 4, `${gender}/${clothingType} styling members`);
-    assert.equal(horizonMembers.length, 3, `${gender}/${clothingType} rotation members`);
-    assert.equal(new Set(setMembers.map((item) => item.spaceGroupId)).size, 3);
-    assert.ok(spaceSetIdFromGroupId(setMembers[0].spaceGroupId));
-    assert.ok(setMembers.every((item) => (
-      item.exampleSelectionOrigin === 'auto'
-      && item.setSelectionOrigin === 'auto'
-      && item.refScope === (item.cutType === 'horizon' ? 'all' : 'pose')
-      && item.exampleId
-    )));
-    // 확장형 기대 컷수를 실제 추첨 결과에서 유도 — 세트 슬롯 고갈(낱장 2컷 폴백)과
-    // 호리존 시퀀스 미커버(트리오 3컷 폴백)를 카테고리별로 그대로 반영한다.
-    const picked = pickEntrySets({
-      gender, clothingType, projectId: context.projectId, stylingCount: 3,
-    });
-    const stylingCuts = picked.stylingSets
-      .reduce((sum, set) => sum + (set ? entryStylingMembers(set).length : 2), 0);
-    const horizonCuts = (picked.sequenceSet || picked.rotationSet)?.members.length ?? 3;
-    assert.equal(
-      defaultStoryboard(fourColorsWithDetail, 'extended', context).length,
-      1 + stylingCuts + horizonCuts + 9 + 2,   // 낱장 스타일링컷 제거(2026-08-16)
-      `${gender}/${clothingType} extended`,
-    );
+test('supported categories share the template seed and its six styling plus three fit cards', () => {
+  for (const clothingType of ['top','bottom','outer','dress']) {
+    const b=defaultStoryboard([{id:'base',isBase:true}], 'basic', {clothingType,targetGenders:['women']});
+    assert.equal(b.filter(b=>b.pageSectionUsage==='styling').length,6);
+    assert.equal(b.filter(b=>b.pageSectionUsage==='fit').length,3);
   }
 });
 
@@ -461,29 +418,22 @@ test('storyboard preserves family-specific group references across shot changes 
   assert.match(storyboardSource, /retryAtomic: true,[^}]*undoLabel:/);
   assert.match(storyboardSource, /latestBlocks\.current !== atomicRetry\.previous/);
   // 2026-08-14: 첫 화면 프레임 슬롯의 복제본은 표식 없이 일반 컷 — stripHookFrameFields 경유.
-  assert.match(storyboardSource, /const copy = \{ \.\.\.stripHookFrameFields\(withoutLayoutRow\(bs\[i\]\)\), id: uid\('blk'\) \}/);
-  assert.match(storyboardSource, /새 섹션에 맞는 컷 예시를 먼저 골라주세요/);
 });
 
 test('storyboard exposes honest retry copy and never labels assignment as an automatic pose', () => {
   assert.match(storyboardSource, /생성예시 카탈로그를 불러오지 못했어요/);
-  assert.match(storyboardSource, /저장된 예시를 불러오지 못했어요/);
+  assert.match(storyboardSource, /저장된 예시를 다시 골라주세요/);
   assert.match(storyboardSource, /변경 내용을 저장하지 못했어요/);
   assert.match(storyboardSource, /다시 시도/);
   assert.doesNotMatch(storyboardSource, /AI 자동 포즈/);
 });
 
-test('storyboard keeps released set members available for generation without an in-space gallery', () => {
-  assert.match(storyboardSource, /shouldRenderGenerationExampleGuide\(block\) \{\s*return !block\?\.spaceGroupId;/);
-  assert.doesNotMatch(storyboardSource, /inSpace/);
-  // 세트 예시는 구획 라벨 없이 일반 예시 뒤에 자연 배치된다(2026-07-31 오너 확정).
-  assert.doesNotMatch(storyboardSource, /공간세트에서 사용된 컷/);
-  assert.doesNotMatch(storyboardSource, /sb-ex-source-label/);
-  assert.match(storyboardSource, /appendSetOnly:\s*cutType !== 'product'/);
-  assert.match(editorSource, /withStoryboardSpaceSetExamples\(c\)/);
-  assert.match(editorSource, /setCatalogs\(hydratedCatalogs\)/);
+test('v5 manual gallery includes published set members alongside standalone examples', () => {
+  const grouped = example('set-member', { setOnly: true, spaceSetId: 'released', variants: ['all', 'pose'] });
+  const flat = example('flat');
+  const shown = selectGenerationExamples([flat, grouped], { cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women', includeSetOnly: true });
+  assert.deepEqual(new Set(shown.map(item => item.id)), new Set(['flat', 'set-member']));
 });
-
 test('horizon groups auto-assign complete-only references while styling groups retain pose scope', () => {
   for (const [cutType, variants, expected] of [['horizon', ['all'], 'all'], ['styling', ['all', 'pose'], 'pose']]) {
     const result = assignGenerationExamples([block('grouped', { cutType, direction: 'front', spaceGroupId: 'ssg1__test__one' })], {

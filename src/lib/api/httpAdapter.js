@@ -20,11 +20,12 @@ import { supabase } from '@/lib/supabase.js';
 import { identityKindOf } from '../identityScope.js';
 import { isRealModelSelection } from '../../features/analysis/modelSelection.js';
 import { LIMITS } from '@/lib/limits.js';
-import { applySeededHookStyle, defaultAnalysisShape, defaultStoryboard, isDefaultStoryboardForMode } from '@/lib/api/shapes.js';
+import { defaultAnalysisShape } from '@/lib/api/shapes.js';
+import { resolveStoryboardEntry } from '../pageTemplates/seed.js';
+import { analysisPageStyle, defaultPageStyle } from '../pageTemplates/pageStyle.js';
+import { setStoryboardEntryNotice, storyboardEntryNotice } from '../pageTemplates/entryNotices.js';
 import { normalizeMatchClothingSelection, toMatchItem } from '@/lib/api/matchingItems.js';
 import { mergeMatchSelection } from '@/lib/api/matchSelection.js';
-import { applyOpeningRow, hasOpeningRow } from '@/lib/storyboardEntryPlacement.js';
-import { deriveHookFrame } from '@/lib/storyboardHookFrame.js';
 import { fetchPhotoBytes } from '../photoBytes.js';
 import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
@@ -713,35 +714,24 @@ export const httpAdapter = {
       http(`/v1/projects/${projectId}/analysis`),
     ]);
     const colors = product?.colors || [];
-    const mode = project?.composeMode === 'extended' ? 'extended' : 'basic';
-    const storyboardContext = {
-      projectId,
-      clothingType: product?.clothingType || 'top',
-      targetGenders: analysis?.targetGenders || [],
-      subCategory: analysis?.subCategory || null,
-      customCategory: analysis?.customCategory || null,
-      matchClothing: analysis?.matchClothing || [],
-      detailRecommendations: analysis?.detailRecommendations,
-      sellingPoints: analysis?.sellingPoints || [],
-      // 실제 모델이면 가상 전용 컷을 자동 구성에서 뺀다(lib/identityScope.js — 판정은 서버).
-      identityKind: identityKindOf(isRealModelSelection(
-        analysis?.selectedModelId || analysis?.selected_model_id)),
-    };
-    if (Array.isArray(saved) && saved.length) {
-      const previousMode = mode === 'extended' ? 'basic' : 'extended';
-      // 이전 모드의 기본 시드 그대로일 때만 사진 양 변경을 반영한다.
-      // 사용자가 옵션·순서·레이아웃 하나라도 바꾼 콘티는 교체하지 않는다.
-      if (!isDefaultStoryboardForMode(saved, colors, previousMode, storyboardContext)) return saved;
-      const seeded = defaultStoryboard(colors, mode, storyboardContext);
-      // 첫 화면 스타일 선택은 사진 양을 바꿔도 유지한다 — pair 만 기본 지문에 들어올 수
-      // 있고(네 컷 구성은 컷이 늘어 애초에 기본이 아님), 그 외는 시드 기본(시그니처).
-      return deriveHookFrame(saved)?.style === 'pair'
-        ? applySeededHookStyle(seeded, 'pair', colors)
-        : seeded;
-    }
-    // 첫 진입/재시드는 화면의 자동 예시 배정 뒤 한 번만 PUT한다. 첫 화면 스타일은
-    // defaultStoryboard 가 시그니처 컷으로 시드한다(2026-08-14 확정).
-    return defaultStoryboard(colors, mode, storyboardContext);
+    const outdated = saved?.some(block => block.taxonomyVersion !== 4);
+    const fallbackStyle = analysis?.pageStyle || (!outdated && saved?.length
+      ? { ...defaultPageStyle(), templateId: saved[0].pageSectionKey.split('.')[0] }
+      : await this.getLastPageStyle());
+    const effectiveAnalysis = analysis?.pageStyle ? analysis : { ...analysis, pageStyle: fallbackStyle };
+    const generated = outdated && (project?.status === 'done' || !!(await this.getEditorBlocks(projectId))?.length);
+    const resolved = resolveStoryboardEntry(saved, product || {}, effectiveAnalysis, {
+      projectId, generated,
+      identityKind: identityKindOf(isRealModelSelection(analysis?.selectedModelId || analysis?.selected_model_id)),
+    });
+    setStoryboardEntryNotice(projectId, resolved.notice);
+    return resolved.notice === 'legacyGenerated' ? [] : resolved.blocks;
+  },
+  storyboardEntryNotice,
+  async getLastPageStyle() {
+    const { data } = await supabase.auth.getSession();
+    if (!data?.session) return defaultPageStyle();
+    return analysisPageStyle(await http('/v1/page-style/last'));
   },
   async saveStoryboard(projectId, blocks, options = {}) {
     recordClientAction('save');

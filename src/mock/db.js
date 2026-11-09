@@ -1,3 +1,6 @@
+import { selectTemplateStyle } from '@/lib/pageTemplates/pageStyle.js';
+import { mockQuery } from '@/mock/outfitV18Fixtures.js';
+import mockFullDetails from './detailRecommendationsFixture.json';
 /* =============================================================
    mock/db.js — single source of fake data (conforms to lib/types.js
    and documents/common_data_contract.md).
@@ -17,36 +20,19 @@ import { Placeholder as P } from '@/mock/placeholders.js';
 import genExamples from '@/data/genExamples.json';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
+import { assemblePage } from '@/lib/pageTemplates/assemble.js';
+import { buildAutoBlocks } from '@/lib/pageTemplates/autoBlocks.js';
 import { genderForClothingType } from '@/lib/productGender.js';
 import {
   createMeasurementFields,
   MEASUREMENT_LABELS,
   MEASUREMENT_SCHEMA,
 } from '@/lib/measurementSchema.js';
-import { defaultStoryboard } from '@/lib/api/shapes.js';
+import { seedStoryboard } from '@/lib/pageTemplates/seed.js';
 import { colorDisplayName } from '@/lib/colorwayMatching.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
-import { ensureSections, rowSizeFor } from '@/lib/sections.js';
-import {
-  CONTENT_ROLES,
-  SECTION_ROLES,
-  contentTitle,
-  inferContentRole,
-  inferSectionRole,
-} from '@/lib/storyboardTaxonomy.js';
-import {
-  CAPTION_GAP,
-  CAPTION_STYLE,
-  ROW_LABEL_HEIGHT,
-  ROW_LABEL_STYLE,
-  TAG_HEIGHT,
-  TAG_SHIFT,
-  TAG_STYLE,
-  captionHeight,
-  hookTitleLayout,
-  hookTitleStyle,
-} from '@/lib/editorTextSlots.js';
+import { CONTENT_ROLES, SECTION_ROLES } from '@/lib/storyboardTaxonomy.js';
 
 const nowIso = () => new Date().toISOString();
 const copyFitProfile = (profile) => ({
@@ -246,316 +232,20 @@ const T = (x, y, w, h, text, style) => ({ id: uid('el'), type: 'text', x, y, w, 
 const IMG = (x, y, w, h, src, radius, cutType) => ({ id: uid('el'), type: 'image', x, y, w, h, src, radius: radius ?? 8, ...(cutType ? { cutType } : {}) });
 
 /* 자동 안내 블록 (PRD §10.14) — 사이즈 안내는 product.measurements 를 "생성 시점"에 읽는다 */
-function buildAutoBlocks(product) {
-  return [
-    {
-      id: uid('b'), name: '사이즈 안내', kind: 'size', auto: true, bg: '#ffffff', elements: [
-        T(60, 56, 500, 44, '사이즈 안내', { size: 28, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
-        T(60, 104, 760, 24, '단위: cm · 측정 위치에 따라 1~3cm 오차가 있을 수 있어요', { size: 14, color: '#6b6b73' }),
-        ...(product.measurements || []).slice(0, 4).flatMap((m, i) => {
-          const x = 60 + i * 232;
-          return [
-            T(x, 168, 200, 24, catalogs.measurementLabels[m.key] || m.key, { size: 14, color: '#6b6b73' }),
-            T(x, 194, 200, 48, (m.value != null ? m.value + ' cm' : '—'), { size: 32, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
-          ];
-        }),
-      ],
-    },
-    {
-      id: uid('b'), name: '세탁 안내', kind: 'care', auto: true, bg: '#f5f5f5', elements: [
-        T(60, 56, 500, 40, '세탁 안내', { size: 24, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
-        T(60, 104, 880, 64, '세탁 전 실제 상품의 케어라벨을 반드시 확인해주세요. 소재와 상품 특성에 따라 관리 방법이 달라질 수 있습니다.', { size: 16, color: '#0e0d14' }),
-      ],
-    },
-    {
-      id: uid('b'), name: 'AI 생성 안내', kind: 'ai-notice', auto: true, bg: '#ffffff', elements: [
-        T(60, 48, 880, 60, '본 상세페이지의 일부 이미지는 AI를 활용해 생성되었습니다. 실제 상품의 색상과 핏은 촬영 환경 및 화면 설정에 따라 다르게 보일 수 있습니다.', { size: 13, color: '#6b6b73', align: 'center' }),
-      ],
-    },
-  ];
-}
-
 /* 저장된 콘티 → 에디터 블록 (mock 생성기, 계약 §6 generateDetailPage).
    실제 파이프라인이 할 일을 placeholder 로 흉내만 낸다 — 블록 수·종류·순서가
    콘티를 따라가고, 카피라이팅 ON 이면 첫 장면/핵심 장점에 카피를 넣는다. */
 export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting, analysis = {}) {
-  const ROW_LAYOUTS = {
-    twoColumn: { name: '2단 구성', kind: 'twocol' },
-    threeColumn: { name: '3단 구성', kind: 'threecol' },
-    grid2x2: { name: '2×2단 구성', kind: 'grid2x2' },
-    colorCompare: { name: '컬러 비교', kind: 'colorcmp' },
-  };
-  const cat = (ct) => ct === 'product' ? 'product' : ct === 'horizon' ? 'horizon' : 'styling';
-  const generatedImageFor = (b, w, h) => {
-    const preview = demoColorwayPreviewFor(product.name, product.clothingType);
-    const previewAsset = preview?.template?.[b.shot];
-    if (b.colorwayGroupId && previewAsset) return previewAsset;
-    const usesWholeExample = !b.similarSourceBlockId && b.exampleId && (b.refScope || 'all') === 'all' && !b.spaceGroupId;
-    return P.photo(usesWholeExample ? b.exampleId : 'gen_' + b.id, cat(b.cutType), w, h);
-  };
-  const arr = storyboard || [];
-  const blocks = [];
-  const CAPTION_PLACEHOLDER = '사진을 설명하는 소제목 (17자 내외)';
-  const ROW_LABEL_PLACEHOLDER = '짧은 라벨 (선택)';
-  const captionText = (contentRole) => !copywriting ? ''
-    : contentRole === CONTENT_ROLES.HERO ? `${product.name || '상품'}와 함께하는 하루`
-      : '강조 포인트를 살린 소제목이 들어가는 자리예요.';
-  const blockHeight = (elements) => Math.max(
-    0, ...elements.map((element) => (element.y || 0) + (element.h || 0)),
-  ) + 50;
-  let aiCutCount = 0;
-  let pointLabelCount = 0;
-  const overviewLabel = (direction, colorId) => {
-    const tag = String(direction || '').toLowerCase() === 'back' ? 'BACK' : 'FRONT';
-    if ((product.colors || []).length < 2 || colorId == null) return tag;
-    const color = product.colors.find((item) => item.id != null && String(item.id) === String(colorId));
-    const name = [color?.name, color?.label, colorDisplayName({ swatchId: color?.swatchId }, '')]
-      .map((value) => String(value || '').trim()).find(Boolean);
-    return name ? `${tag} · ${name}` : tag;
-  };
-  const colorLabelStyle = (text, style, width) => {
-    const scale = Math.min(1, width / (Array.from(text).length * (style.size + (style.tracking || 0))));
-    if (scale === 1) return style;
-    return { ...style, size: Math.floor(style.size * scale * 100) / 100,
-      ...('tracking' in style ? { tracking: Math.floor(style.tracking * scale * 100) / 100 } : {}) };
-  };
-  const singleTag = (contentRole, direction, colorId) => {
-    if (contentRole === CONTENT_ROLES.HERO || contentRole === CONTENT_ROLES.BENEFIT) {
-      pointLabelCount += 1;
-      return `POINT ${String(pointLabelCount).padStart(2, '0')}`;
-    }
-    if (contentRole === CONTENT_ROLES.FIT) return 'FIT';
-    if (contentRole === CONTENT_ROLES.PRODUCT_OVERVIEW) return overviewLabel(direction, colorId);
-    if (contentRole === CONTENT_ROLES.DETAIL) return 'DETAIL';
-    if (contentRole === CONTENT_ROLES.COORDINATION || contentRole === CONTENT_ROLES.REAL_WEAR) return 'STYLING';
-    return null;
-  };
-  const rowLabel = (rowBlock) => inferContentRole(rowBlock) === CONTENT_ROLES.PRODUCT_OVERVIEW
-    ? overviewLabel(rowBlock.direction, rowBlock.colorId) : '';
-  const persistentRowSections = new Set(arr
-    .filter((b) => b.source !== 'mine' && (b.layoutRowId || b.layoutRowVersion))
-    .map((b) => b.sectionId));
-  const pushSingle = (b) => {
-    const bg = blocks.length % 2 ? '#f5f5f5' : '#ffffff';
-    if (b.source === 'mine') {
-      const els = (b.ownImages || []).slice(0, 1).map((src) => IMG(60, 50, 880, 560, src, 12));
-      blocks.push({ id: uid('b'), name: '내 이미지', kind: inferSectionRole(b) || SECTION_ROLES.STYLING, contentRole: CONTENT_ROLES.CUSTOM, bg, h: 660, elements: els });
-      return;
-    }
-    const contentRole = inferContentRole(b);
-    const sectionRole = inferSectionRole(b) || SECTION_ROLES.STYLING;
-    const name = contentTitle(contentRole);
-    // sourceBlockId/copyRole = 서버 조립기와 같은 추적 필드(editor_wait_dev_spec §2-3) —
-    // 에디터 대기 화면의 컷 채움·셀러 카피 오버라이드 매칭 키. mock-서버 패리티 유지.
-    const firstCut = aiCutCount === 0;
-    aiCutCount += 1;
-    const signature = Boolean(b.hookTitleOverlay);
-    const tag = !firstCut && !signature ? singleTag(contentRole, b.direction, b.colorId) : null;
-    const imageY = firstCut || signature || !tag ? 50 : 50 + TAG_SHIFT;
-    const els = [Object.assign(IMG(60, imageY, 880, 560, generatedImageFor(b, 880, 560), 12, b.cutType || undefined), { sourceBlockId: b.id })];
-    // mock에는 생성 픽셀이 없으므로 시그니처 제목은 서버의 측정 실패 폴백과 같은 흰색이다.
-    if (signature && (product.name || '').trim()) {
-      const title = hookTitleLayout(product.name);
-      els.push(Object.assign(
-        T(60, imageY + Math.floor((560 - title.h) / 2), 880, title.h, title.text, hookTitleStyle('#ffffff', title)),
-        { sourceBlockId: b.id, copyRole: 'hookTitle', textSlotVersion: 1 },
-      ));
-    }
-    if (tag) {
-      const colorTag = contentRole === CONTENT_ROLES.PRODUCT_OVERVIEW && tag !== 'FRONT' && tag !== 'BACK';
-      els.push(Object.assign(
-        T(60, 44, colorTag ? 880 : 400, TAG_HEIGHT, tag, colorTag ? colorLabelStyle(tag, TAG_STYLE, 400) : TAG_STYLE),
-        { sourceBlockId: b.id, copyRole: 'label', textSlotVersion: 1 },
-      ));
-    }
-    if (!signature) {
-      const text = captionText(contentRole);
-      els.push(Object.assign(
-        T(60, imageY + 560 + CAPTION_GAP, 880, captionHeight(text), text, CAPTION_STYLE),
-        { sourceBlockId: b.id, copyRole: 'headline', textSlotVersion: 1, placeholder: CAPTION_PLACEHOLDER },
-      ));
-    }
-    blocks.push({ id: uid('b'), name, kind: sectionRole, contentRole, bg, h: blockHeight(els), elements: els });
-  };
-  const pushRow = (chunk, layout) => {
-    const rowLayout = ROW_LAYOUTS[layout];
-    const n = chunk.length;
-    /* 2×2 격자는 사진 넷이 딱 붙어 한 덩어리로 보여야 한다(오너 8/16) — 칸 사이 간격만
-       두지 않는다. 카피 자리는 아래 imgTop 주석 참고(다른 행과 같이 사진 아래). */
-    const grid = layout === 'grid2x2' && n === 4;
-    const w = grid ? 440 : Math.floor((880 - (n - 1) * 20) / n);
-    const h = grid ? 560 : 500;
-    const hero = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.HERO);
-    aiCutCount += n;
-    // 사진 시작 y 는 어느 배치든 같다. 격자만 카피를 위로 올려 자리를 비워 뒀더니,
-    // 에디터가 사진 행의 카피를 통째로 걷어내는 규칙(stripPhotoBlockTextElements —
-    // grid2x2 도 PHOTO_ROW_KINDS 다) 때문에 격자 위에 190px 빈 띠만 남았다.
-    // 카피는 다른 행과 똑같이 사진 아래에 둔다(2026-08-16 리뷰에서 실측 확인).
-    const imgTop = 50;
-    const els = chunk.map((rb, c) => Object.assign(
-      grid
-        ? IMG(60 + (c % 2) * w, imgTop + Math.floor(c / 2) * h, w, h, generatedImageFor(rb, w, h), 0, rb.cutType || undefined)
-        : IMG(60 + c * (w + 20), imgTop, w, h, generatedImageFor(rb, w, h), 12, rb.cutType || undefined),
-      { sourceBlockId: rb.id },
-    ));
-    if (hero) {
-      const copyTop = imgTop + (grid ? h * 2 : h) + CAPTION_GAP;
-      const text = captionText(CONTENT_ROLES.HERO);
-      els.push(Object.assign(
-        T(60, copyTop, 880, captionHeight(text), text, CAPTION_STYLE),
-        { sourceBlockId: hero.id, copyRole: 'headline', textSlotVersion: 1, placeholder: CAPTION_PLACEHOLDER },
-      ));
-    } else if (layout === 'twoColumn' || layout === 'threeColumn') {
-      const labelY = imgTop + h + 16;
-      const labels = chunk.map(rowLabel);
-      chunk.forEach((rowBlock, column) => {
-        const label = labels[column];
-        const colorLabel = !['FRONT', 'BACK', ''].includes(label);
-        els.push(Object.assign(
-          T(60 + column * (w + 20), labelY, w, ROW_LABEL_HEIGHT, label,
-            colorLabel ? colorLabelStyle(label, ROW_LABEL_STYLE, w) : ROW_LABEL_STYLE),
-          { sourceBlockId: rowBlock.id, copyRole: 'label', textSlotVersion: 1, placeholder: ROW_LABEL_PLACEHOLDER },
-        ));
-      });
-    }
-    blocks.push({
-      id: uid('b'), name: rowLayout.name, kind: rowLayout.kind,
-      bg: blocks.length % 2 ? '#f5f5f5' : '#ffffff', h: blockHeight(els), elements: els,
-    });
-  };
-
-  const isColorwayPair = (first, second) => {
-    const groupId = first?.colorwayGroupId;
-    const rowId = first?.layoutRowId;
-    return !!(
-      groupId
-      && first?.colorwayPairVersion === 1
-      && second?.colorwayPairVersion === 1
-      && second?.colorwayGroupId === groupId
-      && rowId
-      && second?.layoutRowId === rowId
-      && first?.sectionLayout === 'twoColumn'
-      && second?.sectionLayout === 'twoColumn'
-      && first?.source !== 'mine'
-      && second?.source !== 'mine'
-      && first?.sectionRole === SECTION_ROLES.STUDIO
-      && second?.sectionRole === SECTION_ROLES.STUDIO
-      && first?.cutType === 'horizon'
-      && second?.cutType === 'horizon'
-      && first?.direction === 'front'
-      && second?.direction === 'front'
-      && first?.colorId === second?.colorId
-      && new Set([first?.shot, second?.shot]).size === 2
-      && [first?.shot, second?.shot].every((shot) => shot === 'full' || shot === 'medium')
-      && JSON.stringify(first?.matchIds || []) === JSON.stringify(second?.matchIds || [])
-      && !first?.spaceGroupId
-      && !second?.spaceGroupId
-    );
-  };
-  const colorwayLabels = (pair) => {
-    const color = (product.colors || []).find((item) => String(item.id) === String(pair[0].colorId));
-    const productLabel = `${String(product.name || '상품').trim().slice(0, 120)} [${colorDisplayName(color).slice(0, 120)}]`;
-    const matchId = pair[0].matchIds?.[0];
-    const matching = (analysis.matchClothing || analysis.matchCandidates || [])
-      .find((item) => String(item.id) === String(matchId));
-    if (!matching) return [productLabel, null];
-    const name = String(matching.name || '매칭 의류').trim().slice(0, 120);
-    const colorName = String(matching.colorName || '').trim().slice(0, 120);
-    return [productLabel, colorName ? `${name} [${colorName}]` : name];
-  };
-  const pushColorwayPair = (pair) => {
-    aiCutCount += pair.length;
-    const ordered = pair.slice().sort((left, right) => (left.shot === 'full' ? -1 : 1) - (right.shot === 'full' ? -1 : 1));
-    const width = 430;
-    const height = 645;
-    const els = ordered.map((rowBlock, column) => Object.assign(
-      IMG(60 + column * 450, 24, width, height, generatedImageFor(rowBlock, width, height), 0, rowBlock.cutType || undefined),
-      { sourceBlockId: rowBlock.id },
-    ));
-    const [productLabel, matchingLabel] = colorwayLabels(ordered);
-    els.push(T(60, 683, 880, 24, productLabel, {
-      size: 14, weight: 400, color: '#6b6b73', align: 'center', tracking: 0.2,
-    }));
-    if (matchingLabel) {
-      els.push(T(60, 705, 880, 26, matchingLabel, {
-        size: 15, weight: 700, color: '#0e0d14', align: 'center', tracking: 0.1,
-      }));
-    }
-    const colorName = colorDisplayName(
-      (product.colors || []).find((item) => String(item.id) === String(ordered[0].colorId)),
-    );
-    blocks.push({
-      id: uid('b'), name: `컬러 룩 · ${colorName}`, kind: 'twocol', layoutType: 'colorwayPair',
-      bg: '#f5f5f5', h: matchingLabel ? 781 : 757, elements: els,
-    });
-  };
-
-  for (let i = 0; i < arr.length; i++) {
-    const b = arr[i];
-    if (i + 1 < arr.length && isColorwayPair(b, arr[i + 1])) {
-      pushColorwayPair([b, arr[i + 1]]);
-      i += 1;
-      continue;
-    }
-    if (b.source === 'mine') { pushSingle(b); continue; }
-
-    // 가로 배치 섹션 — '내 이미지'가
-    // 끊는 같은 섹션의 연속 AI run을 하나의 배치 단위로 조립한다.
-    if (ROW_LAYOUTS[b.sectionLayout] && b.sectionId) {
-      const layout = b.sectionLayout;
-      const run = [];
-      let j = i;
-      while (j < arr.length && arr[j].sectionId === b.sectionId && arr[j].source !== 'mine') { run.push(arr[j]); j++; }
-      i = j - 1;
-
-      // 행 id나 모델 버전이 섹션에 있으면 신규 모델이다. 그래야 내 이미지 건너편 run과
-      // 완성 행이 없는 미완성 꼬리를 레거시 청킹으로 잘못 합치지 않는다.
-      if (persistentRowSections.has(b.sectionId)) {
-        // 신규 보드: 영속 row id가 배치의 단일 소스. 버전만 있고 id 없는 미완성 꼬리는 싱글로 남긴다.
-        for (let k = 0; k < run.length;) {
-          const rowId = run[k].layoutRowId;
-          if (!rowId) { pushSingle(run[k]); k += 1; continue; }
-          let end = k + 1;
-          while (end < run.length && run[end].layoutRowId === rowId) end += 1;
-          const members = run.slice(k, end);
-          if (members.length > 1) pushRow(members, layout);
-          else pushSingle(members[0]); // 손상된/구버전 단독 id는 안전하게 싱글로 폴백.
-          k = end;
-        }
-      } else {
-        // 레거시 보드: row id/모델 버전이 전혀 없으면 기존 rowSizeFor 순차 청킹(미완성 마지막 행 포함)을 유지한다.
-        const size = rowSizeFor(layout);
-        for (let k = 0; k < run.length; k += size) {
-          const chunk = run.slice(k, k + size);
-          if (chunk.length > 1) pushRow(chunk, layout);
-          else pushSingle(chunk[0]);
-        }
-      }
-      continue;
-    }
-    pushSingle(b);
-  }
-  return [...blocks, ...buildAutoBlocks(product)];
+  const cutResults = (storyboard || []).filter(block => block.source === 'ai').map(block => ({
+    blockId: block.id,
+    imageUrl: P.photo(`gen_${block.id}`, block.cutType === 'product' ? 'product' : block.cutType === 'horizon' ? 'horizon' : 'styling', 800, 1200),
+    width: 800, height: 1200,
+  }));
+  return assemblePage({ storyboard, product, copywriting, analysis, cutResults });
 }
 
-/* =============================================================
-   buildStoryboard(mode, colors, context) — HTTP 기본 콘티와 동일한 빌더를
-   공유해 mock에서도 선택 세트·순서·지문이 완전히 같게 유지한다.
-   ============================================================= */
-export function buildStoryboard(mode, colors, context = {}) {
-  const blocks = defaultStoryboard(colors, mode, context);
-  const preview = demoColorwayPreviewFor(context.previewProductName, context.clothingType);
-  if (!preview) return blocks;
-  return blocks.map((block) => (
-    block.colorwayGroupId
-      && preview.template?.[block.shot]
-      ? {
-        ...block,
-        thumb: preview.template[block.shot],
-        previewThumb: preview.template[block.shot],
-      }
-      : block
-  ));
+export function buildStoryboard(_mode, colors, context = {}) {
+  return seedStoryboard({ ...context, colors }, { ...context, pageStyle: context.pageStyle }, context);
 }
 
 /* =============================================================
@@ -645,6 +335,10 @@ export function buildDraft() {
      마네킹 페이지 진입 시 api.generateMannequins 가 수행한다 (미리 채우면 우회됨). */
   const mannequins = [];
 
+  const templateDemo = mockQuery().get('mockTemplate');
+  if (['emo', 'show'].includes(templateDemo)) analysis.pageStyle = selectTemplateStyle(templateDemo);
+  if (mockQuery().get('mockDetail') === 'full') analysis.detailRecommendations = structuredClone(mockFullDetails);
+
   /* ---- Storyboard blocks — 모드별 기본 콘티는 buildStoryboard() (PRD §8, ADR-0003·0004).
      첫 화면 스타일은 시드가 시그니처 컷 프레임을 이미 포함한다(2026-08-14). ---- */
   const storyboard = buildStoryboard(project.composeMode, product.colors, {
@@ -656,6 +350,7 @@ export function buildDraft() {
     matchClothing: analysis.matchClothing,
     detailRecommendations: analysis.detailRecommendations,
     sellingPoints: analysis.sellingPoints,
+    pageStyle: analysis.pageStyle,
     previewProductName: product.name,
   });
 
@@ -706,14 +401,18 @@ export function buildDraft() {
     misc: Array.from({ length: 2 }, (_, i) => ({ id: uid('w'), src: P.product('w3' + i, 200, 260), ai: false, cutType: 'product' })),
   };
 
+  if (mockQuery().get('mockLegacy') === 'after') project.status = 'done';
+
   // storyboardDirty: 사용자가 콘티를 저장(수정)했는지 — false면 사진 양 변경 시 기본 콘티를 재구성한다
   return {
     project,
     product,
     analysis,
-    mannequins,
+    mannequins: mannequins.map(cut => ({ ...cut, previewOnly: true })),
     mannequinExtensionFeePaid: false,
-    storyboard,
+    storyboard: ['before', 'after'].includes(mockQuery().get('mockLegacy'))
+      ? storyboard.map(({ pageSectionKey, pageSectionKind, pageSectionUsage, pageDesignId, slotKey, ...b }) => ({ ...b, taxonomyVersion: 3 }))
+      : storyboard,
     storyboardDirty: false,
     editorBlocks,
     wardrobe,

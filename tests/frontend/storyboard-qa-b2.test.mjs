@@ -1,3 +1,4 @@
+import { readStoryboardSources } from './helpers/storyboardComponents.mjs';
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -13,10 +14,7 @@ import {
   STORYBOARD_AUTOSAVE_DELAY_MS,
 } from '../../src/features/storyboard/storyboardSaveLifecycle.js';
 
-const storyboardSource = readFileSync(
-  new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url),
-  'utf8',
-);
+const storyboardSource = readStoryboardSources();
 
 function fakeClock() {
   let now = 0;
@@ -322,7 +320,7 @@ test('next-step flush failure blocks navigation and reports a toast message', as
   assert.equal(moved, false);
   assert.deepEqual(navigations, []);
   assert.deepEqual(toasts, ['세트 저장에 실패했어요']);
-  assert.match(storyboardSource, /continueAfterStoryboardFlush\(\{[\s\S]*?flush: \(\) => saveNow\(projectId\),[\s\S]*?onFailure: \(message, error\) => toast\.push\(message, \{ variant: \'error\', error/);
+  assert.match(storyboardSource, /continueAfterStoryboardFlush\(\{[\s\S]*?flush: async \(\) => \{ await ensureV4StoryboardCopywriting\(projectId, useAppStore.getState\); return saveNow\(projectId\); \},[\s\S]*?onFailure: \(message, error\) => toast\.push\(message, \{ variant: \'error\', error/);
   assert.doesNotMatch(storyboardSource, /\{saveError && <div className="sb-save-error">/);
   assert.match(storyboardSource, /pickerSaveError && <div className="sb-save-error">/);
   assert.match(storyboardSource, /setSetPickerError\('장소 세트를 저장하지 못했어요\. 다시 시도해주세요\.'/);

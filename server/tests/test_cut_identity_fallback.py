@@ -2,6 +2,7 @@
 
 발행 registry 밖의 non-UUID 가상 모델은 결정적 가상 모델로 폴백할 수 있다. UUID 실존 모델은
 별도 REAL 권한 경로에서 fail-closed하며 이 폴백 경로에 들어오지 않는다."""
+from storyboard_v4_cases import v4_blocks
 
 import asyncio
 
@@ -52,7 +53,7 @@ def _patch_worker(monkeypatch, captured):
         return {"copywriting": False}
 
     async def fake_storyboard(conn, project_id):
-        return [{"id": "b1", "source": "ai", "cutType": "styling", "shot": "full"}]
+        return v4_blocks([{"id": "b1", "source": "ai", "cutType": "styling", "shot": "full"}])
 
     async def fake_product(conn, project_id):
         return {

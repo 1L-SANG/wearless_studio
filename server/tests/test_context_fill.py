@@ -126,7 +126,7 @@ def test_full_width_new_cut_uses_upper_section_and_alternates_shot():
     assert result["payload"]["outerClosureState"] == "closed"
     assert result["payload"]["modelId"] == "mA"
     assert result["payload"]["source"] == "ai"
-    assert result["payload"]["taxonomyVersion"] == 3
+    assert "taxonomyVersion" not in result["payload"]  # editor fill is a standalone recipe, not a storyboard
 
 
 def test_page_top_template_hero_and_later_hero_becomes_benefit():

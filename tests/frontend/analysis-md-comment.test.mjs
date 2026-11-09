@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createServer, transformWithEsbuild } from 'vite';
 import { defaultAnalysisShape } from '../../src/lib/api/shapes.js';
+import { defaultPageStyle, validPageStyle } from '../../src/lib/pageTemplates/pageStyle.js';
+
 import { isGenerationRelevantAnalysisPatch } from '../../src/lib/generationRelevance.js';
 import { outfitContextKey } from '../../src/lib/outfitSelections.js';
 import { createFeatureRun, stripFeatureClientFields } from '../../src/lib/featureRun.js';
@@ -45,7 +47,8 @@ async function form(initial = '', onChange = () => {}, onNext = async () => {}) 
   const confirm = source.slice(source.indexOf('  const confirmAnalysis ='), source.indexOf('  const [customMatchOpen,'));
   const placeholderDeclaration = source.match(/^const MD_COMMENT_PLACEHOLDER = .+;$/m)[0];
   const { code } = await transformWithEsbuild(`${placeholderDeclaration}\nfunction render(a) { ${state}\n${confirm}\nreturn (<>${section}</>); }`, 'md-comment.jsx', { jsx: 'transform' });
-  const hooks = []; let cursor = 0, effects = [], analysis = { mdComment: initial }, tree;
+  const style = defaultPageStyle();
+  const hooks = []; let cursor = 0, effects = [], analysis = { mdComment: initial, pageStyle: style }, tree;
   const bindings = {
     React: { Fragment: 'fragment', createElement: (type, props, ...children) => ({ type, props: { ...props, children } }) },
     useState(initial) { const index = cursor++; if (!(index in hooks)) hooks[index] = typeof initial === 'function' ? initial() : initial;
@@ -56,7 +59,8 @@ async function form(initial = '', onChange = () => {}, onNext = async () => {}) 
         hooks[index] = { deps }; effects.push(effect);
       } },
     onChange, onNext, onBeforeConfirm: undefined, confirming: false, setConfirming() {}, onConfirmingChange() {},
-    composeModeSaveRef: { current: Promise.resolve() }, mannequinGenerationCost: 0,
+    pageStyleReady: true, validPageStyle,
+    pageStyleSaveRef: { current: Promise.resolve() }, pageStyleValueRef: { current: style }, setPageStyleError() {}, mannequinGenerationCost: 0,
   };
   const render = new Function(...Object.keys(bindings), `${code}; return render;`)(...Object.values(bindings));
   const show = (next = analysis) => { analysis = next; cursor = 0; tree = render(analysis);

@@ -20,6 +20,7 @@ import { mergeOutfitSaveResponse, outfitContextKey, syncOutfitLegacySelection } 
 import { mannequinGenerationTotal, normalizePlanTier } from '../../src/lib/limits.js';
 import { mannequinGenerationCreditShortfall } from '../../src/lib/creditPreflight.js';
 import { confirmDraftPhotos } from '../../src/lib/draftPhotoConfirmation.js';
+import { defaultPageStyle, validPageStyle } from '../../src/lib/pageTemplates/pageStyle.js';
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 const clean = (source) => source.replace(/^import [\s\S]*?;\n/gm, '').replace(/^export default .*;$/gm, '').replace(/^export /gm, '');
@@ -51,13 +52,17 @@ function confirmButton(props, effects) {
   const source = read('src/features/analysis/AnalysisForm.jsx');
   const start = source.indexOf('  const confirmAnalysis = async () =>');
   const end = source.indexOf('  const [customMatchOpen,', start);
+  const style = defaultPageStyle();
   const bindings = {
     confirming: false, onBeforeConfirm: props.onBeforeConfirm, onNext: props.onNext,
     setConfirming: () => effects.push('confirming'), onConfirmingChange: () => effects.push('lock'),
-    commitMdComment: () => effects.push('mdSave'), composeModeSaveRef: { current: Promise.resolve() },
+    commitMdComment: () => effects.push('mdSave'), pageStyleSaveRef: { current: Promise.resolve() }, pageStyleValueRef: { current: style }, setPageStyleError() {},
+    a: { pageStyle: style }, pageStyleReady: true, validPageStyle,
+    onChange: () => assert.fail('unchanged template saved again'),
     mannequinGenerationCost: 45,
   };
-  return new Function(...Object.keys(bindings), `${source.slice(start, end)}; return confirmAnalysis;`)(...Object.values(bindings));
+  const persist = source.slice(source.indexOf('  const persistSelectedPageStyle ='), source.indexOf('  const prepareOutfit ='));
+  return new Function(...Object.keys(bindings), `${persist}\n${source.slice(start, end)}; return confirmAnalysis;`)(...Object.values(bindings));
 }
 
 function harness({ mobile = true, analysis = null, fastEntry = false, analyze = null, prepare = null, featureFactory = null, restoreFeature = null, saveAll, transcode, photos = product(), doneBlocked = false, persisted = false, stagedDraft = true, initialSavedMeta = null, session = { user: { id: 'seller' } }, authLoading = false, draftStore = null, slotClient = null, previewRegistry = null, autoSaveIntent = null, sellerConsentReady, slotApi, consentRetry } = {}) {

@@ -15,6 +15,11 @@ export function attachStoryboardDragScroll(win = window) {
   let frame = null;
   let lastTime = null;
   let velocity = 0;
+  let scrollTarget = win;
+  const targetFor = event => {
+    const container = event.target?.closest?.('[data-storyboard-scroll]');
+    return container && container.scrollHeight > container.clientHeight ? container : win;
+  };
   let ended = false;
   const pause = () => {
     if (frame !== null) win.cancelAnimationFrame(frame);
@@ -23,13 +28,15 @@ export function attachStoryboardDragScroll(win = window) {
   const stop = () => { ended = true; pause(); };
   const tick = (time) => {
     if (ended || !velocity) { frame = null; return; }
-    if (lastTime !== null) win.scrollBy({ top: velocity * Math.min(time - lastTime, 48) / 1000, behavior: 'instant' });
+    if (lastTime !== null) scrollTarget.scrollBy({ top: velocity * Math.min(time - lastTime, 48) / 1000, behavior: 'instant' });
     lastTime = time;
     frame = win.requestAnimationFrame(tick);
   };
   const track = (event) => {
     if (ended) return;
-    velocity = edgeScrollVelocity(event.clientY, win.innerHeight);
+    scrollTarget = targetFor(event);
+    const rect = scrollTarget === win ? { top: 0, height: win.innerHeight } : scrollTarget.getBoundingClientRect();
+    velocity = edgeScrollVelocity(event.clientY - rect.top, rect.height);
     if (event.clientX < 0 || event.clientX > win.innerWidth) velocity = 0;
     if (!velocity) { pause(); return; }
     if (frame === null) frame = win.requestAnimationFrame(tick);
@@ -41,8 +48,9 @@ export function attachStoryboardDragScroll(win = window) {
   const wheel = (event) => {
     if (ended || event.ctrlKey || !event.deltaY) return;
     event.preventDefault();
-    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? win.innerHeight : 1;
-    win.scrollBy({ top: event.deltaY * unit, behavior: 'instant' });
+    const target = targetFor(event);
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? target === win ? win.innerHeight : target.clientHeight : 1;
+    target.scrollBy({ top: event.deltaY * unit, behavior: 'instant' });
   };
   const key = (event) => { if (event.key === 'Escape') stop(); };
   const hidden = () => { if (doc.hidden) stop(); };

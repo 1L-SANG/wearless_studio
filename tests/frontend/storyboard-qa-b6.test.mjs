@@ -1,3 +1,4 @@
+import { readStoryboardSources } from './helpers/storyboardComponents.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -6,24 +7,16 @@ import { allowedCutTypeOptionsForSection } from '../../src/lib/storyboardTaxonom
 
 // Source-level UI checks must mean the same thing in LF and Windows CRLF checkouts.
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-const storyboardSource = read('../../src/features/storyboard/Storyboard.jsx');
+const storyboardSource = readStoryboardSources();
 const chromeSource = read('../../src/features/shell/ChromeLayout.jsx');
 const uiSource = read('../../src/components/ui.jsx');
 const appStyles = read('../../src/styles/app.css');
 
-test('N12 addBlock accepts cut types that older section-specific gates rejected', () => {
-  const addBlockStart = storyboardSource.indexOf('const addBlock = async');
-  const addBlockEnd = storyboardSource.indexOf('// drag-to-reorder blocks', addBlockStart);
-  const addBlockSource = storyboardSource.slice(addBlockStart, addBlockEnd);
-  assert.match(addBlockSource, /allowedCutTypeOptionsForSection\(sectionRole\)\.some/);
-
-  const acceptsDrop = (sectionRole, cutType) => allowedCutTypeOptionsForSection(sectionRole)
-    .some((option) => option.value === cutType);
-  assert.equal(acceptsDrop('hooking', 'product'), true);
-  assert.equal(acceptsDrop('studio', 'horizon'), true);
-  assert.equal(acceptsDrop('product', 'styling'), true);
+test('N12 taxonomy retains the existing allowed cut families', () => {
+  for (const [sectionRole, cutType] of [['hooking', 'product'], ['studio', 'horizon'], ['product', 'styling']]) {
+    assert.ok(allowedCutTypeOptionsForSection(sectionRole).some(option => option.value === cutType));
+  }
 });
-
 test('N12 product conversion still clears worn-only matching fields', () => {
   const commitStart = storyboardSource.indexOf('const commitPendingRecipe = async');
   const commitEnd = storyboardSource.indexOf('const generationExamplePatch', commitStart);

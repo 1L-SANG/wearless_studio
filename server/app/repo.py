@@ -1810,6 +1810,31 @@ _SERVER_OWNED_ANALYSIS_KEYS = (
 _IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence", "detailRecommendations", "garmentColorEvidence", "frontClosure", "outfitRecommendation")
 
 
+async def lock_page_style_project(conn: AsyncConnection, project_id: str):
+    # Share the same transaction lock with mannequin job creation (including the first job).
+    async with conn.cursor() as cur:
+        await cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (str(project_id),))
+
+
+async def page_style_locked(conn: AsyncConnection, project_id: str) -> bool:
+    async with conn.cursor() as cur:
+        await cur.execute("select exists(select 1 from mannequin_cuts where project_id = %s) "
+                          "or exists(select 1 from jobs where project_id = %s and kind in ('mannequin', 'mannequin_adjust')) as locked",
+                          (project_id, project_id))
+        row = await cur.fetchone()
+        return bool(row and row["locked"])
+
+
+async def last_page_style(conn: AsyncConnection, user_id: str) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute("select a.payload->'pageStyle' as page_style from analyses a "
+                          "join projects p on p.id = a.project_id where p.user_id = %s and p.deleted_at is null "
+                          "and jsonb_typeof(a.payload->'pageStyle') = 'object' "
+                          "order by coalesce(a.payload->'pageStyle'->>'updatedAt', '') desc, p.updated_at desc, p.id desc limit 1", (user_id,))
+        row = await cur.fetchone()
+        return row["page_style"] if row else None
+
+
 async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict, *,
                         merge: bool = True, delete_nulls: bool = False) -> dict:
     """내부 저장은 담당 키만 병합한다. 클라이언트는 merge=1일 때만 같은 계약을 쓴다.
@@ -1831,7 +1856,7 @@ async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict, 
             update = "(analyses.payload || excluded.payload) - %s::text[]"
             params.append(removed)
     else:
-        params.extend([Json(analysis), [*_SERVER_OWNED_ANALYSIS_KEYS, "locked"]])
+        params.extend([Json(analysis), [*_SERVER_OWNED_ANALYSIS_KEYS, "locked", "pageStyle"]])
         # 전문에서 빠진 일반 키는 삭제한다. 서버 키 이월도 UPDATE 안에서 읽어 경합을 막는다.
         update = """excluded.payload || (
             select coalesce(jsonb_object_agg(previous.key, previous.value), '{}'::jsonb)
@@ -3433,6 +3458,8 @@ async def create_job(
     마네킹과 에디터 실패 칸 재시도는 활성 합류 키도 기억한다.
     202 응답이 유실돼도 종료된 원래 작업을 재생하며 원래 키를 덮어쓰지 않는다.
     """
+    if kind in ("mannequin", "mannequin_adjust"):
+        await lock_page_style_project(conn, project_id)
     remember_request = kind == "mannequin" and bool(idempotency_key)
     retry_block_id = payload.get("retryBlockId") if kind == "editor_image" else None
     context_fill = payload.get("_contextFill") if kind == "editor_image" else None
@@ -4695,9 +4722,15 @@ async def finalize_analyze_success(
         # analyses.payload 는 AG-01 분석분을 덮어쓴다(재분석 시 최신 결과 반영). locked 는 건드리지 않음.
         await cur.execute(
             "insert into analyses (project_id, payload) values (%s, %s) "
-            "on conflict (project_id) do update set payload = excluded.payload",
+            "on conflict (project_id) do update set payload = excluded.payload || "
+            "case when analyses.payload ? 'pageStyle' then jsonb_build_object('pageStyle', analyses.payload->'pageStyle') else '{}'::jsonb end "
+            "returning payload",
             (project_id, Json(analysis_payload)),
         )
+        saved_analysis = await cur.fetchone()
+        if saved_analysis and saved_analysis.get("payload", {}).get("pageStyle"):
+            analysis_payload = {**analysis_payload, "pageStyle": saved_analysis["payload"]["pageStyle"]}
+            result = {**result, "data": {**(result.get("data") or {}), "pageStyle": analysis_payload["pageStyle"]}}
         # metadata 병합 저장(provider·promptVersion) — provider 품질/폴백 추적·spike 데이터 근거.
         await cur.execute(
             "update jobs set status = 'done', result = %s, progress = 100, "
