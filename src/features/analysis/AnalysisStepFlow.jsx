@@ -7,7 +7,7 @@ import styles from './AnalysisStepFlow.module.css';
 
 const easeInOutCubic = (t) => t < .5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2;
 
-export function AnalysisStepFlow({ inline, analysis, product, children, outfit, cta, beforeEnter }) {
+export function AnalysisStepFlow({ inline, analysis, product, children, afterAnalysis, outfit, cta, beforeEnter, enterDisabled = false, onEnteringChange }) {
   const [stage, setStage] = useState('analysis');
   const [folded, setFolded] = useState(false);
   const [hint, setHint] = useState(false);
@@ -32,16 +32,16 @@ export function AnalysisStepFlow({ inline, analysis, product, children, outfit, 
     try { setHint(claimOutfitHint(window.localStorage)); } catch { /* 저장소 자체의 getter도 실패할 수 있다. */ }
   };
   const enter = async () => {
-    if (entering) return;
-    setEntering(true); setError('');
-    try { await beforeEnter?.(); } catch { if (aliveRef.current) { setError('분석 정보를 저장하지 못했어요. 다시 눌러 주세요.'); setEntering(false); } return; }
+    if (entering || enterDisabled) return;
+    setEntering(true); onEnteringChange?.(true); setError('');
+    try { await beforeEnter?.(); } catch (failure) { if (aliveRef.current) { setError(failure?.message || '분석 정보를 저장하지 못했어요. 다시 눌러 주세요.'); setEntering(false); onEnteringChange?.(false); } return; }
     if (!aliveRef.current) return;
     const root = rootRef.current?.closest('.wizard') || rootRef.current;
     const initialY = window.scrollY;
     flushSync(() => { setStage('entering'); setFolded(false); });
     const targetTop = () => Math.max(0, window.scrollY + headRef.current.getBoundingClientRect().top - 76);
     const done = () => {
-      setStage('outfit'); setEntering(false); showHint();
+      setStage('outfit'); setEntering(false); onEnteringChange?.(false); showHint();
       headRef.current?.focus({ preventScroll: true });
     };
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -108,7 +108,8 @@ export function AnalysisStepFlow({ inline, analysis, product, children, outfit, 
     <div ref={analysisRef} className={styles.analysis} hidden={folded}>
       <div className="af-inline-head"><div><div className="af-head-title">AI가 분석한 정보예요</div><div className={styles.subtitle}>틀린 부분이 있으면 직접 수정해주세요.</div></div></div>
       <div className="af-body af-cards merged-card">{children}</div>
-      <WizardCTA className="wizard-cta-analysis"><button type="button" className="btn btn-primary btn-lg" disabled={entering} onClick={enter}>코디 고르기<ArrowRight size={18} /></button></WizardCTA>
+      {afterAnalysis}
+      <WizardCTA className="wizard-cta-analysis"><button type="button" className="btn btn-primary btn-lg" disabled={entering || enterDisabled} onClick={enter}>코디 고르기<ArrowRight size={18} /></button></WizardCTA>
       {error && <p role="alert" className={styles.error}>{error}</p>}
     </div>
     {stage !== 'analysis' && <section className={styles.second}>

@@ -1,0 +1,350 @@
+{
+  "textCases": [
+    {
+      "name": "korean",
+      "text": "가나다",
+      "maxW": 280,
+      "textW": 60,
+      "boxW": 104
+    },
+    {
+      "name": "ascii",
+      "text": "Front",
+      "maxW": 280,
+      "textW": 59,
+      "boxW": 103
+    },
+    {
+      "name": "mixed",
+      "text": "Linen 코튼",
+      "maxW": 280,
+      "textW": 106,
+      "boxW": 150
+    },
+    {
+      "name": "multiple-spaces",
+      "text": "면   100%",
+      "maxW": 280,
+      "textW": 85,
+      "boxW": 129
+    },
+    {
+      "name": "word-wrap",
+      "text": "가나다 라마바 사아자",
+      "maxW": 180,
+      "textW": 127,
+      "boxW": 171
+    },
+    {
+      "name": "explicit-newline",
+      "text": "Front\nSide",
+      "maxW": 280,
+      "textW": 59,
+      "boxW": 103
+    },
+    {
+      "name": "blank-line",
+      "text": "앞면\n\n뒷면",
+      "maxW": 280,
+      "textW": 40,
+      "boxW": 84
+    },
+    {
+      "name": "empty-minimum",
+      "text": "",
+      "maxW": 280,
+      "textW": 0,
+      "boxW": 80
+    },
+    {
+      "name": "edge-spaces",
+      "text": "  AB  CD ",
+      "maxW": 280,
+      "textW": 89,
+      "boxW": 133
+    },
+    {
+      "name": "long-unbroken-word",
+      "text": "가나다라마바사아자차",
+      "maxW": 180,
+      "textW": 130,
+      "boxW": 174,
+      "size": 13
+    },
+    {
+      "name": "unicode-codepoints",
+      "text": "emoji 🙂 okay",
+      "maxW": 280,
+      "textW": 134,
+      "boxW": 178
+    },
+    {
+      "name": "korean-english-digits",
+      "text": "한글과 English 123",
+      "maxW": 280,
+      "textW": 188,
+      "boxW": 232
+    },
+    {
+      "name": "uppercase-front",
+      "text": "FRONT",
+      "maxW": 280,
+      "textW": 70,
+      "boxW": 114
+    },
+    {
+      "name": "uppercase-side",
+      "text": "SIDE",
+      "maxW": 280,
+      "textW": 56,
+      "boxW": 100
+    },
+    {
+      "name": "uppercase-back",
+      "text": "BACK",
+      "maxW": 280,
+      "textW": 56,
+      "boxW": 100
+    },
+    {
+      "name": "tracked-front",
+      "text": "FRONT",
+      "maxW": 280,
+      "textW": 80,
+      "boxW": 124,
+      "style": "labelEn",
+      "fontSize": 22,
+      "tracking": 0.44
+    },
+    {
+      "name": "tracked-side",
+      "text": "SIDE",
+      "maxW": 280,
+      "textW": 64,
+      "boxW": 108,
+      "style": "labelEn",
+      "fontSize": 22,
+      "tracking": 0.44
+    },
+    {
+      "name": "tracked-back",
+      "text": "BACK",
+      "maxW": 280,
+      "textW": 64,
+      "boxW": 108,
+      "style": "labelEn",
+      "fontSize": 22,
+      "tracking": 0.44
+    }
+  ],
+  "metricCases": [
+    {
+      "name": "front-zero-tracking",
+      "text": "FRONT",
+      "width": 1000,
+      "size": 22,
+      "tracking": 0,
+      "textW": 77,
+      "lines": [
+        "FRONT"
+      ]
+    },
+    {
+      "name": "front-positive-tracking",
+      "text": "FRONT",
+      "width": 1000,
+      "size": 22,
+      "tracking": 2.64,
+      "textW": 91,
+      "lines": [
+        "FRONT"
+      ]
+    },
+    {
+      "name": "side-positive-tracking",
+      "text": "SIDE",
+      "width": 1000,
+      "size": 22,
+      "tracking": 2.64,
+      "textW": 73,
+      "lines": [
+        "SIDE"
+      ]
+    },
+    {
+      "name": "back-positive-tracking",
+      "text": "BACK",
+      "width": 1000,
+      "size": 22,
+      "tracking": 2.64,
+      "textW": 73,
+      "lines": [
+        "BACK"
+      ]
+    },
+    {
+      "name": "tracking-changes-wrap",
+      "text": "AB CD",
+      "width": 70,
+      "size": 20,
+      "tracking": 2,
+      "textW": 32,
+      "lines": [
+        "AB",
+        "CD"
+      ]
+    },
+    {
+      "name": "untracked-stays-one-line",
+      "text": "AB CD",
+      "width": 70,
+      "size": 20,
+      "tracking": 0,
+      "textW": 63,
+      "lines": [
+        "AB CD"
+      ]
+    },
+    {
+      "name": "negative-tracking-keeps-one-line",
+      "text": "AB CD",
+      "width": 61,
+      "size": 20,
+      "tracking": -0.4,
+      "textW": 61,
+      "lines": [
+        "AB CD"
+      ]
+    },
+    {
+      "name": "negative-tracking-wrap-boundary",
+      "text": "AB CD",
+      "width": 60,
+      "size": 20,
+      "tracking": -0.4,
+      "textW": 28,
+      "lines": [
+        "AB",
+        "CD"
+      ]
+    },
+    {
+      "name": "unicode-tracking-codepoints",
+      "text": "가🙂 A",
+      "width": 1000,
+      "size": 20,
+      "tracking": 1.2,
+      "textW": 66,
+      "lines": [
+        "가🙂 A"
+      ]
+    },
+    {
+      "name": "tracked-explicit-newline",
+      "text": "FRONT\nSIDE",
+      "width": 1000,
+      "size": 22,
+      "tracking": 2.64,
+      "textW": 91,
+      "lines": [
+        "FRONT",
+        "SIDE"
+      ]
+    },
+    {
+      "name": "fractional-tracking-ceil",
+      "text": "ab",
+      "width": 1000,
+      "size": 20,
+      "tracking": 0.4,
+      "textW": 24,
+      "lines": [
+        "ab"
+      ]
+    }
+  ],
+  "gridCases": [
+    {
+      "name": "emo-1-mono",
+      "cellW": 888,
+      "xs": [
+        56
+      ]
+    },
+    {
+      "name": "emo-2-mono",
+      "cellW": 424,
+      "xs": [
+        56,
+        520
+      ]
+    },
+    {
+      "name": "emo-3-mono",
+      "cellW": 424,
+      "xs": [
+        56,
+        520,
+        288
+      ]
+    },
+    {
+      "name": "show-1-mono",
+      "cellW": 888,
+      "xs": [
+        56
+      ]
+    },
+    {
+      "name": "show-2-mono",
+      "cellW": 434,
+      "xs": [
+        56,
+        509
+      ]
+    },
+    {
+      "name": "show-3-mono",
+      "cellW": 434,
+      "xs": [
+        56,
+        509,
+        283
+      ]
+    },
+    {
+      "name": "common-1-mono",
+      "cellW": 888,
+      "xs": [
+        56
+      ]
+    },
+    {
+      "name": "common-2-mono",
+      "cellW": 441,
+      "xs": [
+        56,
+        502
+      ]
+    },
+    {
+      "name": "common-3-mono",
+      "cellW": 292,
+      "xs": [
+        56,
+        353,
+        650
+      ]
+    },
+    {
+      "name": "common-four-color-grid",
+      "cellW": 292,
+      "xs": [
+        56,
+        353,
+        650,
+        354
+      ]
+    }
+  ]
+}

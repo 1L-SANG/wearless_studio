@@ -1,7 +1,7 @@
 import { selectPublicAnalysisPhotos } from './publicAnalysisPhotos.js';
 
 // Display/ranking only. Generation resolves this ID against the server-owned contract.
-export const isProductDetail = (block) => block?.source !== 'mine'
+export const isProductDetail = (block) => block?.source === 'ai'
   && block?.cutType === 'product' && block?.shot === 'detail';
 
 export const isSourceBasedDetailRecipe = ({ cutType, shot, clothingType } = {}) => (
@@ -101,6 +101,24 @@ export function detailTargetPresentation(block, product, recommendations) {
   const image = (overview?.src ? overview : null) || (indexedImage?.slot === slot ? indexedImage : null)
     || sourceColor?.images?.find((item) => item.slot === slot);
   return { src: image?.src || null, label: target?.label || (block.detailTargetId ? '선택한 디테일' : '원본에서 디테일 촬영'), target };
+}
+
+// Storyboard-only source/ROI. Retry/editor presentation above keeps its existing
+// overview-first source; this must never become a generation input or saved crop.
+export function detailTargetPreview(block, product, recommendations) {
+  if (!isProductDetail(block) || !block.detailTargetId) return null;
+  const target = detailTargetById(recommendations, block.detailTargetId);
+  const region = target?.region;
+  if (!region || ['x', 'y', 'w', 'h'].some(key => !Number.isFinite(region[key]))
+    || region.x < 0 || region.y < 0 || region.w <= 0 || region.h <= 0
+    || region.x + region.w > 1 || region.y + region.h > 1
+    || !Number.isInteger(target.sourceIndex) || target.sourceIndex < 0) return null;
+  const colors = product?.colors || [], base = colors.find(color => color.isBase) || colors[0];
+  const source = selectPublicAnalysisPhotos(base?.images)[target.sourceIndex];
+  if (!source?.src || source.slot !== target.sourceSlot) return null;
+  const known = [source.width, source.height].every(value => Number.isFinite(value) && value > 0);
+  return { src: source.src, region: { ...region }, ...(known ? { width: source.width, height: source.height,
+    dimensionsKnown: source.dimensionsKnown !== false } : {}) };
 }
 
 export function detailRecommendationMessage(recommendations) {

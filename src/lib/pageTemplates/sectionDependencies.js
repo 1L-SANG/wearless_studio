@@ -1,0 +1,131 @@
+import { uid } from '../ids.js';
+import { singleMemberSpaceSet } from '../storyboardSetSelection.js';
+import { getTemplate, pageTemplatesCatalog, sectionDefinition, walkLayout } from './catalog.js';
+import { sectionRuns } from './sectionRuns.js';
+import { wornCropRegions } from './seed.js';
+
+const localSlot = block => String(block.slotKey || '').replace(`${String(block.pageSectionKey).split('.').slice(1).join('.')}.`, '');
+const matches = (key, slot) => key === slot || key.startsWith(`${slot}.`) || new RegExp(`^${slot}\\d+$`).test(key);
+const baseColorId = product => (product?.colors?.find(color => color.isBase) || product?.colors?.[0])?.id;
+
+export function openingSourceProduct(run, product = {}) {
+  if (run?.kind !== 'first' || product?.colors?.length) return product;
+  return { ...product, colors: [{ id: run.blocks.find(block => block.source !== 'text')?.colorId, isBase: true }] };
+}
+
+// Reordering a source section must not silently pick a different source. The
+// catalog's original instance owns the reference. Removing it creates an
+// independent slot instead of borrowing from a different same-kind section.
+export function reuseSourceForSlot(blocks, slot, product = {}) {
+  const ref = slot.reuseFrom;
+  if (!ref) return null;
+  const template = getTemplate(String(blocks[0]?.pageSectionKey).split('.')[0]);
+  const original = template?.sections.find(section => section.kind === ref.kind && (!ref.usage || section.usage === ref.usage));
+  const originalKey = original && `${template.id}.${original.instanceKey}`;
+  const candidates = blocks.filter(block => block.source !== 'text' && !block.similarSourceBlockId
+    && block.pageSectionKind === ref.kind && (!ref.usage || block.pageSectionUsage === ref.usage || block.pageSectionKey === originalKey)
+    && (ref.color !== 'base' || String(block.colorId) === String(baseColorId(product))) && matches(localSlot(block), ref.slot));
+  const ordered = candidates.filter(block => block.pageSectionKey === originalKey);
+  return ordered[ref.index || 0] || null;
+}
+
+export function reuseSlotsForBlock(block) {
+  const template = getTemplate(String(block?.pageSectionKey).split('.')[0]);
+  if (!template) return [];
+  const used = new Set();
+  walkLayout(pageTemplatesCatalog.designs[block.pageDesignId]?.layout, node => {
+    if (node.slot) used.add(node.slot);
+    for (const slot of node.slots || []) used.add(slot);
+  });
+  return sectionDefinition(template, block.pageSectionKey, block.pageSectionKind, block.pageSectionUsage, block.pageDesignId)
+    .photoSlots?.filter(slot => slot.fill === 'reuse' && used.has(slot.slotKey)) || [];
+}
+
+export const isReuseFallback = block => ['ai', 'mine'].includes(block.source) && reuseSlotsForBlock(block).some(slot => localSlot(block) === slot.slotKey);
+
+export function isWornCropSource(block) {
+  if (block?.pageSectionKind !== 'wear') return false;
+  if (block.source === 'mine') return Array.isArray(block.ownImages) && typeof block.ownImages[0] === 'string' && !!block.ownImages[0];
+  return block.source === 'ai' && ['styling', 'horizon'].includes(block.cutType) && ['full', 'medium'].includes(block.shot);
+}
+
+function sourcePriority(block) {
+  const template = getTemplate(String(block.pageSectionKey).split('.')[0]);
+  const section = template && sectionDefinition(template, block.pageSectionKey, block.pageSectionKind, block.pageSectionUsage, block.pageDesignId);
+  const slot = section?.photoSlots?.find(slot => matches(localSlot(block), slot.slotKey)) || section?.photoSlots?.[0];
+  const cutType = block.cutType || slot?.recipe?.cutType;
+  if (block.direction === 'front' && cutType === 'horizon') return slot?.recipe?.set === 'rotation' ? 0 : 1;
+  if (block.direction === 'front' && cutType === 'styling' && ['full', 'medium'].includes(block.shot)) return 2;
+  return 3;
+}
+
+export function preferredWornCropSource(blocks) {
+  return blocks.filter(isWornCropSource).sort((a, b) => sourcePriority(a) - sourcePriority(b))[0] || null;
+}
+
+export function reconcileSectionDependencies(before, after, product = {}, {
+  makeId = () => uid('blk'), cropRegions = wornCropRegions[product.clothingType] || wornCropRegions.top,
+} = {}) {
+  const previousById = new Map(before.map(block => [block.id, block]));
+  let next = after.filter(block => !isReuseFallback(previousById.get(block.id) || {})
+    || reuseSlotsForBlock(block).some(slot => localSlot(block) === slot.slotKey));
+  for (const run of sectionRuns(after)) {
+    const first = run.blocks[0];
+    for (const slot of reuseSlotsForBlock(first)) {
+      const targetKey = `${run.key.split('.').slice(1).join('.')}.${slot.slotKey}`;
+      const own = next.find(block => block.pageSectionKey === run.key && block.slotKey === targetKey && block.source !== 'text');
+      const source = reuseSourceForSlot(next, slot, product);
+      if (source && own) next = next.filter(block => block.id !== own.id);
+      if (source || own) continue;
+      const previousSource = reuseSourceForSlot(before, slot, product);
+      const prototype = previousSource || before.find(block => block.source === 'ai'
+        && block.pageSectionKind === slot.reuseFrom.kind && (!slot.reuseFrom.usage || block.pageSectionUsage === slot.reuseFrom.usage));
+      const recipe = slot.reuseFrom.kind === 'color_product'
+        ? { cutType: 'product', shot: 'ghost', productPresentation: 'ghost', direction: 'front', faceExposure: null }
+        : { cutType: 'styling', shot: 'full', direction: 'front', faceExposure: 'same' };
+      const fallback = singleMemberSpaceSet({ ...(prototype || recipe), id: makeId(), source: prototype?.source || 'ai', taxonomyVersion: 4,
+        pageSectionKey: first.pageSectionKey, pageSectionKind: first.pageSectionKind, pageDesignId: first.pageDesignId,
+        ...(first.pageSectionUsage ? { pageSectionUsage: first.pageSectionUsage } : {}),
+        sectionId: first.sectionId, sectionLayout: 'stack', sectionCustom: true, slotKey: targetKey,
+        contentRole: slot.contentRole, sectionRole: recipe.cutType === 'product' ? 'product' : 'styling',
+        colorId: prototype?.colorId || baseColorId(product), refScope: 'all', matchIds: prototype?.matchIds || [],
+      });
+      for (const key of ['seedFingerprint', 'seedProductKey', 'similarSourceBlockId', 'pointItems', 'pageSectionUsage', 'sectionTitle']) delete fallback[key];
+      const end = next.findLastIndex(block => block.pageSectionKey === run.key) + 1;
+      next = [...next.slice(0, end), fallback, ...next.slice(end)];
+    }
+  }
+  const preferred = preferredWornCropSource(next);
+  const byId = new Map(next.map(block => [block.id, block]));
+  const removedPointRuns = new Set();
+  next = next.map(block => {
+    if (!Array.isArray(block.pointItems)) return block;
+    const derived = block.pointItems.some(item => item.kind === 'wornCrop');
+    if (derived && !preferred) {
+      removedPointRuns.add(block.pageSectionKey);
+      return block;
+    }
+    // All three crops in a derived run use the same actual worn image. Keep an
+    // existing valid source stable when sections are moved or more are added.
+    const retainedSource = derived && block.pointItems.map(item => byId.get(item.sourceBlockId)).find(isWornCropSource);
+    const cropSource = retainedSource || preferred;
+    const items = block.pointItems.flatMap(item => {
+      if (item.kind !== 'wornCrop') {
+        const source = byId.get(item.sourceBlockId);
+        return source?.source === 'ai' && source.shot === 'detail' && source.pageSectionKey === block.pageSectionKey ? [item] : [];
+      }
+      if (!cropSource) return [];
+      if (item.sourceBlockId === cropSource.id) return [item];
+      const currentRegion = cropRegions.find(([bodyPart]) => bodyPart === item.bodyPart)?.[2];
+      return [{ ...item, sourceBlockId: cropSource.id, ...(currentRegion ? { cropRegion: currentRegion } : {}) }];
+    });
+    // Structural detail rows never fill a missing detail with a worn crop.
+    const wanted = derived ? 3 : items.length;
+    for (let i = items.length; cropSource && i < wanted && cropRegions[i]; i++) {
+      const [bodyPart, label, cropRegion] = cropRegions[i];
+      items.push({ kind: 'wornCrop', sourceBlockId: cropSource.id, bodyPart, label, cropRegion });
+    }
+    return JSON.stringify(items) === JSON.stringify(block.pointItems) ? block : { ...block, pointItems: items };
+  });
+  return removedPointRuns.size ? next.filter(block => !removedPointRuns.has(block.pageSectionKey)) : next;
+}

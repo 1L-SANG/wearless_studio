@@ -10,6 +10,7 @@
   ④ 같은 콘티로 새 잡을 돌리면 보관본을 provider 호출 없이 싣고 실패한 컷만 새로 그린다(#394)
 유료 호출 없음 — provider·R2·DB 는 전부 대역이다.
 """
+from storyboard_v4_cases import v4_blocks
 
 import asyncio
 import contextlib
@@ -116,7 +117,7 @@ def _run_job(monkeypatch, *, job_id, r2, fail_blocks, calls, lease_lost=False, r
         return {"copywriting": False}
 
     async def fake_sb(conn, pid):
-        return [dict(b) for b in STORYBOARD]
+        return v4_blocks([dict(b) for b in STORYBOARD])
 
     async def fake_prod(conn, pid):
         return {"name": "셔츠", "colors": [{"isBase": True, "images": [

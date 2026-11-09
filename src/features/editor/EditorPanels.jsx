@@ -11,10 +11,12 @@ import OuterClosureField from '@/components/OuterClosureField.jsx';
 import { resizedPhotoPatch } from './editorCrop.js';
 import { ProductSourcePicker } from '../storyboard/ProductSourcePicker.jsx';
 import { productSourceColorPatch } from '../../lib/productSourcePhotos.js';
+import { garmentColorOptions, garmentColorSelectionPatch } from '../../lib/garmentColors.js';
+import { GarmentColorField } from '../../components/GarmentColorField.jsx';
 import { detailTargetById } from '../../lib/detailRecommendations.js';
 import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Icon, Button, IconButton, Chips, EmptyState, UploadPendingTile } from '@/components/ui.jsx';
-import { UnderlineTabs, ColorDots, MoodGuide } from '@/features/storyboard/Storyboard.jsx';
+import { UnderlineTabs, MoodGuide } from '@/features/storyboard/Storyboard.jsx';
 import { isRealModelSelection } from '@/features/analysis/modelSelection.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { OBJECT_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
@@ -321,8 +323,9 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
   // isDetail 은 검증된 effectiveShotVal 기준 — raw shot 을 읽으면 카탈로그 폴백 시 UI와 전송값이 어긋난다.
   const isDetail = isProduct && effectiveShotVal === 'detail';
   const activeColorOpts = isDetail ? detailColorOpts : colorOpts;
-  const colorVal = activeColorOpts.some((option) => option.id === color)
-    ? color : activeColorOpts[0]?.id || null;   // wardrobe 그룹 키 = colorId (계약 §3.6)
+  const colorVal = color ?? activeColorOpts[0]?.id ?? null;   // wardrobe 그룹 키 = colorId (계약 §3.6)
+  const colorUnavailable = !garmentColorOptions(product, activeColorOpts, effectiveRecipe)
+    .some(option => option.id === colorVal && !option.disabled);
   // 갤러리·게이트용 성별은 고른 가상 모델을 우선하고, 못 찾으면 분석 값을 쓴다.
   const modelGender = virtualModels.find((item) => item.id === model)?.gender
     || exampleGender || null;
@@ -454,13 +457,15 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
       <div className="insp-divider" />
 
       <div className="insp-sec"><label className="lbl">색상</label>
-        <ColorDots colorOpts={activeColorOpts} value={colorVal} onChange={(value) => {
-          setColor(value);
+        <GarmentColorField colorOpts={detailColorOpts.length ? detailColorOpts : colorOpts} value={colorVal}
+          product={product} block={{ ...effectiveRecipe, detailTargetId }} onChange={(value) => {
+          const changes = garmentColorSelectionPatch({ ...effectiveRecipe, colorId: colorVal, detailTargetId }, product, value);
+          if (!changes) return;
+          setColor(changes.colorId);
           if (value !== colorVal) {
             setDetailTargetId(null);
             if (isProduct) {
-              const patch = productSourceColorPatch({ ...effectiveRecipe, detailTargetId: null }, product, value);
-              setProductDirection(patch.direction || directionSpec.direction);
+              setProductDirection(changes.direction || directionSpec.direction);
             }
           }
         }} /></div>
@@ -504,7 +509,7 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
       </details>}
 
       <Button variant="primary" block icon="sparkles" className="btn-glowring"
-        disabled={brandUseCategoryBlocked || generateSubmitting} onClick={() => onGenerate({
+        disabled={brandUseCategoryBlocked || colorUnavailable || generateSubmitting} onClick={() => onGenerate({
         contentRole: effectiveRecipe.contentRole,
         colorId: colorVal, cutType: effectiveCutType,
         // 화면 값이 아니라 **컷 스펙**을 보낸다 — 'threeQuarter' 는 서버가 모르는 값이다.

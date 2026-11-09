@@ -1,12 +1,10 @@
+import { readStoryboardSources } from './helpers/storyboardComponents.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { buildColorOpts, colorLabelOf } from '../../src/lib/colorOpts.js';
 
-const storyboardSource = readFileSync(
-  new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url),
-  'utf8',
-);
+const storyboardSource = readStoryboardSources();
 const editorSource = readFileSync(
   new URL('../../src/features/editor/Editor.jsx', import.meta.url),
   'utf8',
@@ -17,23 +15,11 @@ const featureStyles = readFileSync(
 );
 
 test('N6 matching badge overlays the image only when the seller changed it in the inspector', () => {
-  // 2026-08-14 오너 확정: 캡션 줄 상시 칩 폐기 → 이미지 우측 하단 오버레이,
-  // 셀러가 인스펙터에서 직접 바꾼 컷(matchIdsOrigin 'user')에만 뜬다.
-  const media = storyboardSource.slice(
-    storyboardSource.indexOf('function StoryboardMedia'),
-    storyboardSource.indexOf('function CardDragSurface'),
-  );
-  assert.match(media, /block\.matchIdsOrigin === 'user'/, 'the overlay must gate on the user-change marker');
-  assert.match(media, /className="sb-match-overlay"/, 'the badge renders on the image, not in the caption');
-
-  const caption = storyboardSource.slice(
-    storyboardSource.indexOf('function StoryboardCaption'),
-    storyboardSource.indexOf('function StoryboardCardActions'),
-  );
-  assert.doesNotMatch(caption, /sb-match-chip/, 'the always-on caption chip is retired');
-  assert.ok(caption.includes('className="sb-caption-values"'), 'caption values must remain rendered');
+  const stage = readFileSync(new URL('../../src/features/storyboard/StoryboardStage.jsx', import.meta.url), 'utf8');
+  assert.match(stage, /block\.matchIdsOrigin === 'user'/);
+  assert.match(stage, /matching\?\.thumb/);
+  assert.doesNotMatch(stage, /sb-match-chip/);
 });
-
 test('N6 matching badge sits at the image bottom-right corner', () => {
   assert.match(
     featureStyles,
@@ -83,8 +69,8 @@ test('N7 swatch labels win, then trimmed names, then numbered fallbacks for mock
 
 test('N8 selecting A then B stores only B, and selecting B again clears the array', () => {
   const inspector = storyboardSource.slice(
-    storyboardSource.indexOf('function Inspector'),
-    storyboardSource.indexOf('function prepareStoryboardEntry'),
+    storyboardSource.indexOf('export function StoryboardPhotoPanel'),
+    storyboardSource.indexOf('export function MoodGuide'),
   );
   // 셀러 변경은 matchIdsOrigin 'user' 로 함께 기록된다(카드 오버레이 표시 조건).
   const expression = inspector.match(/onChange\(\{ matchIds: (.+?), matchIdsOrigin: 'user' \}\)/)?.[1];
@@ -113,7 +99,7 @@ test('N8 selecting A then B stores only B, and selecting B again clears the arra
 test('legacy storyboard blocks keep only their first matching garment on entry', () => {
   const entry = storyboardSource.slice(
     storyboardSource.indexOf('function prepareStoryboardEntry'),
-    storyboardSource.indexOf('function ComposeModeSummary'),
+    storyboardSource.indexOf('export function Storyboard('),
   );
   assert.match(entry, /block\.matchIds\.length > 1/);
   assert.match(entry, /matchIds: normalizeMatchIds\(block\.matchIds\)/);

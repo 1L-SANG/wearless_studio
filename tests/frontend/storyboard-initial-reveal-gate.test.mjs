@@ -101,25 +101,10 @@ test('thumbnail collection follows rendered section and preview order', () => {
   );
 });
 
-test('the released gate reveals board chrome immediately and sections in capped 90ms steps', () => {
-  assert.match(
-    storyboardSource,
-    /boardGroups\.map\(\(group, groupIndex\)[\s\S]*?style=\{\{ '--reveal-order': Math\.min\(groupIndex, 6\) \}\}/,
-  );
-  assert.match(
-    storyboardSource,
-    /sb-page sb-content-enter sb-initial-reveal\$\{initialBoardRevealed \? ' is-revealed' : ''\}/,
-  );
-
-  const revealStyles = featureStyles.slice(
-    featureStyles.indexOf('/* 첫 화면 썸네일 게이트 중에도'),
-    featureStyles.indexOf('.sb-page.is-atomic-saving'),
-  );
-  assert.match(revealStyles, /\.sb-initial-reveal > \.page-head/);
-  assert.match(revealStyles, /\.sb-initial-reveal \.sb-board-tools/);
-  assert.match(revealStyles, /\.sb-initial-reveal \.sb-deck/);
-  assert.match(revealStyles, /transform: translate3d\(0, 8px, 0\)/);
-  assert.match(revealStyles, /transition: opacity \.45s ease, transform \.45s ease/);
-  assert.match(revealStyles, /--reveal-delay: calc\(var\(--reveal-order, 0\) \* 90ms\)/);
-  assert.match(revealStyles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?transition: none;[\s\S]*?transition-delay: 0s/);
+test('the released gate reveals the v5 two-column composition after thumbnails settle', () => {
+  const css = readFileSync(new URL('../../src/features/storyboard/StoryboardLayout.module.css', import.meta.url), 'utf8');
+  assert.match(storyboardSource, /initialBoardRevealed \? ' is-revealed' : ''/);
+  assert.match(css, /\.page:global\(\.sb-initial-reveal\):not\(:global\(\.is-revealed\)\) \.layout[^}]*opacity: 0/);
+  assert.match(css, /prefers-reduced-motion: reduce[^}]*[\s\S]*?\.page \*.*transition: none !important/);
+  assert.doesNotMatch(storyboardSource, /style=\{\{/);
 });

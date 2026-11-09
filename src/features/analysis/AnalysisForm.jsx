@@ -34,7 +34,8 @@ import {
   resolveSelectedModelId,
 } from './modelSelection.js';
 import { SELLING_POINTS_MAX, applySellingPointEdit } from './sellingPoints.js';
-import { selectAnalysisComposeMode } from './composeModeSelection.js';
+import { PageTemplatePicker } from './PageTemplatePicker.jsx';
+import { analysisPageStyle, selectTemplateStyle, selectColorModeStyle, validPageStyle, templateSelectionStyle } from '../../lib/pageTemplates/pageStyle.js';
 import { OutfitSelection } from './OutfitSelection.jsx';
 import { AnalysisStepFlow, OutfitCreditLabel } from './AnalysisStepFlow.jsx';
 import { outfitModelCredit } from '@/lib/outfitPresentation.js';
@@ -467,57 +468,42 @@ export function AnalysisForm({
 }) {
   const a = analysis;
   const toast = useToast();
-  const composeMode = useAppStore((s) => s.composeMode);
   const account = useAppStore((s) => s.account);
-  const setComposeMode = useAppStore((s) => s.setComposeMode);
-  const restoreComposeMode = useAppStore((s) => s.restoreComposeMode);
-  const composeModeSaveRef = useRef(Promise.resolve());
-  const composeModeSelectionRef = useRef({ requestId: 0, confirmedMode: composeMode });
-  const [composeModeSaving, setComposeModeSaving] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [composeModeOpen, setComposeModeOpen] = useState(false);
   const [creditQuote, setCreditQuote] = useState(null);
-  const composeModeMenuRef = useRef(null);
-  const composeModeTriggerRef = useRef(null);
+  const [pageStyle, setPageStyle] = useState(() => templateSelectionStyle(a.pageStyle));
+  const [pageStyleReady, setPageStyleReady] = useState(validPageStyle(a.pageStyle));
+  const [pageStyleError, setPageStyleError] = useState('');
+  const [preparingOutfit, setPreparingOutfit] = useState(false);
+  const pageStyleValueRef = useRef(pageStyle);
+  const pageStyleSaveRef = useRef(Promise.resolve());
+  const pageStyleTouchedRef = useRef(false);
   useEffect(() => {
-    if (!composeModeSaving) composeModeSelectionRef.current.confirmedMode = composeMode;
-  }, [composeMode, composeModeSaving]);
-  useEffect(() => {
-    if (!composeModeOpen) return undefined;
-    // 열리면 '현재 선택된' 옵션부터 — 첫 옵션 고정 포커스는 선택 상태를 무시한다(리뷰 P2).
-    const options = () => [...(composeModeMenuRef.current?.querySelectorAll('[role="option"]') || [])];
-    (options().find((el) => el.getAttribute('aria-selected') === 'true') || options()[0])?.focus();
-    const closeOnOutsideClick = (event) => {
-      if (!composeModeMenuRef.current?.contains(event.target)) setComposeModeOpen(false);
-    };
-    const onKeyDown = (event) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        setComposeModeOpen(false);
-        composeModeTriggerRef.current?.focus();
-        return;
-      }
-      // listbox 화살표 이동 (roving focus). 옵션이 2개라 위/아래가 곧 서로 전환이다.
-      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-      const list = options();
-      if (!list.length) return;
-      event.preventDefault();
-      const idx = list.indexOf(document.activeElement);
-      const next = event.key === 'ArrowDown'
-        ? list[Math.min(list.length - 1, idx + 1)] || list[0]
-        : list[Math.max(0, idx - 1)] || list[list.length - 1];
-      next?.focus();
-    };
-    document.addEventListener('pointerdown', closeOnOutsideClick);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', closeOnOutsideClick);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [composeModeOpen]);
-  useEffect(() => {
-    if (composeModeSaving || confirming) setComposeModeOpen(false);
-  }, [composeModeSaving, confirming]);
+    let active = true;
+    if (validPageStyle(a.pageStyle)) {
+      if (!pageStyleTouchedRef.current) { pageStyleValueRef.current = templateSelectionStyle(a.pageStyle); setPageStyle(pageStyleValueRef.current); }
+      setPageStyleReady(true);
+      return undefined;
+    }
+    api.getLastPageStyle().catch(() => analysisPageStyle(null)).then(style => {
+      if (!active) return;
+      if (!pageStyleTouchedRef.current) { pageStyleValueRef.current = templateSelectionStyle(style); setPageStyle(pageStyleValueRef.current); }
+      setPageStyleReady(true);
+    });
+    return () => { active = false; };
+  }, [projectId]);
+  const savePageStyle = next => {
+    pageStyleTouchedRef.current = true;
+    pageStyleValueRef.current = next;
+    setPageStyle(next);
+    setPageStyleError('');
+    invalidateStoryboardEntryPrefetch(projectId);
+    const pending = pageStyleSaveRef.current.catch(() => {}).then(() => onChange({ pageStyle: next }));
+    pageStyleSaveRef.current = pending;
+    void pending.catch(() => setPageStyleError('페이지 스타일을 저장하지 못했어요. 다시 골라 주세요.'));
+  };
+  const changeTemplate = templateId => savePageStyle(selectTemplateStyle(templateId, undefined, pageStyleValueRef.current));
+  const changeColorMode = colorMode => savePageStyle(selectColorModeStyle(pageStyleValueRef.current, colorMode));
   useEffect(() => {
     if (!projectId) return undefined;
     let alive = true;
@@ -551,6 +537,21 @@ export function AnalysisForm({
     current.committed = value;
     return onChange({ mdComment: value });
   };
+  const persistSelectedPageStyle = async () => {
+    if (!pageStyleReady || !validPageStyle(pageStyleValueRef.current)) throw new Error('템플릿을 골라 주세요.');
+    let pending;
+    do {
+      pending = pageStyleSaveRef.current;
+      await pending;
+    } while (pending !== pageStyleSaveRef.current);
+    const style = pageStyleValueRef.current;
+    if (JSON.stringify(style) !== JSON.stringify(a.pageStyle)) await onChange({ pageStyle: style });
+  };
+  const prepareOutfit = async () => {
+    setPageStyleError('');
+    await commitMdComment();
+    await persistSelectedPageStyle();
+  };
   const [ccDraft, setCcDraft] = useState(a.customCategory || '');   // 직접 입력 pill (blur 커밋)
   const [measurementDraft, setMeasurementDraft] = useState(() => ({
     clothingType: a.clothingType,
@@ -567,32 +568,6 @@ export function AnalysisForm({
   const [editMatIdx, setEditMatIdx] = useState(null);
   const matTotal = (a.materials || []).reduce((s, m) => s + (Number(m.ratio) || 0), 0);
   const matOver = matTotal > 100;
-  const composeModes = catalogs?.composeModes || [];
-  const selectedComposeMode = composeModes.find((mode) => mode.value === composeMode)
-    || composeModes[0];
-  const selectedComposeModeLabel = selectedComposeMode
-    ? `${selectedComposeMode.label} · ${selectedComposeMode.count}컷`
-    : '';
-  const changeComposeMode = (nextMode) => {
-    if (nextMode === composeMode) return;
-    setComposeModeSaving(true);
-    const pending = selectAnalysisComposeMode({
-      currentMode: composeMode,
-      nextMode,
-      projectId,
-      setComposeMode,
-      restoreComposeMode,
-      invalidateStoryboardPrefetch: invalidateStoryboardEntryPrefetch,
-      selectionState: composeModeSelectionRef,
-      onFailure: () => {
-        toast.push('사진 양을 저장하지 못했어요 — 잠시 후 다시 시도해주세요');
-      },
-    });
-    composeModeSaveRef.current = pending;
-    void pending.finally(() => {
-      if (composeModeSaveRef.current === pending) setComposeModeSaving(false);
-    });
-  };
   const confirmAnalysis = async () => {
     if (confirming) return;
     if (onBeforeConfirm?.() === false) return;
@@ -600,8 +575,10 @@ export function AnalysisForm({
     onConfirmingChange?.(true);
     try {
       await commitMdComment();
-      await composeModeSaveRef.current;
+      await persistSelectedPageStyle();
       await onNext({ expectedQuote: { free: mannequinGenerationCost === 0, credits: mannequinGenerationCost } });
+    } catch (error) {
+      setPageStyleError(error?.message || '분석 정보를 저장하지 못했어요. 다시 눌러 주세요.');
     } finally {
       setConfirming(false);
       onConfirmingChange?.(false);
@@ -1171,51 +1148,17 @@ export function AnalysisForm({
     </>
   );
 
+  const templatePicker = (
+    <div className="af-template-picker">
+      <PageTemplatePicker value={pageStyle.templateId} onChange={changeTemplate} colorMode={pageStyle.colorMode}
+        onColorModeChange={changeColorMode} product={product} disabled={!pageStyleReady || preparingOutfit || confirming} />
+      {pageStyleError && <p role="alert">{pageStyleError}</p>}
+    </div>
+  );
   const cta = (
-    <div className={`af-cta-split${composeModeOpen ? ' open' : ''}`}>
-      <div className="af-compose-menu" ref={composeModeMenuRef}>
-        {/* 저장 중엔 native disabled 가 아니라 aria-disabled — disabled 는 방금 복귀시킨
-            포커스를 body 로 뱉어내 키보드 사용자가 자리를 잃는다(리뷰 P2 후속 실측). */}
-        <button type="button" className="af-compose-trigger" ref={composeModeTriggerRef}
-          aria-haspopup="listbox" aria-expanded={composeModeOpen}
-          aria-controls="analysis-compose-mode-listbox"
-          aria-disabled={composeModeSaving || confirming}
-          onClick={() => {
-            if (composeModeSaving || confirming) return;
-            setComposeModeOpen((open) => !open);
-          }}>
-          <span className="af-compose-trigger-copy">
-            <small>사진 양</small>
-            <b>{selectedComposeModeLabel}</b>
-          </span>
-          <Icon name="chevUp" size={12} className="af-compose-chevron" />
-        </button>
-        <div id="analysis-compose-mode-listbox" className="af-compose-popover"
-          role="listbox" aria-label="상세페이지 사진 양" aria-hidden={!composeModeOpen}>
-          {composeModes.map((mode) => (
-            <button type="button" role="option" aria-selected={composeMode === mode.value}
-              tabIndex={composeModeOpen && composeMode === mode.value ? 0 : -1}
-              className={`af-compose-option${composeMode === mode.value ? ' on' : ''}`}
-              disabled={composeModeSaving || confirming}
-              key={mode.value} onClick={() => {
-                setComposeModeOpen(false);
-                composeModeTriggerRef.current?.focus();
-                changeComposeMode(mode.value);
-              }}>
-              <span>
-                <b>{mode.label}</b>
-                <small>{mode.desc} · {mode.count}컷</small>
-              </span>
-              <span className="af-compose-tick" aria-hidden="true">
-                <Icon name="check" size={10} stroke={2.5} />
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
+    <div className="af-template-confirm modal-actions">
       <Button variant="primary" size="lg" iconRight="arrowRight"
-        className="af-cta-confirm"
-        disabled={composeModeSaving || confirming}
+        className="af-cta-confirm" disabled={!pageStyleReady || confirming}
         onClick={confirmAnalysis}><OutfitCreditLabel cost={mannequinGenerationCost} label={mannequinGenerationCtaLabel(mannequinGenerationCost)} /></Button>
     </div>
   );
@@ -1231,7 +1174,9 @@ export function AnalysisForm({
       onUploadStart={customUpload.begin} onUploadError={customUpload.fail} />}
   </>;
   const flow = <AnalysisStepFlow inline={inline} analysis={a} product={product} outfit={outfit}
-    cta={cta} beforeEnter={commitMdComment}>{sections}</AnalysisStepFlow>;
+    afterAnalysis={templatePicker} cta={cta} beforeEnter={prepareOutfit}
+    enterDisabled={!pageStyleReady || !validPageStyle(pageStyle) || confirming}
+    onEnteringChange={setPreparingOutfit}>{sections}</AnalysisStepFlow>;
   if (inline) return flow;
   return <div className="wizard"><PageHead title="AI가 상품 정보를 분석했어요" sub="틀린 부분이 있으면 직접 수정해주세요." />{flow}</div>;
 }

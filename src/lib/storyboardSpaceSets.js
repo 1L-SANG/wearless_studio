@@ -1,6 +1,7 @@
 import { spaceSetIdFromGroupId } from './storyboardSpaceSetCatalog.js';
 import { horizonBackgroundMode } from './horizonBackground.js';
 import { inheritSimilarCutRecipes } from './storyboardSimilarCuts.js';
+import { singleMemberSpaceSet } from './storyboardSetSelection.js';
 
 const defaultBlock = (item) => item;
 
@@ -14,6 +15,7 @@ export function detachSpaceMembership(block) {
     spaceGroupId: _spaceGroupId,
     spaceVariation: _spaceVariation,
     spaceSetMemberOrder: _spaceSetMemberOrder,
+    setSelectionOrigin: _setSelectionOrigin,
     horizonBackgroundMode: _horizonBackgroundMode,
     ...single
   } = block;
@@ -132,11 +134,11 @@ export function moveBlockWithSpaceMembership(
   if (from < 0) return blocks;
   let moving = blocks[from];
   if (moving.similarSourceBlockId && (moving.spaceGroupId || null) !== (targetSpaceGroupId || null)) return blocks;
-  const staysInCurrentSpace = moving.source !== 'mine'
+  const staysInCurrentSpace = moving.source === 'ai'
     && !!moving.spaceGroupId
     && moving.spaceGroupId === targetSpaceGroupId;
   const movingIds = new Set([blockId]);
-  if (moving.spaceGroupId && !staysInCurrentSpace && !moving.similarSourceBlockId) {
+  if (!staysInCurrentSpace && !moving.similarSourceBlockId) {
     blocks.filter(block => block.similarSourceBlockId === blockId).forEach(block => movingIds.add(block.id));
   }
   const next = blocks.filter(block => !movingIds.has(block.id));
@@ -146,14 +148,14 @@ export function moveBlockWithSpaceMembership(
       refScope: moving.cutType === 'horizon' ? 'all' : 'pose',
     };
   } else {
-    moving = detachSpaceMembership(clearLayoutRow(moving));
+    moving = singleMemberSpaceSet(clearLayoutRow(moving), { origin: moving.setSelectionOrigin || 'user' });
   }
   const followers = blocks.filter(block => block.id !== blockId && movingIds.has(block.id))
     .map(block => detachSpaceMembership(clearLayoutRow(block)));
   const adjustedTarget = targetIndex - blocks.slice(0, targetIndex).filter(block => movingIds.has(block.id)).length;
   next.splice(Math.max(0, Math.min(adjustedTarget, next.length)), 0, moving, ...followers);
   // 남은 멤버가 1개여도 세트를 풀지 않는다 — 세트 유지는 오너 확정(2026-07-29)
-  return rekeySeparatedSpaceRuns(next, nextGroupId);
+  return inheritSimilarCutRecipes(rekeySeparatedSpaceRuns(next, nextGroupId));
 }
 
 export function moveSpaceSetRun(blocks, spaceGroupId, targetIndex) {
@@ -184,6 +186,7 @@ export function createSpaceSetMembers(set, template, {
       ...template,
       ...previous,
       id: previousMembers[index]?.id || makeId(member, index),
+      slotKey: previousMembers[index]?.slotKey ?? null,
       source: 'ai',
       cutType: member.cutType,
       direction: member.direction,

@@ -1,417 +1,63 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-
+import { pickEntrySets, entryStylingMembers, seededPick, normalizePlaceType, hasFullAndMediumMembers } from '../../src/lib/storyboardEntryPlacement.js';
 import { componentModule } from './helpers/reactHarness.mjs';
-import { applySeededHookStyle, defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
-import { applyHookStyle } from '../../src/lib/storyboardHookFrame.js';
 import { filterSpaceSetsForModel } from '../../src/lib/identityScope.js';
-import {
-  applyOpeningRow,
-  entryStylingMembers,
-  hashSeed,
-  hasFullAndMediumMembers,
-  hasOpeningRow,
-  normalizePlaceType,
-  pickEntrySets,
-  seededPick,
-} from '../../src/lib/storyboardEntryPlacement.js';
-import {
-  isStoryboardSpaceSetEligible,
-  spaceSetIdFromGroupId,
-  storyboardSpaceSetById,
-  storyboardSpaceSetsFor,
-} from '../../src/lib/storyboardSpaceSetCatalog.js';
-
-const baseColors = [{ id: 'base', isBase: true, images: [] }];
-const context = (projectId, clothingType = 'top', gender = 'women') => ({
-  projectId,
-  clothingType,
-  targetGenders: gender ? [gender] : [],
-});
-
-function storyboardFingerprint(blocks) {
-  const groupOrdinals = new Map();
-  const groupOrdinal = (groupId) => {
-    if (!groupId) return null;
-    if (!groupOrdinals.has(groupId)) groupOrdinals.set(groupId, groupOrdinals.size + 1);
-    return groupOrdinals.get(groupId);
-  };
-  return JSON.stringify(blocks.map((block) => ({
-    taxonomyVersion: block.taxonomyVersion,
-    sectionRole: block.sectionRole,
-    contentRole: block.contentRole,
-    source: block.source,
-    cutType: block.cutType,
-    direction: block.direction,
-    shot: block.shot,
-    colorId: block.colorId,
-    faceExposure: block.faceExposure,
-    exampleId: block.exampleId || null,
-    spaceSetId: spaceSetIdFromGroupId(block.spaceGroupId),
-    spaceGroup: groupOrdinal(block.spaceGroupId),
-    spaceVariation: block.spaceVariation || null,
-    spaceSetMemberOrder: block.spaceSetMemberOrder || null,
-  })));
+import { isStoryboardSpaceSetEligible } from '../../src/lib/storyboardSpaceSetCatalog.js';
+import { seedStoryboard, isUntouchedTemplateStoryboard } from '../../src/lib/pageTemplates/seed.js';
+import { defaultPageStyle } from '../../src/lib/pageTemplates/pageStyle.js';
+import { spaceSetIdFromGroupId } from '../../src/lib/storyboardSpaceSetCatalog.js';
+import { assignGenerationExamples } from '../../src/lib/generationExamples.js';
+import { signatureCutMatches } from '../../src/lib/signatureCutPool.js';
+for(const [gender,clothingType] of [['women','top'],['women','bottom'],['women','outer'],['women','dress'],['men','top'],['men','bottom'],['men','outer']]) {
+ for(const templateId of ['emo','show']) test(`${templateId}/${gender}/${clothingType} uses eligible entry sets and the showroom signature pool`,()=>{
+ const a={targetGenders:[gender],pageStyle:{...defaultPageStyle(),templateId}};
+ const product={clothingType,colors:[{id:'base',isBase:true}]};
+ const seeded=seedStoryboard(product,a,{projectId:'entry'});
+ const b=assignGenerationExamples(seeded,{catalog:[],product,gender,projectId:'entry'}).blocks;
+ const sets=pickEntrySets({gender,clothingType,projectId:'entry',stylingCount:3});
+ assert.ok(sets.rotationSet);
+ assert.ok(b.filter(b=>b.spaceGroupId).every(b=>spaceSetIdFromGroupId(b.spaceGroupId)&&b.exampleId&&b.refScope===(b.cutType==='horizon'?'all':'pose')));
+ const album=b.filter(b=>b.pageSectionKey===`${templateId}.wear_styling`);assert.equal(album.length,6);
+ assert.ok(album.every(b=>b.pageSectionUsage===(templateId==='show'?'fit':'styling')));
+ const rotation=b.filter(b=>b.pageSectionKey===`${templateId}.wear_fit`);assert.equal(rotation.length,3);
+ assert.deepEqual(rotation.map(b=>b.direction),['front','side','back']);
+ assert.ok(!album.some(s=>rotation.some(f=>s.spaceGroupId&&f.spaceGroupId===s.spaceGroupId)));
+ if(templateId==='show') {
+  const first=b[0];
+  assert.ok(signatureCutMatches(first.exampleId,{gender,clothingType}));
+  assert.equal(first.cutType,'horizon');assert.equal(first.shot,'medium');assert.equal(first.direction,'front');
+  assert.equal(first.refScope,'all');assert.ok(!first.spaceGroupId);
+  assert.equal(first.pageDesignId,seeded[0].pageDesignId);
+  assert.equal(isUntouchedTemplateStoryboard(b),true);
+ }
+ });
 }
-
-function chosenSetIds(blocks) {
-  return [...new Set(blocks.map((block) => spaceSetIdFromGroupId(block.spaceGroupId)).filter(Boolean))];
-}
-
-test('hash selection is stable, catalog-order independent, and empty-safe', () => {
-  assert.equal(hashSeed('wearless'), hashSeed('wearless'));
-  const forward = [{ id: 'c' }, { id: 'a' }, { id: 'b' }];
-  assert.equal(seededPick(forward, 'project:entry').id, seededPick([...forward].reverse(), 'project:entry').id);
-  assert.equal(seededPick([], 'project:entry'), null);
-});
-
-test('entry placement is deterministic per project and distributes different projects', () => {
-  const first = defaultStoryboard(baseColors, 'basic', context('p0'));
-  const again = defaultStoryboard(baseColors, 'basic', context('p0'));
-  const another = defaultStoryboard(baseColors, 'basic', context('p1'));
-
-  assert.equal(storyboardFingerprint(first), storyboardFingerprint(again));
-  assert.notDeepEqual(chosenSetIds(first), chosenSetIds(another));
-});
-
-test('seeded boards round-trip as defaults and mode changes re-seed only the matching template', () => {
-  const seedContext = context('round-trip', 'outer', 'women');
-  const basic = defaultStoryboard(baseColors, 'basic', seedContext);
-  const extended = defaultStoryboard(baseColors, 'extended', seedContext);
-
-  assert.equal(isDefaultStoryboardForMode(basic, baseColors, 'basic', seedContext), true);
-  assert.equal(isDefaultStoryboardForMode(extended, baseColors, 'extended', seedContext), true);
-  assert.equal(isDefaultStoryboardForMode(basic, baseColors, 'extended', seedContext), false);
-  const relabeled = basic.map((block) => block.spaceGroupId
-    ? { ...block, setSelectionOrigin: 'user' }
-    : block);
-  assert.equal(isDefaultStoryboardForMode(relabeled, baseColors, 'basic', seedContext), true);
-});
-
-test('default seed leads with the signature frame; a pair-switched default is still default', () => {
-  // 2026-08-14 첫 화면 스타일(2차 확정): 후킹 섹션은 스타일이 필요로 하는 컷만 —
-  // 시그니처 = 확대 미디움샷 1컷(구 2컷 배치 폐기).
-  const seeded = defaultStoryboard(baseColors, 'basic', context('opening-row'));
-  const [slot] = seeded;
-  assert.deepEqual([slot.cutType, slot.shot], ['horizon', 'medium']);
-  assert.equal(slot.hookStyle, 'signature');
-  assert.equal(slot.hookTitleOverlay, true);
-  assert.ok(slot.hookFrameId);
-  assert.equal(seeded.filter((block) => block.sectionRole === 'hooking').length, 1);
-  assert.equal(isDefaultStoryboardForMode(seeded, baseColors, 'basic', context('opening-row')), true);
-
-  // 스타일만 두 컷 구성으로 바꾼 기본 보드도 기본 시드로 인정 — 사진 양 변경 재시드가
-  // 스타일 선택을 존중하며 계속 동작한다(시드 경로는 applySeededHookStyle 이 오른칸을 만든다).
-  const pairSwitched = applySeededHookStyle(seeded, 'pair', baseColors);
-  assert.equal(pairSwitched.filter((block) => block.sectionRole === 'hooking').length, 2);
-  assert.equal(isDefaultStoryboardForMode(pairSwitched, baseColors, 'basic', context('opening-row')), true);
-
-  // UI 전환 경로(Storyboard.jsx applyHookStyleChoice 의 createBlock)와 지문이 어긋나면
-  // pair 보드가 재시드에서 "편집본"으로 오판된다 — 팩토리 동등성 회귀 가드.
-  const uiCreateBlock = (slotSpec) => ({
-    id: 'blk_ui', sectionId: slot.sectionId, sectionRole: 'hooking', contentRole: 'benefit',
-    taxonomyVersion: slot.taxonomyVersion, title: slot.title, source: 'ai',
-    cutType: slotSpec.cutType, direction: 'front', shot: slotSpec.shot,
-    colorId: slotSpec.colorId || slot.colorId, pose: 'auto', poseLabel: 'AI 자동',
-    poseThumb: slot.poseThumb, matchIds: [...(slot.matchIds || [])],
-    faceExposure: 'same', angle: 'same', refImages: [], thumb: slot.thumb,
-  });
-  const uiSwitched = applyHookStyle(seeded, 'pair', { colors: baseColors, createBlock: uiCreateBlock });
-  assert.equal(isDefaultStoryboardForMode(uiSwitched, baseColors, 'basic', context('opening-row')), true);
-
-  // 구 '오프닝 2단 행'은 pair 전환 기본 보드와 구조가 같다(hero+benefit 미디움 2장,
-  // 한 행) — 진입 승격(adoptHookFrame)이 pair 프레임으로 흡수하므로, 손대지 않은 구
-  // 오프닝 보드는 기본(pair 변형)으로 인정되어 사진 양 변경 시 pair 로 재시드된다.
-  const legacyOpening = applyOpeningRow([
-    { ...slot, hookFrameId: undefined, hookStyle: undefined, hookFrameVersion: undefined, hookTitleOverlay: undefined, hookSlotRole: undefined, contentRole: 'hero', cutType: 'styling', shot: 'medium' },
-    { ...slot, id: 'blk_legacy', hookFrameId: undefined, hookStyle: undefined, hookFrameVersion: undefined, hookTitleOverlay: undefined, hookSlotRole: undefined, contentRole: 'benefit' },
-    ...seeded.slice(1),
-  ]);
-  assert.equal(hasOpeningRow(legacyOpening), true);
-  assert.equal(isDefaultStoryboardForMode(legacyOpening, baseColors, 'basic', context('opening-row')), true);
-});
-
-test('styling sets use distinct normalized place types in basic and extended modes', () => {
-  const basic = pickEntrySets({
-    gender: 'women', clothingType: 'top', projectId: 'places-basic', stylingCount: 2,
-  }).stylingSets;
-  const extended = pickEntrySets({
-    gender: 'women', clothingType: 'bottom', projectId: 'project-a', stylingCount: 3,
-  }).stylingSets;
-  const placeKeys = (sets) => sets.map((set) => normalizePlaceType(set.placeType, set.setType));
-
-  assert.equal(basic.filter(Boolean).length, 2);
-  assert.equal(new Set(placeKeys(basic)).size, 2);
-  assert.equal(extended.filter(Boolean).length, 3);
-  assert.equal(new Set(placeKeys(extended)).size, 3);
-  assert.equal(normalizePlaceType('mixed-cafe', 'styling'), 'cafe');
-  assert.equal(normalizePlaceType('anything', 'horizon-rotation'), 'studio');
-  assert.equal(normalizePlaceType('future-place', 'styling'), 'future-place');
-});
-
-test('entry styling sets seed exactly one full and one medium member in catalog order', () => {
-  for (const [mode, seedContext, expectedSetCount] of [
-    ['basic', context('two-cut-basic', 'top', 'women'), 2],
-    ['extended', context('two-cut-extended', 'bottom', 'women'), 3],
-  ]) {
-    const seeded = defaultStoryboard(baseColors, mode, seedContext);
-    const groups = new Map();
-    for (const block of seeded.filter((item) => item.spaceGroupId && item.cutType === 'styling')) {
-      if (!groups.has(block.spaceGroupId)) groups.set(block.spaceGroupId, []);
-      groups.get(block.spaceGroupId).push(block);
-    }
-    assert.equal(groups.size, expectedSetCount);
-    for (const members of groups.values()) {
-      assert.equal(members.length, 2);
-      assert.deepEqual(new Set(members.map((member) => member.shot)), new Set(['full', 'medium']));
-      assert.ok(members[0].spaceSetMemberOrder < members[1].spaceSetMemberOrder);
-    }
-  }
-});
-
-test('all-full styling sets still seed two members and prefer different directions', () => {
-  const allFullSet = {
-    members: [
-      { order: 1, shot: 'full', direction: 'front', exampleId: 'front-a' },
-      { order: 2, shot: 'full', direction: 'front', exampleId: 'front-b' },
-      { order: 3, shot: 'full', direction: 'back', exampleId: 'back' },
-    ],
-  };
-  assert.deepEqual(
-    entryStylingMembers(allFullSet).map((member) => member.exampleId),
-    ['front-a', 'back'],
-  );
-  assert.deepEqual(
-    entryStylingMembers({ members: allFullSet.members.slice(0, 2) }).map((member) => member.exampleId),
-    ['front-a', 'front-b'],
-  );
+test('entry picks are stable for a project and styling members use at most two published poses',()=>{
+ const args={gender:'women',clothingType:'top',projectId:'entry',stylingCount:3};
+ assert.deepEqual(pickEntrySets(args),pickEntrySets(args));
+ for(const set of pickEntrySets(args).stylingSets.filter(Boolean))assert.ok(entryStylingMembers(set).length<=2);
+ assert.equal(seededPick([], 'entry'),null);
 });
 
 test('women bottom soft preference falls back to all-full sets to preserve a fourth place', async () => {
-  // 실제 카탈로그의 구도 교정과 무관하게, 혼합 구도가 없는 네 번째 장소도 배치한다.
+  // #608 catalog corrections must not remove coverage of a fourth all-full place.
   const sets = ['cafe', 'home', 'nature', 'coast'].map((placeType, index) => ({
-    id: `fallback-${placeType}`,
-    setType: 'styling',
-    placeType,
-    gender: 'women',
-    applicableClothingTypes: ['bottom'],
-    setApplicableClothingTypes: ['bottom'],
+    id: `fallback-${placeType}`, setType: 'styling', placeType, gender: 'women',
+    applicableClothingTypes: ['bottom'], setApplicableClothingTypes: ['bottom'],
     members: [
       { order: 1, exampleId: `${placeType}-full`, shot: 'full', direction: 'front' },
       { order: 2, exampleId: `${placeType}-second`, shot: index === 3 ? 'full' : 'medium', direction: 'back' },
     ],
   }));
-  const { pickEntrySets: pickFixtureSets } = await componentModule(
-    'src/lib/storyboardEntryPlacement.js', ['pickEntrySets'], {
-      filterSpaceSetsForModel,
-      storyboardSpaceSetsFor: (options) => sets.filter((set) => isStoryboardSpaceSetEligible(set, options)),
-    },
-  );
-  const picked = pickFixtureSets({
-    gender: 'women', clothingType: 'bottom', projectId: 'soft-place-fallback', stylingCount: 4,
-  }).stylingSets;
-  const places = picked.map((set) => normalizePlaceType(set.placeType, set.setType));
+  const { pickEntrySets: pickFixtureSets } = await componentModule('src/lib/storyboardEntryPlacement.js', ['pickEntrySets'], {
+    filterSpaceSetsForModel,
+    storyboardSpaceSetsFor: options => sets.filter(set => isStoryboardSpaceSetEligible(set, options)),
+  });
+  const picked = pickFixtureSets({ gender: 'women', clothingType: 'bottom', projectId: 'soft-place-fallback', stylingCount: 4 }).stylingSets;
+  const places = picked.map(set => normalizePlaceType(set.placeType, set.setType));
   assert.equal(picked.filter(Boolean).length, 4);
   assert.equal(new Set(places).size, 4);
   assert.equal(picked.filter(hasFullAndMediumMembers).length, 3);
   assert.equal(picked[3].id, 'fallback-coast');
-});
-
-test('category filters stay server-consistent for styling and horizon pools', () => {
-  const supported = [
-    ['women', 'top'], ['women', 'bottom'], ['women', 'outer'], ['women', 'dress'],
-    ['men', 'top'], ['men', 'bottom'], ['men', 'outer'],
-  ];
-  for (const [gender, clothingType] of supported) {
-    const picked = pickEntrySets({ gender, clothingType, projectId: `${gender}-${clothingType}`, stylingCount: 2 });
-    assert.ok(picked.stylingSets.every((set) => (
-      !set || (
-        set.gender === gender
-        && set.setApplicableClothingTypes.includes(clothingType)
-      )
-    )));
-    // 세트 배치 범위는 서버 저장 검증(space_set_not_applicable)과 동일하다.
-    for (const set of [picked.rotationSet, picked.sequenceSet].filter(Boolean)) {
-      assert.equal(set.gender, gender);
-      assert.ok(set.setApplicableClothingTypes.includes(clothingType));
-    }
-  }
-  assert.equal(pickEntrySets({
-    gender: 'women', clothingType: 'bottom', projectId: 'rot-bottom', stylingCount: 2,
-  }).rotationSet?.setType, 'horizon-rotation');
-  assert.equal(pickEntrySets({
-    gender: 'women', clothingType: 'top', projectId: 'rot-top', stylingCount: 2,
-  }).rotationSet?.setType, 'horizon-rotation');
-  assert.equal(pickEntrySets({
-    gender: 'women', clothingType: 'dress', projectId: 'rot-dress', stylingCount: 2,
-  }).rotationSet?.setType, 'horizon-rotation');
-  assert.equal(pickEntrySets({
-    gender: 'men', clothingType: 'outer', projectId: 'rot-outer', stylingCount: 2,
-  }).rotationSet?.setType, 'horizon-rotation');
-  assert.ok(pickEntrySets({
-    gender: 'women', clothingType: 'dress', projectId: 'dress-women', stylingCount: 2,
-  }).stylingSets.every(Boolean));
-  assert.ok(pickEntrySets({
-    gender: 'men', clothingType: 'dress', projectId: 'dress-men', stylingCount: 2,
-  }).stylingSets.every((set) => set === null));
-});
-
-test('styling section auto-places space sets only', () => {
-  // 스타일링 섹션은 장소 세트만 자동 배치하고, 낱장은 셀러가 '컷 추가'로 직접 넣는다.
-  const women = defaultStoryboard(baseColors, 'basic', context('women', 'bottom', 'women'));
-  const men = defaultStoryboard(baseColors, 'basic', context('men', 'bottom', 'men'));
-  const unknown = defaultStoryboard(baseColors, 'basic', context('unknown', 'bottom', null));
-
-  for (const blocks of [women, men, unknown]) {
-    const stylingSection = blocks.filter((block) => block.sectionRole === 'styling');
-    assert.ok(stylingSection.length > 0, '스타일링 섹션은 비어 있지 않다');
-    assert.ok(
-      stylingSection.every((block) => !!block.spaceGroupId),
-      '스타일링 섹션 자동 배치는 전부 장소 세트 멤버여야 한다',
-    );
-  }
-  // 성별 미상은 서버(select_base_gender)와 동일하게 women 기본 — 세트 배치는 그대로.
-  assert.equal(unknown.some((block) => block.spaceGroupId), true);
-});
-
-test('multi-color basic and extended seeds follow product and studio repetition rules', () => {
-  const colors = [
-    { id: 'base', isBase: true, images: [] },
-    { id: 'blue', images: [] },
-    { id: 'red', images: [] },
-  ];
-  const seedContext = context('multi-color', 'top', 'women');
-  const basic = defaultStoryboard(colors, 'basic', seedContext);
-  const extended = defaultStoryboard(colors, 'extended', seedContext);
-
-  const basicFrontProducts = basic.filter((block) => (
-    block.cutType === 'product' && block.shot === 'ghost' && block.direction === 'front'
-  ));
-  assert.deepEqual(basicFrontProducts.map((block) => block.colorId), ['base', 'blue', 'red']);
-
-  for (const colorId of ['blue', 'red']) {
-    const horizon = extended.filter((block) => block.cutType === 'horizon' && block.colorId === colorId);
-    assert.deepEqual(horizon.map((block) => [block.direction, block.shot]), [
-      ['front', 'full'], ['front', 'medium'],
-    ]);
-    assert.equal(new Set(horizon.map((block) => block.colorwayGroupId)).size, 1);
-    assert.equal(new Set(horizon.map((block) => block.layoutRowId)).size, 1);
-    assert.ok(horizon.every((block) => (
-      block.colorwayPairVersion === 1
-      && block.layoutRowVersion === 1
-      && block.sectionLayout === 'twoColumn'
-    )));
-    assert.equal(extended.filter((block) => (
-      block.cutType === 'product'
-      && block.direction === 'front'
-      && block.shot === 'ghost'
-      && block.colorId === colorId
-    )).length, 1);
-  }
-  assert.ok(extended.filter((block) => block.spaceGroupId && block.cutType === 'styling')
-    .every((block) => block.colorId === 'base'));
-});
-
-test('cut counts include normal ranges and a forced one-slot styling fallback', () => {
-  const basic = defaultStoryboard(baseColors, 'basic', context('counts', 'top', 'women'));
-  assert.equal(basic.length, 9);   // 추천 근거 없는 자동 디테일은 만들지 않는다.
-  // 확장형 기대치는 실제 추첨(pickEntrySets)에서 유도 — 카탈로그가 자라도 테스트가 낡지 않게.
-  for (const [pid, clothing, gender] of [
-    ['counts-a', 'bottom', 'women'], ['counts-b', 'bottom', 'men'], ['counts-c', 'top', 'women'],
-  ]) {
-    const picked = pickEntrySets({ gender, clothingType: clothing, projectId: pid, stylingCount: 3 });
-    const stylingCuts = picked.stylingSets.reduce((s, set) => s + (set ? entryStylingMembers(set).length : 2), 0);
-    const horizonCuts = (picked.sequenceSet || picked.rotationSet)?.members.length ?? 3;
-    assert.equal(
-      defaultStoryboard(baseColors, 'extended', context(pid, clothing, gender)).length,
-      1 + stylingCuts + horizonCuts + 2,
-      `${gender}/${clothing} extended`,
-    );
-  }
-
-  // 미지의 의류(후보 0)에서도 시드는 추첨 결과와 정확히 정합하며 낱장 폴백으로 채운다(fail-closed).
-  const forced = context('fallback', 'forced-single', 'women');
-  const fPicked = pickEntrySets({
-    gender: 'women', clothingType: 'forced-single', projectId: 'fallback', stylingCount: 2,
-  });
-  const fallback = defaultStoryboard(baseColors, 'basic', forced);
-  const fStyling = fPicked.stylingSets.reduce((s, set) => s + (set ? entryStylingMembers(set).length : 2), 0);
-  const fHorizon = fPicked.rotationSet?.members.length ?? 3;
-  assert.equal(fallback.length, 1 + fStyling + fHorizon + 1);
-  assert.equal(
-    new Set(fallback.filter((block) => block.spaceGroupId).map((block) => block.spaceGroupId)).size,
-    fPicked.stylingSets.filter(Boolean).length + (fPicked.rotationSet ? 1 : 0),
-  );
-});
-
-test('seeded styling groups keep two entry members while horizon groups stay complete', () => {
-  const seeded = defaultStoryboard(baseColors, 'extended', context('atomic', 'outer', 'women'));
-  const groups = new Map();
-  seeded.forEach((block, index) => {
-    if (!block.spaceGroupId) return;
-    if (!groups.has(block.spaceGroupId)) groups.set(block.spaceGroupId, []);
-    groups.get(block.spaceGroupId).push({ block, index });
-  });
-
-  for (const [groupId, members] of groups) {
-    const set = storyboardSpaceSetById(spaceSetIdFromGroupId(groupId));
-    const expectedMembers = set.setType === 'styling' ? entryStylingMembers(set) : set.members;
-    assert.equal(members.length, expectedMembers.length);
-    assert.deepEqual(members.map(({ block }) => block.spaceSetMemberOrder), expectedMembers.map((member) => member.order));
-    assert.equal(members.at(-1).index - members[0].index + 1, members.length);
-    assert.ok(members.every(({ block }) => (
-      block.exampleSelectionOrigin === 'auto'
-      && block.setSelectionOrigin === 'auto'
-      // 호리존은 완성 사진(all), 스타일링은 plate + pose(ADR-0013, 서버 normalize_spec 과 같다).
-      && block.refScope === (block.cutType === 'horizon' ? 'all' : 'pose')
-    )));
-  }
-});
-
-test('HTTP and mock entry paths pass project ids and share the default builder', () => {
-  const httpSource = readFileSync(new URL('../../src/lib/api/httpAdapter.js', import.meta.url), 'utf8');
-  const mockApiSource = readFileSync(new URL('../../src/mock/api.js', import.meta.url), 'utf8');
-  const mockDbSource = readFileSync(new URL('../../src/mock/db.js', import.meta.url), 'utf8');
-  assert.match(httpSource, /const storyboardContext = \{\s*projectId,/);
-  assert.match(mockApiSource, /projectId: DB\.project\.id/);
-  assert.match(mockDbSource, /projectId: project\.id/);
-  assert.match(mockDbSource, /const blocks = defaultStoryboard\(colors, mode, context\)/);
-});
-
-// ---------- 2026-08-07 슬롯 개편: 디테일 컷 상시 제공 ----------
-
-test('추천이 없으면 기본·확장 콘티 모두 자동 디테일을 추가하지 않는다', () => {
-  const colors = [{ id: 'col1', isBase: true, images: [
-    { slot: 'Front', id: 'f1' }, { slot: 'Back', id: 'b1' },
-  ] }];
-  const basic = defaultStoryboard(colors, 'basic', { clothingType: 'top', projectId: 'p-detail' });
-  assert.equal(basic.some((b) => b.cutType === 'product' && b.shot === 'detail'), false);
-  const extended = defaultStoryboard(colors, 'extended', { clothingType: 'top', projectId: 'p-detail' });
-  assert.equal(extended.some((b) => b.cutType === 'product' && b.shot === 'detail'), false);
-});
-
-test('추천 디테일의 색상은 분석 원본의 기본 색상을 쓴다', () => {
-  const colors = [
-    { id: 'col1', isBase: true, images: [{ slot: 'Front', id: 'f1' }, { slot: 'Back', id: 'b1' }] },
-    { id: 'col2', images: [{ slot: 'Detail', id: 'd2' }] },
-  ];
-  const blocks = defaultStoryboard(colors, 'basic', { clothingType: 'top', projectId: 'p-detail2', detailRecommendations: { version: 1, status: 'ready', candidates: [{ id: 'front', direction: 'front', informationGroup: 'front', photoUse: 'standalone', visibility: 'clear', rank: 1 }] } });
-  const detail = blocks.find((b) => b.cutType === 'product' && b.shot === 'detail');
-  assert.equal(detail.colorId, 'col1');
-});
-
-test('디테일 예시를 처음 고르거나 교체해도 원본 면을 유지한다', async () => {
-  const { generationExampleSelectionPatch } = await import('../../src/lib/storyboardExampleSelection.js');
-  const detailBlock = { cutType: 'product', shot: 'detail', direction: 'front' };
-  // 예시의 뒷면은 고른 앞면 원본을 바꾸지 않는다.
-  const picked = generationExampleSelectionPatch(detailBlock, { id: 'ex-bd', direction: 'back' });
-  assert.equal(({ ...detailBlock, ...picked.patch }).direction, 'front');
-  // 방향이 없는 예시로 교체해도 고른 뒷면 원본을 유지한다.
-  const backBlock = { cutType: 'product', shot: 'detail', direction: 'back', exampleId: 'ex-bd' };
-  const swapped = generationExampleSelectionPatch(backBlock, { id: 'ex-fd' });
-  assert.equal(swapped.patch.direction, 'back');
-  // 디테일이 아닌 컷은 기존 규칙 유지(첫 선택은 방향 미변경)
-  const worn = { cutType: 'styling', shot: 'full', direction: 'side' };
-  assert.equal('direction' in generationExampleSelectionPatch(worn, { id: 'ex-w' }).patch, false);
 });

@@ -894,7 +894,7 @@ test('mock UI confirmation locks editing and flow navigation before asynchronous
   const confirmAction = form.slice(form.indexOf('const confirmAnalysis = async () =>'), form.indexOf('// 인물 모델 카탈로그'));
   const promotion = input.slice(input.indexOf('const goToStoryboard = async (opts) =>'), input.indexOf('const queueAnalysisPatch ='));
 
-  assert.ok(confirmAction.indexOf('onConfirmingChange?.(true)') < confirmAction.indexOf('await composeModeSaveRef.current'));
+  assert.ok(confirmAction.indexOf('onConfirmingChange?.(true)') < confirmAction.indexOf('await persistSelectedPageStyle()'));
   assert.match(confirmAction, /finally \{[\s\S]*?onConfirmingChange\?\.\(false\)/);
   assert.ok(promotion.indexOf('setFlowPromotionLocked(true)') < promotion.indexOf('colorSaveSchedulerRef.current.flush()'));
   assert.match(promotion, /latestProductRef\.current[\s\S]*?latestAnalysisRef\.current[\s\S]*?latestComposeModeRef\.current/);

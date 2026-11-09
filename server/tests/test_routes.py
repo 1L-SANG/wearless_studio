@@ -3,6 +3,7 @@
 검증 실패는 get_conn(DB) 이전에 발생하므로 풀 없이 TestClient로 검증 가능.
 explicit-null PATCH가 500이 아니라 422 봉투로 떨어지는지 — 에러 핸들러 직렬화 버그 가드.
 """
+from storyboard_v4_cases import v4_blocks
 
 from dataclasses import replace
 from unittest.mock import AsyncMock
@@ -190,7 +191,7 @@ def test_editor_rejects_retired_cut_type_before_job_or_credit_reservation(client
 def test_storyboard_rejects_retired_cut_type_before_storage(client, make_token, hints):
     response = client.put(
         "/v1/projects/p1/storyboard", headers=_auth(make_token),
-        json=[{"id": "retired", "source": "ai", "cutType": "mirror", **hints}],
+        json=v4_blocks([{"id": "retired", "source": "ai", "cutType": "mirror", **hints}]),
     )
     assert response.status_code == 400, response.text
     assert response.json()["error"]["code"] == "unknown_cut_type"
@@ -505,7 +506,7 @@ def test_save_storyboard_persists_canonical_blocks(client, make_token, monkeypat
     res = client.put(
         "/v1/projects/p1/storyboard",
         headers=_auth(make_token),
-        json=[
+        json=v4_blocks([
             {
                 "id": "b1",
                 "source": "ai",
@@ -527,14 +528,14 @@ def test_save_storyboard_persists_canonical_blocks(client, make_token, monkeypat
                 "cutType": "product",
                 "shot": "detail",
             },
-        ],
+        ]),
     )
 
     assert res.status_code == 200, res.text
-    assert [block["id"] for block in seen["blocks"]] == ["b3", "b2", "b1"]
-    hero, mine, detail = seen["blocks"]
-    assert (hero["sectionRole"], hero["cutType"], hero["shot"]) == (
-        "hooking", "styling", "full",
+    assert [block["id"] for block in seen["blocks"]] == ["b1", "b2", "b3"]
+    worn, mine, detail = seen["blocks"]
+    assert (worn["sectionRole"], worn["cutType"], worn["shot"]) == (
+        "studio", "horizon", "full",
     )
     assert (detail["contentRole"], detail["sectionRole"], detail["cutType"], detail["shot"]) == (
         "detail", "product", "product", "detail",
@@ -548,11 +549,11 @@ def test_save_storyboard_rejects_invalid_example_selection_origin_before_db(clie
     res = client.put(
         "/v1/projects/p1/storyboard",
         headers=_auth(make_token),
-        json=[{
+        json=v4_blocks([{
             "id": "b1", "source": "ai", "sectionRole": "fit", "contentRole": "fit",
             "cutType": "horizon", "direction": "front", "shot": "full",
             "exampleId": "example-id", "exampleSelectionOrigin": "system",
-        }],
+        }]),
     )
 
     assert res.status_code == 400
@@ -592,7 +593,7 @@ def test_save_storyboard_accepts_bottom_signature_without_flat_catalog_lookup(
     res = client.put(
         "/v1/projects/p1/storyboard",
         headers=_auth(make_token),
-        json=[{
+        json=v4_blocks([{
             "id": "opening",
             "source": "ai",
             "sectionRole": "hooking",
@@ -603,12 +604,12 @@ def test_save_storyboard_accepts_bottom_signature_without_flat_catalog_lookup(
             "hookSlotRole": "signature",
             "exampleId": "sig_women_bottom_skirt_02",
             "exampleSelectionOrigin": "user",
-        }],
+        }]),
     )
 
     assert res.status_code == 200, res.text
     assert seen["blocks"][0]["exampleId"] == "sig_women_bottom_skirt_02"
-    assert seen["blocks"][0]["hookSlotRole"] == "signature"
+    assert "hookSlotRole" not in seen["blocks"][0]
 
 
 def test_save_storyboard_rejects_pre_release_space_group_ids(
@@ -631,7 +632,7 @@ def test_save_storyboard_rejects_pre_release_space_group_ids(
     res = client.put(
         "/v1/projects/p1/storyboard",
         headers=_auth(make_token),
-        json=[{
+        json=v4_blocks([{
             "id": "b1",
             "source": "ai",
             "sectionRole": "fit",
@@ -640,7 +641,7 @@ def test_save_storyboard_rejects_pre_release_space_group_ids(
             "direction": "front",
             "shot": "full",
             "spaceGroupId": "legacy-space",
-        }],
+        }]),
     )
 
     assert res.status_code == 400
@@ -703,7 +704,7 @@ def test_save_storyboard_validates_production_set_without_flat_registry(
     res = client.put(
         "/v1/projects/p1/storyboard",
         headers=_auth(make_token),
-        json=[
+        json=v4_blocks([
             {
                 "id": "b1",
                 "source": "ai",
@@ -728,7 +729,7 @@ def test_save_storyboard_validates_production_set_without_flat_registry(
                 "exampleId": "ss_cafe_01",
                 "refScope": "all",
             },
-        ],
+        ]),
     )
 
     assert res.status_code == 200, res.text
@@ -1407,9 +1408,9 @@ def test_detail_request_rejects_saved_retired_cut_before_job_or_credit(client, m
     monkeypatch.setattr(routes.repo, "get_analysis", AsyncMock(return_value={}))
     monkeypatch.setattr(routes.repo, "get_product", AsyncMock(return_value={"clothingType": "top"}))
     monkeypatch.setattr(routes.repo, "get_editor_blocks", AsyncMock(return_value=[]))
-    monkeypatch.setattr(routes.repo, "get_storyboard", AsyncMock(return_value=[
+    monkeypatch.setattr(routes.repo, "get_storyboard", AsyncMock(return_value=v4_blocks([
         {"id": "retired", "source": "ai", "cutType": "mirror", **hints},
-    ]))
+    ])))
     create = AsyncMock()
     reserve = AsyncMock()
     monkeypatch.setattr(routes.repo, "create_job", create)
@@ -1433,9 +1434,9 @@ def test_garment_color_request_rejects_saved_retired_cut_without_observation(cli
     monkeypatch.setattr(routes.repo, "get_project", AsyncMock(return_value={"id": "p1"}))
     monkeypatch.setattr(routes.repo, "get_analysis", AsyncMock(return_value={}))
     monkeypatch.setattr(routes.repo, "get_product", AsyncMock(return_value={"clothingType": "top"}))
-    monkeypatch.setattr(routes.repo, "get_storyboard", AsyncMock(return_value=[
+    monkeypatch.setattr(routes.repo, "get_storyboard", AsyncMock(return_value=v4_blocks([
         {"id": "retired", "source": "ai", "cutType": "mirror"},
-    ]))
+    ])))
     observe = AsyncMock(side_effect=AssertionError("must reject before paid observation"))
     monkeypatch.setattr(garment_color_measure.garment_color_observer, "observe", observe)
     from conftest import FakePool

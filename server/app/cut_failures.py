@@ -2,6 +2,7 @@
 
 CUT_FAILURE_REASONS = {
     **dict.fromkeys((
+        "color_unknown", "color_reference_unavailable", "color_application_failed", "color_check_failed", "color_master_unavailable",
         "temporary_error", "provider_error", "face_pass_unavailable", "scene_qc_unavailable",
         "scene_qc_failed", "example_asset_unavailable", "confirmed_gpt_rejected",
         "confirmed_gpt_requires_virtual_model", "confirmed_gpt_forbids_model_substitution",

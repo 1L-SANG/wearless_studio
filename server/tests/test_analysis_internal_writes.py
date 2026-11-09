@@ -1,4 +1,5 @@
 """서버 내부 저장은 담당 키만 보낸다. 재분석만 명시적으로 전문을 교체한다."""
+from storyboard_v4_cases import v4_blocks
 import ast
 import asyncio
 import inspect
@@ -32,7 +33,7 @@ def test_detail_worker_only_saves_generated_copy_key(monkeypatch):
                "evidenceSlots": ["Front"], "note": None}
     monkeypatch.setattr(repo, "get_project", AsyncMock(return_value={"copywriting": False}))
     monkeypatch.setattr(repo, "get_product", AsyncMock(return_value={"name": "상품", "colors": []}))
-    monkeypatch.setattr(repo, "get_storyboard", AsyncMock(return_value=[]))
+    monkeypatch.setattr(repo, "get_storyboard", AsyncMock(return_value=v4_blocks([])))
     monkeypatch.setattr(repo, "get_analysis", AsyncMock(return_value={
         "fit": "slim", "sellingPoints": ["카라"], "frontClosure": closure}))
     monkeypatch.setattr(detail_page_job.feature_copy, "generate", AsyncMock(return_value=items))

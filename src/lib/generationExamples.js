@@ -1,7 +1,11 @@
+import { preferExamples } from './pageTemplates/examplePreferences.js';
 import publicCombinationTable from '../../data/genexamples_public_combinations.json' with { type: 'json' };
 import { filterExamplesForModel } from './identityScope.js';
 import { exampleDirectionFamilyMatches, isSupportedCutType, poseExampleDirectionCompatible, productPresentationOf } from './storyboardTaxonomy.js';
 import { isSourceBasedDetailRecipe } from './detailRecommendations.js';
+import { isSignatureBlock, pickSignatureCut, signatureExamplesForBlock } from './signatureCutPool.js';
+import { singleMemberSpaceSet } from './storyboardSetSelection.js';
+import { inheritSimilarCutRecipes } from './storyboardSimilarCuts.js';
 import {
   exampleMoodBucket,
   EXAMPLE_MOOD_BUCKETS,
@@ -253,12 +257,14 @@ export function selectGenerationExamples(catalog, rawOptions) {
 /** 이 컷을 '다시 뽑을' 수 있는가 — 후보가 2개 이상이어야 다른 예시로 바뀔 수 있다.
     후보가 0·1개면 셔플을 눌러도 영영 아무 일도 안 난다. 그때는 버튼을 아예 안 보여
     주는 게 정직하다(2026-08-17 검증: 확장형 추가색상 컷이 늘 무반응이었다). */
-export function canRerollGenerationExample(block, { catalog, product, gender }) {
+export function canRerollGenerationExample(block, { catalog, product, analysis, gender }) {
   if (!block?.exampleId) return false;
-  return candidatesForBlock(block, catalog || [], product, gender).length > 1;
+  return candidatesForBlock(block, catalog || [], product, gender, analysis).length > 1;
 }
 
-function candidatesForBlock(block, catalog, product, gender, identityKind = null) {
+function candidatesForBlock(block, catalog, product, gender, analysis, identityKind = null) {
+  const signature = signatureExamplesForBlock(block, { product, analysis, gender });
+  if (signature) return signature;
   // 이 모델로 만들 수 없는 예시는 후보에서 아예 뺀다(판정은 서버 규칙 표 — lib/identityScope.js).
   return filterExamplesForModel(selectGenerationExamples(catalog, {
     cutType: block.cutType,
@@ -326,18 +332,19 @@ export function repeatedAllExampleVariationIds(blocks, catalog = []) {
 // avoidByBlockId: { [blockId]: exampleId } — 예시 셔플이 "직전과 같은 예시"를 피하도록
 // 블록별 회피 대상을 넘긴다. 후보가 그것뿐이면 회피를 포기하고 그대로 쓴다(빈 배정 방지).
 export function assignGenerationExamples(blocks, {
-  catalog, product, gender, onlyBlockIds = null, avoidByBlockId = null, identityKind = null,
+  catalog, product, analysis, gender, projectId = null, onlyBlockIds = null, avoidByBlockId = null, identityKind = null,
 }) {
   if (!Array.isArray(blocks)) return { blocks, changed: false, assignedIds: [], protectedIds: [], missingIds: [] };
   const only = onlyBlockIds == null ? null : new Set(onlyBlockIds);
   const usage = new Map();
+  const usedExampleIds = new Set(blocks.filter(block => block?.source === 'ai').map(block => block.exampleId).filter(Boolean));
   const colorwayTemplates = new Map();
 
   // 추가 색상 페어는 색상마다 새 예시를 고르지 않는다. 풀샷끼리, 미디움샷끼리
   // 하나의 촬영 예시를 공유하고 실제 생성만 각 colorId의 상품 사진으로 수행한다.
   for (const block of blocks) {
     if (block?.source !== 'ai' || !block.colorwayGroupId || !block.exampleId) continue;
-    const pool = candidatesForBlock(block, catalog, product, gender, identityKind).slice(0, 3);
+    const pool = preferExamples(candidatesForBlock(block, catalog, product, gender, analysis, identityKind), block.examplePrefer).slice(0, 3);
     const selected = pool.find((example) => example.id === block.exampleId);
     if (!selected) continue;
     const key = usageKey(block, product, gender);
@@ -349,7 +356,7 @@ export function assignGenerationExamples(blocks, {
   const countedColorwayTemplates = new Set();
   for (const block of blocks) {
     if (block?.source !== 'ai' || block.exampleSelectionOrigin !== 'auto' || !block.exampleId) continue;
-    const pool = candidatesForBlock(block, catalog, product, gender, identityKind).slice(0, 3);
+    const pool = preferExamples(candidatesForBlock(block, catalog, product, gender, analysis, identityKind), block.examplePrefer).slice(0, 3);
     const slot = pool.findIndex((example) => example.id === block.exampleId);
     if (slot < 0) continue;
     const key = usageKey(block, product, gender);
@@ -363,6 +370,7 @@ export function assignGenerationExamples(blocks, {
   }
 
   let changed = false;
+  let repairedSetMembership = false;
   const assignedIds = [];
   const protectedIds = [];
   const missingIds = [];
@@ -371,6 +379,33 @@ export function assignGenerationExamples(blocks, {
       && !only?.has(block.id)) return block;
     if (!block || block.source !== 'ai' || block.similarSourceBlockId) return block;
     if (only && !only.has(block.id)) return block;
+    if (isSignatureBlock(block)) {
+      const pool = signatureExamplesForBlock(block, { product, analysis, gender });
+      const avoidId = avoidByBlockId?.[block.id];
+      const preferred = pickSignatureCut({ ...product, analysis, gender, projectId, slotKey: block.slotKey });
+      const example = pool.find(item => item.id === block.exampleId)
+        || pool.find(item => item.id === preferred?.id && item.id !== avoidId)
+        || pool.find(item => item.id !== avoidId) || pool[0];
+      if (!example) { missingIds.push(block.id); return block; }
+      if (block.exampleId === example.id && block.shot === 'medium' && block.direction === 'front'
+        && !block.sideStyle && block.refScope === 'all' && !block.spaceGroupId) return block;
+      changed = true;
+      assignedIds.push(block.id);
+      return { ...block, exampleId: example.id, exampleSelectionOrigin: block.exampleSelectionOrigin || 'auto',
+        shot: 'medium', direction: 'front', sideStyle: null, refScope: 'all',
+        spaceGroupId: null, spaceVariation: null, spaceSetMemberOrder: null,
+        setSelectionOrigin: null, horizonBackgroundMode: null,
+        baseThumb: block.baseThumb ?? block.thumb ?? null, thumb: example.thumb };
+    }
+    if (!block.spaceGroupId && String(block.exampleId || '').startsWith('ss_')) {
+      const singleton = singleMemberSpaceSet(block, { origin: block.exampleSelectionOrigin || 'auto' });
+      if (singleton.spaceGroupId) {
+        changed = true;
+        repairedSetMembership = true;
+        assignedIds.push(block.id);
+        return singleton;
+      }
+    }
     if (block.exampleChoice === 'manual') return block;
     const colorwayKey = block.colorwayGroupId ? usageKey(block, product, gender) : null;
     const colorwayTemplate = colorwayKey ? colorwayTemplates.get(colorwayKey) : null;
@@ -397,7 +432,7 @@ export function assignGenerationExamples(blocks, {
     }
     if (block.exampleSelectionOrigin != null) return block;
 
-    const pool = candidatesForBlock(block, catalog, product, gender, identityKind).slice(0, 3);
+    const pool = preferExamples(candidatesForBlock(block, catalog, product, gender, analysis, identityKind), block.examplePrefer).slice(0, 3);
     if (!pool.length) {
       missingIds.push(block.id);
       return block;
@@ -412,12 +447,15 @@ export function assignGenerationExamples(blocks, {
       for (let index = 0; index < pool.length; index += 1) {
         if (!avoidId || pool[index].id !== avoidId) eligible.push(index);
       }
-      const candidates = eligible.length ? eligible : pool.map((_item, index) => index);
+      const available = eligible.length ? eligible : pool.map((_item, index) => index);
+      const unused = available.filter(index => !usedExampleIds.has(pool[index].id));
+      const candidates = unused.length ? unused : available;
       let slot = candidates[0];
       for (const index of candidates) {
         if (counts[index] < counts[slot]) slot = index;
       }
       example = pool[slot];
+      usedExampleIds.add(example.id);
       counts[slot] += 1;
       if (colorwayKey) colorwayTemplates.set(colorwayKey, example);
     }
@@ -432,7 +470,8 @@ export function assignGenerationExamples(blocks, {
       thumb: example.thumb,
     };
   });
-  return { blocks: changed ? next : blocks, changed, assignedIds, protectedIds, missingIds };
+  return { blocks: changed ? (repairedSetMembership ? inheritSimilarCutRecipes(next) : next) : blocks,
+    changed, assignedIds, protectedIds, missingIds };
 }
 
 export function storedExampleConditionStatus(example, {

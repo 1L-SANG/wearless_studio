@@ -1,3 +1,4 @@
+import { v4Fixture } from './helpers/templateStoryboard.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ensureSections } from '../../src/lib/sections.js';
@@ -42,11 +43,11 @@ test('model eligibility does not depend on retired pose fields', () => {
 });
 
 test('loading a saved board removes old pose selections before saving it again', () => {
-  const [result] = ensureSections([{
+  const [result] = ensureSections(v4Fixture([{
     id: 'b', source: 'ai', cutType: 'horizon', shot: 'full', direction: 'front',
     sectionRole: 'studio', contentRole: 'fit', taxonomyVersion: 3,
     pose: 'walk', poseLabel: '걷기', poseThumb: 'old.png',
-  }]);
+  }]));
   assert.ok(!('pose' in result));
   assert.ok(!('poseLabel' in result));
   assert.ok(!('poseThumb' in result));
@@ -90,5 +91,5 @@ test('editor renders without manual direction controls for worn and product imag
     catalogs: DB.catalogs, cut: 'horizon', direction: 'back', shot: 'medium',
     clothingType: 'top', gender: 'women', exampleId: backExample.id, onExampleChange() {},
   }));
-  assert.ok(savedGallery.includes('class="sb-excell sel"'));
+  assert.match(savedGallery, /class="sb-excell[^"]*sel/);
 });

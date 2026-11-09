@@ -58,6 +58,9 @@
 }
 
 :root {
+  /* Generated page content: independent of the surrounding editor theme. */
+  --page-overlay-light: #ffffff;
+  --page-overlay-dark: #111111;
   /* ---- Type families ---- */
   --font-display: "Cal Sans", "Cal Sans UI", system-ui, sans-serif;
   --font-body: "Pretendard Variable", "Inter", "Inter Placeholder", system-ui, sans-serif;
@@ -177,6 +180,63 @@
 
   /* ---- Layout ---- */
   --container: 1200px;
+}
+
+/* WOC1b: shared by the storyboard page and its body portals only. The seller
+   entry's pastel ring/focus/ink tokens remain inherited without overrides. */
+.sb-v5-theme {
+  /* WOC2 D174/D178/D208: scoped to the storyboard and its portals. */
+  --sb-toc-thumb: 184px;
+  --sb-toc-thumb-narrow: 172px;
+  --sb-toc-tools-space: 44px;
+  --sb-toc-title-size: 13px;
+  --sb-toc-count-size: 11px;
+  --sb-toc-title-y: 7px;
+  --sb-toc-title-x: 10px;
+  --sb-toc-gap: 14px;
+  --sb-group-head-height: 26px;
+  --sb-toc-border: rgba(34, 42, 53, .14);
+  --sb-panel-bg: rgba(255, 255, 255, .98);
+  --sb-panel-border: rgba(34, 42, 53, .12);
+  --sb-panel-shadow: 0 1px 2px rgba(20, 20, 18, .07), 0 6px 14px rgba(20, 20, 18, .07), 0 24px 56px rgba(20, 20, 18, .14);
+  --sb-place-bg: #f0f0ee;
+  --sb-position-veil: color-mix(in srgb, var(--fg-1) 22%, transparent);
+  --sb-position-bg: color-mix(in srgb, var(--fg-1) 76%, transparent);
+  --sb-orb-one: conic-gradient(from -30deg, #8fc6f6 0 12%, #cfb8f4 28% 40%, #ffcdb2 56% 72%, #c6ecd6 86%, #8fc6f6);
+  --sb-orb-two: conic-gradient(from 40deg, #fff 0 12%, #cfb8f4 30% 40%, #8fc6f6 60%, #fff);
+  --sb-flight-duration: 520ms;
+  --sb-shift-duration: 180ms;
+  --sb-fs-title: 28px;
+  --sb-fs-head: 17px;
+  --sb-fs-sub: 15px;
+  --sb-fs-body: 14px;
+  --sb-fs-btn: 13px;
+  --sb-fs-note: 13px;
+  --sb-fs-meta: 12px;
+  --sb-line-control: var(--fg-3);
+  --sb-t-fast: var(--cta-transition);
+  --sb-t-base: 200ms;
+  --sb-spin: 9s;
+  --sb-font-index: "Playfair Display", Georgia, serif;
+  --sb-wire-w: var(--bg-1);
+  --sb-wire-1: #f4f4f2;
+  --sb-wire-2: #eaeae7;
+  --sb-wire-3: #dfdfdb;
+  --sb-wire-inv: #3a3a38;
+  --sb-wire-comp: #c8c8c3;
+  --sb-wire-photo: #d6d6d1;
+  --sb-wire-scrim-end: #777773;
+  --sb-wire-title: #474743;
+  --sb-wire-on-photo: rgba(255, 255, 255, .82);
+  /* Existing .sb-canvas-shell values, also available to v5's body portals. */
+  --sb-pop-shadow: 0 2px 6px rgba(23, 25, 31, .1), 0 14px 34px rgba(23, 25, 31, .13);
+  --sb-ease: cubic-bezier(.2, .8, .2, 1);
+}
+
+/* Keep the responsive value beside its default. Every repeated theme root
+   (body, page, portal) must receive the same value instead of resetting it. */
+@media (width < 1360px) {
+  .sb-v5-theme { --sb-toc-thumb: var(--sb-toc-thumb-narrow); }
 }
 
 /* ============================================================

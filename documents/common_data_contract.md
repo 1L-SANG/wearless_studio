@@ -729,7 +729,35 @@ generation: {
 }
 ```
 
-새 컷은 `recipeFrom='self'`다. 비슷한 컷과 같은 부위 다시 촬영은 공용 `asset_recipe.resolve_asset_recipes`가 원본 설정을 찾으면 상속하고 `recipeFrom='anchor'`로 남기며, 못 찾으면 `recipe=null`이다. 직접 올린 자산은 `assets.source='upload'`로 판정하고 새 기록을 쓰지 않는다. 색상과 열림 편집은 `origin='editor_color'` 또는 `origin='editor_closure'`, `autoSelected=false`, 고른 원본의 `sourceAssetId`, `recipeFrom='anchor'`를 남긴다. 원본 레시피의 바꾼 필드만 고치며 레시피가 없으면 모든 필드를 `null`로 두고 바꾼 값만 채운다. 색상 결과의 의류 그룹은 목표 색이고 열림과 비슷한 컷은 원본의 의류 색 그룹을 물려받는다. 상세페이지의 `page` 기록은 후속 작업으로 미룬다.
+새 컷은 `recipeFrom='self'`다. 비슷한 컷과 같은 부위 다시 촬영은 공용 `asset_recipe.resolve_asset_recipes`가 원본 설정을 찾으면 상속하고 `recipeFrom='anchor'`로 남기며, 못 찾으면 `recipe=null`이다. 직접 올린 자산은 `assets.source='upload'`로 판정하고 새 기록을 쓰지 않는다. 색상과 열림 편집은 `origin='editor_color'` 또는 `origin='editor_closure'`, `autoSelected=false`, 고른 원본의 `sourceAssetId`, `recipeFrom='anchor'`를 남긴다. 원본 레시피의 바꾼 필드만 고치며 레시피가 없으면 모든 필드를 `null`로 두고 바꾼 값만 채운다. 색상 결과의 의류 그룹은 목표 색이고 열림과 비슷한 컷은 원본의 의류 색 그룹을 물려받는다. 상세페이지 컷은 `origin='page'`와 최종 목표색 레시피를 남긴다.
+
+#### 추가 색상 실행 기록 (ADR-0025)
+
+`block.colorId`와 `generation.recipe.colorId`는 최종 목표색이다. 내부에서 기준색으로 렌더하더라도 이 저장값을 바꾸지 않는다. 서버의 `garment_color.plan_for`와 `render_spec`만 별도 실행색을 계산한다. 제품 단독컷은 목표색 원본에서 직접 만든다.
+
+색 적용 결과에는 선택적으로 다음 서버 전용 실행 기록을 `assets.metadata.colorExecution`에 추가한다. 클라이언트가 이 값을 보내도 실행 권한이나 근거로 사용하지 않는다.
+
+```ts
+colorExecution: {
+  version: 1
+  mode: 'direct' | 'base_then_color'
+  targetColorId: string | null
+  baseColorId: string | null
+  renderColorId: string | null
+  targetEvidence: { assetId: string, sha256: string }[]
+  masterAssetId: string | null
+  masterSha256: string | null
+  colorCheck: {
+    status: 'not_run' | 'passed' | 'failed' | 'unavailable' | 'indeterminate'
+    policyVersion?: string
+    method?: 'ai_visual'
+  }
+}
+```
+
+`masterAssetId`는 같은 사용자와 프로젝트에 속하는 내부 기준색 이미지다. 의류 목록에 넣지 않고 최종 장수나 차감에 포함하지 않는다. 실행색, 목표색 근거와 검수 정책은 체크포인트의 동일성 판단에 포함한다. 색 적용 실패 시 기준색으로 성공 처리하지 않는다. `passed`는 AI 시각 판정의 통과이며 실물색 측정이나 동일 픽셀 보장이 아니다.
+
+`targetEvidence`는 별도 색 적용에 실제로 사용한 근거 목록이며 `direct`에서는 빈 목록일 수 있다. 직접 생성의 상품 사진 근거는 기존 생성 레시피와 입력 계약을 따른다. `colorCheck`는 선택적으로 검수한 이미지의 `checkedOutputSha256`과 `scope: 'color_stage_before_neck_repair'`를 남겨, 후속 목선 보정 결과까지 같은 바이트로 검수한 것처럼 해석하지 않게 한다.
 
 ---
 

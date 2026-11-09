@@ -1,4 +1,5 @@
 """사진 주소의 자산 기록으로 설정을 찾고 오래된 자료를 순서대로 보완한다."""
+from storyboard_v4_cases import v4_blocks
 import asyncio
 from copy import deepcopy
 from importlib import import_module
@@ -29,8 +30,8 @@ def asset(asset_id=A, **values):
 
 
 def storyboard(**values):
-    return {"id": "original", "source": "ai", "cutType": "styling", "shot": "full",
-            "direction": "front", "colorId": "base", **values}
+    return v4_blocks({"id": "original", "source": "ai", "cutType": "styling", "shot": "full",
+            "direction": "front", "colorId": "base", **values})
 
 
 def test_generation_record_wins_and_projects_complete_recipe_without_mutating_input():
@@ -167,7 +168,7 @@ class RecipeConn:
 def test_db_resolver_reads_one_anchor_hop_and_scopes_all_queries(monkeypatch):
     m = module()
     async def get_storyboard(*args):
-        return []
+        return v4_blocks([])
     async def wardrobe(*args):
         return [{"asset_id": B, "cut_type": "horizon", "color_id": "blue"}]
     monkeypatch.setattr(m.repo, "get_storyboard", get_storyboard)
@@ -201,7 +202,7 @@ def test_db_resolver_missing_owned_asset_does_not_expose_other_records(monkeypat
 def test_db_resolver_uses_done_page_and_producing_real_model_snapshot(monkeypatch):
     m = module()
     async def get_storyboard(*args):
-        return [storyboard()]
+        return v4_blocks([storyboard()])
     async def wardrobe(*args):
         return [{"asset_id": A, "cut_type": "styling", "color_id": "base"}]
     monkeypatch.setattr(m.repo, "get_storyboard", get_storyboard)

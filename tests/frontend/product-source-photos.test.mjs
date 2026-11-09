@@ -1,3 +1,4 @@
+import { readStoryboardSources } from './helpers/storyboardComponents.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -6,6 +7,7 @@ import * as taxonomy from '../../src/lib/storyboardTaxonomy.js';
 import * as examples from '../../src/lib/generationExamples.js';
 import * as selection from '../../src/lib/storyboardExampleSelection.js';
 import * as details from '../../src/lib/detailRecommendations.js';
+import * as garmentColors from '../../src/lib/garmentColors.js';
 
 const photo = (slot, src = `/${slot}.jpg`) => ({ slot, src });
 const product = { colors: [
@@ -96,12 +98,12 @@ async function aiHarness() {
   const { code } = await transformWithEsbuild(body + '\nreturn AIPanel;', 'ai.jsx', { loader: 'jsx' });
   const module = await loadPhotos();
   const slots = []; let cursor = 0, request;
-  const scope = { React, ...taxonomy, ...examples, ...selection, ...details, ...module,
+  const scope = { React, ...taxonomy, ...examples, ...selection, ...details, ...module, ...garmentColors,
     useState: initial => { const index = cursor++; if (!(index in slots)) slots[index] = initial; return [slots[index], value => { slots[index] = typeof value === 'function' ? value(slots[index]) : value; }]; },
     useRef: value => { const index = cursor++; return slots[index] ||= { current: value }; },
     isRealModelSelection: () => false, BRAND_USE_CATEGORIES: [],
   };
-  for (const name of ['UnderlineTabs', 'ColorDots', 'MoodGuide', 'ProductSourcePicker', 'DetailTargetPicker', 'PanelHead', 'Chips', 'Button', 'Icon', 'OuterClosureIcon']) scope[name] = name;
+  for (const name of ['UnderlineTabs', 'GarmentColorField', 'MoodGuide', 'ProductSourcePicker', 'DetailTargetPicker', 'PanelHead', 'Chips', 'Button', 'Icon', 'OuterClosureIcon']) scope[name] = name;
   const Panel = evaluate(code, scope);
   const render = () => { cursor = 0; return Panel({ catalogs, product, colorOpts: [{ id: 'base' }, { id: 'extra' }], detailColorOpts: [{ id: 'base' }, { id: 'extra' }],
     detailRecommendations: { version: 1, status: 'ready', candidates: [{ id: 'back-target', direction: 'back' }] }, onGenerate: value => { request = value; } }); };
@@ -120,7 +122,7 @@ test('에디터 고스트 요청은 고른 면을 쓰고 예시를 바꿔도 뒷
   h.generate();
   assert.equal(h.request().direction, 'back');
   assert.equal(h.request().sideStyle, null);
-  h.component('ColorDots').props.onChange('extra');
+  h.component('GarmentColorField').props.onChange('extra');
   h.generate();
   assert.equal(h.request().direction, 'front');
   assert.equal(h.component('ProductSourcePicker').props.block.colorId, 'extra');
@@ -140,32 +142,26 @@ test('에디터 디테일은 대상 방향이나 직접 고른 원본 면을 쓰
   h.generate();
   assert.equal(h.request().direction, 'back');
   assert.equal(h.request().detailTargetId, 'back-target');
-  h.component('ColorDots').props.onChange('extra');
+  h.component('GarmentColorField').props.onChange('extra');
   h.generate();
   assert.equal(h.request().detailTargetId, null);
   assert.equal(h.request().direction, 'front');
 });
 
-test('고스트 카드 캡션에만 원본 면을 붙이고 디테일과 착용컷은 짧게 유지한다', () => {
-  const source = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
-  const body = source.slice(source.indexOf('function cardLabels('), source.indexOf('\n/* 캡션'));
-  const labels = evaluate(`${body}; return cardLabels;`, {});
-  for (const direction of ['front', 'back']) {
-    assert.equal(labels({ cutType: 'product', shot: 'ghost', direction }, catalogs).shot, `고스트샷 · ${direction === 'back' ? '뒷면' : '앞면'} 사진`);
-    assert.equal(labels({ cutType: 'product', shot: 'detail', direction }, catalogs).shot, '디테일샷');
-  }
-  assert.equal(labels({ cutType: 'styling', shot: 'full', direction: 'back' }, catalogs).shot, '풀샷');
+test('고스트 원본 사진은 앞면과 뒷면 구분을 유지한다', async () => {
+  const { productSourcePhotos } = await loadPhotos();
+  assert.equal(productSourcePhotos(product, 'base', 'ghost').front.slot, 'Front');
+  assert.equal(productSourcePhotos(product, 'base', 'ghost').back.slot, 'Back');
 });
-
 test('콘티 대상 색상 변경은 디테일 대상을 먼저 풀고 새 색상의 원본 면을 고른다', async () => {
-  const source = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
+  const source = readStoryboardSources();
   const start = source.indexOf('          value={block.colorId} onChange={(colorId) => {');
   const body = source.slice(start + '          value={block.colorId} onChange={'.length, source.indexOf('} /></div>', start));
   const module = await loadPhotos();
   for (const shot of ['ghost', 'detail']) {
     let changes;
     const block = { cutType: 'product', shot, colorId: 'base', direction: 'back', ...(shot === 'detail' ? { detailTargetId: 'back-target' } : {}) };
-    const change = evaluate(`return (${body});`, { block, catalogs: { detailProduct: product }, ...details, ...module, onChange: value => { changes = value; } });
+    const change = evaluate(`return (${body});`, { block, catalogs: { detailProduct: product }, ...details, ...module, ...garmentColors, onChange: value => { changes = value; } });
     change('extra');
     assert.equal(changes.direction, 'front');
     assert.equal(changes.colorId, 'extra');

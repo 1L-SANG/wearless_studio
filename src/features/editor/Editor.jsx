@@ -1,5 +1,6 @@
 import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
 import { clientEvents } from '@/lib/clientEvents.js';
+import { templateSectionName } from '@/lib/pageTemplates/slots.js';
 /* =============================================================
    features/editor/Editor.jsx — ⑦ 상세페이지 에디터 (PRD §10)
    Structure/markup/classNames ported verbatim from the prototype
@@ -20,7 +21,7 @@ import { jobFailure, jobFailureMessage } from '@/lib/api/jobFailure.js';
 import { getJobSettlement } from '@/lib/api/facemarket.js';
 import { SettlementReceiptChain } from '@/features/editor/SettlementReceiptChain.jsx';
 import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
-import { alignSkeletonToServer, canSafelyMergeServerBlocks, clearFailedJobPreviewBlocks, decorateGenBlocks, failedJobPreviewUrls, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
+import { alignSkeletonToServer, canSafelyMergeServerBlocks, clearFailedJobPreviewBlocks, decorateGenBlocks, failedJobPreviewUrls, fillGenBlocks, mergeServerBlocks, patchTemplateElement } from '@/lib/editorWaitSkeleton.js';
 import { incompleteMessage, retryOfIncomplete, retryReuseHint } from '@/lib/detailPageJobFailure.js';
 import {
   clearEditorWaitDraft, editorWaitDraftDecision, loadEditorWaitDraftEntry, saveEditorWaitDraft,
@@ -95,6 +96,8 @@ import { CONTENT_ROLES, SECTION_ROLES, normalizeEditorBlockRole } from '@/lib/st
 import { withStoryboardSpaceSetExamples } from '@/lib/storyboardSpaceSetCatalog.js';
 import { cssWeight } from '@/features/editor/fontWeights.js';
 import { resolveTextSpacing } from './textSpacing.js';
+import { canvasBlockRuns, defaultStitchedMode, readStitchedPreference, writeStitchedPreference } from './editorViewMode.js';
+import { hasTemplateContrastLines, TemplateContrastText } from './TemplateContrastText.jsx';
 
 const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)', 'Gowun Dodum': 'var(--font-soft)' };
 
@@ -559,6 +562,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       : (!s.list || s.list === 'none') ? el.text
         : lines.map((ln, i) => (s.list === 'ordered' ? `${i + 1}. ` : '• ') + ln).join('\n');
     const hasBg = s.bg && s.bg !== 'none';
+    const textDisplay = emptyText ? el.placeholder : display;
     if (isBubbleText) {
       const fit = speechBubbleFitOptions(el);
       const fill = colorWithOpacity(el.fill || '#ffffff', el.fillOpacity ?? 1);
@@ -608,10 +612,10 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     return (
       /* 높이는 항상 auto — 고정폭 텍스트도 크기를 키우면 상자가 따라 자라야 하고,
          저장되는 el.h는 위의 h 동기화 효과가 실제 렌더 높이로 맞춘다. */
-      <div ref={ref} data-elid={el.id} className={cls(`el-text${editing ? ' editing' : ''}${emptyText ? ' el-empty-text' : ''}${emptyText && el.placeholder ? ' el-placeholder' : ''}`)} style={{ ...base, height: 'auto',
+      <div ref={ref} data-elid={el.id} className={cls(`el-text${el.keepWords ? ' el-keep-words' : ''}${editing ? ' editing' : ''}${emptyText ? ' el-empty-text' : ''}${emptyText && el.placeholder ? ' el-placeholder' : ''}`)} style={{ ...base, height: 'auto',
         fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: cssWeight(s.font, s.weight),
         color: s.color || '#0e0d14', letterSpacing: s.spacingMode === 'auto' ? resolveTextSpacing(s).tracking : s.tracking, textAlign: s.align || 'left',
-        lineHeight: s.spacingMode === 'auto' ? resolveTextSpacing(s).lineHeight + 'px' : s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap', opacity: (el.opacity ?? 1) * (s.opacity ?? 1),
+        lineHeight: s.spacingMode === 'auto' ? resolveTextSpacing(s).lineHeight + 'px' : s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: el.keepWords ? undefined : 'pre-wrap', opacity: (el.opacity ?? 1) * (s.opacity ?? 1),
         background: hasBg ? s.bg : undefined, padding: hasBg ? '2px 8px' : undefined, borderRadius: hasBg ? 4 : undefined,
         fontStyle: s.italic ? 'italic' : 'normal',
         textDecoration: [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ') || 'none' }}
@@ -631,7 +635,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
           if (onTextCommit) onTextCommit(blockId, el.id, value, nextSize);
           else onPatch(blockId, el.id, { text: value });
         }}>
-        {editing ? el.text : (emptyText ? el.placeholder : display)}</div>
+        {editing ? el.text : (!emptyText && hasTemplateContrastLines(el) ? <TemplateContrastText element={el} /> : textDisplay)}</div>
     );
   }
   if (el.type === 'license-verify') {
@@ -642,8 +646,9 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   const fill = el.fill || '#0e0d14';
   const sc = el.stroke && el.stroke !== 'none' ? el.stroke : null;
   const sw = sc ? (el.strokeWidth || 2) : 0;
-  if (el.shape === 'circle') inner = <div style={{ width: '100%', height: '100%', borderRadius: '50%', background: fill, boxShadow: sc ? `inset 0 0 0 ${sw}px ${sc}` : undefined }} />;
-  else if (el.shape === 'rect') inner = <div style={{ width: '100%', height: '100%', borderRadius: el.radius || 0, background: fill, boxShadow: sc ? `inset 0 0 0 ${sw}px ${sc}` : undefined }} />;
+  const boxShadow = [sc ? `inset 0 0 0 ${sw}px ${sc}` : null, el.boxShadow].filter(Boolean).join(', ') || undefined;
+  if (el.shape === 'circle') inner = <div style={{ width: '100%', height: '100%', borderRadius: '50%', background: fill, boxShadow }} />;
+  else if (el.shape === 'rect') inner = <div style={{ width: '100%', height: '100%', borderRadius: el.radius || 0, background: fill, boxShadow }} />;
   else if (el.shape === 'triangle') inner = (
     <svg width="100%" height="100%" viewBox={`0 0 ${el.w} ${el.h}`} preserveAspectRatio="none" style={{ display: 'block', overflow: 'visible' }}>
       <polygon points={`${el.w / 2},${sw / 2 || 0} ${el.w - (sw / 2 || 0)},${el.h - (sw / 2 || 0)} ${sw / 2 || 0},${el.h - (sw / 2 || 0)}`} fill={fill} stroke={sc || 'none'} strokeWidth={sw} strokeLinejoin="round" />
@@ -998,7 +1003,7 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
             onDragEnd={end}
             onDragOver={(e) => { if (dragId) { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setLineAt(e.clientY > r.top + r.height / 2 ? i + 1 : i); } }}
             onDrop={(e) => { e.preventDefault(); if (!dragId) return; const from = blocks.findIndex((x) => x.id === dragId); let to = lineAt == null ? i : lineAt; if (from < to) to--; to = Math.max(0, Math.min(blocks.length - 1, to)); if (from > -1 && from !== to) onReorder(from, to); end(); }}>
-            <div className="mini-canvas" style={{ background: colorWithOpacity(b.bg, b.bgOpacity), aspectRatio: `1000 / ${blockH}` }} title={b.name}
+            <div className="mini-canvas" style={{ background: colorWithOpacity(b.bg, b.bgOpacity), aspectRatio: `1000 / ${blockH}` }} title={templateSectionName(b)}
               ref={i === 0 ? measureRef : undefined}>
               {/* 실제 내용 축소 렌더 — 1000px 블록을 그대로 그려 scale 로 줄인다.
                   글자·표·도형이 캔버스와 동일하게 보인다 (CanvasElement preview 재사용, hidden 자동 제외) */}
@@ -1112,7 +1117,14 @@ export function Editor() {
   const [rightHidden, setRightHidden] = useState(false);
   const [preview, setPreview] = useState(false);
   // 이어보기 — 블록 사이 간격·카드 그림자를 없애 실제 상세페이지처럼 붙여 본다(편집은 그대로 가능).
-  const [stitched, setStitched] = useState(false);
+  const [viewPreference, setViewPreference] = useState(() => ({ projectId, value: readStitchedPreference(projectId) }));
+  const storedView = viewPreference.projectId === projectId ? viewPreference.value : readStitchedPreference(projectId);
+  const stitched = storedView ?? defaultStitchedMode(blocks);
+  const setStitched = (update) => {
+    const value = typeof update === 'function' ? update(stitched) : update;
+    setViewPreference({ projectId, value });
+    writeStitchedPreference(projectId, value);
+  };
   // 블록 강조 표시 여부 — 캔버스 빈 곳을 클릭하면 꺼진다. selBlock 자체는 삽입 대상으로 계속 쓰므로 건드리지 않는다.
   const [blockFocused, setBlockFocused] = useState(false);
   const [download, setDownload] = useState(false);
@@ -1186,14 +1198,14 @@ export function Editor() {
           }
         }
         const skeleton = upgradeLegacyKiwiTemplateBlocks(stripPhotoBlockTextElements(decorateGenBlocks(
-          alignSkeletonToServer(buildEditorBlocksFromStoryboard(sb || [], product, cw), cw), dj, exThumb)), uid);
+          alignSkeletonToServer(buildEditorBlocksFromStoryboard(sb || [], product, cw, analysis || {}), cw), dj, exThumb)), uid);
         setBlocks(skeleton);
         setSelBlock(skeleton[0]?.id);
         setWaitBoardError('');
       } catch { /* 재시도까지 실패 — 화면의 [다시 불러오기]·[보관함으로]가 남아 있다 */ }
     })();
     return () => { cancelled = true; };
-  }, [waitBoardError, waitBoardAttempt, blocks, product, catalogs, projectId]);
+  }, [waitBoardError, waitBoardAttempt, blocks, product, analysis, catalogs, projectId]);
   // 화면 대기(3분)를 넘긴 생성 잡의 백그라운드 추적 — 훅은 로딩 early-return 위에만 둔다.
   const slowJobs = useRef(new Set());
   const slowJobTimers = useRef(new Set());
@@ -1517,7 +1529,7 @@ export function Editor() {
             }
           }
           const skeleton = decorateGenBlocks(
-            alignSkeletonToServer(buildEditorBlocksFromStoryboard(sb || [], p, cw), cw), dj, exThumb);
+            alignSkeletonToServer(buildEditorBlocksFromStoryboard(sb || [], p, cw, an || {}), cw), dj, exThumb);
           // 생성 중 임시 작업본은 서버 완성본과 분리한다. 재진입 시 문구뿐 아니라 배치·추가 요소도
           // 그대로 복원하고, 이후 재수신되는 생성 이벤트가 새 이미지/카피만 채운다.
           withH = savedDraft || skeleton;
@@ -2197,7 +2209,7 @@ export function Editor() {
       ? { ...b, elements: b.elements.map(e => e.id === selEl ? { ...e, ...patch } : e) } : b);
   });
   const patchBubbleAppearance = (patch) => setBlocks((bs) => patchSelectedBubbleAppearance(bs, selEls.length ? selEls : [selEl], patch));
-  const patchElById = (blockId, elId, patch) => setBlocks((bs) => bs.map((b) => b.id === blockId ? { ...b, elements: b.elements.map((e) => e.id === elId ? { ...e, ...patch } : e) } : b));
+  const patchElById = (blockId, elId, patch) => setBlocks((bs) => bs.map((b) => b.id === blockId ? patchTemplateElement(b, elId, patch) : b));
   const commitText = (blockId, elementId, value, elementPatch) => {
     // 한 글자라도 고쳤으면 더는 '안내 문구'가 아니다 — 안 지우는 대상으로 확정한다.
     if (String(value ?? '').trim() !== DEFAULT_TEXT_BODY) FRESH_TEXT_IDS.delete(elementId);
@@ -4125,11 +4137,13 @@ export function Editor() {
               matrix) — scale via transform instead. transform doesn't take layout
               space, so a spacer reserves the SCALED dimensions for scrolling. */}
           <div style={{ position: 'relative', width: 1000 * scale, height: canvasH * scale, margin: '40px auto' }}>
-          <div className={`ed-canvas${frameDragging ? ' frame-dragging' : ''}${stitched ? ' stitched' : ''}`} ref={canvasRef}
+          <div className={`ed-canvas${defaultStitchedMode(blocks) ? ' has-template' : ''}${frameDragging ? ' frame-dragging' : ''}${stitched ? ' stitched' : ''}`} ref={canvasRef}
             style={{ transform: `scale(${scale})`, transformOrigin: 'top left', position: 'absolute', top: 0, left: 0, margin: 0, '--canvas-inv': 1 / (scale || 1) }}>
-            {blocks.map((b, i) => (
+            {canvasBlockRuns(blocks).map(run => (
+              <div key={run.id} className={run.key ? 'canvas-template-section' : 'canvas-single-section'}>
+              {run.items.map(({ block: b, index: i }, runIndex) => (
               <div key={b.id} style={{ display: 'contents' }}>
-                <div className="canvas-droprow" onDragOver={(e) => { if (acceptsEditorBlockInsert(e.dataTransfer.types)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setFrameOver(i); } }}
+                <div className={`canvas-droprow${runIndex ? ' template-continuation' : ''}`} onDragOver={(e) => { if (acceptsEditorBlockInsert(e.dataTransfer.types)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setFrameOver(i); } }}
                   onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setFrameOver((o) => o === i ? null : o); }} onDrop={(e) => onCanvasInsertDrop(e, i)}>
                   <div className={`canvas-dropline${frameOver === i ? ' on' : ''}`} />
                   {dragFrame && frameOver === i && (
@@ -4167,6 +4181,8 @@ export function Editor() {
                   onObjectDrop={(bid, type, id, ev) => (type === 'text' ? dropText(id, bid, ev) : addShape(type, id, bid, ev))} onReshape={reshapeBlock}
                   onMove={moveBlock} onAddEmpty={addEmpty} onDelete={deleteBlock} onEditInfo={openInfoEdit}
                   onDownload={downloadBlock} />
+              </div>
+              ))}
               </div>
             ))}
             <div className="canvas-droprow" onDragOver={(e) => { if (acceptsEditorBlockInsert(e.dataTransfer.types)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setFrameOver(blocks.length); } }}

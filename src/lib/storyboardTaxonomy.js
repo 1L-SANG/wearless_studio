@@ -1,15 +1,16 @@
 /* =============================================================
    콘티보드 사용자 분류의 단일 소스.
 
-   사용자는 상세페이지의 네 섹션과 생성예시·세부 옵션만 다룬다:
-   후킹 → 스타일링 → 스튜디오 → 의류 확인.
+   섹션은 템플릿 인스턴스다. sectionRole은 생성과 에디터가 읽는 촬영 묶음이다.
 
    contentRole은 AI가 사진의 설명 목적을 정할 때만 쓰는 내부값이다.
    cutType은 사용자가 인스펙터에서 고르는 촬영 방식이며, 내부 역할은
    현재 섹션·카드 위치·선택한 cutType/shot에 맞춰 자동으로 정한다.
    ============================================================= */
 
-export const STORYBOARD_TAXONOMY_VERSION = 3;
+import { photoSlotForBlock } from './pageTemplates/slots.js';
+
+export const STORYBOARD_TAXONOMY_VERSION = 4;
 
 export const SECTION_ROLES = Object.freeze({
   HOOKING: 'hooking',
@@ -39,7 +40,7 @@ export const isSupportedCutType = (cutType) => CUT_TYPE_OPTIONS.some((option) =>
 
 export function filterSupportedStoryboardBlocks(blocks) {
   if (!Array.isArray(blocks)) return blocks;
-  const unsupported = (block) => block && block.source !== 'mine'
+  const unsupported = (block) => block && block.source === 'ai'
     && block.cutType != null && !isSupportedCutType(block.cutType);
   const ignored = blocks.filter(unsupported);
   if (!ignored.length) return blocks;
@@ -54,9 +55,12 @@ const CUT_TYPE_OPTIONS_BY_SECTION = Object.freeze({
   [SECTION_ROLES.PRODUCT]: CUT_TYPE_OPTIONS,
 });
 
-export const allowedCutTypeOptionsForSection = (sectionRole) => (
-  CUT_TYPE_OPTIONS_BY_SECTION[sectionRole] || CUT_TYPE_OPTIONS
-);
+export const allowedCutTypeOptionsForSection = (blockOrRole) => {
+  if (typeof blockOrRole !== 'object') return CUT_TYPE_OPTIONS;
+  if (blockOrRole?.source === 'text') return [];
+  const slot = photoSlotForBlock(blockOrRole);
+  return slot ? CUT_TYPE_OPTIONS.filter(option => slot.recipe.allowedCutTypes.includes(option.value)) : CUT_TYPE_OPTIONS;
+};
 
 export const cutTypeOptionsForSection = (sectionRole) => (
   allowedCutTypeOptionsForSection(sectionRole)
@@ -224,6 +228,7 @@ export function inferSectionRole(block) {
 }
 
 export function inferContentRole(block) {
+  if (block?.source === 'text') return null;
   if (isContentRole(block?.contentRole)) return block.contentRole;
   if (block?.source === 'mine') return CONTENT_ROLES.CUSTOM;
   if (block?.cutType === 'product') return block?.shot === 'detail'
@@ -264,127 +269,66 @@ export function blockPatchForContentRole(block, role, { clothingType = 'top' } =
    방향·샷이 새 목적에서도 유효하면 사용자의 기존 선택을 보존하고, 유효하지
    않은 값만 목적의 기본값으로 되돌린다. */
 export function normalizedRecipePatch(block, role) {
-  if (block?.source === 'mine') {
-    return { contentRole: CONTENT_ROLES.CUSTOM, title: '내 이미지', cutType: null };
-  }
-
-  const sectionRole = inferSectionRole(block);
-  let nextRole = isContentRole(role) ? role : inferContentRole(block);
-  if (sectionRole === SECTION_ROLES.STYLING) {
-    nextRole = CONTENT_ROLES.COORDINATION;
-  } else if (sectionRole === SECTION_ROLES.STUDIO) {
-    nextRole = CONTENT_ROLES.FIT;
-  } else if ([CONTENT_ROLES.COORDINATION, CONTENT_ROLES.FIT].includes(nextRole)
-    && WORN_ROLE_BY_CUT_TYPE[block?.cutType]) {
-    nextRole = WORN_ROLE_BY_CUT_TYPE[block.cutType];
-  }
-  if ([CONTENT_ROLES.PRODUCT_OVERVIEW, CONTENT_ROLES.DETAIL].includes(nextRole)
-    && block?.cutType === 'product') {
-    nextRole = block?.shot === 'detail' ? CONTENT_ROLES.DETAIL : CONTENT_ROLES.PRODUCT_OVERVIEW;
-  }
-  const template = contentTemplate(nextRole);
-  if (!template.cutType) {
-    if (block?.cutType === 'styling' || block?.cutType === 'horizon') {
-      return {
-        contentRole: nextRole, title: template.label, cutType: block.cutType,
-        direction: WORN_DIRECTIONS.has(block?.direction) ? block.direction : 'front',
-        shot: WORN_SHOTS.has(block?.shot) ? block.shot : 'full',
-      };
-    }
-    return { contentRole: nextRole, title: template.label };
-  }
-
-  const cutType = [CONTENT_ROLES.HERO, CONTENT_ROLES.BENEFIT].includes(nextRole)
-    && ['styling', 'horizon'].includes(block?.cutType)
-    ? block.cutType : template.cutType;
-  let direction = template.direction;
-  let shot = template.shot;
-  if (cutType === 'product') {
-    if (PRODUCT_DIRECTIONS.has(block?.direction)) direction = block.direction;
-    if (nextRole === CONTENT_ROLES.DETAIL) shot = 'detail';
-    else if (block?.shot === 'flatlay') shot = 'ghost';
-    else if (PRODUCT_OVERVIEW_SHOTS.has(block?.shot)) shot = block.shot;
-  } else {
-    if (WORN_DIRECTIONS.has(block?.direction)) direction = block.direction;
-    if (WORN_SHOTS.has(block?.shot)) shot = block.shot;
-  }
-
+  if (block?.source === 'text') return { cutType: null, contentRole: null, sectionRole: null };
+  if (block?.source === 'mine') return { contentRole: CONTENT_ROLES.CUSTOM, title: '내 이미지', cutType: null };
+  const slot = photoSlotForBlock(block, { includeReuse: true });
+  const recipe = slot?.recipe;
+  let cutType = block?.cutType;
+  if (recipe && !recipe.allowedCutTypes.includes(cutType)) cutType = recipe.cutType;
+  if (!isSupportedCutType(cutType)) cutType = contentTemplate(role).cutType;
+  if (!cutType) return { contentRole: role || CONTENT_ROLES.CUSTOM, title: contentTitle(role) };
+  const worn = cutType !== 'product';
+  let shot = block?.shot;
+  if (recipe && !recipe.allowedShots.includes(shot)) shot = recipe.shot;
+  if (!(worn ? WORN_SHOTS : new Set(['ghost', 'detail'])).has(shot)) shot = worn ? 'full' : 'ghost';
+  const nextRole = [CONTENT_ROLES.HERO, CONTENT_ROLES.BENEFIT].includes(role) && worn ? role
+    : slot?.contentRole && (!recipe || recipe.allowedCutTypes.includes(cutType)) ? slot.contentRole
+      : cutType === 'product' ? (shot === 'detail' ? CONTENT_ROLES.DETAIL : CONTENT_ROLES.PRODUCT_OVERVIEW)
+        : WORN_ROLE_BY_CUT_TYPE[cutType];
   return {
-    contentRole: nextRole,
-    title: template.label,
-    cutType,
-    direction,
-    shot,
+    cutType, shot, contentRole: nextRole, title: contentTitle(nextRole),
     ...(Object.hasOwn(block || {}, 'productPresentation')
       ? { productPresentation: productPresentationOf({ ...block, cutType, shot }) } : {}),
-    ...(['styling', 'horizon'].includes(cutType)
-      && !['same', 'show', 'hide'].includes(block?.faceExposure)
-      ? { faceExposure: 'same' } : {}),
+    direction: (worn ? WORN_DIRECTIONS : PRODUCT_DIRECTIONS).has(block?.direction)
+      ? block.direction : recipe?.direction || 'front',
+    ...(!worn ? { matchIds: [], outerClosureState: null, faceExposure: null }
+      : !['same', 'show', 'hide'].includes(block?.faceExposure) ? { faceExposure: recipe?.faceExposure || 'same' } : {}),
   };
 }
 
-/* contentRole은 사용자 입력값이 아니다. 기본 구성에서 받은 역할은 보존하되,
-   잘못되거나 비어 있는 AI 카드는 현재 섹션의 안전한 기본 역할로 복구하고
-   핵심 장점의 첫 AI 카드만 hero가 되도록 카드 순서에 맞춰 자동 배정한다.
-
-   역할이 바뀌어 생성 레시피까지 달라질 때는 이전 생성예시를 그대로 쓰면
-   조건이 어긋나므로 선택을 해제하고, 예시 적용 전 썸네일이 있으면 복원한다. */
 export function assignInternalContentRoles(blocks) {
   if (!Array.isArray(blocks)) return blocks;
   const supportedBlocks = filterSupportedStoryboardBlocks(blocks);
   let heroAssigned = false;
   let changed = supportedBlocks !== blocks;
-  const next = supportedBlocks.map((raw) => {
+  const next = supportedBlocks.map(raw => {
     const block = normalizeProductPresentation(raw);
     if (block !== raw) changed = true;
-    if (!block || block.source === 'mine') return block;
-
-    const sectionRole = inferSectionRole(block) || SECTION_ROLES.HOOKING;
-    const currentRole = isContentRole(block.contentRole) ? block.contentRole : CONTENT_ROLES.CUSTOM;
-    const currentRoleSection = sectionRoleForContentRole(currentRole);
-    let role = currentRole;
-
-    if (role === CONTENT_ROLES.CUSTOM || currentRoleSection !== sectionRole) {
-      role = defaultContentRoleForSection(sectionRole);
+    if (!block) return block;
+    if (block.source === 'text') {
+      if (block.cutType === null && block.contentRole === null && block.sectionRole === null) return block;
+      changed = true;
+      return { ...block, cutType: null, contentRole: null, sectionRole: null };
     }
-    if (sectionRole === SECTION_ROLES.HOOKING) {
-      if (!heroAssigned) {
-        role = CONTENT_ROLES.HERO;
-        heroAssigned = true;
-      } else if (role === CONTENT_ROLES.HERO) {
-        role = CONTENT_ROLES.BENEFIT;
-      }
+    let role = block.source === 'mine' ? CONTENT_ROLES.CUSTOM
+      : photoSlotForBlock(block)?.contentRole || inferContentRole({ ...block, contentRole: null });
+    const patch = normalizedRecipePatch(block, role);
+    if (block.source === 'ai' && block.pageSectionKind === 'first'
+      && ['styling', 'horizon'].includes(patch.cutType)) {
+      patch.contentRole = !heroAssigned && !block.similarSourceBlockId ? CONTENT_ROLES.HERO : CONTENT_ROLES.BENEFIT;
+      patch.title = contentTitle(patch.contentRole);
+      if (patch.contentRole === CONTENT_ROLES.HERO) heroAssigned = true;
     }
-
-    const recipePatch = normalizedRecipePatch(block, role);
-    const recipeChanged = block.cutType !== recipePatch.cutType
-      || block.direction !== recipePatch.direction
-      || block.shot !== recipePatch.shot;
-    const roleChanged = block.contentRole !== recipePatch.contentRole
-      || block.title !== recipePatch.title
-      || block.sectionRole !== sectionRole
-      || block.taxonomyVersion !== STORYBOARD_TAXONOMY_VERSION;
-    const productStateChanged = recipePatch.cutType === 'product'
-      && ((block.matchIds || []).length > 0
-        || block.outerClosureState != null
-        || block.faceExposure != null);
-    if (!recipeChanged && !roleChanged && !productStateChanged) return block;
-
-    changed = true;
-    return normalizeProductPresentation({
-      ...block,
-      ...recipePatch,
-      sectionRole,
-      taxonomyVersion: STORYBOARD_TAXONOMY_VERSION,
-      ...(recipePatch.cutType === 'product'
-        ? { matchIds: [], outerClosureState: null, faceExposure: null } : {}),
-      ...(recipeChanged ? {
-        exampleId: null,
-        exampleSelectionOrigin: null,
-        thumb: block.baseThumb || block.thumb,
-        baseThumb: null,
-      } : {}),
+    const sectionRole = sectionRoleForContentRole(patch.contentRole);
+    const recipeChanged = block.cutType !== patch.cutType
+      || block.direction !== patch.direction || block.shot !== patch.shot;
+    const next = normalizeProductPresentation({ ...block, ...patch, sectionRole, taxonomyVersion: STORYBOARD_TAXONOMY_VERSION,
+      ...(recipeChanged ? { exampleId: null, exampleSelectionOrigin: null,
+        thumb: block.baseThumb || block.thumb, baseThumb: null, previewThumb: null } : {}),
     });
+    if (JSON.stringify(next) === JSON.stringify(block)) return block;
+    changed = true;
+    return next;
   });
   return changed ? next : blocks;
 }
@@ -397,7 +341,7 @@ export function hasDetailSource(product) {
    kind='info'(내용 추가 블록, PRD §10.14)는 섹션 역할 추론 대상이 아니다 —
    여기서 통과시키지 않으면 재로드 때 kind가 'fit'으로 덮여 정보 블록이 깨진다. */
 export function normalizeEditorBlockRole(block) {
-  if (!block || block.auto || block.kind === 'info' || ['twocol', 'threecol', 'grid2x2', 'colorcmp', 'size', 'care', 'ai-notice'].includes(block.kind)) return block;
+  if (!block || block.pageSectionKey || block.auto || block.kind === 'info' || ['twocol', 'threecol', 'grid2x2', 'colorcmp', 'size', 'care', 'ai-notice'].includes(block.kind)) return block;
   const contentRole = inferContentRole(block);
   const sectionRole = inferSectionRole(block) || SECTION_ROLES.STYLING;
   const name = block.name === '내 이미지' ? '내 이미지'

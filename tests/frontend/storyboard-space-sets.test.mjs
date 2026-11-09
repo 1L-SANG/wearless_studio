@@ -510,48 +510,18 @@ test('reserved-member lookup uses member order even after its example is changed
   assert.equal(nextSpaceSetMemberReservation(set, current).member.exampleId, 'second');
 });
 
-test('one insert control handles empty, terminal, and set-internal additions', () => {
-  const storyboardSource = readFileSync(
-    new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url),
-    'utf8',
-  );
-  const cssSource = readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8');
-  assert.match(storyboardSource, /nextSpaceSetMemberReservation\(set, unit\.items\.map/);
-  assert.equal((storyboardSource.match(/<StoryboardInsertControl/g) || []).length, 1);
-  // 세트 안 ＋(직접 추가)는 예비 멤버가 남았을 때만 — 자리 자체는 드롭용으로 항상 살아 있다(2026-08-16 오너).
-  assert.match(storyboardSource, /canAdd: !\(targetSpaceGroupId && !reservation\)/);
-  assert.match(storyboardSource, /renderUnit\(spaceUnit, group, unit\.spaceGroupId, reservation\)/);
-  assert.match(storyboardSource, /insertControl\(lastItem\.index, group, null, null, 'end'\)/);
-  assert.match(storyboardSource, /!group\.items\.length && insertControl\(groupSection\.start, group, null, null, 'empty'\)/);
-  assert.match(storyboardSource, /addBlock\(idx, section\.id, section\.role, targetSpaceGroupId, group\.key, requestedExample\)/);
-  assert.match(storyboardSource, /\.\.\.\(reservation\?\.blockPatch \|\| \{\}\)/);
-  const addBlockSource = storyboardSource.slice(
-    storyboardSource.indexOf('const addBlock ='),
-    storyboardSource.indexOf('const mineBlock ='),
-  );
-  assert.match(addBlockSource, /effectiveSpaceGroupId = targetSpaceGroupId && \(reservedSpaceMember \|\| droppedExample\)/);
-  assert.match(addBlockSource, /const g = explicitGroup/);
-  assert.doesNotMatch(addBlockSource, /peers\.every/);
-  assert.match(cssSource, /\.sb-addzone\.end \{[^}]*display: grid/);
-  assert.match(cssSource, /\.sb-addzone\.empty/);
-  assert.doesNotMatch(storyboardSource, /sb-ghost-card|sb-tray-add|sb-tray-add-preview/);
-  assert.doesNotMatch(cssSource, /sb-ghost-card|sb-tray-add|sb-tray-add-preview/);
+test('v5 stage has one terminal addition tile and no reserve-image tiles', async () => {
+  const { packStageRows } = await import('../../src/lib/pageTemplates/storyboardStage.js');
+  const rows = packStageRows([{ id: 'a', source: 'ai', spaceGroupId: 'set' }, { id: 'b', source: 'ai', spaceGroupId: 'set' }]);
+  assert.equal(rows.flat().filter(group => group.kind === 'add').length, 1); assert.equal(rows.at(-1).at(-1).kind, 'add');
 });
-
-test('space runs use continuity-aware units, stable composite keys, and no dissolve menu', () => {
-  const storyboardSource = readFileSync(
-    new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url),
-    'utf8',
-  );
-  assert.match(storyboardSource, /kind: 'spaceRun'/);
-  assert.match(storyboardSource, /unit\.kind === 'spaceRun' \? renderSpaceRun/);
-  assert.match(storyboardSource, /key=\{'spaceRun:' \+ unit\.spaceGroupId \+ ':' \+ unit\.items\[0\]\.block\.id\}/);
-  // 세트 이름 라벨('햇살 드는 시장 골목' 등)은 표시하지 않는다(2026-08-15 오너).
-  assert.doesNotMatch(storyboardSource, /sb-tray-label/);
-  assert.match(storyboardSource, /className="sb-tray-swap"[^]*장소 세트 변경/);
-  assert.doesNotMatch(storyboardSource, /장소 세트 묶음 풀기|dissolveSpaceGroup|sb-tray-more/);
+test('v5 stage derives continuous place groups in saved order', async () => {
+  const { packStageRows } = await import('../../src/lib/pageTemplates/storyboardStage.js');
+  const blocks = [{ id: 'a', source: 'ai', spaceGroupId: 'first' }, { id: 'b', source: 'ai', spaceGroupId: 'first' },
+    { id: 'c', source: 'ai', spaceGroupId: 'second' }, { id: 'd', source: 'ai', spaceGroupId: 'second' }];
+  const rows = packStageRows(blocks, { add: false });
+  assert.deepEqual(rows[0].map(group => group.key), ['first', 'second']); assert.deepEqual(rows.flat().flatMap(group => group.blocks), blocks);
 });
-
 test('unknown or pre-release group ids are not inferred as a shooting set', () => {
   assert.equal(inferStoryboardSpaceSet('ssg1__removed-release-id__instance'), null);
   assert.equal(inferStoryboardSpaceSet('sgset__removed-release-id__legacy'), null);

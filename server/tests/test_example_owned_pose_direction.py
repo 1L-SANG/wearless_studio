@@ -1,3 +1,4 @@
+from storyboard_v4_cases import v4_blocks
 from app.agents import content_roles, cut_generator, cut_plan
 from app.workers import detail_page_job
 
@@ -20,10 +21,10 @@ def registry(monkeypatch):
 
 def test_saved_blocks_drop_retired_pose_and_follow_published_example(monkeypatch):
     registry(monkeypatch)
-    saved = content_roles.canonicalize_storyboard([
+    saved = content_roles.canonicalize_storyboard(v4_blocks([
         block(pose="leaning on a wall", poseLabel="기대기", poseThumb="old.png"),
         block(id="b2", direction="back", pose="auto"),
-    ], for_storage=True)
+    ]), for_storage=True)
     assert [(item["direction"], item["sideStyle"]) for item in saved] == [
         ("side", "threeQuarter"), ("side", "threeQuarter"),
     ]
@@ -61,8 +62,8 @@ def test_product_detail_keeps_source_target_direction(monkeypatch):
 
 
 def test_missing_example_does_not_get_automatic_poses_or_directions():
-    saved = content_roles.canonicalize_storyboard([
+    saved = content_roles.canonicalize_storyboard(v4_blocks([
         block(id=f"b{i}", exampleId=None, direction=None, pose="auto") for i in range(6)
-    ])
+    ]))
     assert all(item["direction"] == "front" for item in saved)
     assert all("pose" not in item for item in saved)

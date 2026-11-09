@@ -24,6 +24,7 @@ from . import admin_guard, app_origin, detail_cut_preview, facemarket, legal_ver
 from .agents import (
     color_harmony,
     content_roles,
+    page_style,
     cut_generator,
     feature_copy,
     fit_axes,
@@ -1207,6 +1208,16 @@ async def save_product(
 # ---------- analysis (계약 §3.2) ----------
 
 
+@router.get("/page-style/last", tags=["Analysis"], summary="마지막 페이지 스타일")
+async def get_last_page_style(request: Request, user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        value = await repo.last_page_style(conn, user_id)
+    try:
+        return page_style.validate_page_style(value)
+    except ValueError:
+        return page_style.default_page_style()
+
+
 @router.patch(
     "/projects/{project_id}/analysis",
     responses={**COMMON_RESPONSES},
@@ -1264,10 +1275,21 @@ async def save_analysis(
             )
         else:
             analysis = {**analysis, "brandUseCategory": category}
+    if "pageStyle" in analysis:
+        try:
+            analysis = {**analysis, "pageStyle": page_style.validate_page_style(analysis["pageStyle"])}
+        except ValueError as exc:
+            raise _bad_request("invalid_page_style", "페이지 스타일을 다시 골라 주세요.") from exc
     items = None
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
+        if "pageStyle" in analysis:
+            await repo.lock_page_style_project(conn, project_id)
+            previous_style = (await repo.get_analysis(conn, project_id) or {}).get("pageStyle")
+            if analysis["pageStyle"] != previous_style and await repo.page_style_locked(conn, project_id):
+                raise HTTPException(status_code=409, detail={"code": "page_style_locked",
+                    "message": "마네킹컷을 만든 뒤에는 페이지 스타일을 바꿀 수 없어요."})
         product = await repo.get_product(conn, project_id) or {}
         if (
             product.get("clothingType") or product.get("clothing_type")
@@ -3530,12 +3552,16 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
             raise _bad_request("invalid_example_selection_origin", "생성예시 선택 출처 값이 올바르지 않아요.")
         if str(exc) == "invalid_similar_cut_relationship":
             raise _bad_request("invalid_similar_cut_relationship", "비슷한 컷의 원본 사진 카드를 확인해 주세요.")
-        raise
+        code = str(exc)
+        raise _bad_request(code, "콘티를 다시 열어 주세요." if code == "storyboard_outdated" else "콘티 구성을 다시 확인해 주세요.") from exc
     validation_blocks = [cut_generator.product_runtime_spec(block) if isinstance(block, dict) else block
                          for block in canonical]
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
+        analysis_style = (await repo.get_analysis(conn, project_id) or {}).get("pageStyle") or {}
+        if canonical and analysis_style.get("templateId") not in (None, canonical[0]["pageSectionKey"].split(".")[0]):
+            raise _bad_request("page_style_mismatch", "고른 템플릿으로 콘티를 다시 열어 주세요.")
         if any(
             isinstance(block, dict)
             and (
@@ -3900,7 +3926,8 @@ async def generate_editor_image(
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         payload = {key: value for key, value in (body or {}).items() if not key.startswith("_")
-                   and key not in ("outfitSelectionsSnapshot", "outfitReferenceAssets")}
+                   and key not in ("outfitSelectionsSnapshot", "outfitReferenceAssets", "colorExecution",
+                                   "masterAssetId", "renderColorId", "targetEvidence")}
         if fill_requested:
             slot = body["slot"]
             try:
@@ -3950,7 +3977,7 @@ async def generate_editor_image(
                                    unsupported_message)
             source_asset_id = _asset_id_from_file_capability(source.get("src"))
             if edit_requested:
-                from .agents import asset_recipe, garment_edit, outer_closure
+                from .agents import asset_recipe, garment_edit, garment_color, outer_closure
                 source_asset = (await repo.get_project_asset_for_user(conn, user_id, project_id, source_asset_id)
                                 if source_asset_id else None)
                 records = (await asset_recipe.resolve_asset_recipes(conn, user_id, project_id, [source_asset_id])
@@ -3966,13 +3993,21 @@ async def generate_editor_image(
                 analysis = await repo.get_analysis(conn, project_id) or {}
                 current = garment_edit.current_values(record, analysis)
                 if payload["variationMode"] == "color":
+                    try:
+                        color_plan = garment_color.plan_for(product, {"cutType": trusted_type,
+                                                                    "colorId": payload.get("colorId")})
+                    except garment_color.GarmentColorError as exc:
+                        if exc.reason == "color_unknown":
+                            raise _bad_request("color_unknown", "상품 색상을 확인해 주세요.")
+                        raise HTTPException(status_code=409, detail={"code": "no_selected_color_images",
+                                            "message": "이 색 상품 사진이 없어요."})
                     image_ids = garment_edit.target_image_ids(product, payload.get("colorId"))
                     if image_ids is None:
                         raise _bad_request("color_unknown", "상품 색상을 확인해 주세요.")
                     if payload["colorId"] == current["colorId"]:
                         raise _bad_request("edit_same_value", "지금 사진과 같은 값이에요.")
                     target_asset = None
-                    for target_id in image_ids:
+                    for target_id in (color_plan.target_asset_ids if color_plan.mode == "base_then_color" else image_ids):
                         target_asset = await repo.get_project_asset_for_user(conn, user_id, project_id, target_id)
                         if target_asset:
                             break
@@ -4267,11 +4302,14 @@ async def generate_detail_page(
             "selected_model_id"
         )
         brand_use_category = analysis.get("brandUseCategory")
-        storyboard = (
-            await repo.get_storyboard(conn, project_id)
-            if selected_model_id
-            else None
-        )
+        storyboard = await repo.get_storyboard(conn, project_id)
+        try:
+            content_roles.validate_storyboard_v4(storyboard)
+        except ValueError as exc:
+            code = str(exc)
+            raise _bad_request(code, "콘티를 다시 열어 주세요." if code == "storyboard_outdated" else "콘티 구성을 다시 확인해 주세요.") from exc
+        if storyboard and analysis.get("pageStyle", {}).get("templateId") not in (None, storyboard[0]["pageSectionKey"].split(".")[0]):
+            raise _bad_request("page_style_mismatch", "고른 템플릿으로 콘티를 다시 열어 주세요.")
         ai_worn_blocks = [
             block for block in (storyboard or [])
             if isinstance(block, dict)
@@ -4356,7 +4394,8 @@ async def generate_detail_page(
                 raise _bad_request("unknown_cut_type", "지원하지 않는 컷 종류예요.") from exc
             if str(exc) == "invalid_similar_cut_relationship":
                 raise _bad_request("invalid_similar_cut_relationship", "비슷한 컷의 원본 사진 카드를 확인해 주세요.")
-            raise
+            code = str(exc)
+            raise _bad_request(code, "콘티를 다시 열어 주세요." if code == "storyboard_outdated" else "콘티 구성을 다시 확인해 주세요.") from exc
         ai_blocks = [b for b in generation_storyboard if isinstance(b, dict) and b.get("source") == "ai"]
         # 한 컷이라도 모델 범위 밖이면 전량 완성할 수 없다. 만들 수 있는 컷만 예약하고
         # 일부 페이지를 출고하는 대신, 시작 전에 사용자가 콘티를 고치게 한다.

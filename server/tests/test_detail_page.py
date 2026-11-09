@@ -1,3 +1,4 @@
+from storyboard_v4_cases import v4_blocks
 import asyncio
 import hashlib
 import contextlib
@@ -170,9 +171,9 @@ def test_detail_rejection_publishes_other_cuts_and_excludes_failed_cut_charge(mo
         return {"copywriting": False}
 
     async def storyboard(*args):
-        return [{"id": block_id, "source": "ai", "sectionRole": "product", "contentRole": "detail",
+        return v4_blocks([{"id": block_id, "source": "ai", "sectionRole": "product", "contentRole": "detail",
                  "cutType": "product", "shot": "detail", "direction": direction, "colorId": "base"}
-                for block_id, direction in [("rejected", "front"), ("accepted", "back")]]
+                for block_id, direction in [("rejected", "front"), ("accepted", "back")]])
 
     async def product(*args):
         return {"colors": [{"id": "base", "isBase": True, "images": [
@@ -241,9 +242,9 @@ def test_best_effort_detail_fills_page_and_uses_five_cut_minimum(monkeypatch):
         return {"copywriting": False}
 
     async def storyboard(*args):
-        return [{"id": block_id, "source": "ai", "sectionRole": "product", "contentRole": "detail",
+        return v4_blocks([{"id": block_id, "source": "ai", "sectionRole": "product", "contentRole": "detail",
                  "cutType": "product", "shot": "detail", "direction": direction, "colorId": "base"}
-                for block_id, direction in [("best-effort", "front"), ("passed", "back")]]
+                for block_id, direction in [("best-effort", "front"), ("passed", "back")]])
 
     async def product(*args):
         return {"colors": [{"id": "base", "isBase": True, "images": [
@@ -299,9 +300,9 @@ def test_interrupted_page_revokes_preview_stored_before_cut_gather_returns(monke
         return {"copywriting": False}
 
     async def storyboard(*args):
-        return [{"id": "detail", "source": "ai", "sectionRole": "product",
+        return v4_blocks([{"id": "detail", "source": "ai", "sectionRole": "product",
                  "contentRole": "detail", "cutType": "product", "shot": "detail",
-                 "direction": "front", "colorId": "base"}]
+                 "direction": "front", "colorId": "base"}])
 
     async def product(*args):
         return {"colors": [{"id": "base", "isBase": True, "images": [{"slot": "Front", "id": "front"}]}]}
@@ -349,9 +350,9 @@ def test_success_commit_uncertainty_never_deletes_published_cut(monkeypatch, can
         return {"copywriting": False}
 
     async def storyboard(*args):
-        return [{"id": "detail", "source": "ai", "sectionRole": "product",
+        return v4_blocks([{"id": "detail", "source": "ai", "sectionRole": "product",
                  "contentRole": "detail", "cutType": "product", "shot": "detail",
-                 "direction": "front", "colorId": "base"}]
+                 "direction": "front", "colorId": "base"}])
 
     async def product(*args):
         return {"colors": [{"id": "base", "isBase": True, "images": [{"slot": "Front", "id": "front"}]}]}
@@ -444,7 +445,7 @@ def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
         return []  # 미완료
 
     async def fake_sb(conn, pid):
-        return [{"id": "b1", "source": "ai"}, {"id": "b2", "source": "ai"}, {"id": "m", "source": "mine"}]
+        return v4_blocks([{"id": "b1", "source": "ai", "shot": "full"}, {"id": "b2", "source": "ai", "shot": "medium"}, {"id": "m", "source": "mine"}])
 
     async def fake_create_job(conn, **kw):
         seen.update(kw)
@@ -481,8 +482,8 @@ def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
     assert seen["metadata"]["aiCount"] == 2
     assert seen["metadata"]["minCuts"] == 5
     assert seen["metadata"]["storyboardDigest"] == hashlib.sha256(json.dumps(
-        [{"id": "b1", "source": "ai"}, {"id": "b2", "source": "ai"},
-         {"id": "m", "source": "mine"}],
+        v4_blocks([{"id": "b1", "source": "ai", "shot": "full"}, {"id": "b2", "source": "ai", "shot": "medium"},
+         {"id": "m", "source": "mine"}]),
         sort_keys=True, ensure_ascii=False, separators=(",", ":"),
     ).encode()).hexdigest()
     assert seen["prewarmed"] == 1
@@ -504,9 +505,9 @@ def test_detail_reservation_uses_minimum_only_for_positive_ai_count(
         return []
 
     async def fake_storyboard(conn, project_id):
-        return [{"id": f"b{i}", "source": "ai", "cutType": "product",
+        return v4_blocks([{"id": f"b{i}", "source": "ai", "cutType": "product",
                  "shot": "ghost", "direction": "front", "colorId": f"color-{i}"}
-                for i in range(ai_count)] + [{"id": "mine", "source": "mine"}]
+                for i in range(ai_count)] + [{"id": "mine", "source": "mine"}])
 
     async def fake_product(conn, project_id):
         return {"clothing_type": "top"}
@@ -558,6 +559,8 @@ def test_detail_completed_recall(client, make_token, monkeypatch):
     monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_eb)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.repo, "get_account", fake_acct)
+    async def cached_storyboard(*args): return v4_blocks([{"id": "cached", "source": "ai", "cutType": "horizon", "shot": "full"}])
+    monkeypatch.setattr(routes.repo, "get_storyboard", cached_storyboard)
     patch_route_db(monkeypatch, routes)
     res = client.post("/v1/projects/p1/detail-page:generate", headers=auth_headers(make_token))
     assert res.status_code == 200
@@ -607,7 +610,7 @@ def test_detail_product_only_storyboard_strips_real_model_before_facemarket_gate
         return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
 
     async def fake_storyboard(conn, project_id):
-        return [{"id": "p1", "source": "ai", "cutType": "product", "shot": "ghost"}]
+        return v4_blocks([{"id": "p1", "source": "ai", "cutType": "product", "shot": "ghost"}])
 
     async def forbidden_resolve(*_args, **_kwargs):
         raise AssertionError("product-only detail generation must not enter FaceMarket gate")
@@ -671,7 +674,7 @@ def _post_real_detail_generate(client, make_token, monkeypatch, storyboard):
         return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
 
     async def fake_storyboard(conn, project_id):
-        return storyboard
+        return v4_blocks(storyboard)
 
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
@@ -814,10 +817,10 @@ def test_detail_mixed_real_selection_queues_one_model_for_every_cut(
         }
 
     async def fake_storyboard(conn, project_id):
-        return [
+        return v4_blocks([
             {"id": "h1", "source": "ai", "cutType": "horizon"},
             {"id": "s1", "source": "ai", "cutType": "styling"},
-        ]
+        ])
 
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
@@ -902,7 +905,7 @@ def test_detail_current_selection_updates_lock_and_queues_snapshot_atomically(
         return []
 
     async def fake_storyboard(conn, project_id):
-        return [{"id": "b1", "source": "ai", "cutType": "horizon"}]
+        return v4_blocks([{"id": "b1", "source": "ai", "cutType": "horizon"}])
 
     async def fake_product(conn, project_id):
         return {"clothing_type": "top"}
@@ -969,7 +972,7 @@ def test_detail_denial_precedes_cache_job_and_credit(
         return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
 
     async def fake_storyboard(conn, project_id):
-        return [{"id": "b1", "source": "ai", "cutType": "horizon"}]
+        return v4_blocks([{"id": "b1", "source": "ai", "cutType": "horizon"}])
 
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
@@ -1022,7 +1025,7 @@ def test_detail_reservation_failure_does_not_commit_new_lock(
         return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
 
     async def fake_storyboard(conn, project_id):
-        return [{"id": "b1", "source": "ai", "cutType": "horizon"}]
+        return v4_blocks([{"id": "b1", "source": "ai", "cutType": "horizon"}])
 
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
@@ -1037,7 +1040,7 @@ def test_detail_reservation_failure_does_not_commit_new_lock(
         return []
 
     async def fake_storyboard(conn, project_id):
-        return [{"id": "b1", "source": "ai", "cutType": "horizon"}]
+        return v4_blocks([{"id": "b1", "source": "ai", "cutType": "horizon"}])
 
     async def fake_product(conn, project_id):
         return {"clothing_type": "top"}
@@ -1086,7 +1089,7 @@ def test_detail_cached_success_commits_verified_lock_immediately_before_return(
         return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
 
     async def fake_storyboard(conn, project_id):
-        return [{"id": "b1", "source": "ai", "cutType": "horizon"}]
+        return v4_blocks([{"id": "b1", "source": "ai", "cutType": "horizon"}])
 
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
@@ -1288,7 +1291,7 @@ def test_run_detail_page_job_reports_space_set_binding_error_without_generation(
         return {"copywriting": False}
 
     async def fake_sb(conn, pid):
-        return [
+        return v4_blocks([
             {
                 "id": "set-1",
                 "source": "ai",
@@ -1301,7 +1304,7 @@ def test_run_detail_page_job_reports_space_set_binding_error_without_generation(
                 "spaceSetMemberOrder": 1,
                 "exampleId": "missing-member",
             }
-        ]
+        ])
 
     async def fake_prod(conn, pid):
         return {"clothingType": "top"}
@@ -1459,8 +1462,8 @@ def test_run_detail_page_job_partial_failure_publishes_and_charges_completed_cut
         return {"copywriting": False}
 
     async def fake_sb(conn, pid):
-        return [{"id": "b1", "source": "ai", "cutType": "styling"},
-                {"id": "b2", "source": "ai", "cutType": "product"}]
+        return v4_blocks([{"id": "b1", "source": "ai", "cutType": "styling"},
+                {"id": "b2", "source": "ai", "cutType": "product"}])
 
     async def fake_prod(conn, pid):
         return {"colors": [{"isBase": True, "images": [
@@ -1540,9 +1543,9 @@ def test_detail_success_settles_from_requested_minimum_snapshot(
         return {"copywriting": False}
 
     async def fake_storyboard(conn, project_id):
-        return [{"id": f"b{i}", "source": "ai", "cutType": "product",
+        return v4_blocks([{"id": f"b{i}", "source": "ai", "cutType": "product",
                  "shot": "ghost", "direction": "front", "colorId": f"color-{i}"}
-                for i in range(requested)]
+                for i in range(requested)])
 
     async def fake_product(conn, project_id):
         return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
@@ -1599,8 +1602,8 @@ def test_run_detail_page_job_retries_transient_cut_failures_twice(monkeypatch):
         return {"copywriting": False}
 
     async def fake_sb(conn, pid):
-        return [{"id": "b1", "source": "ai", "cutType": "styling"},
-                {"id": "b2", "source": "ai", "cutType": "product"}]
+        return v4_blocks([{"id": "b1", "source": "ai", "cutType": "styling"},
+                {"id": "b2", "source": "ai", "cutType": "product"}])
 
     async def fake_prod(conn, pid):
         return {"colors": [{"isBase": True, "images": [
@@ -1691,11 +1694,11 @@ def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch):
         return {"copywriting": False}
 
     async def fake_sb(conn, pid):
-        return [{
+        return v4_blocks([{
             "id": "fit-with-match", "source": "ai", "sectionRole": "fit",
             "contentRole": "fit", "cutType": "horizon", "shot": "medium",
             "colorId": "col1", "matchIds": ["match-1", "match-2"],
-        }]
+        }])
 
     async def fake_prod(conn, pid):
         return {"clothingType": "top", "colors": [{
@@ -1779,14 +1782,14 @@ def test_run_detail_page_job_separates_detail_manifests_by_direction(monkeypatch
         return {"copywriting": False}
 
     async def fake_sb(conn, pid):
-        return [
+        return v4_blocks([
             {"id": "front-detail", "source": "ai", "sectionRole": "product",
              "contentRole": "detail", "cutType": "product", "shot": "detail",
              "direction": "front", "colorId": "base"},
             {"id": "back-detail", "source": "ai", "sectionRole": "product",
              "contentRole": "detail", "cutType": "product", "shot": "detail",
              "direction": "back", "colorId": "base"},
-        ]
+        ])
 
     async def fake_prod(conn, pid):
         return {"colors": [
@@ -1852,7 +1855,7 @@ def test_run_detail_page_job_fails_cut_when_any_matching_asset_is_missing(monkey
         return {"copywriting": False}
 
     async def fake_sb(conn, pid):
-        return [{
+        return v4_blocks([{
             "id": "fit-with-missing-match",
             "source": "ai",
             "sectionRole": "fit",
@@ -1861,7 +1864,7 @@ def test_run_detail_page_job_fails_cut_when_any_matching_asset_is_missing(monkey
             "shot": "medium",
             "colorId": "col1",
             "matchIds": ["match-1", "match-2"],
-        }]
+        }])
 
     async def fake_prod(conn, pid):
         return {"clothingType": "top", "colors": [{
@@ -1931,7 +1934,7 @@ def test_run_detail_page_job_uses_other_color_detail_and_keeps_normal_color_stri
         return {"copywriting": False}
 
     async def fake_sb(conn, pid):
-        return [
+        return v4_blocks([
             {
                 "id": "cross-color-detail", "source": "ai", "sectionRole": "product",
                 "contentRole": "detail", "cutType": "product", "shot": "detail",
@@ -1948,7 +1951,7 @@ def test_run_detail_page_job_uses_other_color_detail_and_keeps_normal_color_stri
                 "colorId": "base",
                 "_detailColorTransfer": {"targetName": "잘못 저장된 색상"},
             },
-        ]
+        ])
 
     async def fake_prod(conn, pid):
         return {"colors": [
@@ -1967,7 +1970,7 @@ def test_run_detail_page_job_uses_other_color_detail_and_keeps_normal_color_stri
 
     async def fake_asset(conn, uid, aid):
         captured["loaded_asset_ids"].append(aid)
-        return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
+        return {"id": str(aid), "mime_type": "image/png", "r2_key": f"k/{aid}"}
 
     async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None, **_kw):
         captured["generated_block_ids"].append(cut_spec["id"])
@@ -1999,6 +2002,16 @@ def test_run_detail_page_job_uses_other_color_detail_and_keeps_normal_color_stri
     monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
     monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    async def project_asset(conn, uid, pid, aid):
+        return await fake_asset(conn, uid, aid)
+    async def recolor(settings, provider, master, target, plan, **kwargs):
+        captured["color_stage"] = (master.data, target.data, plan.target_color_id)
+        return b"TARGET", "image/png"
+    async def create_asset(conn, **kwargs):
+        return {"id": kwargs["asset_id"]}
+    monkeypatch.setattr(dpj.repo, "get_project_asset_for_user", project_asset)
+    monkeypatch.setattr(dpj.repo, "create_asset", create_asset)
+    monkeypatch.setattr(dpj.garment_color, "apply", recolor)
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(dpj.detail_shot_runtime, "generate_verified", fake_detail)
     monkeypatch.setattr(dpj.detail_shot_runtime, "ProgressStore", lambda *_args: object())
@@ -2017,7 +2030,7 @@ def test_run_detail_page_job_uses_other_color_detail_and_keeps_normal_color_stri
         "valid-fit", "cross-color-detail", "same-color-detail",
     ]
     assert [result["blockId"] for result in captured["cut_results"]] == [
-        "valid-fit", "cross-color-detail", "same-color-detail",
+        "cross-color-detail", "valid-fit", "same-color-detail",
     ]
     transfer = captured["targets"]["cross-color-detail"]
     assert transfer["colorTransfer"] is True
@@ -2026,7 +2039,9 @@ def test_run_detail_page_job_uses_other_color_detail_and_keeps_normal_color_stri
     assert captured["targets"]["same-color-detail"] is None
     assert captured["sources"]["cross-color-detail"] == [b"k/green-front", b"k/base-detail"]
     assert captured["sources"]["same-color-detail"] == [b"k/base-front", b"k/base-detail"]
-    assert captured["manifests"]["valid-fit"] == "1. PRODUCT — front view of the garment"
+    assert captured["color_stage"] == (b"IMG", b"k/zero-front", "0")
+    assert "2. PRODUCT" in captured["manifests"]["valid-fit"]
+    assert captured["cut_assets"][1]["metadata"]["generation"]["recipe"]["colorId"] == 0
     assert captured["charge"] == 3
 
 
@@ -2039,7 +2054,7 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
         return {"copywriting": False}
 
     async def fake_sb(conn, pid):
-        return [
+        return v4_blocks([
             {"id": "all", "source": "ai", "cutType": "styling",
              "exampleId": "ex_styling_top_full_1", "refScope": "all",
              "pose": "walk"},
@@ -2054,7 +2069,7 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
              "direction": "front", "exampleId": "ex_back_pose", "refScope": "pose"},
             {"id": "named", "source": "ai", "cutType": "styling", "pose": "walk",
              "exampleId": "ex_styling_top_full_1", "refScope": "pose"},
-        ]
+        ])
 
     async def fake_prod(conn, pid):
         return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
@@ -2240,7 +2255,7 @@ def test_run_detail_page_job_attaches_set_plate_and_set_or_flat_pose(monkeypatch
         return {"copywriting": False}
 
     async def fake_sb(conn, pid):
-        return storyboard
+        return v4_blocks(storyboard)
 
     async def fake_prod(conn, pid):
         return {
@@ -2449,7 +2464,7 @@ def test_run_detail_page_job_uses_queued_model_without_mutating_storyboard(monke
         return {"copywriting": False, "selected_mannequin_id": "A-1"}
 
     async def fake_sb(conn, pid):
-        return storyboard
+        return v4_blocks(storyboard)
 
     async def fake_prod(conn, pid):
         return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
@@ -2480,7 +2495,7 @@ def test_run_detail_page_job_uses_queued_model_without_mutating_storyboard(monke
         }
         return b"IMG", "image/png"
 
-    def fake_assemble(saved_storyboard, cut_results, copy_results, product, copywriting):
+    def fake_assemble(saved_storyboard, cut_results, copy_results, product, copywriting, **_template_kwargs):
         captured["assembled_storyboard"] = saved_storyboard
         return []
 
@@ -2531,9 +2546,9 @@ def test_run_detail_page_job_uses_queued_model_without_mutating_storyboard(monke
     assert "mannequin" not in captured["product"]["manifest"].lower()
     assert "MODEL" not in captured["product"]["manifest"]
     assert captured["assembled_storyboard"] is not storyboard
-    assert [block["id"] for block in captured["assembled_storyboard"]] == ["person", "product"]
+    assert [block["id"] for block in captured["assembled_storyboard"]] == ["product", "person"]
     assert [block["contentRole"] for block in captured["assembled_storyboard"]] == [
-        "fit", "productOverview",
+        "productOverview", "fit",
     ]
     assert all("modelId" not in block and "model_id" not in block for block in storyboard)
 
@@ -2566,7 +2581,7 @@ def _run_real_detail_job(monkeypatch, storyboard, *, credits_reserved, failing_i
         return {"copywriting": False}
 
     async def fake_storyboard(conn, project_id):
-        return storyboard
+        return v4_blocks(storyboard)
 
     async def fake_product(conn, project_id):
         return {
@@ -2816,8 +2831,8 @@ def test_run_detail_page_job_full_charge_uses_reservation_time_price(monkeypatch
         return {"copywriting": False}
 
     async def fake_sb(conn, pid):
-        return [{"id": "b1", "source": "ai", "cutType": "styling"},
-                {"id": "b2", "source": "ai", "cutType": "product"}]
+        return v4_blocks([{"id": "b1", "source": "ai", "cutType": "styling"},
+                {"id": "b2", "source": "ai", "cutType": "product"}])
 
     async def fake_prod(conn, pid):
         return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
@@ -2868,9 +2883,9 @@ def test_run_detail_page_job_rejects_board_growth_before_generation(monkeypatch)
         return {"copywriting": False}
 
     async def fake_sb(conn, pid):  # 예약 시점(2블록)보다 커진 콘티
-        return [{"id": "b1", "source": "ai", "cutType": "styling"},
+        return v4_blocks([{"id": "b1", "source": "ai", "cutType": "styling"},
                 {"id": "b2", "source": "ai", "cutType": "product"},
-                {"id": "b3", "source": "ai", "cutType": "horizon"}]
+                {"id": "b3", "source": "ai", "cutType": "horizon"}])
 
     async def fake_prod(conn, pid):
         return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
@@ -2928,8 +2943,8 @@ def test_run_detail_page_job_fails_when_all_ai_blocks_lack_garment_truth(monkeyp
         return {"copywriting": False}
 
     async def fake_sb(conn, pid):
-        return [{"id": f"b{i}", "source": "ai", "cutType": "styling", "refAssetIds": ["ref1"]}
-                for i in range(3)]
+        return v4_blocks([{"id": f"b{i}", "source": "ai", "cutType": "styling", "refAssetIds": ["ref1"]}
+                for i in range(3)])
 
     async def fake_prod(conn, pid):
         return {"colors": []}   # 상품 사진 없음 + 마네킹 미선택
@@ -2989,10 +3004,10 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
         return {"copywriting": True}
 
     async def fake_sb(conn, pid):
-        return [{
+        return v4_blocks([{
             "id": "b1", "source": "ai", "sectionRole": "product", "contentRole": "detail",
-            "cutType": "horizon",
-        }]
+            "cutType": "product", "shot": "detail",
+        }])
 
     async def fake_prod(conn, pid):
         return {"colors": [{"isBase": True, "images": [
@@ -3162,8 +3177,8 @@ def test_striped_detail_page_never_publishes_uploaded_detail_photo(monkeypatch):
         return {"copywriting": False}
 
     async def storyboard(conn, project_id):
-        return [{"id": "stripe-detail", "source": "ai", "cutType": "product",
-                 "shot": "detail", "direction": "front", "colorId": "base"}]
+        return v4_blocks([{"id": "stripe-detail", "source": "ai", "cutType": "product",
+                 "shot": "detail", "direction": "front", "colorId": "base"}])
 
     async def product(conn, project_id):
         return {"name": "잔스트라이프 셔츠", "clothing_type": "top", "colors": [{
@@ -3236,12 +3251,12 @@ def test_run_detail_page_job_emits_copy_first_then_cut_events(monkeypatch):
         return {"copywriting": True}
 
     async def fake_sb(conn, pid):
-        return [
+        return v4_blocks([
             {"id": "b1", "source": "ai", "sectionRole": "styling",
              "contentRole": "hero", "cutType": "styling"},
             {"id": "b2", "source": "ai", "sectionRole": "product",
              "contentRole": "detail", "cutType": "horizon"},
-        ]
+        ])
 
     async def fake_prod(conn, pid):
         return {"colors": [{"isBase": True, "images": [
@@ -3372,17 +3387,16 @@ def test_every_non_real_stored_cut_done_carries_preview_url(monkeypatch):
 
 
 def test_assembler_wires_source_block_id_and_copy_role():
-    """editor_wait_dev_spec §2-3 — 대기 화면 컷 채움·셀러 카피 오버라이드의 매칭 키."""
-    storyboard = [{"id": "sb1", "source": "ai", "sectionRole": "styling",
-                   "contentRole": "hero", "cutType": "styling"}]
+    """Template slots preserve the late-copy and failed-cut identity contract."""
+    storyboard = [{"id": "sb1", "source": "ai", "taxonomyVersion": 4, "sectionId": "first",
+        "pageSectionKey": "emo.first", "pageSectionKind": "first", "pageDesignId": "P01-D09", "slotKey": "first.hero",
+        "contentRole": "hero", "cutType": "styling", "shot": "full"}]
     cut_results = [{"blockId": "sb1", "imageUrl": "/v1/assets/x/file", "width": 880, "height": 1320}]
-    copy_results = [{"blockId": "sb1", "texts": [{"role": "headline", "text": "헤드라인"}]}]
+    copy_results = [{"blockId": "sb1", "texts": [{"role": "tagline", "text": "한 줄 소개"}]}]
     blocks = dpj.page_assembler.assemble(storyboard, cut_results, copy_results, {}, True)
-    hero = blocks[0]
-    img = next(e for e in hero["elements"] if e["type"] == "image")
-    txt = next(e for e in hero["elements"] if e["type"] == "text")
-    assert img["sourceBlockId"] == "sb1"
-    assert txt["sourceBlockId"] == "sb1" and txt["copyRole"] == "headline"
+    elements = [e for b in blocks for e in b["elements"]]
+    assert next(e for e in elements if e["type"] == "image")["sourceBlockId"] == "sb1"
+    assert next(e for e in elements if e.get("copyRole") == "tagline")["sourceBlockId"] == "sb1"
 
 
 def test_job_events_poll_returns_json_with_after_cursor(client, make_token, monkeypatch):

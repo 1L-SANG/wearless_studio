@@ -55,7 +55,13 @@ export const isSignatureExampleId = (id) => (
 );
 
 function signatureContext(context) {
-  return typeof context === 'string' ? { gender: context } : (context || {});
+  const normalized = typeof context === 'string' ? { gender: context } : (context || {});
+  // Analysis owns classification. Omitted Analysis retains legacy flat callers,
+  // while an explicit empty classification must clear stale Product-era fields.
+  return normalized.analysis ? { ...normalized,
+    subCategory: normalized.analysis.subCategory ?? null,
+    customCategory: normalized.analysis.customCategory ?? null,
+  } : normalized;
 }
 
 function isSkirtCategory({ subCategory, customCategory }) {
@@ -125,4 +131,20 @@ export function repairSignatureCutSelections(blocks, context = {}) {
     changed: repairedIds.length > 0,
     repairedIds,
   };
+}
+
+/** D206: only the showroom's existing opening hero uses this independent pool. */
+export const isSignatureBlock = block => block?.source === 'ai'
+  && block.taxonomyVersion === 4 && block.pageSectionKind === 'first'
+  && String(block.pageSectionKey || '').startsWith('show.')
+  && block.slotKey === 'first.hero' && block.cutType === 'horizon'
+  && !block.similarSourceBlockId;
+
+/** null means that the ordinary gallery applies; an array is the complete opening pool. */
+export function signatureExamplesForBlock(block, { product = {}, analysis, gender } = {}) {
+  if (!isSignatureBlock(block)) return null;
+  return signatureCutsFor({ ...product, analysis, gender }).map(cut => ({ ...cut,
+    cutType: 'horizon', shot: 'medium', direction: 'front', sideStyle: null,
+    variants: ['all'], rank: 1,
+  }));
 }

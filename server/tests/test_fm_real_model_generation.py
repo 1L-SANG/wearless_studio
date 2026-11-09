@@ -1,3 +1,4 @@
+from storyboard_v4_cases import v4_blocks
 from types import SimpleNamespace
 
 import pytest
@@ -40,7 +41,7 @@ def generation_boundary(client, monkeypatch):
         return {"selectedModelId": state["model"], "brandUseCategory": "일반 의류"}
 
     async def storyboard(conn, pid):
-        return [{"id": "b1", "source": "ai", "sectionRole": "studio", "cutType": "horizon", "shot": "full", "direction": "front"}]
+        return v4_blocks([{"id": "b1", "source": "ai", "sectionRole": "studio", "cutType": "horizon", "shot": "full", "direction": "front"}])
 
     async def cached(conn, pid):
         return state["cached"]

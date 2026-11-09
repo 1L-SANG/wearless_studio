@@ -447,6 +447,7 @@ function ColorImageGroup({ mobile = false, group, catalogs, swatchColors, onAddF
       {base ? (
         <>
           <div className="color-bar">{colorInd}</div>
+          <p className="color-reference-note">대표 색상 사진으로 옷의 형태와 핏을 맞춰요.</p>
           <div className="slot-wells">{catalogs.angleSlots.map(wellSlot)}</div>
         </>
       ) : (
@@ -476,7 +477,7 @@ function ColorImageGroup({ mobile = false, group, catalogs, swatchColors, onAddF
       )}
 
       {/* 개수 안내는 '상품 이미지' 제목 옆 pill 로 옮겼다(2026-08-14 사용자 결정) — base 중복 제거 */}
-      {!base && <p className="cap-note">정면 사진 필수 · 색상당 최대 3장 · 현재 {used}장</p>}
+      {!base && <p className="color-reference-note">추가 색상 사진은 실제 색을 참고해요. 정면 사진 필수 · 최대 3장 · 현재 {used}장</p>}
     </div>
   );
 }

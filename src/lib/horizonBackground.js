@@ -9,7 +9,7 @@ export function horizonBackgroundMode(block) {
 // 필요 없으면 건너뛰므로, 여기서는 시그니처 또는 '옷 색에 맞춤' AI 호리존 세트 컷만 본다.
 export function needsGarmentColorMeasurement(blocks) {
   return (blocks || []).some((block) => {
-    if (block?.source === 'mine') return false;
+    if (block?.source !== 'ai') return false;
     const exampleId = block?.exampleId || block?.example_id;
     if (typeof exampleId === 'string' && exampleId.startsWith('sig_')) return true;
     return block?.cutType === 'horizon' && block?.spaceGroupId
@@ -24,7 +24,7 @@ export function updateHorizonGroupBackground(blocks, groupId, mode) {
   let changed = false;
   const next = blocks.map((block) => {
     if (block.spaceGroupId !== groupId || block.cutType !== 'horizon'
-      || block.source === 'mine' || horizonBackgroundMode(block) === mode) return block;
+      || block.source !== 'ai' || horizonBackgroundMode(block) === mode) return block;
     changed = true;
     return { ...block, horizonBackgroundMode: mode };
   });
@@ -36,6 +36,6 @@ export function updateHorizonGroupBackground(blocks, groupId, mode) {
 export function restoreHorizonGroupBackground(block, currentBlocks) {
   if (block?.cutType !== 'horizon' || !block.spaceGroupId) return block;
   const peer = currentBlocks.find(candidate => candidate.spaceGroupId === block.spaceGroupId
-    && candidate.cutType === 'horizon' && candidate.source !== 'mine');
+    && candidate.cutType === 'horizon' && candidate.source === 'ai');
   return peer ? { ...block, horizonBackgroundMode: horizonBackgroundMode(peer) } : block;
 }
