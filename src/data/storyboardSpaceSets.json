@@ -2154,8 +2154,8 @@
         }
       ],
       "name": "13 · Nearwear 12582 · 비 젖은 코인세탁소 안뜰 독립 검수 PASS",
-      "place": "industrial-yard",
-      "placeType": "industrial-yard",
+      "place": "urban-building-exterior",
+      "placeType": "urban-building-exterior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_outer_rainy_courtyard_nearwear_12582_prod03.png"
@@ -2202,8 +2202,8 @@
         }
       ],
       "name": "14 · Beidelli 3920 · 지하 주차장 로딩존 독립 검수 PASS",
-      "place": "industrial-yard",
-      "placeType": "industrial-yard",
+      "place": "building-interior",
+      "placeType": "building-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_outer_loadingzone_beidelli_3920_prod03.png"
@@ -2826,8 +2826,8 @@
         }
       ],
       "name": "06 · 조용한 보도·골목",
-      "place": "urban-alley",
-      "placeType": "urban-alley",
+      "place": "urban-building-exterior",
+      "placeType": "urban-building-exterior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-06-men-common-outdoor-quiet-alley-jogunshop-32115.png"
