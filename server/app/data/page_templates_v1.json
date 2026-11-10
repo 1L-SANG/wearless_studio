@@ -3500,7 +3500,8 @@
               "recipe": {
                 "cutType": "styling",
                 "allowedCutTypes": [
-                  "styling"
+                  "styling",
+                  "horizon"
                 ],
                 "shot": "full",
                 "allowedShots": [
@@ -4318,10 +4319,12 @@
               "recipe": {
                 "cutType": "horizon",
                 "allowedCutTypes": [
+                  "styling",
                   "horizon"
                 ],
                 "shot": "medium",
                 "allowedShots": [
+                  "full",
                   "medium"
                 ],
                 "direction": "front",

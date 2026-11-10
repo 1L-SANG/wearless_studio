@@ -40,8 +40,8 @@ const skirtCases = [
   ['custom 치마', { subCategory: null, customCategory: '플리츠 치마' }],
   ['custom 스커트', { subCategory: null, customCategory: 'A라인 스커트' }],
 ];
-const skirtIds = ['sig_women_bottom_skirt_01', 'sig_women_bottom_skirt_02'];
-const pantsIds = ['sig_women_bottom_pants_01', 'sig_women_bottom_pants_02'];
+const skirtIds = Array.from({ length: 8 }, (_, i) => `sig_women_bottom_skirt_${String(i + 2).padStart(2, '0')}`);
+const pantsIds = Array.from({ length: 9 }, (_, i) => `sig_women_bottom_pants_${String(i + 1).padStart(2, '0')}`);
 
 // The actual entry function runs all normalization and assignment passes. Only the
 // persistence serializer is replaced because importing it also imports the API.
@@ -66,7 +66,7 @@ for (const [name, category] of skirtCases) {
     assert.deepEqual(p, snapshot, 'Analysis classifications must never be added to Product');
   });
 
-  test(`R3-1 actual photo panel offers only the Analysis ${name} skirt pool`, async t => {
+  test(`R3-1 actual photo panel pins one signature from the Analysis ${name} skirt pool`, async t => {
     const p = product(), a = analysis(category);
     const panel = await storyboardPhotoPanelHarness({ block: signature(), clothingType: 'bottom',
       subCategory: a.subCategory, customCategory: a.customCategory, exampleGender: 'women' });
@@ -76,6 +76,7 @@ for (const [name, category] of skirtCases) {
     const gallery = nodes(tree).find(node => node.type === 'mood-guide');
     assert.ok(gallery);
     assert.deepEqual(gallery.props.catalogs.genExamples.map(item => item.id), skirtIds);
+    assert.ok(skirtIds.includes(gallery.props.signature.id));
   });
 }
 
@@ -125,18 +126,20 @@ for (const onlyBlockId of [null, 'signature']) test(`R3-1 ${onlyBlockId ? 'singl
     analysis: analysis({ subCategory: 'midi_skirt' }), gender: 'women', onlyBlockId };
   assert.equal(canRerollGenerationExample(before[0], options), true);
   const next = shuffleSectionExamples(before, options);
-  assert.equal(next[0].exampleId, skirtIds[1]);
+  assert.ok(skirtIds.includes(next[0].exampleId));
+  assert.notEqual(next[0].exampleId, skirtIds[0]);
+  assert.equal(shuffleSectionExamples(before, options)[0].exampleId, next[0].exampleId);
   assert.equal(before[0].exampleId, skirtIds[0]);
 });
 
 for (const [clothingType, gender, category, expected] of [
   ['bottom', 'women', {}, pantsIds],
   ['bottom', 'women', { subCategory: 'shorts' }, pantsIds],
-  ['bottom', 'men', { subCategory: 'midi_skirt' }, ['sig_men_bottom_pants_01', 'sig_men_bottom_pants_02']],
+  ['bottom', 'men', { subCategory: 'midi_skirt' }, [1,3,4,5,6,7,8].map(i => `sig_men_bottom_pants_${String(i).padStart(2,'0')}`)],
   ['top', 'men', { subCategory: 'shirt' }, ['sig_men_01', 'sig_men_02', 'sig_men_03', 'sig_men_04', 'sig_men_05']],
   ['top', 'women', { subCategory: 'knit' }, ['sig_women_01', 'sig_women_02', 'sig_women_03', 'sig_women_04']],
   ['outer', 'women', { customCategory: '코트' }, ['sig_women_01', 'sig_women_02', 'sig_women_03', 'sig_women_04']],
-  ['dress', 'women', { subCategory: 'long_dress' }, ['sig_women_dress_01', 'sig_women_dress_02']],
+  ['dress', 'women', { subCategory: 'long_dress' }, Array.from({length:6},(_,i)=>`sig_women_dress_${String(i+1).padStart(2,'0')}`)],
 ]) test(`R3-1 actual entry preserves the ${gender}/${clothingType}/${category.subCategory || 'unknown'} pool`, () => {
   const result = prepare(product(clothingType), analysis(category, gender));
   assert.ok(expected.includes(result.blocks[0].exampleId), result.blocks[0].exampleId);

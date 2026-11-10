@@ -24,7 +24,7 @@ function preview(board, run, catalogs, designId) {
     catalogs }).filter(block => block.pageSectionKey === run.key);
 }
 export function StoryboardSectionPicker({ mode, runKey, blocks, catalogs, gender, identityKind, busy,
-  onChoose, onDragChange, undoEntry, onUndo }) {
+  onChoose, onDragChange, undoEntry, onUndo, onRemove }) {
   const runs = sectionRuns(blocks), existing = runs.find(run => run.key === runKey);
   const entries = useMemo(() => mode !== 'add' ? [] : menuEntries.flatMap(entry => {
     if (entry.kind !== 'wear' && runs.some(run => run.kind === entry.kind)) return [];
@@ -59,13 +59,15 @@ export function StoryboardSectionPicker({ mode, runKey, blocks, catalogs, gender
   if (!existing) return null;
   const name = templateSectionName(existing.blocks[0]);
   return <div className={styles.sectionPicker}>
-    <div className={styles.panelHeading}><h2>{name} 디자인</h2></div>
+    <div className={`${styles.panelHeading} ${styles.panelHeadingRow}`}><h2>{name} 디자인</h2>
+      {existing.kind !== 'first' && <button type="button" className="btn" disabled={busy} onClick={() => onRemove?.(existing.key)}>섹션 빼기</button>}
+    </div>
     <div className={styles.designGrid}>{designs.map((design, index) => <button type="button" key={design.id}
       className={`${styles.designCard}${currentDesignId === design.id ? ` ${styles.designSelected}` : ''}`}
       aria-pressed={currentDesignId === design.id} disabled={busy} onClick={() => onChoose(existing.kind, existing.usage, design.id)}>
       {currentDesignId === design.id && <span className={styles.designCheck}><Icon name="check" size={12} stroke={1.5} /></span>}
       <span className={styles.designPreview}><StoryboardPreview blocks={designPreviews[index]} fit wireframe label={`${name} · ${design.displayName}`} /></span>
-      <strong>{design.displayName}</strong>{defaultDesignId === design.id && <small>기본</small>}
+      <span className={styles.designName}>{defaultDesignId === design.id && <small>기본</small>}<strong>{design.displayName}</strong></span>
     </button>)}</div>
   </div>;
 }

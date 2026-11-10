@@ -55,7 +55,7 @@ export function StoryboardPageList({ runs, page, activeKey, busy, draggingExampl
               <div role="button" tabIndex={busy ? -1 : 0} className={styles.sectionSelect} aria-current={activeKey === run.key ? 'true' : undefined}
                 aria-label={`${templateSectionName(run.blocks[0])} 열기`} aria-disabled={busy || undefined} onClick={busy ? undefined : select}
                 onKeyDown={event => { if (!busy && ['Enter', ' '].includes(event.key)) { event.preventDefault(); select(); } }}>
-                <StoryboardPreview blocks={sectionPage} label={`${templateSectionName(run.blocks[0])} 실제 모습`}
+                <StoryboardPreview blocks={sectionPage} emphasizeText label={`${templateSectionName(run.blocks[0])} 실제 모습`}
                   highlightedPosition={activeKey === run.key ? highlightedPosition : null} selectedSourceId={activeKey === run.key ? selectedSourceId : null}
                   selectedPositionId={activeKey === run.key ? selectedPositionId : null}
                   onPositionClick={busy ? undefined : position => activeKey === run.key ? onPositionSelect?.(run.key, position) : select()} />

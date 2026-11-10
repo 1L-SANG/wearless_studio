@@ -76,10 +76,10 @@ test('R2-3 only everyday wear exposes cut/set addition and the twelve-cut hint',
   for (const [kind, usage] of [['first'], ['fabric'], ['wear', 'fit'], ['review']]) {
     const markup = html(Stage, stageProps('emo', kind, usage));
     assert.doesNotMatch(markup, />＋ 컷 추가<|장소 세트 추가|12컷까지|컷 더 넣을/);
-    assert.match(markup, /사진을 누르면 오른쪽에서 바꿔요/);
+    assert.match(markup, /예시 이미지를 클릭해서 변경할 수 있어요/);
   }
   const markup = html(Stage, stageProps('emo', 'wear', 'styling'));
-  assert.match(markup, /＋ 컷 추가/); assert.match(markup, /＋ 장소 세트 추가/); assert.match(markup, /12컷까지/);
+  assert.match(markup, /＋ 컷 추가/); assert.match(markup, /＋ 장소 세트 추가/); assert.match(markup, /컷 더 넣을 수 있어요/);
 });
 test('R2-4 no stage exposes the old shuffle action', () => assert.doesNotMatch(html(Stage, stageProps('emo', 'first')), /예시 셔플/));
 test('R2-5 the floating action has no copywriting switch', () => {

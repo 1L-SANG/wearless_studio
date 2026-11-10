@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "images": {
+    "top_ghost_front": "/assets/product-presentations/v1/top_ghost_front.webp",
+    "top_ghost_back": "/assets/product-presentations/v1/top_ghost_back.webp",
+    "top_flat_front": "/assets/product-presentations/v1/top_flat_front.webp",
+    "top_flat_back": "/assets/product-presentations/v1/top_flat_back.webp",
+    "top_natural_light_front": "/assets/product-presentations/v1/top_natural_light_front.webp",
+    "top_natural_light_back": "/assets/product-presentations/v1/top_natural_light_back.webp",
+    "bottom_ghost_front": "/assets/product-presentations/v1/bottom_ghost_front.webp",
+    "bottom_ghost_back": "/assets/product-presentations/v1/bottom_ghost_back.webp",
+    "bottom_flat_front": "/assets/product-presentations/v1/bottom_flat_front.webp",
+    "bottom_flat_back": "/assets/product-presentations/v1/bottom_flat_back.webp",
+    "bottom_natural_light_front": "/assets/product-presentations/v1/bottom_natural_light_front.webp",
+    "bottom_natural_light_back": "/assets/product-presentations/v1/bottom_natural_light_back.webp",
+    "outer_ghost_front": "/assets/product-presentations/v1/outer_ghost_front.webp",
+    "outer_ghost_back": "/assets/product-presentations/v1/outer_ghost_back.webp",
+    "outer_flat_front": "/assets/product-presentations/v1/outer_flat_front.webp",
+    "outer_flat_back": "/assets/product-presentations/v1/outer_flat_back.webp",
+    "outer_natural_light_front": "/assets/product-presentations/v1/outer_natural_light_front.webp",
+    "outer_natural_light_back": "/assets/product-presentations/v1/outer_natural_light_back.webp",
+    "dress_ghost_front": "/assets/product-presentations/v1/dress_ghost_front.webp",
+    "dress_ghost_back": "/assets/product-presentations/v1/dress_ghost_back.webp",
+    "dress_flat_front": "/assets/product-presentations/v1/dress_flat_front.webp",
+    "dress_flat_back": "/assets/product-presentations/v1/dress_flat_back.webp",
+    "dress_natural_light_front": "/assets/product-presentations/v1/dress_natural_light_front.webp",
+    "dress_natural_light_back": "/assets/product-presentations/v1/dress_natural_light_back.webp"
+  }
+}

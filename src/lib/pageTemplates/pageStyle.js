@@ -30,5 +30,10 @@ export function selectTemplateStyle(templateId, now = new Date().toISOString(), 
 
 export function selectColorModeStyle(currentStyle, colorMode, now = new Date().toISOString()) {
   if (!['mono', 'point'].includes(colorMode)) throw new Error('invalid_page_style');
-  return { ...templateSelectionStyle(currentStyle), colorMode, updatedAt: now };
+  return { ...analysisPageStyle(currentStyle), colorMode, updatedAt: now };
+}
+
+export function selectFontStyle(currentStyle, fontStyle, now = new Date().toISOString()) {
+  if (!['serif', 'boldGothic', 'template'].includes(fontStyle)) throw new Error('invalid_page_style');
+  return { ...analysisPageStyle(currentStyle), fontStyle, updatedAt: now };
 }

@@ -86,12 +86,13 @@ test('R2-3 header spacing is retained for blank groups sharing a row with a name
   assert.equal(declarations('.addWithHeading')['margin-top'], 'calc(var(--sb-group-head-height) + var(--sp-8))');
   assert.ok(rule('.groupHead .pill'), 'the compact group replacement pill keeps its own dimensions');
 });
-test('R2-4 color-product captions show product names or back, with no group headings', () => {
+test('WOC4 color-product captions show only color dots and ordinals, with no group headings', () => {
   const photos = colors.map((color, i) => photo(`front${i}`, 'color_product', { colorId: color.id, cutType: 'product' }));
   photos.push(photo('back', 'color_product', { cutType: 'product', direction: 'back', slotKey: 'color_product.back' }));
   const tree = stageTree('color_product', photos);
   assert.equal(withClass(tree, styles.groupHead).length, 0);
-  assert.deepEqual(withClass(tree, styles.photoCaption).map(caption => textOf(caption.props.children[0])), ['아이보리','네이비','민트','차콜','뒷면']);
+  assert.deepEqual(withClass(tree, styles.photoCaption).map(caption => caption.props.children[0].props['aria-label']), ['아이보리','네이비','민트','차콜','아이보리']);
+  assert.ok(withClass(tree, styles.photoCaption).every(caption => caption.props.children[0].type === 'svg'));
   assert.doesNotMatch(textOf(tree), /두 번째 색/);
 });
 test('R2-4 everyday extra colors use their names and added base-color groups retain the existing label', () => {
@@ -110,13 +111,13 @@ test('R2-5 outline add is the outlined plus pill while overview remains a text a
   assert.match(addRule.border || '', /^1px solid var\(/);
   assert.equal(declarations('.outlineHead button, .back')['text-decoration'], 'underline');
 });
-test('R2-6 unclassified places omit the gray badge while known locations and the ordinal stay', () => {
+test('WOC4 place captions stay absent for both unknown and known locations while ordinals remain', () => {
   const block = photo('hero', 'first');
   const unknown = stageTree('first', [block]);
-  assert.equal(withClass(unknown, styles.photoCaption)[0].props.children[0], null);
+  assert.equal(withClass(unknown, styles.photoCaption)[0].props.children[0].type, 'svg');
   assert.doesNotMatch(textOf(unknown), /기타/); assert.match(textOf(unknown), /1번째 컷/);
   const known = stageTree('first', [block], { catalogs: { genExamples: [{ id: 'unclassified', cutType: 'styling', placeType: 'cafe' }] } });
-  assert.match(textOf(known), /카페/); assert.match(textOf(known), /1번째 컷/);
+  assert.doesNotMatch(textOf(known), /카페/); assert.match(textOf(known), /1번째 컷/);
 });
 test('R2-7 worn crops clip the exact assembled area inside a contained, letterboxed stage viewport', () => {
   const originalRegions = {

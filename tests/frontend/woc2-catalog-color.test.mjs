@@ -45,9 +45,9 @@ test('new show continuous studio keeps its original instance key and physical re
 test('show opening uses the signature pool medium front recipe', () => {
   const recipe = getTemplate('show').sections.find(s => s.kind === 'first').photoSlots.find(slot => slot.slotKey === 'hero').recipe;
   assert.equal(recipe.cutType, 'horizon'); assert.equal(recipe.direction, 'front');
-  assert.equal(recipe.shot, 'medium'); assert.deepEqual(recipe.allowedShots, ['medium']);
+  assert.equal(recipe.shot, 'medium'); assert.deepEqual(recipe.allowedShots, ['full', 'medium']);
   const block = { source: 'ai', pageSectionKind: 'first', pageSectionKey: 'show.first', slotKey: 'first.hero', pageDesignId: 'P01-D01' };
-  assert.deepEqual(slots.photoSlotForBlock(block).recipe.allowedShots, ['medium']);
+  assert.deepEqual(slots.photoSlotForBlock(block).recipe.allowedShots, ['full', 'medium']);
 });
 
 test('wear additions use life pairs and studio rotations independently of initial sections', () => {

@@ -32,7 +32,7 @@ import { uid } from '@/lib/ids.js';
 
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, Button, ProgressBar, useToast } from '@/components/ui.jsx';
-import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
+import { useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { normalizeMatchIds } from '@/lib/api/matchingItems.js';
 import { ensureSections, normalizeBoard } from '@/lib/sections.js';
 import { hasDetailSource } from '@/lib/storyboardTaxonomy.js';
@@ -84,6 +84,10 @@ import { StoryboardSpaceSetPanel } from './StoryboardSpaceSetPanel.jsx';
 import { StoryboardContinue } from './StoryboardContinue.jsx';
 import { assembleStoryboardPreview } from './storyboardPreview.js';
 import { useDetailPreviewDimensions } from './useDetailPreviewDimensions.js';
+import { StoryboardThemePicker } from './StoryboardThemePicker.jsx';
+import { createStoryboardStyleSaveQueue, saveStoryboardPageStyle } from './storyboardPageStyle.js';
+import { analysisPageStyle, selectFontStyle } from '../../lib/pageTemplates/pageStyle.js';
+import { productSectionNeedingSelection } from '../../lib/pageTemplates/productPresentation.js';
 import { useStoryboardTheme } from './useStoryboardTheme.js';
 import { automaticSectionInsertionKey } from '../../lib/pageTemplates/sectionPlacement.js';
 import { swapStoryboardPositions } from '../../lib/pageTemplates/storyboardPositions.js';
@@ -799,6 +803,19 @@ export function Storyboard({ toastOverride = null } = {}) {
   const pagePreview = useMemo(() => !blocks || !catalogs || entryNotice === 'legacyGenerated' ? []
     : assembleStoryboardPreview({ storyboard: blocks, product: catalogs.detailProduct, analysis: catalogs.analysis,
       catalogs: previewCatalogs }), [blocks, catalogs, previewCatalogs, entryNotice]);
+  const styleSaves = useMemo(() => createStoryboardStyleSaveQueue(style => saveStoryboardPageStyle(projectId, style), { projectId }), [projectId]);
+  const styleRequest = useRef(0);
+  const [pageStyleError, setPageStyleError] = useState('');
+  useEffect(() => { styleRequest.current++; setPageStyleError(''); }, [projectId]);
+  const changeFontStyle = fontStyle => {
+    const next = selectFontStyle(catalogs?.analysis?.pageStyle, fontStyle);
+    const request = ++styleRequest.current;
+    setPageStyleError('');
+    setCatalogs(current => ({ ...current, analysis: { ...current.analysis, pageStyle: next } }));
+    void styleSaves.save(next).catch(() => {
+      if (request === styleRequest.current && projectId === pidRef.current) setPageStyleError('글씨 테마를 저장하지 못했어요. 다시 골라 주세요.');
+    });
+  };
   if (loadError) return (
     <div className="wizard wide"><div className="surface sb-load-error">
       <div>{loadError.message}</div>
@@ -1146,6 +1163,11 @@ export function Storyboard({ toastOverride = null } = {}) {
   const goToMannequin = async () => {
     // 방어: UI disabled 와 별개로 함수 자체도 게이트 — 다른 호출 경로가 생겨도 미설정 블록 생성 불가
     if (blocks.length === 0) return;
+    const missingPresentation = productSectionNeedingSelection(blocks);
+    if (missingPresentation) {
+      setActiveSectionKey(missingPresentation.key); setSelectedId(missingPresentation.ids[0]); setDrawer({ mode: 'photo' });
+      toast.push('제품컷의 촬영 방식을 골라 주세요.'); return;
+    }
     if (blocks.some((b) => b.source === 'ai' && (!b.contentRole || !b.cutType))) { toast.push('생성 설정을 준비하지 못한 이미지가 있어요'); return; }
     if (unsupportedAiBlock) {
       toast.push('이 모델로 만들 수 없는 AI 컷이 있어요. 표시된 컷을 삭제하거나 연출을 바꿔주세요.');
@@ -1154,7 +1176,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     // 생성 입력은 서버가 저장된 콘티에서 읽는다 — 다음 단계로 넘기기 전에 반드시 저장.
     // 같은 직렬 체인 경유: 비행 중 자동저장 뒤에 줄서서 최신 스냅샷이 마지막에 반영됨을 보장.
     await continueAfterStoryboardFlush({
-      flush: async () => { await ensureV4StoryboardCopywriting(projectId, useAppStore.getState); return saveNow(projectId); },
+      flush: async () => { await styleSaves.wait(); await ensureV4StoryboardCopywriting(projectId, useAppStore.getState); return saveNow(projectId); },
       navigate: () => navigate('/create/mannequin'),
       onFailure: (message, error) => toast.push(message, { variant: 'error', error,
         kind: 'save_error', actionName: 'save', messageCode: 'storyboard_save_failed', blocking: true }),
@@ -1189,7 +1211,10 @@ export function Storyboard({ toastOverride = null } = {}) {
         commitSectionRemoval(pendingRemoval.key, impact);
       }} />}
     {doneBlocked && <DoneGuardModal />}
-    <PageHead title="상세페이지 초안 구성" sub="기본 구성으로 채워 뒀어요. 바꾸고 싶은 곳만 눌러요." />
+    <div className={`page-head ${styles.pageHeadWithTheme}`}><div><h1>상세페이지 초안 구성</h1><p>기본 구성으로 채워 뒀어요. 바꾸고 싶은 곳만 눌러요.</p></div>
+      <div><StoryboardThemePicker value={analysisPageStyle(catalogs.analysis?.pageStyle).fontStyle} onChange={changeFontStyle} disabled={atomicSaving} />
+        {pageStyleError && <p role="alert">{pageStyleError}</p>}</div>
+    </div>
     {mannequinFailure && <div className="sec-head" role="status">
       <p className="sec-sub handoff-title">{mannequinFailure}</p>
       <Button variant="ghost" size="sm" onClick={async () => {
@@ -1215,7 +1240,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         onRemove={removeSection} onMove={moveSection} onDropContent={dropSectionContent}
         onOverview={() => { closeInspector(); setOverview(true); }} sectionRefs={sectionRefs} />}
       <StoryboardStage run={activeRun} number={visibleRuns.findIndex(run => run.key === activeRun?.key) + 1}
-        blocks={blocks} page={page} catalogs={catalogs} photoOrdinals={photoOrdinals} selectedId={selectedId} matchClothing={matchClothing || []} identityKind={identityKind}
+        blocks={blocks} page={page} catalogs={catalogs} colorOpts={detailColorOpts} photoOrdinals={photoOrdinals} selectedId={selectedId} matchClothing={matchClothing || []} identityKind={identityKind}
         selectedViewId={selectedViewId} selectedGroupId={drawer?.mode === 'set' && setPicker?.mode === 'replace' ? setPicker.spaceGroupId : null}
         dimOthers={drawer?.mode === 'photo' || drawer?.mode === 'set' && setPicker?.mode === 'replace'} busy={atomicSaving} canDesign={sectionDesignChoices(activeRun, { storyboard: blocks, product: catalogs.detailProduct }).length > 1}
         onHoverPosition={setHighlightedPosition} onSwapPosition={swapPosition} onSwapBlocked={setSwapNotice}
@@ -1240,6 +1265,7 @@ export function Storyboard({ toastOverride = null } = {}) {
           : addSection(kind, usage, designId, automaticSectionInsertionKey(blocks, kind, usage), null, source)}
         onRemove={removeSection} onDragChange={setDraggingSectionChoice} />
         : drawer.mode === 'set' ? <StoryboardSpaceSetPanel mode={setPicker?.mode} error={setPickerError} onChoose={chooseSpaceSet}
+          projectId={projectId}
           gender={exampleGender} clothingType={clothingType} identityKind={identityKind} busy={atomicSaving}
           usage={pickerRun?.usage} cutType={pickerMembers[0]?.cutType || pickerRun?.blocks.find(block => block.source === 'ai')?.cutType}
           currentMembers={pickerMembers} remaining={12 - (pickerRun?.blocks.filter(block => block.source !== 'text').length || 0)} onExampleDrag={setDragExampleId}
@@ -1247,7 +1273,7 @@ export function Storyboard({ toastOverride = null } = {}) {
           : selected?.similarSourceBlockId ? <div className={styles.similarPanel}>
             <h2>비슷한 컷</h2><p>기준 사진이 완성되면 같은 촬영의 다른 순간으로 만들어요.</p>
             <button type="button" onClick={() => selectCard(selected.similarSourceBlockId)}>기준 컷 {photoOrdinals.get(selected.similarSourceBlockId)}번 설정 보기</button>
-          </div> : <StoryboardPhotoPanel key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts}
+          </div> : <StoryboardPhotoPanel key={selectedId} block={selected} blocks={blocks} busy={atomicSaving} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts}
             clothingType={clothingType} subCategory={composeModeSeed.subCategory} customCategory={composeModeSeed.customCategory}
             exampleGender={exampleGender} identityKind={identityKind} hasDetailImage={hasDetailImage} projectId={projectId}
             onChange={(patchValue, options) => patch(selectedId, patchValue, options)} onAtomicChange={(patchValue, options) => atomicPatch(selectedId, patchValue, options)}

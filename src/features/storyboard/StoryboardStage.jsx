@@ -6,7 +6,6 @@ import { isTextOnlySection, visibleSectionRuns } from '../../lib/pageTemplates/s
 import { reuseSlotsForBlock, reuseSourceForSlot } from '../../lib/pageTemplates/sectionDependencies.js';
 import { inferStoryboardSpaceSet } from '../../lib/storyboardSpaceSetCatalog.js';
 import { spaceSetDisplayName } from '../../lib/spaceSetDisplayNames.js';
-import { examplePlace } from '../../lib/pageTemplates/storyboardGallery.js';
 import { canPlanSimilarCut } from '../../lib/storyboardSimilarCuts.js';
 import { rejectionOfBlock } from '../../lib/identityScope.js';
 import { colorDisplayName } from '../../lib/colorwayMatching.js';
@@ -17,7 +16,7 @@ import styles from './StoryboardLayout.module.css';
 
 export const PHOTO_POSITION_DRAG_MIME = 'application/x-wearless-photo-position';
 
-export function StoryboardStage({ run, number, blocks = [], page, catalogs, photoOrdinals, selectedId, selectedViewId, selectedGroupId, dimOthers, matchClothing = [], identityKind,
+export function StoryboardStage({ run, number, blocks = [], page, catalogs, colorOpts = [], photoOrdinals, selectedId, selectedViewId, selectedGroupId, dimOthers, matchClothing = [], identityKind,
   busy, canDesign, onDesign, onSelectPhoto, onRemovePhoto, onSimilar, onAddPhoto, onAddSet, onReplaceSet,
   overview, onLeaveOverview, onSelectSection, onHoverPosition, onSwapPosition, onSwapBlocked, onPhotoDragStart, onPhotoDragEnd }) {
   const visibleKeys = visibleSectionRuns(blocks).map(section => section.key);
@@ -59,12 +58,14 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, phot
   const colorHeading = group => run.kind === 'wear' && group.kind === 'color';
   return <section className={styles.stage} data-storyboard-scroll aria-label={`${templateSectionName(run.blocks[0])} 무대`}>
     <div className={styles.stageHead}><div><h2>{number > 0 && <em>Section {number}</em>}<span>{templateSectionName(run.blocks[0])}</span></h2>
-      <p>{canAdd ? '12컷까지 넣을 수 있어요' : run.kind === 'points' && sourceNumber > 0 ? `Section ${sourceNumber} 사진에서 따와요` : isTextOnlySection(run) ? '글은 생성할 때 AI가 써요' : '사진을 누르면 오른쪽에서 바꿔요'}</p></div>
+      <p>예시 이미지를 클릭해서 변경할 수 있어요</p></div>
       <div className={`modal-actions ${styles.stageActions}`}>
-        {canDesign && <button type="button" className={styles.designButton} disabled={busy} onClick={onDesign}>섹션 디자인 바꾸기</button>}
+        {canDesign && <button type="button" className={styles.designButton} disabled={busy} onClick={onDesign}><Icon name="pencil" size={14} />섹션 디자인 변경</button>}
       </div>
     </div>
     <div className={`${styles.stageBody}${selectedGroupId ? ` ${styles.groupSelection}` : ''}`}>
+      {run.kind === 'points' && sourceNumber > 0 && <p className={styles.stageSourceNote}>Section {sourceNumber} 사진에서 따와요</p>}
+      {isTextOnlySection(run) && <p className={styles.stageSourceNote}>글은 생성할 때 AI가 써요</p>}
       {rows.map((row, rowIndex) => {
         const hasHeading = row.some(group => spaceHeading(group) || colorHeading(group));
         return <div className={styles.stageRow} key={rowIndex}>
@@ -81,11 +82,6 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, phot
           <div className={styles.groupPhotos} data-columns={group.blocks.length}>
             {group.blocks.map(block => {
               const source = block.similarSourceBlockId ? blocks.find(item => item.id === block.similarSourceBlockId) : block;
-              const example = catalogs.genExamples?.find(item => item.id === source?.exampleId);
-              const place = block.cutType === 'styling' ? examplePlace(example) : null;
-              const captionLabel = colorProducts
-                ? block.direction === 'back' || /(?:^|\.)back(?:\.|$)/.test(block.slotKey || '') ? '뒷면' : colorName(block.colorId)
-                : place && !['studio', 'unknown'].includes(place.value) ? place.label : null;
               const requiredOpening = run.kind === 'first' && block.slotKey && !block.similarSourceBlockId;
               const removable = !block.borrowed && run.kind !== 'sns' && !requiredOpening && block.pageSectionKey === run.key && (ownPhotos.length > 1 || run.blocks.some(item => item.source === 'text'));
               const sourceId = block.sourceId || block.id;
@@ -127,7 +123,9 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, phot
                   {run.kind !== 'sns' && block.pageSectionKey === run.key && canPlanSimilarCut(block) && photos.length < 12 && <button type="button" className={`btn btn-primary btn-glowring ${styles.similar}`}
                     disabled={busy} onClick={() => onSimilar(block.id)}>비슷한 컷 추가</button>}
                 </div>
-                <div className={styles.photoCaption}>{captionLabel && <span className={!colorProducts && !block.spaceGroupId && block.exampleSelectionOrigin === 'user' ? styles.detachedPlace : undefined}>{captionLabel}</span>}<strong>{ordinal}번째 컷</strong></div>
+                <div className={styles.photoCaption}>{catalogs.detailProduct?.colors?.length > 1 && <svg className={styles.captionColor} viewBox="0 0 14 14" role="img" aria-label={colorName(block.colorId)}>
+                  <circle cx="7" cy="7" r="6" fill={colorOpts.find(color => color.id === block.colorId)?.hex || 'var(--fg-3)'} />
+                </svg>}<strong>{ordinal}번째 컷</strong></div>
               </article>;
             })}
           </div>

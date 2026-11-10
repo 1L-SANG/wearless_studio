@@ -27,7 +27,7 @@ not a request to fall back to an unrelated layout.
 - The mock `buildEditorBlocksFromStoryboard` dispatches in the same way. The
   editor passes the analysis object when building its generation skeleton.
 
-## Storyboard presentation (WOC3, 2026-11-06)
+## Storyboard presentation (WOC4, 2026-11-10)
 
 Analysis offers two templates, `emo` and `show`, followed by `mono` (default) and
 `point` color cards. Both selections use the existing serialized pageStyle save
@@ -36,6 +36,14 @@ selectable template or mock query; its five layout definitions remain in the
 shared 28-design catalog. Long preview assets are
 `public/templates/previews/preview-{emo,show}-v1.webp`; preview hover/focus,
 full-view modal, missing-image fallback and reduced-motion rules are unchanged.
+
+The header offers magazine (`serif`), bold (`boldGothic`) and friendly
+(`template`) font specimens in that order. Names are titles/accessibility labels;
+the visible specimens read wearless/웨어리스. Each click optimistically updates
+pageStyle.fontStyle and joins a serialized analysis-save queue. The latest whole
+chain is registered before execution so route re-entry and next-step navigation
+wait for queued choices too. Restoring analysis or changing color mode preserves
+the chosen font; explicit template replacement retains its existing default rule.
 
 The v5 board has an outline and one four-column stage. A right overlay drawer
 never changes photo widths. Text-only `intro`/`for_you` runs and previously saved
@@ -63,7 +71,11 @@ Selected borders use primary ink; the existing pastel rotating border
 continues on the floating action. Hover/focus reveals the inset grip/up/down/trash
 pill. The opening has no tools. Boundary arrows use aria-disabled without losing
 focus, and a completed move restores the same arrow/grip. Titles also drag.
-Drop gaps appear during dragging; there are no between-section add buttons.
+Drop gaps appear during dragging; there are no between-section add buttons or
+notches. Only outline text bars use emphasizeText to increase visible thickness;
+design previews and generated text geometry are unchanged. The stage's white
+pencil button reads 섹션 디자인 변경. The design panel has names only, default
+first, and a header removal action except on the opening; it has no option toggles.
 
 `sectionRuns.js` groups the saved blocks list by contiguous `pageSectionKey`.
 That list order is page order in both assemblers, including hidden text runs.
@@ -190,13 +202,17 @@ member order and background settings; styling uses pose scope, studio its normal
 complete-example rules. Same-set choices preserve their instance. Split runs
 are rekeyed; similar followers inherit their source. Legacy ungrouped ss_ choices
 are repaired before autofill. Ordinary independent examples remain ungrouped.
-Used examples stay selectable and labeled; automatic selection still prefers
-unused members. Set names always use `spaceSetDisplayName`, including stage,
-add/replace lists and studio panels. Singleton groups outside wear have no group
+Used examples stay selectable; storyboard photo cards no longer display used
+badges or names. Automatic selection still prefers unused members. Stage group
+names continue using `spaceSetDisplayName`; picker cards contain photos/checks
+and, for studio replacements that increase the count, a cut-delta badge. Singleton groups outside wear have no group
 heading. A row reserves header cells only when at least one group actually has
 a heading; the add tile uses the same conditional offset. Color-product sections
-have no group headers: their captions show seller color names or 뒷면. Extra-color
-wear groups show the actual color name; unknown locations have no caption badge.
+have no group headers. Photo captions show the ordinal and, only with multiple
+sale colors, a color dot with an accessible name. Place and front/back caption
+words are absent. Extra-color wear group heads retain the actual color name.
+The common stage subtitle is 예시 이미지를 클릭해서 변경할 수 있어요; derived-source
+and text-only guidance remain separate in the stage body.
 Whole-set replacement/background changes retain atomic retry/save.
 
 Showroom first.hero uses the restored independent signature pool, filtered by
@@ -207,8 +223,14 @@ Women skirts select the skirt pool; unknown bottoms retain pants and women
 dresses retain their dedicated pool. An Analysis object is authoritative even
 when its category fields are null. The optional Analysis argument omitted or
 entirely null retains compatibility with older direct flat category callers.
-That panel receives only signature candidates. Entry assignment uses project-stable
-selection and preserves valid seller choices. Both category fields now participate
+Both templates' first.hero can select the single pinned signature card. New
+showroom openings use that project/slot-stable pick; emotional openings keep the
+ordinary-place default. A saved approved signature remains the card's picture as
+well as the stage's, and ordinary showroom choices survive re-entry. First-slot
+recipes allow styling/horizon and full/medium. The active pool has 39 entries;
+the two retired local/server entries remain readable. New asset metadata uses
+the existing signature generation contract and requires the owner's CDN upload.
+Entry assignment preserves valid seller choices. Both category fields now participate
 in seedProductKey and analysis-save prefetch invalidation. An untouched v4 board
 with the previous key format may rebuild once, including unknown categories and
 either template; the next resolve is stable. Edited boards are not reseeded.
@@ -220,34 +242,55 @@ to its measured one-line width. P01-D01 retains its old title/ghost layout as a
 candidate under the zero-extra-generation rule above. Switching and undo keep
 the same source cards and signature recipe; existing saved designs are not migrated.
 
-Photo drawers show the current set's other photos first. Normal set instances
-start with the other-photo controls fully absent; the inline toggle expands
-single/set modes, location tabs, framing and the 3×2 gallery. A single-member D204
-instance or a photo outside its original set starts expanded. Whole-group
-replacement stays below this individual-photo selection.
+`StoryboardPhotoGallery` is the storyboard-only picker. Place tabs retain
+cafe-first order, have no all/more option, and wrap between whole labels. Only
+places with photos eligible for the current garment, gender, framing and light
+are shown. Opening uses the photo's place when it is available, otherwise the
+first visible place. Framing/light changes that empty the active place move to
+and remember the first visible place; no available places keeps the empty message.
+The signature stays pinned regardless. The light dropdown reads 빛: 전체 and
+filters the existing soft/hard lightQuality tags. Photo framing opens at the
+current example's full/medium value. Signatures, missing photos and unknown
+framing use medium (하반신 for bottoms); the wear gallery's all-framing option is
+still manually selectable. First/review/faq use the place/framing gallery
+instead of the old cut-family pending transaction. Normal wear-set instances
+still show their same-place photos and the folded alternate-gallery control;
+one-member instances open alternates immediately.
 
-Single mode groups matching members by set into one stack (a lone matching
-member remains an ordinary photo). Its representative is the current photo when
-present. The small anchored dialog holds 96×128px photos, up to four columns,
-8px gaps, 12px padding and a 336px scroll limit. It flips/clamps within the drawer,
-uses roving arrow/Home/End focus, consumes outside clicks and closes on selection,
-drag, Esc or Tab with keyboard focus restored. CSS anchors/native popover have a
-static relative-gallery fallback and no inline positioning styles. Set mode
-retains the separate 3×2 expanded-set view.
+Matching set photos form one representative card even if only one member matches
+the framing. A click expands matching photos inline after that grid row. Cards
+have three columns and no names, descriptions, count or used badges. Keyboard
+paging moves focus to a persistent, visibly focused gallery region before old
+buttons disappear. Group replacement/add panels use the same place/light/tone
+rules and choose the whole set. The editor's separate MoodGuide keeps its existing
+single-image controls; these new storyboard rules do not change editor behavior.
 
-Each open/filter session samples at most 48 eligible entries after grouping,
-puts the current eligible photo/stack first and keeps its seeded order stable
-through paging. Seeds are transient UI state with deterministic test injection;
-neither seeds nor gallery order enter saved blocks. Used examples remain
-selectable with their badge. Initial automatic example placement is separate
-and does not use this gallery randomization.
+`exampleToneOrder.json` contains the owner's supplied tone order. Numbered cover example IDs
+sort ascending, then rotate as one ring with a project/filter-stable hash; unknown
+IDs stay in their existing order at the end. There is no 48-entry random sample in
+the new storyboard picker. Six-card pages preserve the existing paging controls,
+and the opening signature remains the first card on every page/tab. The order
+and filter state never enter saved blocks or automatic initial filling.
+
+`productPresentation.js` applies one existing productPresentation value to AI
+product/ghost cards of exactly one contiguous color_product run. Detail, mine,
+first-page and other runs are excluded. Atomic photo persistence saves/undoes the
+whole change and rolls it all back on failure. Old missing/mixed runs are shown
+without migration and require selection before their photo settings are edited
+or generation proceeds. Added/permitted moved full photos inherit their target
+run's selected mode; the new-section default remains ghost. The picker has only
+three mode cards; display-only local examples follow the clicked face, fall back
+to the same type/mode Front with a note, then a gray name-only card. Neither image
+fallback nor thumbnail failure changes the real direction/color/source recipe.
+First-ghost option/transitions and pale additions remain deferred.
+
 Drawers keep their 48px header, 12px viewport inset, focus return, Escape/blank
 click behavior and independent scrolling. Place replacement marks the whole
 current group with the existing 2px selected border and dims only other photos.
 
 The v5 body theme hides the seller aurora/orb only during this screen and mounts
 two centered, softly rotating orbs. White outline/stage panels use named scoped
-border/shadow/background tokens; panel headers use bg-2, place badges F0F0EE.
+border/shadow/background tokens; panel headers use bg-2.
 Pastel is not used as text; drop lines use ring-flow-5. The seller ADR-0021 ring
 values are inherited. Layout/panel CSS modules and scoped tokens isolate changes
 from other screens; cleanup restores their usual background. The floating action
