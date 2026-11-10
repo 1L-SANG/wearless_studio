@@ -362,7 +362,8 @@ def resolve_page_tokens(page_style=None, base_swatch_id=None, catalog=None):
     catalog, page_style = catalog or CATALOG, page_style or {}
     template = get_template(page_style.get("templateId"), catalog) or get_template(catalog["defaults"]["templateId"], catalog)
     font_style = page_style.get("fontStyle") if page_style.get("fontStyle") in catalog["fontStyles"] else catalog["defaults"]["fontStyle"]
-    color_mode = "point" if page_style.get("colorMode") == "point" else "mono"
+    neutral = not isinstance(base_swatch_id, str) or base_swatch_id not in catalog['pointPalette'] or base_swatch_id in ('white', 'gray', 'black', 'null')
+    color_mode = "point" if page_style.get("colorMode") == "point" and not neutral else "mono"
     fonts = deepcopy(template["fonts"])
     for key, override in catalog["fontStyles"][font_style].items():
         if not override:
@@ -371,12 +372,11 @@ def resolve_page_tokens(page_style=None, base_swatch_id=None, catalog=None):
         if font_style == "serif" and key == "labelEn":
             fonts[key].update(italic=template["fonts"][key].get("italic", False), uppercase=bool(template["fonts"][key].get("uppercase")), trackingEm=template["fonts"][key]["trackingEm"])
     colors = {**template["colors"], "canvas": catalog["canvasColor"]}
-    neutral = base_swatch_id not in catalog['pointPalette'] or base_swatch_id in ('white', 'gray', 'black', 'null')
     if color_mode == "point" and not neutral:
         point = catalog["pointPalette"].get(base_swatch_id or "null", catalog["pointPalette"]["null"])
         colors.update(accentInk=point["accentInk"], accentLine=point["accentLine"])
-        if template["id"] != "show":
-            colors["accentBg"] = point["accentBg"]
+        colors["accentBg"] = point["accentBg"]
+        colors["panel"] = point["accentBg"]
     colors["accentBg"] = colors.get("accentBg") or colors["panel"]
     colors["invertInk"] = colors.get("invertInk") or catalog["overlayColors"]["light"]
     colors["summaryBg"] = colors['accentBg'] if template['id'] == 'emo' and color_mode == 'point' and not neutral else colors["canvas"]

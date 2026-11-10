@@ -74,10 +74,10 @@ test('WOC5 all three named type specimens are readable and only selection adds t
   assert.doesNotMatch(read('StoryboardLayout.module.css'), /\.drawerOpen > :global\(\.page-head\) \{[^}]*opacity:/);
 });
 
-test('WOC5 intro copy spans the header grid at the approved readable size', () => {
+test('R2 intro copy stays below the top-aligned title at the approved readable size', () => {
   const css = read('StoryboardLayout.module.css');
   assert.match(css, /\.pageHeadWithTheme \{[^}]*display: grid/);
-  assert.match(css, /\.introCopy \{[^}]*grid-column: 1 \/ -1[^}]*font-size: var\(--sb-fs-intro\)/);
+  assert.match(css, /\.introCopy \{[^}]*font-size: var\(--sb-fs-intro\)/);
   assert.doesNotMatch(css.match(/\.introCopy \{([^}]+)\}/)?.[1] || '', /nowrap|word-break|overflow-wrap/);
   assert.match(readFileSync('src/styles/tokens.css', 'utf8'), /--sb-fs-intro: 16px/);
 });

@@ -17,7 +17,9 @@ const shadowPaint = shadow => {
   return color ? { x: Number(match[1]), y: Number(match[2]), blur: Number(match[3]), ...color } : null;
 };
 
-function PreviewElement({ element: el, wireframe, onScrim, emphasizeText }) {
+const tonePaint = (paint, colors) => colors && [colors.accentBg, colors.accentLine, colors.accentInk].includes(paint) ? paint : undefined;
+
+function PreviewElement({ element: el, wireframe, onScrim, emphasizeText, toneColors }) {
   const clipId = React.useId();
   if (el.hidden) return null;
   if (el.type === 'image') return <svg x={el.x} y={el.y} width={el.w} height={el.h} viewBox={`0 0 ${el.w} ${el.h}`}>
@@ -29,9 +31,10 @@ function PreviewElement({ element: el, wireframe, onScrim, emphasizeText }) {
   if (el.type === 'shape') {
     const gradient = gradientPaint(el.fill), shadow = shadowPaint(el.boxShadow);
     const gradientId = `${clipId}-gradient`, shadowId = `${clipId}-shadow`;
+    const tinted = wireframe && tonePaint(el.fill, toneColors);
     const paint = {
-      className: wireframe && !gradient ? styles.previewWireShape : undefined,
-      fill: gradient ? `url(#${gradientId})` : wireframe ? undefined : el.fill,
+      className: wireframe && !gradient && !tinted ? styles.previewWireShape : undefined,
+      fill: gradient ? `url(#${gradientId})` : wireframe ? tinted : el.fill,
       stroke: wireframe ? undefined : el.stroke, strokeWidth: el.strokeWidth || 0,
       filter: shadow ? `url(#${shadowId})` : undefined,
     };
@@ -68,7 +71,7 @@ function PreviewElement({ element: el, wireframe, onScrim, emphasizeText }) {
 
 // Preview geometry is assembled once. Copy stays as faint lines until generation.
 export function StoryboardPreview({ blocks = [], label = '페이지 미리보기', fit = false, wireframe = false,
-  highlightedPosition, selectedSourceId, selectedPositionId, onPositionClick, emphasizeText = false }) {
+  highlightedPosition, selectedSourceId, selectedPositionId, onPositionClick, emphasizeText = false, toneColors }) {
   const visible = (Array.isArray(blocks) ? blocks : []).filter(block => block && Number.isFinite(block.h) && block.h > 0);
   const height = visible.reduce((sum, block) => sum + block.h, 0) || 1;
   let y = 0;
@@ -77,7 +80,8 @@ export function StoryboardPreview({ blocks = [], label = '페이지 미리보기
     {visible.map(block => {
       const top = y; y += block.h;
       return <g key={block.id} transform={`translate(0 ${top})`}>
-        <rect width="1000" height={block.h} className={wireframe ? styles.previewWireCanvas : undefined} fill={wireframe ? undefined : block.bg} />
+        <rect width="1000" height={block.h} className={wireframe && !tonePaint(block.bg, toneColors) ? styles.previewWireCanvas : undefined}
+          fill={wireframe ? tonePaint(block.bg, toneColors) : block.bg} />
         {(block.elements || []).filter(element => element && ['x', 'y', 'w', 'h'].every(key => Number.isFinite(element[key])))
           .map(element => {
             const onScrim = wireframe && element.type === 'text'
@@ -87,7 +91,7 @@ export function StoryboardPreview({ blocks = [], label = '페이지 미리보기
             const viewId = storyboardPositionId(block, element);
             const highlighted = highlightedPosition === viewId || (!highlightedPosition && (selectedPositionId
               ? viewId === selectedPositionId : selectedSourceId && element.sourceBlockId === selectedSourceId));
-            return <React.Fragment key={element.id}><PreviewElement element={element} wireframe={wireframe} onScrim={onScrim} emphasizeText={emphasizeText} />
+            return <React.Fragment key={element.id}><PreviewElement element={element} wireframe={wireframe} onScrim={onScrim} emphasizeText={emphasizeText} toneColors={toneColors} />
               {element.type === 'image' && (onPositionClick || highlighted) && <rect x={element.x} y={element.y} width={element.w} height={element.h}
                 data-preview-position={viewId} className={`${styles.positionHit}${highlighted ? ` ${styles.positionHighlight}` : ''}`}
                 vectorEffect="non-scaling-stroke" onClick={onPositionClick ? event => { event.stopPropagation(); onPositionClick({ viewId, sourceBlockId: element.sourceBlockId, slotKey: element.slotKey }); } : undefined} />}

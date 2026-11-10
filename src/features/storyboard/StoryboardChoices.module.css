@@ -39,9 +39,10 @@
 .presentationImage > img { object-fit: contain; }
 .presentationCard strong { font-weight: 600; }
 .presentationCard small { color: var(--fg-2); font-size: var(--sb-fs-meta); text-wrap: balance; }
-.themePicker { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-8); min-width: 0; }
+.themePicker { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--sp-12); min-width: 0; }
+.inlineThemes { display: contents; }
 .themeLabel:global(.lbl) { margin: 0; color: var(--fg-1); font: 600 var(--sb-fs-sub)/1.3 var(--font-body); letter-spacing: -.01em; }
-.themes { display: flex; flex-wrap: wrap; gap: var(--sp-6); }
+.themes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-6); }
 .themeChoice { display: flex; padding: var(--sb-theme-padding); border: 0; border-radius: var(--sb-theme-radius); background: transparent; color: var(--fg-1); font: inherit; text-align: left; cursor: pointer; }
 .themeChoice:hover { background: var(--bg-2); }
 .themeSelected { box-shadow: inset 0 0 0 1.5px var(--fg-1); }
@@ -52,8 +53,8 @@
 .themeChoice[data-font-style="serif"] .themeKorean { font-family: var(--sb-theme-serif-ko); font-weight: 700; }
 .themeChoice[data-font-style="boldGothic"] .themeEnglish { font-family: var(--font-display); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .14em; }
 .themeChoice[data-font-style="boldGothic"] .themeKorean { font-family: var(--font-body); font-weight: 800; letter-spacing: -.03em; }
-.themeChoice[data-font-style="template"] .themeEnglish { font-family: var(--font-serif); font-style: italic; font-weight: 500; font-size: 19px; }
-.themeChoice[data-font-style="template"] .themeKorean { font-family: var(--font-body); font-weight: 600; }
+.templateEnglish { font-size: var(--sb-fs-head); overflow: visible; }
+.templateKorean { font-size: var(--sb-fs-intro); overflow: visible; }
 .setPanelHeader { margin-bottom: var(--sp-16); }
 .setPanelHeader h2 { margin-bottom: var(--sp-12); }
 .cutDelta { position: absolute; left: var(--sp-6); bottom: var(--sp-6); border-radius: var(--r-pill); background: var(--bg-1); color: var(--fg-1); padding: var(--sp-2) var(--sp-6); font: 600 var(--sb-fs-meta)/1.3 var(--font-body); }

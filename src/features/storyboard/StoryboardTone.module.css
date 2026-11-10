@@ -1,0 +1,13 @@
+.controls { display: grid; grid-template-columns: auto var(--sb-style-controls-width); align-items: center; column-gap: var(--sp-12); row-gap: var(--sp-8); width: max-content; max-width: 100%; min-width: 0; }
+.label:global(.lbl) { margin: 0; justify-self: start; color: var(--fg-1); font: 600 var(--sb-fs-sub)/1.3 var(--font-body); letter-spacing: -.01em; white-space: nowrap; }
+.tones { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-8); }
+.choice { position: relative; isolation: isolate; min-width: 0; min-height: var(--sb-tone-height); padding: 0 var(--sp-28) 0 var(--sp-12); overflow: hidden; border: 0; border-radius: var(--sb-theme-radius); background: var(--bg-1); color: var(--fg-1); font: 600 var(--sb-fs-btn)/1.3 var(--font-body); cursor: pointer; }
+.choice::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--sb-line-control); pointer-events: none; }
+.surface { position: absolute; z-index: -1; inset: 0; pointer-events: none; }
+.copy { display: block; overflow: visible; font: inherit; pointer-events: none; }
+.choice:hover::after { box-shadow: inset 0 0 0 1px var(--fg-1); }
+.choice.selected::after { box-shadow: inset 0 0 0 2px var(--fg-1); }
+.choice:focus-visible { outline: 2px solid var(--fg-1); outline-offset: var(--sp-3); }
+.choice:disabled { cursor: wait; }
+.check { position: absolute; right: var(--sp-8); top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: var(--sp-16); height: var(--sp-16); border-radius: var(--r-pill); background: var(--fg-1); color: var(--bg-1); pointer-events: none; }
+@media (max-width: 640px) { .controls { column-gap: var(--sp-8); width: 100%; } }

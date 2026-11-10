@@ -1095,9 +1095,9 @@ export const api = {
     if (isCurrent && !await isCurrent()) return null;
     if (Object.hasOwn(patch, 'pageStyle')) {
       if (!validPageStyle(patch.pageStyle)) throw Object.assign(new Error('페이지 스타일을 다시 골라 주세요.'), { status: 400, code: 'invalid_page_style' });
-      if (_projectId && JSON.stringify(patch.pageStyle) !== JSON.stringify(DB.analysis.pageStyle)
+      if (_projectId && patch.pageStyle.templateId !== (DB.analysis.pageStyle?.templateId || defaultPageStyle().templateId)
         && (DB.mannequins?.some(cut => !cut.previewOnly) || DB.project.latestJobs?.mannequin)) {
-        throw Object.assign(new Error('마네킹컷을 만든 뒤에는 페이지 스타일을 바꿀 수 없어요.'), { status: 409, code: 'page_style_locked' });
+        throw Object.assign(new Error('마네킹컷을 만든 뒤에는 템플릿을 바꿀 수 없어요.'), { status: 409, code: 'page_style_locked' });
       }
       lastPageStyle = clone(patch.pageStyle);
     }

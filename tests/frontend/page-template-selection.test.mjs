@@ -23,16 +23,18 @@ test('guest style is merged into the draft and the next project reads the last c
   assert.deepEqual(await mock.getLastPageStyle(), pageStyle);
 });
 
-test('mock locks all style fields once a mannequin job exists and accepts the identical value', async () => {
+for (const reason of ['cut', 'job']) test(`mock locks only the template when a mannequin ${reason} exists`, async () => {
   const prior = { mannequins: db.mannequins, jobs: db.project.latestJobs, style: db.analysis.pageStyle };
   const pageStyle = selectTemplateStyle('show');
   db.analysis.pageStyle = pageStyle;
-  db.project.latestJobs = { ...db.project.latestJobs, mannequin: { id: 'started', status: 'error' } };
+  db.mannequins = reason === 'cut' ? [{ id: 'made', previewOnly: false }] : [];
+  db.project.latestJobs = reason === 'job' ? { mannequin: { id: 'started', status: 'running' } } : {};
   try {
-    for (const patch of [{ templateId: 'emo' }, { fontStyle: 'serif' }, { colorMode: 'point' }, { updatedAt: '2026-10-29T00:00:00Z' }]) {
-      await assert.rejects(mock.saveAnalysis(db.project.id, { pageStyle: { ...pageStyle, ...patch } }), { code: 'page_style_locked', status: 409 });
+    await assert.rejects(mock.saveAnalysis(db.project.id, { pageStyle: { ...pageStyle, templateId: 'emo' } }), { code: 'page_style_locked', status: 409 });
+    for (const patch of [{ fontStyle: 'serif' }, { colorMode: 'point' }, { updatedAt: '2026-10-29T00:00:00Z' }, {}]) {
+      const next = { ...pageStyle, ...patch };
+      assert.deepEqual((await mock.saveAnalysis(db.project.id, { pageStyle: next })).pageStyle, next);
     }
-    assert.deepEqual((await mock.saveAnalysis(db.project.id, { pageStyle })).pageStyle, pageStyle);
   } finally { db.mannequins = prior.mannequins; db.project.latestJobs = prior.jobs; db.analysis.pageStyle = prior.style; }
 });
 
