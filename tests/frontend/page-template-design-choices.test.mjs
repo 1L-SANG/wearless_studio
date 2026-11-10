@@ -4,6 +4,7 @@ import { pageTemplatesCatalog, validateCatalog } from '../../src/lib/pageTemplat
 import { sectionDesignChoices, sectionDesignPhotoCount, sectionDesignGenerationCount, defaultSectionDesignId } from '../../src/lib/pageTemplates/designChoices.js';
 import { sectionRuns } from '../../src/lib/pageTemplates/sectionRuns.js';
 import { addTemplateSection, changeTemplateSectionDesign } from '../../src/lib/pageTemplates/sectionActions.js';
+import { addStageAddition, stageAdditions } from '../../src/lib/pageTemplates/stageAdditions.js';
 import { seedStoryboard } from '../../src/lib/pageTemplates/seed.js';
 import { defaultPageStyle } from '../../src/lib/pageTemplates/pageStyle.js';
 import { validateStoryboardV4 } from '../../src/lib/pageTemplates/validateStoryboard.js';
@@ -39,11 +40,20 @@ for (const templateId of ['emo', 'show']) test(`${templateId}: candidates preser
   assert.deepEqual(original, snapshot);
 });
 
-test('first openings can reuse a product photo for free while SNS retains exact position matching', () => {
+test('first ghost pairs are enabled by pale toggles while visible layouts and SNS keep their candidate rules', () => {
   const blocks = board('emo'), runs = sectionRuns(blocks);
-  assert.deepEqual(choices(blocks, runs[0]).map(design => design.id), ['P01-D09', 'P01-D01', 'P01-D11', 'P01-SHOW-01']);
+  assert.deepEqual(choices(blocks, runs[0]).map(design => design.id), ['P01-D09', 'P01-D11', 'P01-SHOW-01']);
   const show = board('show');
-  assert.deepEqual(choices(show, sectionRuns(show)[0]).map(design => design.id), ['P01-SHOW-01', 'P01-D09', 'P01-D01', 'P01-D11']);
+  assert.deepEqual(choices(show, sectionRuns(show)[0]).map(design => design.id), ['P01-SHOW-01', 'P01-D09', 'P01-D11']);
+  const base = changeTemplateSectionDesign(blocks, runs[0].key, 'P01-D11', { product });
+  const tile = stageAdditions(base, runs[0].key, { product, analysis: analysis('emo') }).find(item => item.id === 'firstGhost');
+  const paired = addStageAddition(base, runs[0].key, tile, { product, analysis: analysis('emo') });
+  const pairedRun = sectionRuns(paired)[0];
+  assert.equal(pairedRun.designId, 'P01-D01');
+  assert.equal(sectionDesignPhotoCount(pairedRun, pairedRun.designId, paired), 2);
+  assert.equal(sectionDesignGenerationCount(pairedRun, pairedRun.designId, paired, product), 1);
+  assert.deepEqual(choices(paired, pairedRun).map(design => design.id), ['P01-D09', 'P01-D11', 'P01-SHOW-01']);
+  assert.equal(changeTemplateSectionDesign(blocks, runs[0].key, 'P01-D01', { product }), blocks);
   const withSNS = addTemplateSection(blocks, product, analysis('emo'), 'sns');
   const sns = sectionRuns(withSNS).find(run => run.kind === 'sns');
   assert.deepEqual(choices(withSNS, sns).map(design => design.id), ['I09-D14']);

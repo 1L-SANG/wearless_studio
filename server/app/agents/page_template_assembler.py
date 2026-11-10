@@ -293,7 +293,7 @@ def _render_text(node, x, y, width, ctx):
     display = text or (fallback.upper() if uppercase else fallback)
     if node.get("singleLine"):
         display = re.sub(r"\s+", " ", display).strip()
-    title_wrap = node.get("titleWrap") if ctx.design_id == "P01-D09" and role == "name" else None
+    title_wrap = node.get("titleWrap") if ctx.design_id in ("P01-D09", "P01-D09-G") and role == "name" else None
     if title_wrap:
         layout_width = min(layout_width, ctx.photo_width * title_wrap["photoWidthRatio"])
         size, lines = _layout_product_title(display, layout_width, title_wrap, metrics, font.get("trackingEm") or 0)
@@ -367,22 +367,38 @@ def _resolve_photo(slot_key, ctx):
     if not slot or slot["fill"] != "reuse":
         return None
     ref = slot["reuseFrom"]
+    original = next((section for section in ctx.tokens["template"]["sections"] if section["kind"] == ref["kind"]
+                     and (not ref.get("usage") or section.get("usage") == ref["usage"])), None)
+    original_key = ctx.tokens["template"]["id"] + "." + original["instanceKey"] if original else None
+    original_run = [card for card in ctx.storyboard if card.get("pageSectionKey") == original_key]
+    # A first-page ghost is a reference to one explicitly ghost-mode product
+    # run. Missing/mixed modes and another same-kind instance never substitute.
+    if ref["kind"] == "color_product" and slot_key == "ghost":
+        whole_cuts = [card for card in original_run if card.get("source") == "ai"
+                      and card.get("cutType") == "product" and card.get("shot") == "ghost"]
+        if not whole_cuts or any(card.get("productPresentation") != "ghost" for card in whole_cuts):
+            return None
     candidates = []
-    for card in ctx.storyboard:
-        if card.get("source") == "text" or card.get("pageSectionKind") != ref["kind"]:
+    for card in original_run:
+        if card.get("source") == "text" or card.get("similarSourceBlockId") or card.get("pageSectionKind") != ref["kind"]:
             continue
         if ref.get("color") == "base" and _string(card.get("colorId")) != _string(ctx.base_color.get("id")):
             continue
+        if ref["kind"] == "color_product":
+            ai_front = (card.get("source") == "ai" and card.get("cutType") == "product"
+                        and card.get("shot") == "ghost" and card.get("direction") == "front")
+            own_images = card.get("ownImages")
+            mine_front = (card.get("source") == "mine" and card.get("direction") in (None, "front")
+                          and isinstance(own_images, list) and bool(own_images)
+                          and isinstance(own_images[0], str) and bool(own_images[0]))
+            if not ai_front and not (slot_key == "product" and mine_front):
+                continue
         section = {"instanceKey": ".".join(_string(card.get("pageSectionKey")).split(".")[1:])}
         if _matches(_local_slot(card, section), ref["slot"]):
             candidates.append(card)
     index = ref.get("index") or 0
-    original = next((section for section in ctx.tokens["template"]["sections"] if section["kind"] == ref["kind"]
-                     and (not ref.get("usage") or section.get("usage") == ref["usage"])), None)
-    original_key = ctx.tokens["template"]["id"] + "." + original["instanceKey"] if original else None
     candidates = [card for card in candidates if not ref.get("usage") or card.get("pageSectionUsage") == ref["usage"] or card["pageSectionKey"] == original_key]
-    ordered = [card for card in candidates if card["pageSectionKey"] == original_key and not card.get("similarSourceBlockId")]
-    return ordered[index] if len(ordered) > index else None
+    return candidates[index] if len(candidates) > index else None
 
 
 def _select_cards(node, ctx):
@@ -487,7 +503,7 @@ def _render_groups(groups, x, y, width, height, ctx, photo):
             gy = y + height * ((band["top"] + band["bottom"]) / 2 if band else .5) - (top + bottom) / 2
         else:
             gy = y + (max(0, height - (group.get("y") or 0) - h) if group.get("anchor") == "bottom" else group.get("y") or 0)
-        policy = group.get("positionFallback") if ctx.design_id == "P01-D09" else None
+        policy = group.get("positionFallback") if ctx.design_id in ("P01-D09", "P01-D09-G") else None
         offsets = {}
         if policy:
             inset = max(0, min(height * policy["edgeInsetRatio"], (height - (bottom - top)) / 2))

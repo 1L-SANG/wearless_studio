@@ -48,11 +48,11 @@ test('port a fallback with no prior product prototype gets the existing main gho
   assert.ok(fallback); assert.equal(fallback.productPresentation, 'ghost');
 });
 
-test('port a copied existing product recipe keeps its mode without implementing new first-ghost transitions', () => {
+test('WOC5 first ghost uses a clean ghost after removing an original flat product section', () => {
   const p = product('top'), a = analysis('show');
   const seeded = seedStoryboard(p, a).map(block => block.pageSectionKind === 'first'
     ? { ...block, pageDesignId: 'P01-D01' } : fullProducts([block]).length ? { ...block, productPresentation: 'flat' } : block);
   const key = seeded.find(block => block.pageSectionKind === 'color_product').pageSectionKey;
   const removed = removeTemplateSection(seeded, key, { product: p });
-  assert.equal(fullProducts(removed).find(block => block.pageSectionKind === 'first').productPresentation, 'flat');
+  assert.equal(fullProducts(removed).find(block => block.pageSectionKind === 'first').productPresentation, 'ghost');
 });

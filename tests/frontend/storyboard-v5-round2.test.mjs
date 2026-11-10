@@ -8,6 +8,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { loadStoryboardComponent, textOf, readStoryboard } from './helpers/storyboardComponents.mjs';
 import { defaultPageStyle } from '../../src/lib/pageTemplates/pageStyle.js';
+import { stageAdditions, addStageAddition } from '../../src/lib/pageTemplates/stageAdditions.js';
 
 let vite, Stage, Preview, Continue, Picker, SetPanel, Gallery, catalog, seedStoryboard, sectionRuns, changeDesign, spaceSets, groupId, safeName, setExamples;
 const product = { clothingType: 'top', colors: [{ id: 'base', isBase: true }] };
@@ -50,7 +51,7 @@ test('R2-1 stage, photo stacks and every set panel expose only seller set names'
   const markups = [html(Stage, props)];
   for (const clothingType of ['top', 'bottom']) for (const cut of ['styling', 'horizon']) {
     const markup = html(Gallery, { catalogs: setExamples({ genExamples: [] }), cut, shot: 'full', clothingType, gender: 'women' });
-    assert.match(markup, /장 펼치기/); markups.push(markup);
+    assert.match(markup, /컷 펼치기/); markups.push(markup);
   }
   for (const [mode, usage, cutType] of [['add', 'styling', 'styling'], ['replace', 'styling', 'styling'], ['replace', 'fit', 'horizon'], ['replace', 'styling', 'horizon']]) {
     markups.push(html(SetPanel, { mode, usage, cutType, gender: 'women', clothingType: 'top', onChoose() {} }));
@@ -72,26 +73,34 @@ test('R2-2 the invisible similar action cannot add height between a photo and it
   assert.equal(matches.at(-1)?.position, 'absolute');
 });
 
-test('R2-3 only everyday wear exposes cut/set addition and the twelve-cut hint', () => {
+test('R2-3 everyday wear offers a same-place pale cut and separate set addition without count captions', () => {
   for (const [kind, usage] of [['first'], ['fabric'], ['wear', 'fit'], ['review']]) {
     const markup = html(Stage, stageProps('emo', kind, usage));
     assert.doesNotMatch(markup, />＋ 컷 추가<|장소 세트 추가|12컷까지|컷 더 넣을/);
     assert.match(markup, /예시 이미지를 클릭해서 변경할 수 있어요/);
   }
   const markup = html(Stage, stageProps('emo', 'wear', 'styling'));
-  assert.match(markup, /＋ 컷 추가/); assert.match(markup, /＋ 장소 세트 추가/); assert.match(markup, /컷 더 넣을 수 있어요/);
+  assert.match(markup, /aria-label="같은 장소 1컷 더 넣기"/);
+  assert.match(markup, /＋ 장소 세트 추가/);
+  assert.doesNotMatch(markup, /＋ 컷 추가|12컷까지|컷 더 넣을 수 있어요|1컷 늘어나요|컷 수 그대로/);
 });
 test('R2-4 no stage exposes the old shuffle action', () => assert.doesNotMatch(html(Stage, stageProps('emo', 'first')), /예시 셔플/));
 test('R2-5 the floating action has no copywriting switch', () => {
   const markup = html(Continue, { count: 7, credits: 88, copyOn: false });
   assert.doesNotMatch(markup, /카피라이팅|role="switch"/); assert.match(markup, /다음: 마네킹컷 선택/);
 });
-test('R2-6 every design has a short seller name, and an opening may borrow a second position without another generated card', () => {
-  assert.equal(Object.keys(catalog.designs).length, 28);
+test('R2-6 paired designs have seller names and enter through the pale slot without another generated card', () => {
+  assert.equal(Object.keys(catalog.designs).length, 32);
   for (const design of Object.values(catalog.designs)) assert.ok(typeof design.displayName === 'string' && design.displayName.trim() && design.displayName.length <= 24, design.id);
   const blocks = seedStoryboard(product, analysis('emo'));
-  const changed = changeDesign(blocks, blocks[0].pageSectionKey, 'P01-D01');
+  const key = blocks[0].pageSectionKey, context = { product, analysis: analysis('emo') };
+  assert.equal(catalog.designs['P01-D09-G'].pickerHidden, true);
+  assert.equal(changeDesign(blocks, key, 'P01-D09-G', context), blocks, 'hidden paired layouts cannot be selected as a design card');
+  const addition = stageAdditions(blocks, key, context).find(item => item.kind === 'firstGhost');
+  assert.ok(addition);
+  const changed = addStageAddition(blocks, key, addition, context);
   assert.notEqual(changed, blocks);
+  assert.equal(changed[0].pageDesignId, 'P01-D09-G');
   assert.deepEqual(changed.map(block => block.id), blocks.map(block => block.id));
   assert.equal(changed.filter(block => block.source === 'ai').length, blocks.filter(block => block.source === 'ai').length);
 });
@@ -136,5 +145,5 @@ test('R2-11 the floating action is mounted outside transformed page ancestors', 
     Toggle: 'toggle', document: { body }, createPortal: (child, target) => { portals.push(target); return child; },
   });
   const tree = Action({ count: 7, credits: 88 });
-  assert.deepEqual(portals, [body]); assert.match(textOf(tree), /구성컷 7개/);
+  assert.deepEqual(portals, [body]); assert.match(textOf(tree), /구성 7컷/);
 });

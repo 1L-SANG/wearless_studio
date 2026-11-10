@@ -20,7 +20,7 @@ def test_ten_kinds_four_groups_and_default_section_instances():
     assert [group["name"] for group in CATALOG["menuGroups"]] == ["사진", "옷 자세히", "상품 설명", "후기와 소통"]
     assert [len([s for s in t["sections"] if s["presence"] == "default"]) for t in CATALOG["templates"]] == [10, 7]
     assert [s["instanceKey"] for s in get_template("show")["sections"] if s["kind"] == "points"] == ["points"]
-    assert len(CATALOG["designs"]) == 28
+    assert len(CATALOG["designs"]) == 32
 
 
 def _set_path(catalog, path, value):

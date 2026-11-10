@@ -157,7 +157,7 @@ test('WOC4 theme specimens are ordered, two-line, titled only and use the approv
   assert.ok(html.indexOf('title="매거진"')<html.indexOf('title="볼드"')&&html.indexOf('title="볼드"')<html.indexOf('title="다정"'));
   assert.equal((html.match(/>wearless</g)||[]).length,3);assert.equal((html.match(/>웨어리스</g)||[]).length,3);
   assert.doesNotMatch(html,/>매거진<|>볼드<|>다정</);
-  const tokens=readFileSync('src/styles/tokens.css','utf8');assert.match(tokens,/--sb-theme-inactive: \.35/);assert.match(tokens,/--sb-theme-width: 96px/);
+  const tokens=readFileSync('src/styles/tokens.css','utf8');assert.doesNotMatch(tokens,/--sb-theme-inactive/);assert.match(tokens,/--sb-theme-width: 96px/);
 });
 
 test('WOC4 font saves serialize fast clicks, wait for the latest request and preserve the other style fields',async()=>{

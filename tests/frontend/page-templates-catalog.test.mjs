@@ -14,6 +14,7 @@ import {
 test("catalog contains the ten kinds, four menu groups, approved first-phase designs and ordered defaults", () => {
     assert.equal(validateCatalog(catalog), catalog);
     assert.equal(Object.keys(catalog.kinds).length, 10);
+    assert.equal(Object.keys(catalog.designs).length, 32);
     assert.equal(
         (catalog.firstTitleBand.top + catalog.firstTitleBand.bottom) / 2,
         0.5,
@@ -84,6 +85,8 @@ test("catalog contains the ten kinds, four menu groups, approved first-phase des
         "P01-D09",
         "P01-D01",
         "P01-D11",
+        "P01-D09-G",
+        "P01-SHOW-01-G",
         "P02-D01",
         "P02-D02",
         "P04-D01",
@@ -92,6 +95,8 @@ test("catalog contains the ten kinds, four menu groups, approved first-phase des
         "CP-GUIDE-01",
         "T03-D01",
         "T03-D06",
+        "T03-D01-P",
+        "T03-D06-P",
         "T03-GUIDE-01",
         "T03-TEXT-01",
         "T01-D07",

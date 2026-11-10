@@ -61,7 +61,9 @@ export function StoryboardPhotoGallery({ block, catalogs, cut, shot, shotOptions
       onClick={() => group ? setExpanded(open ? null : entry.id) : choose(entry.example, entry.id)}
       draggable={!busy && Boolean(onExampleDrag) && entry.kind !== 'signature'}
       onDragStart={event => { event.dataTransfer.effectAllowed = 'copy'; event.dataTransfer.setData('text/example-id', entry.example.id); onExampleDrag?.(entry.example.id); }}
-      onDragEnd={() => onExampleDrag?.(null)}>{image(entry.example)}{chosen && <span className={styles.check}><Icon name="check" size={12} /></span>}</button>;
+      onDragEnd={() => onExampleDrag?.(null)}>{image(entry.example)}
+      {entry.kind === 'signature' && <span className={styles.signatureBadge}>시그니처</span>}
+      {chosen && <span className={styles.check}><Icon name="check" size={12} /></span>}</button>;
   };
   const cells = [];
   entries.forEach((entry, index) => {

@@ -19,7 +19,7 @@ test('unavailable saved tone selects the actual reference background while leavi
   assert.match(html, /value="garment-tone"/);
   assert.match(html, /data-selected="true"[^>]*>\s*<input[^>]*value="reference"[^>]*checked|data-selected="true"[^>]*>\s*<input[^>]*checked[^>]*value="reference"/);
   assert.match(html, /value="garment-tone"[^>]*disabled|disabled[^>]*value="garment-tone"/);
-  assert.match(html, /기존 배경/); assert.match(html, /옷 색에 맞춤/); assert.match(html, /4컷/); assert.match(html, /세트 전체 · 4장/);
+  assert.match(html, /기존 배경/); assert.match(html, /옷 색에 맞춤/); assert.match(html, /4컷/); assert.match(html, /세트 전체 · 4컷/);
   assert.doesNotMatch(html, /색상 근거를 확인한 뒤 사용할 수 있어요/);
   const available = renderToStaticMarkup(React.createElement(Control, { block, availability: { state: 'ready', available: true, reason: null }, onChange() {} }));
   assert.doesNotMatch(available, /disabled/);

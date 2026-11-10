@@ -15,6 +15,7 @@ import { assignGenerationExamples } from "../src/lib/generationExamples.js";
 import { validateStoryboardV4 } from "../src/lib/pageTemplates/validateStoryboard.js";
 import mockFullDetails from "../src/mock/detailRecommendationsFixture.json" with { type: "json" };
 import { Placeholder } from "../src/mock/placeholders.js";
+import { stageAdditions, addStageAddition } from "../src/lib/pageTemplates/stageAdditions.js";
 const path = new URL(
     "../tests/fixtures/page_templates_cases.json",
     import.meta.url,
@@ -29,7 +30,7 @@ const translateCommon = value => {
         .map(([key, item]) => [key.replace(/^guide\./, 'emo.'), translateCommon(item)]));
     return value;
 };
-fixture.cases = fixture.cases.filter(item => !/^woc[23]-/.test(item.name)).map(item => {
+fixture.cases = fixture.cases.filter(item => !/^woc[235]-/.test(item.name)).map(item => {
     if (!item.name.startsWith('guide-')) return item;
     const input = translateCommon(item.input);
     const album = item.name.includes('fit-album') || item.name === 'guide-3-point';
@@ -41,6 +42,12 @@ fixture.cases = fixture.cases.filter(item => !/^woc[23]-/.test(item.name)).map(i
     return { name: item.name.replace(/^guide-/, 'common-'), input };
 });
 fixture.catalogVersion = pageTemplatesCatalog.catalogVersion;
+// These original fixtures describe deliberate ghost recipes, not undecided
+// legacy products. Make that intention explicit under the section mode contract.
+for (const item of fixture.cases) for (const block of item.input.storyboard) {
+    if (block.source === 'ai' && block.cutType === 'product' && block.shot === 'ghost'
+        && block.pageSectionKind === 'color_product' && !block.productPresentation) block.productPresentation = 'ghost';
+}
 
 const recommendation = count => ({ version: 1, status: 'ready', candidates: [
     { id: 'fabric', kind: 'fabric', label: '원단', rank: 1, informationGroup: 'fabric', photoUse: 'standalone', visibility: 'clear', direction: 'front' },
@@ -156,7 +163,8 @@ for (const templateId of ['emo', 'show']) {
             storyboard: changeTemplateSectionDesign(present, key, designId, { product }) });
     }
     if (templateId === 'show') {
-        const ghost = changeTemplateSectionDesign(initial, 'show.first', 'P01-D01', { product });
+        const base = changeTemplateSectionDesign(initial, 'show.first', 'P01-D11', { product });
+        const ghost = addStageAddition(base, 'show.first', stageAdditions(base, 'show.first', { product, analysis })[0], { product, analysis });
         appendCase('woc3-show-retained-ghost', { product, analysis, storyboard: ghost });
         appendCase('woc3-show-ghost-source-removed', { product, analysis,
             storyboard: removeTemplateSection(ghost, 'show.color_product', { product }) });
@@ -164,7 +172,30 @@ for (const templateId of ['emo', 'show']) {
             storyboard: removeTemplateSection(initial, 'show.color_product', { product }) });
     }
 }
-for (const item of fixture.cases.filter(item => /^woc[23]-/.test(item.name))) validateStoryboardV4(item.input.storyboard);
+for (const templateId of ['emo', 'show']) {
+    const source = fixture.cases.find(item => item.name === `${templateId}-2-mono`).input;
+    const product = structuredClone(source.product), analysis = { ...structuredClone(source.analysis), detailRecommendations: recommendation(3) };
+    const initial = seedStoryboard(product, analysis, { projectId: 'fixture-woc5' });
+    for (const [kind, base] of [['first', 'P01-D11'], ['first', 'P01-D09'], ['first', 'P01-SHOW-01'], ['fabric', 'T03-D01'], ['fabric', 'T03-D06']]) {
+        const run = sectionRuns(initial).find(run => run.kind === kind);
+        const board = changeTemplateSectionDesign(initial, run.key, base, { product });
+        const paired = addStageAddition(board, run.key, stageAdditions(board, run.key, { product, analysis })[0], { product, analysis });
+        appendCase(`woc5-${templateId}-${base}-reuse`, { product, analysis, storyboard: paired });
+    }
+    for (const mode of ['flat', 'natural_light']) {
+        const board = patchStoryboardPhoto(initial, initial.find(b => b.pageSectionKind === 'color_product').id, { productPresentation: mode }, product);
+        const first = sectionRuns(board)[0], paired = addStageAddition(board, first.key,
+            stageAdditions(board, first.key, { product, analysis })[0], { product, analysis });
+        appendCase(`woc5-${templateId}-first-${mode}-dedicated`, { product, analysis, storyboard: paired });
+    }
+    const cropAnalysis = { ...analysis, detailRecommendations: recommendation(0) };
+    let cropBoard = addTemplateSection(seedStoryboard(product, cropAnalysis), product, cropAnalysis, 'points');
+    cropBoard = removeTemplateSection(cropBoard, `${templateId}.fabric`, { product });
+    const points = sectionRuns(cropBoard).find(run => run.kind === 'points');
+    cropBoard = addStageAddition(cropBoard, points.key, stageAdditions(cropBoard, points.key, { product, analysis: cropAnalysis })[0], { product, analysis: cropAnalysis });
+    appendCase(`woc5-${templateId}-crops-and-fabric`, { product, analysis: cropAnalysis, storyboard: cropBoard });
+}
+for (const item of fixture.cases.filter(item => /^woc[235]-/.test(item.name))) validateStoryboardV4(item.input.storyboard);
 const outputs = fixture.cases.map(({ input }) => ({
     blocks: assemblePage(input),
     regions: collectOverlayRegions(input),
@@ -180,7 +211,7 @@ from page_template_cases import assemble_input,collect_input_regions
 from app.agents.content_roles import validate_storyboard_v4
 values=json.load(sys.stdin)
 for value in values:
- if value['storyboard'][0]['id'].startswith(('woc2-', 'woc3-')): validate_storyboard_v4(value['storyboard'])
+ if value['storyboard'][0]['id'].startswith(('woc2-', 'woc3-', 'woc5-')): validate_storyboard_v4(value['storyboard'])
 print(json.dumps([dict(blocks=assemble_input(c),regions=collect_input_regions(c)) for c in values],ensure_ascii=False))
 `,
     ],

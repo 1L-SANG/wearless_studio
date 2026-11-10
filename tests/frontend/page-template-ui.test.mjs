@@ -147,7 +147,7 @@ test('studio photo gallery keeps published sets even when standalone examples co
   const props = { catalogs: withStoryboardSpaceSetExamples({ genExamples: rawExamples }), cut: 'horizon', shot: 'full', clothingType: 'top', gender: 'women' };
   let tree = h.render(Gallery, props);
   assert.ok(nodes(tree).some(node => node.type === 'button' && textOf(node) === '세트컷'));
-  const stack = nodes(tree).find(node => node.type === 'button' && node.props['aria-label']?.includes('장 펼치기'));
+  const stack = nodes(tree).find(node => node.type === 'button' && node.props['aria-label']?.includes('컷 펼치기'));
   assert.ok(stack);
   stack.props.onClick(); tree = h.render(Gallery, props);
   assert.ok(nodes(tree).some(node => textOf(node) === '전체 예시'));

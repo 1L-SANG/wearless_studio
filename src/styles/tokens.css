@@ -194,12 +194,9 @@
   --sb-toc-title-y: 7px;
   --sb-toc-title-x: 10px;
   --sb-toc-gap: 14px;
-  --sb-theme-inactive: .35;
   --sb-theme-width: 96px;
-  --sb-theme-gap: 10px;
   --sb-theme-radius: 10px;
-  --sb-theme-padding: 6px 10px 6px 6px;
-  --sb-theme-bar: #c9c9c5;
+  --sb-theme-padding: 6px 10px;
   --sb-theme-serif-ko: "Gowun Batang", serif;
   --sb-group-head-height: 26px;
   --sb-toc-border: rgba(34, 42, 53, .14);
@@ -214,6 +211,9 @@
   --sb-flight-duration: 520ms;
   --sb-shift-duration: 180ms;
   --sb-fs-title: 28px;
+  --sb-fs-intro: 16px;
+  --sb-pale-photo-opacity: .18;
+  --sb-pale-photo-hover-opacity: .28;
   --sb-fs-head: 17px;
   --sb-fs-sub: 15px;
   --sb-fs-body: 14px;

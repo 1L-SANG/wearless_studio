@@ -250,7 +250,7 @@ export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, sh
                 tabIndex={pageIndex === galleryPage ? 0 : -1} aria-pressed={selected}
                 aria-haspopup={singleStack ? 'dialog' : undefined} aria-expanded={singleStack ? popup?.id === item.id : undefined}
                 data-storyboard-stack={singleStack ? item.id : undefined}
-                aria-label={stack ? `${spaceSetDisplayName(item.set)}, ${members.length}장${singleStack ? '. 누르면 펼쳐요' : ' 펼치기'}` : `${examplePlace(example).label} ${example.shot === 'full' ? '전신' : clothingType === 'bottom' ? '하반신' : '상반신'} 예시`}
+                aria-label={stack ? `${spaceSetDisplayName(item.set)}, ${members.length}컷${singleStack ? '. 누르면 펼쳐요' : ' 펼치기'}` : `${examplePlace(example).label} ${example.shot === 'full' ? '전신' : clothingType === 'bottom' ? '하반신' : '상반신'} 예시`}
                 draggable={Boolean(onExampleDrag) && cut !== 'product'} onDragStart={event => drag(event, example)} onDragEnd={() => onExampleDrag?.(null)}
                 onClick={event => {
                   if (showingStacks) { setExpandedSetId(item.id); return; }
@@ -264,7 +264,7 @@ export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, sh
                 <span className={singleStack ? styles.singleStackPhoto : styles.examplePhoto}>
                 <ExampleThumb example={{ ...example, thumb: generationExampleImageSources(example).src || example.thumb }} />
                 {selected && <span className="ck"><Icon name="check" size={12} stroke={1.5} /></span>}
-                {stack && <span className={styles.stackCount}>{members.length}장</span>}
+                {stack && <span className={styles.stackCount}>{members.length}컷</span>}
                 {usedExampleIds.has(example.id) && <span className={styles.used}>이미 사용</span>}
                 </span>
               </button>

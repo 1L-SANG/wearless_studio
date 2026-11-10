@@ -57,7 +57,7 @@ def _validate_photo_slots(template_id, section, check):
         check(_positive(count) if isinstance(count, (int, float)) else isinstance(count, dict) and _positive(count.get("max")) and all(k == "detailPool" or _positive(v) for k, v in count.items()), f"photo count {template_id}.{key}")
         if slot.get("fill") == "reuse":
             ref = slot.get("reuseFrom") or {}
-            check((template_id == "show" and section.get("kind") == "first" and key == "ghost" and slot.get("contentRole") == "productOverview" and ref.get("kind") == "color_product" and ref.get("slot") == "front" and ref.get("color") == "base")
+            check(((section.get("kind"), key) in (("first", "ghost"), ("fabric", "product")) and slot.get("contentRole") == "productOverview" and ref.get("kind") == "color_product" and ref.get("slot") == "front" and ref.get("color") == "base")
                   or (section.get("kind") == "sns" and ref.get("kind") == "wear" and ref.get("usage") in ("styling", "fit") and ref.get("slot") == "g" and ref.get("index") in (0, 1)), f"reuse {template_id}.{key}")
             check(slot.get("recipe") is None, f"reuse recipe {template_id}.{key}")
             continue
@@ -119,6 +119,8 @@ def validate_catalog(catalog):
         name = design.get("displayName")
         check(isinstance(name, str) and bool(name.strip()) and len(name) <= 24, f"design displayName {key}")
         check(design.get("usage") in ("styling", "fit") if design.get("kind") == "wear" else design.get("usage") is None, f"design usage {key}")
+        if "pickerHidden" in design:
+            check(isinstance(design["pickerHidden"], bool), f"pickerHidden {key}")
         roles, photos, group_ids = set(), set(), set()
         for node in walk_layout(design.get("layout")):
             for group in [*(node.get("groups") or []), *(node.get("overlayGroups") or [])]:
@@ -132,7 +134,7 @@ def validate_catalog(catalog):
                     check(isinstance(color, str) and (HEX.fullmatch(color) or color in COLORS and color != "onPhoto"), f"overlay text color {key}.{group_id}")
                 if group.get("positionFallback") is not None:
                     policy = group["positionFallback"]
-                    check(key == "P01-D09" and isinstance(policy, dict)
+                    check(key in ("P01-D09", "P01-D09-G") and isinstance(policy, dict)
                           and policy.get("anchors") == ["center", "top", "bottom"]
                           and isinstance(policy.get("edgeInsetRatio"), (int, float))
                           and not isinstance(policy.get("edgeInsetRatio"), bool)
@@ -162,7 +164,7 @@ def validate_catalog(catalog):
                 policy = node["titleWrap"]
                 sizes = policy.get("sizes") if isinstance(policy, dict) else None
                 ratio = policy.get("photoWidthRatio") if isinstance(policy, dict) else None
-                check(key == "P01-D09" and node.get("type") == "text" and node.get("copyRole") == "name"
+                check(key in ("P01-D09", "P01-D09-G") and node.get("type") == "text" and node.get("copyRole") == "name"
                       and _positive(ratio) and ratio <= 1
                       and isinstance(sizes, list) and bool(sizes) and sizes[0] == node.get("size")
                       and all(_positive(size) and size % 1 == 0
@@ -171,7 +173,7 @@ def validate_catalog(catalog):
                       and _positive(policy.get("minSizeMaxLines")) and policy["minSizeMaxLines"] % 1 == 0
                       and policy["minSizeMaxLines"] >= policy["maxLines"], f"title wrap {key}.{node.get('copyRole')}")
             if node.get("matchText") is not None:
-                check(key == "P01-D09" and node.get("type") == "rule" and node["matchText"] == "name" and node.get("align") == "center"
+                check(key in ("P01-D09", "P01-D09-G") and node.get("type") == "rule" and node["matchText"] == "name" and node.get("align") == "center"
                       and _positive(node.get("minW")) and _positive(node.get("maxWidthRatio")) and node["maxWidthRatio"] <= 1,
                       f"rule text width {key}")
             if node.get("copyRole"):

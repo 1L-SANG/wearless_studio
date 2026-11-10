@@ -12,9 +12,12 @@
 .page:global(.sb-page) > :global(.page-head) { padding: var(--sp-28) 0 var(--sp-24); text-align: left; transition: opacity var(--sb-t-base) var(--sb-ease); }
 .page:global(.sb-page) > :global(.page-head) h1 { font-size: var(--sb-fs-title); font-weight: 700; line-height: 1.25; letter-spacing: -.03em; text-wrap: balance; }
 .page:global(.sb-page) > :global(.page-head) p { margin-top: var(--sp-8); color: var(--fg-2); font-size: var(--sb-fs-body); line-height: 1.35; letter-spacing: -.01em; }
-.pageHeadWithTheme { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--sp-20); }
+.pageHeadWithTheme { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: var(--sp-8) var(--sp-20); }
+.page:global(.sb-page) > :global(.page-head) .introCopy { grid-column: 1 / -1; margin: 0; color: var(--fg-2); font-size: var(--sb-fs-intro); line-height: 1.5; text-wrap: pretty; }
+@media (max-width: 640px) { .pageHeadWithTheme { grid-template-columns: minmax(0, 1fr); gap: var(--sp-16); } }
 .page.page.drawerOpen { margin-inline-start: 0; }
-.drawerOpen > :global(.page-head) { opacity: .4; transition: opacity var(--sb-t-base) var(--sb-ease); }
+.pageHeadWithTheme > h1, .pageHeadWithTheme > .introCopy { transition: opacity var(--sb-t-base) var(--sb-ease); }
+.drawerOpen > :global(.page-head) > h1, .drawerOpen > :global(.page-head) > .introCopy { opacity: .4; }
 .page button, .continueBar button { letter-spacing: inherit; }
 .page button:disabled, .continueBar button:disabled { opacity: .42; cursor: default; }
 .page button:focus-visible, .continueBar button:focus-visible { outline: 2px solid var(--focus); outline-offset: var(--sp-2); }
@@ -51,9 +54,10 @@
 .previewRule { stroke: var(--sb-wire-comp); }
 .positionHit { fill: transparent; stroke: none; cursor: pointer; }
 .positionHighlight { fill: var(--sb-position-veil); stroke: var(--fg-1); stroke-width: 2.4px; pointer-events: auto; }
-.sectionTools { position: absolute; z-index: 3; top: var(--sp-6); right: var(--sp-6); display: flex; align-items: center; padding: var(--sp-3); gap: var(--sp-1); border-radius: var(--r-pill); background: var(--bg-1); box-shadow: var(--elev-card); opacity: 0; pointer-events: none; transition: opacity var(--sb-t-fast); }
-.sectionRow:hover .sectionTools, .sectionRow:focus-within .sectionTools { opacity: 1; pointer-events: auto; }
-.sectionTools button { display: grid; place-items: center; width: 25px; height: 26px; border: 0; border-radius: var(--r-pill); padding: 0; background: transparent; color: var(--fg-1); cursor: pointer; }
+.sectionTools { position: absolute; z-index: 3; top: var(--sp-6); left: var(--sp-6); display: flex; align-items: center; padding: 0; gap: var(--sp-1); border-radius: var(--r-pill); background: var(--bg-1); box-shadow: var(--elev-card); }
+.sectionTools button { display: grid; place-items: center; width: var(--sp-28); height: var(--sp-28); flex: none; border: 0; border-radius: var(--r-pill); padding: 0; background: transparent; color: var(--fg-1); cursor: pointer; }
+.sectionMoveTools { display: flex; gap: var(--sp-1); width: 0; overflow: hidden; opacity: 0; pointer-events: none; }
+.sectionTools:hover .sectionMoveTools, .sectionTools:focus-within .sectionMoveTools { width: calc(var(--sp-28) * 2 + var(--sp-1)); overflow: visible; opacity: 1; pointer-events: auto; }
 .sectionTools button:hover { background: var(--bg-2); }
 .sectionTools button[aria-disabled="true"] { opacity: .3; cursor: default; }
 .sectionTools .removeSection { color: var(--fg-2); }
@@ -124,7 +128,6 @@
 .pill { min-height: 32px; border: 1px solid var(--sb-line-control); border-radius: var(--r-pill); padding: 0 14px; background: var(--bg-1); color: var(--fg-1); font: 540 var(--sb-fs-btn)/1.2 var(--font-body); cursor: pointer; transition: border-color var(--sb-t-fast), background-color var(--sb-t-fast); }
 .pill:hover { border-color: var(--fg-2); }
 .pill:active { background: var(--bg-2); }
-.addSlot small { margin-top: var(--sp-2); color: var(--fg-2); font-size: var(--sb-fs-meta); text-align: center; font-variant-numeric: tabular-nums; }
 .overview { width: 100%; max-height: calc(100vh - 284px); overflow-y: auto; scrollbar-gutter: stable; padding: 0 var(--sp-20) var(--sp-24) 0; }
 .overviewHead { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-16); margin-bottom: var(--sp-16); }
 .overviewHead h2 { font: 650 var(--sb-fs-head)/1.3 var(--font-body); letter-spacing: -.02em; text-wrap: balance; }

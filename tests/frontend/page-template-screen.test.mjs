@@ -48,7 +48,7 @@ test('both loaded storyboard screens and the old-page notice render without a br
     assert.doesNotMatch(html, /aria-label="첫 장 섹션 빼기"/);
     assert.match(html, /aria-label="페이지 구성"/);
     assert.match(html, /aria-label="첫 장 무대"/);
-    assert.match(html.replace(/<[^>]*>/g, ''), /구성컷.*예상.*크레딧.*다음: 마네킹컷 선택/);
+    assert.match(html.replace(/<[^>]*>/g, ''), /구성 \d+컷.*예상.*크레딧.*다음: 마네킹컷 선택/);
     assert.doesNotMatch(html, /콘티보드를 불러오는 중이에요|첫 화면 스타일|사진 양/);
   }
   DB.storyboard = DB.storyboard.map(b => ({ ...b, taxonomyVersion: 3 }));

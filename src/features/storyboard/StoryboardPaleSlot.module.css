@@ -1,0 +1,8 @@
+.slot { position: relative; display: block; width: 100%; aspect-ratio: 3 / 4; padding: 0; overflow: hidden; border: 1px dashed var(--sb-line-control); border-radius: var(--r-4); background: var(--bg-2); color: var(--fg-1); cursor: pointer; }
+.picture { display: block; width: 100%; height: 100%; object-fit: cover; opacity: var(--sb-pale-photo-opacity); transition: opacity var(--sb-t-fast) var(--sb-ease); }
+.label { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-8); padding: var(--sp-12); font: 600 var(--sb-fs-body)/1.5 var(--font-body); text-wrap: balance; text-align: center; }
+.label > span { font-size: var(--sb-fs-title); }
+.slot:hover:not(:disabled) .picture { opacity: var(--sb-pale-photo-hover-opacity); }
+.slot:focus-visible { outline: 2px solid var(--fg-1); outline-offset: 3px; }
+.slot:disabled { cursor: wait; }
+@media (prefers-reduced-motion: reduce) { .picture { transition: none; } }
