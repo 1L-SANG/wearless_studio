@@ -13,12 +13,12 @@
   "examples": 380,
   "sets": 74,
   "status": {
-   "ok": 212,
-   "review": 168
+   "ok": 226,
+   "review": 154
   },
   "setStatus": {
-   "ok": 57,
-   "review": 17
+   "ok": 69,
+   "review": 5
   },
   "missing": 0
  },
@@ -185,10 +185,8 @@
     "ss_set_09_men_outer_outdoor_resort_upnormal_7100_02": "medium",
     "ss_set_09_men_outer_outdoor_resort_upnormal_7100_03": "medium"
    },
-   "status": "review",
-   "conflicts": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "conflicts": []
   },
   "set_style_women_top_coast_sinoon_6575707_prod02": {
    "setType": "styling",
@@ -337,7 +335,7 @@
    "placeType": "storefront-street",
    "scene": {
     "placeGroup": "urban",
-    "urbanSubtype": "building_front",
+    "urbanSubtype": "commercial_street",
     "lightQuality": "soft",
     "lightSide": "even",
     "windowGradient": null,
@@ -402,7 +400,7 @@
    "setType": "styling",
    "placeType": "cafe-shop-interior",
    "scene": {
-    "placeGroup": "indoor_family",
+    "placeGroup": "cafe",
     "urbanSubtype": null,
     "lightQuality": "soft",
     "lightSide": "even",
@@ -426,16 +424,14 @@
     "ss_set_01_men_top_indoor_retro_counter_byslim_28625_02": "medium",
     "ss_set_01_men_top_indoor_retro_counter_byslim_28625_03": "medium"
    },
-   "status": "review",
-   "conflicts": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "conflicts": []
   },
   "set-style-women-dress-botanical-attrangs-160835-root01": {
    "setType": "styling",
    "placeType": "resort-terrace",
    "scene": {
-    "placeGroup": "outdoor_family",
+    "placeGroup": "nature",
     "urbanSubtype": null,
     "lightQuality": "soft",
     "lightSide": "even",
@@ -459,10 +455,8 @@
     "ss_set_style_women_dress_botanical_attrangs_160835_root01_02": "fullFront",
     "ss_set_style_women_dress_botanical_attrangs_160835_root01_03": "medium"
    },
-   "status": "review",
-   "conflicts": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "conflicts": []
   },
   "horizon-sequence-figma-s21-v2": {
    "setType": "horizon-sequence",
@@ -690,10 +684,8 @@
     "ss_set_style_women_top_home_hotping_48041_prod02_02": "medium",
     "ss_set_style_women_top_home_hotping_48041_prod02_03": "medium"
    },
-   "status": "review",
-   "conflicts": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "conflicts": []
   },
   "set-14-men-top-indoor-late-night-laundromat-lookple-8966": {
    "setType": "styling",
@@ -831,7 +823,7 @@
   },
   "set_style_women_outer_rainy_courtyard_nearwear_12582_prod03": {
    "setType": "styling",
-   "placeType": "industrial-yard",
+   "placeType": "urban-building-exterior",
    "scene": {
     "placeGroup": "urban",
     "urbanSubtype": "building_front",
@@ -950,10 +942,8 @@
     "ss_set_style_women_top_park_realcoco_161014511_prod02_02": "medium",
     "ss_set_style_women_top_park_realcoco_161014511_prod02_03": "medium"
    },
-   "status": "review",
-   "conflicts": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "conflicts": []
   },
   "horizon-sequence-figma-s08-v2": {
    "setType": "horizon-sequence",
@@ -1130,7 +1120,7 @@
    "setType": "styling",
    "placeType": "home-interior",
    "scene": {
-    "placeGroup": "indoor",
+    "placeGroup": "home",
     "urbanSubtype": null,
     "lightQuality": "soft",
     "lightSide": "left",
@@ -1154,16 +1144,14 @@
     "ss_set_04_men_top_indoor_window_room_anotheroffice_1881_02": "medium",
     "ss_set_04_men_top_indoor_window_room_anotheroffice_1881_03": "medium"
    },
-   "status": "review",
-   "conflicts": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "conflicts": []
   },
   "set-09-coast": {
    "setType": "styling",
    "placeType": "waterfront",
    "scene": {
-    "placeGroup": "outdoor_family",
+    "placeGroup": "nature",
     "urbanSubtype": null,
     "lightQuality": "hard",
     "lightSide": "left",
@@ -1187,17 +1175,15 @@
     "ss_set_09_coast_02": "medium",
     "ss_set_09_coast_03": "medium"
    },
-   "status": "review",
-   "conflicts": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "conflicts": []
   },
   "set-style-women-dress-night-riverwalk-maybins-40948-root07": {
    "setType": "styling",
    "placeType": "waterfront",
    "scene": {
-    "placeGroup": "outdoor_family",
-    "urbanSubtype": "urban",
+    "placeGroup": "nature",
+    "urbanSubtype": null,
     "lightQuality": "soft",
     "lightSide": "even",
     "windowGradient": null,
@@ -1220,10 +1206,8 @@
     "ss_set_style_women_dress_night_riverwalk_maybins_40948_root07_02": "medium",
     "ss_set_style_women_dress_night_riverwalk_maybins_40948_root07_03": "medium"
    },
-   "status": "review",
-   "conflicts": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "conflicts": []
   },
   "set-style-women-dress-coast-beach-hotping-48001-root05": {
    "setType": "styling",
@@ -1384,7 +1368,7 @@
   },
   "set-06-men-common-outdoor-quiet-alley-jogunshop-32115": {
    "setType": "styling",
-   "placeType": "urban-alley",
+   "placeType": "urban-building-exterior",
    "scene": {
     "placeGroup": "urban",
     "urbanSubtype": "building_front",
@@ -1417,7 +1401,7 @@
   },
   "set_style_women_outer_loadingzone_beidelli_3920_prod03": {
    "setType": "styling",
-   "placeType": "industrial-yard",
+   "placeType": "building-interior",
    "scene": {
     "placeGroup": "indoor",
     "urbanSubtype": null,
@@ -1481,7 +1465,7 @@
    "setType": "styling",
    "placeType": "resort-terrace",
    "scene": {
-    "placeGroup": "indoor",
+    "placeGroup": "nature",
     "urbanSubtype": null,
     "lightQuality": "soft",
     "lightSide": "left",
@@ -1636,8 +1620,8 @@
    "setType": "styling",
    "placeType": "waterfront",
    "scene": {
-    "placeGroup": "outdoor_family",
-    "urbanSubtype": "urban",
+    "placeGroup": "nature",
+    "urbanSubtype": null,
     "lightQuality": "soft",
     "lightSide": "even",
     "windowGradient": null,
@@ -1660,10 +1644,8 @@
     "ss_set_07_women_bottom_riverside_bbibbongunni_22538_02": "fullFront",
     "ss_set_07_women_bottom_riverside_bbibbongunni_22538_03": "fullFront"
    },
-   "status": "review",
-   "conflicts": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "conflicts": []
   },
   "set-style-women-dress-home-living-musinsa-6570399-root06": {
    "setType": "styling",
@@ -1700,7 +1682,7 @@
    "setType": "styling",
    "placeType": "cafe-shop-interior",
    "scene": {
-    "placeGroup": "home",
+    "placeGroup": "cafe",
     "urbanSubtype": null,
     "lightQuality": "soft",
     "lightSide": "left",
@@ -1800,7 +1782,7 @@
    "placeType": "park-garden",
    "scene": {
     "placeGroup": "park",
-    "urbanSubtype": "urban",
+    "urbanSubtype": null,
     "lightQuality": "hard",
     "lightSide": "left",
     "windowGradient": null,
@@ -1823,10 +1805,8 @@
     "ss_set_08_park_02": "medium",
     "ss_set_08_park_03": "medium"
    },
-   "status": "review",
-   "conflicts": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "conflicts": []
   },
   "set-01-indoor": {
    "setType": "styling",
@@ -2104,16 +2084,14 @@
     "ss_set_07_men_top_indoor_small_shop_upnormal_7126_02": "medium",
     "ss_set_07_men_top_indoor_small_shop_upnormal_7126_03": "fullBack"
    },
-   "status": "review",
-   "conflicts": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "conflicts": []
   },
   "set-12-men-common-indoor-reading-corner-gopeople-7896": {
    "setType": "styling",
    "placeType": "library-interior",
    "scene": {
-    "placeGroup": "indoor_family",
+    "placeGroup": "indoor",
     "urbanSubtype": null,
     "lightQuality": "soft",
     "lightSide": "even",
@@ -2137,10 +2115,8 @@
     "ss_set_12_men_common_indoor_reading_corner_gopeople_7896_02": "medium",
     "ss_set_12_men_common_indoor_reading_corner_gopeople_7896_03": "medium"
    },
-   "status": "review",
-   "conflicts": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "conflicts": []
   },
   "horizon-set-01-women-scarf-outer": {
    "setType": "horizon-sequence",
@@ -2244,7 +2220,7 @@
    "placeType": "storefront-street",
    "scene": {
     "placeGroup": "urban",
-    "urbanSubtype": "urban",
+    "urbanSubtype": "commercial_street",
     "lightQuality": "hard",
     "lightSide": "left",
     "windowGradient": null,
@@ -2544,13 +2520,11 @@
     "heroAppeal": 2.82,
     "fitReadable": false
    },
-   "status": "review",
-   "review": [
-    "placeGroup"
-   ],
+   "status": "ok",
+   "review": [],
    "scene": {
-    "placeGroup": null,
-    "urbanSubtype": null,
+    "placeGroup": "urban",
+    "urbanSubtype": "building_front",
     "lightQuality": "soft",
     "lightSide": "even",
     "windowGradient": null,
@@ -2924,8 +2898,7 @@
    },
    "status": "review",
    "review": [
-    "garmentFullyVisible",
-    "placeGroup"
+    "garmentFullyVisible"
    ]
   },
   "ex_styling_men_bottom_medium_snapshot_06": {
@@ -3465,10 +3438,8 @@
     "heroAppeal": 2.59,
     "fitReadable": false
    },
-   "status": "review",
-   "review": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "review": []
   },
   "ss_horizon_sequence_08_men_top_textured_03": {
    "setId": "horizon-sequence-08-men-top-textured",
@@ -3966,10 +3937,8 @@
     "heroAppeal": 2.71,
     "fitReadable": false
    },
-   "status": "review",
-   "review": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "review": []
   },
   "ss_set_02_street_01": {
    "setId": "set-02-street",
@@ -4254,12 +4223,10 @@
     "heroAppeal": 3.33,
     "fitReadable": true
    },
-   "status": "review",
-   "review": [
-    "placeGroup"
-   ],
+   "status": "ok",
+   "review": [],
    "scene": {
-    "placeGroup": null,
+    "placeGroup": "home",
     "urbanSubtype": null,
     "lightQuality": "soft",
     "lightSide": "right",
@@ -4662,10 +4629,8 @@
     "heroAppeal": 2.4,
     "fitReadable": false
    },
-   "status": "review",
-   "review": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "review": []
   },
   "ss_set_06_men_common_outdoor_quiet_alley_jogunshop_32115_03": {
    "setId": "set-06-men-common-outdoor-quiet-alley-jogunshop-32115",
@@ -4746,11 +4711,10 @@
    },
    "status": "review",
    "review": [
-    "lightSide",
-    "placeGroup"
+    "lightSide"
    ],
    "scene": {
-    "placeGroup": null,
+    "placeGroup": "cafe",
     "urbanSubtype": null,
     "lightQuality": "soft",
     "lightSide": "even",
@@ -4781,11 +4745,10 @@
    },
    "status": "review",
    "review": [
-    "garmentFullyVisible",
-    "placeGroup"
+    "garmentFullyVisible"
    ],
    "scene": {
-    "placeGroup": null,
+    "placeGroup": "cafe",
     "urbanSubtype": null,
     "lightQuality": "hard",
     "lightSide": "left",
@@ -4814,10 +4777,8 @@
     "heroAppeal": 1.99,
     "fitReadable": false
    },
-   "status": "review",
-   "review": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "review": []
   },
   "ss_set_style_women_dress_city_ivy_modimood_2928_root02_02": {
    "setId": "set-style-women-dress-city-ivy-modimood-2928-root02",
@@ -4989,10 +4950,8 @@
     "heroAppeal": 2.32,
     "fitReadable": false
    },
-   "status": "review",
-   "review": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "review": []
   },
   "ss_set_04_living_02": {
    "setId": "set-04-living",
@@ -5260,8 +5219,7 @@
    },
    "status": "review",
    "review": [
-    "emptyBottom",
-    "placeGroup"
+    "emptyBottom"
    ]
   },
   "ex_horizon_women_top_medium_back_01": {
@@ -6338,10 +6296,8 @@
     "heroAppeal": 2.47,
     "fitReadable": false
    },
-   "status": "review",
-   "review": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "review": []
   },
   "ex_styling_men_top_full_snapshot_02": {
    "setId": null,
@@ -7617,7 +7573,6 @@
    },
    "status": "review",
    "review": [
-    "placeGroup",
     "shot"
    ]
   },
@@ -8011,12 +7966,11 @@
    "status": "review",
    "review": [
     "emptyBottom",
-    "garmentFullyVisible",
-    "placeGroup"
+    "garmentFullyVisible"
    ],
    "scene": {
-    "placeGroup": null,
-    "urbanSubtype": null,
+    "placeGroup": "urban",
+    "urbanSubtype": "commercial_street",
     "lightQuality": "soft",
     "lightSide": "even",
     "windowGradient": null,
@@ -8381,10 +8335,8 @@
     "heroAppeal": 2.94,
     "fitReadable": false
    },
-   "status": "review",
-   "review": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "review": []
   },
   "ss_set_horizon_women_bottom_threetimes_7563033280596_prod01_02": {
    "setId": "set_horizon_women_bottom_threetimes_7563033280596_prod01",
@@ -8758,10 +8710,8 @@
     "heroAppeal": 2.96,
     "fitReadable": true
    },
-   "status": "review",
-   "review": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "review": []
   },
   "ex_styling_men_top_full_snapshot_01": {
    "setId": null,
@@ -9543,12 +9493,10 @@
     "heroAppeal": 1.5,
     "fitReadable": true
    },
-   "status": "review",
-   "review": [
-    "placeGroup"
-   ],
+   "status": "ok",
+   "review": [],
    "scene": {
-    "placeGroup": null,
+    "placeGroup": "cafe",
     "urbanSubtype": null,
     "lightQuality": "soft",
     "lightSide": "even",
@@ -9777,10 +9725,8 @@
     "heroAppeal": 1.99,
     "fitReadable": false
    },
-   "status": "review",
-   "review": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "review": []
   },
   "ss_set_13_sports_center_03": {
    "setId": "set-13-sports-center",
@@ -10036,8 +9982,7 @@
    },
    "status": "review",
    "review": [
-    "lightSide",
-    "placeGroup"
+    "lightSide"
    ]
   },
   "ss_horizon_set_04_men_chino_focus_04": {
@@ -10500,10 +10445,8 @@
     "heroAppeal": 2.83,
     "fitReadable": true
    },
-   "status": "review",
-   "review": [
-    "placeGroup"
-   ]
+   "status": "ok",
+   "review": []
   },
   "ss_set_style_women_top_coast_sinoon_6575707_prod02_01": {
    "setId": "set_style_women_top_coast_sinoon_6575707_prod02",
@@ -10944,7 +10887,6 @@
    "review": [
     "face",
     "lightSide",
-    "placeGroup",
     "special"
    ]
   },
@@ -11133,7 +11075,6 @@
    },
    "status": "review",
    "review": [
-    "placeGroup",
     "shot"
    ]
   },
@@ -11257,12 +11198,10 @@
     "heroAppeal": 1.92,
     "fitReadable": false
    },
-   "status": "review",
-   "review": [
-    "placeGroup"
-   ],
+   "status": "ok",
+   "review": [],
    "scene": {
-    "placeGroup": null,
+    "placeGroup": "cafe",
     "urbanSubtype": null,
     "lightQuality": "soft",
     "lightSide": "even",
@@ -12514,8 +12453,7 @@
    },
    "status": "review",
    "review": [
-    "lightHard",
-    "placeGroup"
+    "lightHard"
    ]
   },
   "ex_horizon_women_bottom_medium_side_01": {
