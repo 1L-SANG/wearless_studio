@@ -8,6 +8,7 @@ import { isHiddenStoryboardKind } from '../../lib/pageTemplates/storyboardPositi
 import { sectionDesignChoices, defaultSectionDesignId, currentSectionDesignId } from '../../lib/pageTemplates/designChoices.js';
 import { sectionDesignPreviewSample } from '../../lib/pageTemplates/designPreview.js';
 import { templateSectionName } from '../../lib/pageTemplates/slots.js';
+import { baseColorOf, resolvePageTokens } from '../../lib/pageTemplates/tokens.js';
 import { StoryboardPreview } from './StoryboardPreview.jsx';
 import { assembleStoryboardPreview } from './storyboardPreview.js';
 import { NEW_SECTION_DRAG_MIME } from './StoryboardPageList.jsx';
@@ -26,6 +27,8 @@ function preview(board, run, catalogs, designId) {
 export function StoryboardSectionPicker({ mode, runKey, blocks, catalogs, gender, identityKind, busy,
   onChoose, onDragChange, undoEntry, onUndo, onRemove }) {
   const runs = sectionRuns(blocks), existing = runs.find(run => run.key === runKey);
+  const pageTokens = resolvePageTokens(catalogs.analysis?.pageStyle, baseColorOf(catalogs.detailProduct).swatchId);
+  const toneColors = pageTokens.colorMode === 'point' ? pageTokens.colors : null;
   const entries = useMemo(() => mode !== 'add' ? [] : menuEntries.flatMap(entry => {
     if (entry.kind !== 'wear' && runs.some(run => run.kind === entry.kind)) return [];
     const board = addTemplateSection(blocks, catalogs.detailProduct, catalogs.analysis || {}, entry.kind, entry.usage,
@@ -48,7 +51,7 @@ export function StoryboardSectionPicker({ mode, runKey, blocks, catalogs, gender
       return <button type="button" key={`${entry.kind}:${entry.usage || ''}`} className={styles.sectionOption} data-default-design={entry.designId}
         disabled={busy} draggable={!busy} onDragStart={event => startDrag(event, { kind: entry.kind, usage: entry.usage, designId: entry.designId })} onDragEnd={() => onDragChange?.(false)}
         onClick={event => onChoose(entry.kind, entry.usage, entry.designId, event.currentTarget.querySelector('[data-section-flight-source]'))}>
-        <span className={styles.menuPreview} data-section-flight-source><StoryboardPreview blocks={entry.preview} fit wireframe label={`${label} 대표 레이아웃`} /></span>
+        <span className={styles.menuPreview} data-section-flight-source><StoryboardPreview blocks={entry.preview} fit wireframe toneColors={toneColors} label={`${label} 대표 레이아웃`} /></span>
         <span><strong>{label}</strong><small>{entry.kind === 'wear' ? entry.usage === 'fit'
           ? '단색 배경에서 앞, 옆, 뒤를 찍은 사진' : '카페, 골목, 집처럼 장소에서 찍은 사진'
           : definition.storyboardPhotoNote || definition.storyboardTextNote || definition.emptySellerNote || ''}</small></span>
@@ -66,7 +69,7 @@ export function StoryboardSectionPicker({ mode, runKey, blocks, catalogs, gender
       className={`${styles.designCard}${currentDesignId === design.id ? ` ${styles.designSelected}` : ''}`}
       aria-pressed={currentDesignId === design.id} disabled={busy} onClick={() => onChoose(existing.kind, existing.usage, design.id)}>
       {currentDesignId === design.id && <span className={styles.designCheck}><Icon name="check" size={12} stroke={1.5} /></span>}
-      <span className={styles.designPreview}><StoryboardPreview blocks={designPreviews[index]} fit wireframe label={`${name} · ${design.displayName}`} /></span>
+      <span className={styles.designPreview}><StoryboardPreview blocks={designPreviews[index]} fit wireframe toneColors={toneColors} label={`${name} · ${design.displayName}`} /></span>
       <span className={styles.designName}>{defaultDesignId === design.id && <small>기본</small>}<strong>{design.displayName}</strong></span>
     </button>)}</div>
   </div>;

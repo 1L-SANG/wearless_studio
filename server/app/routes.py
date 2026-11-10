@@ -1287,9 +1287,11 @@ async def save_analysis(
         if "pageStyle" in analysis:
             await repo.lock_page_style_project(conn, project_id)
             previous_style = (await repo.get_analysis(conn, project_id) or {}).get("pageStyle")
-            if analysis["pageStyle"] != previous_style and await repo.page_style_locked(conn, project_id):
+            previous_template = previous_style.get("templateId") if isinstance(previous_style, dict) else None
+            previous_template = previous_template or page_style.default_page_style()["templateId"]
+            if analysis["pageStyle"]["templateId"] != previous_template and await repo.page_style_locked(conn, project_id):
                 raise HTTPException(status_code=409, detail={"code": "page_style_locked",
-                    "message": "마네킹컷을 만든 뒤에는 페이지 스타일을 바꿀 수 없어요."})
+                    "message": "마네킹컷을 만든 뒤에는 템플릿을 바꿀 수 없어요."})
         product = await repo.get_product(conn, project_id) or {}
         if (
             product.get("clothingType") or product.get("clothing_type")

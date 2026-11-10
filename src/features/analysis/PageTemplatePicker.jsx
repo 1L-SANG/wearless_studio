@@ -1,6 +1,5 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { pageTemplatesCatalog } from '../../lib/pageTemplates/catalog.js';
-import { baseColorOf, resolvePageTokens } from '../../lib/pageTemplates/tokens.js';
 import { observePreviewMotion } from '../../lib/pageTemplates/previewMotion.js';
 import styles from './PageTemplatePicker.module.css';
 
@@ -73,34 +72,7 @@ export function TemplateOption({ template, value, onChange, onPreview }) {
   </article>;
 }
 
-export function PageColorModePicker({ value = 'mono', templateId, product, onChange, disabled = false }) {
-  const base = baseColorOf(product);
-  const label = base.name || pageTemplatesCatalog.swatchLabels[base.swatchId];
-  return <fieldset className={`${styles.picker} ${styles.colorPicker}`} disabled={disabled}>
-    <legend>색</legend>
-    <p className={styles.note}>옷 색에 맞추면 라벨, 제목, 옅은 바탕이 바뀌어요.</p>
-    <div className={styles.colorCards}>{[
-      ['mono', '모노톤', '기본이에요'], ['point', '옷 색에 맞춤', label ? `대표 색 ${label}` : '옷 대표 색에 맞춰요'],
-    ].map(([mode, title, description]) => {
-      const { colors } = resolvePageTokens({ templateId, colorMode: mode }, base.swatchId);
-      return <label key={mode} className={`${styles.card} ${styles.colorChoice}`}>
-        <input type="radio" name="page-color-mode" value={mode} checked={value === mode} onChange={() => onChange?.(mode)} />
-        <svg className={styles.colorPreview} viewBox="0 0 240 112" aria-hidden="true" focusable="false">
-          <rect width="240" height="112" fill={colors.canvas} />
-          <rect x="20" y="16" width="50" height="5" rx="2" fill={colors.accentInk} />
-          <rect x="20" y="31" width="116" height="8" rx="3" fill={colors.ink} />
-          <rect x="20" y="55" width="200" height="38" rx="8" fill={colors.accentBg} />
-          <path d="m32 72 4 4 7-8" fill="none" stroke={colors.accentInk} strokeWidth="2" />
-          <rect x="152" y="72" width="56" height="4" rx="2" fill={colors.muted} />
-          <rect x="20" y="104" width="200" height="1" fill={colors.accentLine} />
-        </svg>
-        <span className={styles.label}><b>{title}</b><small>{description}</small></span>
-      </label>;
-    })}</div>
-  </fieldset>;
-}
-
-export function PageTemplatePicker({ value, onChange, colorMode = 'mono', onColorModeChange, product, disabled = false }) {
+export function PageTemplatePicker({ value, onChange, disabled = false }) {
   const [previewId, setPreviewId] = useState(null);
   const previewTriggerRef = useRef(null);
   const templates = pageTemplatesCatalog.templates.filter(template => template.selectable);
@@ -113,7 +85,6 @@ export function PageTemplatePicker({ value, onChange, colorMode = 'mono', onColo
       <div className={styles.cards}>{templates.map(template => <TemplateOption key={template.id}
         template={template} value={value} onChange={onChange} onPreview={showPreview} />)}</div>
     </fieldset>
-    <PageColorModePicker value={colorMode} templateId={value} product={product} onChange={onColorModeChange} disabled={disabled} />
     {preview && <TemplatePreviewDialog template={preview} returnFocusTo={previewTriggerRef.current} onClose={() => setPreviewId(null)} />}
   </>;
 }

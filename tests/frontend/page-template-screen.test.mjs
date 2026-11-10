@@ -26,7 +26,7 @@ test('both loaded storyboard screens and the old-page notice render without a br
   const { selectTemplateStyle } = await vite.ssrLoadModule('/src/lib/pageTemplates/pageStyle.js');
   const { PageTemplatePicker } = await vite.ssrLoadModule('/src/features/analysis/PageTemplatePicker.jsx');
   const picker = renderToStaticMarkup(React.createElement(PageTemplatePicker, { value: 'show', onChange() {} }));
-  assert.equal((picker.match(/type="radio"/g) || []).length, 4);
+  assert.equal((picker.match(/type="radio"/g) || []).length, 2);
   assert.match(picker, /checked="" value="show"/);
   assert.match(picker, /견본 사진이에요/);
   useAppStore.setState({ projectId: DB.project.id, projectPersisted: true });

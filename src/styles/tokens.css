@@ -195,6 +195,9 @@
   --sb-toc-title-x: 10px;
   --sb-toc-gap: 14px;
   --sb-theme-width: 96px;
+  --sb-style-controls-width: calc(3 * (var(--sb-theme-width) + var(--sp-20)) + 2 * var(--sp-6));
+  --sb-tone-height: 38px;
+  --sb-tone-transition: 280ms;
   --sb-theme-radius: 10px;
   --sb-theme-padding: 6px 10px;
   --sb-theme-serif-ko: "Gowun Batang", serif;

@@ -86,9 +86,11 @@ import { StoryboardSpaceSetPanel } from './StoryboardSpaceSetPanel.jsx';
 import { StoryboardContinue } from './StoryboardContinue.jsx';
 import { assembleStoryboardPreview } from './storyboardPreview.js';
 import { useDetailPreviewDimensions } from './useDetailPreviewDimensions.js';
-import { StoryboardThemePicker } from './StoryboardThemePicker.jsx';
+import { StoryboardStyleControls } from './StoryboardStyleControls.jsx';
+import { useStoryboardTone } from './useStoryboardTone.js';
 import { createStoryboardStyleSaveQueue, saveStoryboardPageStyle } from './storyboardPageStyle.js';
-import { analysisPageStyle, selectFontStyle } from '../../lib/pageTemplates/pageStyle.js';
+import { analysisPageStyle, selectFontStyle, selectColorModeStyle } from '../../lib/pageTemplates/pageStyle.js';
+import { baseColorOf, isNeutralPageSwatch, resolvePageTokens } from '../../lib/pageTemplates/tokens.js';
 import { productSectionNeedingSelection } from '../../lib/pageTemplates/productPresentation.js';
 import { useStoryboardTheme } from './useStoryboardTheme.js';
 import { automaticSectionInsertionKey } from '../../lib/pageTemplates/sectionPlacement.js';
@@ -805,22 +807,50 @@ export function Storyboard({ toastOverride = null } = {}) {
     .flatMap(item => item.block ? [item.block] : [])], [blocks, catalogs]);
   const detailPreviewDimensions = useDetailPreviewDimensions(detailPreviewBlocks, catalogs);
   const previewCatalogs = useMemo(() => catalogs && ({ ...catalogs, detailPreviewDimensions }), [catalogs, detailPreviewDimensions]);
-  const pagePreview = useMemo(() => !blocks || !catalogs || entryNotice === 'legacyGenerated' ? []
-    : assembleStoryboardPreview({ storyboard: blocks, product: catalogs.detailProduct, analysis: catalogs.analysis,
-      catalogs: previewCatalogs }), [blocks, catalogs, previewCatalogs, entryNotice]);
   const styleSaves = useMemo(() => createStoryboardStyleSaveQueue(style => saveStoryboardPageStyle(projectId, style), { projectId }), [projectId]);
   const styleRequest = useRef(0);
+  const selectedPageStyle = analysisPageStyle(catalogs?.analysis?.pageStyle);
+  const styleValueRef = useRef(selectedPageStyle);
+  useLayoutEffect(() => { styleValueRef.current = selectedPageStyle; styleSaves.seed(selectedPageStyle); }, [projectId, selectedPageStyle, styleSaves]);
   const [pageStyleError, setPageStyleError] = useState('');
+  const [styleRollback, setStyleRollback] = useState(0);
   useEffect(() => { styleRequest.current++; setPageStyleError(''); }, [projectId]);
-  const changeFontStyle = fontStyle => {
-    const next = selectFontStyle(catalogs?.analysis?.pageStyle, fontStyle);
+  const changePageStyle = changes => {
+    const next = changes.fontStyle ? selectFontStyle(styleValueRef.current, changes.fontStyle)
+      : selectColorModeStyle(styleValueRef.current, changes.colorMode);
+    styleValueRef.current = next;
     const request = ++styleRequest.current;
     setPageStyleError('');
     setCatalogs(current => ({ ...current, analysis: { ...current.analysis, pageStyle: next } }));
-    void styleSaves.save(next).catch(() => {
-      if (request === styleRequest.current && projectId === pidRef.current) setPageStyleError('글씨 테마를 저장하지 못했어요. 다시 골라 주세요.');
+    // Prefetched controls are interactive before pidRef binds the board loader.
+    // Use the live project boundary for style replies, including the first failure.
+    void styleSaves.save(next).then(() => {
+      if (request !== styleRequest.current || projectId !== useAppStore.getState().projectId) return;
+      const saved = styleSaves.confirmed();
+      styleValueRef.current = saved;
+      setCatalogs(current => ({ ...current, analysis: { ...current.analysis, pageStyle: saved } }));
+    }).catch(() => {
+      if (request !== styleRequest.current || projectId !== useAppStore.getState().projectId) return;
+      const saved = styleSaves.confirmed();
+      styleValueRef.current = saved;
+      setCatalogs(current => ({ ...current, analysis: { ...current.analysis, pageStyle: saved } }));
+      setStyleRollback(value => value + 1);
+      setPageStyleError('페이지 스타일을 저장하지 못했어요. 다시 골라 주세요.');
     });
   };
+  const tone = useStoryboardTone({ projectId, pageStyle: selectedPageStyle, product: catalogs?.detailProduct,
+    resetKey: styleRollback, sectionCount: blocks ? visibleSectionRuns(blocks).length : 0, onChange: colorMode => changePageStyle({ colorMode }) });
+  const toneCatalogs = useMemo(() => previewCatalogs && ({ ...previewCatalogs,
+    analysis: { ...catalogs.analysis, pageStyle: { ...selectedPageStyle, colorMode: tone.mode } } }), [previewCatalogs, selectedPageStyle, tone.mode]);
+  const tonePages = useMemo(() => {
+    if (!blocks || !catalogs || entryNotice === 'legacyGenerated') return { mono: [], point: [] };
+    const assemble = colorMode => assembleStoryboardPreview({ storyboard: blocks, product: catalogs.detailProduct,
+      analysis: catalogs.analysis, pageStyle: { ...analysisPageStyle(catalogs.analysis?.pageStyle), colorMode }, catalogs: previewCatalogs });
+    const mono = assemble('mono');
+    return { mono, point: isNeutralPageSwatch(baseColorOf(catalogs.detailProduct).swatchId) ? mono : assemble('point') };
+  }, [blocks, catalogs, previewCatalogs, entryNotice]);
+  const pagePreview = tonePages[tone.mode];
+  const toneColors = resolvePageTokens({ ...selectedPageStyle, colorMode: tone.mode }, baseColorOf(catalogs?.detailProduct).swatchId).colors;
   if (loadError) return (
     <div className="wizard wide"><div className="surface sb-load-error">
       <div>{loadError.message}</div>
@@ -1223,10 +1253,11 @@ export function Storyboard({ toastOverride = null } = {}) {
         commitSectionRemoval(pendingRemoval.key, impact);
       }} />}
     {doneBlocked && <DoneGuardModal />}
-    <div className={`page-head ${styles.pageHeadWithTheme}`}><h1>상세페이지 초안 구성</h1>
-      <div><StoryboardThemePicker value={analysisPageStyle(catalogs.analysis?.pageStyle).fontStyle} onChange={changeFontStyle} disabled={atomicSaving} />
+    <div className={`page-head ${styles.pageHeadWithTheme}`}><div className={styles.pageHeadingCopy}><h1>상세페이지 초안 구성</h1>
+        <p className={styles.introCopy}>예시 이미지들로 상세페이지 초안이 구성됐어요. 원하는 느낌으로 구성해보세요.</p></div>
+      <div className={styles.styleControlsWrap}><StoryboardStyleControls pageStyle={selectedPageStyle} product={catalogs.detailProduct} disabled={atomicSaving}
+        onFontChange={fontStyle => changePageStyle({ fontStyle })} onToneChange={tone.select} onTonePreview={tone.beginPreview} onTonePreviewEnd={tone.endPreview} />
         {pageStyleError && <p role="alert">{pageStyleError}</p>}</div>
-      <p className={styles.introCopy}>예시 이미지들로 상세페이지 초안이 구성됐어요. 원하는 느낌으로 구성해보세요.</p>
     </div>
     {mannequinFailure && <div className="sec-head" role="status">
       <p className="sec-sub handoff-title">{mannequinFailure}</p>
@@ -1246,6 +1277,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     </div>}
     <div className={`${styles.layout}${overview ? ` ${styles.overviewLayout}` : ''}`}>
       {!overview && <StoryboardPageList runs={visibleRuns} page={page} activeKey={activeRun?.key}
+        previousPage={tone.wave ? tonePages[tone.wave.fromMode] : null} toneRevealed={tone.wave?.revealed}
         busy={atomicSaving} highlightedPosition={highlightedPosition} selectedSourceId={selectedId} selectedPositionId={selectedViewId} insertedKey={insertedSectionKey}
         onPositionSelect={(key, position) => selectCard(position.sourceBlockId, position.viewId, key)}
         draggingExample={Boolean(dragExampleId || draggingSectionChoice)} onSelect={selectSection}
@@ -1253,6 +1285,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         onRemove={removeSection} onMove={moveSection} onDropContent={dropSectionContent}
         onOverview={() => { closeInspector(); setOverview(true); }} sectionRefs={sectionRefs} />}
       <StoryboardStage run={activeRun} number={visibleRuns.findIndex(run => run.key === activeRun?.key) + 1}
+        toneColor={tone.mode === 'point' ? toneColors.accentBg : null}
         blocks={blocks} page={page} catalogs={previewCatalogs} colorOpts={detailColorOpts} photoOrdinals={photoOrdinals} selectedId={selectedId} matchClothing={matchClothing || []} identityKind={identityKind}
         selectedViewId={selectedViewId} selectedGroupId={drawer?.mode === 'set' && setPicker?.mode === 'replace' ? setPicker.spaceGroupId : null}
         dimOthers={drawer?.mode === 'photo' || drawer?.mode === 'set' && setPicker?.mode === 'replace'} busy={atomicSaving} canDesign={sectionDesignChoices(activeRun, { storyboard: blocks, product: catalogs.detailProduct }).length > 1}
@@ -1272,7 +1305,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     {drawer && <StoryboardDrawer mode={drawer.mode} busy={atomicSaving} onClose={closeInspector}
       focusKey={`${drawer.mode}:${drawer.runKey || ''}:${drawer.beforeSectionKey || ''}:${selectedId || ''}`}>
       {['add', 'design'].includes(drawer.mode) ? <StoryboardSectionPicker mode={drawer.mode} runKey={drawer.runKey}
-        blocks={blocks} catalogs={previewCatalogs} gender={exampleGender} identityKind={identityKind} busy={atomicSaving}
+        blocks={blocks} catalogs={toneCatalogs} gender={exampleGender} identityKind={identityKind} busy={atomicSaving}
         undoEntry={undoEntry} onUndo={undoLatest}
         onChoose={(kind, usage, designId, source) => drawer.mode === 'design' ? changeDesign(designId)
           : addSection(kind, usage, designId, automaticSectionInsertionKey(blocks, kind, usage), null, source)}

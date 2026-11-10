@@ -184,37 +184,29 @@ test('both runtimes resolve identical palettes and fonts across all modes and sw
   assert.deepEqual(JSON.parse(python.stdout), cases.map(([style, swatch]) => resolvePageTokens(style, swatch)));
 });
 
-test('analysis color cards render below the template selector and report their selected mode', async t => {
+test('analysis only exposes template choices after tone selection moves to the storyboard', async t => {
   const h = await outfitHarness(); t.after(() => h.close());
   const picker = await h.load('/src/features/analysis/PageTemplatePicker.jsx');
-  const tree = h.render(picker.PageTemplatePicker, { value: 'emo', colorMode: 'mono', onChange() {}, onColorModeChange() {} });
-  const component = nodes(tree).find(node => node.type === picker.PageColorModePicker);
-  assert.ok(component, 'the template picker includes its color controls');
-  const selected = [];
-  assert.equal(typeof picker.PageColorModePicker, 'function');
-  const colors = h.render(picker.PageColorModePicker, { value: 'mono', templateId: 'emo', onChange: mode => selected.push(mode),
-    product: { colors: [{ id: 'blue', swatchId: 'blue', isBase: true }] } });
-  assert.ok(textOf(colors).includes('모노톤')); assert.ok(textOf(colors).includes('옷 색에 맞춤'));
-  const radios = nodes(colors).filter(node => node.type === 'input' && node.props.type === 'radio');
-  assert.deepEqual(radios.map(node => [node.props.value, node.props.checked]), [['mono', true], ['point', false]]);
-  radios[1].props.onChange(); assert.deepEqual(selected, ['point']);
+  const tree = h.render(picker.PageTemplatePicker, { value: 'emo', onChange() {} });
+  assert.equal(picker.PageColorModePicker, undefined);
+  assert.ok(!textOf(tree).includes('모노톤')); assert.ok(!textOf(tree).includes('옷 색에 맞춤'));
 });
 
-test('analysis color changes use the same serialized persistence queue as template changes', async () => {
+test('analysis template saves retain a previously selected storyboard tone', async () => {
   const source = readFileSync(new URL('../../src/features/analysis/AnalysisForm.jsx', import.meta.url), 'utf8');
   const start = source.indexOf('  const savePageStyle =');
   assert.ok(start >= 0, 'shared style-save action exists');
   const end = source.indexOf('  useEffect(() => {', start);
   const saved = [], errors = [], scope = { ...pageStyle,
-    pageStyleTouchedRef: { current: false }, pageStyleValueRef: { current: pageStyle.defaultPageStyle() },
+    pageStyleTouchedRef: { current: false }, pageStyleValueRef: { current: { ...pageStyle.defaultPageStyle(), colorMode: 'point' } },
     pageStyleSaveRef: { current: Promise.resolve() }, projectId: 'p',
     invalidateStoryboardEntryPrefetch() {}, setPageStyle() {}, setPageStyleError: value => errors.push(value),
     onChange: async patch => { saved.push(patch.pageStyle); },
   };
-  const actions = new Function('scope', `with (scope) { ${source.slice(start, end)}; return { changeTemplate, changeColorMode }; }`)(scope);
-  actions.changeColorMode('point'); actions.changeTemplate('show'); actions.changeColorMode('mono');
+  const actions = new Function('scope', `with (scope) { ${source.slice(start, end)}; return { changeTemplate }; }`)(scope);
+  actions.changeTemplate('show'); actions.changeTemplate('emo');
   await scope.pageStyleSaveRef.current;
-  assert.deepEqual(saved.map(style => [style.templateId, style.colorMode]), [['emo', 'point'], ['show', 'point'], ['show', 'mono']]);
+  assert.deepEqual(saved.map(style => [style.templateId, style.colorMode]), [['show', 'point'], ['emo', 'point']]);
   assert.ok(saved.every(style => pageStyle.validPageStyle(style)));
   assert.equal(errors.some(Boolean), false);
 });

@@ -27,24 +27,59 @@ not a request to fall back to an unrelated layout.
 - The mock `buildEditorBlocksFromStoryboard` dispatches in the same way. The
   editor passes the analysis object when building its generation skeleton.
 
-## Storyboard presentation (WOC5, 2026-11-11)
+## Storyboard presentation (WOC7, 2026-11-11)
 
-Analysis offers two templates, `emo` and `show`, followed by `mono` (default) and
-`point` color cards. Both selections use the existing serialized pageStyle save
-queue, restore/promotion and mannequin style lock. Removed `guide` is not a
+Analysis offers only the two templates, `emo` and `show`. Color selection lives
+in the storyboard header; previously saved pageStyle.colorMode values survive
+analysis restoration and template selection. The existing serialized style-save
+queue, restore/promotion and mannequin template lock remain unchanged. After a mannequin exists, only a change
+to templateId is locked; fontStyle/colorMode/updatedAt edits remain valid in both
+the mock API and the server. Removed `guide` is not a
 selectable template or mock query; its five layout definitions remain in the
 shared 32-design catalog. Long preview assets are
 `public/templates/previews/preview-{emo,show}-v1.webp`; preview hover/focus,
 full-view modal, missing-image fallback and reduced-motion rules are unchanged.
 
-The header offers magazine (`serif`), bold (`boldGothic`) and friendly
-(`template`) font specimens in that order. Names are titles/accessibility labels;
-the visible specimens read wearless/웨어리스 after the 글자 스타일 label. All three remain
+The header has two aligned label/control rows: 글자 스타일 and 페이지 색감.
+The font specimens remain magazine (`serif`), bold (`boldGothic`) and template
+(`template`), in that order. The template specimen reads labelEn/titleKo directly
+from the chosen template, including family, weight, italic, case and tracking. Its
+name is 다정 for emo and 기본 for show. Names are titles/accessibility labels;
+the specimens read wearless/웨어리스 (uppercase Latin where the role specifies it). All three remain
 fully readable; only the chosen specimen has a 1.5px ink border. Each click optimistically updates
 pageStyle.fontStyle and joins a serialized analysis-save queue. The latest whole
 chain is registered before execution so route re-entry and next-step navigation
 wait for queued choices too. Restoring analysis or changing color mode preserves
 the chosen font; explicit template replacement retains its existing default rule.
+
+Page tone has two equal rounded cells, 기본 (`mono`) and 의류 색감에 맞추기
+(`point`). A check and 2px ink border mark the selected cell; neither unselected
+cell is dimmed. SVG paint attributes read the actual pointPalette accentBg and
+accentInk, rather than maintaining a duplicate CSS color table. The row is absent
+for white/gray/black/null, unknown swatches and an empty product color list.
+baseColorOf retains its existing explicit-base/first-color fallback. Both engines
+resolve saved point to effective mono for these neutral cases without rewriting
+the saved analysis on load or hover. Point mode maps both accentBg and the existing
+panel alias to its pale palette; ink/invertBg and inverted section panels remain
+neutral. No design definitions or catalogVersion changed.
+
+useStoryboardTone owns only ephemeral pointer/focus preview and a bounded color
+wave. Preview never enters the save queue. Leaving/blurring restores the current
+selection; selecting uses the same queue as font selection, with a latest-style
+ref preserving rapid interleaved choices. The queue separately retains its last
+successful server value. A latest-request failure restores that value and clears
+hover/wave state while showing the error; stale responses cannot replace a newer
+choice. Earlier successful requests still become the fallback for a later failure. The stage band changes first, outline
+rows reveal their new assembled fills between 100 and 500ms, and 280ms fill
+transitions finish within 780ms. Reduced motion skips both delay and transition;
+context changes/unmount clear timers. Mono and point assembled pages are memoized
+for the same board/catalog state, so hover and reveal steps reuse them. The open
+section picker receives the same preview mode; its wireframes tint accent surfaces
+while keeping existing gray photo/dark-shape simplification. The controls column is the original 360px specimen width, shared by both rows.
+Title and subtitle occupy a top-aligned left copy block, with word wrapping
+instead of expanding the control column. Pointer-compatible mouse events and
+focus both reach the actual stage/outline/open-picker preview path. Analysis no longer renders color cards or their
+explanatory copy.
 
 The v5 board has an outline and one four-column stage. A right overlay drawer
 never changes photo widths. Text-only `intro`/`for_you` runs and previously saved

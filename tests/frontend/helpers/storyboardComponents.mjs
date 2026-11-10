@@ -13,9 +13,10 @@ import { assembleStoryboardPreview } from '../../../src/features/storyboard/stor
 import { stageAdditions } from '../../../src/lib/pageTemplates/stageAdditions.js';
 import { pairedPhotoSlot } from '../../../src/lib/pageTemplates/pairedDesigns.js';
 import { reconcileSectionDependencies } from '../../../src/lib/pageTemplates/sectionDependencies.js';
+import { baseColorOf, resolvePageTokens } from '../../../src/lib/pageTemplates/tokens.js';
 const extraBindings = { storyboardPositions, storyboardPositionId, isHiddenStoryboardKind, positionSwapReason, storyboardPositionSwapReason,
   wearUsageForBlock, automaticSectionInsertionKey, colorDisplayName, isTextOnlySection, visibleSectionRuns,
-  ...signature, ...gallery, ...photoChoices, assembleStoryboardPreview, stageAdditions, pairedPhotoSlot, reconcileSectionDependencies,
+  ...signature, ...gallery, ...photoChoices, assembleStoryboardPreview, stageAdditions, pairedPhotoSlot, reconcileSectionDependencies, baseColorOf, resolvePageTokens,
   StoryboardPaleSlot: 'pale-slot', StoryboardStackPopup: 'stack-popup',
   ProductPresentationPicker: 'product-presentations', PhotoChoiceFilters: 'photo-filters', PhotoFraming: 'photo-framing', PhotoChoicePager: 'photo-pages', ExampleThumb: 'example-thumb' };
 

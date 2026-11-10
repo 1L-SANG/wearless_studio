@@ -35,7 +35,7 @@ import {
 } from './modelSelection.js';
 import { SELLING_POINTS_MAX, applySellingPointEdit } from './sellingPoints.js';
 import { PageTemplatePicker } from './PageTemplatePicker.jsx';
-import { analysisPageStyle, selectTemplateStyle, selectColorModeStyle, validPageStyle } from '../../lib/pageTemplates/pageStyle.js';
+import { analysisPageStyle, selectTemplateStyle, validPageStyle } from '../../lib/pageTemplates/pageStyle.js';
 import { OutfitSelection } from './OutfitSelection.jsx';
 import { AnalysisStepFlow, OutfitCreditLabel } from './AnalysisStepFlow.jsx';
 import { outfitModelCredit } from '@/lib/outfitPresentation.js';
@@ -503,7 +503,6 @@ export function AnalysisForm({
     void pending.catch(() => setPageStyleError('페이지 스타일을 저장하지 못했어요. 다시 골라 주세요.'));
   };
   const changeTemplate = templateId => savePageStyle(selectTemplateStyle(templateId, undefined, pageStyleValueRef.current));
-  const changeColorMode = colorMode => savePageStyle(selectColorModeStyle(pageStyleValueRef.current, colorMode));
   useEffect(() => {
     if (!projectId) return undefined;
     let alive = true;
@@ -1150,8 +1149,7 @@ export function AnalysisForm({
 
   const templatePicker = (
     <div className="af-template-picker">
-      <PageTemplatePicker value={pageStyle.templateId} onChange={changeTemplate} colorMode={pageStyle.colorMode}
-        onColorModeChange={changeColorMode} product={product} disabled={!pageStyleReady || preparingOutfit || confirming} />
+      <PageTemplatePicker value={pageStyle.templateId} onChange={changeTemplate} disabled={!pageStyleReady || preparingOutfit || confirming} />
       {pageStyleError && <p role="alert">{pageStyleError}</p>}
     </div>
   );

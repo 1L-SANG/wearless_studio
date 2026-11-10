@@ -19,7 +19,7 @@ import styles from './StoryboardLayout.module.css';
 
 export const PHOTO_POSITION_DRAG_MIME = 'application/x-wearless-photo-position';
 
-export function StoryboardStage({ run, number, blocks = [], page, catalogs, colorOpts = [], photoOrdinals, selectedId, selectedViewId, selectedGroupId, dimOthers, matchClothing = [], identityKind,
+export function StoryboardStage({ run, number, blocks = [], page, catalogs, toneColor = null, colorOpts = [], photoOrdinals, selectedId, selectedViewId, selectedGroupId, dimOthers, matchClothing = [], identityKind,
   busy, canDesign, onDesign, onSelectPhoto, onRemovePhoto, onRemovePairedPhoto, onAddAddition, onSimilar, onAddSet, onReplaceSet,
   overview, onLeaveOverview, onSelectSection, onHoverPosition, onSwapPosition, onSwapBlocked, onPhotoDragStart, onPhotoDragEnd }) {
   const visibleKeys = visibleSectionRuns(blocks).map(section => section.key);
@@ -69,7 +69,8 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, colo
   const spaceHeading = group => !colorProducts && group.kind === 'space' && (run.kind === 'wear' || group.blocks.length > 1);
   const colorHeading = group => run.kind === 'wear' && group.kind === 'color';
   return <section className={styles.stage} data-storyboard-scroll aria-label={`${templateSectionName(run.blocks[0])} 무대`}>
-    <div className={styles.stageHead}><div><h2>{number > 0 && <em>Section {number}</em>}<span>{templateSectionName(run.blocks[0])}</span></h2>
+    <div className={styles.stageHead}><svg className={styles.stageToneBand} width="100%" height="100%" aria-hidden="true"><rect width="100%" height="100%" fill={toneColor || 'var(--bg-2)'} /></svg>
+      <div><h2>{number > 0 && <em>Section {number}</em>}<span>{templateSectionName(run.blocks[0])}</span></h2>
       <p>예시 이미지를 클릭해서 변경할 수 있어요</p></div>
       <div className={`modal-actions ${styles.stageActions}`}>
         {canDesign && <button type="button" className={styles.designButton} disabled={busy} onClick={onDesign}><Icon name="pencil" size={14} />섹션 디자인 변경</button>}
