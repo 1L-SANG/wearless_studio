@@ -27,19 +27,20 @@ not a request to fall back to an unrelated layout.
 - The mock `buildEditorBlocksFromStoryboard` dispatches in the same way. The
   editor passes the analysis object when building its generation skeleton.
 
-## Storyboard presentation (WOC4, 2026-11-10)
+## Storyboard presentation (WOC5, 2026-11-11)
 
 Analysis offers two templates, `emo` and `show`, followed by `mono` (default) and
 `point` color cards. Both selections use the existing serialized pageStyle save
 queue, restore/promotion and mannequin style lock. Removed `guide` is not a
 selectable template or mock query; its five layout definitions remain in the
-shared 28-design catalog. Long preview assets are
+shared 32-design catalog. Long preview assets are
 `public/templates/previews/preview-{emo,show}-v1.webp`; preview hover/focus,
 full-view modal, missing-image fallback and reduced-motion rules are unchanged.
 
 The header offers magazine (`serif`), bold (`boldGothic`) and friendly
 (`template`) font specimens in that order. Names are titles/accessibility labels;
-the visible specimens read wearless/웨어리스. Each click optimistically updates
+the visible specimens read wearless/웨어리스 after the 글자 스타일 label. All three remain
+fully readable; only the chosen specimen has a 1.5px ink border. Each click optimistically updates
 pageStyle.fontStyle and joins a serialized analysis-save queue. The latest whole
 chain is registered before execution so route re-entry and next-step navigation
 wait for queued choices too. Restoring analysis or changing color mode preserves
@@ -68,8 +69,8 @@ count, keeping the owner-verified 3px gaps and zero extra count margin.
 The nonwrapping header contains only 페이지 구성 and the outlined ＋ 섹션 추가 pill.
 The overview text action follows the final section inside the outline scroller.
 Selected borders use primary ink; the existing pastel rotating border
-continues on the floating action. Hover/focus reveals the inset grip/up/down/trash
-pill. The opening has no tools. Boundary arrows use aria-disabled without losing
+continues on the floating action. A 28px white pill at each thumbnail’s top left always shows grip/trash.
+Its up/down arrows expand on toolbar hover/focus, remaining keyboard reachable. The opening has no tools. Boundary arrows use aria-disabled without losing
 focus, and a completed move restores the same arrow/grip. Titles also drag.
 Drop gaps appear during dragging; there are no between-section add buttons or
 notches. Only outline text bars use emphasizeText to increase visible thickness;
@@ -282,7 +283,40 @@ run's selected mode; the new-section default remains ghost. The picker has only
 three mode cards; display-only local examples follow the clicked face, fall back
 to the same type/mode Front with a note, then a gray name-only card. Neither image
 fallback nor thumbnail failure changes the real direction/color/source recipe.
-First-ghost option/transitions and pale additions remain deferred.
+First ghost and fabric product attachments use only paired pageDesignId values:
+P01-D11 ↔ P01-D01, P01-D09 ↔ P01-D09-G, P01-SHOW-01 ↔ P01-SHOW-01-G,
+T03-D01 ↔ T03-D01-P, T03-D06 ↔ T03-D06-P. These pairs have pickerHidden=true;
+the picker applies its existing kind/usage/photo-count rules to the visible base,
+and changing that base retains an enabled attachment. Saved hidden layouts still
+assemble. The catalogVersion stays compatible with existing saved page styles.
+
+`stageAdditions.js` computes ephemeral pale positions and rechecks eligibility
+on insertion. No option flags or preview fields enter blocks. First ghost reuses
+only the original color_product run’s base/front AI full photo when every product
+full photo in that run explicitly uses ghost. Otherwise it creates one clean
+first.ghost AI recipe; undecided/mixed modes must first be selected. Flat/natural
+transitions retain its ID, ghost reuse removes it, and base changes update its
+color. The clean recipe has ghost/front, angle same, empty match/ref arrays and no
+set/example/mood/similar state. Failure of a reused source never creates another
+billable photo. The displayed first ghost has readonly base/front settings.
+
+Daily wear has one pale next-unused-member position per styling group, omitted
+when exhausted or at 12 actual photos. Insertion preserves that set instance and
+pose reference. Studio wear and color_product have no pale positions. Points
+may add one eligible fabric target if no fabric run exists, that target is unused,
+and fewer than four actual AI detail photos exist. Crops consume no detail budget;
+the additional fabric uses the same measured ROI preview and a separate row from
+worn crops. If all worn sources disappear, unavailable crops are removed while
+an independent detail remains. Fabric’s optional product position reuses the
+original base/front source for zero generations; removing that source downgrades
+to the base fabric layout instead of creating a fallback. Pair X actions remove
+only the attachment, never its source. Each insertion/removal is one undo/save.
+
+Pale positions show only their preview and label; count/credit changes appear in
+the existing floating action (구성 n컷). Other generated-photo counts use 컷;
+user-upload progress retains 장. The photo panel starts with 의류 색상 선택 and
+one dot/name button per color, omitted for single-color products. The pinned
+signature card has a small 시그니처 chip.
 
 Drawers keep their 48px header, 12px viewport inset, focus return, Escape/blank
 click behavior and independent scrolling. Place replacement marks the whole

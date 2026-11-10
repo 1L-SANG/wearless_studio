@@ -10,9 +10,13 @@ import * as signature from '../../../src/lib/signatureCutPool.js';
 import * as photoChoices from '../../../src/lib/pageTemplates/storyboardPhotoChoices.js';
 import * as gallery from '../../../src/lib/pageTemplates/storyboardGallery.js';
 import { assembleStoryboardPreview } from '../../../src/features/storyboard/storyboardPreview.js';
+import { stageAdditions } from '../../../src/lib/pageTemplates/stageAdditions.js';
+import { pairedPhotoSlot } from '../../../src/lib/pageTemplates/pairedDesigns.js';
+import { reconcileSectionDependencies } from '../../../src/lib/pageTemplates/sectionDependencies.js';
 const extraBindings = { storyboardPositions, storyboardPositionId, isHiddenStoryboardKind, positionSwapReason, storyboardPositionSwapReason,
   wearUsageForBlock, automaticSectionInsertionKey, colorDisplayName, isTextOnlySection, visibleSectionRuns,
-  ...signature, ...gallery, ...photoChoices, assembleStoryboardPreview, StoryboardStackPopup: 'stack-popup',
+  ...signature, ...gallery, ...photoChoices, assembleStoryboardPreview, stageAdditions, pairedPhotoSlot, reconcileSectionDependencies,
+  StoryboardPaleSlot: 'pale-slot', StoryboardStackPopup: 'stack-popup',
   ProductPresentationPicker: 'product-presentations', PhotoChoiceFilters: 'photo-filters', PhotoFraming: 'photo-framing', PhotoChoicePager: 'photo-pages', ExampleThumb: 'example-thumb' };
 
 export const componentStyles = new Proxy({}, { get: (_target, key) => String(key) });

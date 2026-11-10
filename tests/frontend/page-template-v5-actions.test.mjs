@@ -12,6 +12,7 @@ import { generationExampleSelectionPatch } from '../../src/lib/storyboardExample
 import { detachSpaceMembership } from '../../src/lib/storyboardSpaceSets.js';
 import { withStoryboardSpaceSetExamples, storyboardSpaceSetsFor, spaceSetIdFromGroupId } from '../../src/lib/storyboardSpaceSetCatalog.js';
 import { reconcileSectionDependencies } from '../../src/lib/pageTemplates/sectionDependencies.js';
+import { changeTemplateSectionDesign as storedRunDesign } from '../../src/lib/pageTemplates/sectionRuns.js';
 import rawExamples from '../../src/data/genExamples.json' with { type: 'json' };
 import { assignGenerationExamples } from '../../src/lib/generationExamples.js';
 
@@ -128,14 +129,20 @@ for (const templateId of ['emo', 'show', 'guide']) test(`${templateId}: reuse sl
   assert.equal(restored.some(b => b.pageSectionKind === 'sns' && b.source === 'ai'), false);
 });
 
-test('retained showroom ghost design materializes one product cut when its source section is removed', () => {
-  const original = actions.changeTemplateSectionDesign(board('show'), 'show.first', 'P01-D01', { product });
+test('stored hidden showroom ghost design still reuses its source and materializes one cut on source removal', () => {
+  // A persisted hidden design is valid even though it is no longer a picker item.
+  const original = valid(JSON.parse(JSON.stringify(storedRunDesign(board('show'), 'show.first', 'P01-D01'))));
   const source = original.find(b => b.pageSectionKind === 'color_product');
+  const rendered = assemblePage({ storyboard: original, product, analysis: analysisFor('show') });
+  const reused = rendered.filter(block => block.pageSectionKind === 'first').flatMap(block => block.elements)
+    .find(element => element.slotKey === 'first.ghost');
+  assert.equal(reused.sourceBlockId, source.id);
   const next = valid(actions.removeTemplateSection(original, source.pageSectionKey, { product }));
   const fallback = next.filter(b => b.pageSectionKind === 'first' && b.cutType === 'product');
   assert.equal(fallback.length, 1);
   assert.equal(fallback[0].slotKey, 'first.ghost');
   assert.equal(fallback[0].shot, 'ghost');
+  assert.equal(fallback[0].productPresentation, 'ghost');
   assert.equal(next.filter(b => b.source === 'ai').length, original.filter(b => b.source === 'ai' && b.pageSectionKey !== source.pageSectionKey).length + 1);
 });
 

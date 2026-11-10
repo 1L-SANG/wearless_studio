@@ -193,6 +193,8 @@ export function validateCatalog(catalog) {
         check(typeof design.displayName === 'string' && design.displayName.trim().length > 0
             && design.displayName.length <= 24, `design displayName ${id}`);
         check(design.kind === 'wear' ? ['styling', 'fit'].includes(design.usage) : design.usage == null, `design usage ${id}`);
+        if (Object.hasOwn(design, 'pickerHidden'))
+            check(typeof design.pickerHidden === 'boolean', `pickerHidden ${id}`);
         const roles = new Set(),
             photos = new Set(),
             groupIds = new Set();
@@ -227,7 +229,7 @@ export function validateCatalog(catalog) {
                 if (group.positionFallback != null) {
                     const policy = group.positionFallback;
                     check(
-                        id === "P01-D09" &&
+                        ["P01-D09", "P01-D09-G"].includes(id) &&
                             Array.isArray(policy.anchors) &&
                             policy.anchors.length === 3 &&
                             policy.anchors.every(
@@ -271,7 +273,7 @@ export function validateCatalog(catalog) {
             if (node.titleWrap != null) {
                 const policy = node.titleWrap;
                 check(
-                    id === "P01-D09" &&
+                    ["P01-D09", "P01-D09-G"].includes(id) &&
                         node.type === "text" &&
                         node.copyRole === "name" &&
                         Number.isFinite(policy.photoWidthRatio) &&
@@ -295,7 +297,7 @@ export function validateCatalog(catalog) {
             }
             if (node.matchText != null)
                 check(
-                    id === "P01-D09" &&
+                    ["P01-D09", "P01-D09-G"].includes(id) &&
                         node.type === "rule" &&
                         node.matchText === "name" &&
                         node.align === "center" &&
@@ -611,9 +613,8 @@ function validatePhotoSlots(templateId, section, check) {
         if (slot.fill === "reuse") {
             const ref = slot.reuseFrom || {};
             check(
-                (templateId === "show" &&
-                    section.kind === "first" &&
-                    slot.slotKey === "ghost" &&
+                ((section.kind === "first" && slot.slotKey === "ghost" ||
+                    section.kind === "fabric" && slot.slotKey === "product") &&
                     slot.contentRole === "productOverview" &&
                     ref.kind === "color_product" &&
                     ref.slot === "front" &&

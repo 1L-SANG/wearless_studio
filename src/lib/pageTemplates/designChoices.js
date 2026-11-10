@@ -2,6 +2,7 @@ import { getTemplate, pageTemplatesCatalog, sectionDefinition } from './catalog.
 import { pointPhotosForRun } from './assemble.js';
 import { wearUsageForBlock } from './slots.js';
 import { reuseSourceForSlot, openingSourceProduct } from './sectionDependencies.js';
+import { baseDesignId } from './pairedDesigns.js';
 
 const definitionFor = run => sectionDefinition(getTemplate(String(run.key).split('.')[0]), run.key, run.kind, run.usage);
 const photosFor = (run, storyboard) => pointPhotosForRun(run.blocks, storyboard);
@@ -17,7 +18,7 @@ export function defaultSectionDesignId(run, storyboard = run?.blocks || []) {
 export function currentSectionDesignId(run, storyboard = run?.blocks || []) {
   if (!run) return null;
   const definition = definitionFor(run);
-  return !photosFor(run, storyboard).length && definition.fallbackDesignId || run.designId || definition.designId;
+  return !photosFor(run, storyboard).length && definition.fallbackDesignId || baseDesignId(run.designId) || definition.designId;
 }
 
 // Count the layout's photo positions, including reuse positions. Counting assembled
@@ -86,6 +87,9 @@ function displaysProductColors(run, design, storyboard, product) {
 
 export function sectionDesignChoices(run, { storyboard = run?.blocks || [], product } = {}) {
   if (!run) return [];
+  // A paired attachment is toggled on the stage, not a new layout choice. Apply
+  // the unchanged candidate rules to its base layout and retain it on selection.
+  run = { ...run, designId: baseDesignId(run.designId) };
   const definition = definitionFor(run);
   if (!photosFor(run, storyboard).length && definition.fallbackDesignId) return [pageTemplatesCatalog.designs[definition.fallbackDesignId]];
   const current = run.designId || definition.designId;
@@ -93,7 +97,7 @@ export function sectionDesignChoices(run, { storyboard = run?.blocks || [], prod
   const wearBlock = run.blocks.find(block => ['horizon', 'styling'].includes(block.cutType)) || run.blocks[0];
   const usage = wearUsageForBlock(wearBlock) || run.usage;
   const cropped = run.blocks.some(block => block.pointItems?.some(item => item.kind === 'wornCrop'));
-  const choices = Object.values(pageTemplatesCatalog.designs).filter(design => design.kind === run.kind
+  const choices = Object.values(pageTemplatesCatalog.designs).filter(design => !design.pickerHidden && design.kind === run.kind
     && (run.kind !== 'wear' || design.usage === usage)
     && (!cropped || design.supportsWornCrop !== false)
     && sectionDesignGenerationCount(run, design.id, storyboard, product) === count

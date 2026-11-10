@@ -112,7 +112,7 @@ test('v5 floating action keeps the cut count and credit estimate alongside the n
   const { loadStoryboardComponent, textOf } = await import('./helpers/storyboardComponents.mjs');
   const Continue = await loadStoryboardComponent('StoryboardContinue.jsx', 'StoryboardContinue', { Toggle: 'toggle' });
   const tree = Continue({ count: 7, credits: 88, copyOn: true });
-  const text = textOf(tree); assert.ok(text.includes('구성컷 7개')); assert.ok(text.includes('예상 88크레딧')); assert.ok(text.includes('다음: 마네킹컷 선택'));
+  const text = textOf(tree); assert.ok(text.includes('구성 7컷')); assert.ok(text.includes('예상 88크레딧')); assert.ok(text.includes('다음: 마네킹컷 선택'));
 });
 test('1-12 classifies 404 separately from retryable network errors', () => {
   assert.deepEqual(storyboardNotFoundError(), {

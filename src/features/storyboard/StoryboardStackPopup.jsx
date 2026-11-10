@@ -94,10 +94,10 @@ export function StoryboardStackPopup({ entry, selectedId, anchor, galleryElement
   }, [entry.id, anchor, galleryElement, columns]);
 
   const name = spaceSetDisplayName(entry.set);
-  return <div ref={ref} className={styles.stackPopup} role="dialog" aria-label={`${name}, ${entry.members.length}장 중 한 장 고르기`}
+  return <div ref={ref} className={styles.stackPopup} role="dialog" aria-label={`${name}, ${entry.members.length}컷 중 한 컷 고르기`}
     data-cols={columns} data-row={row} data-column={column} data-many={entry.members.length > 8 || undefined} data-floating="fallback">
     <i className={styles.stackPopupPointer} aria-hidden="true" />
-    <p className={styles.stackPopupHeading}><b>{name}</b><span>{entry.members.length}장</span></p>
+    <p className={styles.stackPopupHeading}><b>{name}</b><span>{entry.members.length}컷</span></p>
     <div className={styles.stackPopupGrid}>{entry.members.map(example => <button type="button" key={example.id}
       className={`sb-excell ${styles.example}${example.id === selectedId ? ' sel' : ''}`} data-example-id={example.id}
       aria-label={`${name} ${entry.members.indexOf(example) + 1}번째 사진`} aria-pressed={example.id === selectedId}

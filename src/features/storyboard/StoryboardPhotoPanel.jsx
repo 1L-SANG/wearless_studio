@@ -4,7 +4,7 @@ import { Icon } from '@/components/ui.jsx';
 import OuterClosureField from '@/components/OuterClosureField.jsx';
 import { DetailTargetPicker } from './DetailTargetPicker.jsx';
 import { ProductSourcePicker } from './ProductSourcePicker.jsx';
-import { GarmentColorField } from '../../components/GarmentColorField.jsx';
+import { StoryboardGarmentColorField as GarmentColorField } from './StoryboardGarmentColorField.jsx';
 import HorizonBackgroundControl from './HorizonBackgroundControl.jsx';
 import { UnderlineTabs, ShotSegment, MineImageTab, MINE_SHOT_OPTION } from './StoryboardControls.jsx';
 import { StoryboardPhotoGallery as MoodGuide } from './StoryboardPhotoGallery.jsx';
@@ -13,6 +13,7 @@ import { garmentColorSelectionPatch } from '../../lib/garmentColors.js';
 import { referenceFeedbackPatch } from '../../lib/storyboardExampleFeedback.js';
 import { photoSlotForBlock } from '../../lib/pageTemplates/slots.js';
 import { isSinglePhotoSection } from '../../lib/pageTemplates/storyboardPhotoChoices.js';
+import { productSectionState } from '../../lib/pageTemplates/productPresentation.js';
 import { horizonBackgroundAvailability } from '../../lib/horizonBackgroundAvailability.js';
 import { normalizeOuterClosureState } from '../../lib/outerClosure.js';
 import { CONTENT_ROLES, SECTION_ROLES, cutTypeOptionsForSection, normalizedRecipePatch, defaultContentRoleForSection, productPresentationOf } from '../../lib/storyboardTaxonomy.js';
@@ -27,7 +28,7 @@ const WORN_CUT_TYPES = new Set(['styling', 'horizon']);
 const WORN_ROLE_BY_CUT_TYPE = { styling: CONTENT_ROLES.COORDINATION, horizon: CONTENT_ROLES.FIT };
 export const shouldRenderGenerationExampleGuide = block => Boolean(block?.cutType);
 
-export function StoryboardPhotoPanel({ block, blocks, busy = false, catalogs, colorOpts, detailColorOpts, clothingType, subCategory, customCategory, exampleGender, identityKind = null, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, customMatchPromotionPending = false, spaceContext, onChangeSpaceSet, onExampleDrag, onChangeSpaceBackground, usedExampleIds }) {
+export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct = false, catalogs, colorOpts, detailColorOpts, clothingType, subCategory, customCategory, exampleGender, identityKind = null, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, customMatchPromotionPending = false, spaceContext, onChangeSpaceSet, onExampleDrag, onChangeSpaceBackground, usedExampleIds }) {
   const [matchOpen, setMatchOpen] = useState(false);
   const [pendingRecipe, setPendingRecipe] = useState(null);
   const [pendingChoice, setPendingChoice] = useState(null);
@@ -48,8 +49,21 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, catalogs, co
   }, [block?.id, requestedRecipe?.blockId, requestedRecipe?.cutType, requestedRecipe?.shot]);
 
   if (!block) return null;
-  if (block.source === 'ai' && block.cutType === 'product' && block.shot === 'ghost') return <ProductPresentationPicker
-    block={block} blocks={blocks} clothingType={clothingType} busy={busy} onChange={onAtomicChange || onChange} />;
+  const productMode = block.source === 'ai' && block.cutType === 'product' && block.shot === 'ghost';
+  const productState = productMode ? productSectionState(blocks || [block], block.pageSectionKey) : null;
+  const modeRequired = productState && ['missing', 'mixed'].includes(productState.status);
+  const colorField = !fixedProduct && block.source === 'ai' && block.cutType ? <GarmentColorField
+    colorOpts={detailColorOpts?.length ? detailColorOpts : colorOpts} product={catalogs.detailProduct} block={block}
+    value={block.colorId} disabled={busy || Boolean(modeRequired)}
+    disabledReason={modeRequired ? '촬영 방식을 먼저 골라 주세요.' : ''} onChange={colorId => {
+      if (busy || modeRequired) return;
+      const changes = garmentColorSelectionPatch(block, catalogs.detailProduct, colorId);
+      if (changes) onChange(changes);
+    }} /> : null;
+  if (productMode) return <div className={`inspector ${styles.photoPanel}`}>
+    {colorField}<ProductPresentationPicker block={block} blocks={blocks} product={catalogs.detailProduct}
+      fixedProduct={fixedProduct} clothingType={clothingType} busy={busy} onChange={onAtomicChange || onChange} />
+  </div>;
 
   const signatureExamples = signatureExamplesForBlock(block, { product: catalogs.detailProduct,
     analysis: { subCategory, customCategory }, gender: exampleGender });
@@ -227,6 +241,7 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, catalogs, co
   const outerClosureState = normalizeOuterClosureState(block.outerClosureState);
   return (
     <div className={`inspector ${styles.photoPanel}`}>
+      {colorField}
       {isMine && !block.spaceGroupId ? (
         <>
           <div className="sb-exhead">
@@ -347,14 +362,6 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, catalogs, co
         <OuterClosureField id={`outer-closure-${block.id}`} value={outerClosureState}
           onChange={(value) => onChange({ outerClosureState: value })} frontClosure={catalogs.frontClosure} />
       )}
-
-      <div className="insp-sec"><label className="lbl">대상 색상</label>
-        <GarmentColorField colorOpts={detailColorOpts?.length ? detailColorOpts : colorOpts}
-          product={catalogs.detailProduct} block={block}
-          value={block.colorId} onChange={(colorId) => {
-            const changes = garmentColorSelectionPatch(block, catalogs.detailProduct, colorId);
-            if (changes) onChange(changes);
-          }} /></div>
 
       {/* 매칭 의류가 없으면 편집 패널이 빈 화면이 되므로 진입 자체를 막는다.
           세트 멤버(spaceGroupId)는 세트 연출이 정본이라 매칭 편집도 숨긴다(2026-08-15 오너). */}

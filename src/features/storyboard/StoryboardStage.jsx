@@ -12,12 +12,15 @@ import { colorDisplayName } from '../../lib/colorwayMatching.js';
 import { storyboardPreviewSource } from './storyboardPreview.js';
 import { storyboardPositions, positionSwapReason, storyboardPositionSwapReason } from '../../lib/pageTemplates/storyboardPositions.js';
 import { StoryboardPreview } from './StoryboardPreview.jsx';
+import { StoryboardPaleSlot } from './StoryboardPaleSlot.jsx';
+import { stageAdditions } from '../../lib/pageTemplates/stageAdditions.js';
+import { pairedPhotoSlot } from '../../lib/pageTemplates/pairedDesigns.js';
 import styles from './StoryboardLayout.module.css';
 
 export const PHOTO_POSITION_DRAG_MIME = 'application/x-wearless-photo-position';
 
 export function StoryboardStage({ run, number, blocks = [], page, catalogs, colorOpts = [], photoOrdinals, selectedId, selectedViewId, selectedGroupId, dimOthers, matchClothing = [], identityKind,
-  busy, canDesign, onDesign, onSelectPhoto, onRemovePhoto, onSimilar, onAddPhoto, onAddSet, onReplaceSet,
+  busy, canDesign, onDesign, onSelectPhoto, onRemovePhoto, onRemovePairedPhoto, onAddAddition, onSimilar, onAddSet, onReplaceSet,
   overview, onLeaveOverview, onSelectSection, onHoverPosition, onSwapPosition, onSwapBlocked, onPhotoDragStart, onPhotoDragEnd }) {
   const visibleKeys = visibleSectionRuns(blocks).map(section => section.key);
   if (overview) return <section className={styles.overview} aria-label="페이지 전체 보기">
@@ -41,13 +44,22 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, colo
     if (!source) return [];
     const borrowed = source.pageSectionKey !== run.key;
     return [{ ...source, id: positions.filter(item => item.sourceBlockId === source.id).length > 1 ? position.viewId : source.id,
-      sourceId: source.id, position, borrowed, ...(borrowed ? { spaceGroupId: null } : {}) }];
+      sourceId: source.id, position, borrowed, ...(borrowed ? { spaceGroupId: null } : {}),
+      ...(run.kind === 'points' ? { stageRowKind: borrowed ? 'crop' : 'detail' } : {}) }];
   }) : [...ownPhotos, ...reused];
   const canAdd = run.kind === 'wear' && wearUsageForBlock(run.blocks.find(block => block.source !== 'text') || run.blocks[0]) === 'styling';
   const sourceRun = photos.find(block => block.borrowed);
   const sourceKey = sourceRun && byId.get(sourceRun.sourceId)?.pageSectionKey;
   const sourceNumber = visibleKeys.indexOf(sourceKey) + 1;
-  const rows = packStageRows(photos, { add: canAdd });
+  const additions = stageAdditions(blocks, run.key, { product: catalogs.detailProduct, analysis: catalogs.analysis });
+  const stagedPhotos = photos.flatMap((block, index) => {
+    const addition = run.kind === 'first' && index === 0 ? additions.find(item => item.kind === 'firstGhost')
+      : block.spaceGroupId !== photos[index + 1]?.spaceGroupId && additions.find(item => item.groupId === block.spaceGroupId);
+    return addition ? [block, { id: addition.id, paleAddition: addition, spaceGroupId: addition.groupId || null, colorId: block.colorId }] : [block];
+  });
+  stagedPhotos.push(...additions.filter(item => !item.groupId && item.kind !== 'firstGhost').map(item => ({ id: item.id, paleAddition: item,
+    ...(run.kind === 'points' ? { stageRowKind: 'detail' } : {}) })));
+  const rows = packStageRows(stagedPhotos, { add: canAdd });
   const baseColor = catalogs.detailProduct?.colors?.find(color => color.isBase)?.id || photos[0]?.colorId;
   const colorProducts = run.kind === 'color_product';
   const colorName = id => {
@@ -70,20 +82,21 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, colo
         const hasHeading = row.some(group => spaceHeading(group) || colorHeading(group));
         return <div className={styles.stageRow} key={rowIndex}>
         {row.map(group => group.kind === 'add' ? <div className={`${styles.addSlot}${hasHeading ? ` ${styles.addWithHeading}` : ''}`} key="add">
-          <button type="button" className={styles.pill} disabled={busy} onClick={onAddPhoto}>＋ 컷 추가</button>
           {run.kind === 'wear' && <button type="button" className={styles.pill} disabled={busy} onClick={onAddSet}>＋ 장소 세트 추가</button>}
-          <small>{12 - photos.length}컷 더 넣을 수 있어요</small>
         </div> : <div className={styles.stageGroup} key={`${group.key}:${rowIndex}`} data-span={group.blocks.length}>
           {hasHeading && <div className={styles.groupHead}>
             {spaceHeading(group) && <><strong>{spaceSetDisplayName(inferStoryboardSpaceSet(group.blocks[0].spaceGroupId))}</strong><i />
-              <button type="button" className={styles.pill} disabled={busy} onClick={() => onReplaceSet(group.blocks[0])}>{group.blocks[0].cutType === 'horizon' ? '스튜디오 세트 바꾸기' : '장소 바꾸기'}</button></>}
+              <button type="button" className={styles.pill} disabled={busy} onClick={() => onReplaceSet(blocks.find(block => block.spaceGroupId === group.blocks[0].spaceGroupId) || group.blocks[0])}>{group.blocks[0].cutType === 'horizon' ? '스튜디오 세트 바꾸기' : '장소 바꾸기'}</button></>}
             {colorHeading(group) && <><strong>{group.blocks[0].colorId !== baseColor ? colorName(group.blocks[0].colorId) : '추가한 컷'}</strong><i /></>}
           </div>}
           <div className={styles.groupPhotos} data-columns={group.blocks.length}>
             {group.blocks.map(block => {
+              if (block.paleAddition) return <StoryboardPaleSlot key={block.id} item={block.paleAddition} blocks={blocks} runKey={run.key} catalogs={catalogs} disabled={busy} onAdd={onAddAddition} />;
               const source = block.similarSourceBlockId ? blocks.find(item => item.id === block.similarSourceBlockId) : block;
+              const optionalPhoto = pairedPhotoSlot(run.designId)
+                && (block.position?.slotKey || block.slotKey)?.endsWith(`.${pairedPhotoSlot(run.designId)}`);
               const requiredOpening = run.kind === 'first' && block.slotKey && !block.similarSourceBlockId;
-              const removable = !block.borrowed && run.kind !== 'sns' && !requiredOpening && block.pageSectionKey === run.key && (ownPhotos.length > 1 || run.blocks.some(item => item.source === 'text'));
+              const removable = optionalPhoto || !block.borrowed && run.kind !== 'sns' && !requiredOpening && block.pageSectionKey === run.key && (ownPhotos.length > 1 || run.blocks.some(item => item.source === 'text'));
               const sourceId = block.sourceId || block.id;
               const ordinal = photoOrdinals.get(sourceId);
               const selected = selectedGroupId ? block.spaceGroupId === selectedGroupId : selectedViewId ? block.position?.viewId === selectedViewId : selectedId === sourceId;
@@ -117,7 +130,7 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, colo
                     </svg> : storyboardPreviewSource(source, catalogs) ? <img src={storyboardPreviewSource(source, catalogs)} alt="" loading="lazy" decoding="async" /> : <span className={styles.photoMissing}>사진 설정을 확인해주세요</span>}
                     {block.similarSourceBlockId && <span className={styles.similarVeil}>{String(photoOrdinals.get(block.similarSourceBlockId)).padStart(2, '0')}번째 컷과 비슷하게</span>}
                   </button>
-                  {removable && <button type="button" className={styles.removePhoto} disabled={busy} onClick={() => onRemovePhoto(block.id)} aria-label={`${ordinal}번째 컷 빼기`}><Icon name="x" size={14} /></button>}
+                  {removable && <button type="button" className={styles.removePhoto} disabled={busy} onClick={() => optionalPhoto ? onRemovePairedPhoto(run.key) : onRemovePhoto(block.id)} aria-label={optionalPhoto ? `${run.kind === 'first' ? '고스트컷' : '제품컷'} 빼기` : `${ordinal}번째 컷 빼기`}><Icon name="x" size={14} /></button>}
                   {matching?.thumb && <span className={styles.matchBadge} title={`매칭 의류 · ${matching.name || ''}`}><img src={matching.thumb} alt="" /><small>매칭</small></span>}
                   {rejection && <span className={styles.unsupported} title={rejection.message}>이 모델로 만들 수 없는 컷</span>}
                   {run.kind !== 'sns' && block.pageSectionKey === run.key && canPlanSimilarCut(block) && photos.length < 12 && <button type="button" className={`btn btn-primary btn-glowring ${styles.similar}`}

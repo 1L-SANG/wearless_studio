@@ -69,8 +69,10 @@ import { applyPromotedMatchSelection, getCustomMatchPromotionTask, onCustomMatch
 
 import { sectionRuns, visibleSectionRuns } from '../../lib/pageTemplates/sectionRuns.js';
 import { moveTemplateSection, changeTemplateSectionDesign } from '../../lib/pageTemplates/sectionActions.js';
-import { addStoryboardPhoto, removeStoryboardPhoto, patchStoryboardPhoto, canReplaceStoryboardSet } from '../../lib/pageTemplates/photoActions.js';
+import { removeStoryboardPhoto, patchStoryboardPhoto, canReplaceStoryboardSet } from '../../lib/pageTemplates/photoActions.js';
 import { reconcileSectionDependencies } from '../../lib/pageTemplates/sectionDependencies.js';
+import { addStageAddition, removePairedPhoto, stageAdditions } from '../../lib/pageTemplates/stageAdditions.js';
+import { pairedPhotoSlot } from '../../lib/pageTemplates/pairedDesigns.js';
 import { wornCropRegions } from '../../lib/pageTemplates/seed.js';
 import { usedGalleryExampleIds } from '../../lib/pageTemplates/storyboardGallery.js';
 import { templateSectionName, wearUsageForBlock } from '../../lib/pageTemplates/slots.js';
@@ -242,7 +244,7 @@ function prepareStoryboardEntry(
       ? { ...block, matchIds: normalizeMatchIds(block.matchIds) }
       : block
   ));
-  const normalizedBlocks = ensureContiguousSpaceRuns(matchRepairedBlocks);
+  const normalizedBlocks = ensureContiguousSpaceRuns(reconcileSectionDependencies(sourceBlocks, matchRepairedBlocks, p));
   const normalized = sbStable(normalizedBlocks) !== sbStable(sourceBlocks);
   // 방금 바인딩/예시를 뗀 카드만 boundGender(서버가 실제로 검증하는 성별)로 먼저 채운다.
   // 일반 자동배정(exampleGender, 바로 아래)은 실존 모델 픽처럼 targetGenders 와 일부러
@@ -390,7 +392,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     if (previousGenerationCutCount.current != null && crossedBelowDetailPageMinimum(
       previousGenerationCutCount.current, generationCutCount, CREDIT_COSTS.storyboardMinCuts,
     )) {
-      pushToast(`AI 컷이 ${CREDIT_COSTS.storyboardMinCuts}장보다 적으면 ${CREDIT_COSTS.storyboardMinCuts}장 기준(${detailPageCreditCost(1)}크레딧)으로 차감돼요. ${CREDIT_COSTS.storyboardMinCuts}장까지는 같은 값이에요.`);
+      pushToast(`AI 컷이 ${CREDIT_COSTS.storyboardMinCuts}컷보다 적으면 ${CREDIT_COSTS.storyboardMinCuts}컷 기준(${detailPageCreditCost(1)}크레딧)으로 차감돼요. ${CREDIT_COSTS.storyboardMinCuts}컷까지는 같은 값이에요.`);
     }
     previousGenerationCutCount.current = generationCutCount;
   }, [generationCutCount, pushToast]);
@@ -798,7 +800,10 @@ export function Storyboard({ toastOverride = null } = {}) {
     });
     return () => sbSetSaveRepair(null);
   }, []);
-  const detailPreviewDimensions = useDetailPreviewDimensions(blocks, catalogs);
+  const detailPreviewBlocks = useMemo(() => [...(blocks || []), ...sectionRuns(blocks || []).filter(run => run.kind === 'points')
+    .flatMap(run => stageAdditions(blocks, run.key, { product: catalogs?.detailProduct, analysis: catalogs?.analysis }))
+    .flatMap(item => item.block ? [item.block] : [])], [blocks, catalogs]);
+  const detailPreviewDimensions = useDetailPreviewDimensions(detailPreviewBlocks, catalogs);
   const previewCatalogs = useMemo(() => catalogs && ({ ...catalogs, detailPreviewDimensions }), [catalogs, detailPreviewDimensions]);
   const pagePreview = useMemo(() => !blocks || !catalogs || entryNotice === 'legacyGenerated' ? []
     : assembleStoryboardPreview({ storyboard: blocks, product: catalogs.detailProduct, analysis: catalogs.analysis,
@@ -1016,12 +1021,19 @@ export function Storyboard({ toastOverride = null } = {}) {
     if (blocks.some(block => block.similarSourceBlockId === id)) toast.push('원본과 연결된 비슷한 컷을 함께 삭제했어요');
     if (!next.some(block => block.id === selectedId)) closeInspector();
   };
-  const addBlock = key => {
+  const addOptionalPhoto = async item => {
+    if (atomicSavingRef.current || !activeRun) return;
+    try {
+      await atomicBoardChange(current => addStageAddition(current, activeRun.key, item,
+        { product: catalogs.detailProduct, analysis: catalogs.analysis }), { undoLabel: `${item.label} 넣기` });
+    } catch { toast.push('컷을 저장하지 못했어요. 다시 시도해주세요.'); }
+  };
+  const removeOptionalPhoto = async key => {
     if (atomicSavingRef.current) return;
-    const next = addStoryboardPhoto(blocks, key, { catalog: catalogs.genExamples, product: catalogs.detailProduct,
-      analysis: catalogs.analysis, gender: exampleGender, identityKind });
-    if (next === blocks) return;
-    setBlocks(next); showUndo(blocks, next, { label: '컷 추가' });
+    try {
+      await atomicBoardChange(current => removePairedPhoto(current, key, catalogs.detailProduct), { undoLabel: '컷 빼기' });
+      closeInspector();
+    } catch { toast.push('컷을 저장하지 못했어요. 다시 시도해주세요.'); }
   };
   const chooseSpaceSet = async set => {
     if (!setPicker || atomicSavingRef.current) return;
@@ -1048,7 +1060,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         return reconcileHorizonGroupBackground(next, groupId, catalogs.detailProduct, catalogs.garmentColorEvidence, set.id);
       }, { nextSelectedId: ids[0], undoLabel: setPicker.mode === 'replace' ? '장소 바꾸기' : '장소 세트 추가' });
       setSetPicker({ ...setPicker, mode: 'replace', spaceGroupId: groupId });
-      if (removedSimilarCount) toast.push(`원본과 연결된 비슷한 컷 ${removedSimilarCount}장도 함께 정리했어요`);
+      if (removedSimilarCount) toast.push(`원본과 연결된 비슷한 컷 ${removedSimilarCount}컷도 함께 정리했어요`);
     } catch { setSetPickerError('장소 세트를 저장하지 못했어요. 다시 시도해주세요.'); }
   };
   const locked = false;
@@ -1211,9 +1223,10 @@ export function Storyboard({ toastOverride = null } = {}) {
         commitSectionRemoval(pendingRemoval.key, impact);
       }} />}
     {doneBlocked && <DoneGuardModal />}
-    <div className={`page-head ${styles.pageHeadWithTheme}`}><div><h1>상세페이지 초안 구성</h1><p>기본 구성으로 채워 뒀어요. 바꾸고 싶은 곳만 눌러요.</p></div>
+    <div className={`page-head ${styles.pageHeadWithTheme}`}><h1>상세페이지 초안 구성</h1>
       <div><StoryboardThemePicker value={analysisPageStyle(catalogs.analysis?.pageStyle).fontStyle} onChange={changeFontStyle} disabled={atomicSaving} />
         {pageStyleError && <p role="alert">{pageStyleError}</p>}</div>
+      <p className={styles.introCopy}>예시 이미지들로 상세페이지 초안이 구성됐어요. 원하는 느낌으로 구성해보세요.</p>
     </div>
     {mannequinFailure && <div className="sec-head" role="status">
       <p className="sec-sub handoff-title">{mannequinFailure}</p>
@@ -1240,13 +1253,13 @@ export function Storyboard({ toastOverride = null } = {}) {
         onRemove={removeSection} onMove={moveSection} onDropContent={dropSectionContent}
         onOverview={() => { closeInspector(); setOverview(true); }} sectionRefs={sectionRefs} />}
       <StoryboardStage run={activeRun} number={visibleRuns.findIndex(run => run.key === activeRun?.key) + 1}
-        blocks={blocks} page={page} catalogs={catalogs} colorOpts={detailColorOpts} photoOrdinals={photoOrdinals} selectedId={selectedId} matchClothing={matchClothing || []} identityKind={identityKind}
+        blocks={blocks} page={page} catalogs={previewCatalogs} colorOpts={detailColorOpts} photoOrdinals={photoOrdinals} selectedId={selectedId} matchClothing={matchClothing || []} identityKind={identityKind}
         selectedViewId={selectedViewId} selectedGroupId={drawer?.mode === 'set' && setPicker?.mode === 'replace' ? setPicker.spaceGroupId : null}
         dimOthers={drawer?.mode === 'photo' || drawer?.mode === 'set' && setPicker?.mode === 'replace'} busy={atomicSaving} canDesign={sectionDesignChoices(activeRun, { storyboard: blocks, product: catalogs.detailProduct }).length > 1}
         onHoverPosition={setHighlightedPosition} onSwapPosition={swapPosition} onSwapBlocked={setSwapNotice}
         onPhotoDragStart={() => { photoDragUntil.current = Infinity; }} onPhotoDragEnd={() => { photoDragUntil.current = Date.now() + 200; }}
         onDesign={() => setDrawer({ mode: 'design', runKey: activeRun.key })} onSelectPhoto={selectCard}
-        onRemovePhoto={remove} onSimilar={addSimilar} onAddPhoto={() => addBlock(activeRun.key)}
+        onRemovePhoto={remove} onRemovePairedPhoto={removeOptionalPhoto} onAddAddition={addOptionalPhoto} onSimilar={addSimilar}
         onAddSet={() => openSetPicker({ mode: 'add', targetSid: activeRun.sectionId, targetRole: activeRun.usage === 'fit' ? 'studio' : 'styling' })}
         onReplaceSet={block => { setSelectedId(block.id); openSetPicker({ mode: 'replace', spaceGroupId: block.spaceGroupId,
           targetSid: block.sectionId, targetRole: block.cutType === 'horizon' ? 'studio' : 'styling' }); }}
@@ -1274,6 +1287,8 @@ export function Storyboard({ toastOverride = null } = {}) {
             <h2>비슷한 컷</h2><p>기준 사진이 완성되면 같은 촬영의 다른 순간으로 만들어요.</p>
             <button type="button" onClick={() => selectCard(selected.similarSourceBlockId)}>기준 컷 {photoOrdinals.get(selected.similarSourceBlockId)}번 설정 보기</button>
           </div> : <StoryboardPhotoPanel key={selectedId} block={selected} blocks={blocks} busy={atomicSaving} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts}
+            fixedProduct={activeRun?.kind === 'first' && pairedPhotoSlot(activeRun.designId) === 'ghost'
+              && (selectedViewId?.includes(':first.ghost:') || selected?.slotKey === 'first.ghost')}
             clothingType={clothingType} subCategory={composeModeSeed.subCategory} customCategory={composeModeSeed.customCategory}
             exampleGender={exampleGender} identityKind={identityKind} hasDetailImage={hasDetailImage} projectId={projectId}
             onChange={(patchValue, options) => patch(selectedId, patchValue, options)} onAtomicChange={(patchValue, options) => atomicPatch(selectedId, patchValue, options)}

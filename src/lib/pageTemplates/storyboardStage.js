@@ -15,6 +15,8 @@ export function packStageRows(blocks, { add = true } = {}) {
   let row = [], occupied = 0;
   const flush = () => { if (row.length) rows.push(row); row = []; occupied = 0; };
   for (const group of groups) {
+    const previousKind = row.at(-1)?.blocks.at(-1)?.stageRowKind;
+    if (previousKind && group.blocks[0]?.stageRowKind && previousKind !== group.blocks[0].stageRowKind) flush();
     if (occupied + group.blocks.length > 4) flush();
     for (let offset = 0; offset < group.blocks.length; offset += 4) {
       const chunk = { ...group, blocks: group.blocks.slice(offset, offset + 4), continued: offset > 0 };
@@ -23,7 +25,7 @@ export function packStageRows(blocks, { add = true } = {}) {
       if (offset + 4 < group.blocks.length || occupied === 4) flush();
     }
   }
-  if (add && photos.length < 12) {
+  if (add && photos.filter(block => !block.paleAddition).length < 12) {
     if (occupied === 4) flush();
     row.push({ kind: 'add', key: 'add', blocks: [] });
   }

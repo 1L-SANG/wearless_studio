@@ -1361,7 +1361,8 @@
         "type": "photoStack",
         "aspect": "source",
         "gap": 40
-      }
+      },
+      "pickerHidden": true
     },
     "P01-D11": {
       "id": "P01-D11",
@@ -3436,6 +3437,383 @@
         "aspect": "source",
         "gap": 40
       }
+    },
+    "P01-D09-G": {
+      "id": "P01-D09-G",
+      "displayName": "사진 가운데 소개와 고스트컷",
+      "kind": "first",
+      "padding": 0,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "overlay",
+          "slot": "hero",
+          "aspect": "4/5",
+          "groups": [
+            {
+              "x": 56,
+              "w": 888,
+              "y": 0,
+              "nodes": [
+                {
+                  "type": "rule",
+                  "h": 1.5,
+                  "color": "onPhoto",
+                  "align": "center",
+                  "gap": 18,
+                  "matchText": "name",
+                  "minW": 48,
+                  "maxWidthRatio": 0.6
+                },
+                {
+                  "type": "text",
+                  "copyRole": "label",
+                  "gap": 12,
+                  "size": 32,
+                  "color": "onPhoto",
+                  "align": "center"
+                },
+                {
+                  "type": "text",
+                  "copyRole": "name",
+                  "gap": 12,
+                  "size": 51,
+                  "style": "titleKo",
+                  "color": "onPhoto",
+                  "align": "center",
+                  "titleWrap": {
+                    "photoWidthRatio": 0.7,
+                    "sizes": [
+                      51,
+                      44,
+                      38
+                    ],
+                    "maxLines": 2,
+                    "minSizeMaxLines": 3
+                  }
+                },
+                {
+                  "type": "text",
+                  "copyRole": "tagline",
+                  "gap": 8,
+                  "size": 25,
+                  "color": "onPhoto",
+                  "align": "center"
+                },
+                {
+                  "type": "text",
+                  "copyRole": "colors",
+                  "gap": 18,
+                  "size": 23,
+                  "color": "onPhoto",
+                  "align": "center"
+                },
+                {
+                  "type": "rule",
+                  "h": 1.5,
+                  "color": "onPhoto",
+                  "align": "center",
+                  "matchText": "name",
+                  "minW": 48,
+                  "maxWidthRatio": 0.6
+                }
+              ],
+              "id": "center",
+              "anchor": "center",
+              "band": "firstTitleBand",
+              "positionFallback": {
+                "anchors": [
+                  "center",
+                  "top",
+                  "bottom"
+                ],
+                "edgeInsetRatio": 0.08
+              }
+            }
+          ]
+        },
+        {
+          "type": "panel",
+          "padding": 56,
+          "fill": "panel",
+          "nodes": [
+            {
+              "type": "photo",
+              "slot": "ghost",
+              "aspect": "1/1",
+              "gap": 0,
+              "x": 140,
+              "w": 496
+            }
+          ],
+          "gap": 20,
+          "x": 56,
+          "w": 888
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "pickerHidden": true
+    },
+    "P01-SHOW-01-G": {
+      "id": "P01-SHOW-01-G",
+      "displayName": "큰 사진과 상품명, 고스트컷",
+      "kind": "first",
+      "padding": 0,
+      "top": 0,
+      "bottom": 28,
+      "layout": [
+        {
+          "type": "photo",
+          "slot": "hero",
+          "aspect": "3/4",
+          "gap": 20
+        },
+        {
+          "type": "text",
+          "copyRole": "name",
+          "x": 70,
+          "w": 860,
+          "size": 28,
+          "align": "left",
+          "color": "ink",
+          "singleLine": true,
+          "gap": 0
+        },
+        {
+          "type": "panel",
+          "padding": 56,
+          "fill": "panel",
+          "nodes": [
+            {
+              "type": "photo",
+              "slot": "ghost",
+              "aspect": "1/1",
+              "gap": 0,
+              "x": 140,
+              "w": 496
+            }
+          ],
+          "gap": 20,
+          "x": 56,
+          "w": 888
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "pickerHidden": true
+    },
+    "T03-D01-P": {
+      "id": "T03-D01-P",
+      "displayName": "사진 옆 설명과 제품컷",
+      "kind": "fabric",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 12,
+          "size": 32
+        },
+        {
+          "type": "text",
+          "copyRole": "title",
+          "gap": 26,
+          "size": 37,
+          "emphasis": "title"
+        },
+        {
+          "type": "panel",
+          "padding": 0,
+          "fill": null,
+          "nodes": [],
+          "gap": 20,
+          "columns": [
+            {
+              "x": 0,
+              "w": 428,
+              "nodes": [
+                {
+                  "type": "photo",
+                  "slot": "fabric",
+                  "aspect": "1/1",
+                  "gap": 0,
+                  "radius": 16
+                }
+              ]
+            },
+            {
+              "x": 460,
+              "w": 428,
+              "nodes": [
+                {
+                  "type": "text",
+                  "copyRole": "body",
+                  "gap": 20,
+                  "size": 25
+                },
+                {
+                  "type": "panel",
+                  "padding": 0,
+                  "fill": null,
+                  "nodes": [
+                    {
+                      "type": "text",
+                      "copyRole": "mix",
+                      "gap": 10,
+                      "size": 20,
+                      "align": "left"
+                    },
+                    {
+                      "type": "rule",
+                      "w": "text",
+                      "h": 2,
+                      "color": "accentInk",
+                      "gap": 0
+                    }
+                  ],
+                  "gap": 20,
+                  "radius": 14
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "copyRole": "notice",
+          "gap": 14,
+          "size": 22,
+          "hideEmpty": true
+        },
+        {
+          "type": "panel",
+          "padding": 56,
+          "fill": "panel",
+          "nodes": [
+            {
+              "type": "photo",
+              "slot": "product",
+              "aspect": "3/4",
+              "gap": 0,
+              "x": 140,
+              "w": 496
+            }
+          ],
+          "gap": 20
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "pickerHidden": true
+    },
+    "T03-D06-P": {
+      "id": "T03-D06-P",
+      "displayName": "사진 안 소재 설명과 제품컷",
+      "kind": "fabric",
+      "padding": 56,
+      "top": 74,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "overlay",
+          "slot": "fabric",
+          "aspect": "4/5",
+          "groups": [
+            {
+              "x": 51,
+              "y": 47,
+              "w": 786,
+              "nodes": [
+                {
+                  "type": "text",
+                  "copyRole": "label",
+                  "gap": 12,
+                  "size": 53,
+                  "color": "onPhoto",
+                  "align": "left"
+                },
+                {
+                  "type": "text",
+                  "copyRole": "title",
+                  "gap": 26,
+                  "size": 30,
+                  "emphasis": "title",
+                  "color": "onPhoto",
+                  "align": "left"
+                }
+              ],
+              "id": "heading"
+            },
+            {
+              "x": 51,
+              "y": 47,
+              "w": 786,
+              "anchor": "bottom",
+              "nodes": [
+                {
+                  "type": "text",
+                  "copyRole": "mix",
+                  "gap": 14,
+                  "size": 22,
+                  "color": "onPhoto",
+                  "align": "left"
+                },
+                {
+                  "type": "text",
+                  "copyRole": "body",
+                  "gap": 0,
+                  "size": 25,
+                  "color": "onPhoto",
+                  "align": "left"
+                }
+              ],
+              "id": "description"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "copyRole": "notice",
+          "gap": 14,
+          "size": 22,
+          "hideEmpty": true
+        },
+        {
+          "type": "panel",
+          "padding": 56,
+          "fill": "panel",
+          "nodes": [
+            {
+              "type": "photo",
+              "slot": "product",
+              "aspect": "3/4",
+              "gap": 0,
+              "x": 140,
+              "w": 496
+            }
+          ],
+          "gap": 20
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "pickerHidden": true
     }
   },
   "templates": [
@@ -3656,6 +4034,21 @@
               "count": 1,
               "aspect": "1/1",
               "hint": "원단 확대"
+            },
+            {
+              "slotKey": "product",
+              "contentRole": "productOverview",
+              "fill": "reuse",
+              "reuseFrom": {
+                "kind": "color_product",
+                "slot": "front",
+                "color": "base"
+              },
+              "recipe": null,
+              "color": "base",
+              "count": 1,
+              "aspect": "3/4",
+              "hint": "기준 색 앞면 제품 사진 재사용"
             }
           ],
           "block": {
@@ -4095,6 +4488,21 @@
               "count": 1,
               "aspect": "1/1",
               "hint": "원단 확대"
+            },
+            {
+              "slotKey": "product",
+              "contentRole": "productOverview",
+              "fill": "reuse",
+              "reuseFrom": {
+                "kind": "color_product",
+                "slot": "front",
+                "color": "base"
+              },
+              "recipe": null,
+              "color": "base",
+              "count": 1,
+              "aspect": "3/4",
+              "hint": "기준 색 앞면 제품 사진 재사용"
             }
           ],
           "fallbackDesignId": "T03-TEXT-01"
@@ -4445,6 +4853,21 @@
               "count": 1,
               "aspect": "1/1",
               "hint": "원단 확대"
+            },
+            {
+              "slotKey": "product",
+              "contentRole": "productOverview",
+              "fill": "reuse",
+              "reuseFrom": {
+                "kind": "color_product",
+                "slot": "front",
+                "color": "base"
+              },
+              "recipe": null,
+              "color": "base",
+              "count": 1,
+              "aspect": "3/4",
+              "hint": "기준 색 앞면 제품 사진 재사용"
             }
           ],
           "block": {
@@ -4811,6 +5234,21 @@
               "count": 1,
               "aspect": "1/1",
               "hint": "원단 확대"
+            },
+            {
+              "slotKey": "product",
+              "contentRole": "productOverview",
+              "fill": "reuse",
+              "reuseFrom": {
+                "kind": "color_product",
+                "slot": "front",
+                "color": "base"
+              },
+              "recipe": null,
+              "color": "base",
+              "count": 1,
+              "aspect": "3/4",
+              "hint": "기준 색 앞면 제품 사진 재사용"
             }
           ],
           "fallbackDesignId": "T03-TEXT-01"

@@ -84,7 +84,7 @@ test('D204 singleton instances and photos outside their original set start with 
 test('single mode opens a captionless stack dialog while set mode retains inline set expansion', async () => {
   const h = await guideHarness();
   let tree = h.render();
-  const setStack = buttons(tree).find(node => node.props['aria-label']?.includes('장 펼치기'));
+  const setStack = buttons(tree).find(node => node.props['aria-label']?.includes('컷 펼치기'));
   assert.ok(setStack); setStack.props.onClick(); tree = h.render();
   assert.ok(byText(tree, '전체 예시')); byText(tree, '전체 예시').props.onClick(); tree = h.render();
   byText(tree, '단일컷').props.onClick(); tree = h.render();
@@ -215,7 +215,7 @@ async function popupHarness({ keyboardOpen = true, selectedId = 'b', native = fa
 
 test('real popup traps keyboard navigation, consumes Escape and Tab and restores its stack', async () => {
   const h = await popupHarness(); const tree = h.render();
-  assert.equal(tree.props.role, 'dialog'); assert.match(tree.props['aria-label'], /4장 중 한 장 고르기/);
+  assert.equal(tree.props.role, 'dialog'); assert.match(tree.props['aria-label'], /4컷 중 한 컷 고르기/);
   assert.equal(h.doc.activeElement, h.elements[1]);
   for (const [key, id] of [['ArrowRight', 'c'], ['ArrowDown', 'c'], ['Home', 'a'], ['End', 'd'], ['ArrowLeft', 'c']]) {
     const event = h.event(key); h.listeners.get('keydown')(event);

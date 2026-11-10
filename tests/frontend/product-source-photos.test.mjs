@@ -1,4 +1,4 @@
-import { readStoryboardSources } from './helpers/storyboardComponents.mjs';
+import { storyboardPhotoPanelHarness } from './helpers/storyboardPhotoPanelHarness.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -154,18 +154,18 @@ test('고스트 원본 사진은 앞면과 뒷면 구분을 유지한다', async
   assert.equal(productSourcePhotos(product, 'base', 'ghost').back.slot, 'Back');
 });
 test('콘티 대상 색상 변경은 디테일 대상을 먼저 풀고 새 색상의 원본 면을 고른다', async () => {
-  const source = readStoryboardSources();
-  const start = source.indexOf('          value={block.colorId} onChange={(colorId) => {');
-  const body = source.slice(start + '          value={block.colorId} onChange={'.length, source.indexOf('} /></div>', start));
-  const module = await loadPhotos();
   for (const shot of ['ghost', 'detail']) {
-    let changes;
-    const block = { cutType: 'product', shot, colorId: 'base', direction: 'back', ...(shot === 'detail' ? { detailTargetId: 'back-target' } : {}) };
-    const change = evaluate(`return (${body});`, { block, catalogs: { detailProduct: product }, ...details, ...module, ...garmentColors, onChange: value => { changes = value; } });
-    change('extra');
-    assert.equal(changes.direction, 'front');
-    assert.equal(changes.colorId, 'extra');
-    if (shot === 'detail') assert.equal(changes.detailTargetId, null);
+    const block = { id: `product-${shot}`, pageSectionKey: `emo.${shot}`, pageSectionKind: shot === 'ghost' ? 'color_product' : 'detail',
+      source: 'ai', cutType: 'product', shot, colorId: 'base', direction: 'back',
+      ...(shot === 'detail' ? { contentRole: 'detail', detailTargetId: 'back-target' } : { productPresentation: 'ghost' }) };
+    const h = await storyboardPhotoPanelHarness({ block, catalogs: { ...catalogs, detailProduct: product } });
+    try {
+      const field = nodes(h.render(), node => node.type === 'color-dots')[0];
+      field.props.onChange('extra');
+      assert.equal(h.block.direction, 'front');
+      assert.equal(h.block.colorId, 'extra');
+      if (shot === 'detail') assert.equal(h.block.detailTargetId, null);
+    } finally { h.close(); }
   }
 });
 

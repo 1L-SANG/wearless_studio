@@ -451,7 +451,7 @@ function renderText(node, x, y, width, ctx) {
     let display = text || (uppercase ? fallback.toUpperCase() : fallback);
     if (node.singleLine) display = display.replace(/\s+/gu, " ").trim();
     const titleWrap =
-        ctx.designId === "P01-D09" && content.role === "name" && node.titleWrap;
+        ["P01-D09", "P01-D09-G"].includes(ctx.designId) && content.role === "name" && node.titleWrap;
     if (titleWrap) {
         layoutWidth = Math.min(
             layoutWidth,
@@ -869,7 +869,7 @@ function renderGroups(groups, x, y, width, height, ctx, photo) {
                   ? Math.max(0, height - (group.y || 0) - result.h)
                   : group.y || 0);
         const policy =
-            ctx.designId === "P01-D09" ? group.positionFallback : null;
+            ["P01-D09", "P01-D09-G"].includes(ctx.designId) ? group.positionFallback : null;
         let offsets;
         if (policy) {
             const inset = Math.max(
