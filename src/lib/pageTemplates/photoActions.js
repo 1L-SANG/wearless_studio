@@ -6,6 +6,7 @@ import { sectionRuns } from './sectionRuns.js';
 import { reconcileSectionDependencies } from './sectionDependencies.js';
 import { wornCropRegions } from './seed.js';
 import { getTemplate, sectionDefinition } from './catalog.js';
+import { isProductSectionPhoto, productSectionState, changeProductSectionPresentation, inheritProductSectionPresentation } from './productPresentation.js';
 
 export function canReplaceStoryboardSet(blocks, groupId, set) {
   const current = blocks.filter(block => block.spaceGroupId === groupId);
@@ -17,8 +18,15 @@ export function canReplaceStoryboardSet(blocks, groupId, set) {
 }
 
 export function patchStoryboardPhoto(blocks, id, changes, product = {}) {
-  const next = blocks.map(block => block.id === id
+  const target = blocks.find(block => block.id === id);
+  let source = blocks;
+  if (isProductSectionPhoto(target)) {
+    if (Object.hasOwn(changes, 'productPresentation')) source = changeProductSectionPresentation(blocks, target.pageSectionKey, changes.productPresentation);
+    else if (!productSectionState(blocks, target.pageSectionKey).value) throw new Error('product_presentation_required');
+  }
+  const patched = source.map(block => block.id === id
     ? changes.source === 'mine' ? detachSpaceMembership({ ...block, ...changes }) : { ...block, ...changes } : block);
+  const next = inheritProductSectionPresentation(blocks, patched);
   return reconcileSectionDependencies(blocks, reconcileSimilarCutMutation(blocks, next), product,
     { cropRegions: wornCropRegions[product.clothingType] || wornCropRegions.top });
 }

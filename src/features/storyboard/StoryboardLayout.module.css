@@ -12,6 +12,7 @@
 .page:global(.sb-page) > :global(.page-head) { padding: var(--sp-28) 0 var(--sp-24); text-align: left; transition: opacity var(--sb-t-base) var(--sb-ease); }
 .page:global(.sb-page) > :global(.page-head) h1 { font-size: var(--sb-fs-title); font-weight: 700; line-height: 1.25; letter-spacing: -.03em; text-wrap: balance; }
 .page:global(.sb-page) > :global(.page-head) p { margin-top: var(--sp-8); color: var(--fg-2); font-size: var(--sb-fs-body); line-height: 1.35; letter-spacing: -.01em; }
+.pageHeadWithTheme { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--sp-20); }
 .page.page.drawerOpen { margin-inline-start: 0; }
 .drawerOpen > :global(.page-head) { opacity: .4; transition: opacity var(--sb-t-base) var(--sb-ease); }
 .page button, .continueBar button { letter-spacing: inherit; }
@@ -72,10 +73,13 @@
 .stageHead h2 em { font: italic 500 var(--sb-fs-sub)/1.2 var(--sb-font-index); color: var(--fg-2-read); letter-spacing: 0; }
 .stageHead p { margin: var(--sp-8) 0 0; color: var(--fg-2); font: 400 var(--sb-fs-note)/1.45 var(--font-body); letter-spacing: -.01em; }
 .stageActions:global(.modal-actions) { display: flex; flex: none; gap: var(--sp-8); margin: 0; }
-.designButton { min-height: 32px; border: 0; border-radius: var(--r-pill); padding: 0 14px; background: var(--cta-bg); color: var(--cta-fg); box-shadow: var(--elev-btn-hi); font: 540 var(--sb-fs-btn)/1.2 var(--font-body); cursor: pointer; transition: background-color var(--sb-t-fast), box-shadow var(--sb-t-fast); }
-.designButton:hover { background: var(--cta-bg-hover); }
+.designButton { display: inline-flex; align-items: center; gap: var(--sp-6); min-height: 32px; border: 0; border-radius: var(--r-pill); padding: 0 14px; background: var(--bg-1); color: var(--fg-1); box-shadow: inset 0 0 0 1px var(--sb-line-control); font: 540 var(--sb-fs-btn)/1.2 var(--font-body); cursor: pointer; transition: background-color var(--sb-t-fast), box-shadow var(--sb-t-fast); }
+.designButton:hover { box-shadow: inset 0 0 0 1px var(--fg-2); }
 .page .designButton:focus-visible, .continueBar .continue:focus-visible { outline: none; box-shadow: var(--cta-focus-ring); }
 .stageBody { padding: var(--sp-16) var(--sp-20) var(--sp-24); }
+.stageSourceNote { margin: 0 0 var(--sp-12); color: var(--fg-2); font: 400 var(--sb-fs-note)/1.45 var(--font-body); }
+.captionColor { display: block; width: 14px; height: 14px; flex: none; }
+.captionColor circle { stroke: var(--ring-strong); stroke-width: 1px; }
 .stageRow { display: grid; align-items: start; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--conti-photo-gap); margin-bottom: var(--sp-20); }
 .stageRow:last-child { margin-bottom: 0; }
 .stageGroup { min-width: 0; }

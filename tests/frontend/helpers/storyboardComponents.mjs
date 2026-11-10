@@ -6,12 +6,14 @@ import { wearUsageForBlock } from '../../../src/lib/pageTemplates/slots.js';
 import { automaticSectionInsertionKey } from '../../../src/lib/pageTemplates/sectionPlacement.js';
 import { colorDisplayName } from '../../../src/lib/colorwayMatching.js';
 import { isTextOnlySection, visibleSectionRuns } from '../../../src/lib/pageTemplates/sectionRuns.js';
-import { signatureExamplesForBlock } from '../../../src/lib/signatureCutPool.js';
+import * as signature from '../../../src/lib/signatureCutPool.js';
+import * as photoChoices from '../../../src/lib/pageTemplates/storyboardPhotoChoices.js';
 import * as gallery from '../../../src/lib/pageTemplates/storyboardGallery.js';
 import { assembleStoryboardPreview } from '../../../src/features/storyboard/storyboardPreview.js';
 const extraBindings = { storyboardPositions, storyboardPositionId, isHiddenStoryboardKind, positionSwapReason, storyboardPositionSwapReason,
-  wearUsageForBlock, automaticSectionInsertionKey, signatureExamplesForBlock, colorDisplayName, isTextOnlySection, visibleSectionRuns,
-  ...gallery, assembleStoryboardPreview, StoryboardStackPopup: 'stack-popup' };
+  wearUsageForBlock, automaticSectionInsertionKey, colorDisplayName, isTextOnlySection, visibleSectionRuns,
+  ...signature, ...gallery, ...photoChoices, assembleStoryboardPreview, StoryboardStackPopup: 'stack-popup',
+  ProductPresentationPicker: 'product-presentations', PhotoChoiceFilters: 'photo-filters', PhotoFraming: 'photo-framing', PhotoChoicePager: 'photo-pages', ExampleThumb: 'example-thumb' };
 
 export const componentStyles = new Proxy({}, { get: (_target, key) => String(key) });
 export const nodes = node => Array.isArray(node) ? node.flatMap(nodes)

@@ -95,7 +95,7 @@ for (const template of ['emo', 'show']) for (const count of [0, 1, 2, 3, 4]) tes
 test('v4 slot recipes, shooting groups and hero assignment preserve page order', () => {
   const b = seedStoryboard(product(2), analysis('emo'));
   const first = b[0], fit = b.find(b => b.pageSectionUsage === 'fit');
-  assert.deepEqual(photoSlotForBlock(first).recipe.allowedCutTypes, ['styling']);
+  assert.deepEqual(photoSlotForBlock(first).recipe.allowedCutTypes, ['styling', 'horizon']);
   assert.equal(normalizedRecipePatch({ ...first, cutType: 'product', shot: 'detail' }, 'hero').cutType, 'styling');
   const child = createSimilarCutBlock({ ...first, exampleId: 'example' }, 'similar');
   assert.equal(child.slotKey, null);

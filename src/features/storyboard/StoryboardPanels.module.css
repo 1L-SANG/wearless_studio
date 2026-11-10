@@ -14,6 +14,9 @@
 .drawer:global(.sb-v5-theme) input, .drawer:global(.sb-v5-theme) select, .drawer:global(.sb-v5-theme) textarea { font-size: 16px; }
 :global(.sb-v5-theme) .panelHeading { padding-bottom: 14px; border-bottom: 1px solid var(--ring); }
 :global(.sb-v5-theme) .panelHeading p { margin: var(--sp-4) 0 0; color: var(--fg-2); font: 400 var(--sb-fs-note)/1.45 var(--font-body); }
+:global(.sb-v5-theme) .panelHeadingRow { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); }
+:global(.sb-v5-theme) .panelHeadingRow button { flex: none; min-height: 32px; padding-inline: var(--sp-12); }
+:global(.sb-v5-theme) .designName { display: flex; align-items: baseline; gap: var(--sp-6); }
 :global(.sb-v5-theme) .photoPanel:global(.inspector) { position: static; padding: 0; border-radius: 0; box-shadow: none; background: transparent; font-size: var(--sb-fs-body); }
 :global(.sb-v5-theme) .photoPanel :global(.insp-sec) { padding: var(--sp-20) 0; margin: 0; border-bottom: 1px solid var(--ring); }
 :global(.sb-v5-theme) .photoPanel :global(.insp-sec):first-child { padding-top: 0; }

@@ -7,10 +7,12 @@ import { ProductSourcePicker } from './ProductSourcePicker.jsx';
 import { GarmentColorField } from '../../components/GarmentColorField.jsx';
 import HorizonBackgroundControl from './HorizonBackgroundControl.jsx';
 import { UnderlineTabs, ShotSegment, MineImageTab, MINE_SHOT_OPTION } from './StoryboardControls.jsx';
-import { MoodGuide } from './StoryboardExampleGallery.jsx';
+import { StoryboardPhotoGallery as MoodGuide } from './StoryboardPhotoGallery.jsx';
+import { ProductPresentationPicker } from './ProductPresentationPicker.jsx';
 import { garmentColorSelectionPatch } from '../../lib/garmentColors.js';
 import { referenceFeedbackPatch } from '../../lib/storyboardExampleFeedback.js';
 import { photoSlotForBlock } from '../../lib/pageTemplates/slots.js';
+import { isSinglePhotoSection } from '../../lib/pageTemplates/storyboardPhotoChoices.js';
 import { horizonBackgroundAvailability } from '../../lib/horizonBackgroundAvailability.js';
 import { normalizeOuterClosureState } from '../../lib/outerClosure.js';
 import { CONTENT_ROLES, SECTION_ROLES, cutTypeOptionsForSection, normalizedRecipePatch, defaultContentRoleForSection, productPresentationOf } from '../../lib/storyboardTaxonomy.js';
@@ -18,14 +20,14 @@ import { hasAvailableGenerationRecipe, isSourceBasedProductRecipe } from '../../
 import { productSourceColorPatch } from '../../lib/productSourcePhotos.js';
 import { generationExampleSelectionPatch } from '../../lib/storyboardExampleSelection.js';
 import { mineImageUrl, normalizeMineImages, promoteMineImage } from '../../lib/storyboardMineImages.js';
-import { signatureExamplesForBlock } from '../../lib/signatureCutPool.js';
+import { signatureExamplesForBlock, signatureCardForBlock, isSignatureBlock, isSignatureExampleId } from '../../lib/signatureCutPool.js';
 import styles from './StoryboardPanels.module.css';
 
 const WORN_CUT_TYPES = new Set(['styling', 'horizon']);
 const WORN_ROLE_BY_CUT_TYPE = { styling: CONTENT_ROLES.COORDINATION, horizon: CONTENT_ROLES.FIT };
 export const shouldRenderGenerationExampleGuide = block => Boolean(block?.cutType);
 
-export function StoryboardPhotoPanel({ block, catalogs, colorOpts, detailColorOpts, clothingType, subCategory, customCategory, exampleGender, identityKind = null, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, customMatchPromotionPending = false, spaceContext, onChangeSpaceSet, onExampleDrag, onChangeSpaceBackground, usedExampleIds }) {
+export function StoryboardPhotoPanel({ block, blocks, busy = false, catalogs, colorOpts, detailColorOpts, clothingType, subCategory, customCategory, exampleGender, identityKind = null, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, customMatchPromotionPending = false, spaceContext, onChangeSpaceSet, onExampleDrag, onChangeSpaceBackground, usedExampleIds }) {
   const [matchOpen, setMatchOpen] = useState(false);
   const [pendingRecipe, setPendingRecipe] = useState(null);
   const [pendingChoice, setPendingChoice] = useState(null);
@@ -46,10 +48,13 @@ export function StoryboardPhotoPanel({ block, catalogs, colorOpts, detailColorOp
   }, [block?.id, requestedRecipe?.blockId, requestedRecipe?.cutType, requestedRecipe?.shot]);
 
   if (!block) return null;
+  if (block.source === 'ai' && block.cutType === 'product' && block.shot === 'ghost') return <ProductPresentationPicker
+    block={block} blocks={blocks} clothingType={clothingType} busy={busy} onChange={onAtomicChange || onChange} />;
 
   const signatureExamples = signatureExamplesForBlock(block, { product: catalogs.detailProduct,
     analysis: { subCategory, customCategory }, gender: exampleGender });
-  const guideCatalogs = signatureExamples ? { ...catalogs, genExamples: signatureExamples } : catalogs;
+  const signature = signatureCardForBlock(block, { product: catalogs.detailProduct, analysis: { subCategory, customCategory }, gender: exampleGender, projectId });
+  const guideCatalogs = signatureExamples ? { ...catalogs, genExamples: [...signatureExamples, ...(catalogs.genExamples || [])] } : catalogs;
   const isMine = block.source === 'mine';
   const isProduct = block.cutType === 'product';
   const isDetail = block.contentRole === CONTENT_ROLES.DETAIL;
@@ -58,7 +63,7 @@ export function StoryboardPhotoPanel({ block, catalogs, colorOpts, detailColorOp
   const pendingInSpace = !!block.spaceGroupId && !requestedRecipe;
   // 디테일 샷 상시 제공(2026-08-07 개편) — 디테일 사진이 없어도 서버가 원본 구조 확대로 생성
   const slotDefinition = photoSlotForBlock(block);
-  const permittedShots = signatureExamples ? ['medium'] : slotDefinition?.recipe.allowedShots;
+  const permittedShots = slotDefinition?.recipe?.allowedShots;
   const wornShotOptions = catalogs.shotTypes.filter(option => !permittedShots || permittedShots.includes(option.value));
   const productShotOptions = catalogs.productShotTypes.filter(option => !permittedShots || permittedShots.includes(option.value));
   const hasSelectableExamples = (cutType, shot) => hasAvailableGenerationRecipe(
@@ -72,7 +77,7 @@ export function StoryboardPhotoPanel({ block, catalogs, colorOpts, detailColorOp
       appendSetOnly: cutType !== 'product',
     },
   );
-  const cutTypeOptions = cutTypeOptionsForSection(block).filter(option => !signatureExamples || option.value === 'horizon').map((option) => {
+  const cutTypeOptions = cutTypeOptionsForSection(block).map((option) => {
     const shots = option.value === 'product'
       ? productShotOptions.map((item) => item.value)
       : wornShotOptions.map((item) => item.value);
@@ -178,14 +183,20 @@ export function StoryboardPhotoPanel({ block, catalogs, colorOpts, detailColorOp
     }
   };
   const generationExamplePatch = (current, example, scope) => {
-    const selected = generationExampleSelectionPatch(current, example, {
+    const opening = isSignatureBlock(current);
+    const base = opening ? { ...current, cutType: example.cutType, shot: example.shot } : current;
+    const recipe = opening ? normalizedRecipePatch(base, CONTENT_ROLES.HERO) : {};
+    const selected = generationExampleSelectionPatch({ ...base, ...recipe }, example, {
       clothingType,
       defaultColorId: (isDetail ? detailColorOpts : colorOpts)[0]?.id,
       refScope: scope,
     });
     return {
       changes: referenceFeedbackPatch(current, {
+        ...recipe,
         ...selected.patch,
+        ...(isSignatureExampleId(example.id) ? { cutType: 'horizon', shot: 'medium', direction: 'front', sideStyle: null, refScope: 'all',
+          spaceGroupId: null, spaceVariation: null, spaceSetMemberOrder: null, setSelectionOrigin: null, horizonBackgroundMode: null } : {}),
         baseThumb: current.baseThumb ?? current.thumb,
       }, guideCatalogs),
       settingsReset: selected.settingsReset,
@@ -248,7 +259,7 @@ export function StoryboardPhotoPanel({ block, catalogs, colorOpts, detailColorOp
       ) : (
         <>
       {/* 세트 멤버는 컷 종류가 세트에 고정 — 잠금 표시 대신 아예 숨긴다(2026-08-15 오너). */}
-      {!spaceContext && (
+      {!spaceContext && !isSinglePhotoSection(block) && (
         <div className="insp-sec">
           <div className="sb-cut-label-row"><label className="lbl">컷 종류</label></div>
           <UnderlineTabs
@@ -268,7 +279,7 @@ export function StoryboardPhotoPanel({ block, catalogs, colorOpts, detailColorOp
             onCancelRequestedRecipe?.();
           }}>섹션 이동 취소</button>}
           {shouldRenderGenerationExamples && (
-            <MoodGuide usedExampleIds={usedExampleIds} identityKind={identityKind} catalogs={guideCatalogs} cut={pendingRecipe.cutType}
+            <MoodGuide block={block} projectId={projectId} busy={busy} usedExampleIds={usedExampleIds} identityKind={identityKind} catalogs={guideCatalogs} cut={pendingRecipe.cutType}
               direction={block.direction}
               sideStyle={block.sideStyle ?? null}
               shot={pendingRecipe.shot}
@@ -294,7 +305,7 @@ export function StoryboardPhotoPanel({ block, catalogs, colorOpts, detailColorOp
             {!productPresentationOf(block) && <p className="hint">예시 사진은 연출만 참고해요.</p>}
           </>}
           {shouldRenderGenerationExamples && (
-            <MoodGuide usedExampleIds={usedExampleIds} identityKind={identityKind} onUseMine={(ref) => onChange({
+            <MoodGuide block={block} projectId={projectId} signature={signature} busy={busy || pickerSaving} usedExampleIds={usedExampleIds} identityKind={identityKind} onUseMine={(ref) => onChange({
               source: 'mine', title: '내 이미지', cutType: null, contentRole: CONTENT_ROLES.CUSTOM,
               ownImages: [ref?.url || ref], thumb: ref?.url || ref,
               exampleId: null, exampleSelectionOrigin: null, refScope: null,

@@ -17,7 +17,7 @@ const shadowPaint = shadow => {
   return color ? { x: Number(match[1]), y: Number(match[2]), blur: Number(match[3]), ...color } : null;
 };
 
-function PreviewElement({ element: el, wireframe, onScrim }) {
+function PreviewElement({ element: el, wireframe, onScrim, emphasizeText }) {
   const clipId = React.useId();
   if (el.hidden) return null;
   if (el.type === 'image') return <svg x={el.x} y={el.y} width={el.w} height={el.h} viewBox={`0 0 ${el.w} ${el.h}`}>
@@ -60,14 +60,15 @@ function PreviewElement({ element: el, wireframe, onScrim }) {
   return <g aria-hidden="true">{Array.from({ length: count }, (_, i) => {
     const width = Math.max(0, el.w * (i === count - 1 ? .63 : .9));
     const x = el.x + (el.style?.align === 'center' ? (el.w - width) / 2 : el.style?.align === 'right' ? el.w - width : 0);
-    return <rect key={i} x={x} y={el.y + i * lineHeight + size * .35} width={width} height={Math.min(size * .35, el.h)} rx={size * .15}
+    const barHeight = Math.min(emphasizeText ? Math.max(size * .6, 10) : size * .35, el.h);
+    return <rect key={i} x={x} y={el.y + i * lineHeight + (emphasizeText ? (lineHeight - barHeight) / 2 : size * .35)} width={width} height={barHeight} rx={size * .15}
       className={`${styles.previewTextLine}${wireframe && onScrim ? ` ${styles.previewTextOnScrim}` : ''}`} />;
   })}</g>;
 }
 
 // Preview geometry is assembled once. Copy stays as faint lines until generation.
 export function StoryboardPreview({ blocks = [], label = '페이지 미리보기', fit = false, wireframe = false,
-  highlightedPosition, selectedSourceId, selectedPositionId, onPositionClick }) {
+  highlightedPosition, selectedSourceId, selectedPositionId, onPositionClick, emphasizeText = false }) {
   const visible = (Array.isArray(blocks) ? blocks : []).filter(block => block && Number.isFinite(block.h) && block.h > 0);
   const height = visible.reduce((sum, block) => sum + block.h, 0) || 1;
   let y = 0;
@@ -86,7 +87,7 @@ export function StoryboardPreview({ blocks = [], label = '페이지 미리보기
             const viewId = storyboardPositionId(block, element);
             const highlighted = highlightedPosition === viewId || (!highlightedPosition && (selectedPositionId
               ? viewId === selectedPositionId : selectedSourceId && element.sourceBlockId === selectedSourceId));
-            return <React.Fragment key={element.id}><PreviewElement element={element} wireframe={wireframe} onScrim={onScrim} />
+            return <React.Fragment key={element.id}><PreviewElement element={element} wireframe={wireframe} onScrim={onScrim} emphasizeText={emphasizeText} />
               {element.type === 'image' && (onPositionClick || highlighted) && <rect x={element.x} y={element.y} width={element.w} height={element.h}
                 data-preview-position={viewId} className={`${styles.positionHit}${highlighted ? ` ${styles.positionHighlight}` : ''}`}
                 vectorEffect="non-scaling-stroke" onClick={onPositionClick ? event => { event.stopPropagation(); onPositionClick({ viewId, sourceBlockId: element.sourceBlockId, slotKey: element.slotKey }); } : undefined} />}

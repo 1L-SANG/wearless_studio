@@ -132,19 +132,16 @@ test('editor product choices send each selected presentation, preserve the back 
   assert.equal(Object.hasOwn(h.request(), 'productPresentation'), false);
 });
 
-test('v5 photo panel keeps every saved presentation while editing the product source', async () => {
+test('WOC4 product panel forwards saved modes and fixed face to its section picker without source-face controls', async () => {
   for (const productPresentation of modes) {
-    const h = await storyboardPhotoPanelHarness({ block: card({ productPresentation }), catalogs, clothingType: 'top',
-      colorOpts: [{ id: 'base' }], detailColorOpts: [{ id: 'base' }] });
+    const h = await storyboardPhotoPanelHarness({ block: card({ productPresentation }), catalogs, clothingType: 'top' });
     try {
-      let tree = h.render();
-      assert.equal(nodes(tree, node => node.props?.['aria-label'] === '촬영 방식').length, 0, 'D251/D254 replacement UI is deferred');
-      const source = nodes(tree, node => node.type === 'product-source')[0];
-      source.props.onChange({ direction: 'front' });
-      tree = h.render();
-      assert.equal(h.block.productPresentation, productPresentation);
-      assert.equal(h.block.direction, 'front');
-      assert.equal(nodes(tree, node => node.type === 'mood-guide')[0].props.productPresentation, productPresentation);
+      const tree = h.render(), picker = nodes(tree, node => node.type === 'product-presentations')[0];
+      assert.ok(picker); assert.equal(picker.props.block.productPresentation, productPresentation);
+      assert.equal(picker.props.block.direction, 'back');
+      assert.equal(nodes(tree, node => node.type === 'product-source' || node.type === 'mood-guide').length, 0);
+      await picker.props.onChange({ productPresentation: 'flat' });
+      assert.equal(h.block.productPresentation, 'flat'); assert.equal(h.block.direction, 'back');
     } finally { h.close(); }
   }
 });
