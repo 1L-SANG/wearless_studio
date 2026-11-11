@@ -14,6 +14,7 @@ import { samePlaceExamplePair } from './storyboardGallery.js';
 import { singleMemberSpaceSet } from '../storyboardSetSelection.js';
 import { directionSpecFromExample } from '../storyboardExampleSelection.js';
 import { isPairedDesign, pairedDesignId } from './pairedDesigns.js';
+import { wornCropRegion, wornCropSourceAspect } from './wornCropGeometry.js';
 
 export { moveTemplateSection } from './sectionRuns.js';
 
@@ -98,7 +99,9 @@ export function addTemplateSection(blocks, product, analysis, kind, usage, conte
     const source = preferredWornCropSource(blocks);
     if (!source) return blocks;
     const crops = wornCropRegions[product.clothingType] || wornCropRegions.top;
-    lead.pointItems = crops.map(([bodyPart, label, cropRegion]) => ({ kind: 'wornCrop', sourceBlockId: source.id, bodyPart, label, cropRegion }));
+    const sourceAspect = wornCropSourceAspect(source, { product, cutResults: context.cutResults });
+    lead.pointItems = crops.map(([bodyPart, label, region]) => ({ kind: 'wornCrop', sourceBlockId: source.id,
+      bodyPart, label, cropRegion: wornCropRegion(region, sourceAspect) }));
   }
   added = added.map(({ seedFingerprint, seedProductKey, ...b }) => ({ ...b, sectionCustom: true }));
   const next = [...blocks];
@@ -108,19 +111,21 @@ export function addTemplateSection(blocks, product, analysis, kind, usage, conte
     if (!sectionDesignChoices(run && { ...run, designId: original?.designId || placement.designId }, { storyboard: next, product })
       .some(design => design.id === context.designId)) return blocks;
   }
-  return reconcileSectionDependencies(blocks, next, product, { cropRegions: wornCropRegions[product.clothingType] || wornCropRegions.top });
+  return reconcileSectionDependencies(blocks, next, product,
+    { cropRegions: wornCropRegions[product.clothingType] || wornCropRegions.top, cutResults: context.cutResults });
 }
 
-export function removeTemplateSection(blocks, key, { product = {} } = {}) {
+export function removeTemplateSection(blocks, key, { product = {}, cutResults = [] } = {}) {
   const target = blocks.find(block => block.pageSectionKey === key);
   if (!target || target.pageSectionKind === 'first') return blocks;
   const next = blocks.filter(block => block.pageSectionKey !== key);
-  return reconcileSectionDependencies(blocks, next, product, { cropRegions: wornCropRegions[product.clothingType] || wornCropRegions.top });
+  return reconcileSectionDependencies(blocks, next, product,
+    { cropRegions: wornCropRegions[product.clothingType] || wornCropRegions.top, cutResults });
 }
 
-export function sectionRemovalImpact(blocks, key, { product = {} } = {}) {
+export function sectionRemovalImpact(blocks, key, { product = {}, cutResults = [] } = {}) {
   const target = blocks.find(block => block.pageSectionKey === key);
-  const nextBlocks = removeTemplateSection(blocks, key, { product });
+  const nextBlocks = removeTemplateSection(blocks, key, { product, cutResults });
   const confirmationRequired = target?.pageSectionKind === 'wear';
   if (!confirmationRequired || nextBlocks === blocks) return { nextBlocks, confirmationRequired, consequenceText: '' };
   const consequences = [];

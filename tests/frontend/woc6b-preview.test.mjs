@@ -41,14 +41,22 @@ for (const source of ['details', 'wornCrop']) test(`WOC6B points picker samples 
   const samplePage = assemblePage({ storyboard: sampled, product, analysis: inputAnalysis }).filter(b => b.pageSectionKey === current.key);
   assert.equal(images(actualPage).length, 3); assert.equal(images(samplePage).length, 2);
   assert.deepEqual(blocks, before);
-  const widths = ['PT-COLUMN-01', 'P06-D01'].map(id => images(assemblePage({ storyboard: sectionDesignPreviewSample(changeTemplateSectionDesign(blocks, current.key, id, { product }), current.key), product, analysis: inputAnalysis }).filter(b => b.pageSectionKey === current.key)).map(e => e.w));
-  assert.ok(widths[0][0] > widths[1][0]); assert.equal(widths[0].length, 2); assert.equal(widths[1].length, 2);
+  for (const [designId, width, height] of [['PT-PHOTO-CARD-01', 880, 1100], ['PT-TEXT-PHOTO-01', 920, 1150]]) {
+    const changed = changeTemplateSectionDesign(blocks, current.key, designId, { product });
+    const actual = assemblePage({ storyboard: changed, product, analysis: inputAnalysis }).filter(b => b.pageSectionKey === current.key);
+    const sample = assemblePage({ storyboard: sectionDesignPreviewSample(changed, current.key), product, analysis: inputAnalysis }).filter(b => b.pageSectionKey === current.key);
+    assert.deepEqual(images(actual).map(image => [image.w, image.h]), Array.from({ length: 3 }, () => [width, height]));
+    assert.deepEqual(images(sample).map(image => [image.w, image.h]), [[width, height], [width, height]]);
+    assert.equal(pointPhotosForRun(run(changed).blocks, changed).length, 3);
+    assert.deepEqual(blocks, before);
+  }
 });
 
-test('WOC6B point cards use a distinct panel paint only in wireframes, retaining tone preview', () => {
+test('WOC6B saved legacy point cards keep their panel paint in wireframes and tone previews', () => {
   const blocks = seedStoryboard(product, analysis), current = run(blocks);
   for (const designId of ['PT-COLUMN-CARD-01', 'PT-BELOW-CARD-01']) {
-    const storyboard = changeTemplateSectionDesign(blocks, current.key, designId, { product });
+    // Hidden designs remain valid saved documents; they are no longer chooser actions.
+    const storyboard = blocks.map(block => block.pageSectionKey === current.key ? { ...block, pageDesignId: designId } : block);
     const page = assemblePage({ storyboard, product, analysis }).filter(b => b.pageSectionKey === current.key);
     const html = renderToStaticMarkup(React.createElement(Preview, { blocks: page, wireframe: true }));
     assert.match(html, /fill="var\(--sb-wire-panel\)"/);

@@ -14,6 +14,7 @@ import { patchStoryboardPhoto } from "../src/lib/pageTemplates/photoActions.js";
 import { assignGenerationExamples } from "../src/lib/generationExamples.js";
 import { validateStoryboardV4 } from "../src/lib/pageTemplates/validateStoryboard.js";
 import mockFullDetails from "../src/mock/detailRecommendationsFixture.json" with { type: "json" };
+import { withMockPartDescriptions } from "../src/mock/partDescriptionCopy.js";
 import { Placeholder } from "../src/mock/placeholders.js";
 import { stageAdditions, addStageAddition } from "../src/lib/pageTemplates/stageAdditions.js";
 const path = new URL(
@@ -30,7 +31,7 @@ const translateCommon = value => {
         .map(([key, item]) => [key.replace(/^guide\./, 'emo.'), translateCommon(item)]));
     return value;
 };
-fixture.cases = fixture.cases.filter(item => !/^woc(?:[2356]|6b)-/.test(item.name)).map(item => {
+fixture.cases = fixture.cases.filter(item => !/^woc(?:[2356]|6b|11)-/.test(item.name)).map(item => {
     if (!item.name.startsWith('guide-')) return item;
     const input = translateCommon(item.input);
     const album = item.name.includes('fit-album') || item.name === 'guide-3-point';
@@ -209,9 +210,11 @@ for (const templateId of ['emo', 'show']) {
         initial = addStageAddition(initial, run.key, addition, { product, analysis });
     }
     const metrics = block => block.shot === 'detail' ? { width: 1024, height: 1536 } : { width: 1024, height: 1280 };
-    for (const design of Object.values(pageTemplatesCatalog.designs).filter(design => !design.pickerHidden && design.choiceAxes && !design.framePhotos)) {
+    const savedPointIds = ['PT-COLUMN-01', 'P06-D01', 'PT-COLUMN-CARD-01', 'PT-BELOW-CARD-01'];
+    for (const design of Object.values(pageTemplatesCatalog.designs).filter(design => (!design.pickerHidden || savedPointIds.includes(design.id)) && design.choiceAxes && !design.framePhotos)) {
         const run = sectionRuns(initial).find(run => run.kind === design.kind && (design.kind !== 'wear' || run.usage === design.usage));
-        const storyboard = changeTemplateSectionDesign(initial, run.key, design.id, { product });
+        const storyboard = savedPointIds.includes(design.id) ? restoreSavedDesign(initial, run.key, design.id)
+            : changeTemplateSectionDesign(initial, run.key, design.id, { product });
         if (storyboard.find(b => b.pageSectionKey === run.key).pageDesignId !== design.id) throw new Error(`WOC6 fixture design rejected: ${design.id}`);
         appendCase(`woc6-${templateId}-${design.id}`, { product, analysis, storyboard }, metrics);
         const saved = fixture.cases.at(-1).input, lead = saved.storyboard.find(b => b.pageSectionKind === 'points' && b.source === 'text');
@@ -260,14 +263,47 @@ for (const templateId of ['emo', 'show']) {
     const parts = { ...analysis, partDescriptionCopy: ['목선', '단추', '소맷단'].map(point => ({ point, desc: `${point} 설명` })) };
     const detailBoard = seedStoryboard(product, parts);
     const detailKey = sectionRuns(detailBoard).find(run => run.kind === 'points').key;
-    appendCase(`woc6b-${templateId}-part-copy`, { product, analysis: parts, storyboard: changeTemplateSectionDesign(detailBoard, detailKey, 'PT-COLUMN-CARD-01', { product }) });
+    appendCase(`woc6b-${templateId}-part-copy`, { product, analysis: parts, storyboard: restoreSavedDesign(detailBoard, detailKey, 'PT-COLUMN-CARD-01') });
     const wornAnalysis = { ...analysis, detailRecommendations: recommendation(0) };
     const wornBoard = addTemplateSection(seedStoryboard(product, wornAnalysis), product, wornAnalysis, 'points');
     const worn = sectionRuns(wornBoard).find(run => run.kind === 'points');
     wornAnalysis.partDescriptionCopy = worn.blocks.flatMap(block => block.pointItems || []).map(item => ({ point: item.label, desc: `${item.label} 설명` }));
-    appendCase(`woc6b-${templateId}-worn-copy`, { product, analysis: wornAnalysis, storyboard: changeTemplateSectionDesign(wornBoard, worn.key, 'PT-BELOW-CARD-01', { product }) });
+    appendCase(`woc6b-${templateId}-worn-copy`, { product, analysis: wornAnalysis, storyboard: restoreSavedDesign(wornBoard, worn.key, 'PT-BELOW-CARD-01') });
 }
-for (const item of fixture.cases.filter(item => /^woc(?:[2356]|6b)-/.test(item.name))) validateStoryboardV4(item.input.storyboard);
+// WOC11's two visible designs; legacy fixtures above keep their saved IDs.
+for (const templateId of ['emo', 'show']) {
+    const source = fixture.cases.find(item => item.name === `${templateId}-2-mono`).input;
+    const product = structuredClone(source.product);
+    const baseAnalysis = { ...structuredClone(source.analysis), targetGenders: ['women'], detailRecommendations: recommendation(3) };
+    const initial = seedStoryboard(product, baseAnalysis, { projectId: 'fixture-woc11' });
+    const pointKey = sectionRuns(initial).find(run => run.kind === 'points').key;
+    const metadata = block => block.shot === 'detail' ? { width: 600, height: 900 } : { width: 900, height: 1200 };
+    for (const designId of ['PT-PHOTO-CARD-01', 'PT-TEXT-PHOTO-01']) {
+        const storyboard = changeTemplateSectionDesign(initial, pointKey, designId, { product });
+        const analysis = withMockPartDescriptions(storyboard, baseAnalysis, true);
+        for (const fontStyle of Object.keys(pageTemplatesCatalog.fontStyles)) for (const colorMode of ['mono', 'point']) {
+            appendCase(`woc11-${templateId}-${designId}-${fontStyle}-${colorMode}`, { product, storyboard,
+                analysis: { ...analysis, pageStyle: { ...analysis.pageStyle, fontStyle, colorMode } } }, metadata);
+        }
+        for (const [name, size] of [['portrait', { width: 600, height: 900 }], ['landscape', { width: 1600, height: 900 }], ['unknown', {}]]) {
+            appendCase(`woc11-${templateId}-${designId}-${name}`, { product, analysis, storyboard }, block => block.shot === 'detail' ? size : metadata(block));
+        }
+        appendCase(`woc11-${templateId}-${designId}-copy-off`, { product, analysis, storyboard, copywriting: false }, metadata);
+        appendCase(`woc11-${templateId}-${designId}-legacy-one-line-copy`, { product, storyboard,
+            analysis: { ...analysis, partDescriptionCopy: analysis.partDescriptionCopy.map(item => ({ ...item, desc: '부위 마감을 확인할 수 있습니다.' })) } }, metadata);
+        const cropAnalysis = { ...baseAnalysis, detailRecommendations: recommendation(0) };
+        const crops = addTemplateSection(seedStoryboard(product, cropAnalysis), product, cropAnalysis, 'points');
+        const cropKey = sectionRuns(crops).find(run => run.kind === 'points').key;
+        const cropBoard = changeTemplateSectionDesign(crops, cropKey, designId, { product });
+        const cropCopy = withMockPartDescriptions(cropBoard, cropAnalysis, true);
+        appendCase(`woc11-${templateId}-${designId}-new-worn`, { product, analysis: cropCopy, storyboard: cropBoard }, metadata);
+        const oldRegions = [[.44, .20, .30, .16], [.36, .20, .28, .17], [.30, .27, .40, .24]];
+        appendCase(`woc11-${templateId}-${designId}-saved-worn`, { product, analysis: cropCopy,
+            storyboard: cropBoard.map(block => block.pointItems ? { ...block,
+                pointItems: block.pointItems.map((item, i) => ({ ...item, cropRegion: oldRegions[i] })) } : block) }, metadata);
+    }
+}
+for (const item of fixture.cases.filter(item => /^woc(?:[2356]|6b|11)-/.test(item.name))) validateStoryboardV4(item.input.storyboard);
 const outputs = fixture.cases.map(({ input }) => ({
     blocks: assemblePage(input),
     regions: collectOverlayRegions(input),
@@ -283,7 +319,7 @@ from page_template_cases import assemble_input,collect_input_regions
 from app.agents.content_roles import validate_storyboard_v4
 values=json.load(sys.stdin)
 for value in values:
- if value['storyboard'][0]['id'].startswith(('woc2-', 'woc3-', 'woc5-', 'woc6-', 'woc6b-')): validate_storyboard_v4(value['storyboard'])
+ if value['storyboard'][0]['id'].startswith(('woc2-', 'woc3-', 'woc5-', 'woc6-', 'woc6b-', 'woc11-')): validate_storyboard_v4(value['storyboard'])
 print(json.dumps([dict(blocks=assemble_input(c),regions=collect_input_regions(c)) for c in values],ensure_ascii=False))
 `,
     ],

@@ -81,14 +81,16 @@ test('fabric candidates preserve one photo and text-only fallback remains one se
   assert.equal(defaultSectionDesignId(fallback, noPhoto), 'T03-TEXT-01');
 });
 
-test('both templates share four natural detail choices with one column default', () => {
+test('both templates share two flat detail choices with their own selected default', () => {
   for (const template of ['emo', 'show']) {
-    const defaultId = 'PT-COLUMN-01';
+    const defaultId = template === 'emo' ? 'PT-PHOTO-CARD-01' : 'PT-TEXT-PHOTO-01';
     const blocks = board(template), run = sectionRuns(blocks).find(run => run.kind === 'points');
     assert.equal(defaultSectionDesignId(run, blocks), defaultId);
     const offered = choices(blocks, run);
     assert.equal(offered.filter(design => design.id === defaultId).length, 1);
-    assert.deepEqual(offered.map(design => design.id), ['PT-COLUMN-01', 'P06-D01', 'PT-COLUMN-CARD-01', 'PT-BELOW-CARD-01']);
+    assert.deepEqual(offered.map(design => design.id), template === 'emo'
+      ? ['PT-PHOTO-CARD-01', 'PT-TEXT-PHOTO-01'] : ['PT-TEXT-PHOTO-01', 'PT-PHOTO-CARD-01']);
+    assert.ok(offered.every(design => !Object.hasOwn(design, 'choiceAxes')));
   }
 });
 

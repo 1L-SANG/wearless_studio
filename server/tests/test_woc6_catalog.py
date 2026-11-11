@@ -52,7 +52,7 @@ def test_section_lookup_uses_new_defaults_and_preserves_saved_reuse(template_id)
     template = get_template(template_id)
     assert wear_addition_definition(template, "fit")["designId"] == "WEAR-FIT-COLUMN-01"
     assert wear_addition_definition(template, "styling")["designId"] == "P02-D01"
-    assert section_definition(template, f"{template_id}.points", "points")["designId"] == "PT-COLUMN-01"
+    assert section_definition(template, f"{template_id}.points", "points")["designId"] == ("PT-PHOTO-CARD-01" if template_id == "emo" else "PT-TEXT-PHOTO-01")
     assert section_definition(template, f"{template_id}.color_product", "color_product")["designId"] == "CP-COLUMN-01"
     paired = section_definition(template, f"{template_id}.first", "first", design_id="P01-D09-G")
     assert next(slot for slot in paired["photoSlots"] if slot["slotKey"] == "ghost")["fill"] == "reuse"

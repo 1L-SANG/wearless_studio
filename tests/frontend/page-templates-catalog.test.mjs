@@ -11,11 +11,11 @@ import {
     resolvePageTokens,
 } from "../../src/lib/pageTemplates/tokens.js";
 
-test("catalog keeps saved designs and exposes the WOC6 defaults without SNS by default", () => {
+test("catalog keeps saved designs and exposes the current defaults without SNS by default", () => {
     assert.equal(validateCatalog(catalog), catalog);
     assert.equal(Object.keys(catalog.kinds).length, 10);
-    assert.equal(Object.keys(catalog.designs).length, 50);
-    assert.equal(Object.values(catalog.designs).filter(design => design.pickerHidden).length, 20);
+    assert.equal(Object.keys(catalog.designs).length, 52);
+    assert.equal(Object.values(catalog.designs).filter(design => design.pickerHidden).length, 24);
     assert.equal(
         (catalog.firstTitleBand.top + catalog.firstTitleBand.bottom) / 2,
         0.5,
@@ -49,13 +49,13 @@ test("catalog keeps saved designs and exposes the WOC6 defaults without SNS by d
             if (section.kind === "wear")
                 assert.equal(section.designId, section.usage === "fit" ? "WEAR-FIT-COLUMN-01" : "P02-D01");
             if (section.kind === "color_product") assert.equal(section.designId, "CP-COLUMN-01");
-            if (section.kind === "points") assert.equal(section.designId, "PT-COLUMN-01");
+            if (section.kind === "points") assert.equal(section.designId, template.id === "emo" ? "PT-PHOTO-CARD-01" : "PT-TEXT-PHOTO-01");
             if (section.kind === "sns") assert.equal(section.presence, "optional");
             if (section.presence === "default") assert.notEqual(catalog.designs[section.designId].pickerHidden, true);
         }
         assert.equal(template.addPlacements.wear.designId, "P02-D01");
         assert.equal(template.addPlacements.color_product.designId, "CP-COLUMN-01");
-        assert.equal(template.addPlacements.points.designId, "PT-COLUMN-01");
+        assert.equal(template.addPlacements.points.designId, template.id === "emo" ? "PT-PHOTO-CARD-01" : "PT-TEXT-PHOTO-01");
         assert.deepEqual(template.addPlacements.sns.designIds, ["I09-D14", "P07-D08"]);
         assert.ok(template.addPlacements.sns.designIds.every(id => catalog.designs[id].pickerHidden));
     }
@@ -128,6 +128,8 @@ test("catalog keeps saved designs and exposes the WOC6 defaults without SNS by d
         "PT-COLUMN-01",
         "PT-COLUMN-CARD-01",
         "PT-BELOW-CARD-01",
+        "PT-PHOTO-CARD-01",
+        "PT-TEXT-PHOTO-01",
         "T05-D07",
         "T07-D06",
         "T08-D01",

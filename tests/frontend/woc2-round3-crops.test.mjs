@@ -12,11 +12,14 @@ import { defaultPageStyle } from '../../src/lib/pageTemplates/pageStyle.js';
 import { storyboardPreviewCuts } from '../../src/features/storyboard/storyboardPreview.js';
 
 const regions = {
-  top: [['shoulder', '어깨선', [.44, .20, .30, .16]], ['neckline', '목선이 앉는 모양', [.36, .20, .28, .17]], ['length', '입었을 때 기장', [.30, .27, .40, .24]]],
-  outer: [['shoulder', '어깨선', [.44, .20, .30, .16]], ['silhouette', '입었을 때 실루엣', [.28, .20, .44, .34]], ['length', '입었을 때 기장', [.30, .40, .40, .24]]],
-  bottom: [['waistline', '입었을 때 허리선', [.34, .36, .32, .14]], ['silhouette', '입었을 때 실루엣', [.30, .40, .40, .50]], ['length', '입었을 때 기장', [.30, .72, .40, .24]]],
-  dress: [['shoulder', '어깨선', [.44, .20, .30, .16]], ['silhouette', '입었을 때 실루엣', [.30, .30, .40, .40]], ['length', '입었을 때 기장', [.30, .60, .40, .26]]],
+  top: [['shoulder', '어깨선', [.44, .139375, .30, .28125]], ['neckline', '목선이 앉는 모양', [.36, .15375, .28, .2625]], ['length', '입었을 때 기장', [.30, .2025, .40, .375]]],
+  outer: [['shoulder', '어깨선', [.44, .139375, .30, .28125]], ['silhouette', '입었을 때 실루엣', [.28, .16375, .44, .4125]], ['length', '입었을 때 기장', [.30, .3325, .40, .375]]],
+  bottom: [['waistline', '입었을 때 허리선', [.34, .28, .32, .30]], ['silhouette', '입었을 때 실루엣', [.30, .4625, .40, .375]], ['length', '입었을 때 기장', [.30, .625, .40, .375]]],
+  dress: [['shoulder', '어깨선', [.44, .139375, .30, .28125]], ['silhouette', '입었을 때 실루엣', [.30, .3125, .40, .375]], ['length', '입었을 때 기장', [.30, .5425, .40, .375]]],
 };
+// Compare the hand-calculated normalized coordinates without IEEE-754 tails.
+const normalizedRegion = region => region.map(value => Number(value.toFixed(12)));
+const normalizedRows = rows => rows.map(([bodyPart, label, region]) => [bodyPart, label, normalizedRegion(region)]);
 const product = { clothingType: 'top', colors: [{ id: 'base', isBase: true }] };
 const analysis = templateId => ({ targetGenders: ['women'], pageStyle: { ...defaultPageStyle(), templateId } });
 const items = blocks => blocks.flatMap(block => block.pointItems || []);
@@ -24,6 +27,8 @@ function added(clothingType = 'top', templateId = 'emo') {
   const p = { ...product, clothingType }, a = analysis(templateId);
   return addTemplateSection(seedStoryboard(p, a), p, a, 'points');
 }
+// Explicit saved legacy design and ROI keep the old 30%/native-pixel contract
+// covered independently of current picker defaults and the WOC11 cover path.
 function simpleBoard(region = [.44, .20, .30, .16]) {
   return [{ id: 'wear-photo', taxonomyVersion: 4, source: 'ai', pageSectionKey: 'emo.wear_life', pageSectionKind: 'wear',
     pageSectionUsage: 'styling', pageDesignId: 'P02-D01', sectionId: 'wear', sectionLayout: 'stack', slotKey: null,
@@ -49,9 +54,9 @@ const geometryCases = [
 ];
 
 for (const templateId of ['emo', 'show']) for (const clothingType of Object.keys(regions)) {
-  test(`${templateId} new ${clothingType} manual crops use the exact owner regions without changing labels`, () => {
+  test(`${templateId} new ${clothingType} manual crops use source-aware 4:5 regions without changing labels`, () => {
     const blocks = added(clothingType, templateId);
-    assert.deepEqual(items(blocks).map(({ bodyPart, label, cropRegion }) => [bodyPart, label, cropRegion]), regions[clothingType]);
+    assert.deepEqual(normalizedRows(items(blocks).map(({ bodyPart, label, cropRegion }) => [bodyPart, label, cropRegion])), regions[clothingType]);
     validateStoryboardV4(blocks);
   });
 }
@@ -74,8 +79,8 @@ test('a single measured dimension does not activate the native scale cap', () =>
   }
 });
 
-test('preview dimensions stay transient estimates and cannot silently become native metadata', () => {
-  const blocks = added(), before = structuredClone(blocks);
+test('legacy preview dimensions stay transient estimates and cannot silently become native metadata', () => {
+  const blocks = simpleBoard(), before = structuredClone(blocks);
   const cuts = storyboardPreviewCuts(blocks, {});
   assert.ok(cuts.length);
   assert.ok(cuts.every(cut => cut.dimensionsKnown === false));
@@ -83,6 +88,7 @@ test('preview dimensions stay transient estimates and cannot silently become nat
   assert.ok(blocks.every(block => !Object.hasOwn(block, 'dimensionsKnown')));
   const images = croppedImages(assemblePage({ storyboard: blocks, product, analysis: analysis('emo'), cutResults: cuts }));
   assert.ok(images.some(image => image.crop.iw > 1024), 'preview estimates still use the 30% zoom cap');
+  assert.deepEqual(images[0].crop, { iw: 1427, ih: 1902, ox: 628, oy: 319 });
 });
 
 test('same source preserves custom saved regions through re-entry, moves, edits and design changes', () => {
@@ -94,8 +100,8 @@ test('same source preserves custom saved regions through re-entry, moves, edits 
   const moved = moveTemplateSection(blocks, blocks.find(block => block.id === sourceId).pageSectionKey);
   const edited = patchStoryboardPhoto(moved, sourceId, { direction: 'side' }, product);
   const pointsKey = blocks.find(block => block.pointItems).pageSectionKey;
-  const redesigned = changeTemplateSectionDesign(edited, pointsKey, 'PT-BELOW-CARD-01', { product });
-  assert.equal(redesigned.find(block => block.pageSectionKey === pointsKey).pageDesignId, 'PT-BELOW-CARD-01');
+  const redesigned = changeTemplateSectionDesign(edited, pointsKey, 'PT-TEXT-PHOTO-01', { product });
+  assert.equal(redesigned.find(block => block.pageSectionKey === pointsKey).pageDesignId, 'PT-TEXT-PHOTO-01');
   const reconciled = reconcileSectionDependencies(edited, redesigned, product);
   assert.deepEqual(items(reconciled).map(item => item.cropRegion), custom);
   assert.deepEqual(blocks, before);
@@ -107,8 +113,8 @@ test('source removal rebinds custom saved regions to current body parts even whe
   const sourceId = items(blocks)[0].sourceBlockId, source = blocks.find(block => block.id === sourceId);
   const changed = removeTemplateSection(blocks, source.pageSectionKey, { product });
   assert.ok(items(changed).every(item => item.sourceBlockId !== sourceId));
-  assert.deepEqual(items(changed).map(item => [item.bodyPart, item.cropRegion]), [
-    ['length', [.30, .27, .40, .24]], ['shoulder', [.44, .20, .30, .16]], ['neckline', [.36, .20, .28, .17]],
+  assert.deepEqual(items(changed).map(item => [item.bodyPart, normalizedRegion(item.cropRegion)]), [
+    ['length', [.30, .2025, .40, .375]], ['shoulder', [.44, .139375, .30, .28125]], ['neckline', [.36, .15375, .28, .2625]],
   ]);
   const direct = reconcileSectionDependencies(blocks, blocks.filter(block => block.id !== sourceId), product);
   assert.deepEqual(items(direct).map(item => item.cropRegion), items(changed).map(item => item.cropRegion));
@@ -120,7 +126,7 @@ test('photo deletion and source invalidation also refresh saved regions on rebin
   const sourceId = items(blocks)[0].sourceBlockId;
   for (const next of [removeStoryboardPhoto(blocks, sourceId, product), patchStoryboardPhoto(blocks, sourceId, { cutType: 'product', shot: 'ghost' }, product)]) {
     assert.ok(items(next).every(item => item.sourceBlockId !== sourceId));
-    assert.deepEqual(items(next).map(item => item.cropRegion), regions.top.map(row => row[2]));
+    assert.deepEqual(items(next).map(item => normalizedRegion(item.cropRegion)), regions.top.map(row => row[2]));
   }
 });
 
@@ -165,5 +171,5 @@ test('shared fixture retains legacy saved-region and new geometry boundary cover
   }
   for (const templateId of ['emo', 'show']) assert.deepEqual(items(fixture.cases.find(value => value.name === `woc2-${templateId}-crops-saved`).input.storyboard)
     .map(item => item.cropRegion), [[.15, .16, .7, .35], [.2, .15, .6, .3], [.1, .38, .8, .45]]);
-  assert.deepEqual(wornCropRegions, regions);
+  assert.deepEqual(Object.fromEntries(Object.entries(wornCropRegions).map(([kind, rows]) => [kind, normalizedRows(rows)])), regions);
 });

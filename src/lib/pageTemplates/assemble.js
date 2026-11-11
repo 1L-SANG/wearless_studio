@@ -411,10 +411,17 @@ function contentFor(node, ctx) {
         text = ctx.copy[role] || "";
         if (/^items\.\d+\.desc$/.test(role)) {
             const name = factText(role.replace(/\.desc$/, ".name"), ctx);
-            text = ctx.analysis.partDescriptionCopy?.find?.((item) => item.point === name)?.desc
-                || (ctx.card?.pointItem?.kind !== 'wornCrop'
-                    && ctx.analysis.featureCopy?.find?.((item) => item.point === name)?.desc)
-                || text;
+            const part = ctx.analysis.partDescriptionCopy?.find?.((item) => item.point === name)?.desc;
+            if (node.copyPolicy === 'partOnly') {
+                const lines = string(part).replace(/\r\n?/g, '\n').split('\n');
+                // Old one-line copy remains stored and remains usable by saved layouts.
+                text = lines.length === 2 && lines.every(line => line.trim()) ? lines.join('\n') : '';
+            } else {
+                text = part
+                    || (ctx.card?.pointItem?.kind !== 'wornCrop'
+                        && ctx.analysis.featureCopy?.find?.((item) => item.point === name)?.desc)
+                    || text;
+            }
         }
     }
     if (ctx.paragraphRole === role) text = ctx.paragraphText;
@@ -436,12 +443,15 @@ function renderText(node, x, y, width, ctx) {
         : token === "num"
           ? "labelEn"
           : token;
-    const font = ctx.tokens.fonts[fontKey];
+    const font = { ...ctx.tokens.fonts[fontKey],
+        ...(node.weight === 'light' ? { weight: 300 } : {}),
+        ...(node.trackingEm != null ? { trackingEm: node.trackingEm } : {}) };
     const metrics = ctx.catalog.textMetrics;
     const uppercase =
         content.slot?.uppercase ||
         (font.uppercase && content.slot?.kind !== "fact");
     let text = uppercase ? content.text.toUpperCase() : content.text;
+    if (node.numberPrefix && text) text = `${(ctx.index || 0) + 1}. ${text}`;
     if (node.singleLine) text = text.replace(/\s+/gu, " ").trim();
     let layoutWidth = Math.max(1, width - (node.swatchDot ? 18 : 0));
     let size = node.size || 25;
@@ -508,7 +518,7 @@ function renderText(node, x, y, width, ctx) {
             : fontKey === "labelEn"
               ? metrics.labelLineHeight
               : metrics.lineHeight;
-    const lineHeight = Math.ceil((size * factor) / metrics.unitsPerEm);
+    const lineHeight = Math.ceil(node.lineHeight != null ? size * node.lineHeight : (size * factor) / metrics.unitsPerEm);
     let color = node.color || content.slot?.color || "ink";
     if (!node.color && fontKey === "titleKo")
         color =
@@ -632,7 +642,7 @@ function selectCards(node, ctx) {
     if (node.slots) return node.slots.map((slot) => resolvePhoto(slot, ctx));
     // Loose/similar photos lack slot keys. Curated wildcards include them in
     // place; saved legacy layouts retain their existing overflow behavior.
-    if (node.slot === "*" && (node.type === "photoFlow" || ctx.catalog.designs[ctx.designId]?.choiceAxes))
+    if (node.slot === "*" && (node.type === "photoFlow" || node.includeLoose || ctx.catalog.designs[ctx.designId]?.choiceAxes))
         return ctx.photos;
     return ctx.photos.filter((card) =>
         matches(localSlot(card, ctx.section), node.slot || "*"),
@@ -657,6 +667,16 @@ const knownImageSize = (meta) => number(meta.width) > 0 && number(meta.height) >
 const naturalImageSize = (node, meta, catalog) => knownImageSize(meta)
     ? [number(meta.width), number(meta.height)]
     : (node.fallbackAspect || catalog.textMetrics.fallbackAspect).split("/").map(Number);
+
+function coverImageSize(card, meta, product) {
+    const known = value => value && Number.isFinite(value.width) && value.width > 0
+        && Number.isFinite(value.height) && value.height > 0 && value.dimensionsKnown !== false;
+    if (known(meta) && (card?.source !== 'mine' || meta.imageUrl === card.ownImages?.[0]))
+        return [meta.width, meta.height];
+    const image = card?.source === 'mine' && (product.colors || []).flatMap(color => color.images || [])
+        .find(image => image.src === card.ownImages?.[0] && known(image));
+    return image ? [image.width, image.height] : null;
+}
 
 function imageHeight(node, width, card, ctx) {
     const meta = ctx.cuts[card?.id] || {};
@@ -734,7 +754,25 @@ function renderPhoto(node, x, y, width, ctx) {
             oy: Math.min(ih - h, round(sh * scale * node.cropTop)),
         };
     }
-    if (card?.pointItem?.kind === "wornCrop") {
+    const coverSize = node.fit === 'cover' ? coverImageSize(card, meta, ctx.product) : null;
+    if (node.fit === 'cover' && (coverSize || card?.pointItem?.kind === 'wornCrop')) {
+        const worn = card?.pointItem?.kind === 'wornCrop';
+        // Unknown ordinary photos use native object-fit cover, without guessing
+        // their source ratio. Worn ROIs retain the generated-wear 3:4 fallback.
+        const [sw, sh] = coverSize || [3, 4];
+        const [rx, ry, rw, rh] = worn ? card.pointItem.cropRegion : [0, 0, 1, 1];
+        // A fixed viewport covers the selected region, including saved legacy ROIs.
+        // Unlike natural legacy layouts, cover intentionally permits upscaling.
+        const scale = Math.max(width / (sw * rw), h / (sh * rh));
+        const iw = Math.max(width, round(sw * scale)), ih = Math.max(h, round(sh * scale));
+        element.crop = { iw, ih,
+            ox: Math.max(0, Math.min(iw - width, round((rx + rw / 2) * iw - width / 2))),
+            oy: Math.max(0, Math.min(ih - h, round((ry + rh / 2) * ih - h / 2))) };
+        if (worn) {
+            element.pointItemKind = 'wornCrop';
+            element.bodyPart = card.pointItem.bodyPart;
+        }
+    } else if (card?.pointItem?.kind === "wornCrop") {
         const [rx, ry, rw, rh] = card.pointItem.cropRegion;
         const [sw, sh] = naturalPhoto(node)
             ? naturalImageSize(node, meta, ctx.catalog)
@@ -1760,7 +1798,9 @@ export function assemblePage({
             )
         )
             throw new Error("Invalid page section design");
-        const sectionStyle = sectionTokens(tokens, section);
+        const renderSection = design.invert == null ? section
+            : { ...section, block: { ...section.block, invert: design.invert } };
+        const sectionStyle = sectionTokens(tokens, renderSection);
         const ctx = {
             catalog,
             storyboard,
@@ -1785,7 +1825,7 @@ export function assemblePage({
             index: 0,
             overlayRegions,
             designId,
-            surfaceColor: section.block?.invert
+            surfaceColor: renderSection.block?.invert
                 ? tokens.colors.invertBg
                 : sectionStyle.colors[design.surface || "canvas"],
         };
@@ -1795,7 +1835,7 @@ export function assemblePage({
             elements = [],
             part = 0,
             lastTextWidth;
-        const flush = () => {
+        const flush = (bottom = design.bottom || 0) => {
             if (!elements.length) return;
             const id = `b${blocks.length}`;
             const gap = photos.length
@@ -1803,7 +1843,7 @@ export function assemblePage({
                 : tokens.template.spacing.textSectionGap;
             const h =
                 Math.max(y, ...elements.map((el) => el.y + el.h)) +
-                (design.bottom || 0);
+                bottom;
             blocks.push({
                 id,
                 name: templateSectionName(first),
@@ -1811,7 +1851,7 @@ export function assemblePage({
                 pageSectionKey: key,
                 pageSectionKind: first.pageSectionKind,
                 pageDesignId: designId,
-                bg: section.block?.invert
+                bg: renderSection.block?.invert
                     ? tokens.colors.invertBg
                     : sectionStyle.colors[design.surface || "canvas"],
                 h,
@@ -1864,7 +1904,7 @@ export function assemblePage({
                 const step = node.type === "photoGrid" ? node.columns : 1;
                 if (elements.some((el) => el.type === "image")) flush();
                 for (let i = 0; i < selected.length; i += step) {
-                    if (i) flush();
+                    if (i) flush(node.itemGap != null ? 0 : undefined);
                     const result = renderRepeated(
                         node,
                         selected.slice(i, i + step),
@@ -1876,7 +1916,7 @@ export function assemblePage({
                     elements.push(...result.elements);
                     y += result.h;
                     if (i + step < selected.length)
-                        y += tokens.template.spacing.photoGap;
+                        y += node.itemGap ?? tokens.template.spacing.photoGap;
                 }
                 if (selected.length) y += node.gap || 0;
             } else {

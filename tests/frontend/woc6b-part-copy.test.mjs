@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { defaultInfoFor } from '../../src/features/editor/presets/infoPresets.js';
 
-let vite, api, DB;
+let vite, api, DB, withMockPartDescriptions;
 before(async () => {
   process.env.MOCK_API_LATENCY_SCALE = '0';
   vite = await createServer({ configFile: false, logLevel: 'silent', optimizeDeps: { noDiscovery: true, include: [] },
@@ -12,6 +12,7 @@ before(async () => {
     server: { middlewareMode: true, hmr: false, watch: null }, appType: 'custom' });
   ({ api } = await vite.ssrLoadModule('/src/mock/api.js'));
   ({ DB } = await vite.ssrLoadModule('/src/mock/db.js'));
+  ({ withMockPartDescriptions } = await vite.ssrLoadModule('/src/mock/partDescriptionCopy.js'));
 });
 after(async () => { await vite?.close(); });
 
@@ -54,6 +55,14 @@ for (const method of ['generateDetailPage', 'startDetailPage']) {
       blocks = job.result.data;
     }
     assert.deepEqual(DB.analysis.partDescriptionCopy.map(item => item.point), ['기존 부위', '단추', '어깨선']);
+    for (const row of DB.analysis.partDescriptionCopy.slice(1)) {
+      const lines = row.desc.split('\n');
+      assert.equal(lines.length, 2);
+      assert.ok(lines.every(line => [...line].length <= 22));
+      assert.match(lines[0], /[로라]$/u);
+      assert.match(lines[1], /(?:어요|아요|해요)\.?$/u);
+      assert.doesNotMatch(row.desc, /확인할 수 있습니다|완벽|통기성|보온|방수/u);
+    }
     assert.deepEqual(DB.analysis.featureCopy, originalFeatures);
     const exposed = await api.getAnalysis(DB.project.id);
     assert.deepEqual(exposed.partDescriptionCopy, DB.analysis.partDescriptionCopy);
@@ -78,4 +87,33 @@ test('mock analysis null patch cannot delete stored part descriptions', async ()
   const stored = structuredClone(DB.analysis.partDescriptionCopy);
   await api.saveAnalysis(DB.project.id, { partDescriptionCopy: null });
   assert.deepEqual(DB.analysis.partDescriptionCopy, stored);
+});
+
+test('mock same-label seller copy stays independent and unsupported labels are not invented', () => {
+  seed();
+  DB.analysis.featureCopy = [{ point: '단추', desc: '단추 디테일을 확인할 수 있습니다.' }];
+  DB.storyboard[1].pointItems[1].label = '알 수 없는 부위';
+  const result = withMockPartDescriptions(DB.storyboard, DB.analysis, true);
+  assert.deepEqual(result.featureCopy, DB.analysis.featureCopy);
+  assert.equal(result.partDescriptionCopy.find(item => item.point === '단추').desc,
+    '단추가 더해진 여밈으로\n차분한 옷차림을 완성해요');
+  assert.equal(result.partDescriptionCopy.some(item => item.point === '알 수 없는 부위'), false);
+});
+
+test('mock fixture part labels all receive separate natural two-line descriptions', () => {
+  seed();
+  const labels = ['목선', '소맷단', '밑단', '골지 원단', '어깨선', '기장',
+    '목선이 앉는 모양', '입었을 때 기장', '입었을 때 실루엣', '입었을 때 허리선'];
+  DB.storyboard[1].pointItems = labels.map(label => ({ kind: 'wornCrop', sourceBlockId: 'worn', label }));
+  const result = withMockPartDescriptions(DB.storyboard, DB.analysis, true);
+  const descriptions = labels.map(label => result.partDescriptionCopy.find(item => item.point === label)?.desc);
+  assert.equal(new Set(descriptions).size, labels.length);
+  for (const desc of descriptions) {
+    const lines = desc.split('\n');
+    assert.equal(lines.length, 2);
+    assert.ok(lines.every(line => [...line].length <= 22));
+    assert.match(lines[0], /[로라]$/u);
+    assert.match(lines[1], /요\.?$/u);
+    assert.doesNotMatch(desc, /확인할 수 있습니다|완벽|통기성|보온|방수/u);
+  }
 });

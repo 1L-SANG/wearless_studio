@@ -30,8 +30,8 @@ for (const template of ['emo', 'show']) test(`WOC6 ${template} defaults and visi
   assert.deepEqual(ids(blocks, 'first'), template === 'emo' ? ['P01-D09', 'P01-SHOW-01'] : ['P01-SHOW-01', 'P01-D09']);
   assert.deepEqual(new Set(ids(blocks, 'fabric')), new Set(['T03-D01', 'T03-D06']));
   assert.deepEqual(new Set(ids(blocks, 'color_product')), new Set(['CP-COLUMN-01', 'CP-EMO-01']));
-  assert.deepEqual(new Set(ids(blocks, 'points')), new Set(['PT-COLUMN-01', 'P06-D01', 'PT-COLUMN-CARD-01', 'PT-BELOW-CARD-01']));
-  assert.equal(runOf(blocks, 'points').designId, 'PT-COLUMN-01');
+  assert.deepEqual(new Set(ids(blocks, 'points')), new Set(['PT-PHOTO-CARD-01', 'PT-TEXT-PHOTO-01']));
+  assert.equal(runOf(blocks, 'points').designId, template === 'emo' ? 'PT-PHOTO-CARD-01' : 'PT-TEXT-PHOTO-01');
   assert.equal(runOf(blocks, 'color_product').designId, 'CP-COLUMN-01');
   assert.ok(sectionRuns(blocks).filter(run => run.kind === 'wear' && run.usage === 'fit').every(run => run.designId === 'WEAR-FIT-COLUMN-01'));
   assert.ok(!blocks.some(b => b.pageSectionKind === 'sns'));
@@ -71,17 +71,22 @@ test('WOC6 color grid needs at least two sale colors and back presence follows s
   }
 });
 
-test('WOC6 axis changes patch only the run design, keep cuts and roundtrip undo snapshots', () => {
+test('WOC11 flat point design changes patch only the run design, keep cuts and roundtrip undo snapshots', () => {
   const initial = board(), key = runOf(initial, 'points').key;
   let blocks = structuredClone(initial);
   const count = uniqueGenerationCutCount(blocks, product), eraseDesign = list => list.map(({ pageDesignId, ...b }) => b);
-  for (const [axis, id, expected] of [['decorations', 'card', 'PT-COLUMN-CARD-01'], ['layouts', 'below', 'PT-BELOW-CARD-01'],
-    ['decorations', 'basic', 'P06-D01'], ['layouts', 'column', 'PT-COLUMN-01']]) {
+  const photoCount = sectionDesignPhotoCount(runOf(initial, 'points'), 'PT-PHOTO-CARD-01', initial);
+  for (const expected of ['PT-TEXT-PHOTO-01', 'PT-PHOTO-CARD-01']) {
     const run = runOf(blocks, 'points'), axes = sectionDesignAxes(run, { storyboard: blocks, product });
-    const option = axes[axis].find(o => o.id === id); assert.equal(option.designId, expected);
-    blocks = valid(changeTemplateSectionDesign(blocks, key, option.designId, { product }));
+    assert.equal(axes.hasAxes, false);
+    const option = sectionDesignChoices(run, { storyboard: blocks, product }).find(design => design.id === expected);
+    assert.ok(option, 'each flat design is an actual selectable choice');
+    const before = structuredClone(blocks);
+    blocks = valid(changeTemplateSectionDesign(blocks, key, option.id, { product }));
     assert.equal(uniqueGenerationCutCount(blocks, product), count); assert.deepEqual(eraseDesign(blocks), eraseDesign(initial));
+    assert.equal(sectionDesignPhotoCount(runOf(blocks, 'points'), expected, blocks), photoCount);
     assert.ok(blocks.filter(b => b.pageSectionKey === key).every(b => b.pageDesignId === expected));
+    assert.deepEqual(eraseDesign(before), eraseDesign(blocks), 'the saved undo snapshot retains every source and crop');
   }
   assert.deepEqual(blocks, initial);
 });

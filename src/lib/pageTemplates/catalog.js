@@ -215,6 +215,8 @@ export function validateCatalog(catalog) {
         check(design.kind === 'wear' ? ['styling', 'fit'].includes(design.usage) : design.usage == null, `design usage ${id}`);
         if (Object.hasOwn(design, 'pickerHidden'))
             check(typeof design.pickerHidden === 'boolean', `pickerHidden ${id}`);
+        if (Object.hasOwn(design, 'invert'))
+            check(typeof design.invert === 'boolean', `design invert ${id}`);
         if (Object.hasOwn(design, 'choiceAxes')) {
             const axes = design.choiceAxes;
             check(CHOICE_LAYOUTS[design.kind]?.includes(axes?.layout?.id)
@@ -314,7 +316,9 @@ export function validateCatalog(catalog) {
             if (node.fillOpacity != null)
                 check(["panel", "list"].includes(node.type) && opacity(node.fillOpacity), `fill opacity ${id}`);
             if (node.itemGap != null)
-                check(node.type === "list" && Number.isFinite(node.itemGap) && node.itemGap >= 0, `list item gap ${id}`);
+                check(["list", "photoStack"].includes(node.type) && Number.isFinite(node.itemGap) && node.itemGap >= 0, `list item gap ${id}`);
+            if (Object.hasOwn(node, 'includeLoose'))
+                check(node.type === 'photoStack' && node.slot === '*' && typeof node.includeLoose === 'boolean', `include loose ${id}`);
             if (node.shadow != null) {
                 const shadow = node.shadow;
                 check(
@@ -326,6 +330,16 @@ export function validateCatalog(catalog) {
             }
             if (node.singleLine != null)
                 check(node.type === "text" && typeof node.singleLine === "boolean", `single line ${id}`);
+            if (Object.hasOwn(node, 'weight'))
+                check(node.type === 'text' && node.weight === 'light', `text weight ${id}`);
+            if (Object.hasOwn(node, 'numberPrefix'))
+                check(node.type === 'text' && typeof node.numberPrefix === 'boolean', `number prefix ${id}`);
+            if (Object.hasOwn(node, 'trackingEm'))
+                check(node.type === 'text' && Number.isFinite(node.trackingEm) && node.trackingEm > -1 && node.trackingEm <= 1, `text tracking ${id}`);
+            if (Object.hasOwn(node, 'lineHeight'))
+                check(node.type === 'text' && positive(node.lineHeight), `text line height ${id}`);
+            if (Object.hasOwn(node, 'copyPolicy'))
+                check(node.type === 'text' && node.copyRole === 'items.n.desc' && node.copyPolicy === 'partOnly', `copy policy ${id}`);
             if (node.titleWrap != null) {
                 const policy = node.titleWrap;
                 check(

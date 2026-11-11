@@ -48,11 +48,12 @@ def run_job(monkeypatch, *, enabled=True, result=None, failure=False, persist_fa
     monkeypatch.setattr(repo, "get_storyboard", AsyncMock(return_value=board()))
     monkeypatch.setattr(repo, "get_analysis", AsyncMock(return_value=original))
     if real_generator:
-        generate = AsyncMock(return_value=({"items": result or []}, "fake-provider"))
+        generate = AsyncMock(return_value=(result or {}, "fake-provider"))
         monkeypatch.setattr(dpj.feature_copy, "complete_json", generate)
     else:
-        generate = AsyncMock(return_value=result or [], side_effect=RuntimeError("copy unavailable") if failure else None)
-        monkeypatch.setattr(dpj.feature_copy, "generate", generate)
+        generate = AsyncMock(return_value=result or ({} if enabled else []),
+                             side_effect=RuntimeError("copy unavailable") if failure else None)
+        monkeypatch.setattr(dpj.page_part_copy if enabled else dpj.feature_copy, "generate", generate)
     monkeypatch.setattr(dpj, "_gen_copy", AsyncMock(return_value=([], None)))
     monkeypatch.setattr(dpj, "_emit", AsyncMock())
     monkeypatch.setattr(dpj, "_gen_cuts", AsyncMock(return_value=([
@@ -77,15 +78,17 @@ def run_job(monkeypatch, *, enabled=True, result=None, failure=False, persist_fa
 
 @pytest.mark.parametrize("persist_failure", [False, True])
 def test_one_request_names_only_selected_parts_and_updates_current_assembly(monkeypatch, persist_failure):
-    generated = [{"point": "단추", "desc": "단추 여밈을 확인할 수 있습니다."},
-                 {"point": "드롭 숄더", "desc": "어깨선이 내려온 형태입니다."},
-                 {"point": "선택하지 않은 포켓", "desc": "반환되어도 버릴 문구입니다."}]
+    seller = {"point": "단추", "desc": "단추 여밈을 확인할 수 있습니다."}
+    button = {"point": "단추", "desc": "단추가 더해진 여밈으로\n차분한 옷차림을 완성해요"}
+    shoulder = {"point": "드롭 숄더", "desc": "어깨 아래로 내려온 절개라\n상체 윤곽이 한결 느긋해요"}
+    generated = {"featureCopy": [seller], "partDescriptionCopy": [button, shoulder,
+                 {"point": "선택하지 않은 포켓", "desc": "반환되어도 버릴 문구입니다."}]}
     call, saved, assembled, original = run_job(monkeypatch, result=generated, persist_failure=persist_failure)
     assert call.await_count == 1
-    assert call.call_args.args[1] == ["단추", "유연한 원단", "드롭 숄더"]
+    assert call.call_args.args[1:3] == (["단추", "유연한 원단"], ["단추", "드롭 숄더"])
     assert call.call_args.kwargs["timeout_seconds"] == 120
-    expected_features = [{"point": "유연한 원단", "desc": "저장된 원단 설명입니다."}, generated[0]]
-    expected_parts = [generated[1], generated[0]]
+    expected_features = [{"point": "유연한 원단", "desc": "저장된 원단 설명입니다."}, seller]
+    expected_parts = [shoulder, button]
     assert saved.call_args.args[2] == {"featureCopy": expected_features, "partDescriptionCopy": expected_parts}
     assert assembled["analysis"]["featureCopy"] == expected_features
     assert assembled["analysis"]["partDescriptionCopy"] == expected_parts
@@ -93,10 +96,12 @@ def test_one_request_names_only_selected_parts_and_updates_current_assembly(monk
 
 
 def test_partial_response_keeps_missing_stored_part_and_seller_copy(monkeypatch):
-    generated = [{"point": "단추", "desc": "단추 여밈을 확인할 수 있습니다."}]
+    seller = {"point": "단추", "desc": "단추 여밈을 확인할 수 있습니다."}
+    part = {"point": "단추", "desc": "단추가 더해진 여밈으로\n차분한 옷차림을 완성해요"}
+    generated = {"featureCopy": [seller], "partDescriptionCopy": [part]}
     call, saved, assembled, _ = run_job(monkeypatch, result=generated)
     assert call.await_count == 1
-    assert assembled["analysis"]["partDescriptionCopy"] == [analysis()["partDescriptionCopy"][0], generated[0]]
+    assert assembled["analysis"]["partDescriptionCopy"] == [analysis()["partDescriptionCopy"][0], part]
     assert assembled["analysis"]["featureCopy"][0] == analysis()["featureCopy"][0]
     assert set(saved.call_args.args[2]) == {"featureCopy", "partDescriptionCopy"}
 
@@ -121,15 +126,23 @@ def test_toggle_off_keeps_legacy_feature_call_without_requesting_part_copy(monke
 
 
 def test_real_feature_generator_uses_one_fake_provider_call_for_all_unknown_labels(monkeypatch):
-    result = [{"point": "유연한 원단", "desc": "원단의 유연한 형태를 확인할 수 있습니다."},
-              {"point": "드롭 숄더", "desc": "어깨선이 내려온 형태입니다."}]
+    result = {"featureCopy": [{"point": "유연한 원단", "desc": "원단의 유연한 형태를 확인할 수 있습니다."}],
+              "partDescriptionCopy": [
+                  {"point": "단추", "desc": "단추가 더해진 여밈으로\n차분한 옷차림을 완성해요"},
+                  {"point": "드롭 숄더", "desc": "어깨 아래로 내려온 절개라\n상체 윤곽이 한결 느긋해요"}]}
     provider, saved, assembled, _ = run_job(monkeypatch, result=result, real_generator=True)
     assert provider.await_count == 1
     prompt = provider.call_args.args[1]
     assert "- 유연한 원단" in prompt and "- 드롭 숄더" in prompt
+    assert prompt.split("PAGE PARTS (data):\n", 1)[1].strip() == "- 단추\n- 드롭 숄더"
     assert "선택하지 않은 포켓" not in prompt and "삭제된 기장" not in prompt
     assert {item["point"] for item in assembled["analysis"]["featureCopy"]} == {"유연한 원단", "단추"}
     assert {item["point"] for item in assembled["analysis"]["partDescriptionCopy"]} == {"단추", "드롭 숄더"}
+    seller_button = next(item["desc"] for item in assembled["analysis"]["featureCopy"] if item["point"] == "단추")
+    part_button = next(item["desc"] for item in assembled["analysis"]["partDescriptionCopy"] if item["point"] == "단추")
+    assert seller_button == "단추 디테일을 확인할 수 있습니다."
+    assert part_button == result["partDescriptionCopy"][0]["desc"]
+    assert seller_button != part_button
     assert saved.await_count == 1
 
 
@@ -153,7 +166,7 @@ def test_missing_candidate_and_removed_worn_source_do_not_request_unrelated_labe
 def test_bad_or_unrequested_response_rows_cannot_clear_saved_descriptions(monkeypatch):
     malformed = [None, {"point": [], "desc": "bad"}, {"point": "단추", "desc": " "},
                  {"point": "드롭 숄더", "desc": None}, {"point": "미요청 부위", "desc": "버릴 설명입니다."}]
-    _call, saved, assembled, _ = run_job(monkeypatch, result=malformed)
+    _call, saved, assembled, _ = run_job(monkeypatch, result={"featureCopy": malformed, "partDescriptionCopy": malformed})
     assert not saved.called
     assert assembled["analysis"]["featureCopy"] == analysis()["featureCopy"]
     assert assembled["analysis"]["partDescriptionCopy"] == analysis()["partDescriptionCopy"]

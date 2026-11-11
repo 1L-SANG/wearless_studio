@@ -2716,7 +2716,8 @@
           "id": "basic",
           "name": "기본"
         }
-      }
+      },
+      "pickerHidden": true
     },
     "T05-D07": {
       "id": "T05-D07",
@@ -4318,7 +4319,8 @@
           "name": "기본"
         }
       },
-      "storyboardTextNote": "부위 이름"
+      "storyboardTextNote": "부위 이름",
+      "pickerHidden": true
     },
     "PT-COLUMN-CARD-01": {
       "id": "PT-COLUMN-CARD-01",
@@ -4404,7 +4406,8 @@
           "name": "부위별 카드"
         }
       },
-      "storyboardTextNote": "부위 이름과 한 줄 설명"
+      "storyboardTextNote": "부위 이름과 한 줄 설명",
+      "pickerHidden": true
     },
     "PT-BELOW-CARD-01": {
       "id": "PT-BELOW-CARD-01",
@@ -4492,7 +4495,8 @@
           "name": "부위별 카드"
         }
       },
-      "storyboardTextNote": "부위 이름과 한 줄 설명"
+      "storyboardTextNote": "부위 이름과 한 줄 설명",
+      "pickerHidden": true
     },
     "WEAR-STYLING-FRAME-COLUMN-01": {
       "id": "WEAR-STYLING-FRAME-COLUMN-01",
@@ -4961,6 +4965,137 @@
       "usage": "styling",
       "minPhotos": 3,
       "framePhotos": 3
+    },
+    "PT-PHOTO-CARD-01": {
+      "id": "PT-PHOTO-CARD-01",
+      "displayName": "사진과 글 칸 카드",
+      "kind": "points",
+      "padding": 60,
+      "top": 100,
+      "bottom": 80,
+      "align": "center",
+      "surface": "panel",
+      "invert": false,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "style": "labelEn",
+          "default": "Detail",
+          "size": 34,
+          "color": "muted",
+          "gap": 50
+        },
+        {
+          "type": "photoStack",
+          "slot": "*",
+          "includeLoose": true,
+          "itemGap": 50,
+          "items": [
+            {
+              "type": "panel",
+              "fill": "canvas",
+              "padding": 0,
+              "nodes": [
+                {
+                  "type": "photo",
+                  "slot": "$current",
+                  "aspect": "4/5",
+                  "fit": "cover"
+                },
+                {
+                  "type": "panel",
+                  "padding": 50,
+                  "nodes": [
+                    {
+                      "type": "text",
+                      "copyRole": "items.n.name",
+                      "style": "titleKo",
+                      "size": 42,
+                      "color": "ink",
+                      "gap": 16
+                    },
+                    {
+                      "type": "text",
+                      "copyRole": "items.n.desc",
+                      "copyPolicy": "partOnly",
+                      "style": "body",
+                      "size": 35,
+                      "color": "muted",
+                      "lineHeight": 1.7
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "4/5",
+        "gap": 50
+      },
+      "storyboardTextNote": "부위 이름과 두 줄 설명"
+    },
+    "PT-TEXT-PHOTO-01": {
+      "id": "PT-TEXT-PHOTO-01",
+      "displayName": "제목, 설명, 사진",
+      "kind": "points",
+      "padding": 40,
+      "top": 120,
+      "bottom": 60,
+      "align": "left",
+      "surface": "canvas",
+      "invert": false,
+      "layout": [
+        {
+          "type": "photoStack",
+          "slot": "*",
+          "includeLoose": true,
+          "itemGap": 230,
+          "items": [
+            {
+              "type": "text",
+              "copyRole": "items.n.name",
+              "style": "titleKo",
+              "numberPrefix": true,
+              "size": 46,
+              "color": "ink",
+              "trackingEm": -0.03,
+              "x": 3,
+              "w": 914,
+              "gap": 66
+            },
+            {
+              "type": "text",
+              "copyRole": "items.n.desc",
+              "copyPolicy": "partOnly",
+              "style": "body",
+              "size": 37,
+              "weight": "light",
+              "color": "ink",
+              "trackingEm": -0.05,
+              "lineHeight": 1.35,
+              "x": 3,
+              "w": 914,
+              "gap": 24
+            },
+            {
+              "type": "photo",
+              "slot": "$current",
+              "aspect": "4/5",
+              "fit": "cover"
+            }
+          ]
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "4/5",
+        "gap": 230
+      },
+      "storyboardTextNote": "번호 붙은 부위 이름과 두 줄 설명"
     }
   },
   "templates": [
@@ -5102,7 +5237,7 @@
           "instanceKey": "points",
           "kind": "points",
           "presence": "default",
-          "designId": "PT-COLUMN-01",
+          "designId": "PT-PHOTO-CARD-01",
           "alternatives": [],
           "photoSlots": [
             {
@@ -5660,7 +5795,7 @@
           "photoSlots": []
         },
         "points": {
-          "designId": "PT-COLUMN-01",
+          "designId": "PT-PHOTO-CARD-01",
           "after": "lastSameKind",
           "photoSlots": [
             {
@@ -6180,7 +6315,7 @@
           "instanceKey": "points",
           "kind": "points",
           "presence": "default",
-          "designId": "PT-COLUMN-01",
+          "designId": "PT-TEXT-PHOTO-01",
           "alternatives": [],
           "photoSlots": [
             {
@@ -6406,7 +6541,7 @@
           "photoSlots": []
         },
         "points": {
-          "designId": "PT-COLUMN-01",
+          "designId": "PT-TEXT-PHOTO-01",
           "after": "lastSameKind",
           "photoSlots": [
             {

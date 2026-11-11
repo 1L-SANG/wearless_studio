@@ -133,6 +133,8 @@ def validate_catalog(catalog):
         check(design.get("usage") in ("styling", "fit") if design.get("kind") == "wear" else design.get("usage") is None, f"design usage {key}")
         if "pickerHidden" in design:
             check(isinstance(design["pickerHidden"], bool), f"pickerHidden {key}")
+        if "invert" in design:
+            check(isinstance(design["invert"], bool), f"design invert {key}")
         if "choiceAxes" in design:
             axes = design["choiceAxes"]
             layout = axes.get("layout") if isinstance(axes, dict) else None
@@ -206,7 +208,9 @@ def validate_catalog(catalog):
                 check(node.get("type") in ("panel", "list") and _opacity(node["fillOpacity"]), f"fill opacity {key}")
             if node.get("itemGap") is not None:
                 value = node["itemGap"]
-                check(node.get("type") == "list" and isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0, f"list item gap {key}")
+                check(node.get("type") in ("list", "photoStack") and isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0, f"list item gap {key}")
+            if "includeLoose" in node:
+                check(node.get("type") == "photoStack" and node.get("slot") == "*" and isinstance(node["includeLoose"], bool), f"include loose {key}")
             if node.get("shadow") is not None:
                 shadow = node["shadow"]
                 check(node.get("type") in ("panel", "list") and isinstance(shadow, dict)
@@ -215,6 +219,18 @@ def validate_catalog(catalog):
                       and _opacity(shadow.get("opacity")), f"shape shadow {key}")
             if node.get("singleLine") is not None:
                 check(node.get("type") == "text" and isinstance(node["singleLine"], bool), f"single line {key}")
+            if "weight" in node:
+                check(node.get("type") == "text" and node["weight"] == "light", f"text weight {key}")
+            if "numberPrefix" in node:
+                check(node.get("type") == "text" and isinstance(node["numberPrefix"], bool), f"number prefix {key}")
+            if "trackingEm" in node:
+                value = node["trackingEm"]
+                check(node.get("type") == "text" and isinstance(value, (int, float)) and not isinstance(value, bool)
+                      and math.isfinite(value) and -1 < value <= 1, f"text tracking {key}")
+            if "lineHeight" in node:
+                check(node.get("type") == "text" and _positive(node["lineHeight"]), f"text line height {key}")
+            if "copyPolicy" in node:
+                check(node.get("type") == "text" and node.get("copyRole") == "items.n.desc" and node["copyPolicy"] == "partOnly", f"copy policy {key}")
             if node.get("titleWrap") is not None:
                 policy = node["titleWrap"]
                 sizes = policy.get("sizes") if isinstance(policy, dict) else None

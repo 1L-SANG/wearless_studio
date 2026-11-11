@@ -2806,13 +2806,18 @@ async def run_detail_page_job(app, job: dict) -> None:
         points = page_part_copy.unique_labels(analysis.get("sellingPoints") or analysis.get("aiSuggestedPoints") or [])
         part_labels = page_part_copy.part_labels(storyboard, analysis) if copywriting else []
         try:
-            items = await feature_copy.generate(
-                s, page_part_copy.unique_labels([*points, *part_labels]), product, analysis,
-                timeout_seconds=s.background_ai_timeout_seconds)
+            if copywriting:
+                groups = await page_part_copy.generate(
+                    s, points, part_labels, product, analysis,
+                    timeout_seconds=s.background_ai_timeout_seconds)
+            else:
+                groups = {"featureCopy": await feature_copy.generate(
+                    s, points, product, analysis,
+                    timeout_seconds=s.background_ai_timeout_seconds)}
         except Exception as e:  # 카피는 게이트 아님 — 상세페이지 생성을 막지 않는다
             log.warning("feature copy failed for job %s: %r", job_id, e)
-            items = []
-        copy_patch = page_part_copy.partition_copy(items, points, part_labels, analysis)
+            groups = {}
+        copy_patch = page_part_copy.partition_copy(groups, points, part_labels, analysis)
         if copy_patch:
             # The current assembly uses the new descriptions even if persistence fails.
             analysis = {**analysis, **copy_patch}

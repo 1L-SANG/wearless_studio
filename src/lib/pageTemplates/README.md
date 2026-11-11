@@ -30,7 +30,7 @@ not a request to fall back to an unrelated layout.
 - The mock `buildEditorBlocksFromStoryboard` dispatches in the same way. The
   editor passes the analysis object when building its generation skeleton.
 
-## Storyboard presentation (WOC6B, 2026-11-11)
+## Storyboard presentation (WOC11, 2026-11-12)
 
 Analysis offers only the two templates, `emo` and `show`. Color selection lives
 in the storyboard header; previously saved pageStyle.colorMode values survive
@@ -39,7 +39,7 @@ queue, restore/promotion and mannequin template lock remain unchanged. After a m
 to templateId is locked; fontStyle/colorMode/updatedAt edits remain valid in both
 the mock API and the server. Removed `guide` is not a
 selectable template or mock query; its five layout definitions remain in the
-shared 50-design catalog (20 picker-hidden definitions). Long preview assets are
+shared 52-design catalog (24 picker-hidden definitions). Long preview assets are
 `public/templates/previews/preview-{emo,show}-v1.webp`; preview hover/focus,
 full-view modal, missing-image fallback and reduced-motion rules are unchanged.
 
@@ -175,14 +175,23 @@ Color/product defaults to CP-COLUMN-01, with full-width photos and actual color
 dots/names. CP-EMO-01 is the two-column choice only with two or more sale colors.
 Both retain the existing requiresBack source rule; a missing uploaded base-color
 back creates no slot. Only 기본 decoration exists, so there is no decoration row.
-Points default to PT-COLUMN-01 (photo and part name); P06-D01 keeps the narrower
-photo/description arrangement. PT-COLUMN-CARD-01 and PT-BELOW-CARD-01 are the
-matching 부위별 카드 combinations: each uses a panel-color surface, photo, fact
-name and one-line description, without a border, shadow or new English copy.
-All four point layouts use the natural image ratio, falling back to 2:3 when
-dimensions are unknown. Existing text-only PT-EMO-TEXT fallback is retained.
-Points chooser samples contain at most two real/derived photos, so the full/narrow
-layout difference remains visible. The actual board and stage are unchanged.
+Points now have two flat design choices, with no layout/decoration axes.
+PT-PHOTO-CARD-01 (사진과 글 칸 카드) is the emotional default; PT-TEXT-PHOTO-01
+(제목, 설명, 사진) is the showroom default. Both templates can choose either without
+changing photo/generation counts. Old PT-COLUMN-01, P06-D01, PT-COLUMN-CARD-01 and
+PT-BELOW-CARD-01 are picker-hidden and retain their saved natural-aspect layouts.
+The existing text-only PT-EMO-TEXT fallback remains.
+
+The card design has a page-panel-colored section, only a Detail label in labelEn,
+and white cards at x60/w880. The 4:5 photo fills card width; caption padding is50,
+part name42 in the resolved title font/weight, and description35 in regular body,
+muted color, line-height1.7. Cards are50px apart, without border/shadow. The plain
+design has no section heading: one-based numbered actual part label (46px,
+tracking-.03em), description (37px, light300, tracking-.05em, line-height1.35), then
+photo. Text x43/w914, photo x40/w920; gaps are66/24/230px. Title font/weight follows
+page style. Both plain text roles use the existing ink token, not a new theme.
+New descriptions have no singleLine policy. Samples retain at most two real/derived
+photos and the panel UI itself is unchanged; WOC10 owns its future presentation.
 Wireframe photo panels use the distinct --sb-wire-panel surface, with a restrained
 tone mix during point-color preview. Overlay bubbles retain their existing paint;
 frame backdrops become dark gray rectangles in wireframes.
@@ -269,15 +278,24 @@ validated before SVG transforms, and crop origins follow the editor's -ox/-oy
 rendering contract. Stage crops use that exact assembled viewport inside an
 overflow-clipped nested SVG, then contain it in the portrait card with bg-2
 letterboxing; the outline continues rendering the actual assembled geometry.
-Both engines cap worn-crop zoom at a 30% visible source width and, for measured
-native dimensions, at 1x. A smaller native image stays smaller than its slot;
-slot-fill max operations must not undo this limit. Pixel rounding remains shared.
-Approximate storyboard preview dimensions carry transient `dimensionsKnown:false`
-and therefore use only the fractional limit. That metadata is never a saved
-block field. The 12 D205 regions in seed.js apply to newly added crops; valid
-stored cropRegion values are preserved until the source ID changes. Rebinding
-selects the current region by bodyPart. Positive bounded ROIs such as the new
-28% neck region are valid even though rendered zoom stops at 30%.
+Legacy/hidden natural designs retain the 30%-source-width and known-native-1x
+worn-crop caps, including a smaller image staying smaller than its slot. New WOC11
+fit:cover viewports instead fill4:5 around the selected region's center, permitting
+upscaling rather than empty bars. Ordinary2:3 detail photos retain5/6 of source
+height. Unknown ordinary dimensions use native renderer center-cover; unknown
+worn sources use3:4. No stored ROI is changed during assembly.
+
+`wornCropRegions` now exports4:5 normalized regions for the3:4 source fallback.
+New bindings and retargets use wornCropRegion/sourceAspect: preserve the anatomical
+center and width, derive height for4:5, shrink only if needed to fit source bounds,
+and clamp the origin. Existing exact cutResults dimensions may be supplied as
+transient context; mine sources additionally require matching image URLs, or an
+exact matching product image's dimensions. AI sources never borrow product Front
+sizes. Current Storyboard callers have no final cutResults before generation and
+use3:4 unless matching mine metadata exists. Same-source custom saved regions,
+reordering/settings, late metadata and undo snapshots are preserved. Same-ID mine
+image replacement is a source rebinding unless explicit replacement ROI was supplied.
+Labels/bodyPart fields are unchanged; no source-dimension fields were added.
 
 For source-bound AI product/detail cards, `detailTargetPreview` separately resolves
 the candidate's bounded region and exact `selectPublicAnalysisPhotos` sourceIndex
@@ -569,6 +587,15 @@ If that block differs from the canvas color, a locked canvas-colored rectangle
 `textMetrics.maxBlockHeight` is a layout verification budget, not a clipping
 operation; the editor itself does not enforce a block height ceiling.
 
+Text nodes may opt into `weight: light` (300), trackingEm and absolute lineHeight.
+Omitted weight retains the resolved page-font weight. `numberPrefix: true` adds
+one-based N. only to a nonempty fact title, leaving the source label unchanged.
+photoStack.includeLoose opts new designs into null-slot photos; itemGap measures
+physical inter-item spacing and applies bottom padding only to the final item.
+New designs' invert:false overrides the old showroom section inversion without
+rewriting saved section data. Pretendard's bundled variable face declares100–900;
+editor cssWeight preserves300 and the export embedder includes the same WOFF2.
+
 `photo` nodes may opt into `fit: contain`, `aspect: source` and a fallbackAspect.
 Positive actual image dimensions determine natural height; unknown preview
 estimates use fallbackAspect instead. The height has a 1px lower bound and no
@@ -594,17 +621,30 @@ leading text card. Repeated copy roles are zero based (`items.0.desc`, etc.).
 Static and fact slots ignore copy results. AI slots use the provided result or
 an empty string and placeholder. When copywriting is disabled, seller MD text
 is preserved verbatim and the other AI slots remain empty. When copywriting is
-enabled, items.n.desc first uses analysis.partDescriptionCopy matched by actual
-part label. Ordinary details may then use legacy featureCopy; worn crops still
-cannot borrow seller construction-feature text. Existing section-lead role copy
-is the final fallback. Missing all sources retains the ordinary placeholder.
-The detail worker requests selected detail-target labels and wornCrop labels in
-the same existing feature_copy.generate call as seller features, dedupes labels
-and partitions the result. Part-only labels never enter seller featureCopy or
-editor info presets. Both lists merge with saved copy; missing/failed output does
-not clear it. Local analysis receives the result before current-job assembly,
-even if persistence fails. Copywriting off adds no part labels and shows no AI
-part description; the prior toggle-independent seller-feature path is retained.
+enabled, legacy items.n.desc first uses analysis.partDescriptionCopy, then
+non-worn featureCopy and section-lead role copy. WOC11 nodes opt into
+copyPolicy:partOnly instead: only the dedicated matching part description with
+two nonempty explicit lines is used, without dictionary/featureCopy/role-copy
+fallback. Old one-line stored rows remain stored and still work in old layouts;
+new designs show the ordinary placeholder until valid two-line copy is supplied.
+Long supplied lines wrap by words rather than singleLine truncation.
+
+`page_part_copy.generate` keeps one existing completion invocation for seller
+misses plus all actual part labels. Its response has separate featureCopy and
+partDescriptionCopy lists; the same label may have different wording in each.
+Seller DETAIL_COPY hits and existing feature_copy.generate/prompt/60-character
+one-sentence rules remain unchanged. Parts always use new two-line generation:
+first line describes supported visible construction and ends로/라, second gives
+a modest visible benefit in해요체; each line is at most22 codepoints including
+spaces.22 full Hangul at35px occupies770px inside the780px card text box;23 would
+be805px. The plain text box also fits22. Forbidden/hype/material-function claims,
+extra labels, markup/control characters and malformed/overlong lines are rejected.
+The eight original structure examples live in server/prompts/page_part_copy_v1.txt.
+The existing provider fallback chain remains; no correction call was added.
+Missing/failed output preserves stored copy, but new partOnly rendering cannot
+fall back to an old one-line dictionary sentence. Local analysis is updated before
+current-job assembly. Copywriting off sends no part labels and shows no AI part
+copy; the legacy seller-feature path remains independent of that toggle.
 The intro `facts` slot projects confirmed color, material and fit values. Notice
 slots have `unavailable: true` and no fact path because the current analysis
 contract contains no product notice; these slots are hidden. SIZE remains absent
@@ -721,7 +761,7 @@ left in the retained shared column layout.
 ## Verification and follow-up boundaries
 
 Both test suites read `tests/fixtures/page_templates_cases.json`, which contains
-222 complete input/output cases, including independent colors for two groups on
+282 complete input/output cases, including independent colors for two groups on
 one fabric photo, optional opening copy, MD paragraphs, per-line contrast,
 white/ivory/dark swatches in both templates, and a four-color shared grid.
 Exact measurement-region parity is included. Separate semantic assertions check card counts,
@@ -749,6 +789,7 @@ WOC6B adds36 cases for frame counts/layouts in both templates, medium/full/other
 group fallback, absent shop name, no remaining photos, unknown dimensions and
 separate real-detail/worn descriptions. Focused frame tests add23 complete-output
 parity inputs including source-index and removed-group boundaries.
+WOC11 adds60 shared cases for both new designs, templates, fourfonts/twocolormodes, known/unknown images, new/saved wornROIs and copy-off/legacy-copy behavior. Focused engines add72 complete parity inputs and eight saved-render hash checks.
 Fixtures are never regenerated by a test run. Run
 `node scripts/regenerate-page-template-fixtures.mjs` explicitly: it checks exact
 JS/Python agreement before writing the new expected results.

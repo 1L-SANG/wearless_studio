@@ -36,18 +36,19 @@ const ownGhost = input => {
   return card;
 };
 
-test('WOC5 paired layouts survive the WOC6 picker hiding policy', () => {
+test('WOC5 paired layouts survive the current picker hiding policy', () => {
   const expected = [...[...firstPairs, ...fabricPairs].map(([, pair]) => pair),
     'P01-D11', 'P02-D02', 'P04-D01', 'CP-SHOW-01', 'CP-GUIDE-01', 'T03-GUIDE-01', 'T03-TEXT-01',
-    'PT-EMO-01', 'PT-EMO-TEXT', 'T05-D07', 'T07-D06', 'I09-D14', 'P07-D08', 'I09-SCRIM-01', 'T08-SCRIM-01'].sort();
+    'PT-EMO-01', 'PT-EMO-TEXT', 'T05-D07', 'T07-D06', 'I09-D14', 'P07-D08', 'I09-SCRIM-01', 'T08-SCRIM-01',
+    'PT-COLUMN-01', 'P06-D01', 'PT-COLUMN-CARD-01', 'PT-BELOW-CARD-01'].sort();
   assert.deepEqual(Object.values(catalog.designs).filter(design => design.pickerHidden).map(design => design.id).sort(), expected);
   for (const [base, pair] of [...firstPairs.slice(0, 2), ...fabricPairs]) {
     assert.deepEqual(catalog.designs[pair].layout.slice(0, -1), catalog.designs[base].layout);
     assert.equal(catalog.designs[pair].layout.at(-1).type, 'panel');
     assert.equal(catalog.designs[pair].layout.at(-1).nodes[0].slot, pair.endsWith('-P') ? 'product' : 'ghost');
   }
-  assert.equal(expected.length, 20);
-  assert.equal(Object.keys(catalog.designs).length, 50);
+  assert.equal(expected.length, 24);
+  assert.equal(Object.keys(catalog.designs).length, 52);
   assert.equal(validateCatalog(catalog), catalog);
 });
 

@@ -10,7 +10,8 @@ import { defaultPageStyle } from '../../src/lib/pageTemplates/pageStyle.js';
 import { addTemplateSection, changeTemplateSectionDesign } from '../../src/lib/pageTemplates/sectionActions.js';
 import { sectionRuns } from '../../src/lib/pageTemplates/sectionRuns.js';
 import { pageTemplatesCatalog } from '../../src/lib/pageTemplates/catalog.js';
-import { sectionDesignChoices, defaultSectionDesignId, currentSectionDesignId } from '../../src/lib/pageTemplates/designChoices.js';
+import { sectionDesignChoices, sectionDesignPhotoCount, defaultSectionDesignId, currentSectionDesignId } from '../../src/lib/pageTemplates/designChoices.js';
+import { uniqueGenerationCutCount } from '../../src/lib/generationCutCount.js';
 import { sectionDesignPreviewSample } from '../../src/lib/pageTemplates/designPreview.js';
 import { templateSectionName } from '../../src/lib/pageTemplates/slots.js';
 import { baseColorOf, resolvePageTokens } from '../../src/lib/pageTemplates/tokens.js';
@@ -65,17 +66,18 @@ test('WOC6B daily wear exposes separate layout and decoration groups', () => {
   assert.match(html, /섹션 빼기<\/button>/);
 });
 
-test('WOC6 points present two independently selected groups without a duplicate basic badge', () => {
+test('WOC11 points present two flat designs with one selected choice and one default badge', () => {
   const blocks = addTemplateSection(board(), product, analysis, 'points');
   const run = sectionRuns(blocks).find(item => item.kind === 'points');
   assert.ok(run);
   const html = render({ blocks, runKey: run.key });
-  assert.match(html, /role="group" aria-label="배치"/);
-  assert.match(html, /role="group" aria-label="꾸밈"/);
-  assert.equal((html.match(/aria-pressed="true"/g) || []).length, 2);
+  assert.doesNotMatch(html, /role="group"|<h3/);
+  assert.equal((html.match(/aria-pressed=/g) || []).length, 2);
+  assert.equal((html.match(/aria-pressed="true"/g) || []).length, 1);
   assert.equal((html.match(/<small>기본<\/small>/g) || []).length, 1);
-  assert.match(html, /<strong>기본<\/strong>/);
-  assert.match(html, /<strong>부위별 카드<\/strong>/);
+  assert.match(html, /<strong>사진과 글 칸 카드<\/strong>/);
+  assert.match(html, /<strong>제목, 설명, 사진<\/strong>/);
+  assert.doesNotMatch(html, /<strong>부위별 카드<\/strong>/);
 });
 
 test('WOC6 add menu omits SNS while keeping both repeatable wear usages', () => {
@@ -86,29 +88,42 @@ test('WOC6 add menu omits SNS while keeping both repeatable wear usages', () => 
   assert.match(html, /단색 배경에서 앞, 옆, 뒤를 찍은 사진/);
 });
 
-test('WOC6 changing either points axis preserves the other axis through actual selection callbacks', async () => {
+test('WOC11 flat point selection callbacks preserve saved blocks, photo counts and undo snapshots', async () => {
   let blocks = addTemplateSection(board(), product, analysis, 'points');
   const runKey = sectionRuns(blocks).find(item => item.kind === 'points').key;
   const original = structuredClone(blocks), chosen = [], h = await pickerHarness();
+  const eraseDesign = list => list.map(({ pageDesignId, ...block }) => block);
+  const generationCount = uniqueGenerationCutCount(blocks, product);
+  const photoCount = sectionDesignPhotoCount(sectionRuns(blocks).find(run => run.key === runKey), 'PT-PHOTO-CARD-01', blocks);
+  const undo = [];
   const onChoose = (kind, usage, designId) => {
+    undo.push(structuredClone(blocks));
     chosen.push([kind, usage, designId]);
     blocks = changeTemplateSectionDesign(blocks, runKey, designId, { product });
   };
   try {
     let tree = h.render({ blocks, runKey, onChoose });
-    assert.equal(selectable(group(tree, '배치')).filter(button => button.props['aria-pressed']).length, 1);
-    assert.equal(selectable(group(tree, '꾸밈')).filter(button => button.props['aria-pressed']).length, 1);
-    for (const [axis, expectedId] of [
-      ['꾸밈', 'PT-COLUMN-CARD-01'], ['배치', 'PT-BELOW-CARD-01'],
-      ['꾸밈', 'P06-D01'], ['배치', 'PT-COLUMN-01'],
+    assert.equal(group(tree, '배치'), undefined);
+    assert.equal(group(tree, '꾸밈'), undefined);
+    assert.equal(selectable(tree).length, 2);
+    assert.equal(selectable(tree).filter(button => button.props['aria-pressed']).length, 1);
+    for (const [name, expectedId] of [
+      ['제목, 설명, 사진', 'PT-TEXT-PHOTO-01'], ['사진과 글 칸 카드', 'PT-PHOTO-CARD-01'],
     ]) {
-      selectable(group(tree, axis)).find(button => !button.props['aria-pressed']).props.onClick();
+      selectable(tree).find(button => nodes(button).some(node => node.type === 'strong' && textOf(node) === name)).props.onClick();
       assert.deepEqual(chosen.at(-1), ['points', undefined, expectedId]);
       assert.ok(blocks.filter(block => block.pageSectionKey === runKey).every(block => block.pageDesignId === expectedId));
+      assert.deepEqual(eraseDesign(blocks), eraseDesign(original));
+      assert.equal(uniqueGenerationCutCount(blocks, product), generationCount);
+      assert.equal(sectionDesignPhotoCount(sectionRuns(blocks).find(run => run.key === runKey), expectedId, blocks), photoCount);
       tree = h.render({ blocks, runKey, onChoose });
-      assert.equal(selectable(tree).filter(button => button.props['aria-pressed']).length, 2);
+      assert.equal(selectable(tree).filter(button => button.props['aria-pressed']).length, 1);
     }
-    assert.deepEqual(blocks, original, 'returning to both defaults changes no stored block fields');
+    assert.deepEqual(blocks, original, 'returning to the default changes no stored block fields');
+    blocks = undo.pop();
+    assert.ok(blocks.filter(block => block.pageSectionKey === runKey).every(block => block.pageDesignId === 'PT-TEXT-PHOTO-01'));
+    blocks = undo.pop();
+    assert.deepEqual(blocks, original, 'both undo snapshots restore exact saved blocks');
   } finally { h.close(); }
 });
 
@@ -141,30 +156,39 @@ test('WOC6 legacy hidden wear remains unselected while new axis choices can repl
   } finally { h.close(); }
 });
 
-test('WOC6 axis previews use target combination geometry with the current page tone', async () => {
+test('WOC11 flat point previews use each target geometry with the current page tone', async () => {
   const initial = addTemplateSection(board(), product, analysis, 'points');
   const runKey = sectionRuns(initial).find(item => item.kind === 'points').key;
-  const blocks = changeTemplateSectionDesign(initial, runKey, 'PT-BELOW-CARD-01', { product });
+  const blocks = changeTemplateSectionDesign(initial, runKey, 'PT-TEXT-PHOTO-01', { product });
   const pointCatalogs = { ...catalogs, analysis: { ...analysis, pageStyle: { ...analysis.pageStyle, colorMode: 'point' } } };
   const tone = resolvePageTokens(pointCatalogs.analysis.pageStyle, baseColorOf(product).swatchId).colors;
   const h = await pickerHarness();
   try {
     const tree = h.render({ blocks, runKey, catalogs: pointCatalogs });
     const previews = nodes(tree).filter(node => node.type === Preview);
-    assert.equal(previews.length, 4);
+    assert.equal(previews.length, 2);
     for (const preview of previews) {
       assert.equal(preview.props.fit, true);
       assert.equal(preview.props.wireframe, true);
       assert.deepEqual(preview.props.toneColors, tone);
       assert.ok(preview.props.blocks.some(block => block.elements.some(element => element.type === 'image')));
     }
-    const selectedLayout = selectable(group(tree, '배치')).find(button => button.props['aria-pressed']);
-    const selectedDecoration = selectable(group(tree, '꾸밈')).find(button => button.props['aria-pressed']);
-    assert.deepEqual(nodes(selectedLayout).find(node => node.type === Preview).props.blocks,
-      nodes(selectedDecoration).find(node => node.type === Preview).props.blocks, 'both selected axes preview the same combined design');
-    const basic = selectable(group(tree, '꾸밈')).find(button => !button.props['aria-pressed']);
-    assert.notDeepEqual(nodes(basic).find(node => node.type === Preview).props.blocks,
-      nodes(selectedDecoration).find(node => node.type === Preview).props.blocks, 'basic and card have distinct engine geometry');
+    const selected = selectable(tree).find(button => button.props['aria-pressed']);
+    assert.ok(nodes(selected).some(node => node.type === 'strong' && textOf(node) === '제목, 설명, 사진'));
+    const plain = nodes(selected).find(node => node.type === Preview).props.blocks;
+    const card = nodes(selectable(tree).find(button => !button.props['aria-pressed'])).find(node => node.type === Preview).props.blocks;
+    assert.notDeepEqual(plain, card, 'flat choices retain distinct photo/text geometry');
+    const elements = pages => pages.flatMap(page => page.elements);
+    assert.deepEqual(elements(plain).filter(element => element.type === 'image').map(element => [element.x, element.w, element.h]), [[40, 920, 1150], [40, 920, 1150]]);
+    assert.deepEqual(elements(card).filter(element => element.type === 'image').map(element => [element.x, element.w, element.h]), [[60, 880, 1100], [60, 880, 1100]]);
+    assert.ok(plain.every(page => page.bg === '#ffffff'));
+    assert.ok(card.every(page => page.bg === tone.panel));
+    assert.ok(elements(card).some(element => element.type === 'shape' && element.fill === '#ffffff' && element.w === 880));
+    const title = elements(plain).find(element => element.copyRole === 'items.0.name');
+    const desc = elements(plain).find(element => element.copyRole === 'items.0.desc');
+    const photo = elements(plain).find(element => element.type === 'image');
+    assert.equal(desc.y - title.y - title.h, 66);
+    assert.equal(photo.y - desc.y - desc.h, 24);
   } finally { h.close(); }
 });
 

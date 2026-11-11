@@ -137,18 +137,19 @@ test('a fixed four-position layout that repeats only two colors is excluded with
   } finally { delete catalog.designs[id]; }
 });
 
-test('natural point choices support crops and original detail photos while the saved album stays renderable', () => {
+test('current point choices support crops and photos while saved natural designs and the album still render', () => {
   const source = worn('horizon', 1, { taxonomyVersion: 4, pageSectionKey: 'emo.wear_fit', pageSectionUsage: 'fit' });
   const lead = { id: 'points', taxonomyVersion: 4, source: 'text', pageSectionKind: 'points', pageSectionKey: 'emo.points', pageDesignId: 'PT-EMO-01',
     pointItems: [1, 2, 3].map(i => ({ kind: 'wornCrop', sourceBlockId: source.id, label: `부위 ${i}`,
       bodyPart: `part${i}`, cropRegion: [.1, .1, .7, .7] })) };
   const blocks = [source, lead];
-  const expected = ['PT-COLUMN-01', 'P06-D01', 'PT-COLUMN-CARD-01', 'PT-BELOW-CARD-01'];
+  const expected = ['PT-PHOTO-CARD-01', 'PT-TEXT-PHOTO-01'];
   assert.deepEqual(sectionDesignChoices(runOf([lead]), { storyboard: blocks }).map(design => design.id), expected);
   const details = [1, 2, 3].map(i => ({ id: `d${i}`, taxonomyVersion: 4, source: 'ai', pageSectionKind: 'points', pageSectionKey: 'emo.points',
     pageDesignId: 'PT-EMO-01', slotKey: `points.detail${i}`, cutType: 'product', shot: 'detail', colorId: 'base' }));
   assert.deepEqual(sectionDesignChoices(runOf(details), { storyboard: details }).map(design => design.id), expected);
-  for (const id of expected) {
+  // Construct stored hidden IDs directly: the current picker intentionally cannot select them.
+  for (const id of ['PT-COLUMN-01', 'P06-D01', 'PT-COLUMN-CARD-01', 'PT-BELOW-CARD-01']) {
     const storyboard = blocks.map(block => block.pageSectionKind === 'points' ? { ...block, pageDesignId: id } : block);
     const images = assemblePage({ storyboard, product: { colors: [{ id: 'base' }] },
       cutResults: [{ blockId: source.id, imageUrl: '/native.webp', width: 1000, height: 1600 }] })
