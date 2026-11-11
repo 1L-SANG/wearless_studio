@@ -9,6 +9,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { loadStoryboardComponent, textOf, readStoryboard } from './helpers/storyboardComponents.mjs';
 import { defaultPageStyle } from '../../src/lib/pageTemplates/pageStyle.js';
 import { stageAdditions, addStageAddition } from '../../src/lib/pageTemplates/stageAdditions.js';
+import { sectionDesignChoices } from '../../src/lib/pageTemplates/designChoices.js';
+import { sectionDesignAxes } from '../../src/lib/pageTemplates/designAxes.js';
 
 let vite, Stage, Preview, Continue, Picker, SetPanel, Gallery, catalog, seedStoryboard, sectionRuns, changeDesign, spaceSets, groupId, safeName, setExamples;
 const product = { clothingType: 'top', colors: [{ id: 'base', isBase: true }] };
@@ -103,18 +105,27 @@ test('R2-6 paired designs have seller names and enter through the pale slot with
   assert.deepEqual(changed.map(block => block.id), blocks.map(block => block.id));
   assert.equal(changed.filter(block => block.source === 'ai').length, blocks.filter(block => block.source === 'ai').length);
 });
-test('R2-6 visible design choices retain default labels and fitted previews while single-option axes stay hidden', () => {
+test('WOC10 visible design choices use full actual previews while single-option stages stay hidden', () => {
   for (const templateId of ['emo', 'show']) {
     const blocks = seedStoryboard(product, analysis(templateId));
     for (const run of sectionRuns(blocks)) {
       const markup = html(Picker, { mode: 'design', runKey: run.key, blocks,
         catalogs: { detailProduct: product, analysis: analysis(templateId), genExamples: [] } });
+      const axes = sectionDesignAxes(run, { storyboard: blocks, product });
+      const choices = axes.hasAxes ? axes.decorations : sectionDesignChoices(run, { storyboard: blocks, product });
+      const thumbnailCount = choices.length > 1 ? choices.length : 0;
       const singleColorAxis = run.kind === 'color_product';
-      assert.equal((markup.match(/<small>기본<\/small>/g) || []).length, singleColorAxis ? 0 : 1, run.key);
-      assert.doesNotMatch(markup, /<strong>디자인 \d/);
-      assert.equal(markup.includes('height="100%"'), !singleColorAxis, run.key);
+      assert.doesNotMatch(markup, /<small>기본<\/small>|<strong>디자인 \d|섹션 빼기|previewWirePhoto|previewFit/);
+      assert.equal((markup.match(/data-design-thumbnail=/g) || []).length, thumbnailCount, run.key);
+      const previews = markup.match(/<svg\b[^>]*role="img"[^>]*>/g) || [];
+      assert.equal(previews.length, thumbnailCount + 1, run.key);
+      assert.ok(previews.every(preview => !/width="100%"|height="100%"/.test(preview)), run.key);
+      assert.match(markup, /role="region" aria-label="완성 모습" tabindex="0"/);
       if (singleColorAxis) assert.doesNotMatch(markup, /aria-pressed=|role="group"/);
-      if (run.kind === 'fabric') assert.match(markup, /aria-pressed="true"/, 'the active text-only fallback is selected');
+      if (run.kind === 'fabric') {
+        assert.equal((markup.match(/aria-pressed="true"/g) || []).length, thumbnailCount ? 1 : 0, 'only an eligible choice group shows the active fallback');
+        assert.match(markup, /aria-label="소재 완성 모습"/);
+      }
     }
   }
 });

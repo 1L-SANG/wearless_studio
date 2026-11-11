@@ -85,6 +85,20 @@ function displaysProductColors(run, design, storyboard, product) {
   return colors.every(id => represented.has(id));
 }
 
+// Frame photos are already consumed by the decoration. The remaining layout
+// uses its basic counterpart's minimum; a column also supports no remainder.
+function hasFrameLayoutPhotos(design, photoCount, designs) {
+  if (design.framePhotos == null) return true;
+  const remaining = photoCount - design.framePhotos;
+  if (remaining < 0) return false;
+  const layout = design.choiceAxes?.layout.id;
+  if (layout === 'column') return true;
+  const basic = designs.find(candidate => candidate.kind === design.kind && candidate.usage === design.usage
+    && candidate.choiceAxes?.decoration.id === 'basic' && candidate.choiceAxes.layout.id === layout);
+  const minimum = basic?.minPhotos ?? { twoColumn: 2, heroPair: 3 }[layout] ?? design.minPhotos ?? 0;
+  return remaining >= minimum;
+}
+
 export function sectionDesignChoices(run, { storyboard = run?.blocks || [], product } = {}) {
   if (!run) return [];
   // A paired attachment is toggled on the stage, not a new layout choice. Apply
@@ -99,11 +113,12 @@ export function sectionDesignChoices(run, { storyboard = run?.blocks || [], prod
   const cropped = run.blocks.some(block => block.pointItems?.some(item => item.kind === 'wornCrop'));
   const photoCount = photosFor(run, storyboard).length;
   const colorCount = product?.colors?.length || new Set(photosFor(run, storyboard).map(card => card.colorId).filter(id => id != null)).size;
-  const choices = Object.values(pageTemplatesCatalog.designs).filter(design => !design.pickerHidden && design.kind === run.kind
+  const designs = Object.values(pageTemplatesCatalog.designs);
+  const choices = designs.filter(design => !design.pickerHidden && design.kind === run.kind
     && (run.kind !== 'wear' || design.usage === usage)
     && (!cropped || design.supportsWornCrop !== false)
     && (design.minPhotos == null || photoCount >= design.minPhotos)
-    && (design.framePhotos == null || photoCount >= design.framePhotos)
+    && hasFrameLayoutPhotos(design, photoCount, designs)
     && (design.minColors == null || colorCount >= design.minColors)
     && sectionDesignGenerationCount(run, design.id, storyboard, product) === count
     && displaysProductColors(run, design, storyboard, product));

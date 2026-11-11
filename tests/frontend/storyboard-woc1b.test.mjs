@@ -86,17 +86,26 @@ test('WOC1b-2 studio sets show their own members first and keep other studio exa
   assert.doesNotMatch(textOf(tree), /이 컷만 다른 사진으로 바꾸기/); h.close();
 });
 
-for (const [count, previewPhotos] of [[1, 8], [2, 16], [10, 20]]) test(`WOC6 daily-wear layout and decoration choices each use four sample photos with ${count} actual cuts`, () => {
+for (const count of [1, 2, 10]) test(`WOC10 daily-wear decoration choices and the completed section retain all ${count} actual photos`, () => {
   const original = seedStoryboard(product, analysis('emo')), run = sectionRuns(original).find(run => run.usage === 'styling');
   const photos = Array.from({ length: count }, (_, index) => ({ ...run.blocks[index % run.blocks.length], id: `actual:${index}`,
     source: 'mine', ownImages: [`photo:${index}`], thumb: `photo:${index}`, slotKey: `wear_styling.g${index + 1}` }));
   const blocks = [...original.slice(0, run.start), ...photos, ...original.slice(run.end)], snapshot = structuredClone(blocks);
   const html = renderToStaticMarkup(React.createElement(Picker, { mode: 'design', runKey: run.key, blocks,
     catalogs: { ...catalogs, detailProduct: product, analysis: analysis('emo') } }));
-  assert.equal((html.match(/previewWirePhoto/g) || []).length, previewPhotos);
-  const sample = sectionDesignPreviewSample(blocks, run.key).filter(block => block.pageSectionKey === run.key && block.source !== 'text');
-  assert.equal(new Set(sample.map(block => block.spaceGroupId)).size, 1, 'display-only samples make hero and two-column layouts distinguishable');
-  assert.ok(!html.includes('href="photo:4"')); assert.deepEqual(blocks, snapshot);
+  assert.equal((html.match(/data-design-thumbnail=/g) || []).length, 2);
+  assert.match(html, /role="region" aria-label="완성 모습"/);
+  assert.doesNotMatch(html, /previewWirePhoto|previewFit|href="preview:/);
+  // Frame backdrops can reuse an image. Count the clipped foreground photos so
+  // every real photo must appear once in each choice and once in the result.
+  const previews = html.split(/(?=<svg\b[^>]*role="img")/).slice(1);
+  assert.equal(previews.length, 3);
+  for (const preview of previews) {
+    const photoSources = [...preview.matchAll(/<image\b[^>]*href="([^"]+)"[^>]*clip-path=/g)].map(match => match[1]);
+    assert.equal(photoSources.length, count);
+    assert.deepEqual(photoSources.slice().sort(), photos.map(photo => photo.thumb).sort());
+  }
+  assert.deepEqual(blocks, snapshot, 'rendering actual previews never rewrites saved photos or their set bindings');
 });
 
 test('WOC1b-4 wear designs declare a matching usage, independently of photo count', () => {

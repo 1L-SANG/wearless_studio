@@ -1306,13 +1306,14 @@ export function Storyboard({ toastOverride = null } = {}) {
     </div>
     {swapNotice && <p role="status" className={styles.swapNotice}>{swapNotice}</p>}
     {drawer && <StoryboardDrawer mode={drawer.mode} busy={atomicSaving} onClose={closeInspector}
+      title={drawer.mode === 'design' ? `${templateSectionName(blocks.find(block => block.pageSectionKey === drawer.runKey))} 디자인` : undefined}
       focusKey={`${drawer.mode}:${drawer.runKey || ''}:${drawer.beforeSectionKey || ''}:${selectedId || ''}`}>
       {['add', 'design'].includes(drawer.mode) ? <StoryboardSectionPicker mode={drawer.mode} runKey={drawer.runKey}
         blocks={blocks} catalogs={toneCatalogs} gender={exampleGender} identityKind={identityKind} busy={atomicSaving}
         undoEntry={undoEntry} onUndo={undoLatest}
         onChoose={(kind, usage, designId, source) => drawer.mode === 'design' ? changeDesign(designId)
           : addSection(kind, usage, designId, automaticSectionInsertionKey(blocks, kind, usage), null, source)}
-        onRemove={removeSection} onDragChange={setDraggingSectionChoice} />
+        onDragChange={setDraggingSectionChoice} />
         : drawer.mode === 'set' ? <StoryboardSpaceSetPanel mode={setPicker?.mode} error={setPickerError} onChoose={chooseSpaceSet}
           projectId={projectId}
           gender={exampleGender} clothingType={clothingType} identityKind={identityKind} busy={atomicSaving}

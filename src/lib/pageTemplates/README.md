@@ -30,7 +30,7 @@ not a request to fall back to an unrelated layout.
 - The mock `buildEditorBlocksFromStoryboard` dispatches in the same way. The
   editor passes the analysis object when building its generation skeleton.
 
-## Storyboard presentation (WOC11, 2026-11-12)
+## Storyboard presentation (WOC10, 2026-11-12)
 
 Analysis offers only the two templates, `emo` and `show`. Color selection lives
 in the storyboard header; previously saved pageStyle.colorMode values survive
@@ -83,8 +83,8 @@ rows reveal their new assembled fills between 100 and 500ms, and 280ms fill
 transitions finish within 780ms. Reduced motion skips both delay and transition;
 context changes/unmount clear timers. Mono and point assembled pages are memoized
 for the same board/catalog state, so hover and reveal steps reuse them. The open
-section picker receives the same preview mode; its wireframes tint accent surfaces
-while keeping existing gray photo/dark-shape simplification. Both rows share a compact 256px control column: two 124px tone pills plus 8px gap.
+section picker receives the same preview mode; its actual-photo assemblies use
+the same selected tone as the outline. Both rows share a compact 256px control column: two 124px tone pills plus 8px gap.
 Tone labels, accessible names and tooltips are 기본/의류 색감. The header
 control group remains right aligned; the open-drawer one-column layout remains.
 Title and subtitle occupy a top-aligned left copy block, with word wrapping
@@ -102,9 +102,9 @@ new T03-TEXT-01 fallback run. The fallback design remains for old saved data.
 Actual photo-bearing fabric remains visible. Overview, active-section fallback
 and crop-source Section numbering use the same run visibility predicate. There is
 no text-section management mode. All storyboard previews render text positions
-as faint lines; design candidates additionally replace photos and colored shapes
-with a generic grayscale rendering of actual assembler geometry. Editor/final
-copy is unaffected. No separate handwritten layout scheme catalog is maintained.
+as faint lines. Design/decor candidates and the completed preview use the actual
+full section photos and assembler geometry, like the outline. Only the add-menu
+representative previews retain grayscale samples. Editor/final copy is unaffected.
 
 The outline strip uses 184px thumbnails (172px below 1360px), with its column
 44px wider. Default and narrow widths are declared together on the theme in
@@ -123,14 +123,39 @@ tools use the inside-thumbnail fallback. Up/down arrows expand on hover/focus
 and remain keyboard reachable. The opening has no tools. Boundary arrows use aria-disabled without losing
 focus, and a completed move restores the same arrow/grip. Titles also drag.
 Drop gaps appear during dragging; there are no between-section add buttons or
-notches. Only outline text bars use emphasizeText to increase visible thickness;
-design previews and generated text geometry are unchanged. The stage's white
-pencil button reads 섹션 디자인 변경. The design panel has names only, default
-first, and a header removal action except on the opening; it has no option toggles.
+notches. The outline and actual-photo design previews use emphasizeText to make
+faint text bars legible; generated text geometry is unchanged. The stage's white
+pencil button reads 섹션 디자인 변경. Design mode has one title/close header and no
+removal action, default badge or checkmark. Removal remains in the outline.
+
+The 520px-token drawer uses two columns: layout glyphs and decoration/design
+thumbnails on the left, and a keyboard-scrollable 완성 모습 on the right. Layout
+glyphs show only column/twoColumn/heroPair or color-column/grid structure, never
+decoration. Actual thumbnails clip the section top at196px and do not fit or
+sample the whole section into that height. The right region contains the full
+section and resets to its top only when the selected section/design changes.
+Selection uses one2px ink border; frame counts use white pills inside a gray group
+named 액자에 넣을 사진 directly below the decoration thumbnails. Stages with one
+choice disappear. Native buttons support Tab/Enter/Space; Left/Right arrows also
+select and focus the adjacent option. Saving disables all options.
+
+At1440×900 the drawer's existing1px borders/padding leave478px: the16px gap and
+18:11 columns yield286.76/175.24px. Body height798px contains the completed-region
+heading28px plus770px scroller; the complete left controls stay below500px.
+At viewport heights840px or less, outer scrolling is permitted. Other drawer
+modes retain their scrolling/padding and the outer width token is unchanged.
+
+createSectionDesignPreviewCache stores bounded per-panel assemblies by full
+requested design ID. Its context excludes only current-run design/seed metadata,
+retains paired attachment intent, and includes real source/settings/dependency,
+selected-example, text/tone, size and shop inputs. Design-only saves reuse pages;
+real input changes invalidate them. Memoized SVG children reuse unchanged page
+objects. The assembler and saved storyboard format are unchanged.
 
 `sectionDesignAxes` derives 배치 and 꾸밈 from catalog `choiceAxes` metadata.
 Each complete combination is still one `pageDesignId`: choosing a layout keeps
-the current decoration and choosing a decoration keeps the current layout.
+the current decoration and frame count. Decoration/count changes retain the current
+layout when it remains eligible, otherwise frame transitions resolve to column.
 Each axis row disappears when it has at most one eligible option. Non-axis
 sections retain the flat design list. `pickerHidden` only hides choices; it does
 not invalidate or migrate saved layouts. Existing same-kind/usage/photo-count
@@ -145,17 +170,22 @@ odd tails fill the row; hero-pair repeats one full-width photo and a pair, with
 one remaining photo full width or two remaining photos paired. Photos remain
 4:5 and all fit layouts retain direction captions. Curated wildcard repeats
 include loose/similar photos at their stored positions. Legacy hidden layouts
-without axes retain their previous overflow behavior. Picker samples alone use
-one canonical group (four styling or three fit photos) to show the layout grammar;
-real page groups and saved blocks are unchanged.
+without axes retain their previous overflow behavior. Design mode never creates
+a sample or canonical group; real stored groups and the full photo count reach
+assembly. The separate add-menu sample helper retains its representative role.
 
 The frame decoration adds nine styling-only designs: WEAR-STYLING-FRAME-
 {COLUMN,2COL,HERO}-{01,02,03}. `framePhotos` is catalog metadata; only the complete
 pageDesignId is saved. Entering frame chooses two photos, or one when only one
-exists. Its 액자 사진 pill row shows one, two and three only when the actual section
-has enough photos. Layout changes retain frame count; count changes retain layout;
-returning from basic to frame uses the two-photo default. Existing layout minima
-still apply. The backdrop is not counted as another storyboard position or cut.
+exists. Its 액자에 넣을 사진 row shows one, two and three only when the section
+has enough photos. Framed layout minima use total photos minus framePhotos:
+column supports0/1 remaining, twoColumn needs2, heroPair needs3. Layout options hold
+the current count fixed. Increasing count or entering frame from basic preserves
+the requested/default count first, falling back to column when the current layout
+no longer fits. Four total withframe2 has column/twoColumn; frame3 hides the
+layout stage. Stored older ineligible IDs are still rendered as saved on read;
+explicit new choices resolve to eligible full IDs as one existing undo/save.
+The backdrop remains a reuse, not another storyboard position or generated cut.
 
 `selectFramePhotos` chooses the first contiguous group with enough medium shots.
 Otherwise it picks the first group with the most medium shots, fills from that
@@ -190,8 +220,8 @@ design has no section heading: one-based numbered actual part label (46px,
 tracking-.03em), description (37px, light300, tracking-.05em, line-height1.35), then
 photo. Text x43/w914, photo x40/w920; gaps are66/24/230px. Title font/weight follows
 page style. Both plain text roles use the existing ink token, not a new theme.
-New descriptions have no singleLine policy. Samples retain at most two real/derived
-photos and the panel UI itself is unchanged; WOC10 owns its future presentation.
+New descriptions have no singleLine policy. Design-mode previews use every real/derived
+photo; the separate add-menu representative sample remains limited to two.
 Wireframe photo panels use the distinct --sb-wire-panel surface, with a restrained
 tone mix during point-color preview. Overlay bubbles retain their existing paint;
 frame backdrops become dark gray rectangles in wireframes.

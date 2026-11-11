@@ -15,6 +15,7 @@ import { pairedPhotoSlot } from '../../../src/lib/pageTemplates/pairedDesigns.js
 import { reconcileSectionDependencies } from '../../../src/lib/pageTemplates/sectionDependencies.js';
 import { baseColorOf, resolvePageTokens } from '../../../src/lib/pageTemplates/tokens.js';
 import { hasBackdropBlur, backdropEdgeTiles } from '../../../src/features/editor/editorImageBlur.js';
+import { createSectionDesignPreviewCache } from '../../../src/features/storyboard/storyboardDesignPreview.js';
 import { sectionDesignAxes } from '../../../src/lib/pageTemplates/designAxes.js';
 const extraBindings = { storyboardPositions, storyboardPositionId, isHiddenStoryboardKind, positionSwapReason, storyboardPositionSwapReason,
   wearUsageForBlock, automaticSectionInsertionKey, colorDisplayName, isTextOnlySection, visibleSectionRuns,
@@ -36,7 +37,7 @@ export const readStoryboardSources = () => ['Storyboard.jsx', 'StoryboardPhotoPa
 // Execute the actual JSX and callbacks with hook storage supplied by the test.
 // This never starts a browser, server, fetch, or image request.
 export async function loadStoryboardComponent(file, name, bindings = {}) {
-  bindings = { ...extraBindings, ...bindings };
+  bindings = { designStyles: componentStyles, createSectionDesignPreviewCache, ...extraBindings, ...bindings };
   if (file === 'StoryboardPreview.jsx' && !bindings.BackdropSvg) {
     const raw = readFileSync(new URL('../../../src/features/editor/EditorBackdropImage.jsx', import.meta.url), 'utf8')
       .replace(/^import[\s\S]*?from ['"][^'"]+['"];\s*/gm, '').replace(/\bexport (?=(function|const))/g, '');

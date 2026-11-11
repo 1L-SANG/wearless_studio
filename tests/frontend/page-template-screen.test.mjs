@@ -17,7 +17,7 @@ test('both loaded storyboard screens and the old-page notice render without a br
   const vite = await createServer({ configFile: false, plugins: [react()],
     optimizeDeps: { noDiscovery: true, include: [] },
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
-    server: { middlewareMode: true, watch: null }, appType: 'custom', logLevel: 'silent' });
+    server: { middlewareMode: true, watch: null, hmr: false, ws: false }, appType: 'custom', logLevel: 'silent' });
   t.after(() => vite.close());
   const { DB } = await vite.ssrLoadModule('/src/mock/db.js');
   const { useAppStore } = await vite.ssrLoadModule('/src/store/useAppStore.js');
