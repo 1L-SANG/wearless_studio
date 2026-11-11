@@ -35,7 +35,7 @@ function countDesignPhotos(run, designId, storyboard, borrowedSlots = new Set())
     if (node.type === 'photo' || node.type === 'overlay') return sum + (borrowedSlots.has(node.slot) ? 0 : 1);
     const selected = node.slots ? node.slots.filter(slot => !borrowedSlots.has(slot)).length
       : borrowedSlots.has(node.slot) ? 0 : photos.filter(card => matches(card, node.slot)).length;
-    if (['photoGrid', 'photoFlow', 'pointRows'].includes(node.type)) return sum + selected;
+    if (['photoGrid', 'photoFlow', 'photoFrame', 'pointRows'].includes(node.type)) return sum + selected;
     if (node.type === 'photoStack') return sum + selected * count(node.items);
     return sum + count(node.nodes) + count(node.items) + count(node.captions)
       + (node.columns || []).reduce((n, column) => n + count(column.nodes), 0);
@@ -103,6 +103,7 @@ export function sectionDesignChoices(run, { storyboard = run?.blocks || [], prod
     && (run.kind !== 'wear' || design.usage === usage)
     && (!cropped || design.supportsWornCrop !== false)
     && (design.minPhotos == null || photoCount >= design.minPhotos)
+    && (design.framePhotos == null || photoCount >= design.framePhotos)
     && (design.minColors == null || colorCount >= design.minColors)
     && sectionDesignGenerationCount(run, design.id, storyboard, product) === count
     && displaysProductColors(run, design, storyboard, product));

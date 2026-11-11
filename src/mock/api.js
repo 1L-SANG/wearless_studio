@@ -4,6 +4,9 @@ import { validateStoryboardV4 } from '@/lib/pageTemplates/validateStoryboard.js'
 import { uploadWardrobeGif, mergeWardrobeGifs } from '../lib/api/gifWardrobe.js';
 import { inheritSimilarCutRecipes } from '@/lib/storyboardSimilarCuts.js';
 import { acceptMockClientEvent } from './clientEvents.js';
+import { withMockPartDescriptions } from './partDescriptionCopy.js';
+import { selectFrameShopName } from '../lib/frameShopName.js';
+import { validateEditorImageBlur } from '../features/editor/editorImageBlur.js';
 /* =============================================================
    mock/api.js — the ONLY data access screens are allowed to use.
    Signatures/shapes follow documents/common_data_contract.md §6.
@@ -1128,7 +1131,7 @@ export const api = {
     const changed = Object.fromEntries(Object.entries(patch).map(([key, value]) => [key, value === null ? null : normalized[key]]));
     if (_projectId) {
       for (const key of ['locked', 'confirmedGptProductEvidence', 'detailRecommendations', 'garmentColorEvidence']) delete changed[key];
-      for (const key of ['sourceMirrored', 'inputConsistency', 'featureCopy']) {
+      for (const key of ['sourceMirrored', 'inputConsistency', 'featureCopy', 'partDescriptionCopy']) {
         if (changed[key] === null) delete changed[key];
       }
     }
@@ -1487,7 +1490,10 @@ export const api = {
       if (type === 'progress') job.progress = payload.progress;
     };
     (async () => {
-      const blocks = buildEditorBlocksFromStoryboard(draft.storyboard, draft.product, draft.project.copywriting, draft.analysis);
+      draft.analysis = withMockPartDescriptions(draft.storyboard, draft.analysis, draft.project.copywriting);
+      if (DB.project.id === job.projectId) DB.analysis = draft.analysis;
+      const blocks = buildEditorBlocksFromStoryboard(draft.storyboard, draft.product, draft.project.copywriting, draft.analysis,
+        selectFrameShopName(Object.values(DB.mallConnections || {})));
       const imgs = []; const copies = new Map();
       for (const b of blocks) {
         for (const el of (b.elements || [])) {
@@ -1585,7 +1591,9 @@ export const api = {
       }
       emitProgress(100);
       if (DB.project.id !== ownerId) return { data: [], credits: DB.account.credits };
-      DB.editorBlocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting, DB.analysis);
+      DB.analysis = withMockPartDescriptions(DB.storyboard, DB.analysis, DB.project.copywriting);
+      DB.editorBlocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting, DB.analysis,
+        selectFrameShopName(Object.values(DB.mallConnections || {})));
       DB.project.status = 'done'; touch();
       // 실서버와 동일: 동일 설정 복제 컷은 1장만 생성 — 청구도 실제 생성 수 기준(ADR-0011).
       const aiCuts = uniqueGenerationCutCount(DB.storyboard, {
@@ -1608,6 +1616,7 @@ export const api = {
   // 에디터 상태 영속화 (계약 §6) — 저장 버튼·자동 저장이 호출. 세션 내 재진입 시 편집 유지.
   async saveEditorBlocks(projectId, blocks) {
     await wait(200);
+    validateEditorImageBlur(blocks);
     if (!sameEditorJson(DB.editorBlocks, blocks)) {
       DB.editorBlocks = clone(blocks); DB.project.editorRevision = (DB.project.editorRevision || 0) + 1; touch();
     }

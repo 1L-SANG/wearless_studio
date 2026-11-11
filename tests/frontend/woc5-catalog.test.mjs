@@ -47,7 +47,7 @@ test('WOC5 paired layouts survive the WOC6 picker hiding policy', () => {
     assert.equal(catalog.designs[pair].layout.at(-1).nodes[0].slot, pair.endsWith('-P') ? 'product' : 'ghost');
   }
   assert.equal(expected.length, 20);
-  assert.equal(Object.keys(catalog.designs).length, 41);
+  assert.equal(Object.keys(catalog.designs).length, 50);
   assert.equal(validateCatalog(catalog), catalog);
 });
 

@@ -36,7 +36,10 @@ for (const template of ['emo', 'show']) test(`WOC6 ${template} defaults and visi
   assert.ok(sectionRuns(blocks).filter(run => run.kind === 'wear' && run.usage === 'fit').every(run => run.designId === 'WEAR-FIT-COLUMN-01'));
   assert.ok(!blocks.some(b => b.pageSectionKind === 'sns'));
   const daily = runOf(blocks, 'wear', 'styling') ? blocks : addTemplateSection(blocks, product, analysis(template), 'wear', 'styling');
-  assert.deepEqual(new Set(ids(daily, 'wear', 'styling')), new Set(['P02-D01', 'WEAR-STYLING-2COL-01', ...(runOf(daily, 'wear', 'styling').blocks.filter(b => b.source !== 'text').length >= 3 ? ['WEAR-STYLING-HERO-01'] : [])]));
+  const dailyCount = runOf(daily, 'wear', 'styling').blocks.filter(b => b.source !== 'text').length;
+  const frames = ['COLUMN', '2COL', 'HERO'].slice(0, Math.min(3, dailyCount))
+    .flatMap(layout => Array.from({ length: Math.min(3, dailyCount) }, (_, index) => `WEAR-STYLING-FRAME-${layout}-0${index + 1}`));
+  assert.deepEqual(new Set(ids(daily, 'wear', 'styling')), new Set(['P02-D01', 'WEAR-STYLING-2COL-01', ...(dailyCount >= 3 ? ['WEAR-STYLING-HERO-01'] : []), ...frames]));
   assert.deepEqual(new Set(ids(blocks, 'wear', 'fit')), new Set(['WEAR-FIT-COLUMN-01', 'WEAR-FIT-2COL-01', 'WEAR-FIT-HERO-01']));
   for (const [kind, id] of [['review', 'I09-D06'], ['faq', 'T08-D07']]) {
     const withKind = runOf(blocks, kind) ? blocks : addTemplateSection(blocks, product, analysis(template), kind);
@@ -50,9 +53,9 @@ for (const usage of ['styling', 'fit']) test(`WOC6 ${usage} minimum photos refer
     const chosen = run.blocks.filter(b => b.source !== 'text').slice(0, count).map((b, i) => i === count - 1 ? { ...b, slotKey: null } : b);
     const blocks = original.flatMap(b => b.pageSectionKey === run.key ? [] : [b]); blocks.splice(run.start, 0, ...chosen);
     const current = runOf(blocks, 'wear', usage), choices = sectionDesignChoices(current, { storyboard: blocks, product });
-    assert.equal(choices.length, count); assert.ok(choices.every(d => sectionDesignPhotoCount(current, d.id, blocks) === count));
+    assert.equal(choices.length, usage === 'styling' ? count * (count + 1) : count); assert.ok(choices.every(d => sectionDesignPhotoCount(current, d.id, blocks) === count));
     assert.equal(sectionDesignAxes(current, { storyboard: blocks, product }).layouts.length, count);
-    assert.equal(sectionDesignAxes(current, { storyboard: blocks, product }).decorations.length, 1);
+    assert.equal(sectionDesignAxes(current, { storyboard: blocks, product }).decorations.length, usage === 'styling' ? 2 : 1);
     valid(blocks);
   }
 });

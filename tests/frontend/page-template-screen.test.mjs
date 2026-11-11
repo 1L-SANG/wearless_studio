@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 test('both loaded storyboard screens and the old-page notice render without a browser', async t => {
   const logError = console.error;
@@ -31,8 +32,11 @@ test('both loaded storyboard screens and the old-page notice render without a br
   assert.match(picker, /견본 사진이에요/);
   useAppStore.setState({ projectId: DB.project.id, projectPersisted: true });
   useAppStore.getInitialState = useAppStore.getState;
-  const render = () => renderToStaticMarkup(React.createElement(MemoryRouter,
-    { initialEntries: ['/create/storyboard'] }, React.createElement(Storyboard, { toastOverride: { push() {} } })));
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  t.after(() => queryClient.clear());
+  const render = () => renderToStaticMarkup(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(MemoryRouter, { initialEntries: ['/create/storyboard'] },
+      React.createElement(Storyboard, { toastOverride: { push() {} } }))));
   for (const templateId of ['emo', 'show']) {
     DB.analysis.pageStyle = selectTemplateStyle(templateId);
     DB.storyboard = seedStoryboard(DB.product, DB.analysis);

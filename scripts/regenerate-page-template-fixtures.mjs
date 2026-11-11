@@ -30,7 +30,7 @@ const translateCommon = value => {
         .map(([key, item]) => [key.replace(/^guide\./, 'emo.'), translateCommon(item)]));
     return value;
 };
-fixture.cases = fixture.cases.filter(item => !/^woc[2356]-/.test(item.name)).map(item => {
+fixture.cases = fixture.cases.filter(item => !/^woc(?:[2356]|6b)-/.test(item.name)).map(item => {
     if (!item.name.startsWith('guide-')) return item;
     const input = translateCommon(item.input);
     const album = item.name.includes('fit-album') || item.name === 'guide-3-point';
@@ -209,7 +209,7 @@ for (const templateId of ['emo', 'show']) {
         initial = addStageAddition(initial, run.key, addition, { product, analysis });
     }
     const metrics = block => block.shot === 'detail' ? { width: 1024, height: 1536 } : { width: 1024, height: 1280 };
-    for (const design of Object.values(pageTemplatesCatalog.designs).filter(design => !design.pickerHidden && design.choiceAxes)) {
+    for (const design of Object.values(pageTemplatesCatalog.designs).filter(design => !design.pickerHidden && design.choiceAxes && !design.framePhotos)) {
         const run = sectionRuns(initial).find(run => run.kind === design.kind && (design.kind !== 'wear' || run.usage === design.usage));
         const storyboard = changeTemplateSectionDesign(initial, run.key, design.id, { product });
         if (storyboard.find(b => b.pageSectionKey === run.key).pageDesignId !== design.id) throw new Error(`WOC6 fixture design rejected: ${design.id}`);
@@ -224,7 +224,50 @@ for (const templateId of ['emo', 'show']) {
         appendCase(`woc6-${templateId}-detail-${name}`, { product, analysis, storyboard: initial }, block => block.shot === 'detail' ? size : metrics(block));
     }
 }
-for (const item of fixture.cases.filter(item => /^woc[2356]-/.test(item.name))) validateStoryboardV4(item.input.storyboard);
+// WOC6B frames use existing storyboard fields only; image data is fixture-local.
+for (const templateId of ['emo', 'show']) {
+    const source = fixture.cases.find(item => item.name === `${templateId}-2-mono`).input;
+    const product = structuredClone(source.product);
+    const analysis = { ...structuredClone(source.analysis), targetGenders: ['women'], detailRecommendations: recommendation(3) };
+    const shopName = '웨어리스 테스트몰';
+    const makeBoard = groups => {
+        let board = seedStoryboard(product, analysis, { projectId: 'fixture-woc6b' });
+        if (!sectionRuns(board).some(run => run.kind === 'wear' && run.usage === 'styling')) board = addTemplateSection(board, product, analysis, 'wear', 'styling');
+        const run = sectionRuns(board).find(run => run.kind === 'wear' && run.usage === 'styling');
+        const original = run.blocks.find(block => block.source !== 'text'), instance = run.key.split('.').slice(1).join('.');
+        let index = 0;
+        const photos = groups.flatMap((shots, group) => shots.map((shot, member) => ({ ...original,
+            id: `frame-photo-${++index}`, slotKey: `${instance}.g${index}`, shot, exampleId: null,
+            spaceGroupId: original.spaceGroupId.replace(/__[^_]+_[^_]+$/, `__woc6b_${group + 1}`), spaceSetMemberOrder: member,
+        })));
+        return { key: run.key, board: [...board.slice(0, run.start), ...photos, ...board.slice(run.end)] };
+    };
+    const addFrameCase = (suffix, layout, count, groups, extra = {}, metrics = { width: 900, height: 1200 }) => {
+        const { board, key } = makeBoard(groups), id = `WEAR-STYLING-FRAME-${layout}-0${count}`;
+        const storyboard = changeTemplateSectionDesign(board, key, id, { product });
+        if (storyboard.find(block => block.pageSectionKey === key).pageDesignId !== id) throw new Error(`WOC6B frame fixture rejected ${id}`);
+        appendCase(`woc6b-${templateId}-${suffix}`, { product, analysis, shopName, ...extra, storyboard }, metrics);
+    };
+    const standard = [['full', 'medium', 'medium'], ['full', 'medium', 'medium']];
+    for (const layout of ['COLUMN', '2COL', 'HERO']) for (const count of [1, 2, 3]) addFrameCase(`${layout}-${count}`, layout, count, standard);
+    addFrameCase('medium-winner', 'HERO', 3, [['medium', 'full'], ['full', 'medium', 'medium', 'medium']]);
+    addFrameCase('full-fill', 'COLUMN', 3, [['full', 'medium', 'medium'], ['full']]);
+    addFrameCase('other-fill', '2COL', 3, [['medium'], ['full', 'full']]);
+    addFrameCase('no-medium', 'HERO', 2, [['full', 'full'], ['full']]);
+    addFrameCase('no-shop', 'COLUMN', 2, standard, { shopName: null });
+    addFrameCase('no-remainder', 'COLUMN', 2, [['medium', 'medium']]);
+    addFrameCase('unknown-size', '2COL', 2, standard, {}, {});
+    const parts = { ...analysis, partDescriptionCopy: ['목선', '단추', '소맷단'].map(point => ({ point, desc: `${point} 설명` })) };
+    const detailBoard = seedStoryboard(product, parts);
+    const detailKey = sectionRuns(detailBoard).find(run => run.kind === 'points').key;
+    appendCase(`woc6b-${templateId}-part-copy`, { product, analysis: parts, storyboard: changeTemplateSectionDesign(detailBoard, detailKey, 'PT-COLUMN-CARD-01', { product }) });
+    const wornAnalysis = { ...analysis, detailRecommendations: recommendation(0) };
+    const wornBoard = addTemplateSection(seedStoryboard(product, wornAnalysis), product, wornAnalysis, 'points');
+    const worn = sectionRuns(wornBoard).find(run => run.kind === 'points');
+    wornAnalysis.partDescriptionCopy = worn.blocks.flatMap(block => block.pointItems || []).map(item => ({ point: item.label, desc: `${item.label} 설명` }));
+    appendCase(`woc6b-${templateId}-worn-copy`, { product, analysis: wornAnalysis, storyboard: changeTemplateSectionDesign(wornBoard, worn.key, 'PT-BELOW-CARD-01', { product }) });
+}
+for (const item of fixture.cases.filter(item => /^woc(?:[2356]|6b)-/.test(item.name))) validateStoryboardV4(item.input.storyboard);
 const outputs = fixture.cases.map(({ input }) => ({
     blocks: assemblePage(input),
     regions: collectOverlayRegions(input),
@@ -240,7 +283,7 @@ from page_template_cases import assemble_input,collect_input_regions
 from app.agents.content_roles import validate_storyboard_v4
 values=json.load(sys.stdin)
 for value in values:
- if value['storyboard'][0]['id'].startswith(('woc2-', 'woc3-', 'woc5-', 'woc6-')): validate_storyboard_v4(value['storyboard'])
+ if value['storyboard'][0]['id'].startswith(('woc2-', 'woc3-', 'woc5-', 'woc6-', 'woc6b-')): validate_storyboard_v4(value['storyboard'])
 print(json.dumps([dict(blocks=assemble_input(c),regions=collect_input_regions(c)) for c in values],ensure_ascii=False))
 `,
     ],

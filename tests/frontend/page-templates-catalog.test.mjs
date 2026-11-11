@@ -14,7 +14,7 @@ import {
 test("catalog keeps saved designs and exposes the WOC6 defaults without SNS by default", () => {
     assert.equal(validateCatalog(catalog), catalog);
     assert.equal(Object.keys(catalog.kinds).length, 10);
-    assert.equal(Object.keys(catalog.designs).length, 41);
+    assert.equal(Object.keys(catalog.designs).length, 50);
     assert.equal(Object.values(catalog.designs).filter(design => design.pickerHidden).length, 20);
     assert.equal(
         (catalog.firstTitleBand.top + catalog.firstTitleBand.bottom) / 2,

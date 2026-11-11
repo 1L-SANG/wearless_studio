@@ -409,14 +409,12 @@ function contentFor(node, ctx) {
         text = string(ctx.analysis.mdComment);
     else if (ctx.copywriting) {
         text = ctx.copy[role] || "";
-        if (
-            /^items\.\d+\.desc$/.test(role) &&
-            ctx.card?.pointItem?.kind !== "wornCrop"
-        ) {
+        if (/^items\.\d+\.desc$/.test(role)) {
             const name = factText(role.replace(/\.desc$/, ".name"), ctx);
-            text =
-                ctx.analysis.featureCopy?.find?.((item) => item.point === name)
-                    ?.desc || text;
+            text = ctx.analysis.partDescriptionCopy?.find?.((item) => item.point === name)?.desc
+                || (ctx.card?.pointItem?.kind !== 'wornCrop'
+                    && ctx.analysis.featureCopy?.find?.((item) => item.point === name)?.desc)
+                || text;
         }
     }
     if (ctx.paragraphRole === role) text = ctx.paragraphText;
@@ -1440,9 +1438,77 @@ function renderFactTable(node, x, y, width, ctx) {
     return { elements, h: cursor - y };
 }
 
+const photoGroupKey = (card) => card?.spaceGroupId ? `space:${card.spaceGroupId}` : `color:${card?.colorId ?? ""}`;
+
+function contiguousPhotoGroups(cards) {
+    const groups = [];
+    for (const card of cards) {
+        const last = groups.at(-1);
+        if (last && photoGroupKey(last[0]) === photoGroupKey(card)) last.push(card);
+        else groups.push([card]);
+    }
+    return groups;
+}
+
+/** Existing photos only. Preserve contiguous runs even after an entire run is framed. */
+export function selectFramePhotos(cards, count) {
+    const groups = contiguousPhotoGroups(cards);
+    const medium = (group) => group.filter(card => card.shot === 'medium');
+    const winner = groups.find(group => medium(group).length >= count)
+        || groups.reduce((best, group) => medium(group).length > medium(best).length ? group : best, groups[0] || []);
+    const seen = new Set(), frame = [];
+    for (const card of [...medium(winner), ...winner.filter(card => card.shot === 'full'), ...cards]) {
+        if (frame.length >= count) break;
+        if (seen.has(card.id)) continue;
+        seen.add(card.id); frame.push(card);
+    }
+    const unused = winner.filter(card => !seen.has(card.id));
+    const remainingGroups = groups.map(group => group.filter(card => !seen.has(card.id))).filter(group => group.length);
+    return { frame, remaining: remainingGroups.flat(), remainingGroups,
+        background: unused.find(card => card.shot === 'full') || unused[0] || frame[0] || null };
+}
+
+function renderFrameFact(text, role, x, y, width, ctx) {
+    if (!text) return { elements: [], h: 0 };
+    const frame = ctx.catalog.frameStyle;
+    const style = { font: ctx.tokens.fonts.body.font, size: frame.textSize, weight: frame.textWeight, italic: false,
+        tracking: round(frame.textTrackingEm * frame.textSize * 100) / 100, lineHeight: frame.textLineHeight,
+        align: 'center', color: ctx.tokens.colors[frame.ink] };
+    const h = estimateTextHeight(text, width, style.size, style.lineHeight, ctx.catalog.textMetrics, style.tracking);
+    return { elements: [{ type: 'text', x, y, w: width, h, text, style,
+        sourceBlockId: ctx.sourceId, copyRole: role, textSlotVersion: 1 }], h };
+}
+
+function renderFrameBand(selection, y, ctx) {
+    if (!selection.frame.length) return { elements: [], h: 0 };
+    const frame = ctx.catalog.frameStyle, cardX = (ctx.catalog.canvasWidth - frame.cardWidth) / 2,
+        cardY = y + frame.bandPadding, photoX = cardX + frame.paddingX, photoWidth = frame.cardWidth - frame.paddingX * 2;
+    let cursor = cardY + frame.paddingTop;
+    const head = renderFrameFact(string(ctx.product.name), 'name', photoX, cursor, photoWidth, ctx);
+    const content = [...head.elements];
+    cursor += head.h + (head.h ? frame.photoTop : 0);
+    selection.frame.forEach((card, i) => {
+        const result = renderPhoto({ type: 'photo', slot: '$current', fit: 'contain', aspect: 'source', fallbackAspect: frame.fallbackAspect },
+            photoX, cursor, photoWidth, { ...ctx, card, index: ctx.photos.indexOf(card) });
+        content.push(...result.elements); cursor += result.h + (i + 1 < selection.frame.length ? frame.photoGap : 0);
+    });
+    const shopName = ctx.shopName;
+    if (shopName) {
+        cursor += frame.footerGap;
+        const foot = renderFrameFact(shopName, 'who', photoX, cursor, photoWidth, ctx);
+        content.push(...foot.elements); cursor += foot.h;
+    }
+    const cardHeight = cursor + frame.paddingBottom - cardY, height = cardHeight + frame.bandPadding * 2;
+    // A background reuse must not consume a remaining original photo.
+    const backdrop = renderPhoto({ type: 'photo', slot: '$current', aspect: '4/5' }, 0, y, ctx.catalog.canvasWidth,
+        { ...ctx, card: selection.background, index: ctx.photos.indexOf(selection.background), used: new Set() }).elements[0];
+    return { elements: [{ ...backdrop, h: height, blur: frame.blur },
+        { type: 'shape', shape: 'rect', x: cardX, y: cardY, w: frame.cardWidth, h: cardHeight, fill: ctx.tokens.colors[frame.paper], radius: 0 },
+        ...content], h: height };
+}
+
 function photoFlowRows(node, cards) {
-    const groupKey = (card) => node.groupBy === "none" ? "all"
-        : card?.spaceGroupId ? `space:${card.spaceGroupId}` : `color:${card?.colorId ?? ""}`;
+    const groupKey = (card) => node.groupBy === "none" ? "all" : photoGroupKey(card);
     const rows = [];
     for (let start = 0; start < cards.length;) {
         let end = start + 1;
@@ -1479,7 +1545,7 @@ function renderRepeated(node, cards, ctx, x, y, width) {
                 index:
                     node.type === "photoGrid" && ctx.kind.kind === "color_product" && colorIndex >= 0
                         ? colorIndex
-                        : ctx.index + i,
+                        : ctx.photoIndexes?.get(card?.id) ?? ctx.index + i,
                 targetSlot: node.slots?.[ctx.index + i],
             };
             const photo = renderPhoto(
@@ -1520,7 +1586,7 @@ function renderRepeated(node, cards, ctx, x, y, width) {
     }
     const card = cards[0];
     if (node.type === "photoStack") {
-        const item = { ...ctx, card };
+        const item = { ...ctx, card, index: ctx.photoIndexes?.get(card?.id) ?? ctx.index };
         if (ctx.kind.kind === "color_product" && ctx.catalog.designs[ctx.designId]?.choiceAxes) {
             const colorIndex = (ctx.product.colors || []).findIndex((color) => string(color.id) === string(card?.colorId));
             if (colorIndex >= 0) item.index = colorIndex;
@@ -1623,6 +1689,7 @@ export function assemblePage({
     failedCuts = {},
     licenseNotice = null,
     profile = {},
+    shopName,
     overlayRegions,
 } = {}) {
     const catalog = pageTemplatesCatalog;
@@ -1700,6 +1767,7 @@ export function assemblePage({
             product,
             analysis,
             profile,
+            shopName: typeof shopName === "string" ? shopName.trim() : "",
             copywriting,
             key,
             section,
@@ -1761,7 +1829,26 @@ export function assemblePage({
         for (const node of design.layout) {
             if (node.whenTemplate && node.whenTemplate !== tokens.template.id)
                 continue;
-            if (node.type === "photoFlow") {
+            if (node.type === "photoFrame") {
+                const selection = selectFramePhotos(selectCards(node, ctx), node.count);
+                if (elements.some(el => el.type === 'image')) flush();
+                const frame = renderFrameBand(selection, y, ctx);
+                elements.push(...frame.elements); y += frame.h;
+                const rows = selection.remainingGroups.flatMap(group => node.pattern === 'column'
+                    ? group.map(card => ({ cards: [card] })) : photoFlowRows({ ...node, groupBy: 'none' }, group));
+                const remainderNode = node.pattern === 'column'
+                    ? { type: 'photoStack', items: [{ type: 'photo', slot: '$current', aspect: node.aspect, radius: 16 }, ...node.captions] }
+                    : { ...node, type: 'photoFlow' };
+                const photoIndexes = new Map(ctx.photos.map((card, index) => [card.id, index]));
+                if (rows.length) { y += catalog.frameStyle.remainderGap; flush(); }
+                rows.forEach((row, index) => {
+                    if (index) flush();
+                    const result = renderRepeated(remainderNode, row.cards, { ...ctx, photoIndexes, index: photoIndexes.get(row.cards[0].id) }, pad, y, width);
+                    elements.push(...result.elements); y += result.h;
+                    if (index + 1 < rows.length) y += tokens.template.spacing.photoGap;
+                });
+                if (rows.length && node.pattern !== 'column') y += node.gap || 0;
+            } else if (node.type === "photoFlow") {
                 const rows = photoFlowRows(node, selectCards(node, ctx));
                 if (elements.some((el) => el.type === "image")) flush();
                 rows.forEach((row, index) => {

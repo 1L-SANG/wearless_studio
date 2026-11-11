@@ -15,7 +15,8 @@ const nodesOf = id => {
 };
 
 test('WOC6 offers the agreed layouts while saved hidden definitions remain valid', () => {
-  assert.deepEqual(visible('wear', 'styling'), ['P02-D01', 'WEAR-STYLING-2COL-01', 'WEAR-STYLING-HERO-01']);
+  assert.deepEqual(visible('wear', 'styling'), ['P02-D01', 'WEAR-STYLING-2COL-01', 'WEAR-STYLING-HERO-01',
+    ...['COLUMN', '2COL', 'HERO'].flatMap(layout => [1, 2, 3].map(count => `WEAR-STYLING-FRAME-${layout}-0${count}`))].sort());
   assert.deepEqual(visible('wear', 'fit'), ['WEAR-FIT-2COL-01', 'WEAR-FIT-COLUMN-01', 'WEAR-FIT-HERO-01']);
   assert.deepEqual(visible('color_product'), ['CP-COLUMN-01', 'CP-EMO-01']);
   assert.deepEqual(visible('points'), ['P06-D01', 'PT-BELOW-CARD-01', 'PT-COLUMN-01', 'PT-COLUMN-CARD-01']);

@@ -90,6 +90,8 @@ import { patchRegistrationSizes } from './mallRegisterDraft.js';
 import { extractEditorAssetId } from '@/lib/editorAssetInfo.js';
 import { ExportSplitButton, buildExportMenuItems } from './ExportMenu.jsx';
 import { publishDetailPage, buildPublicationHtml, buildPublicationUrlList, downloadPublicationZip } from './detailPublish.js';
+import { EditorBackdropImage } from './EditorBackdropImage.jsx';
+import { hasBackdropBlur } from './editorImageBlur.js';
 import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, isPhotoSlotElement, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, reorderElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
 import { CONTENT_ROLES, SECTION_ROLES, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
@@ -539,7 +541,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     return (
       <div {...common} {...imageDropProps} className={cls(imageDropOver ? 'image-drop-over' : '')} style={{ ...base, borderRadius: el.radius, ...imageFrameStyle }}
         onDoubleClick={preview ? undefined : (e) => { e.stopPropagation(); onCropStart && onCropStart(el); }}>
-        {el.crop ? (
+        {hasBackdropBlur(el) ? <EditorBackdropImage element={el} src={imgSrc} /> : el.crop ? (
           /* 커밋된 인라인 크롭: 프레임(overflow hidden) 안에 원본을 -ox,-oy 오프셋으로 */
           <div className="el-cropped" style={{ borderRadius: el.radius }}>
             <img src={imgSrc} data-gif-poster={isGifImage(el) ? el.posterSrc : undefined} alt="" draggable={false} style={{ left: -el.crop.ox, top: -el.crop.oy, width: el.crop.iw, height: el.crop.ih }} />

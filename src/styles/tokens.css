@@ -241,6 +241,7 @@
   --sb-wire-inv: #3a3a38;
   --sb-wire-comp: #c8c8c3;
   --sb-wire-photo: #d6d6d1;
+  --sb-wire-panel: var(--sb-wire-2);
   --sb-wire-scrim-end: #777773;
   --sb-wire-title: #474743;
   --sb-wire-on-photo: rgba(255, 255, 255, .82);

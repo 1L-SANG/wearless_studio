@@ -1,12 +1,22 @@
 import { sectionRuns } from './sectionRuns.js';
 import { getTemplate, sectionDefinition } from './catalog.js';
 import { wearUsageForBlock } from './slots.js';
+import { pointPhotosForRun } from './assemble.js';
 
 // Presentation-only sample. Never pass this board to persistence, validation or
 // credit calculation; real blocks and their order remain the editor's state.
 export function sectionDesignPreviewSample(blocks, key) {
   const run = sectionRuns(blocks).find(run => run.key === key);
   if (!run) return blocks;
+  if (run.kind === 'points') {
+    const lead = run.blocks.find(block => block.source === 'text' && Array.isArray(block.pointItems));
+    const shown = pointPhotosForRun(run.blocks, blocks).slice(0, 2);
+    const sourceIds = new Set(shown.filter(photo => !photo.pointItem).map(photo => photo.id));
+    const items = shown.map(photo => photo.pointItem || lead?.pointItems.find(item => item.kind === 'detail' && item.sourceBlockId === photo.id)).filter(Boolean);
+    const sample = run.blocks.filter(block => block.source === 'text' || sourceIds.has(block.id))
+      .map(block => block === lead ? { ...block, pointItems: items } : block);
+    return [...blocks.slice(0, run.start), ...sample, ...blocks.slice(run.end)];
+  }
   const photos = run.blocks.filter(block => block.source !== 'text');
   if (!photos.length) return blocks;
   const definition = sectionDefinition(getTemplate(key.split('.')[0]), key, run.kind, run.usage);

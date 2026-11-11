@@ -86,7 +86,7 @@ test('WOC1b-2 studio sets show their own members first and keep other studio exa
   assert.doesNotMatch(textOf(tree), /이 컷만 다른 사진으로 바꾸기/); h.close();
 });
 
-for (const [count, previewPhotos] of [[1, 0], [2, 8], [10, 12]]) test(`WOC6 daily-wear choices use four sample photos only for eligible layouts with ${count} actual cuts`, () => {
+for (const [count, previewPhotos] of [[1, 8], [2, 16], [10, 20]]) test(`WOC6 daily-wear layout and decoration choices each use four sample photos with ${count} actual cuts`, () => {
   const original = seedStoryboard(product, analysis('emo')), run = sectionRuns(original).find(run => run.usage === 'styling');
   const photos = Array.from({ length: count }, (_, index) => ({ ...run.blocks[index % run.blocks.length], id: `actual:${index}`,
     source: 'mine', ownImages: [`photo:${index}`], thumb: `photo:${index}`, slotKey: `wear_styling.g${index + 1}` }));

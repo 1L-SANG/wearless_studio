@@ -20,7 +20,7 @@ def test_saved_catalog_designs_and_woc6_defaults_without_sns_by_default():
     assert [group["name"] for group in CATALOG["menuGroups"]] == ["사진", "옷 자세히", "상품 설명", "후기와 소통"]
     assert [len([s for s in t["sections"] if s["presence"] == "default"]) for t in CATALOG["templates"]] == [10, 7]
     assert [s["instanceKey"] for s in get_template("show")["sections"] if s["kind"] == "points"] == ["points"]
-    assert len(CATALOG["designs"]) == 41
+    assert len(CATALOG["designs"]) == 50
     assert sum(bool(design.get("pickerHidden")) for design in CATALOG["designs"].values()) == 20
     for template in CATALOG["templates"]:
         for section in template["sections"]:

@@ -21,6 +21,7 @@ import genExamples from '@/data/genExamples.json';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
 import { assemblePage } from '@/lib/pageTemplates/assemble.js';
+import { pageTemplatesCatalog } from '@/lib/pageTemplates/catalog.js';
 import { buildAutoBlocks } from '@/lib/pageTemplates/autoBlocks.js';
 import { genderForClothingType } from '@/lib/productGender.js';
 import {
@@ -235,13 +236,17 @@ const IMG = (x, y, w, h, src, radius, cutType) => ({ id: uid('el'), type: 'image
 /* 저장된 콘티 → 에디터 블록 (mock 생성기, 계약 §6 generateDetailPage).
    실제 파이프라인이 할 일을 placeholder 로 흉내만 낸다 — 블록 수·종류·순서가
    콘티를 따라가고, 카피라이팅 ON 이면 첫 장면/핵심 장점에 카피를 넣는다. */
-export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting, analysis = {}) {
+export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting, analysis = {}, shopName = null) {
   const cutResults = (storyboard || []).filter(block => block.source === 'ai').map(block => ({
     blockId: block.id,
     imageUrl: P.photo(`gen_${block.id}`, block.cutType === 'product' ? 'product' : block.cutType === 'horizon' ? 'horizon' : 'styling', 800, 1200),
     width: 800, height: 1200,
   }));
-  return assemblePage({ storyboard, product, copywriting, analysis, cutResults });
+  const hasFrame = (storyboard || []).some(block => block.taxonomyVersion === 4
+    && pageTemplatesCatalog.designs[block.pageDesignId]?.framePhotos);
+  const name = hasFrame && typeof shopName === 'string' ? shopName.trim() : '';
+  return assemblePage({ storyboard, product, copywriting, analysis, cutResults,
+    ...(name ? { shopName: name } : {}) });
 }
 
 export function buildStoryboard(_mode, colors, context = {}) {

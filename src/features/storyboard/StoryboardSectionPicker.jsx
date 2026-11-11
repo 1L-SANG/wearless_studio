@@ -68,7 +68,7 @@ export function StoryboardSectionPicker({ mode, runKey, blocks, catalogs, gender
     <div className={`${styles.panelHeading} ${styles.panelHeadingRow}`}><h2>{name} 디자인</h2>
       {existing.kind !== 'first' && <button type="button" className="btn" disabled={busy} onClick={() => onRemove?.(existing.key)}>섹션 빼기</button>}
     </div>
-    {axes.hasAxes ? [
+    {axes.hasAxes ? <> {[
       { id: 'layout', label: '배치', options: axes.layouts },
       { id: 'decoration', label: '꾸밈', options: axes.decorations },
     ].filter(axis => axis.options.length > 1).map(axis => <section key={axis.id} className={styles.designAxis} role="group" aria-label={axis.label}>
@@ -80,7 +80,15 @@ export function StoryboardSectionPicker({ mode, runKey, blocks, catalogs, gender
         <span className={styles.designPreview}><StoryboardPreview blocks={designPreviews.get(option.designId)} fit wireframe toneColors={toneColors} label={`${name} · ${axis.label} · ${option.name}`} /></span>
         <span className={styles.designName}>{option.isDefault && option.name !== '기본' && <small>기본</small>}<strong>{option.name}</strong></span>
       </button>)}</div>
-    </section>) : <div className={styles.designGrid}>{designs.map(design => <button type="button" key={design.id}
+    </section>)}
+    {axes.framePhotoChoices.length > 0 && <section className={styles.designAxis}>
+      <h3>액자 사진</h3>
+      <div className={`modal-actions ${styles.framePhotoChoices}`} role="group" aria-label="액자 사진">
+        {axes.framePhotoChoices.map(option => <button type="button" key={option.count}
+          className={`btn${option.selected ? ` ${styles.framePhotoSelected}` : ''}`} aria-pressed={option.selected} disabled={busy}
+          onClick={() => onChoose(existing.kind, existing.usage, option.designId)}>{option.count}장</button>)}
+      </div>
+    </section>}</> : <div className={styles.designGrid}>{designs.map(design => <button type="button" key={design.id}
       className={`${styles.designCard}${currentDesignId === design.id ? ` ${styles.designSelected}` : ''}`}
       aria-pressed={currentDesignId === design.id} disabled={busy} onClick={() => onChoose(existing.kind, existing.usage, design.id)}>
       {currentDesignId === design.id && <span className={styles.designCheck}><Icon name="check" size={12} stroke={1.5} /></span>}

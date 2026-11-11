@@ -14,6 +14,7 @@ import logging
 import time
 import uuid
 from dataclasses import replace
+from datetime import datetime, timezone
 from io import BytesIO
 
 from PIL import Image
@@ -42,6 +43,7 @@ from ..agents import (
     mannequin,
     outer_closure,
     page_assembler,
+    page_part_copy,
     page_output_qc,
     product_button_qc,
     real_horizon_neck_repair,
@@ -382,6 +384,34 @@ def _page_template_assembly_options(storyboard, analysis, product):
     return {"analysis": analysis,
             "page_style": analysis.get("pageStyle") or {**PAGE_TEMPLATES["defaults"], "templateId": storyboard[0]["pageSectionKey"].split(".")[0]},
             "base_swatch_id": base_color_of(product).get("swatchId")}
+
+
+async def _frame_assembly_shop_name(pool, user_id, storyboard, settings):
+    """Use only a connected mall's public shop name for an optional frame footer."""
+    if not any(block.get("taxonomyVersion") == 4
+               and PAGE_TEMPLATES["designs"].get(block.get("pageDesignId"), {}).get("framePhotos")
+               for block in storyboard):
+        return None
+    if not settings.mall_connect_enabled:
+        return None
+    try:
+        async with pool.connection() as conn:
+            for mall in ("cafe24", "zigzag"):
+                row = await repo.get_mall_connection(conn, user_id=user_id, mall=mall)
+                if not row:
+                    continue
+                # Mirror list_malls' effective connected status without provider calls.
+                if mall == "cafe24" and (not settings.cafe24_ready
+                        or not row.get("refresh_expires_at")
+                        or row["refresh_expires_at"] <= datetime.now(timezone.utc)):
+                    continue
+                name = row.get("shop_name")
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+    except Exception:
+        # A missing optional footer must not discard successfully generated cuts.
+        log.warning("frame shop name unavailable")
+    return None
 
 
 async def _normalize_detail_openai_refs(prepared, model: str, horizon_model: str | None = None):
@@ -2771,20 +2801,25 @@ async def run_detail_page_job(app, job: dict) -> None:
             generated_name = generated_name or _fallback_product_name(product, analysis)
             product["name"] = generated_name
 
-        # 특징 포인트 설명은 상품명 생성 여부와 사진 카피 토글과 무관한 상세페이지 기본 단계다.
-        # 포인트 출처는 프론트(Editor.jsx buildInfoCtx)와 같은 우선순위다.
-        points = analysis.get("sellingPoints") or analysis.get("aiSuggestedPoints") or []
+        # Seller feature descriptions retain their existing toggle-independent path.
+        # Point-card descriptions share that one request only when copywriting is on.
+        points = page_part_copy.unique_labels(analysis.get("sellingPoints") or analysis.get("aiSuggestedPoints") or [])
+        part_labels = page_part_copy.part_labels(storyboard, analysis) if copywriting else []
         try:
             items = await feature_copy.generate(
-                s, points, product, analysis, timeout_seconds=s.background_ai_timeout_seconds)
+                s, page_part_copy.unique_labels([*points, *part_labels]), product, analysis,
+                timeout_seconds=s.background_ai_timeout_seconds)
         except Exception as e:  # 카피는 게이트 아님 — 상세페이지 생성을 막지 않는다
             log.warning("feature copy failed for job %s: %r", job_id, e)
             items = []
-        if items:
+        copy_patch = page_part_copy.partition_copy(items, points, part_labels, analysis)
+        if copy_patch:
+            # The current assembly uses the new descriptions even if persistence fails.
+            analysis = {**analysis, **copy_patch}
             try:
                 async with pool.connection() as conn:
                     # 잡이 도는 동안의 셀러 편집을 보존하도록 생성한 카피 키만 병합한다.
-                    await repo.save_analysis(conn, project_id, {"featureCopy": items})
+                    await repo.save_analysis(conn, project_id, copy_patch)
                     await conn.commit()
             except Exception as e:  # 카피는 게이트 아님 — 기록 실패가 생성을 죽이지 않는다
                 log.warning("feature copy persist failed for job %s: %r", job_id, e)
@@ -2889,6 +2924,9 @@ async def run_detail_page_job(app, job: dict) -> None:
         if failed_cuts:
             assemble_kwargs["failed_cuts"] = failed_cuts
         assemble_kwargs.update(_page_template_assembly_options(storyboard, analysis, product))
+        shop_name = await _frame_assembly_shop_name(pool, user_id, storyboard, s)
+        if shop_name:
+            assemble_kwargs["shop_name"] = shop_name
         assembly_product = {
             **product,
             "_matchClothing": (

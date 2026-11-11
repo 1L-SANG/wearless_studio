@@ -1790,12 +1790,13 @@ def garment_color_input_identity(product: dict) -> tuple:
 
 
 # AG-01이 파생하는 서버 소유 필드. 부분 병합은 클라이언트가 모르는 키도 보존한다.
-# sourceMirrored·inputConsistency·featureCopy의 명시적 수정은 기존 계약대로 허용한다.
+# sourceMirrored·inputConsistency·featureCopy·partDescriptionCopy의 명시적 수정은 허용한다.
 # 재분석 때는 finalize가 전문을 교체하므로 낡은 판정이 남지 않는다.
 _SERVER_OWNED_ANALYSIS_KEYS = (
     "sourceMirrored",
     "inputConsistency",
     "featureCopy",
+    "partDescriptionCopy",
     "confirmedGptProductEvidence",
     "detailRecommendations",
     "garmentColorEvidence",

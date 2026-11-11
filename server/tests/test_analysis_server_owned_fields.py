@@ -348,3 +348,14 @@ def test_prompt_block_requires_strict_true(junk):
     from app.agents.prompts import build_mirrored_source_block
     assert build_mirrored_source_block({"sourceMirrored": junk}) == ""
     assert build_mirrored_source_block({"sourceMirrored": True}) != ""
+
+
+@pytest.mark.parametrize('options', [{"merge": False}, {"merge": True, "delete_nulls": True}])
+def test_part_description_copy_survives_old_client_replace_and_null_patch(options):
+    parts = [{"point": "어깨", "desc": "어깨선을 확인할 수 있습니다."}]
+    incoming = {"fit": "regular"}
+    if options["merge"]:
+        incoming["partDescriptionCopy"] = None
+    saved = _save({"partDescriptionCopy": parts, "fit": "over"}, incoming, **options)
+    assert saved["partDescriptionCopy"] == parts
+    assert saved["fit"] == "regular"

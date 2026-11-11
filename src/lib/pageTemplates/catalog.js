@@ -28,8 +28,10 @@ const FACT_PATHS = new Set([
     "analysis.fit",
     "analysis.detailRecommendations.candidates[].label",
     "analysis.featureCopy",
+    "analysis.partDescriptionCopy",
     "analysis.mdComment",
     "profiles.display_name",
+    "mall_connections.shop_name",
 ]);
 const COLORS = new Set([
     "ink",
@@ -44,6 +46,8 @@ const COLORS = new Set([
     "onPhoto",
     "summaryBg",
     "pointBg",
+    "framePaper",
+    "frameInk",
 ]);
 const STYLES = new Set(["titleKo", "labelEn", "body", "small", "num"]);
 const LAYOUT_TYPES = new Set([
@@ -52,6 +56,7 @@ const LAYOUT_TYPES = new Set([
     "photoStack",
     "photoGrid",
     "photoFlow",
+    "photoFrame",
     "overlay",
     "pointRows",
     "list",
@@ -105,6 +110,13 @@ export function validateCatalog(catalog) {
         "schemaVersion/canvasWidth",
     );
     check(HEX.test(catalog?.canvasColor), "canvas color");
+    const frameStyle = catalog?.frameStyle || {};
+    check(['bandPadding', 'cardWidth', 'paddingTop', 'paddingX', 'paddingBottom', 'photoGap', 'photoTop', 'footerGap', 'remainderGap', 'textSize', 'textLineHeight', 'textWeight']
+        .every(key => positive(frameStyle[key]))
+        && frameStyle.cardWidth <= catalog.canvasWidth && frameStyle.paddingX * 2 < frameStyle.cardWidth
+        && Number.isFinite(frameStyle.textTrackingEm) && Number.isFinite(frameStyle.blur) && frameStyle.blur >= 0 && frameStyle.blur <= 100
+        && aspectRatio(frameStyle.fallbackAspect)
+        && ['paper', 'ink'].every(key => COLORS.has(frameStyle[key]) && HEX.test(catalog?.neutralColors?.[frameStyle[key]])), 'frame style');
     check(
         Object.keys(catalog?.swatchLabels || {}).every((key) =>
             HEX.test(catalog?.swatchHex?.[key]),
@@ -206,10 +218,16 @@ export function validateCatalog(catalog) {
         if (Object.hasOwn(design, 'choiceAxes')) {
             const axes = design.choiceAxes;
             check(CHOICE_LAYOUTS[design.kind]?.includes(axes?.layout?.id)
-                && ['basic', 'card'].includes(axes?.decoration?.id)
+                && ['basic', 'card', 'frame'].includes(axes?.decoration?.id)
                 && [axes?.layout?.name, axes?.decoration?.name].every(name => typeof name === 'string' && name.trim()),
             `choice axes ${id}`);
         }
+        const frameNodes = design.layout?.filter(node => node.type === 'photoFrame') || [];
+        if (design.choiceAxes?.decoration?.id === 'frame' || Object.hasOwn(design, 'framePhotos') || frameNodes.length)
+            check(design.kind === 'wear' && design.usage === 'styling' && design.choiceAxes?.decoration?.id === 'frame'
+                && [1, 2, 3].includes(design.framePhotos) && frameNodes.length === 1
+                && frameNodes[0].count === design.framePhotos && frameNodes[0].pattern === design.choiceAxes?.layout?.id
+                && design.minPhotos >= Math.max(design.framePhotos, { column: 1, twoColumn: 2, heroPair: 3 }[design.choiceAxes?.layout?.id]), `frame design ${id}`);
         for (const key of ['minPhotos', 'minColors'])
             if (Object.hasOwn(design, key))
                 check(Number.isInteger(design[key]) && design[key] > 0, `design minimum ${id}.${key}`);
@@ -263,6 +281,13 @@ export function validateCatalog(catalog) {
                 }
             }
             check(LAYOUT_TYPES.has(node.type), `layout ${id}.${node.type}`);
+            if (node.type === 'photoFrame')
+                check(design.layout.includes(node) && design.kind === 'wear' && design.usage === 'styling'
+                    && design.choiceAxes?.decoration?.id === 'frame' && design.framePhotos === node.count
+                    && node.slot === '*' && [1, 2, 3].includes(node.count)
+                    && ['column', 'twoColumn', 'heroPair'].includes(node.pattern)
+                    && node.groupBy === 'spaceGroup' && node.aspect === '4/5'
+                    && Number.isFinite(node.gap) && node.gap >= 0 && Array.isArray(node.captions), `photoFrame ${id}`);
             if (node.type === 'photoFlow')
                 check(typeof node.slot === 'string' && node.slot.length > 0
                     && ['twoColumn', 'heroPair'].includes(node.pattern)

@@ -50,6 +50,7 @@
 .previewEmpty, .previewWireShape { fill: var(--sb-wire-1); }
 .previewWireCanvas { fill: var(--bg-1); }
 .previewWirePhoto { fill: var(--sb-wire-photo); stroke: var(--sb-wire-comp); }
+.previewWireBackdrop { fill: var(--sb-wire-inv); }
 .previewTextLine { fill: var(--sb-wire-3); }
 .previewTextOnScrim { fill: var(--bg-1); }
 .previewRule { stroke: var(--sb-wire-comp); }

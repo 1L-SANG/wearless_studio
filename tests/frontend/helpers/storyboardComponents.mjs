@@ -14,10 +14,12 @@ import { stageAdditions } from '../../../src/lib/pageTemplates/stageAdditions.js
 import { pairedPhotoSlot } from '../../../src/lib/pageTemplates/pairedDesigns.js';
 import { reconcileSectionDependencies } from '../../../src/lib/pageTemplates/sectionDependencies.js';
 import { baseColorOf, resolvePageTokens } from '../../../src/lib/pageTemplates/tokens.js';
+import { hasBackdropBlur, backdropEdgeTiles } from '../../../src/features/editor/editorImageBlur.js';
 import { sectionDesignAxes } from '../../../src/lib/pageTemplates/designAxes.js';
 const extraBindings = { storyboardPositions, storyboardPositionId, isHiddenStoryboardKind, positionSwapReason, storyboardPositionSwapReason,
   wearUsageForBlock, automaticSectionInsertionKey, colorDisplayName, isTextOnlySection, visibleSectionRuns,
   ...signature, ...gallery, ...photoChoices, assembleStoryboardPreview, stageAdditions, pairedPhotoSlot, reconcileSectionDependencies, baseColorOf, resolvePageTokens, sectionDesignAxes,
+  hasBackdropBlur,
   StoryboardPaleSlot: 'pale-slot', StoryboardStackPopup: 'stack-popup',
   ProductPresentationPicker: 'product-presentations', PhotoChoiceFilters: 'photo-filters', PhotoFraming: 'photo-framing', PhotoChoicePager: 'photo-pages', ExampleThumb: 'example-thumb' };
 
@@ -35,6 +37,12 @@ export const readStoryboardSources = () => ['Storyboard.jsx', 'StoryboardPhotoPa
 // This never starts a browser, server, fetch, or image request.
 export async function loadStoryboardComponent(file, name, bindings = {}) {
   bindings = { ...extraBindings, ...bindings };
+  if (file === 'StoryboardPreview.jsx' && !bindings.BackdropSvg) {
+    const raw = readFileSync(new URL('../../../src/features/editor/EditorBackdropImage.jsx', import.meta.url), 'utf8')
+      .replace(/^import[\s\S]*?from ['"][^'"]+['"];\s*/gm, '').replace(/\bexport (?=(function|const))/g, '');
+    const { code } = await transformWithEsbuild(raw, 'EditorBackdropImage.jsx', { jsx: 'transform' });
+    bindings.BackdropSvg = new Function('React', 'styles', 'backdropEdgeTiles', `${code}; return BackdropSvg;`)(React, componentStyles, backdropEdgeTiles);
+  }
   const source = readStoryboard(file).replace(/^import[\s\S]*?from ['"][^'"]+['"];\s*/gm, '')
     .replace(/^export default [^;]+;\s*/gm, '')
     .replace(/^export \{[^}]+\} from [^;]+;\s*/gm, '').replace(/\bexport (?=(function|const))/g, '');

@@ -13,12 +13,15 @@ not a request to fall back to an unrelated layout.
   This resolves fonts and palette values, without sampling garment pixels.
 - `assemble.js`: `assemblePage({ storyboard, cutResults, copyResults, product,
   analysis, pageStyle, baseSwatchId, copywriting, failedCuts, licenseNotice,
-  profile })`. Optional `profile` has `display_name` and `handle`; retrieving the
+  profile, shopName })`. Optional `profile` has `display_name` and `handle`; retrieving the
   seller profile in the worker belongs to WO3. Without it, the avatar and seller
   name use `MD`, and the account slot stays empty with a placeholder. With a
   display name, the avatar uses its first Unicode code point. The emotional
   intro avatar has a 98px circle and a 50px-wide text box at 24px, leaving room
   for the bundled font's `MD` advance without disabling text wrapping.
+- `shopName` is a separate optional, trimmed string for frame footers only.
+  It comes from a connected mall's `mall_connections.shop_name`, never a member's
+  profile or account name. Python accepts the corresponding `shop_name` argument.
 - `collectOverlayRegions(input)` evaluates the same layout and returns each
   source image's bare-text group and line rectangles, including reused SNS appearances.
 - Python: `page_assembler.assemble(..., analysis=..., page_style=...,
@@ -27,7 +30,7 @@ not a request to fall back to an unrelated layout.
 - The mock `buildEditorBlocksFromStoryboard` dispatches in the same way. The
   editor passes the analysis object when building its generation skeleton.
 
-## Storyboard presentation (WOC6 first pass, 2026-11-11)
+## Storyboard presentation (WOC6B, 2026-11-11)
 
 Analysis offers only the two templates, `emo` and `show`. Color selection lives
 in the storyboard header; previously saved pageStyle.colorMode values survive
@@ -36,7 +39,7 @@ queue, restore/promotion and mannequin template lock remain unchanged. After a m
 to templateId is locked; fontStyle/colorMode/updatedAt edits remain valid in both
 the mock API and the server. Removed `guide` is not a
 selectable template or mock query; its five layout definitions remain in the
-shared 41-design catalog (20 picker-hidden definitions). Long preview assets are
+shared 50-design catalog (20 picker-hidden definitions). Long preview assets are
 `public/templates/previews/preview-{emo,show}-v1.webp`; preview hover/focus,
 full-view modal, missing-image fallback and reduced-motion rules are unchanged.
 
@@ -135,7 +138,7 @@ and color-coverage rules still apply, followed by explicit `minPhotos` and
 `minColors` constraints.
 
 Styling and fit each offer 한 열, 2열 (at least two photos), and 큰 사진 아래 두 칸
-(at least three). Both use only the 기본 decoration in this pass. Their column
+(at least three). Fit uses only 기본 decoration; styling offers 기본 and 액자. Their column
 defaults are P02-D01 and WEAR-FIT-COLUMN-01. Flow designs restart at every
 contiguous place-set group; loose photos use consecutive color groups. Two-column
 odd tails fill the row; hero-pair repeats one full-width photo and a pair, with
@@ -145,6 +148,28 @@ include loose/similar photos at their stored positions. Legacy hidden layouts
 without axes retain their previous overflow behavior. Picker samples alone use
 one canonical group (four styling or three fit photos) to show the layout grammar;
 real page groups and saved blocks are unchanged.
+
+The frame decoration adds nine styling-only designs: WEAR-STYLING-FRAME-
+{COLUMN,2COL,HERO}-{01,02,03}. `framePhotos` is catalog metadata; only the complete
+pageDesignId is saved. Entering frame chooses two photos, or one when only one
+exists. Its 액자 사진 pill row shows one, two and three only when the actual section
+has enough photos. Layout changes retain frame count; count changes retain layout;
+returning from basic to frame uses the two-photo default. Existing layout minima
+still apply. The backdrop is not counted as another storyboard position or cut.
+
+`selectFramePhotos` chooses the first contiguous group with enough medium shots.
+Otherwise it picks the first group with the most medium shots, fills from that
+group's full shots and then other section photos in stored order. The backdrop
+uses an unused full shot in the winning group, then any unused shot in that group,
+then the first framed photo. Only one frame is emitted. Remaining photos keep
+original group boundaries even when an entire intervening group was framed.
+
+The 1000px-wide band has 110px vertical padding around a centered 680px paper
+card. Shared frameStyle tokens define padding 52/60/46, 24px photo gaps, 34px after
+the product name and 40px before an optional connected shopName. Name/footer
+use body500 at22px with .04em tracking. Photos retain their natural ratio, falling
+back to3:4 when dimensions are unknown. Frame paper/ink are neutral catalog
+tokens, independent of page tone. Unframed photos use the selected4:5 layout.
 
 Color/product defaults to CP-COLUMN-01, with full-width photos and actual color
 dots/names. CP-EMO-01 is the two-column choice only with two or more sale colors.
@@ -156,6 +181,45 @@ matching 부위별 카드 combinations: each uses a panel-color surface, photo, 
 name and one-line description, without a border, shadow or new English copy.
 All four point layouts use the natural image ratio, falling back to 2:3 when
 dimensions are unknown. Existing text-only PT-EMO-TEXT fallback is retained.
+Points chooser samples contain at most two real/derived photos, so the full/narrow
+layout difference remains visible. The actual board and stage are unchanged.
+Wireframe photo panels use the distinct --sb-wire-panel surface, with a restrained
+tone mix during point-color preview. Overlay bubbles retain their existing paint;
+frame backdrops become dark gray rectangles in wireframes.
+
+Frame backdrops are ordinary editor image elements with optional `blur` in
+1000px-canvas units (finite0–100, default48). Presence including zero is the
+only marker; ordinary images do not acquire it. The editor exposes its existing
+range/number control under 효과 (the control remains 흐림) and history/autosave path, and replacement preserves the
+value. Storyboard and editor share BackdropSvg: original crop/cover geometry,
+eight extended edge/corner strips, Gaussian blur and final clipping. Background
+reuse is excluded from storyboard slot numbering/hit areas. The footer source
+is an active connected store: Cafe24 first, then Zigzag, skipping missing or blank
+names. Cafe24 must also be available and have a valid refresh expiry, matching
+the connection API's effective connected status. The existing unique active
+owner/provider constraint makes this priority independent of query order.
+The worker reads only existing owner-bound mall connections when a frame exists
+and mall connections are enabled;
+missing/failed reads omit the footer and never fall back to profiles.display_name.
+Storyboard uses a service/query hook with the existing account-scoped
+`['mall-connections', userId]` cache (30s freshness), fetching only for a selected
+frame and hiding a stale name on refresh error. Local unauthenticated mock demos
+use an isolated local-mock cache key. Actual connected names also drive mock
+generation. Account changes cannot apply an earlier response to a new board.
+Legacy profile/initial handling in other designs remains unchanged.
+
+Every page export bakes the blur after existing CORS-safe image preflight and
+before image probes/toSvg: single block, long PNG, split/ZIP/storefront and both
+publication/mall-registration paths. JavaScript triple-box pixel blur uses
+premultiplied alpha and clamped edges, never CSS or Canvas filters. Positive
+intermediates are bounded to1,048,576pixels/4096side; sigma scales with the work
+raster and the baked PNG fills the original box without cropping twice. This
+reduces background fine detail at very small positive blur, not page geometry.
+Zero blur keeps original source bytes/crop without a full-height backdrop buffer.
+Selected backdrop download produces PNG; oversized zero-blur standalone capture
+fails before allocation and suggests split page export. GIF replacement uses its
+fixed poster for these captures. Ordinary original-photo/GIF download is unchanged.
+Server and mock validate only the optional image effect; no DB migration occurs.
 
 First choices are P01-D09/P01-SHOW-01, fabric T03-D01/T03-D06, review I09-D06,
 and FAQ T08-D07. Retired choices (including old opening, studio, color, points,
@@ -163,9 +227,8 @@ fabric-guide and scrim layouts) remain valid but picker-hidden. First/fabric
 attachment pairs still preserve an enabled attachment when the visible base
 changes. SNS is absent from new defaults and the add menu; saved SNS runs,
 reuse behavior and the low-level compatibility addition helper remain supported.
-Intro/for-you visibility is unchanged. Frame decoration can later add combinations
-under the existing styling decoration axis; no frame, blurred surface or editor
-blur control is included in this pass.
+Intro/for-you visibility is unchanged. Fit and color/product have no frame or
+extra decoration. No color-background decoration was introduced.
 
 `sectionRuns.js` groups the saved blocks list by contiguous `pageSectionKey`.
 That list order is page order in both assemblers, including hidden text runs.
@@ -184,7 +247,7 @@ flies for 520ms, then the inserted row is briefly marked; reduced motion inserts
 immediately. A DOM snapshot is captured before a singleton option disappears.
 This transient Web Animations transform never changes saved geometry or uses
 React style props. A panel-local message exposes standalone undo while the bottom
-action is hidden. Default color layouts are the existing dynamic grids; no deferred
+action is hidden. Default color layouts use the current dynamic color column; no deferred
 D201 vertical color design has been invented for the representative preview.
 
 `designChoices.js` uses the whole catalog, independent of per-template alternatives.
@@ -459,8 +522,8 @@ unchanged. HTTP adapter and production analysis paths do not read this flag.
 
 ## Layout interpretation
 
-Coordinates use a 1000px canvas. The catalog contains eleven layout node types,
-including the grouped `photoFlow` repeat. `x` and `w` are local to their containing panel; ordinary nodes
+Coordinates use a 1000px canvas. The catalog contains twelve layout node types,
+including the grouped `photoFlow` repeat and `photoFrame`. `x` and `w` are local to their containing panel; ordinary nodes
 flow vertically. `gap` is trailing spacing. Panels can contain local columns;
 overlays contain named groups anchored at the top, center or bottom. Text heights use the
 shared integer metrics, count Unicode code points, preserve multiple spaces,
@@ -530,13 +593,18 @@ Copy is keyed by the first storyboard card of the section run, including a
 leading text card. Repeated copy roles are zero based (`items.0.desc`, etc.).
 Static and fact slots ignore copy results. AI slots use the provided result or
 an empty string and placeholder. When copywriting is disabled, seller MD text
-is preserved verbatim and the other AI slots remain empty. `featureCopy` takes
-priority for matching product-point descriptions when copywriting is enabled.
-The existing worker emits per-photo headline copy, not section-lead items.n.desc.
-If neither those item roles nor matching featureCopy is supplied, descriptions
-retain the existing 부위 설명 placeholder. Worn crops intentionally require item
-copy instead of featureCopy fallback. The layout update does not change that
-generation pipeline or invent missing descriptions.
+is preserved verbatim and the other AI slots remain empty. When copywriting is
+enabled, items.n.desc first uses analysis.partDescriptionCopy matched by actual
+part label. Ordinary details may then use legacy featureCopy; worn crops still
+cannot borrow seller construction-feature text. Existing section-lead role copy
+is the final fallback. Missing all sources retains the ordinary placeholder.
+The detail worker requests selected detail-target labels and wornCrop labels in
+the same existing feature_copy.generate call as seller features, dedupes labels
+and partitions the result. Part-only labels never enter seller featureCopy or
+editor info presets. Both lists merge with saved copy; missing/failed output does
+not clear it. Local analysis receives the result before current-job assembly,
+even if persistence fails. Copywriting off adds no part labels and shows no AI
+part description; the prior toggle-independent seller-feature path is retained.
 The intro `facts` slot projects confirmed color, material and fit values. Notice
 slots have `unavailable: true` and no fact path because the current analysis
 contract contains no product notice; these slots are hidden. SIZE remains absent
@@ -653,7 +721,7 @@ left in the retained shared column layout.
 ## Verification and follow-up boundaries
 
 Both test suites read `tests/fixtures/page_templates_cases.json`, which contains
-186 complete input/output cases, including independent colors for two groups on
+222 complete input/output cases, including independent colors for two groups on
 one fabric photo, optional opening copy, MD paragraphs, per-line contrast,
 white/ivory/dark swatches in both templates, and a four-color shared grid.
 Exact measurement-region parity is included. Separate semantic assertions check card counts,
@@ -677,6 +745,10 @@ WOC6 adds 38 shared cases for every layout/decoration combination in both templa
 all four fonts and known/unknown natural image dimensions. Separate engine tests
 cover place-group tails, null-slot photos, native/ROI sizing and real color-index
 binding after photo removal; all 60 focused parity inputs compare complete output.
+WOC6B adds36 cases for frame counts/layouts in both templates, medium/full/other
+group fallback, absent shop name, no remaining photos, unknown dimensions and
+separate real-detail/worn descriptions. Focused frame tests add23 complete-output
+parity inputs including source-index and removed-group boundaries.
 Fixtures are never regenerated by a test run. Run
 `node scripts/regenerate-page-template-fixtures.mjs` explicitly: it checks exact
 JS/Python agreement before writing the new expected results.

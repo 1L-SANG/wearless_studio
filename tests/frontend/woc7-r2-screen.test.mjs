@@ -15,7 +15,7 @@ test('R2 actual Storyboard pointer/focus preview reaches the stage without savin
   nodes(h.tree).find(n => n.type === 'button' && textOf(n) === '섹션 디자인 변경').props.onClick(); h.render();
   const outline = () => nodes(h.tree).find(n => n.type === 'nav' && n.props['aria-label'] === '페이지 구성');
   const dialog = () => nodes(h.tree).find(n => n.props?.role === 'dialog' && n.props['aria-label'] === '섹션 디자인 바꾸기');
-  const tinted = subtree => nodes(subtree).filter(n => n.type === 'rect' && n.props.fill === '#edf4ff').length;
+  const tinted = subtree => nodes(subtree).filter(n => n.type === 'rect' && (n.props.fill === '#edf4ff' || n.props.fill === 'color-mix(in srgb, var(--sb-wire-panel) 70%, #edf4ff)')).length;
   assert.equal(tinted(outline()), 0); assert.equal(tinted(dialog()), 0);
   assert.equal(bandFill(h.tree), 'var(--bg-2)');
   button(h.tree, '의류 색감').props.onPointerEnter({ pointerType: 'mouse' }); h.render();

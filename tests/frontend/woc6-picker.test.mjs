@@ -50,12 +50,13 @@ async function pickerHarness() {
   return { render: props => hooks.render(Component, { mode: 'design', catalogs, ...props }), close: hooks.close };
 }
 
-test('WOC6 wear choices expose a layout group while omitting the single decoration group', () => {
+test('WOC6B daily wear exposes separate layout and decoration groups', () => {
   const blocks = board(), run = sectionRuns(blocks).find(item => item.usage === 'styling');
   const html = render({ blocks, runKey: run.key });
   assert.match(html, /role="group" aria-label="배치"/);
   assert.match(html, /<h3[^>]*>배치<\/h3>/);
-  assert.doesNotMatch(html, /aria-label="꾸밈"|<h3[^>]*>꾸밈<\/h3>/);
+  assert.match(html, /role="group" aria-label="꾸밈"/);
+  assert.match(html, /<strong>액자<\/strong>/);
   assert.match(html, /<strong>한 열<\/strong>/);
   assert.match(html, /<strong>2열<\/strong>/);
   assert.match(html, /<strong>큰 사진 아래 두 칸<\/strong>/);
@@ -111,12 +112,13 @@ test('WOC6 changing either points axis preserves the other axis through actual s
   } finally { h.close(); }
 });
 
-test('WOC6 one eligible layout omits its entire group and does not invent extra preview choices', () => {
+test('WOC6B one eligible layout omits its group while daily decoration remains', () => {
   const original = board(), run = sectionRuns(original).find(item => item.usage === 'styling');
   const photo = run.blocks.find(block => block.source !== 'text');
   const blocks = original.filter(block => block.pageSectionKey !== run.key || block.source === 'text' || block.id === photo.id);
   const html = render({ blocks, runKey: run.key });
-  assert.doesNotMatch(html, /role="group"|aria-pressed=|<h3/);
+  assert.doesNotMatch(html, /aria-label="배치"/);
+  assert.match(html, /aria-label="꾸밈"/);
   assert.match(html, /일상 착용컷 디자인/);
   assert.match(html, /섹션 빼기<\/button>/);
   const singleProduct = { ...product, colors: [product.colors[0]] }, singleBlocks = board(singleProduct);

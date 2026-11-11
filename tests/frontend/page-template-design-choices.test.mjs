@@ -26,7 +26,7 @@ for (const templateId of ['emo', 'show']) test(`${templateId}: candidates preser
     assert.ok(offered.length);
     assert.equal(offered.filter(design => design.id === defaultSectionDesignId(run, original)).length, 1);
     const images = blocks => assemblePage({ storyboard: blocks, product, analysis: analysis(templateId) })
-      .filter(block => block.pageSectionKey === run.key).flatMap(block => block.elements).filter(element => element.type === 'image');
+      .filter(block => block.pageSectionKey === run.key).flatMap(block => block.elements).filter(element => element.type === 'image' && !Object.hasOwn(element, 'blur'));
     const count = images(original).length;
     for (const design of offered) {
       const next = changeTemplateSectionDesign(original, run.key, design.id, { product });

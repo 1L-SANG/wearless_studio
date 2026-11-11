@@ -203,6 +203,7 @@ def assemble(
     page_style: dict | None = None,
     base_swatch_id: str | None = None,
     profile: dict | None = None,
+    shop_name: str | None = None,
 ) -> list[dict]:
     """mock buildEditorBlocksFromStoryboard(storyboard, product, copywriting) 포팅.
 
@@ -218,4 +219,4 @@ def assemble(
 
     return assemble_v4(storyboard, cut_results, copy_results, product or {}, copywriting,
                        analysis=analysis, page_style=page_style, base_swatch_id=base_swatch_id,
-                       license_notice=license_notice, failed_cuts=failed_cuts, profile=profile)
+                       license_notice=license_notice, failed_cuts=failed_cuts, profile=profile, shop_name=shop_name)

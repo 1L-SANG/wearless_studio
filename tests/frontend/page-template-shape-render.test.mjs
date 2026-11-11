@@ -5,6 +5,7 @@ import { transformWithEsbuild } from "vite";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { assemblePage } from "../../src/lib/pageTemplates/assemble.js";
+import { bakeExportBackdrops } from "../../src/features/editor/editorExportRaster.js";
 import { isEmptyTextElement } from "../../src/features/editor/editorGeometry.js";
 import { isSpeechBubbleElement } from "../../src/features/editor/editorBubbleFit.js";
 import { cssWeight } from "../../src/features/editor/fontWeights.js";
@@ -181,6 +182,7 @@ test("R1 circles pass unchanged through the real download clone and capture func
         replaceGifPosters() {},
         preflightImages: async () => ({ softFailed: 0 }),
         collectExportImageProbes: async () => [],
+        bakeExportBackdrops,
         toSvg: async (clone, options) => {
             assert.equal(appended, true);
             assert.deepEqual(

@@ -41,7 +41,8 @@ export function resolvePageTokens(
             fonts[key].trackingEm = template.fonts.labelEn.trackingEm;
         }
     }
-    const colors = { ...template.colors, canvas: catalog.canvasColor };
+    const colors = { ...template.colors, canvas: catalog.canvasColor,
+        framePaper: catalog.neutralColors.framePaper, frameInk: catalog.neutralColors.frameInk };
     if (colorMode === "point" && !neutral) {
         const point =
             catalog.pointPalette[baseSwatchId] || catalog.pointPalette.null;

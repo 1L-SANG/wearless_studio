@@ -138,6 +138,8 @@ Analysis {
   materials: Material[]            // Material { name: string(자유 텍스트), ratio: number(%) }
   sellingPoints: string[]          // 자유 텍스트, max LIMITS.sellingPointMax(5)
   aiSuggestedPoints: string[]      // max LIMITS.aiSuggestedPointMax(2)
+  featureCopy?: { point: string, desc: string }[] // 판매 특징 설명. 구 상세 카드의 동일명 fallback도 유지한다.
+  partDescriptionCopy?: { point: string, desc: string }[] // 실제 상세 부위 카드 설명. detailTarget 후보 label 또는 wornCrop.label과 일치시킨다.
   mdComment: string                // 셀러 직접 입력 선택 메모. 기본값 ''. 앞뒤 공백 제거 후 최대 300자
   selectedModelId: string          // catalogs.models 참조
   matchCandidates: MatchClothing[] // AI가 제안한 매칭 의류 후보
@@ -177,6 +179,8 @@ MatchClothing {
 
 `mdComment`는 지금은 저장만 하고 AI 입력에는 쓰지 않는다. 템플릿이 확정된 뒤 연결한다.
 문자열이 아닌 값은 저장할 수 없다. `merge=1`에서 `null`은 기존 병합 규칙에 따라 키를 삭제한다.
+
+`partDescriptionCopy`는 상세페이지 생성의 기존 `feature_copy.generate` 1회 요청에 실제 사용 부위명을 함께 보내 얻는다. 판매 특징과 부위명이 같으면 응답을 양쪽 목록에 넣고, 그 밖의 부위 설명은 `featureCopy`에 넣지 않는다. 실패하거나 일부 응답이 빠져도 저장된 설명을 유지한다. `copywriting=false`일 때는 부위명을 추가로 요청하지 않고 카드의 AI 설명도 비운다. 판매 특징 설명의 기존 토글 독립 동작은 유지한다. 두 필드는 분석 전문 교체에서 생략하거나 병합 PATCH로 null을 보내도 보존하며, DB 마이그레이션이나 새 스토리보드 필드를 요구하지 않는다.
 
 `garmentColorEvidence`는 기존 13개 색상 계열/색상명을 HEX로 바꾸는 값이 아니다. 사진 분석은 이 값을 만들지 않는다. 셀러가 콘티보드에서 마네킹컷으로 넘어갈 때 서버가 필요할 때만 만든다. 필요 조건은 `horizonBackgroundMode='garment-tone'`인 호리존 세트 멤버가 있고 그 대상 색상의 측정 결과가 없는 경우다. 해당 색상의 첫 Front와 첫 Back 원본에서 관찰기는 판매 의류 안쪽 영역만 제안하고, 서버가 사진을 먼저 줄인 뒤 sRGB로 변환한 픽셀에서 색을 측정한다. 측정이 실패해도 이동은 막지 않는다. 생성이 시작될 때 필요한 색의 측정 결과가 아직 없으면(이동 때 측정이 끝나지 않았거나 실패했거나 측정 없이 넘어간 경우) 상세페이지 생성이 한 번 더 측정한다. 끝내 근거가 없으면 배경은 기존 예시를 유지한다. 사진의 관찰색이며 실물색 보정/인증 값은 아니다.
 
@@ -337,6 +341,7 @@ Element (type='image') + {
   frameSlot?: boolean              // true = drag/drop 교체·자르기·빼내기를 지원하는 이미지 슬롯
   cutType: CutType | null          // 생성 시 기록. null = 직접 업로드(미상)
   crop?: { ox: number, oy: number, iw: number, ih: number }   // 프레임 기준 원본 오프셋/크기
+  blur?: number                    // 유한한 0~100, 기준 폭 1000 캔버스의 px. 액자 배경에만 조립 기본값 48을 넣는다.
 }
 Element (type='text') + {
   text: string                     // 자유 텍스트
@@ -371,6 +376,12 @@ TextStyle {
   bg?: string | 'none'             // 하이라이트
 }
 ```
+
+액자 하단의 상점 이름은 연결된 몰의 `mall_connections.shop_name`에서 읽는다. 유효한 연결과 비어 있지 않은 이름 중 카페24 자사몰을 먼저, 지그재그를 다음으로 고른다. 카페24 준비 상태·refresh 만료도 연결 API와 같은 기준으로 확인한다. 회원의 `profiles.display_name`이나 `account.name`, 몰 식별자로 대체하지 않는다. 조립 입력은 JS `shopName` / Python `shop_name`의 정리된 문자열 하나이며 콘티나 DB 필드가 아니다. 액자 없는 생성·콘티에는 이 조회를 새로 만들지 않는다. 몰 연결 API가 비활성이면 워커도 상점명을 조회하지 않는다. 콘티는 기존 계정별 몰 연결 캐시와 서비스 레이어를 재사용한다. 이름 없음·조회 실패는 하단 줄 생략으로 끝나며 다른 디자인의 profile 이니셜 동작은 그대로다.
+
+`image.blur`는 값 0을 포함해 필드가 있는 이미지 자체를 편집 가능한 액자 배경으로 구분한다. 별도 배경 표시 필드나 콘티 필드는 추가하지 않는다. 일반 이미지는 이 필드를 생략하며, 이미지 교체·저장·되돌리기는 값을 보존한다. 서버는 범위 밖·비유한 값·문자열·Boolean·null과 이미지가 아닌 요소의 blur를 `400 editor_blur_invalid`로 거절한다. 화면은 원래 crop/fit과 프레임 경계를 유지하고 가장자리 픽셀을 연장해 흐리게 한다. 블록·전체·ZIP·선택 배경 다운로드와 쇼핑몰 게시 이미지는 출력 배율만큼 흐림을 조절하고 JavaScript 픽셀 연산으로 PNG에 구워 넣는다. CSS/Canvas 필터 지원에 의존하지 않는다. 일반 사진의 원본 다운로드는 기존 원본 바이트를 유지한다.
+
+양수 흐림의 작업 래스터는 최대 1,048,576픽셀·한 변 4,096픽셀로 제한한다. 큰 배경은 작업 배율을 낮추고 흐림 반경에도 같은 배율을 적용한 뒤 원래 이미지 상자에 채워 넣는다. 따라서 최종 페이지 크기·crop과 캔버스 기준 흐림 너비는 유지되며 배경의 세부 해상도만 제한된다. 0 흐림의 페이지 내보내기는 원본 바이트와 crop/fit을 그대로 써서 긴 배경의 픽셀 버퍼를 만들지 않는다. 선택 배경만 다운로드할 때 0 흐림이 브라우저 캔버스 한도를 넘으면 분할 페이지 다운로드를 안내한다.
 
 빈 이미지 칸은 `genFailed`가 있거나, 템플릿이 아닌 페이지 생성 블록에서 `sourceBlockId`가 저장 콘티의 AI 블록을 가리키면 계획된 칸이다. 그 밖의 빈 사진 칸은 계획 없는 칸이며 프레임 자동 채움 뒤 지운 칸도 포함한다. 정보 블록, 자동 블록, 숨긴 칸과 생성 중인 칸은 AI로 채우기 대상에서 뺀다(ADR-0019).
 

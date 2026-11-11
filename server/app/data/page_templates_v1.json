@@ -16,7 +16,9 @@
   "neutralColors": {
     "invertMuted": "#bdbdbd",
     "invertLine": "#3a3a3a",
-    "panelMuted": "#5c5c5c"
+    "panelMuted": "#5c5c5c",
+    "framePaper": "#fbfaf7",
+    "frameInk": "#6b6b6b"
   },
   "editorFonts": [
     "Pretendard",
@@ -223,6 +225,30 @@
           "itemCount": null,
           "style": "body",
           "color": "ink",
+          "uppercase": false
+        },
+        {
+          "copyRole": "name",
+          "kind": "fact",
+          "source": "fact",
+          "default": "",
+          "maxChars": null,
+          "factPath": "product.name",
+          "itemCount": null,
+          "style": "body",
+          "color": "frameInk",
+          "uppercase": false
+        },
+        {
+          "copyRole": "who",
+          "kind": "fact",
+          "source": "fact",
+          "default": "",
+          "maxChars": null,
+          "factPath": "profiles.display_name",
+          "itemCount": null,
+          "style": "body",
+          "color": "frameInk",
           "uppercase": false
         }
       ],
@@ -1013,7 +1039,8 @@
     "analysis.detailRecommendations.candidates[].label",
     "analysis.featureCopy",
     "analysis.mdComment",
-    "profiles.display_name"
+    "profiles.display_name",
+    "mall_connections.shop_name"
   ],
   "fitLabels": {
     "slim": "슬림핏",
@@ -4466,6 +4493,474 @@
         }
       },
       "storyboardTextNote": "부위 이름과 한 줄 설명"
+    },
+    "WEAR-STYLING-FRAME-COLUMN-01": {
+      "id": "WEAR-STYLING-FRAME-COLUMN-01",
+      "displayName": "한 열 액자 1장",
+      "kind": "wear",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 35,
+          "size": 32
+        },
+        {
+          "type": "photoFrame",
+          "slot": "*",
+          "count": 1,
+          "pattern": "column",
+          "groupBy": "spaceGroup",
+          "aspect": "4/5",
+          "gap": 24,
+          "captions": [
+            {
+              "type": "text",
+              "copyRole": "colorName.n",
+              "gap": 0,
+              "size": 25,
+              "onlyExtraColor": true
+            }
+          ]
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "usage": "styling",
+      "choiceAxes": {
+        "layout": {
+          "id": "column",
+          "name": "한 열"
+        },
+        "decoration": {
+          "id": "frame",
+          "name": "액자"
+        }
+      },
+      "framePhotos": 1,
+      "minPhotos": 1
+    },
+    "WEAR-STYLING-FRAME-COLUMN-02": {
+      "id": "WEAR-STYLING-FRAME-COLUMN-02",
+      "displayName": "한 열 액자 2장",
+      "kind": "wear",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 35,
+          "size": 32
+        },
+        {
+          "type": "photoFrame",
+          "slot": "*",
+          "count": 2,
+          "pattern": "column",
+          "groupBy": "spaceGroup",
+          "aspect": "4/5",
+          "gap": 24,
+          "captions": [
+            {
+              "type": "text",
+              "copyRole": "colorName.n",
+              "gap": 0,
+              "size": 25,
+              "onlyExtraColor": true
+            }
+          ]
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "usage": "styling",
+      "choiceAxes": {
+        "layout": {
+          "id": "column",
+          "name": "한 열"
+        },
+        "decoration": {
+          "id": "frame",
+          "name": "액자"
+        }
+      },
+      "framePhotos": 2,
+      "minPhotos": 2
+    },
+    "WEAR-STYLING-FRAME-COLUMN-03": {
+      "id": "WEAR-STYLING-FRAME-COLUMN-03",
+      "displayName": "한 열 액자 3장",
+      "kind": "wear",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 35,
+          "size": 32
+        },
+        {
+          "type": "photoFrame",
+          "slot": "*",
+          "count": 3,
+          "pattern": "column",
+          "groupBy": "spaceGroup",
+          "aspect": "4/5",
+          "gap": 24,
+          "captions": [
+            {
+              "type": "text",
+              "copyRole": "colorName.n",
+              "gap": 0,
+              "size": 25,
+              "onlyExtraColor": true
+            }
+          ]
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "usage": "styling",
+      "choiceAxes": {
+        "layout": {
+          "id": "column",
+          "name": "한 열"
+        },
+        "decoration": {
+          "id": "frame",
+          "name": "액자"
+        }
+      },
+      "framePhotos": 3,
+      "minPhotos": 3
+    },
+    "WEAR-STYLING-FRAME-2COL-01": {
+      "id": "WEAR-STYLING-FRAME-2COL-01",
+      "displayName": "2열 액자 1장",
+      "kind": "wear",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 35,
+          "size": 32
+        },
+        {
+          "type": "photoFrame",
+          "slot": "*",
+          "count": 1,
+          "pattern": "twoColumn",
+          "groupBy": "spaceGroup",
+          "aspect": "4/5",
+          "gap": 24,
+          "captions": [
+            {
+              "type": "text",
+              "copyRole": "colorName.n",
+              "gap": 0,
+              "size": 25,
+              "onlyExtraColor": true
+            }
+          ]
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "choiceAxes": {
+        "layout": {
+          "id": "twoColumn",
+          "name": "2열"
+        },
+        "decoration": {
+          "id": "frame",
+          "name": "액자"
+        }
+      },
+      "usage": "styling",
+      "minPhotos": 2,
+      "framePhotos": 1
+    },
+    "WEAR-STYLING-FRAME-2COL-02": {
+      "id": "WEAR-STYLING-FRAME-2COL-02",
+      "displayName": "2열 액자 2장",
+      "kind": "wear",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 35,
+          "size": 32
+        },
+        {
+          "type": "photoFrame",
+          "slot": "*",
+          "count": 2,
+          "pattern": "twoColumn",
+          "groupBy": "spaceGroup",
+          "aspect": "4/5",
+          "gap": 24,
+          "captions": [
+            {
+              "type": "text",
+              "copyRole": "colorName.n",
+              "gap": 0,
+              "size": 25,
+              "onlyExtraColor": true
+            }
+          ]
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "choiceAxes": {
+        "layout": {
+          "id": "twoColumn",
+          "name": "2열"
+        },
+        "decoration": {
+          "id": "frame",
+          "name": "액자"
+        }
+      },
+      "usage": "styling",
+      "minPhotos": 2,
+      "framePhotos": 2
+    },
+    "WEAR-STYLING-FRAME-2COL-03": {
+      "id": "WEAR-STYLING-FRAME-2COL-03",
+      "displayName": "2열 액자 3장",
+      "kind": "wear",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 35,
+          "size": 32
+        },
+        {
+          "type": "photoFrame",
+          "slot": "*",
+          "count": 3,
+          "pattern": "twoColumn",
+          "groupBy": "spaceGroup",
+          "aspect": "4/5",
+          "gap": 24,
+          "captions": [
+            {
+              "type": "text",
+              "copyRole": "colorName.n",
+              "gap": 0,
+              "size": 25,
+              "onlyExtraColor": true
+            }
+          ]
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "choiceAxes": {
+        "layout": {
+          "id": "twoColumn",
+          "name": "2열"
+        },
+        "decoration": {
+          "id": "frame",
+          "name": "액자"
+        }
+      },
+      "usage": "styling",
+      "minPhotos": 3,
+      "framePhotos": 3
+    },
+    "WEAR-STYLING-FRAME-HERO-01": {
+      "id": "WEAR-STYLING-FRAME-HERO-01",
+      "displayName": "큰 사진 아래 두 칸 액자 1장",
+      "kind": "wear",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 35,
+          "size": 32
+        },
+        {
+          "type": "photoFrame",
+          "slot": "*",
+          "count": 1,
+          "pattern": "heroPair",
+          "groupBy": "spaceGroup",
+          "aspect": "4/5",
+          "gap": 24,
+          "captions": [
+            {
+              "type": "text",
+              "copyRole": "colorName.n",
+              "gap": 0,
+              "size": 25,
+              "onlyExtraColor": true
+            }
+          ]
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "choiceAxes": {
+        "layout": {
+          "id": "heroPair",
+          "name": "큰 사진 아래 두 칸"
+        },
+        "decoration": {
+          "id": "frame",
+          "name": "액자"
+        }
+      },
+      "usage": "styling",
+      "minPhotos": 3,
+      "framePhotos": 1
+    },
+    "WEAR-STYLING-FRAME-HERO-02": {
+      "id": "WEAR-STYLING-FRAME-HERO-02",
+      "displayName": "큰 사진 아래 두 칸 액자 2장",
+      "kind": "wear",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 35,
+          "size": 32
+        },
+        {
+          "type": "photoFrame",
+          "slot": "*",
+          "count": 2,
+          "pattern": "heroPair",
+          "groupBy": "spaceGroup",
+          "aspect": "4/5",
+          "gap": 24,
+          "captions": [
+            {
+              "type": "text",
+              "copyRole": "colorName.n",
+              "gap": 0,
+              "size": 25,
+              "onlyExtraColor": true
+            }
+          ]
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "choiceAxes": {
+        "layout": {
+          "id": "heroPair",
+          "name": "큰 사진 아래 두 칸"
+        },
+        "decoration": {
+          "id": "frame",
+          "name": "액자"
+        }
+      },
+      "usage": "styling",
+      "minPhotos": 3,
+      "framePhotos": 2
+    },
+    "WEAR-STYLING-FRAME-HERO-03": {
+      "id": "WEAR-STYLING-FRAME-HERO-03",
+      "displayName": "큰 사진 아래 두 칸 액자 3장",
+      "kind": "wear",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 35,
+          "size": 32
+        },
+        {
+          "type": "photoFrame",
+          "slot": "*",
+          "count": 3,
+          "pattern": "heroPair",
+          "groupBy": "spaceGroup",
+          "aspect": "4/5",
+          "gap": 24,
+          "captions": [
+            {
+              "type": "text",
+              "copyRole": "colorName.n",
+              "gap": 0,
+              "size": 25,
+              "onlyExtraColor": true
+            }
+          ]
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "choiceAxes": {
+        "layout": {
+          "id": "heroPair",
+          "name": "큰 사진 아래 두 칸"
+        },
+        "decoration": {
+          "id": "frame",
+          "name": "액자"
+        }
+      },
+      "usage": "styling",
+      "minPhotos": 3,
+      "framePhotos": 3
     }
   },
   "templates": [
@@ -6084,5 +6579,24 @@
   },
   "fontStyleLabels": {
     "plainGothic": "담백 고딕"
+  },
+  "frameStyle": {
+    "bandPadding": 110,
+    "cardWidth": 680,
+    "paddingTop": 52,
+    "paddingX": 60,
+    "paddingBottom": 46,
+    "photoGap": 24,
+    "photoTop": 34,
+    "footerGap": 40,
+    "remainderGap": 40,
+    "textSize": 22,
+    "textLineHeight": 31,
+    "textWeight": 500,
+    "textTrackingEm": 0.04,
+    "blur": 48,
+    "fallbackAspect": "3/4",
+    "paper": "framePaper",
+    "ink": "frameInk"
   }
 }

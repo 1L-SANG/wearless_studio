@@ -86,6 +86,7 @@ import { StoryboardSpaceSetPanel } from './StoryboardSpaceSetPanel.jsx';
 import { StoryboardContinue } from './StoryboardContinue.jsx';
 import { assembleStoryboardPreview } from './storyboardPreview.js';
 import { useDetailPreviewDimensions } from './useDetailPreviewDimensions.js';
+import { useStoryboardShopName } from './useStoryboardShopName.js';
 import { StoryboardStyleControls } from './StoryboardStyleControls.jsx';
 import { useStoryboardTone } from './useStoryboardTone.js';
 import { createStoryboardStyleSaveQueue, saveStoryboardPageStyle } from './storyboardPageStyle.js';
@@ -403,6 +404,7 @@ export function Storyboard({ toastOverride = null } = {}) {
   const promotedMatchClothingRef = useRef({ projectId: null, items: null });
   const composeModeSeedRef = useRef(composeModeSeed);
   const projectId = useAppStore((s) => s.projectId);
+  const shopName = useStoryboardShopName(blocks);
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
 
   // 입력 화면이 시작한 완료 프라미스를 직접 구독한다. 서버를 반복 조회하지 않고 완료 시 한 번만
@@ -806,7 +808,8 @@ export function Storyboard({ toastOverride = null } = {}) {
     .flatMap(run => stageAdditions(blocks, run.key, { product: catalogs?.detailProduct, analysis: catalogs?.analysis }))
     .flatMap(item => item.block ? [item.block] : [])], [blocks, catalogs]);
   const detailPreviewDimensions = useDetailPreviewDimensions(detailPreviewBlocks, catalogs);
-  const previewCatalogs = useMemo(() => catalogs && ({ ...catalogs, detailPreviewDimensions }), [catalogs, detailPreviewDimensions]);
+  const previewCatalogs = useMemo(() => catalogs && ({ ...catalogs, detailPreviewDimensions,
+    shopName }), [catalogs, detailPreviewDimensions, shopName]);
   const styleSaves = useMemo(() => createStoryboardStyleSaveQueue(style => saveStoryboardPageStyle(projectId, style), { projectId }), [projectId]);
   const styleRequest = useRef(0);
   const selectedPageStyle = analysisPageStyle(catalogs?.analysis?.pageStyle);

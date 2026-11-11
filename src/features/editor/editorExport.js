@@ -13,7 +13,9 @@ import { recordClientAction } from '../../lib/clientEvents.js';
  * 경로 3개: ① 블록 1개 PNG(퀵바) ② 전체 세로 이어붙인 긴 PNG ③ 블록별 PNG ZIP (다운로드 모달).
  */
 import { getFontEmbedCSS, toSvg } from 'html-to-image';
-import { collectExportImageProbes, rasterizeExportSvg } from './editorExportRaster.js';
+import { bakeExportBackdrops, collectExportImageProbes, rasterizeBackdropImage, rasterizeExportSvg } from './editorExportRaster.js';
+import { hasBackdropBlur } from './editorImageBlur.js';
+import { isGifImage } from '../../lib/gif/gifMedia.js';
 import JSZip from 'jszip';
 import { ASSET_CACHE_VERSION } from '../../lib/assetUrl.js';
 import { notarize } from './publicationNotarize.js';
@@ -415,6 +417,7 @@ export function flattenOnWhite(canvas) {
 async function captureBlockCanvas(blockNode, pixelRatio, fontEmbedCSS, imageCache, onVerify) {
   const { clone, softFailed, dispose } = await prepareClone(blockNode, imageCache);
   try {
+    await bakeExportBackdrops(clone, pixelRatio);
     // backgroundColor 옵션을 넘기면 html-to-image 가 **캡처 대상(블록) 자체의 배경색을 그 값으로
     // 덮어쓴다**(apply-style: style.backgroundColor = options.backgroundColor). 그래서 셀러가 바꾼
     // 블록 배경이 다운로드에서 전부 흰색이 됐다(2026-09-28). 블록 배경은 그대로 캡처하고,
@@ -447,6 +450,7 @@ export async function captureBlockCanvasSlices(
   const { clone, softFailed, dispose } = await prepareClone(blockNode, imageCache);
   const canvases = [];
   try {
+    await bakeExportBackdrops(clone, pixelRatio);
     const totalCssHeight = clone.offsetHeight;
     const totalHeight = Math.trunc(totalCssHeight * pixelRatio);
     const holder = clone.parentElement;
@@ -706,19 +710,37 @@ function saveBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-// Downloads the original selected photo. Canvas crop/rotation are deliberately
-// not baked into these bytes; full-page export continues through its own path.
-export async function downloadEditorPhoto(image, productName, { fetchImage = clientApiFetch, save = saveBlob } = {}) {
+// Ordinary selections keep original bytes. Backdrop selections download the
+// cropped, baked background (GIF replacements use their stable poster frame).
+export async function downloadEditorPhoto(image, productName, { fetchImage = clientApiFetch, save = saveBlob,
+  loadImage = loadBlobImage, createCanvas, encodeCanvas = canvasToBlob } = {}) {
   if (!image?.src) throw new Error('받을 사진을 선택해 주세요.');
-  const response = await fetchImage(toBytesUrl(image.src));
+  const backdrop = hasBackdropBlur(image);
+  const response = await fetchImage(toBytesUrl(backdrop && isGifImage(image) ? image.posterSrc : image.src));
   const type = (response.headers.get('content-type') || '').split(';')[0];
   if (!response.ok || !type.startsWith('image/')) {
     throw attachResponseError(new Error('사진을 받지 못했어요. 다시 시도해 주세요.'), response);
   }
-  const blob = await readClientResponse(response, 'blob');
-  const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/avif': 'avif', 'image/gif': 'gif', 'image/svg+xml': 'svg' }[type] || 'png';
+  let blob = await readClientResponse(response, 'blob');
+  if (backdrop) {
+    const decoded = await loadImage(blob);
+    const canvas = rasterizeBackdropImage(decoded, image, PIXEL_RATIO, { createCanvas });
+    try { blob = await encodeCanvas(canvas, 'image/png'); }
+    finally { releaseExportCanvas(canvas); }
+  }
+  const ext = backdrop ? 'png' : { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/avif': 'avif', 'image/gif': 'gif', 'image/svg+xml': 'svg' }[type] || 'png';
   const name = `${productName || 'wearless'}-${image.cutType || 'photo'}`.replace(/[\\/:*?"<>|]/g, '-');
   save(blob, `${name}.${ext}`);
+}
+
+async function loadBlobImage(blob) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    return image;
+  } finally { URL.revokeObjectURL(url); }
 }
 
 // Export clones use a fixed first frame, while the live canvas keeps playing.

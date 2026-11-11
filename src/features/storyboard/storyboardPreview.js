@@ -3,6 +3,7 @@ import { signatureCutById } from '../../lib/signatureCutPool.js';
 import { detailTargetPresentation, detailTargetPreview } from '../../lib/detailRecommendations.js';
 import { mineImageUrl } from '../../lib/storyboardMineImages.js';
 import { assemblePage } from '../../lib/pageTemplates/assemble.js';
+import { pageTemplatesCatalog } from '../../lib/pageTemplates/catalog.js';
 import { productPresentationOf } from '../../lib/storyboardTaxonomy.js';
 import { productSourcePhotos } from '../../lib/productSourcePhotos.js';
 
@@ -89,7 +90,9 @@ export function assembleStoryboardPreview({ catalogs = {}, cutResults = [], ...i
   const cuts = [...storyboardPreviewCuts(storyboard, previewCatalogs).filter(cut => !completed.has(cut.blockId)), ...completed.values()];
   const targets = new Map(storyboard.map(block => [block.id,
     detailTargetPreview(block, product, previewCatalogs.detailRecommendations)]));
-  return assemblePage({ ...input, storyboard, product, analysis, cutResults: cuts }).map(block => {
+  const shopName = input.shopName ?? (storyboard.some(block => pageTemplatesCatalog.designs[block.pageDesignId]?.framePhotos)
+    ? catalogs.shopName : undefined);
+  return assemblePage({ ...input, storyboard, product, analysis, shopName, cutResults: cuts }).map(block => {
     let changed = false;
     const elements = block.elements.map(element => {
       if (element.type !== 'image' || completed.has(element.sourceBlockId)) return element;

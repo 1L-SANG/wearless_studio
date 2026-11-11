@@ -1,0 +1,22 @@
+.frame {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.frame > svg,
+.frame[data-blur-baked] > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.frame > .source {
+  display: none;
+}
+
+.frame[data-blur-baked] > img {
+  object-fit: fill;
+}
