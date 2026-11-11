@@ -72,19 +72,14 @@ the saved analysis on load or hover. Point mode maps both accentBg and the exist
 panel alias to its pale palette; ink/invertBg and inverted section panels remain
 neutral. The existing catalogVersion remains compatible with saved page styles.
 
-useStoryboardTone owns only ephemeral pointer/focus preview and a bounded color
-wave. Preview never enters the save queue. Leaving/blurring restores the current
-selection; selecting uses the same queue as font selection, with a latest-style
-ref preserving rapid interleaved choices. The queue separately retains its last
-successful server value. A latest-request failure restores that value and clears
-hover/wave state while showing the error; stale responses cannot replace a newer
-choice. Earlier successful requests still become the fallback for a later failure. The stage band changes first, outline
-rows reveal their new assembled fills between 100 and 500ms, and 280ms fill
-transitions finish within 780ms. Reduced motion skips both delay and transition;
-context changes/unmount clear timers. Mono and point assembled pages are memoized
-for the same board/catalog state, so hover and reveal steps reuse them. The open
-section picker receives the same preview mode; its actual-photo assemblies use
-the same selected tone as the outline. Both rows share a compact 256px control column: two 124px tone pills plus 8px gap.
+Font style and page tone use the same arrow carousel (StoryboardStyleCarousel).
+There is no hover or focus preview: an arrow click applies the next value at once
+and sends it through the same save queue as the font style, with a latest-style
+ref preserving rapid interleaved choices. The queue retains its last successful
+server value; a latest-request failure restores it and shows the error, and stale
+responses cannot replace a newer choice. The stage band, outline and open section
+picker read only the selected tone. The two carousels sit side by side in equal
+256px columns; a neutral base color shows only the font style column.
 Tone labels, accessible names and tooltips are 기본/의류 색감. The header
 control group remains right aligned; the open-drawer one-column layout remains.
 Title and subtitle occupy a top-aligned left copy block, with word wrapping
