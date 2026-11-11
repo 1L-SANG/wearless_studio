@@ -45,13 +45,13 @@ test('R2 actual screen restores its last saved font and tone on the latest failu
   button(h.tree, '의류 색감').props.onFocus(); h.render();
   button(h.tree, '의류 색감').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();
   assert.deepEqual(h.DB.analysis.pageStyle, saved);
-  assert.equal(fontValue(h.tree) === 'serif', true);
+  assert.equal(fontValue(h.tree), 'plainGothic');
   assert.equal(button(h.tree, '기본').props['aria-pressed'], true);
   assert.equal(bandFill(h.tree), 'var(--bg-2)');
   assert.match(textOf(h.tree), /페이지 스타일을 저장하지 못했어요/);
   button(h.tree, '다음 글자 스타일').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();
-  assert.equal(fontValue(h.tree) === 'serif', true);
-  assert.equal(fontValue(h.tree) === 'boldGothic', false);
+  assert.equal(fontValue(h.tree), 'plainGothic');
+  assert.notEqual(fontValue(h.tree), 'serif');
 });
 
 test('R2 a first failed selection restores prefetched non-default style before project loading completes', async t => {
@@ -86,7 +86,7 @@ for (const lockSource of ['cut', 'job']) test(`R2 actual Storyboard saves throug
   const h = await storyboardScreenHarness({ lockSource }); t.after(() => h.close());
   h.render(); await h.flush();
   button(h.tree, '다음 글자 스타일').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();
-  assert.equal(h.DB.analysis.pageStyle.fontStyle, 'serif');
+  assert.equal(h.DB.analysis.pageStyle.fontStyle, 'plainGothic');
   button(h.tree, '의류 색감').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();
   assert.equal(h.DB.analysis.pageStyle.colorMode, 'point');
   assert.equal(button(h.tree, '의류 색감').props['aria-pressed'], true);
@@ -108,8 +108,8 @@ for (const failure of ['first', 'last']) test(`R2 rapid actual selections use on
   assert.equal(button(h.tree, '의류 색감').props['aria-pressed'], true, 'an earlier response cannot replace the newer choice');
   if (failure === 'last') pending[1].fail(); else await pending[1].succeed();
   await h.waitForStyle(); await h.flush();
-  assert.equal(h.DB.analysis.pageStyle.fontStyle, 'serif');
-  assert.equal(fontValue(h.tree) === 'serif', true);
+  assert.equal(h.DB.analysis.pageStyle.fontStyle, 'plainGothic');
+  assert.equal(fontValue(h.tree), 'plainGothic');
   assert.equal(h.DB.analysis.pageStyle.colorMode, failure === 'last' ? 'mono' : 'point');
   assert.equal(button(h.tree, '의류 색감').props['aria-pressed'], failure !== 'last');
   assert.equal(bandFill(h.tree), failure === 'last' ? 'var(--bg-2)' : '#edf4ff');

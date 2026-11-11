@@ -873,6 +873,21 @@
       "labelEn": null,
       "titleKo": null
     },
+    "plainGothic": {
+      "labelEn": {
+        "font": "Pretendard",
+        "weight": 500,
+        "italic": false,
+        "trackingEm": 0.12,
+        "uppercase": true
+      },
+      "titleKo": {
+        "font": "Pretendard",
+        "weight": 600,
+        "italic": false,
+        "trackingEm": -0.02
+      }
+    },
     "serif": {
       "labelEn": {
         "font": "Cormorant",
@@ -1419,7 +1434,8 @@
         "aspect": "source",
         "gap": 40
       },
-      "contentInset": 56
+      "contentInset": 56,
+      "pickerHidden": true
     },
     "P02-D01": {
       "id": "P02-D01",
@@ -1461,7 +1477,17 @@
         "aspect": "source",
         "gap": 40
       },
-      "usage": "styling"
+      "usage": "styling",
+      "choiceAxes": {
+        "layout": {
+          "id": "column",
+          "name": "한 열"
+        },
+        "decoration": {
+          "id": "basic",
+          "name": "기본"
+        }
+      }
     },
     "P02-D02": {
       "id": "P02-D02",
@@ -1528,7 +1554,8 @@
         "gap": 40
       },
       "contentInset": 56,
-      "usage": "fit"
+      "usage": "fit",
+      "pickerHidden": true
     },
     "P04-D01": {
       "id": "P04-D01",
@@ -1596,11 +1623,12 @@
         "gap": 40
       },
       "contentInset": 56,
-      "usage": "fit"
+      "usage": "fit",
+      "pickerHidden": true
     },
     "CP-EMO-01": {
       "id": "CP-EMO-01",
-      "displayName": "색별 사진과 뒷면",
+      "displayName": "색 격자",
       "kind": "color_product",
       "padding": 56,
       "top": 0,
@@ -1695,7 +1723,18 @@
         "type": "photoStack",
         "aspect": "source",
         "gap": 40
-      }
+      },
+      "choiceAxes": {
+        "layout": {
+          "id": "grid",
+          "name": "색 격자"
+        },
+        "decoration": {
+          "id": "basic",
+          "name": "기본"
+        }
+      },
+      "minColors": 2
     },
     "CP-SHOW-01": {
       "id": "CP-SHOW-01",
@@ -1780,7 +1819,8 @@
         "type": "photoStack",
         "aspect": "source",
         "gap": 40
-      }
+      },
+      "pickerHidden": true
     },
     "CP-GUIDE-01": {
       "id": "CP-GUIDE-01",
@@ -1865,7 +1905,8 @@
         "type": "photoStack",
         "aspect": "source",
         "gap": 40
-      }
+      },
+      "pickerHidden": true
     },
     "T03-D01": {
       "id": "T03-D01",
@@ -2105,7 +2146,8 @@
         "type": "photoStack",
         "aspect": "source",
         "gap": 40
-      }
+      },
+      "pickerHidden": true
     },
     "T03-TEXT-01": {
       "id": "T03-TEXT-01",
@@ -2161,7 +2203,8 @@
         "aspect": "source",
         "gap": 40
       },
-      "storyboardTextNote": "원단 사진 없이 소재 설명만 들어가요"
+      "storyboardTextNote": "원단 사진 없이 소재 설명만 들어가요",
+      "pickerHidden": true
     },
     "T01-D07": {
       "id": "T01-D07",
@@ -2496,7 +2539,8 @@
         "aspect": "source",
         "gap": 40
       },
-      "storyboardTextNote": "핏 문단, 사이즈 팁, 부위 설명"
+      "storyboardTextNote": "핏 문단, 사이즈 팁, 부위 설명",
+      "pickerHidden": true
     },
     "PT-EMO-TEXT": {
       "id": "PT-EMO-TEXT",
@@ -2568,7 +2612,8 @@
         "aspect": "source",
         "gap": 40
       },
-      "storyboardTextNote": "핏 문단과 사이즈 팁"
+      "storyboardTextNote": "핏 문단과 사이즈 팁",
+      "pickerHidden": true
     },
     "P06-D01": {
       "id": "P06-D01",
@@ -2599,10 +2644,12 @@
             {
               "type": "photo",
               "slot": "$current",
-              "aspect": "1/1",
+              "aspect": "source",
               "gap": 0,
               "x": 178,
-              "w": 532
+              "w": 532,
+              "fit": "contain",
+              "fallbackAspect": "2/3"
             },
             {
               "type": "text",
@@ -2632,7 +2679,17 @@
         "aspect": "source",
         "gap": 40
       },
-      "storyboardTextNote": "상품 디테일과 특징"
+      "storyboardTextNote": "상품 디테일과 특징",
+      "choiceAxes": {
+        "layout": {
+          "id": "below",
+          "name": "사진 아래 설명"
+        },
+        "decoration": {
+          "id": "basic",
+          "name": "기본"
+        }
+      }
     },
     "T05-D07": {
       "id": "T05-D07",
@@ -2710,7 +2767,8 @@
         "aspect": "source",
         "gap": 40
       },
-      "storyboardTextNote": "부위별 디테일과 특징"
+      "storyboardTextNote": "부위별 디테일과 특징",
+      "pickerHidden": true
     },
     "T07-D06": {
       "id": "T07-D06",
@@ -2838,7 +2896,8 @@
       "surface": "panel",
       "contentInset": 56,
       "storyboardTextNote": "핏 설명과 사이즈 팁",
-      "supportsWornCrop": false
+      "supportsWornCrop": false,
+      "pickerHidden": true
     },
     "T08-D01": {
       "id": "T08-D01",
@@ -3180,7 +3239,8 @@
         "type": "photoStack",
         "aspect": "source",
         "gap": 40
-      }
+      },
+      "pickerHidden": true
     },
     "P07-D08": {
       "id": "P07-D08",
@@ -3247,7 +3307,8 @@
         "type": "photoStack",
         "aspect": "source",
         "gap": 40
-      }
+      },
+      "pickerHidden": true
     },
     "P01-SHOW-01": {
       "id": "P01-SHOW-01",
@@ -3358,7 +3419,8 @@
         "type": "photoStack",
         "aspect": "source",
         "gap": 40
-      }
+      },
+      "pickerHidden": true
     },
     "T08-SCRIM-01": {
       "id": "T08-SCRIM-01",
@@ -3436,7 +3498,8 @@
         "type": "photoStack",
         "aspect": "source",
         "gap": 40
-      }
+      },
+      "pickerHidden": true
     },
     "P01-D09-G": {
       "id": "P01-D09-G",
@@ -3814,6 +3877,595 @@
         "gap": 40
       },
       "pickerHidden": true
+    },
+    "WEAR-STYLING-2COL-01": {
+      "id": "WEAR-STYLING-2COL-01",
+      "displayName": "2열",
+      "kind": "wear",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 35,
+          "size": 32
+        },
+        {
+          "type": "photoFlow",
+          "slot": "*",
+          "pattern": "twoColumn",
+          "groupBy": "spaceGroup",
+          "aspect": "4/5",
+          "gap": 24,
+          "captions": [
+            {
+              "type": "text",
+              "copyRole": "colorName.n",
+              "gap": 0,
+              "size": 25,
+              "onlyExtraColor": true
+            }
+          ]
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "choiceAxes": {
+        "layout": {
+          "id": "twoColumn",
+          "name": "2열"
+        },
+        "decoration": {
+          "id": "basic",
+          "name": "기본"
+        }
+      },
+      "usage": "styling",
+      "minPhotos": 2
+    },
+    "WEAR-STYLING-HERO-01": {
+      "id": "WEAR-STYLING-HERO-01",
+      "displayName": "큰 사진 아래 두 칸",
+      "kind": "wear",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 35,
+          "size": 32
+        },
+        {
+          "type": "photoFlow",
+          "slot": "*",
+          "pattern": "heroPair",
+          "groupBy": "spaceGroup",
+          "aspect": "4/5",
+          "gap": 24,
+          "captions": [
+            {
+              "type": "text",
+              "copyRole": "colorName.n",
+              "gap": 0,
+              "size": 25,
+              "onlyExtraColor": true
+            }
+          ]
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "choiceAxes": {
+        "layout": {
+          "id": "heroPair",
+          "name": "큰 사진 아래 두 칸"
+        },
+        "decoration": {
+          "id": "basic",
+          "name": "기본"
+        }
+      },
+      "usage": "styling",
+      "minPhotos": 3
+    },
+    "WEAR-FIT-2COL-01": {
+      "id": "WEAR-FIT-2COL-01",
+      "displayName": "2열",
+      "kind": "wear",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 35,
+          "size": 32
+        },
+        {
+          "type": "photoFlow",
+          "slot": "*",
+          "pattern": "twoColumn",
+          "groupBy": "spaceGroup",
+          "aspect": "4/5",
+          "gap": 24,
+          "captions": [
+            {
+              "type": "text",
+              "copyRole": "cap.{direction}",
+              "gap": 0,
+              "style": "small",
+              "size": 22,
+              "color": "ink"
+            }
+          ]
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "choiceAxes": {
+        "layout": {
+          "id": "twoColumn",
+          "name": "2열"
+        },
+        "decoration": {
+          "id": "basic",
+          "name": "기본"
+        }
+      },
+      "usage": "fit",
+      "minPhotos": 2
+    },
+    "WEAR-FIT-HERO-01": {
+      "id": "WEAR-FIT-HERO-01",
+      "displayName": "큰 사진 아래 두 칸",
+      "kind": "wear",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 35,
+          "size": 32
+        },
+        {
+          "type": "photoFlow",
+          "slot": "*",
+          "pattern": "heroPair",
+          "groupBy": "spaceGroup",
+          "aspect": "4/5",
+          "gap": 24,
+          "captions": [
+            {
+              "type": "text",
+              "copyRole": "cap.{direction}",
+              "gap": 0,
+              "style": "small",
+              "size": 22,
+              "color": "ink"
+            }
+          ]
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "choiceAxes": {
+        "layout": {
+          "id": "heroPair",
+          "name": "큰 사진 아래 두 칸"
+        },
+        "decoration": {
+          "id": "basic",
+          "name": "기본"
+        }
+      },
+      "usage": "fit",
+      "minPhotos": 3
+    },
+    "WEAR-FIT-COLUMN-01": {
+      "id": "WEAR-FIT-COLUMN-01",
+      "displayName": "큰 사진 이어 보기",
+      "kind": "wear",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 30,
+          "size": 32
+        },
+        {
+          "type": "photoStack",
+          "slot": "*",
+          "items": [
+            {
+              "type": "photo",
+              "slot": "$current",
+              "aspect": "4/5",
+              "gap": 16
+            },
+            {
+              "type": "text",
+              "copyRole": "cap.{direction}",
+              "gap": 0,
+              "style": "small",
+              "size": 22,
+              "color": "ink"
+            }
+          ]
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "choiceAxes": {
+        "layout": {
+          "id": "column",
+          "name": "한 열"
+        },
+        "decoration": {
+          "id": "basic",
+          "name": "기본"
+        }
+      },
+      "usage": "fit"
+    },
+    "CP-COLUMN-01": {
+      "id": "CP-COLUMN-01",
+      "displayName": "색별 이어 보기",
+      "kind": "color_product",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 12,
+          "size": 32
+        },
+        {
+          "type": "text",
+          "copyRole": "title",
+          "gap": 26,
+          "size": 37,
+          "emphasis": "title"
+        },
+        {
+          "type": "photoStack",
+          "slot": "front",
+          "items": [
+            {
+              "type": "photo",
+              "slot": "$current",
+              "aspect": "4/5",
+              "gap": 16
+            },
+            {
+              "type": "text",
+              "copyRole": "colors.n.name",
+              "gap": 0,
+              "style": "titleKo",
+              "size": 24,
+              "fitWidth": true,
+              "swatchDot": true
+            }
+          ]
+        },
+        {
+          "type": "photoStack",
+          "slot": "back",
+          "items": [
+            {
+              "type": "photo",
+              "slot": "$current",
+              "aspect": "4/5",
+              "gap": 16
+            },
+            {
+              "type": "text",
+              "copyRole": "colors.n.name",
+              "gap": 8,
+              "style": "titleKo",
+              "size": 24,
+              "fitWidth": true,
+              "swatchDot": true
+            },
+            {
+              "type": "text",
+              "copyRole": "cap.back",
+              "gap": 0,
+              "size": 22
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "copyRole": "notice",
+          "gap": 14,
+          "size": 22,
+          "hideEmpty": true
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "choiceAxes": {
+        "layout": {
+          "id": "column",
+          "name": "색별 이어 보기"
+        },
+        "decoration": {
+          "id": "basic",
+          "name": "기본"
+        }
+      }
+    },
+    "PT-COLUMN-01": {
+      "id": "PT-COLUMN-01",
+      "displayName": "부위 사진 세로로",
+      "kind": "points",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 12,
+          "size": 32,
+          "default": "Detail"
+        },
+        {
+          "type": "text",
+          "copyRole": "title",
+          "gap": 26,
+          "size": 37,
+          "emphasis": "title"
+        },
+        {
+          "type": "photoStack",
+          "slot": "*",
+          "items": [
+            {
+              "type": "photo",
+              "slot": "$current",
+              "fit": "contain",
+              "aspect": "source",
+              "fallbackAspect": "2/3",
+              "gap": 20
+            },
+            {
+              "type": "text",
+              "copyRole": "items.n.name",
+              "gap": 0,
+              "style": "titleKo",
+              "size": 30
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "copyRole": "notice",
+          "gap": 14,
+          "size": 22,
+          "hideEmpty": true
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "choiceAxes": {
+        "layout": {
+          "id": "column",
+          "name": "부위 사진 세로로"
+        },
+        "decoration": {
+          "id": "basic",
+          "name": "기본"
+        }
+      },
+      "storyboardTextNote": "부위 이름"
+    },
+    "PT-COLUMN-CARD-01": {
+      "id": "PT-COLUMN-CARD-01",
+      "displayName": "부위 사진 세로 카드",
+      "kind": "points",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 12,
+          "size": 32,
+          "default": "Detail"
+        },
+        {
+          "type": "text",
+          "copyRole": "title",
+          "gap": 26,
+          "size": 37,
+          "emphasis": "title"
+        },
+        {
+          "type": "photoStack",
+          "slot": "*",
+          "items": [
+            {
+              "type": "panel",
+              "padding": [
+                24,
+                24
+              ],
+              "fill": "panel",
+              "nodes": [
+                {
+                  "type": "photo",
+                  "slot": "$current",
+                  "fit": "contain",
+                  "aspect": "source",
+                  "fallbackAspect": "2/3",
+                  "gap": 20
+                },
+                {
+                  "type": "text",
+                  "copyRole": "items.n.name",
+                  "gap": 12,
+                  "style": "titleKo",
+                  "size": 30
+                },
+                {
+                  "type": "text",
+                  "copyRole": "items.n.desc",
+                  "gap": 0,
+                  "size": 25,
+                  "singleLine": true
+                }
+              ],
+              "gap": 0
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "copyRole": "notice",
+          "gap": 14,
+          "size": 22,
+          "hideEmpty": true
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "choiceAxes": {
+        "layout": {
+          "id": "column",
+          "name": "부위 사진 세로로"
+        },
+        "decoration": {
+          "id": "card",
+          "name": "부위별 카드"
+        }
+      },
+      "storyboardTextNote": "부위 이름과 한 줄 설명"
+    },
+    "PT-BELOW-CARD-01": {
+      "id": "PT-BELOW-CARD-01",
+      "displayName": "사진 아래 설명 카드",
+      "kind": "points",
+      "padding": 56,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 12,
+          "size": 32,
+          "default": "Detail"
+        },
+        {
+          "type": "text",
+          "copyRole": "title",
+          "gap": 26,
+          "size": 37,
+          "emphasis": "title"
+        },
+        {
+          "type": "photoStack",
+          "slot": "*",
+          "items": [
+            {
+              "type": "panel",
+              "padding": [
+                24,
+                24
+              ],
+              "fill": "panel",
+              "nodes": [
+                {
+                  "type": "photo",
+                  "slot": "$current",
+                  "fit": "contain",
+                  "aspect": "source",
+                  "fallbackAspect": "2/3",
+                  "gap": 20
+                },
+                {
+                  "type": "text",
+                  "copyRole": "items.n.name",
+                  "gap": 12,
+                  "style": "titleKo",
+                  "size": 30
+                },
+                {
+                  "type": "text",
+                  "copyRole": "items.n.desc",
+                  "gap": 0,
+                  "size": 25,
+                  "singleLine": true
+                }
+              ],
+              "gap": 0,
+              "x": 154,
+              "w": 580
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "copyRole": "notice",
+          "gap": 14,
+          "size": 22,
+          "hideEmpty": true
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "choiceAxes": {
+        "layout": {
+          "id": "below",
+          "name": "사진 아래 설명"
+        },
+        "decoration": {
+          "id": "card",
+          "name": "부위별 카드"
+        }
+      },
+      "storyboardTextNote": "부위 이름과 한 줄 설명"
     }
   },
   "templates": [
@@ -3955,7 +4607,7 @@
           "instanceKey": "points",
           "kind": "points",
           "presence": "default",
-          "designId": "PT-EMO-01",
+          "designId": "PT-COLUMN-01",
           "alternatives": [],
           "photoSlots": [
             {
@@ -4143,7 +4795,7 @@
           "instanceKey": "wear_fit",
           "kind": "wear",
           "presence": "default",
-          "designId": "P04-D01",
+          "designId": "WEAR-FIT-COLUMN-01",
           "alternatives": [],
           "photoSlots": [
             {
@@ -4234,7 +4886,7 @@
           "instanceKey": "color_product",
           "kind": "color_product",
           "presence": "default",
-          "designId": "CP-EMO-01",
+          "designId": "CP-COLUMN-01",
           "alternatives": [],
           "photoSlots": [
             {
@@ -4404,7 +5056,7 @@
           ]
         },
         "color_product": {
-          "designId": "CP-EMO-01",
+          "designId": "CP-COLUMN-01",
           "after": "wear_fit",
           "photoSlots": [
             {
@@ -4513,7 +5165,7 @@
           "photoSlots": []
         },
         "points": {
-          "designId": "PT-EMO-01",
+          "designId": "PT-COLUMN-01",
           "after": "lastSameKind",
           "photoSlots": [
             {
@@ -4781,7 +5433,7 @@
           "instanceKey": "wear_styling",
           "kind": "wear",
           "presence": "default",
-          "designId": "P02-D02",
+          "designId": "WEAR-FIT-COLUMN-01",
           "alternatives": [],
           "photoSlots": [
             {
@@ -4879,7 +5531,7 @@
           "instanceKey": "wear_fit",
           "kind": "wear",
           "presence": "default",
-          "designId": "P04-D01",
+          "designId": "WEAR-FIT-COLUMN-01",
           "alternatives": [],
           "photoSlots": [
             {
@@ -4970,7 +5622,7 @@
           "instanceKey": "color_product",
           "kind": "color_product",
           "presence": "default",
-          "designId": "CP-SHOW-01",
+          "designId": "CP-COLUMN-01",
           "alternatives": [],
           "photoSlots": [
             {
@@ -5033,7 +5685,7 @@
           "instanceKey": "points",
           "kind": "points",
           "presence": "default",
-          "designId": "P06-D01",
+          "designId": "PT-COLUMN-01",
           "alternatives": [],
           "photoSlots": [
             {
@@ -5150,7 +5802,7 @@
           ]
         },
         "color_product": {
-          "designId": "CP-SHOW-01",
+          "designId": "CP-COLUMN-01",
           "after": "wear_fit",
           "photoSlots": [
             {
@@ -5259,7 +5911,7 @@
           "photoSlots": []
         },
         "points": {
-          "designId": "P06-D01",
+          "designId": "PT-COLUMN-01",
           "after": "lastSameKind",
           "photoSlots": [
             {
@@ -5429,5 +6081,8 @@
     "pink": "#e3a7b8",
     "yellow": "#e7c75c",
     "purple": "#7d5ba6"
+  },
+  "fontStyleLabels": {
+    "plainGothic": "담백 고딕"
   }
 }

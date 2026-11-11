@@ -94,8 +94,8 @@ test('same source preserves custom saved regions through re-entry, moves, edits 
   const moved = moveTemplateSection(blocks, blocks.find(block => block.id === sourceId).pageSectionKey);
   const edited = patchStoryboardPhoto(moved, sourceId, { direction: 'side' }, product);
   const pointsKey = blocks.find(block => block.pointItems).pageSectionKey;
-  const redesigned = changeTemplateSectionDesign(edited, pointsKey, 'T05-D07', { product });
-  assert.equal(redesigned.find(block => block.pageSectionKey === pointsKey).pageDesignId, 'T05-D07');
+  const redesigned = changeTemplateSectionDesign(edited, pointsKey, 'PT-BELOW-CARD-01', { product });
+  assert.equal(redesigned.find(block => block.pageSectionKey === pointsKey).pageDesignId, 'PT-BELOW-CARD-01');
   const reconciled = reconcileSectionDependencies(edited, redesigned, product);
   assert.deepEqual(items(reconciled).map(item => item.cropRegion), custom);
   assert.deepEqual(blocks, before);

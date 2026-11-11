@@ -28,14 +28,14 @@ function countDesignPhotos(run, designId, storyboard, borrowedSlots = new Set())
   const photos = photosFor(run, storyboard);
   const matches = (card, slot = '*') => {
     const key = String(card.slotKey || '').replace(`${definition.instanceKey}.`, '');
-    return Boolean(key && (slot === '*' || key === slot || key.startsWith(`${slot}.`) || new RegExp(`^${slot}\\d+$`).test(key)));
+    return slot === '*' || Boolean(key && (key === slot || key.startsWith(`${slot}.`) || new RegExp(`^${slot}\\d+$`).test(key)));
   };
   const count = (list = []) => list.reduce((sum, node) => {
     if (node.whenTemplate && node.whenTemplate !== templateId) return sum;
     if (node.type === 'photo' || node.type === 'overlay') return sum + (borrowedSlots.has(node.slot) ? 0 : 1);
     const selected = node.slots ? node.slots.filter(slot => !borrowedSlots.has(slot)).length
       : borrowedSlots.has(node.slot) ? 0 : photos.filter(card => matches(card, node.slot)).length;
-    if (node.type === 'photoGrid' || node.type === 'pointRows') return sum + selected;
+    if (['photoGrid', 'photoFlow', 'pointRows'].includes(node.type)) return sum + selected;
     if (node.type === 'photoStack') return sum + selected * count(node.items);
     return sum + count(node.nodes) + count(node.items) + count(node.captions)
       + (node.columns || []).reduce((n, column) => n + count(column.nodes), 0);
@@ -97,9 +97,13 @@ export function sectionDesignChoices(run, { storyboard = run?.blocks || [], prod
   const wearBlock = run.blocks.find(block => ['horizon', 'styling'].includes(block.cutType)) || run.blocks[0];
   const usage = wearUsageForBlock(wearBlock) || run.usage;
   const cropped = run.blocks.some(block => block.pointItems?.some(item => item.kind === 'wornCrop'));
+  const photoCount = photosFor(run, storyboard).length;
+  const colorCount = product?.colors?.length || new Set(photosFor(run, storyboard).map(card => card.colorId).filter(id => id != null)).size;
   const choices = Object.values(pageTemplatesCatalog.designs).filter(design => !design.pickerHidden && design.kind === run.kind
     && (run.kind !== 'wear' || design.usage === usage)
     && (!cropped || design.supportsWornCrop !== false)
+    && (design.minPhotos == null || photoCount >= design.minPhotos)
+    && (design.minColors == null || colorCount >= design.minColors)
     && sectionDesignGenerationCount(run, design.id, storyboard, product) === count
     && displaysProductColors(run, design, storyboard, product));
   const defaultId = defaultSectionDesignId(run, storyboard);

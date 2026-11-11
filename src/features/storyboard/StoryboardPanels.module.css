@@ -176,6 +176,9 @@
 :global(.sb-v5-theme) .roundPlus { display: grid; place-items: center; width: 32px; height: 32px; border-radius: var(--r-pill); background: var(--cta-bg); color: var(--cta-fg); font-size: var(--sb-fs-sub); transition: background-color var(--sb-t-fast); }
 :global(.sb-v5-theme) .sectionOption:hover .roundPlus { background: var(--cta-bg-hover); }
 :global(.sb-v5-theme) .designGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-16) var(--sp-12); margin-top: var(--sp-16); }
+:global(.sb-v5-theme) .designAxis { margin-top: var(--sp-24); }
+:global(.sb-v5-theme) .designAxis h3 { margin: 0; color: var(--fg-1); font: 600 var(--sb-fs-sub)/1.3 var(--font-body); }
+:global(.sb-v5-theme) .designAxis .designGrid { margin-top: var(--sp-12); }
 :global(.sb-v5-theme) .designCard { position: relative; min-width: 0; border: 1px solid transparent; border-radius: var(--r-5); padding: var(--sp-12) var(--sp-12) var(--sp-16); background: var(--bg-2); color: var(--fg-1); text-align: left; cursor: pointer; transition: background-color var(--sb-t-fast), border-color var(--sb-t-fast), box-shadow var(--sb-t-fast); }
 :global(.sb-v5-theme) .designCard:hover { background: var(--bg-1); border-color: var(--fg-3); }
 :global(.sb-v5-theme) .designSelected { border-color: var(--ring); }

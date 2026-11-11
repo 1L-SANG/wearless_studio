@@ -6,6 +6,7 @@ import { sectionRuns, isTextOnlySection } from '../../lib/pageTemplates/sectionR
 import { automaticSectionInsertionKey } from '../../lib/pageTemplates/sectionPlacement.js';
 import { isHiddenStoryboardKind } from '../../lib/pageTemplates/storyboardPositions.js';
 import { sectionDesignChoices, defaultSectionDesignId, currentSectionDesignId } from '../../lib/pageTemplates/designChoices.js';
+import { sectionDesignAxes } from '../../lib/pageTemplates/designAxes.js';
 import { sectionDesignPreviewSample } from '../../lib/pageTemplates/designPreview.js';
 import { templateSectionName } from '../../lib/pageTemplates/slots.js';
 import { baseColorOf, resolvePageTokens } from '../../lib/pageTemplates/tokens.js';
@@ -14,7 +15,7 @@ import { assembleStoryboardPreview } from './storyboardPreview.js';
 import { NEW_SECTION_DRAG_MIME } from './StoryboardPageList.jsx';
 import styles from './StoryboardPanels.module.css';
 
-const menuEntries = Object.values(pageTemplatesCatalog.kinds).filter(kind => kind.kind !== 'first' && !isHiddenStoryboardKind(kind.kind))
+const menuEntries = Object.values(pageTemplatesCatalog.kinds).filter(kind => kind.kind !== 'first' && kind.kind !== 'sns' && !isHiddenStoryboardKind(kind.kind))
   .flatMap(kind => kind.kind === 'wear' ? kind.usages.map(usage => ({ kind: kind.kind, usage })) : [{ kind: kind.kind }]);
 
 function preview(board, run, catalogs, designId) {
@@ -37,8 +38,10 @@ export function StoryboardSectionPicker({ mode, runKey, blocks, catalogs, gender
     return run && !isTextOnlySection(run) ? [{ ...entry, designId: defaultSectionDesignId(run, board), preview: preview(board, run, catalogs) }] : [];
   }), [mode, blocks, catalogs, gender, identityKind]);
   const designs = sectionDesignChoices(existing, { storyboard: blocks, product: catalogs.detailProduct });
+  const axes = sectionDesignAxes(existing, { storyboard: blocks, product: catalogs.detailProduct });
   const defaultDesignId = defaultSectionDesignId(existing, blocks), currentDesignId = currentSectionDesignId(existing, blocks);
-  const designPreviews = useMemo(() => mode === 'design' ? designs.map(design => preview(blocks, existing, catalogs, design.id)) : [], [mode, blocks, runKey, catalogs]);
+  const designPreviews = useMemo(() => new Map(mode === 'design'
+    ? designs.map(design => [design.id, preview(blocks, existing, catalogs, design.id)]) : []), [mode, blocks, runKey, catalogs]);
   const startDrag = (event, payload) => {
     if (busy) { event.preventDefault(); return; }
     event.dataTransfer.effectAllowed = 'copy'; event.dataTransfer.setData(NEW_SECTION_DRAG_MIME, JSON.stringify(payload)); onDragChange?.(true);
@@ -65,12 +68,24 @@ export function StoryboardSectionPicker({ mode, runKey, blocks, catalogs, gender
     <div className={`${styles.panelHeading} ${styles.panelHeadingRow}`}><h2>{name} 디자인</h2>
       {existing.kind !== 'first' && <button type="button" className="btn" disabled={busy} onClick={() => onRemove?.(existing.key)}>섹션 빼기</button>}
     </div>
-    <div className={styles.designGrid}>{designs.map((design, index) => <button type="button" key={design.id}
+    {axes.hasAxes ? [
+      { id: 'layout', label: '배치', options: axes.layouts },
+      { id: 'decoration', label: '꾸밈', options: axes.decorations },
+    ].filter(axis => axis.options.length > 1).map(axis => <section key={axis.id} className={styles.designAxis} role="group" aria-label={axis.label}>
+      <h3>{axis.label}</h3>
+      <div className={styles.designGrid}>{axis.options.map(option => <button type="button" key={option.id}
+        className={`${styles.designCard}${option.selected ? ` ${styles.designSelected}` : ''}`}
+        aria-pressed={option.selected} disabled={busy} onClick={() => onChoose(existing.kind, existing.usage, option.designId)}>
+        {option.selected && <span className={styles.designCheck}><Icon name="check" size={12} stroke={1.5} /></span>}
+        <span className={styles.designPreview}><StoryboardPreview blocks={designPreviews.get(option.designId)} fit wireframe toneColors={toneColors} label={`${name} · ${axis.label} · ${option.name}`} /></span>
+        <span className={styles.designName}>{option.isDefault && option.name !== '기본' && <small>기본</small>}<strong>{option.name}</strong></span>
+      </button>)}</div>
+    </section>) : <div className={styles.designGrid}>{designs.map(design => <button type="button" key={design.id}
       className={`${styles.designCard}${currentDesignId === design.id ? ` ${styles.designSelected}` : ''}`}
       aria-pressed={currentDesignId === design.id} disabled={busy} onClick={() => onChoose(existing.kind, existing.usage, design.id)}>
       {currentDesignId === design.id && <span className={styles.designCheck}><Icon name="check" size={12} stroke={1.5} /></span>}
-      <span className={styles.designPreview}><StoryboardPreview blocks={designPreviews[index]} fit wireframe toneColors={toneColors} label={`${name} · ${design.displayName}`} /></span>
+      <span className={styles.designPreview}><StoryboardPreview blocks={designPreviews.get(design.id)} fit wireframe toneColors={toneColors} label={`${name} · ${design.displayName}`} /></span>
       <span className={styles.designName}>{defaultDesignId === design.id && <small>기본</small>}<strong>{design.displayName}</strong></span>
-    </button>)}</div>
+    </button>)}</div>}
   </div>;
 }

@@ -76,7 +76,7 @@ for (const templateId of ['emo', 'show']) {
     const studio = actions.addTemplateSection(before, product, analysisFor(templateId), 'wear', 'fit');
     const addedStudio = studio.filter(block => !before.some(old => old.id === block.id));
     assert.equal(addedStudio.length, 3);
-    assert.ok(addedStudio.every(block => block.cutType === 'horizon' && block.pageDesignId === 'P04-D01'));
+    assert.ok(addedStudio.every(block => block.cutType === 'horizon' && block.pageDesignId === 'WEAR-FIT-COLUMN-01'));
     assert.deepEqual(addedStudio.map(block => block.direction), ['front', 'side', 'back']);
   });
 }

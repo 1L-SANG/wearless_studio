@@ -27,7 +27,7 @@ not a request to fall back to an unrelated layout.
 - The mock `buildEditorBlocksFromStoryboard` dispatches in the same way. The
   editor passes the analysis object when building its generation skeleton.
 
-## Storyboard presentation (WOC8 R2, 2026-11-11)
+## Storyboard presentation (WOC6 first pass, 2026-11-11)
 
 Analysis offers only the two templates, `emo` and `show`. Color selection lives
 in the storyboard header; previously saved pageStyle.colorMode values survive
@@ -36,24 +36,27 @@ queue, restore/promotion and mannequin template lock remain unchanged. After a m
 to templateId is locked; fontStyle/colorMode/updatedAt edits remain valid in both
 the mock API and the server. Removed `guide` is not a
 selectable template or mock query; its five layout definitions remain in the
-shared 32-design catalog. Long preview assets are
+shared 41-design catalog (20 picker-hidden definitions). Long preview assets are
 `public/templates/previews/preview-{emo,show}-v1.webp`; preview hover/focus,
 full-view modal, missing-image fallback and reduced-motion rules are unchanged.
 
 The header has two aligned label/control rows: 글자 스타일 and 페이지 색감.
 Typography uses one centered two-line specimen, previous/next arrows and
 noninteractive dots. Order comes from Object.keys(fontStyles), currently template,
-serif, boldGothic. Arrows wrap and ArrowLeft/Right work only inside the focused
+plainGothic, serif, boldGothic. Arrows wrap and ArrowLeft/Right work only inside the focused
 group. Every specimen reads the actual resolvePageTokens labelEn/titleKo fonts,
 including family, weight, italic, case and tracking. Current names remain
-다정 (emo template), 기본 (show template), 매거진 and 볼드. There is no specimen
+다정 (emo template), 기본 (show template), 담백 고딕, 매거진 and 볼드. Plain Gothic
+uses Pretendard 500, uppercase and 0.12em tracking for labelEn; titleKo uses
+Pretendard 600 and -0.02em tracking. Existing sizes and the other three styles
+are unchanged. There is no specimen
 border or vertical bar. Each arrow optimistically updates pageStyle.fontStyle
 through the same serialized save/rollback queue and re-entry wait.
 
 Both validators derive supported style IDs/defaults from the catalog. Retiring
 an old saved font falls back only that font, preserving its template/tone; explicit
-template selection uses the catalog's current default font. No actual font option
-or design definition was added/removed in WOC8.
+template selection uses the catalog's current default font. No saved style field
+was added for the fourth font.
 
 Page tone has two equal pill cells in the shared modal-actions group, 기본 (`mono`) and 의류 색감
 (`point`). A check and 2px ink border mark the selected cell; neither unselected
@@ -64,7 +67,7 @@ baseColorOf retains its existing explicit-base/first-color fallback. Both engine
 resolve saved point to effective mono for these neutral cases without rewriting
 the saved analysis on load or hover. Point mode maps both accentBg and the existing
 panel alias to its pale palette; ink/invertBg and inverted section panels remain
-neutral. No design definitions or catalogVersion changed.
+neutral. The existing catalogVersion remains compatible with saved page styles.
 
 useStoryboardTone owns only ephemeral pointer/focus preview and a bounded color
 wave. Preview never enters the save queue. Leaving/blurring restores the current
@@ -121,6 +124,48 @@ notches. Only outline text bars use emphasizeText to increase visible thickness;
 design previews and generated text geometry are unchanged. The stage's white
 pencil button reads 섹션 디자인 변경. The design panel has names only, default
 first, and a header removal action except on the opening; it has no option toggles.
+
+`sectionDesignAxes` derives 배치 and 꾸밈 from catalog `choiceAxes` metadata.
+Each complete combination is still one `pageDesignId`: choosing a layout keeps
+the current decoration and choosing a decoration keeps the current layout.
+Each axis row disappears when it has at most one eligible option. Non-axis
+sections retain the flat design list. `pickerHidden` only hides choices; it does
+not invalidate or migrate saved layouts. Existing same-kind/usage/photo-count
+and color-coverage rules still apply, followed by explicit `minPhotos` and
+`minColors` constraints.
+
+Styling and fit each offer 한 열, 2열 (at least two photos), and 큰 사진 아래 두 칸
+(at least three). Both use only the 기본 decoration in this pass. Their column
+defaults are P02-D01 and WEAR-FIT-COLUMN-01. Flow designs restart at every
+contiguous place-set group; loose photos use consecutive color groups. Two-column
+odd tails fill the row; hero-pair repeats one full-width photo and a pair, with
+one remaining photo full width or two remaining photos paired. Photos remain
+4:5 and all fit layouts retain direction captions. Curated wildcard repeats
+include loose/similar photos at their stored positions. Legacy hidden layouts
+without axes retain their previous overflow behavior. Picker samples alone use
+one canonical group (four styling or three fit photos) to show the layout grammar;
+real page groups and saved blocks are unchanged.
+
+Color/product defaults to CP-COLUMN-01, with full-width photos and actual color
+dots/names. CP-EMO-01 is the two-column choice only with two or more sale colors.
+Both retain the existing requiresBack source rule; a missing uploaded base-color
+back creates no slot. Only 기본 decoration exists, so there is no decoration row.
+Points default to PT-COLUMN-01 (photo and part name); P06-D01 keeps the narrower
+photo/description arrangement. PT-COLUMN-CARD-01 and PT-BELOW-CARD-01 are the
+matching 부위별 카드 combinations: each uses a panel-color surface, photo, fact
+name and one-line description, without a border, shadow or new English copy.
+All four point layouts use the natural image ratio, falling back to 2:3 when
+dimensions are unknown. Existing text-only PT-EMO-TEXT fallback is retained.
+
+First choices are P01-D09/P01-SHOW-01, fabric T03-D01/T03-D06, review I09-D06,
+and FAQ T08-D07. Retired choices (including old opening, studio, color, points,
+fabric-guide and scrim layouts) remain valid but picker-hidden. First/fabric
+attachment pairs still preserve an enabled attachment when the visible base
+changes. SNS is absent from new defaults and the add menu; saved SNS runs,
+reuse behavior and the low-level compatibility addition helper remain supported.
+Intro/for-you visibility is unchanged. Frame decoration can later add combinations
+under the existing styling decoration axis; no frame, blurred surface or editor
+blur control is included in this pass.
 
 `sectionRuns.js` groups the saved blocks list by contiguous `pageSectionKey`.
 That list order is page order in both assemblers, including hidden text runs.
@@ -284,8 +329,8 @@ sig_ stays out of the ordinary example catalog and follows the existing
 server signature worker input route. New showroom seeds default to P01-SHOW-01,
 a full-width 3:4 photo followed by a 28px product name with 70px side insets.
 The generic singleLine text policy normalizes whitespace and shrinks a long name
-to its measured one-line width. P01-D01 retains its old title/ghost layout as a
-candidate under the zero-extra-generation rule above. Switching and undo keep
+to its measured one-line width. P01-D01 retains its old title/ghost layout for
+saved projects and its hidden P01-D11 attachment pair. Switching and undo keep
 the same source cards and signature recipe; existing saved designs are not migrated.
 
 `StoryboardPhotoGallery` is the storyboard-only picker. Place tabs retain
@@ -414,8 +459,8 @@ unchanged. HTTP adapter and production analysis paths do not read this flag.
 
 ## Layout interpretation
 
-Coordinates use a 1000px canvas. The catalog contains the ten layout node types
-from the contract. `x` and `w` are local to their containing panel; ordinary nodes
+Coordinates use a 1000px canvas. The catalog contains eleven layout node types,
+including the grouped `photoFlow` repeat. `x` and `w` are local to their containing panel; ordinary nodes
 flow vertically. `gap` is trailing spacing. Panels can contain local columns;
 overlays contain named groups anchored at the top, center or bottom. Text heights use the
 shared integer metrics, count Unicode code points, preserve multiple spaces,
@@ -452,11 +497,21 @@ count for the whole grid; an incomplete last row keeps that width and centers
 the remaining cells. A grid containing just one photo still uses one full-width
 column. Section headers occur only on the first
 block. Extra cards, including cards with `slotKey: null`, follow in new blocks
-inside the same section. Section spacing is added once, on the last block.
+inside the same section for legacy layouts. Curated `choiceAxes` wildcard nodes
+include those cards in their original order. `photoFlow` uses the row's actual
+cardinality and restarts its twoColumn/heroPair pattern at each contiguous group.
+Section spacing is added once, on the last block.
 If that block differs from the canvas color, a locked canvas-colored rectangle
 (`pageSectionGap: true`) covers the appended gap; no spacer block is introduced.
 `textMetrics.maxBlockHeight` is a layout verification budget, not a clipping
 operation; the editor itself does not enforce a block height ceiling.
+
+`photo` nodes may opt into `fit: contain`, `aspect: source` and a fallbackAspect.
+Positive actual image dimensions determine natural height; unknown preview
+estimates use fallbackAspect instead. The height has a 1px lower bound and no
+legacy min/max clamp, and cropTop is not applied. A wornCrop's natural ratio is
+its selected region; its saved ROI, 30%-source-width and known-native-pixel caps
+remain unchanged. Existing hidden designs keep their prior photo geometry.
 
 A photo slot matches `g`, `g1`, `g2`, or `g.1` after stripping an optional
 `<instanceKey>.` prefix. For example, `wear_styling.g1` fills the `g` slot.
@@ -477,6 +532,11 @@ Static and fact slots ignore copy results. AI slots use the provided result or
 an empty string and placeholder. When copywriting is disabled, seller MD text
 is preserved verbatim and the other AI slots remain empty. `featureCopy` takes
 priority for matching product-point descriptions when copywriting is enabled.
+The existing worker emits per-photo headline copy, not section-lead items.n.desc.
+If neither those item roles nor matching featureCopy is supplied, descriptions
+retain the existing 부위 설명 placeholder. Worn crops intentionally require item
+copy instead of featureCopy fallback. The layout update does not change that
+generation pipeline or invent missing descriptions.
 The intro `facts` slot projects confirmed color, material and fit values. Notice
 slots have `unavailable: true` and no fact path because the current analysis
 contract contains no product notice; these slots are hidden. SIZE remains absent
@@ -593,7 +653,7 @@ left in the retained shared column layout.
 ## Verification and follow-up boundaries
 
 Both test suites read `tests/fixtures/page_templates_cases.json`, which contains
-132 complete input/output cases, including independent colors for two groups on
+186 complete input/output cases, including independent colors for two groups on
 one fabric photo, optional opening copy, MD paragraphs, per-line contrast,
 white/ivory/dark swatches in both templates, and a four-color shared grid.
 Exact measurement-region parity is included. Separate semantic assertions check card counts,
@@ -613,6 +673,10 @@ seller uploads without fabric eligibility, old saved text fallback, both gradien
 new/retained showroom openings with reuse-source removal. Mock full/default
 subjects in both templates add four cases: the default has neither points nor
 fabric, while full has three structural details plus one fabric candidate.
+WOC6 adds 38 shared cases for every layout/decoration combination in both templates,
+all four fonts and known/unknown natural image dimensions. Separate engine tests
+cover place-group tails, null-slot photos, native/ROI sizing and real color-index
+binding after photo removal; all 60 focused parity inputs compare complete output.
 Fixtures are never regenerated by a test run. Run
 `node scripts/regenerate-page-template-fixtures.mjs` explicitly: it checks exact
 JS/Python agreement before writing the new expected results.

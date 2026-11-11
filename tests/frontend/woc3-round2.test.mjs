@@ -96,20 +96,23 @@ test('R2-2 invalid preview paint cannot break scrim detection and only text abov
   assert.ok(lines[1].class.includes('previewTextOnScrim'));
 });
 
-for (const [templateId, kind, defaultId] of [['show', 'first', 'P01-SHOW-01'], ['emo', 'review', 'I09-D06']]) {
+for (const [templateId, kind, defaultId, selectedId] of [
+  ['show', 'first', 'P01-SHOW-01', 'P01-D09'], ['emo', 'review', 'I09-D06', 'I09-D06'],
+]) {
   test(`R2-3 ${templateId} ${kind} starts with its default and preserves the remaining catalog order`, () => {
     const blocks = seedStoryboard(product, analysis(templateId)), run = sectionRuns(blocks).find(run => run.kind === kind);
     const designs = sectionDesignChoices(run, { storyboard: blocks, product });
     assert.equal(defaultSectionDesignId(run, blocks), defaultId); assert.equal(designs[0].id, defaultId);
     const rest = Object.keys(catalog.designs).filter(id => id !== defaultId && designs.some(design => design.id === id));
     assert.deepEqual(designs.slice(1).map(design => design.id), rest);
-    const alternate = designs[1].id, changed = changeTemplateSectionDesign(blocks, run.key, alternate, { product });
+    if (kind === 'review') assert.deepEqual(designs.map(design => design.id), [defaultId]);
+    const changed = selectedId === defaultId ? blocks : changeTemplateSectionDesign(blocks, run.key, selectedId, { product });
     const html = renderToStaticMarkup(React.createElement(Picker, { mode: 'design', runKey: run.key, blocks: changed,
       catalogs: { detailProduct: product, analysis: analysis(templateId), genExamples: [] } }));
     const cards = [...html.matchAll(/<button\b([^>]+)>([\s\S]*?)<\/button>/g)].filter(([, attrs]) => attrs.includes('aria-pressed'));
     assert.match(cards[0][2], new RegExp(`<strong>${catalog.designs[defaultId].displayName}</strong>`));
     assert.match(cards[0][2], /<small>기본<\/small>/);
-    assert.equal(attrs(cards.find(([, , body]) => body.includes(`<strong>${catalog.designs[alternate].displayName}</strong>`))[1])['aria-pressed'], 'true');
+    assert.equal(attrs(cards.find(([, , body]) => body.includes(`<strong>${catalog.designs[selectedId].displayName}</strong>`))[1])['aria-pressed'], 'true');
     assert.equal(validateStoryboardV4(changed), changed);
   });
 }

@@ -9,7 +9,7 @@ import {
 import { pageTemplatesCatalog } from "../src/lib/pageTemplates/catalog.js";
 import { seedStoryboard } from "../src/lib/pageTemplates/seed.js";
 import { addTemplateSection, removeTemplateSection, changeTemplateSectionDesign } from "../src/lib/pageTemplates/sectionActions.js";
-import { sectionRuns } from "../src/lib/pageTemplates/sectionRuns.js";
+import { sectionRuns, changeTemplateSectionDesign as restoreSavedDesign } from "../src/lib/pageTemplates/sectionRuns.js";
 import { patchStoryboardPhoto } from "../src/lib/pageTemplates/photoActions.js";
 import { assignGenerationExamples } from "../src/lib/generationExamples.js";
 import { validateStoryboardV4 } from "../src/lib/pageTemplates/validateStoryboard.js";
@@ -30,7 +30,7 @@ const translateCommon = value => {
         .map(([key, item]) => [key.replace(/^guide\./, 'emo.'), translateCommon(item)]));
     return value;
 };
-fixture.cases = fixture.cases.filter(item => !/^woc[235]-/.test(item.name)).map(item => {
+fixture.cases = fixture.cases.filter(item => !/^woc[2356]-/.test(item.name)).map(item => {
     if (!item.name.startsWith('guide-')) return item;
     const input = translateCommon(item.input);
     const album = item.name.includes('fit-album') || item.name === 'guide-3-point';
@@ -76,7 +76,7 @@ function appendCase(name, input, cutMetadata = { width: 1024, height: 1365 }) {
     if (input.storyboard[0]?.pageSectionKey === 'show.first') input.storyboard = assignGenerationExamples(input.storyboard,
         { product: input.product, analysis: input.analysis, gender: 'women', projectId: 'fixture-woc2', catalog: [], onlyBlockIds: [input.storyboard[0].id] }).blocks;
     input.cutResults = input.storyboard.filter(block => block.source === 'ai')
-        .map(block => ({ blockId: block.id, imageUrl: `photo:${block.id}`, ...cutMetadata }));
+        .map(block => ({ blockId: block.id, imageUrl: `photo:${block.id}`, ...(typeof cutMetadata === 'function' ? cutMetadata(block) : cutMetadata) }));
     input.copyResults = [];
     fixture.cases.push({ name, input });
 }
@@ -160,10 +160,10 @@ for (const templateId of ['emo', 'show']) {
         const present = initial.some(block => block.pageSectionKind === kind) ? initial : addTemplateSection(initial, product, analysis, kind);
         const key = present.find(block => block.pageSectionKind === kind).pageSectionKey;
         appendCase(`woc3-${templateId}-${kind}-gradient`, { product, analysis,
-            storyboard: changeTemplateSectionDesign(present, key, designId, { product }) });
+            storyboard: restoreSavedDesign(present, key, designId) });
     }
     if (templateId === 'show') {
-        const base = changeTemplateSectionDesign(initial, 'show.first', 'P01-D11', { product });
+        const base = restoreSavedDesign(initial, 'show.first', 'P01-D11');
         const ghost = addStageAddition(base, 'show.first', stageAdditions(base, 'show.first', { product, analysis })[0], { product, analysis });
         appendCase('woc3-show-retained-ghost', { product, analysis, storyboard: ghost });
         appendCase('woc3-show-ghost-source-removed', { product, analysis,
@@ -178,7 +178,7 @@ for (const templateId of ['emo', 'show']) {
     const initial = seedStoryboard(product, analysis, { projectId: 'fixture-woc5' });
     for (const [kind, base] of [['first', 'P01-D11'], ['first', 'P01-D09'], ['first', 'P01-SHOW-01'], ['fabric', 'T03-D01'], ['fabric', 'T03-D06']]) {
         const run = sectionRuns(initial).find(run => run.kind === kind);
-        const board = changeTemplateSectionDesign(initial, run.key, base, { product });
+        const board = restoreSavedDesign(initial, run.key, base);
         const paired = addStageAddition(board, run.key, stageAdditions(board, run.key, { product, analysis })[0], { product, analysis });
         appendCase(`woc5-${templateId}-${base}-reuse`, { product, analysis, storyboard: paired });
     }
@@ -195,7 +195,36 @@ for (const templateId of ['emo', 'show']) {
     cropBoard = addStageAddition(cropBoard, points.key, stageAdditions(cropBoard, points.key, { product, analysis: cropAnalysis })[0], { product, analysis: cropAnalysis });
     appendCase(`woc5-${templateId}-crops-and-fabric`, { product, analysis: cropAnalysis, storyboard: cropBoard });
 }
-for (const item of fixture.cases.filter(item => /^woc[235]-/.test(item.name))) validateStoryboardV4(item.input.storyboard);
+// WOC6 curated combinations, real detail ratio, style order and natural fallbacks.
+for (const templateId of ['emo', 'show']) {
+    const source = fixture.cases.find(item => item.name === `${templateId}-2-mono`).input;
+    const product = structuredClone(source.product);
+    const analysis = { ...structuredClone(source.analysis), targetGenders: ['women'], detailRecommendations: recommendation(3) };
+    let initial = seedStoryboard(product, analysis, { projectId: 'fixture-woc6' });
+    if (!sectionRuns(initial).some(run => run.kind === 'wear' && run.usage === 'styling')) {
+        initial = addTemplateSection(initial, product, analysis, 'wear', 'styling');
+        const run = sectionRuns(initial).find(run => run.kind === 'wear' && run.usage === 'styling');
+        const addition = stageAdditions(initial, run.key, { product, analysis }).find(item => item.kind === 'spaceMember');
+        if (!addition) throw new Error('WOC6 styling fixture needs a third published member');
+        initial = addStageAddition(initial, run.key, addition, { product, analysis });
+    }
+    const metrics = block => block.shot === 'detail' ? { width: 1024, height: 1536 } : { width: 1024, height: 1280 };
+    for (const design of Object.values(pageTemplatesCatalog.designs).filter(design => !design.pickerHidden && design.choiceAxes)) {
+        const run = sectionRuns(initial).find(run => run.kind === design.kind && (design.kind !== 'wear' || run.usage === design.usage));
+        const storyboard = changeTemplateSectionDesign(initial, run.key, design.id, { product });
+        if (storyboard.find(b => b.pageSectionKey === run.key).pageDesignId !== design.id) throw new Error(`WOC6 fixture design rejected: ${design.id}`);
+        appendCase(`woc6-${templateId}-${design.id}`, { product, analysis, storyboard }, metrics);
+        const saved = fixture.cases.at(-1).input, lead = saved.storyboard.find(b => b.pageSectionKind === 'points' && b.source === 'text');
+        saved.copyResults = [{ blockId: lead.id, texts: ['목선 마감', '여밈 마감', '소맷단 마감'].map((text, i) => ({ role: `items.${i}.desc`, text })) }];
+    }
+    for (const fontStyle of Object.keys(pageTemplatesCatalog.fontStyles)) {
+        appendCase(`woc6-${templateId}-font-${fontStyle}`, { product, analysis: { ...analysis, pageStyle: { ...analysis.pageStyle, fontStyle } }, storyboard: initial }, metrics);
+    }
+    for (const [name, size] of [['unknown', {}], ['wide', { width: 1800, height: 900 }], ['portrait', { width: 600, height: 900 }]]) {
+        appendCase(`woc6-${templateId}-detail-${name}`, { product, analysis, storyboard: initial }, block => block.shot === 'detail' ? size : metrics(block));
+    }
+}
+for (const item of fixture.cases.filter(item => /^woc[2356]-/.test(item.name))) validateStoryboardV4(item.input.storyboard);
 const outputs = fixture.cases.map(({ input }) => ({
     blocks: assemblePage(input),
     regions: collectOverlayRegions(input),
@@ -211,7 +240,7 @@ from page_template_cases import assemble_input,collect_input_regions
 from app.agents.content_roles import validate_storyboard_v4
 values=json.load(sys.stdin)
 for value in values:
- if value['storyboard'][0]['id'].startswith(('woc2-', 'woc3-', 'woc5-')): validate_storyboard_v4(value['storyboard'])
+ if value['storyboard'][0]['id'].startswith(('woc2-', 'woc3-', 'woc5-', 'woc6-')): validate_storyboard_v4(value['storyboard'])
 print(json.dumps([dict(blocks=assemble_input(c),regions=collect_input_regions(c)) for c in values],ensure_ascii=False))
 `,
     ],

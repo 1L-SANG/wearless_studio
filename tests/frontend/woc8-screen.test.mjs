@@ -11,7 +11,7 @@ test('WOC8 carousel arrows apply and save through the actual mannequin-locked mo
   const h = await storyboardScreenHarness(); t.after(() => h.close()); h.render(); await h.flush();
   assert.equal(h.DB.analysis.pageStyle.fontStyle, 'template');
   button(h.tree, '다음 글자 스타일').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();
-  assert.equal(h.DB.analysis.pageStyle.fontStyle, 'serif');
+  assert.equal(h.DB.analysis.pageStyle.fontStyle, 'plainGothic');
   button(h.tree, '이전 글자 스타일').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();
   assert.equal(h.DB.analysis.pageStyle.fontStyle, 'template');
   button(h.tree, '이전 글자 스타일').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();

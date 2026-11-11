@@ -86,15 +86,16 @@ test('WOC1b-2 studio sets show their own members first and keep other studio exa
   assert.doesNotMatch(textOf(tree), /이 컷만 다른 사진으로 바꾸기/); h.close();
 });
 
-for (const count of [2, 10]) test(`WOC1b-3 daily-wear design cards use four leading photos with repeats, even with ${count} actual cuts`, () => {
+for (const [count, previewPhotos] of [[1, 0], [2, 8], [10, 12]]) test(`WOC6 daily-wear choices use four sample photos only for eligible layouts with ${count} actual cuts`, () => {
   const original = seedStoryboard(product, analysis('emo')), run = sectionRuns(original).find(run => run.usage === 'styling');
   const photos = Array.from({ length: count }, (_, index) => ({ ...run.blocks[index % run.blocks.length], id: `actual:${index}`,
     source: 'mine', ownImages: [`photo:${index}`], thumb: `photo:${index}`, slotKey: `wear_styling.g${index + 1}` }));
   const blocks = [...original.slice(0, run.start), ...photos, ...original.slice(run.end)], snapshot = structuredClone(blocks);
-  const selected = sectionRuns(blocks).find(item => item.key === run.key);
   const html = renderToStaticMarkup(React.createElement(Picker, { mode: 'design', runKey: run.key, blocks,
     catalogs: { ...catalogs, detailProduct: product, analysis: analysis('emo') } }));
-  assert.equal((html.match(/previewWirePhoto/g) || []).length, sectionDesignChoices(selected, { storyboard: blocks }).length * 4);
+  assert.equal((html.match(/previewWirePhoto/g) || []).length, previewPhotos);
+  const sample = sectionDesignPreviewSample(blocks, run.key).filter(block => block.pageSectionKey === run.key && block.source !== 'text');
+  assert.equal(new Set(sample.map(block => block.spaceGroupId)).size, 1, 'display-only samples make hero and two-column layouts distinguishable');
   assert.ok(!html.includes('href="photo:4"')); assert.deepEqual(blocks, snapshot);
 });
 

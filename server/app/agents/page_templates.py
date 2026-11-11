@@ -13,7 +13,8 @@ FONTS = {"Pretendard", "Cormorant", "Roboto Mono", "Cal Sans", "Gowun Dodum", "G
 FACT_PATHS = {"product.name", "product.colors[].name", "product.colors[].swatchId", "analysis.materials", "analysis.fit", "analysis.detailRecommendations.candidates[].label", "analysis.featureCopy", "analysis.mdComment", "profiles.display_name"}
 COLORS = {"ink", "muted", "accentInk", "accentBg", "accentLine", "panel", "invertBg", "invertInk", "canvas", "onPhoto", "summaryBg", "pointBg"}
 STYLES = {"titleKo", "labelEn", "body", "small", "num"}
-LAYOUT_TYPES = {"text", "photo", "photoStack", "photoGrid", "overlay", "pointRows", "list", "factTable", "panel", "rule"}
+LAYOUT_TYPES = {"text", "photo", "photoStack", "photoGrid", "photoFlow", "overlay", "pointRows", "list", "factTable", "panel", "rule"}
+CHOICE_LAYOUTS = {"wear": ("column", "twoColumn", "heroPair"), "color_product": ("column", "grid"), "points": ("column", "below")}
 HEX = re.compile(r"#[\da-f]{6}\Z", re.I)
 
 
@@ -25,8 +26,12 @@ def _opacity(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 1
 
 
+def _aspect_ratio(value):
+    return isinstance(value, str) and re.fullmatch(r"\d+(?:\.\d+)?/\d+(?:\.\d+)?", value) and all(float(part) > 0 for part in value.split("/"))
+
+
 def walk_layout(nodes):
-    for node in nodes or []:
+    for node in nodes if isinstance(nodes, list) else []:
         yield node
         for key in ("nodes", "items", "captions"):
             yield from walk_layout(node.get(key))
@@ -121,6 +126,18 @@ def validate_catalog(catalog):
         check(design.get("usage") in ("styling", "fit") if design.get("kind") == "wear" else design.get("usage") is None, f"design usage {key}")
         if "pickerHidden" in design:
             check(isinstance(design["pickerHidden"], bool), f"pickerHidden {key}")
+        if "choiceAxes" in design:
+            axes = design["choiceAxes"]
+            layout = axes.get("layout") if isinstance(axes, dict) else None
+            decoration = axes.get("decoration") if isinstance(axes, dict) else None
+            check(isinstance(layout, dict) and isinstance(decoration, dict)
+                  and layout.get("id") in CHOICE_LAYOUTS.get(design.get("kind"), ())
+                  and decoration.get("id") in ("basic", "card")
+                  and all(isinstance(axis.get("name"), str) and axis["name"].strip() for axis in (layout, decoration)),
+                  f"choice axes {key}")
+        for prop in ("minPhotos", "minColors"):
+            if prop in design:
+                check(_positive(design[prop]) and design[prop] % 1 == 0, f"design minimum {key}.{prop}")
         roles, photos, group_ids = set(), set(), set()
         for node in walk_layout(design.get("layout")):
             for group in [*(node.get("groups") or []), *(node.get("overlayGroups") or [])]:
@@ -141,6 +158,20 @@ def validate_catalog(catalog):
                           and math.isfinite(policy["edgeInsetRatio"]) and 0 <= policy["edgeInsetRatio"] < .5,
                           f"overlay position {key}.{group_id}")
             check(node.get("type") in LAYOUT_TYPES, f"layout {key}.{node.get('type')}")
+            if node.get("type") == "photoFlow":
+                gap = node.get("gap")
+                check(isinstance(node.get("slot"), str) and bool(node["slot"])
+                      and node.get("pattern") in ("twoColumn", "heroPair")
+                      and node.get("groupBy") in ("spaceGroup", "none")
+                      and _aspect_ratio(node.get("aspect"))
+                      and isinstance(gap, (int, float)) and not isinstance(gap, bool) and math.isfinite(gap) and gap >= 0
+                      and isinstance(node.get("captions"), list), f"photoFlow {key}")
+            if "fit" in node:
+                check(node.get("type") == "photo" and node["fit"] in ("contain", "cover"), f"photo fit {key}")
+            if "fallbackAspect" in node:
+                check(node.get("type") == "photo" and node.get("aspect") == "source" and _aspect_ratio(node["fallbackAspect"]), f"fallback aspect {key}")
+            if node.get("fit") == "contain":
+                check("cropTop" not in node, f"contain crop {key}")
             if node.get("scrim") is not None:
                 paint = node["scrim"]
                 check(node.get("type") == "overlay" and isinstance(paint, dict)
@@ -217,7 +248,7 @@ def validate_catalog(catalog):
                     check(isinstance(value, (int, float)) and math.isfinite(value) and value >= 0, f"geometry {key}.{prop}")
             if node.get("aspect") not in (None, "source"):
                 value = node["aspect"]
-                check(isinstance(value, str) and re.fullmatch(r"\d+(?:\.\d+)?/\d+(?:\.\d+)?", value) and all(float(v) > 0 for v in value.split("/")), f"aspect {key}")
+                check(_aspect_ratio(value), f"aspect {key}")
             if node.get("cropTop") is not None:
                 value = node["cropTop"]
                 check(isinstance(value, (int, float)) and math.isfinite(value) and 0 <= value < 1, f"cropTop {key}")

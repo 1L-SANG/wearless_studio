@@ -90,7 +90,6 @@ test('R2-5 the floating action has no copywriting switch', () => {
   assert.doesNotMatch(markup, /카피라이팅|role="switch"/); assert.match(markup, /다음: 마네킹컷 선택/);
 });
 test('R2-6 paired designs have seller names and enter through the pale slot without another generated card', () => {
-  assert.equal(Object.keys(catalog.designs).length, 32);
   for (const design of Object.values(catalog.designs)) assert.ok(typeof design.displayName === 'string' && design.displayName.trim() && design.displayName.length <= 24, design.id);
   const blocks = seedStoryboard(product, analysis('emo'));
   const key = blocks[0].pageSectionKey, context = { product, analysis: analysis('emo') };
@@ -104,15 +103,17 @@ test('R2-6 paired designs have seller names and enter through the pale slot with
   assert.deepEqual(changed.map(block => block.id), blocks.map(block => block.id));
   assert.equal(changed.filter(block => block.source === 'ai').length, blocks.filter(block => block.source === 'ai').length);
 });
-test('R2-6 each section instance has exactly one default label and a named, fitted preview per candidate', () => {
+test('R2-6 visible design choices retain default labels and fitted previews while single-option axes stay hidden', () => {
   for (const templateId of ['emo', 'show']) {
     const blocks = seedStoryboard(product, analysis(templateId));
     for (const run of sectionRuns(blocks)) {
       const markup = html(Picker, { mode: 'design', runKey: run.key, blocks,
         catalogs: { detailProduct: product, analysis: analysis(templateId), genExamples: [] } });
-      assert.equal((markup.match(/<small>기본<\/small>/g) || []).length, 1, run.key);
+      const singleColorAxis = run.kind === 'color_product';
+      assert.equal((markup.match(/<small>기본<\/small>/g) || []).length, singleColorAxis ? 0 : 1, run.key);
       assert.doesNotMatch(markup, /<strong>디자인 \d/);
-      assert.ok(markup.includes('height="100%"'), run.key);
+      assert.equal(markup.includes('height="100%"'), !singleColorAxis, run.key);
+      if (singleColorAxis) assert.doesNotMatch(markup, /aria-pressed=|role="group"/);
       if (run.kind === 'fabric') assert.match(markup, /aria-pressed="true"/, 'the active text-only fallback is selected');
     }
   }

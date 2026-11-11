@@ -406,11 +406,35 @@ def _select_cards(node, ctx):
         return [ctx.card]
     if node.get("slots"):
         return [_resolve_photo(slot, ctx) for slot in node["slots"]]
+    # Curated wildcards include loose/similar photos in place; legacy layouts
+    # keep their existing overflow behavior for photos without slot keys.
+    if node.get("slot") == "*" and (node["type"] == "photoFlow" or ctx.catalog["designs"][ctx.design_id].get("choiceAxes")):
+        return ctx.photos
     return [card for card in ctx.photos if _matches(_local_slot(card, ctx.section), node.get("slot") or "*")]
+
+
+def _natural_photo(node):
+    return node.get("fit") == "contain" and node.get("aspect") == "source"
+
+
+def _known_image_size(meta):
+    return _number(meta.get("width")) > 0 and _number(meta.get("height")) > 0 and meta.get("dimensionsKnown") is not False
+
+
+def _natural_image_size(node, meta, catalog):
+    if _known_image_size(meta):
+        return _number(meta["width"]), _number(meta["height"])
+    return tuple(map(float, (node.get("fallbackAspect") or catalog["textMetrics"]["fallbackAspect"]).split("/")))
 
 
 def _image_height(node, width, card, ctx):
     meta = ctx.cuts.get((card or {}).get("id")) or {}
+    if _natural_photo(node):
+        sw, sh = _natural_image_size(node, meta, ctx.catalog)
+        item = (card or {}).get("pointItem") or {}
+        region = item["cropRegion"] if item.get("kind") == "wornCrop" else None
+        # A derived photo's natural aspect belongs to its selected region.
+        return max(1, _round(width * sh * (region[3] if region else 1) / (sw * (region[2] if region else 1))))
     ratio = node.get("aspect")
     if not ratio or ratio == "source":
         ratio = f"{meta['width']}/{meta['height']}" if _number(meta.get("width")) > 0 and _number(meta.get("height")) > 0 else ctx.catalog["textMetrics"]["fallbackAspect"]
@@ -436,7 +460,7 @@ def _render_photo(node, x, y, width, ctx):
             element["cutType"] = card["cutType"]
         if card.get("pageSectionKey") == ctx.key:
             ctx.used.add(card["id"])
-    if node.get("cropTop"):
+    if node.get("cropTop") and node.get("fit") != "contain":
         sw = _number(meta.get("width")) if _number(meta.get("width")) > 0 else 2
         sh = _number(meta.get("height")) if _number(meta.get("height")) > 0 else 3
         scale = max(width / sw, height / (sh * (1 - node["cropTop"])))
@@ -445,10 +469,10 @@ def _render_photo(node, x, y, width, ctx):
     if ((card or {}).get("pointItem") or {}).get("kind") == "wornCrop":
         item = card["pointItem"]
         rx, ry, rw, rh = item["cropRegion"]
-        sw = _number(meta.get("width")) if _number(meta.get("width")) > 0 else 2
-        sh = _number(meta.get("height")) if _number(meta.get("height")) > 0 else 3
-        dimensions_known = (_number(meta.get("width")) > 0 and _number(meta.get("height")) > 0
-                            and meta.get("dimensionsKnown") is not False)
+        sw, sh = (_natural_image_size(node, meta, ctx.catalog) if _natural_photo(node) else
+                  (_number(meta.get("width")) if _number(meta.get("width")) > 0 else 2,
+                   _number(meta.get("height")) if _number(meta.get("height")) > 0 else 3))
+        dimensions_known = _known_image_size(meta)
         scale = min(max(width / (sw * rw), height / (sh * rh)), width / (sw * .3),
                     1 if dimensions_known else math.inf)
         # Keep undersized native images small instead of undoing the pixel cap.
@@ -697,16 +721,37 @@ def _render_fact_table(node, x, y, width, ctx):
     return elements, cursor - y
 
 
+def _photo_flow_rows(node, cards):
+    def group_key(card):
+        if node.get("groupBy") == "none":
+            return "all"
+        return f"space:{card['spaceGroupId']}" if (card or {}).get("spaceGroupId") else "color:" + _string((card or {}).get("colorId"))
+
+    rows, start = [], 0
+    while start < len(cards):
+        end = start + 1
+        while end < len(cards) and group_key(cards[end]) == group_key(cards[start]):
+            end += 1
+        index, row = start, 0
+        while index < end:
+            remaining = end - index
+            count = min(remaining, 2 if node["pattern"] == "twoColumn" or remaining <= 2 or row % 2 else 1)
+            rows.append((index, cards[index:index + count]))
+            index, row = index + count, row + 1
+        start = end
+    return rows
+
+
 def _render_repeated(node, cards, ctx, x, y, width):
-    if node["type"] == "photoGrid":
-        columns = min(node["columns"], ctx.grid_card_count)
+    if node["type"] in ("photoGrid", "photoFlow"):
+        columns = len(cards) if node["type"] == "photoFlow" else min(node["columns"], ctx.grid_card_count)
         gap = node.get("gap") or 0
         cell_w = math.floor((width - gap * (columns - 1)) / columns)
         start_x = x + ((width - (len(cards) * cell_w + gap * (len(cards) - 1))) / 2 if len(cards) < columns else 0)
         cells = []
         for index, card in enumerate(cards):
             color_index = next((i for i, color in enumerate(ctx.product.get("colors") or []) if _string(color.get("id")) == _string((card or {}).get("colorId"))), index)
-            item = _fork(ctx, card=card, index=color_index if ctx.kind["kind"] == "color_product" else ctx.index + index, target_slot=node["slots"][ctx.index + index] if node.get("slots") else None)
+            item = _fork(ctx, card=card, index=color_index if node["type"] == "photoGrid" and ctx.kind["kind"] == "color_product" else ctx.index + index, target_slot=node["slots"][ctx.index + index] if node.get("slots") else None)
             px = start_x + index * (cell_w + gap)
             photo, ph, _ = _render_photo({"type": "photo", "slot": "$current", "aspect": node.get("aspect")}, px, y, cell_w, item)
             captions, ch = _render_nodes(node.get("captions"), px, y + ph + 16, cell_w, item)
@@ -715,7 +760,11 @@ def _render_repeated(node, cards, ctx, x, y, width):
         return [el for elements, _ in cells for el in elements], max(0, *(h for _, h in cells))
     card = cards[0]
     if node["type"] == "photoStack":
-        return _render_nodes(node.get("items"), x, y, width, _fork(ctx, card=card))
+        item = _fork(ctx, card=card)
+        if ctx.kind["kind"] == "color_product" and ctx.catalog["designs"][ctx.design_id].get("choiceAxes"):
+            item.index = next((i for i, color in enumerate(ctx.product.get("colors") or [])
+                               if _string(color.get("id")) == _string((card or {}).get("colorId"))), ctx.index)
+        return _render_nodes(node.get("items"), x, y, width, item)
     pad, gap = node.get("padding") or 0, node.get("gap") or 0
     photo_w = min(node["photoWidth"], width - 2 * pad)
     reverse = node.get("alternate") and ctx.index % 2
@@ -815,7 +864,21 @@ def assemble_v4(storyboard, cut_results, copy_results, product, copywriting, *, 
         for node in design["layout"]:
             if node.get("whenTemplate") and node["whenTemplate"] != tokens["template"]["id"]:
                 continue
-            if node["type"] in ("photoStack", "pointRows", "photoGrid"):
+            if node["type"] == "photoFlow":
+                rows = _photo_flow_rows(node, _select_cards(node, ctx))
+                if any(el["type"] == "image" for el in elements):
+                    flush()
+                for row_index, (index, cards) in enumerate(rows):
+                    if row_index:
+                        flush()
+                    result, height = _render_repeated(node, cards, _fork(ctx, index=index), pad, y, width)
+                    elements.extend(result)
+                    y += height
+                    if row_index + 1 < len(rows):
+                        y += tokens["template"]["spacing"]["photoGap"]
+                if rows:
+                    y += node.get("gap") or 0
+            elif node["type"] in ("photoStack", "pointRows", "photoGrid"):
                 selected = _select_cards(node, ctx)
                 step = node["columns"] if node["type"] == "photoGrid" else 1
                 if any(el["type"] == "image" for el in elements):

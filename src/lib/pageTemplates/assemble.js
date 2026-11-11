@@ -632,6 +632,10 @@ function renderText(node, x, y, width, ctx) {
 function selectCards(node, ctx) {
     if (node.slot === "$current") return [ctx.card || null];
     if (node.slots) return node.slots.map((slot) => resolvePhoto(slot, ctx));
+    // Loose/similar photos lack slot keys. Curated wildcards include them in
+    // place; saved legacy layouts retain their existing overflow behavior.
+    if (node.slot === "*" && (node.type === "photoFlow" || ctx.catalog.designs[ctx.designId]?.choiceAxes))
+        return ctx.photos;
     return ctx.photos.filter((card) =>
         matches(localSlot(card, ctx.section), node.slot || "*"),
     );
@@ -649,8 +653,22 @@ function resolvePhoto(slotKey, ctx) {
     return reuseSourceForSlot(ctx.storyboard, slot, ctx.product);
 }
 
+const naturalPhoto = (node) => node.fit === "contain" && node.aspect === "source";
+const knownImageSize = (meta) => number(meta.width) > 0 && number(meta.height) > 0
+    && meta.dimensionsKnown !== false;
+const naturalImageSize = (node, meta, catalog) => knownImageSize(meta)
+    ? [number(meta.width), number(meta.height)]
+    : (node.fallbackAspect || catalog.textMetrics.fallbackAspect).split("/").map(Number);
+
 function imageHeight(node, width, card, ctx) {
     const meta = ctx.cuts[card?.id] || {};
+    if (naturalPhoto(node)) {
+        const [sw, sh] = naturalImageSize(node, meta, ctx.catalog);
+        const region = card?.pointItem?.kind === "wornCrop" ? card.pointItem.cropRegion : null;
+        // The selected region is the derived photo; sizing it as the full
+        // original would crop the same source a second time.
+        return Math.max(1, round(width * sh * (region?.[3] || 1) / (sw * (region?.[2] || 1))));
+    }
     let ratio = node.aspect;
     if (!ratio || ratio === "source")
         ratio =
@@ -705,7 +723,7 @@ function renderPhoto(node, x, y, width, ctx) {
         if (card.cutType) element.cutType = card.cutType;
         if (card.pageSectionKey === ctx.key) ctx.used.add(card.id);
     }
-    if (node.cropTop) {
+    if (node.cropTop && node.fit !== "contain") {
         const sw = number(meta.width) > 0 ? number(meta.width) : 2,
             sh = number(meta.height) > 0 ? number(meta.height) : 3;
         const scale = Math.max(width / sw, h / (sh * (1 - node.cropTop)));
@@ -720,10 +738,11 @@ function renderPhoto(node, x, y, width, ctx) {
     }
     if (card?.pointItem?.kind === "wornCrop") {
         const [rx, ry, rw, rh] = card.pointItem.cropRegion;
-        const sw = number(meta.width) > 0 ? number(meta.width) : 2;
-        const sh = number(meta.height) > 0 ? number(meta.height) : 3;
-        const dimensionsKnown = number(meta.width) > 0 && number(meta.height) > 0
-            && meta.dimensionsKnown !== false;
+        const [sw, sh] = naturalPhoto(node)
+            ? naturalImageSize(node, meta, ctx.catalog)
+            : [number(meta.width) > 0 ? number(meta.width) : 2,
+                number(meta.height) > 0 ? number(meta.height) : 3];
+        const dimensionsKnown = knownImageSize(meta);
         const scale = Math.min(
             Math.max(width / (sw * rw), h / (sh * rh)),
             width / (sw * 0.3),
@@ -1421,9 +1440,27 @@ function renderFactTable(node, x, y, width, ctx) {
     return { elements, h: cursor - y };
 }
 
+function photoFlowRows(node, cards) {
+    const groupKey = (card) => node.groupBy === "none" ? "all"
+        : card?.spaceGroupId ? `space:${card.spaceGroupId}` : `color:${card?.colorId ?? ""}`;
+    const rows = [];
+    for (let start = 0; start < cards.length;) {
+        let end = start + 1;
+        while (end < cards.length && groupKey(cards[end]) === groupKey(cards[start])) end += 1;
+        for (let index = start, row = 0; index < end; row += 1) {
+            const remaining = end - index;
+            const count = Math.min(remaining, node.pattern === "twoColumn" || remaining <= 2 ? 2 : row % 2 ? 2 : 1);
+            rows.push({ index, cards: cards.slice(index, index + count) });
+            index += count;
+        }
+        start = end;
+    }
+    return rows;
+}
+
 function renderRepeated(node, cards, ctx, x, y, width) {
-    if (node.type === "photoGrid") {
-        const columns = Math.min(node.columns, ctx.gridCardCount);
+    if (node.type === "photoGrid" || node.type === "photoFlow") {
+        const columns = node.type === "photoFlow" ? cards.length : Math.min(node.columns, ctx.gridCardCount);
         const gap = node.gap || 0,
             cellW = Math.floor((width - gap * (columns - 1)) / columns);
         const startX =
@@ -1440,7 +1477,7 @@ function renderRepeated(node, cards, ctx, x, y, width) {
                 ...ctx,
                 card,
                 index:
-                    ctx.kind.kind === "color_product" && colorIndex >= 0
+                    node.type === "photoGrid" && ctx.kind.kind === "color_product" && colorIndex >= 0
                         ? colorIndex
                         : ctx.index + i,
                 targetSlot: node.slots?.[ctx.index + i],
@@ -1482,8 +1519,14 @@ function renderRepeated(node, cards, ctx, x, y, width) {
         };
     }
     const card = cards[0];
-    if (node.type === "photoStack")
-        return renderNodes(node.items, x, y, width, { ...ctx, card });
+    if (node.type === "photoStack") {
+        const item = { ...ctx, card };
+        if (ctx.kind.kind === "color_product" && ctx.catalog.designs[ctx.designId]?.choiceAxes) {
+            const colorIndex = (ctx.product.colors || []).findIndex((color) => string(color.id) === string(card?.colorId));
+            if (colorIndex >= 0) item.index = colorIndex;
+        }
+        return renderNodes(node.items, x, y, width, item);
+    }
     const pad = node.padding || 0,
         photoW = Math.min(node.photoWidth, width - 2 * pad),
         gap = node.gap || 0;
@@ -1718,7 +1761,18 @@ export function assemblePage({
         for (const node of design.layout) {
             if (node.whenTemplate && node.whenTemplate !== tokens.template.id)
                 continue;
-            if (["photoStack", "pointRows", "photoGrid"].includes(node.type)) {
+            if (node.type === "photoFlow") {
+                const rows = photoFlowRows(node, selectCards(node, ctx));
+                if (elements.some((el) => el.type === "image")) flush();
+                rows.forEach((row, index) => {
+                    if (index) flush();
+                    const result = renderRepeated(node, row.cards, { ...ctx, index: row.index }, pad, y, width);
+                    elements.push(...result.elements);
+                    y += result.h;
+                    if (index + 1 < rows.length) y += tokens.template.spacing.photoGap;
+                });
+                if (rows.length) y += node.gap || 0;
+            } else if (["photoStack", "pointRows", "photoGrid"].includes(node.type)) {
                 const selected = selectCards(node, ctx);
                 const step = node.type === "photoGrid" ? node.columns : 1;
                 if (elements.some((el) => el.type === "image")) flush();

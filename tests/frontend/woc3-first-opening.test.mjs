@@ -52,17 +52,17 @@ test('E10 a long product name still occupies one line and both assemblers agree 
 test('E10 a pale ghost toggle reuses a cut, survives design selection and removes back to the original board', () => {
   const initial = board(), snapshot = structuredClone(initial), run = sectionRuns(initial)[0];
   const choices = sectionDesignChoices(run, { storyboard: initial, product });
-  assert.ok(choices.some(d => d.id === 'P01-SHOW-01')); assert.ok(choices.some(d => d.id === 'P01-D11'));
+  assert.ok(choices.some(d => d.id === 'P01-SHOW-01')); assert.ok(choices.some(d => d.id === 'P01-D09'));
   assert.ok(choices.every(d => !d.pickerHidden));
   assert.equal(changeTemplateSectionDesign(initial, run.key, 'P01-D01', { product }), initial);
   assert.equal(sectionDesignPhotoCount(run, 'P01-SHOW-01', initial), 1);
   assert.equal(sectionDesignPhotoCount(run, 'P01-D01', initial), 2, 'visual positions remain separate from generation eligibility');
-  const base = changeTemplateSectionDesign(initial, run.key, 'P01-D11', { product });
+  const base = changeTemplateSectionDesign(initial, run.key, 'P01-D09', { product });
   const tile = stageAdditions(base, run.key, { product, analysis }).find(item => item.id === 'firstGhost');
   assert.ok(tile);
   const changed = addStageAddition(base, run.key, tile, { product, analysis });
   assert.notEqual(changed, initial); assert.equal(validateStoryboardV4(changed), changed);
-  assert.equal(changed[0].pageDesignId, 'P01-D01');
+  assert.equal(changed[0].pageDesignId, 'P01-D09-G');
   assert.equal(uniqueGenerationCutCount(changed), uniqueGenerationCutCount(initial));
   assert.deepEqual(changed.map(b => b.id), initial.map(b => b.id));
   assert.equal(elements(opening(input(changed))).filter(el => el.type === 'image').length, 2);
@@ -80,7 +80,7 @@ test('E10 a missing borrowed source adds a cut only through the explicit pale gh
   assert.ok(sectionDesignChoices(run, { storyboard: removed, product }).some(d => d.id === 'P01-SHOW-01'));
   assert.ok(!sectionDesignChoices(run, { storyboard: removed, product }).some(d => d.id === 'P01-D01'));
   assert.equal(changeTemplateSectionDesign(removed, run.key, 'P01-D01', { product }), removed);
-  const base = changeTemplateSectionDesign(removed, run.key, 'P01-D11', { product });
+  const base = changeTemplateSectionDesign(removed, run.key, 'P01-D09', { product });
   assert.equal(uniqueGenerationCutCount(base), uniqueGenerationCutCount(removed));
   const tile = stageAdditions(base, run.key, { product, analysis }).find(item => item.id === 'firstGhost');
   assert.ok(tile);
@@ -96,8 +96,8 @@ test('E10 visible design actions without a product option retain an enabled ghos
   const seed = board();
   const tile = stageAdditions(seed, 'show.first', { product, analysis }).find(item => item.id === 'firstGhost');
   const initial = addStageAddition(seed, 'show.first', tile, { product, analysis });
-  const changed = changeTemplateSectionDesign(initial, 'show.first', 'P01-D11');
-  assert.ok(changed.some(block => block.pageDesignId === 'P01-D01'));
+  const changed = changeTemplateSectionDesign(initial, 'show.first', 'P01-D09');
+  assert.ok(changed.some(block => block.pageDesignId === 'P01-D09-G'));
   assert.equal(uniqueGenerationCutCount(changed), uniqueGenerationCutCount(initial));
   assert.deepEqual(changed.map(block => block.id), initial.map(block => block.id));
   assert.equal(validateStoryboardV4(changed), changed);

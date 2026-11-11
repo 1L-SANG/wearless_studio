@@ -54,7 +54,8 @@ test('WOC8 one current two-line specimen has catalog role typography for every t
     assert.ok(sample, 'the current value is exposed on its specimen');
     assert.equal(nodes(tree).filter(node => node.props?.['data-font-style']).length, 1);
     assert.equal(sample.props['data-font-style'], value);
-    const label = value === 'template' ? templateId === 'show' ? '기본' : '다정' : value === 'serif' ? '매거진' : '볼드';
+    const label = value === 'template' ? templateId === 'show' ? '기본' : '다정'
+      : value === 'plainGothic' ? catalog.fontStyleLabels.plainGothic : value === 'serif' ? '매거진' : '볼드';
     assert.equal(sample.props.title, label);
     assert.equal(sample.props['aria-label'], label);
     const lines = nodes(sample).filter(node => node.type === 'text');
@@ -80,8 +81,8 @@ test('WOC8 actual arrows wrap the catalog order and each click changes the contr
   const render = () => Picker({ value, onChange: next => { chosen.push(next); value = next; } });
   for (let i = 0; i < 4; i++) find(render(), '다음 글자 스타일').props.onClick();
   for (let i = 0; i < 2; i++) find(render(), '이전 글자 스타일').props.onClick();
-  assert.deepEqual(chosen, ['serif', 'boldGothic', 'template', 'serif', 'template', 'boldGothic']);
-  assert.equal(specimen(render()).props['data-font-style'], 'boldGothic');
+  assert.deepEqual(chosen, ['plainGothic', 'serif', 'boldGothic', 'template', 'boldGothic', 'serif']);
+  assert.equal(specimen(render()).props['data-font-style'], 'serif');
 });
 
 test('WOC8 arrow keys change style only inside the focused group and disabled controls stay inert', async () => {
@@ -94,7 +95,7 @@ test('WOC8 arrow keys change style only inside the focused group and disabled co
     group.props.onKeyDown(event);
     assert.equal(event.prevented, expected);
   }
-  assert.deepEqual(chosen, ['boldGothic', 'serif']);
+  assert.deepEqual(chosen, ['boldGothic', 'plainGothic']);
   const disabledTree = Picker({ value: 'template', disabled: true, onChange: value => chosen.push(value) });
   for (const button of nodes(disabledTree).filter(node => node.type === 'button')) {
     assert.equal(button.props.disabled, true);
@@ -103,7 +104,7 @@ test('WOC8 arrow keys change style only inside the focused group and disabled co
   const disabledEvent = keyEvent('ArrowRight');
   find(disabledTree, '글자 스타일').props.onKeyDown(disabledEvent);
   assert.equal(disabledEvent.prevented, false);
-  assert.deepEqual(chosen, ['boldGothic', 'serif']);
+  assert.deepEqual(chosen, ['boldGothic', 'plainGothic']);
 });
 
 test('WOC8 catalog additions, removal and ordering drive arrow choices, display-only dots and fallback labels', async () => {

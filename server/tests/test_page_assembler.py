@@ -45,9 +45,11 @@ def _storyboard():
 
 
 # ── 이미지 비율 보존 (WS2: 에디터·산출물 크롭 회귀 방지) ──────────────────────
-def _one_ai_block(cut_result: dict):
+def _one_ai_block(cut_result: dict, design_id="P02-D02"):
     block = v4_blocks([_storyboard()[2]])[0]
-    # An unbound manual photo is appended using the design overflow's source aspect.
+    # Saved legacy layouts retain source-aspect overflow. Curated WOC6 wear
+    # instead includes loose photos in its requested 4:5 layout.
+    block["pageDesignId"] = design_id
     block["slotKey"] = None
     return next(b for b in assemble([block], [cut_result], [], PRODUCT, False) if any(el["type"] == "image" for el in b["elements"]))
 
@@ -57,7 +59,7 @@ def test_image_element_keeps_source_aspect_ratio():
     # 구현 전에는 880×560(가로)로 고정돼 object-fit:cover 가 높이를 ~58% 잘라먹었다.
     block = _one_ai_block({"blockId": "blk3", "imageUrl": "u", "width": 848, "height": 1264})
     img = next(el for el in block["elements"] if el["type"] == "image")
-    assert (img["w"], img["h"]) == (888, 1324)
+    assert (img["w"], img["h"]) == (1000, 1491)
     assert abs(img["w"] / img["h"] - 848 / 1264) < 0.002
 
 
@@ -65,7 +67,7 @@ def test_image_element_follows_non_default_ratio():
     # 하드코딩이 아님을 증명 — 3:4 소스면 요소도 3:4.
     block = _one_ai_block({"blockId": "blk3", "imageUrl": "u", "width": 900, "height": 1200})
     img = next(el for el in block["elements"] if el["type"] == "image")
-    assert (img["w"], img["h"]) == (888, 1184)
+    assert (img["w"], img["h"]) == (1000, 1333)
     assert abs(img["w"] / img["h"] - 0.75) < 0.002
 
 
@@ -74,7 +76,14 @@ def test_image_box_falls_back_when_dims_missing_or_invalid():
     for bad in ({}, {"width": None, "height": None}, {"width": 0, "height": 0},
                 {"width": "x", "height": "y"}):
         img = next(el for el in _one_ai_block({"blockId": "blk3", "imageUrl": "u", **bad})["elements"] if el["type"] == "image")
-        assert (img["w"], img["h"]) == (888, 1332)
+        assert (img["w"], img["h"]) == (1000, 1500)
+
+
+def test_curated_wear_keeps_loose_photos_in_its_four_five_layout():
+    block = _one_ai_block({"blockId": "blk3", "imageUrl": "u", "width": 848, "height": 1264}, "P02-D01")
+    img = next(el for el in block["elements"] if el["type"] == "image")
+    assert (img["w"], img["h"]) == (888, 1110)
+    assert img["sourceBlockId"] == "blk3"
 
 
 def test_block_contains_image_without_overflow():

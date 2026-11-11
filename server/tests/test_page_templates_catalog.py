@@ -7,7 +7,7 @@ from app.agents import page_templates
 from app.agents.page_templates import CATALOG, base_color_of, get_template, resolve_page_tokens, validate_catalog, walk_layout
 
 
-def test_ten_kinds_four_groups_and_default_section_instances():
+def test_saved_catalog_designs_and_woc6_defaults_without_sns_by_default():
     assert validate_catalog(CATALOG) is CATALOG
     assert len(CATALOG["kinds"]) == 10
     assert (CATALOG["firstTitleBand"]["top"] + CATALOG["firstTitleBand"]["bottom"]) / 2 == .5
@@ -20,7 +20,25 @@ def test_ten_kinds_four_groups_and_default_section_instances():
     assert [group["name"] for group in CATALOG["menuGroups"]] == ["사진", "옷 자세히", "상품 설명", "후기와 소통"]
     assert [len([s for s in t["sections"] if s["presence"] == "default"]) for t in CATALOG["templates"]] == [10, 7]
     assert [s["instanceKey"] for s in get_template("show")["sections"] if s["kind"] == "points"] == ["points"]
-    assert len(CATALOG["designs"]) == 32
+    assert len(CATALOG["designs"]) == 41
+    assert sum(bool(design.get("pickerHidden")) for design in CATALOG["designs"].values()) == 20
+    for template in CATALOG["templates"]:
+        for section in template["sections"]:
+            if section["kind"] == "wear":
+                assert section["designId"] == ("WEAR-FIT-COLUMN-01" if section["usage"] == "fit" else "P02-D01")
+            if section["kind"] == "color_product":
+                assert section["designId"] == "CP-COLUMN-01"
+            if section["kind"] == "points":
+                assert section["designId"] == "PT-COLUMN-01"
+            if section["kind"] == "sns":
+                assert section["presence"] == "optional"
+            if section["presence"] == "default":
+                assert not CATALOG["designs"][section["designId"]].get("pickerHidden")
+        assert template["addPlacements"]["wear"]["designId"] == "P02-D01"
+        assert template["addPlacements"]["color_product"]["designId"] == "CP-COLUMN-01"
+        assert template["addPlacements"]["points"]["designId"] == "PT-COLUMN-01"
+        assert template["addPlacements"]["sns"]["designIds"] == ["I09-D14", "P07-D08"]
+        assert all(CATALOG["designs"][design_id].get("pickerHidden") for design_id in template["addPlacements"]["sns"]["designIds"])
 
 
 def _set_path(catalog, path, value):
