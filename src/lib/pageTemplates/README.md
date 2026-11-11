@@ -27,7 +27,7 @@ not a request to fall back to an unrelated layout.
 - The mock `buildEditorBlocksFromStoryboard` dispatches in the same way. The
   editor passes the analysis object when building its generation skeleton.
 
-## Storyboard presentation (WOC7, 2026-11-11)
+## Storyboard presentation (WOC8 R2, 2026-11-11)
 
 Analysis offers only the two templates, `emo` and `show`. Color selection lives
 in the storyboard header; previously saved pageStyle.colorMode values survive
@@ -41,18 +41,21 @@ shared 32-design catalog. Long preview assets are
 full-view modal, missing-image fallback and reduced-motion rules are unchanged.
 
 The header has two aligned label/control rows: 글자 스타일 and 페이지 색감.
-The font specimens remain magazine (`serif`), bold (`boldGothic`) and template
-(`template`), in that order. The template specimen reads labelEn/titleKo directly
-from the chosen template, including family, weight, italic, case and tracking. Its
-name is 다정 for emo and 기본 for show. Names are titles/accessibility labels;
-the specimens read wearless/웨어리스 (uppercase Latin where the role specifies it). All three remain
-fully readable; only the chosen specimen has a 1.5px ink border. Each click optimistically updates
-pageStyle.fontStyle and joins a serialized analysis-save queue. The latest whole
-chain is registered before execution so route re-entry and next-step navigation
-wait for queued choices too. Restoring analysis or changing color mode preserves
-the chosen font; explicit template replacement retains its existing default rule.
+Typography uses one centered two-line specimen, previous/next arrows and
+noninteractive dots. Order comes from Object.keys(fontStyles), currently template,
+serif, boldGothic. Arrows wrap and ArrowLeft/Right work only inside the focused
+group. Every specimen reads the actual resolvePageTokens labelEn/titleKo fonts,
+including family, weight, italic, case and tracking. Current names remain
+다정 (emo template), 기본 (show template), 매거진 and 볼드. There is no specimen
+border or vertical bar. Each arrow optimistically updates pageStyle.fontStyle
+through the same serialized save/rollback queue and re-entry wait.
 
-Page tone has two equal rounded cells, 기본 (`mono`) and 의류 색감에 맞추기
+Both validators derive supported style IDs/defaults from the catalog. Retiring
+an old saved font falls back only that font, preserving its template/tone; explicit
+template selection uses the catalog's current default font. No actual font option
+or design definition was added/removed in WOC8.
+
+Page tone has two equal pill cells in the shared modal-actions group, 기본 (`mono`) and 의류 색감
 (`point`). A check and 2px ink border mark the selected cell; neither unselected
 cell is dimmed. SVG paint attributes read the actual pointPalette accentBg and
 accentInk, rather than maintaining a duplicate CSS color table. The row is absent
@@ -75,7 +78,9 @@ transitions finish within 780ms. Reduced motion skips both delay and transition;
 context changes/unmount clear timers. Mono and point assembled pages are memoized
 for the same board/catalog state, so hover and reveal steps reuse them. The open
 section picker receives the same preview mode; its wireframes tint accent surfaces
-while keeping existing gray photo/dark-shape simplification. The controls column is the original 360px specimen width, shared by both rows.
+while keeping existing gray photo/dark-shape simplification. Both rows share a compact 256px control column: two 124px tone pills plus 8px gap.
+Tone labels, accessible names and tooltips are 기본/의류 색감. The header
+control group remains right aligned; the open-drawer one-column layout remains.
 Title and subtitle occupy a top-aligned left copy block, with word wrapping
 instead of expanding the control column. Pointer-compatible mouse events and
 focus both reach the actual stage/outline/open-picker preview path. Analysis no longer renders color cards or their
@@ -104,8 +109,12 @@ count, keeping the owner-verified 3px gaps and zero extra count margin.
 The nonwrapping header contains only 페이지 구성 and the outlined ＋ 섹션 추가 pill.
 The overview text action follows the final section inside the outline scroller.
 Selected borders use primary ink; the existing pastel rotating border
-continues on the floating action. A 28px white pill at each thumbnail’s top left always shows grip/trash.
-Its up/down arrows expand on toolbar hover/focus, remaining keyboard reachable. The opening has no tools. Boundary arrows use aria-disabled without losing
+continues on the floating action. When at least 40px exists to the panel's left,
+a vertical 28px grip/trash toolbar sits in that outside gutter and scrolls with its
+row. The scroll box extends into that gutter so the buttons are not clipped. At
+widths below 1110px, or while the drawer moves the page to the 24px viewport edge,
+tools use the inside-thumbnail fallback. Up/down arrows expand on hover/focus
+and remain keyboard reachable. The opening has no tools. Boundary arrows use aria-disabled without losing
 focus, and a completed move restores the same arrow/grip. Titles also drag.
 Drop gaps appear during dragging; there are no between-section add buttons or
 notches. Only outline text bars use emphasizeText to increase visible thickness;
@@ -245,7 +254,8 @@ and, for studio replacements that increase the count, a cut-delta badge. Singlet
 heading. A row reserves header cells only when at least one group actually has
 a heading; the add tile uses the same conditional offset. Color-product sections
 have no group headers. Photo captions show the ordinal and, only with multiple
-sale colors, a color dot with an accessible name. Place and front/back caption
+sale colors, a color dot followed by its visible color name. The dot is decorative
+for assistive technology because the name already supplies the label. Place and front/back caption
 words are absent. Extra-color wear group heads retain the actual color name.
 The common stage subtitle is 예시 이미지를 클릭해서 변경할 수 있어요; derived-source
 and text-only guidance remain separate in the stage body.
@@ -349,13 +359,37 @@ only the attachment, never its source. Each insertion/removal is one undo/save.
 
 Pale positions show only their preview and label; count/credit changes appear in
 the existing floating action (구성 n컷). Other generated-photo counts use 컷;
-user-upload progress retains 장. The photo panel starts with 의류 색상 선택 and
-one dot/name button per color, omitted for single-color products. The pinned
+user-upload progress retains 장. The photo panel places 의류 색상 선택 after its generated-example gallery
+(or product-presentation examples), separated by a top rule and spacing. It uses
+one dot/name button per color and is omitted entirely for single-color products. The pinned
 signature card has a small 시그니처 chip.
 
 Drawers keep their 48px header, 12px viewport inset, focus return, Escape/blank
 click behavior and independent scrolling. Place replacement marks the whole
 current group with the existing 2px selected border and dims only other photos.
+
+At desktop widths (1024px+), only /create/storyboard uses a viewport-bound shell.
+The compact 44px footer contains the terms/privacy links and a business-info
+popover built from the existing CompanyInfoRows. Other routes retain SiteFooter.
+The outline and stage body are separate flex/grid scrollers; the document does
+not grow. The stage header is a non-scrolling sibling of the body, so its tinted
+band uses the whole card width even when a persistent scrollbar gutter is present.
+Only the body carries data-storyboard-scroll. Its key is the section key: changing
+sections creates a fresh body at scroll top, while same-section tone/settings
+updates preserve the body and its scroll position. The stage fills the remaining grid column instead of capping at 742px, so
+its right edge matches the full-width header and portalled action. The action
+uses the same 1030px inner-page right-edge formula. An open drawer reflows the
+header into the safe remaining width, without resizing the stage photos.
+
+Completion used to remove the progress ribbon's height, moving a hovered tone
+button away from the stationary pointer. The storyboard reserves a 36px strip;
+a second existing ribbon can use the page's 44px top padding. Notification context
+rerenders alone do not clear preview state, and pointer/focus previews are tested
+through the actual ToastProvider. Toasts sit above the 44px footer, 16px gap, 60px
+action and 12px clearance. The business popover raises its footer above these
+portals only while open and handles Escape before a background drawer. With a drawer
+open, the legal links, business popup and notification move into the visible
+left area so the drawer cannot cover them.
 
 The v5 body theme hides the seller aurora/orb only during this screen and mounts
 two centered, softly rotating orbs. White outline/stage panels use named scoped

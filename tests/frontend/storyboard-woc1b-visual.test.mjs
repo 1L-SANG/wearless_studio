@@ -37,7 +37,7 @@ test('WOC1b visual outline, stage heading and metadata use the specified type an
 });
 test('WOC1b visual drawer has an independent 48px header, the specified bounds, and themed body', () => {
   assert.match(resolve(rule(panels, '.drawer')), /top: 12px; right: 12px; bottom: 12px/);
-  assert.match(rule(panels, '.drawer'), /width: min\(520px, 40vw\)/);
+  assert.match(rule(panels, '.drawer'), /width: var\(--sb-drawer-width\)/);
   assert.match(rule(panels, '.drawer'), /var\(--r-6\).*var\(--bg-1\).*var\(--sb-pop-shadow\)/);
   assert.match(rule(panels, '.drawerBar'), /height: 48px/);
   assert.match(resolve(rule(panels, '.drawerBody')), /padding: 4px 20px 24px.*overflow-y: auto/);

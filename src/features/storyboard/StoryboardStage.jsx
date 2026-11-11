@@ -68,7 +68,7 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, tone
   };
   const spaceHeading = group => !colorProducts && group.kind === 'space' && (run.kind === 'wear' || group.blocks.length > 1);
   const colorHeading = group => run.kind === 'wear' && group.kind === 'color';
-  return <section className={styles.stage} data-storyboard-scroll aria-label={`${templateSectionName(run.blocks[0])} 무대`}>
+  return <section className={styles.stage} aria-label={`${templateSectionName(run.blocks[0])} 무대`}>
     <div className={styles.stageHead}><svg className={styles.stageToneBand} width="100%" height="100%" aria-hidden="true"><rect width="100%" height="100%" fill={toneColor || 'var(--bg-2)'} /></svg>
       <div><h2>{number > 0 && <em>Section {number}</em>}<span>{templateSectionName(run.blocks[0])}</span></h2>
       <p>예시 이미지를 클릭해서 변경할 수 있어요</p></div>
@@ -76,7 +76,7 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, tone
         {canDesign && <button type="button" className={styles.designButton} disabled={busy} onClick={onDesign}><Icon name="pencil" size={14} />섹션 디자인 변경</button>}
       </div>
     </div>
-    <div className={`${styles.stageBody}${selectedGroupId ? ` ${styles.groupSelection}` : ''}`}>
+    <div key={run.key} className={`${styles.stageBody}${selectedGroupId ? ` ${styles.groupSelection}` : ''}`} data-storyboard-scroll>
       {run.kind === 'points' && sourceNumber > 0 && <p className={styles.stageSourceNote}>Section {sourceNumber} 사진에서 따와요</p>}
       {isTextOnlySection(run) && <p className={styles.stageSourceNote}>글은 생성할 때 AI가 써요</p>}
       {rows.map((row, rowIndex) => {
@@ -137,9 +137,9 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, tone
                   {run.kind !== 'sns' && block.pageSectionKey === run.key && canPlanSimilarCut(block) && photos.length < 12 && <button type="button" className={`btn btn-primary btn-glowring ${styles.similar}`}
                     disabled={busy} onClick={() => onSimilar(block.id)}>비슷한 컷 추가</button>}
                 </div>
-                <div className={styles.photoCaption}>{catalogs.detailProduct?.colors?.length > 1 && <svg className={styles.captionColor} viewBox="0 0 14 14" role="img" aria-label={colorName(block.colorId)}>
+                <div className={styles.photoCaption}>{catalogs.detailProduct?.colors?.length > 1 && <span className={styles.captionGarment}><svg className={styles.captionColor} viewBox="0 0 14 14" aria-hidden="true">
                   <circle cx="7" cy="7" r="6" fill={colorOpts.find(color => color.id === block.colorId)?.hex || 'var(--fg-3)'} />
-                </svg>}<strong>{ordinal}번째 컷</strong></div>
+                </svg><span className={styles.captionColorName}>{colorName(block.colorId)}</span></span>}<strong>{ordinal}번째 컷</strong></div>
               </article>;
             })}
           </div>

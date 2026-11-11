@@ -10,7 +10,7 @@ export function validPageStyle(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value)
     && Object.keys(value).every(key => allowed.includes(key))
     && value.version === 1 && !!getTemplate(value.templateId)
-    && ['template', 'serif', 'boldGothic'].includes(value.fontStyle)
+    && typeof value.fontStyle === 'string' && Object.hasOwn(pageTemplatesCatalog.fontStyles, value.fontStyle)
     && ['mono', 'point'].includes(value.colorMode)
     && value.catalogVersion === pageTemplatesCatalog.catalogVersion
     && (!Object.hasOwn(value, 'updatedAt') || typeof value.updatedAt === 'string'
@@ -18,10 +18,17 @@ export function validPageStyle(value) {
 }
 
 export function analysisPageStyle(value) {
-  return validPageStyle(value) ? value : defaultPageStyle();
+  if (validPageStyle(value)) return value;
+  // A catalog option can retire without changing this project's template/tone.
+  // Keep the usual validation for every other field and do not mutate storage.
+  if (value && typeof value.fontStyle === 'string' && !Object.hasOwn(pageTemplatesCatalog.fontStyles, value.fontStyle)) {
+    const fallback = { ...value, fontStyle: pageTemplatesCatalog.defaults.fontStyle };
+    if (validPageStyle(fallback)) return fallback;
+  }
+  return defaultPageStyle();
 }
 
-export const templateSelectionStyle = value => ({ ...analysisPageStyle(value), fontStyle: 'template' });
+export const templateSelectionStyle = value => ({ ...analysisPageStyle(value), fontStyle: pageTemplatesCatalog.defaults.fontStyle });
 
 export function selectTemplateStyle(templateId, now = new Date().toISOString(), currentStyle = null) {
   if (!getTemplate(templateId)) throw new Error('invalid_page_style');
@@ -34,6 +41,6 @@ export function selectColorModeStyle(currentStyle, colorMode, now = new Date().t
 }
 
 export function selectFontStyle(currentStyle, fontStyle, now = new Date().toISOString()) {
-  if (!['serif', 'boldGothic', 'template'].includes(fontStyle)) throw new Error('invalid_page_style');
+  if (typeof fontStyle !== 'string' || !Object.hasOwn(pageTemplatesCatalog.fontStyles, fontStyle)) throw new Error('invalid_page_style');
   return { ...analysisPageStyle(currentStyle), fontStyle, updatedAt: now };
 }

@@ -80,7 +80,7 @@ test('WOC7 two aligned rows keep labels beside controls and equal-width tone cel
   const html = render(Controls, { pageStyle: defaultPageStyle(), product: product('blue') });
   assert.match(html, />글자 스타일</); assert.match(html, />페이지 색감</);
   assert.match(html, /aria-label="기본" aria-pressed="true"/);
-  assert.match(html, /aria-label="의류 색감에 맞추기" aria-pressed="false"/);
+  assert.match(html, /aria-label="의류 색감" aria-pressed="false"/);
   assert.match(html, new RegExp(`fill="${catalog.pointPalette.blue.accentBg}"`));
   assert.match(html, new RegExp(`fill="${catalog.pointPalette.blue.accentInk}"`));
   assert.doesNotMatch(html, /\sstyle="/);
@@ -92,7 +92,7 @@ test('WOC7 two aligned rows keep labels beside controls and equal-width tone cel
 test('WOC7 missing or neutral base hides the entire tone row even for a stored point choice', () => {
   for (const p of [undefined, { colors: [] }, ...[null, 'null', 'white', 'gray', 'black', 'unknown'].map(product)]) {
     const html = render(Controls, { pageStyle: { ...defaultPageStyle(), colorMode: 'point' }, product: p });
-    assert.doesNotMatch(html, /페이지 색감|의류 색감에 맞추기/); assert.match(html, /글자 스타일/);
+    assert.doesNotMatch(html, /페이지 색감|의류 색감/); assert.match(html, /글자 스타일/);
   }
   assert.match(render(Controls, { pageStyle: defaultPageStyle(), product: { colors: [{ swatchId: 'blue' }] } }), /페이지 색감/);
 });
@@ -100,7 +100,7 @@ test('WOC7 template specimen uses current template role fonts, case and tracking
   for (const template of catalog.templates) {
     const html = render(Theme, { templateId: template.id, value: 'template' });
     const label = template.id === 'show' ? '기본' : '다정';
-    const card = html.match(new RegExp(`<button[^>]*title="${label}"[\\s\\S]*?<\\/button>`))?.[0];
+    const card = html.match(new RegExp(`<span[^>]*title="${label}"[\\s\\S]*?<\\/span>`))?.[0];
     assert.ok(card);
     for (const role of ['labelEn', 'titleKo']) {
       const font = template.fonts[role];

@@ -4,6 +4,7 @@ import { storyboardScreenHarness } from './helpers/storyboardScreenHarness.mjs';
 import { nodes, textOf } from './helpers/storyboardComponents.mjs';
 import { readFileSync } from 'node:fs';
 const button = (tree, label) => nodes(tree).find(n => n.type === 'button' && n.props['aria-label'] === label);
+const fontValue = tree => nodes(tree).find(n => n.props?.['data-font-style'])?.props['data-font-style'];
 const band = tree => nodes(tree).find(n => n.type === 'svg' && n.props.className?.includes('stageToneBand'))?.props.children;
 const bandFill = tree => nodes(band(tree)).find(n => n.type === 'rect')?.props.fill;
 
@@ -17,40 +18,40 @@ test('R2 actual Storyboard pointer/focus preview reaches the stage without savin
   const tinted = subtree => nodes(subtree).filter(n => n.type === 'rect' && n.props.fill === '#edf4ff').length;
   assert.equal(tinted(outline()), 0); assert.equal(tinted(dialog()), 0);
   assert.equal(bandFill(h.tree), 'var(--bg-2)');
-  button(h.tree, '의류 색감에 맞추기').props.onPointerEnter({ pointerType: 'mouse' }); h.render();
+  button(h.tree, '의류 색감').props.onPointerEnter({ pointerType: 'mouse' }); h.render();
   assert.equal(bandFill(h.tree), '#edf4ff'); assert.deepEqual(h.DB.analysis.pageStyle, before);
   assert.ok(tinted(outline()) > 0); assert.ok(tinted(dialog()) > 0);
-  button(h.tree, '의류 색감에 맞추기').props.onPointerLeave(); h.render(); assert.equal(bandFill(h.tree), 'var(--bg-2)');
+  button(h.tree, '의류 색감').props.onPointerLeave(); h.render(); assert.equal(bandFill(h.tree), 'var(--bg-2)');
   assert.equal(tinted(outline()), 0); assert.equal(tinted(dialog()), 0);
-  button(h.tree, '의류 색감에 맞추기').props.onFocus(); h.render(); assert.equal(bandFill(h.tree), '#edf4ff');
-  button(h.tree, '의류 색감에 맞추기').props.onBlur(); h.render(); assert.equal(bandFill(h.tree), 'var(--bg-2)');
-  button(h.tree, '의류 색감에 맞추기').props.onPointerEnter({}); h.render(); assert.equal(bandFill(h.tree), '#edf4ff', 'mouse-compatible events without pointerType preview too');
-  button(h.tree, '의류 색감에 맞추기').props.onPointerLeave(); h.render();
-  assert.equal(typeof button(h.tree, '의류 색감에 맞추기').props.onMouseEnter, 'function');
-  button(h.tree, '의류 색감에 맞추기').props.onMouseEnter(); h.render(); assert.equal(bandFill(h.tree), '#edf4ff');
-  button(h.tree, '의류 색감에 맞추기').props.onMouseLeave(); h.render(); assert.equal(bandFill(h.tree), 'var(--bg-2)');
+  button(h.tree, '의류 색감').props.onFocus(); h.render(); assert.equal(bandFill(h.tree), '#edf4ff');
+  button(h.tree, '의류 색감').props.onBlur(); h.render(); assert.equal(bandFill(h.tree), 'var(--bg-2)');
+  button(h.tree, '의류 색감').props.onPointerEnter({}); h.render(); assert.equal(bandFill(h.tree), '#edf4ff', 'mouse-compatible events without pointerType preview too');
+  button(h.tree, '의류 색감').props.onPointerLeave(); h.render();
+  assert.equal(typeof button(h.tree, '의류 색감').props.onMouseEnter, 'function');
+  button(h.tree, '의류 색감').props.onMouseEnter(); h.render(); assert.equal(bandFill(h.tree), '#edf4ff');
+  button(h.tree, '의류 색감').props.onMouseLeave(); h.render(); assert.equal(bandFill(h.tree), 'var(--bg-2)');
   assert.deepEqual(h.DB.analysis.pageStyle, before);
 });
 
 test('R2 actual screen restores its last saved font and tone on the latest failure', async t => {
   const h = await storyboardScreenHarness(); t.after(() => h.close());
   h.render(); await h.flush();
-  button(h.tree, '매거진').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();
+  button(h.tree, '다음 글자 스타일').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();
   const saved = structuredClone(h.DB.analysis.pageStyle), save = h.api.saveAnalysis;
   // Inject a transport failure only for this negative case. Success tests above
   // never replace the API/save function or its lock checks.
   h.api.saveAnalysis = async () => { throw new Error('test transport unavailable'); };
   t.after(() => { h.api.saveAnalysis = save; });
-  button(h.tree, '의류 색감에 맞추기').props.onFocus(); h.render();
-  button(h.tree, '의류 색감에 맞추기').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();
+  button(h.tree, '의류 색감').props.onFocus(); h.render();
+  button(h.tree, '의류 색감').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();
   assert.deepEqual(h.DB.analysis.pageStyle, saved);
-  assert.equal(button(h.tree, '매거진').props['aria-pressed'], true);
+  assert.equal(fontValue(h.tree) === 'serif', true);
   assert.equal(button(h.tree, '기본').props['aria-pressed'], true);
   assert.equal(bandFill(h.tree), 'var(--bg-2)');
   assert.match(textOf(h.tree), /페이지 스타일을 저장하지 못했어요/);
-  button(h.tree, '볼드').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();
-  assert.equal(button(h.tree, '매거진').props['aria-pressed'], true);
-  assert.equal(button(h.tree, '볼드').props['aria-pressed'], false);
+  button(h.tree, '다음 글자 스타일').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();
+  assert.equal(fontValue(h.tree) === 'serif', true);
+  assert.equal(fontValue(h.tree) === 'boldGothic', false);
 });
 
 test('R2 a first failed selection restores prefetched non-default style before project loading completes', async t => {
@@ -60,16 +61,16 @@ test('R2 a first failed selection restores prefetched non-default style before p
   h.api.saveAnalysis = async () => { throw new Error('first request offline'); };
   t.after(() => { h.api.saveAnalysis = original; });
   button(h.tree, '기본').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();
-  assert.equal(button(h.tree, '의류 색감에 맞추기').props['aria-pressed'], true);
-  assert.equal(button(h.tree, '볼드').props['aria-pressed'], true);
+  assert.equal(button(h.tree, '의류 색감').props['aria-pressed'], true);
+  assert.equal(fontValue(h.tree) === 'boldGothic', true);
   assert.equal(bandFill(h.tree), '#edf4ff');
   assert.match(textOf(h.tree), /페이지 스타일을 저장하지 못했어요/);
   assert.equal(h.DB.analysis.pageStyle.colorMode, 'point');
   await h.releaseLoad(); await h.flush();
-  assert.equal(button(h.tree, '의류 색감에 맞추기').props['aria-pressed'], true);
+  assert.equal(button(h.tree, '의류 색감').props['aria-pressed'], true);
 });
 
-test('R2 style controls stay at the original specimen width and the heading copy is top aligned', () => {
+test('WOC8 R2 compact controls share one width and keep the heading copy top aligned', () => {
   const css = readFileSync('src/features/storyboard/StoryboardTone.module.css', 'utf8');
   assert.match(css, /grid-template-columns: auto var\(--sb-style-controls-width\)/);
   const layout = readFileSync('src/features/storyboard/StoryboardLayout.module.css', 'utf8');
@@ -77,18 +78,18 @@ test('R2 style controls stay at the original specimen width and the heading copy
   const source = readFileSync('src/features/storyboard/Storyboard.jsx', 'utf8');
   assert.match(source, /className=\{styles.pageHeadingCopy\}><h1>상세페이지 초안 구성<\/h1>\s*<p className=\{styles.introCopy\}/);
   const tokens = readFileSync('src/styles/tokens.css', 'utf8');
-  assert.match(tokens, /--sb-style-controls-width: calc\(3 \* \(var\(--sb-theme-width\) \+ var\(--sp-20\)\) \+ 2 \* var\(--sp-6\)\)/);
-  assert.equal(3 * (96 + 20) + 2 * 6, 360);
+  assert.match(tokens, /--sb-style-controls-width: 256px/);
+  assert.equal((256 - 8) / 2, 124);
 });
 
 for (const lockSource of ['cut', 'job']) test(`R2 actual Storyboard saves through the unchanged mock API with a mannequin ${lockSource}`, async t => {
   const h = await storyboardScreenHarness({ lockSource }); t.after(() => h.close());
   h.render(); await h.flush();
-  button(h.tree, '매거진').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();
+  button(h.tree, '다음 글자 스타일').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();
   assert.equal(h.DB.analysis.pageStyle.fontStyle, 'serif');
-  button(h.tree, '의류 색감에 맞추기').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();
+  button(h.tree, '의류 색감').props.onClick(); h.render(); await h.waitForStyle(); await h.flush();
   assert.equal(h.DB.analysis.pageStyle.colorMode, 'point');
-  assert.equal(button(h.tree, '의류 색감에 맞추기').props['aria-pressed'], true);
+  assert.equal(button(h.tree, '의류 색감').props['aria-pressed'], true);
   assert.doesNotMatch(textOf(h.tree), /스타일을 저장하지 못했어요/);
 });
 
@@ -99,18 +100,18 @@ for (const failure of ['first', 'last']) test(`R2 rapid actual selections use on
     succeed: async () => resolve(await original(...args)), fail: () => reject(new Error('temporary failure')),
   }));
   t.after(() => { h.api.saveAnalysis = original; });
-  button(h.tree, '매거진').props.onClick(); h.render();
-  button(h.tree, '의류 색감에 맞추기').props.onClick(); h.render(); await h.flush();
+  button(h.tree, '다음 글자 스타일').props.onClick(); h.render();
+  button(h.tree, '의류 색감').props.onClick(); h.render(); await h.flush();
   assert.equal(pending.length, 1);
   if (failure === 'first') pending[0].fail(); else await pending[0].succeed();
   await h.flush(); assert.equal(pending.length, 2);
-  assert.equal(button(h.tree, '의류 색감에 맞추기').props['aria-pressed'], true, 'an earlier response cannot replace the newer choice');
+  assert.equal(button(h.tree, '의류 색감').props['aria-pressed'], true, 'an earlier response cannot replace the newer choice');
   if (failure === 'last') pending[1].fail(); else await pending[1].succeed();
   await h.waitForStyle(); await h.flush();
   assert.equal(h.DB.analysis.pageStyle.fontStyle, 'serif');
-  assert.equal(button(h.tree, '매거진').props['aria-pressed'], true);
+  assert.equal(fontValue(h.tree) === 'serif', true);
   assert.equal(h.DB.analysis.pageStyle.colorMode, failure === 'last' ? 'mono' : 'point');
-  assert.equal(button(h.tree, '의류 색감에 맞추기').props['aria-pressed'], failure !== 'last');
+  assert.equal(button(h.tree, '의류 색감').props['aria-pressed'], failure !== 'last');
   assert.equal(bandFill(h.tree), failure === 'last' ? 'var(--bg-2)' : '#edf4ff');
   assert.equal(textOf(h.tree).includes('페이지 스타일을 저장하지 못했어요'), failure === 'last');
 });

@@ -88,7 +88,7 @@ def validate_catalog(catalog):
     check(isinstance(catalog.get("canvasColor"), str) and HEX.fullmatch(catalog["canvasColor"]), "canvas color")
     check(all(isinstance((catalog.get("swatchHex") or {}).get(key), str) and HEX.fullmatch(catalog["swatchHex"][key]) for key in catalog.get("swatchLabels") or {}), "swatch colors")
     defaults, band = catalog.get("defaults") or {}, catalog.get("firstTitleBand") or {}
-    check(defaults.get("templateId") in ("emo", "show") and defaults.get("fontStyle") in ("template", "serif", "boldGothic") and defaults.get("colorMode") in ("mono", "point"), "default page style")
+    check(defaults.get("templateId") in ("emo", "show") and isinstance(defaults.get("fontStyle"), str) and defaults["fontStyle"] in catalog.get("fontStyles", {}) and defaults.get("colorMode") in ("mono", "point"), "default page style")
     check(all(isinstance(band.get(k), (int, float)) and math.isfinite(band[k]) and 0 <= band[k] <= 1 for k in ("left", "right", "top", "bottom")) and band.get("left", 1) < band.get("right", 0) and band.get("top", 1) < band.get("bottom", 0), "first title band")
     kinds = catalog.get("kinds") or {}
     check(len(kinds) == 10 and all(key in kinds for key in SECTION_KINDS), "ten section kinds")
@@ -264,7 +264,7 @@ def validate_catalog(catalog):
             check(placement.get("after") is None or placement["after"] in keys or placement["after"] in ("lastSameKind", "lastSameUsage"), f"placement target {tid}.{key}")
             _validate_photo_slots(tid, {**placement, "kind": key}, check)
     check(len(ids) == 2, "two templates")
-    check(set(catalog.get("fontStyles", {})) == {"template", "serif", "boldGothic"}, "three font styles")
+    check(bool(catalog.get("fontStyles")), "font styles")
     for refs in catalog.get("fontStyles", {}).values():
         for ref in refs.values():
             if ref:

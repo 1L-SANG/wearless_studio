@@ -12,9 +12,9 @@ export function StoryboardStyleControls({ pageStyle, product, disabled, onFontCh
     <StoryboardThemePicker templateId={tokens.template.id} value={tokens.fontStyle} onChange={onFontChange} disabled={disabled} inline />
     {!isNeutralPageSwatch(swatch) && <>
       <span className={`lbl ${styles.label}`}>페이지 색감</span>
-      <div className={styles.tones} role="group" aria-label="페이지 색감">
-        {[['mono', '기본'], ['point', '의류 색감에 맞추기']].map(([mode, label]) => <button key={mode} type="button"
-          aria-label={label} aria-pressed={tokens.colorMode === mode} disabled={disabled}
+      <div className={`modal-actions ${styles.tones}`} role="group" aria-label="페이지 색감">
+        {[['mono', '기본'], ['point', '의류 색감']].map(([mode, label]) => <button key={mode} type="button"
+          title={label} aria-label={label} aria-pressed={tokens.colorMode === mode} disabled={disabled}
           className={`${styles.choice}${tokens.colorMode === mode ? ` ${styles.selected}` : ''}`}
           onPointerEnter={event => { if (!disabled && mode === 'point' && event.pointerType !== 'touch') onTonePreview?.('pointer'); }}
           onPointerLeave={() => onTonePreviewEnd?.('pointer')}

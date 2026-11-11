@@ -58,6 +58,12 @@
 }
 
 :root {
+  --sb-footer-height: 44px;
+  --sb-job-strip-height: 36px;
+  --sb-continue-height: calc(var(--cta-height) + var(--sp-8) * 2);
+  --sb-page-edge: max(var(--sp-24), calc((100vw - 1030px) / 2));
+  --sb-drawer-width: min(520px, 40vw);
+  --sb-outside-tools: 40px;
   /* Generated page content: independent of the surrounding editor theme. */
   --page-overlay-light: #ffffff;
   --page-overlay-dark: #111111;
@@ -195,7 +201,7 @@
   --sb-toc-title-x: 10px;
   --sb-toc-gap: 14px;
   --sb-theme-width: 96px;
-  --sb-style-controls-width: calc(3 * (var(--sb-theme-width) + var(--sp-20)) + 2 * var(--sp-6));
+  --sb-style-controls-width: 256px;
   --sb-tone-height: 38px;
   --sb-tone-transition: 280ms;
   --sb-theme-radius: 10px;

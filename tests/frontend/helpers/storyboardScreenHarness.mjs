@@ -6,7 +6,7 @@ import { MemoryRouter } from 'react-router-dom';
 
 // Real modules and callbacks, including api -> mockAdapter -> mock.saveAnalysis.
 // Only the React host/DOM boundary is inert; no browser or network image loads.
-export async function storyboardScreenHarness({ pairedFirst = false, lockSource = 'cut', savedStyle = {}, pauseLoad = false } = {}) {
+export async function storyboardScreenHarness({ pairedFirst = false, lockSource = 'cut', savedStyle = {}, pauseLoad = false, withToast = false, viewportWidth = 1440 } = {}) {
   const descriptors = new Map(['window', 'document', 'requestAnimationFrame', 'cancelAnimationFrame'].map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
   const host = () => ({ nodeType: 1, classList: { add() {}, remove() {}, contains: () => false },
     focus() {}, contains: () => true, querySelector: () => null, querySelectorAll: () => [],
@@ -14,7 +14,7 @@ export async function storyboardScreenHarness({ pairedFirst = false, lockSource 
     addEventListener() {}, removeEventListener() {}, style: { setProperty() {}, removeProperty() {} } });
   const document = Object.assign(new EventTarget(), { body: host(), documentElement: host(), visibilityState: 'visible', activeElement: null,
     querySelector: () => null, querySelectorAll: () => [], createElement: host });
-  const window = Object.assign(new EventTarget(), { document, innerWidth: 1440, innerHeight: 1000,
+  const window = Object.assign(new EventTarget(), { document, innerWidth: viewportWidth, innerHeight: 1000,
     location: { pathname: '/create/storyboard', search: '?mockTemplate=emo', href: 'http://localhost/create/storyboard?mockTemplate=emo' },
     matchMedia: query => ({ matches: query.includes('reduced-motion'), addEventListener() {}, removeEventListener() {} }),
     getComputedStyle: () => ({ getPropertyValue: () => '' }), scrollTo() {}, setTimeout, clearTimeout });
@@ -27,6 +27,7 @@ export async function storyboardScreenHarness({ pairedFirst = false, lockSource 
   const { prefetchStoryboardEntry, invalidateStoryboardEntryPrefetch } = await vite.ssrLoadModule('/src/features/storyboard/storyboardEntryPrefetch.js');
   const { waitForAnalysisEditSave } = await vite.ssrLoadModule('/src/features/product-input/saveRouting.js');
   const { Storyboard } = await vite.ssrLoadModule('/src/features/storyboard/Storyboard.jsx');
+  const { ToastProvider, useToast } = await vite.ssrLoadModule('/src/components/ui.jsx');
   const { defaultPageStyle } = await vite.ssrLoadModule('/src/lib/pageTemplates/pageStyle.js');
   const { seedStoryboard } = await vite.ssrLoadModule('/src/lib/pageTemplates/seed.js');
   DB.analysis.pageStyle = { ...defaultPageStyle(), ...savedStyle }; DB.product.colors[0].swatchId = 'blue';
@@ -43,6 +44,8 @@ export async function storyboardScreenHarness({ pairedFirst = false, lockSource 
   globalThis.requestAnimationFrame = fn => setTimeout(fn, 0); globalThis.cancelAnimationFrame = clearTimeout;
   const instances = new Map(), contexts = new Map();
   const toast = { push() {} };
+  let notifications;
+  function CaptureNotifications() { notifications = useToast(); return null; }
   const currentDispatcher = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
   let active, cursor = 0, dirty = true, tree, layout = [], effects = [], closed = false;
   const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
@@ -96,7 +99,9 @@ export async function storyboardScreenHarness({ pairedFirst = false, lockSource 
     let loops = 0;
     do {
       dirty = false; layout = []; effects = [];
-      tree = expand(React.createElement(MemoryRouter, { initialEntries: ['/create/storyboard'] }, React.createElement(Storyboard, { toastOverride: toast })));
+      const screen = React.createElement(Storyboard, withToast ? {} : { toastOverride: toast });
+      tree = expand(React.createElement(MemoryRouter, { initialEntries: ['/create/storyboard'] }, withToast
+        ? React.createElement(ToastProvider, null, React.createElement(CaptureNotifications), screen) : screen));
       layout.splice(0).forEach(fn => fn()); effects.splice(0).forEach(fn => fn());
       if (++loops > 30) throw new Error('screen render did not settle');
     } while (dirty);
@@ -104,6 +109,8 @@ export async function storyboardScreenHarness({ pairedFirst = false, lockSource 
   };
   const flush = async () => { for (let i = 0; i < 20; i++) { await new Promise(setImmediate); if (dirty) render(); } return tree; };
   return { DB, api, render, flush, get tree() { return tree; }, waitForStyle: () => waitForAnalysisEditSave(DB.project.id),
+    notify(message = '마네킹컷이 만들어졌어요') { return notifications.push(message, { variant: 'mannequinCompletion', sticky: true }); },
+    dismissNotification(id) { notifications.dismiss(id, 'mannequinCompletion'); },
     async releaseLoad() { await originalLoad(); waitingLoads.splice(0).forEach(resolve => resolve()); },
     load: path => vite.ssrLoadModule(path),
     async close() {

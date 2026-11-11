@@ -104,9 +104,8 @@ export function validateCatalog(catalog) {
     );
     check(
         ["emo", "show"].includes(catalog?.defaults?.templateId) &&
-            ["template", "serif", "boldGothic"].includes(
-                catalog?.defaults?.fontStyle,
-            ) &&
+            typeof catalog?.defaults?.fontStyle === 'string' &&
+            Object.hasOwn(catalog?.fontStyles || {}, catalog.defaults.fontStyle) &&
             ["mono", "point"].includes(catalog?.defaults?.colorMode),
         "default page style",
     );
@@ -521,9 +520,8 @@ export function validateCatalog(catalog) {
     }
     check(ids.size === 2, "two templates");
     check(
-        JSON.stringify(Object.keys(catalog?.fontStyles || {}).sort()) ===
-            '["boldGothic","serif","template"]',
-        "three font styles",
+        Object.keys(catalog?.fontStyles || {}).length > 0,
+        "font styles",
     );
     for (const refs of Object.values(catalog?.fontStyles || {}))
         for (const ref of Object.values(refs))
