@@ -15,7 +15,7 @@
 .pageHeadingCopy { min-width: 0; }
 .styleControlsWrap { justify-self: end; min-width: 0; max-width: 100%; }
 .page:global(.sb-page) > :global(.page-head) .introCopy { margin: var(--sp-8) 0 0; color: var(--fg-2); font-size: var(--sb-fs-intro); line-height: 1.5; text-wrap: pretty; }
-@media (max-width: 640px) { .pageHeadWithTheme { grid-template-columns: minmax(0, 1fr); gap: var(--sp-16); } }
+@media (max-width: 1109px) { .pageHeadWithTheme { grid-template-columns: minmax(0, 1fr); gap: var(--sp-16); } }
 .page.page.drawerOpen { margin-inline-start: 0; }
 .pageHeadingCopy { transition: opacity var(--sb-t-base) var(--sb-ease); }
 .drawerOpen > :global(.page-head) > .pageHeadingCopy { opacity: .4; }

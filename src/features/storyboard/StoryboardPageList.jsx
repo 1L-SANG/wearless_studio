@@ -14,7 +14,7 @@ function MoveDots() {
     {[2, 7, 12].map(cy => <g key={cy}><circle cx="2" cy={cy} r="1.3" /><circle cx="7" cy={cy} r="1.3" /></g>)}
   </svg>;
 }
-export function StoryboardPageList({ runs, page, previousPage = null, toneRevealed = Infinity, activeKey, busy, draggingExample, highlightedPosition, selectedSourceId, selectedPositionId, insertedKey,
+export function StoryboardPageList({ runs, page, activeKey, busy, draggingExample, highlightedPosition, selectedSourceId, selectedPositionId, insertedKey,
   onSelect, onAdd, onRemove, onMove, onDropContent, onOverview, onPositionSelect, sectionRefs }) {
   const [dragKey, setDragKey] = useState(null), [over, setOver] = useState(undefined);
   const dragging = Boolean(dragKey || draggingExample);
@@ -41,7 +41,7 @@ export function StoryboardPageList({ runs, page, previousPage = null, toneReveal
     <div className={styles.outlineHead}><span>페이지 구성</span><button type="button" className={styles.outlineAdd} disabled={busy} onClick={() => onAdd(null)}>＋ 섹션 추가</button></div>
     <div className={styles.outlineScroll} data-storyboard-scroll>
       {runs.map((run, index) => {
-        const sectionPage = (previousPage && index >= toneRevealed ? previousPage : page).filter(block => block.pageSectionKey === run.key), positions = storyboardPositions(sectionPage, run.key);
+        const sectionPage = page.filter(block => block.pageSectionKey === run.key), positions = storyboardPositions(sectionPage, run.key);
         const count = run.blocks.filter(block => block.source !== 'text').length || positions.length;
         const select = () => onSelect(run.key);
         return <React.Fragment key={run.key}>

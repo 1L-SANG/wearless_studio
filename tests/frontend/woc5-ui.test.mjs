@@ -68,8 +68,10 @@ test('WOC5 the current named type specimen stays readable without a selection bo
   assert.match(html, /title="매거진"/);
   assert.equal((html.match(/data-font-style=/g) || []).length, 1);
   assert.match(html, /aria-label="이전 글자 스타일"/); assert.match(html, /aria-label="다음 글자 스타일"/);
-  const css = read('StoryboardChoices.module.css');
-  assert.doesNotMatch(css.match(/\.themeSample \{([^}]+)\}/)?.[1] || '', /opacity:|border:|box-shadow:/);
+  const css = read('StoryboardTone.module.css');
+  const sampleRule = css.match(/\.sample \{([^}]+)\}/)?.[1];
+  assert.ok(sampleRule);
+  assert.doesNotMatch(sampleRule, /opacity:|border:|box-shadow:/);
   assert.doesNotMatch(readFileSync('src/styles/tokens.css', 'utf8'), /--sb-theme-inactive/);
   assert.doesNotMatch(read('StoryboardLayout.module.css'), /\.drawerOpen > :global\(\.page-head\) \{[^}]*opacity:/);
 });
