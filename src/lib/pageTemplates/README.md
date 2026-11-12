@@ -1,5 +1,18 @@
 # Page templates (WO1)
 
+## 현재 계약 요약 (2026-11-13)
+
+아래 영어 본문은 템플릿 콘티를 만들면서 단계마다 남긴 작업 기록이다. 지금 코드의 계약은 이 요약이 먼저이고, 결정의 정본은 ADR-0026이다.
+
+- 콘티 블록은 `taxonomyVersion: 4`만 받는다. 섹션은 같은 `pageSectionKey`가 이어진 블록 묶음이고, 저장 순서가 곧 페이지 순서다. 블록은 `pageSectionKind`, `pageSectionUsage`(착용컷만 `styling` 또는 `fit`), `pageDesignId`, `slotKey`를 가진다.
+- 템플릿은 `emo`(감성형)와 `show`(쇼룸형) 둘이다. 카탈로그 `server/app/data/page_templates_v1.json`은 섹션 종류 10개와 섹션 디자인 52개를 담고, 그중 27개는 섹션 디자인 판에 보이지 않는다.
+- 조립기는 JS `assemblePage`와 Python `assemble_v4` 두 벌이다. `page_assembler.assemble`과 목 `buildEditorBlocksFromStoryboard`는 늘 이 조립기를 부르며, 옛 조립 경로는 없다. 페이지 끝에는 자동 블록 넷(사이즈 안내, 세탁 안내, AI 생성 안내, 공통 주의)을 붙인다.
+- 감성형 첫 장 제목(`P01-D09`)은 가운데, 위, 아래 세 자리 중 글자 대비가 3:1 이상인 곳에 두고, 비슷하면 가운데, 아래, 위 순으로 고른다. 모두 안 되면 검정 60% 받침을 깔고, 받침은 가운데를 먼저 쓰되 받침 자리의 절반 이상이 옷에 걸리면 아래로 옮긴다. 아래도 절반 이상 걸리면 덜 걸리는 쪽, 같으면 가운데에 둔다. 세부 규칙은 루트 `DESIGN.md` 15.5.4에 둔다.
+- 카피는 늘 켠다. AI 글이 들어가는 칸은 디테일 요소 섹션의 부위 설명(`analysis.partDescriptionCopy`), 상품 소개 본문, 후기 초안이고, 다른 AI 글 칸은 지금 빈 글과 안내 문구(placeholder)로 나간다. 카피 체계는 별도 카피라이팅 작업에서 정한다.
+- 상품 소개 본문(`seller+ai`)에는 감성형과 쇼룸형 모두 셀러의 MD 코멘트(`analysis.mdComment`)를 AI가 실제 쇼핑몰 상세페이지의 MD 코멘트처럼 다듬어 넣는다(2026-11-13 오너 결정). 다듬는 말투와 형식은 카피라이팅 작업이 정하고, 다듬기가 붙기 전에는 원문을 줄바꿈까지 그대로 글상자 하나에 넣는다. 셀러 글이 없으면 AI가 초안을 쓴다. 쇼룸형은 상품 소개 요약 판(`T06-D01`) 위에 영문 라벨 "Comment"와 본문을 둔다.
+- 후기 섹션은 셀러가 고치기 쉽도록 AI가 매번 조금씩 다른 초안을 넣어 두고, 셀러가 에디터에서 실제 후기로 고친다(2026-10-26 오너 결정). 이름 칸 기본값은 "김태희", 별점 기본값은 5개다.
+- 두 엔진은 같은 카탈로그와 같은 사례 파일(`tests/fixtures/page_templates_cases.json` 304건 등)로 결과가 같은지 검사한다. 상품 소개 MD 코멘트 사례(이름이 `woc17-`로 시작하는 묶음)도 이 파일에 있다. 카탈로그가 잘못되면 API가 시작하지 않는다.
+
 The shared catalog is `server/app/data/page_templates_v1.json`. JavaScript imports
 it directly; Python reads and validates it in `app.agents.page_templates`. API
 startup validates the file before opening connections. Invalid data is an error,
@@ -25,9 +38,11 @@ not a request to fall back to an unrelated layout.
 - `collectOverlayRegions(input)` evaluates the same layout and returns each
   source image's bare-text group and line rectangles, including reused SNS appearances.
 - Python: `page_assembler.assemble(..., analysis=..., page_style=...,
-  base_swatch_id=..., failed_cuts=...)` dispatches taxonomy 4 to
-  `page_template_assembler.assemble_v4`. Other versions keep the existing path.
-- The mock `buildEditorBlocksFromStoryboard` dispatches in the same way. The
+  base_swatch_id=..., failed_cuts=...)` always calls
+  `page_template_assembler.assemble_v4`. There is no older assembly path:
+  `assemblePage` and `assemble_v4` both reject a storyboard with any card whose
+  `taxonomyVersion` is not 4.
+- The mock `buildEditorBlocksFromStoryboard` always calls `assemblePage`. The
   editor passes the analysis object when building its generation skeleton.
 
 ## Storyboard presentation (WOC10, 2026-11-12)
@@ -39,7 +54,7 @@ queue, restore/promotion and mannequin template lock remain unchanged. After a m
 to templateId is locked; fontStyle/colorMode/updatedAt edits remain valid in both
 the mock API and the server. Removed `guide` is not a
 selectable template or mock query; its five layout definitions remain in the
-shared 52-design catalog (24 picker-hidden definitions). Long preview assets are
+shared 52-design catalog (27 picker-hidden definitions). Long preview assets are
 `public/templates/previews/preview-{emo,show}-v1.webp`; preview hover/focus,
 full-view modal, missing-image fallback and reduced-motion rules are unchanged.
 
@@ -351,9 +366,11 @@ SVG sources therefore retain distinct enlarged region previews after loading.
 Catalog/recipe metadata determines `일상 착용컷`, `스튜디오 착용컷`, `디테일 요소`
 and `원단 설명`; saved titles are not rewritten. Showroom continuous horizon wear
 is studio wear even on older styling-named instances. Both templates add daily
-wear with P02-D01 and two same-place full/medium photographs; studio additions
-use P04-D01 with front/side/back. The showroom's default continuous layout remains
-P02-D02. Existing default budgets and extra-color cards remain unchanged.
+wear with P02-D01 and two same-place full/medium photographs. Studio additions
+copy the template's rotation wear section, whose design is WEAR-FIT-COLUMN-01,
+with front/side/back. The showroom's initial continuous studio run also uses
+WEAR-FIT-COLUMN-01. P02-D02 and P04-D01 remain in the catalog as picker-hidden
+definitions. Existing default budgets and extra-color cards remain unchanged.
 Only physical daily wear exposes cut/set addition and the twelve-cut hint.
 
 `storyboardPositions.js` derives stable view IDs from section/slot/source and
@@ -648,9 +665,12 @@ zero-photo fabric is compatible but is never a newly seeded text replacement.
 Copy is keyed by the first storyboard card of the section run, including a
 leading text card. Repeated copy roles are zero based (`items.0.desc`, etc.).
 Static and fact slots ignore copy results. AI slots use the provided result or
-an empty string and placeholder. When copywriting is disabled, seller MD text
-is preserved verbatim and the other AI slots remain empty. When copywriting is
-enabled, legacy items.n.desc first uses analysis.partDescriptionCopy, then
+an empty string and placeholder. Copy is always on for template storyboards. A
+nonblank seller MD comment (`analysis.mdComment`) fills the `seller+ai` intro
+body in both templates. AI will rewrite it like an MD comment on a real shop
+detail page, in a voice and format set by the copywriting work; until that
+rewrite is connected the comment is placed verbatim, and that element carries no
+`aiDraft`. A blank comment leaves the body to an AI draft. Legacy items.n.desc first uses analysis.partDescriptionCopy, then
 non-worn featureCopy and section-lead role copy. WOC11 nodes opt into
 copyPolicy:partOnly instead: only the dedicated matching part description with
 two nonempty explicit lines is used, without dictionary/featureCopy/role-copy
@@ -679,10 +699,13 @@ slots have `unavailable: true` and no fact path because the current analysis
 contract contains no product notice; these slots are hidden. SIZE remains absent
 because the fact contract has no confirmed size-name path. The first kind adds
 an optional `intro` role for showroom openings, hidden when empty.
-WO3 will supply that copy. MD body paragraphs become at most three separately
+The copywriting work will supply that copy. Non-seller body copy becomes at most three separately
 hugged bubbles, 12px apart, with a heading on the first. Excess paragraphs stay
 in the third bubble; body elements retain the `body` role plus `paragraphIndex`
-and `paragraphCount`.
+and `paragraphCount`. A seller MD comment is not split: it stays in one bubble
+with its spaces and line breaks. The wait-screen copy merge
+(`src/lib/editorWaitSkeleton.js`) leaves an intro body that already holds the
+seller comment untouched.
 
 `P01-D01` opening ghost images and SNS photos use reuse slots. P01-SHOW-01 is the
 showroom default; P01-D01 can also be chosen when its product source exists. Review and FAQ
@@ -797,7 +820,7 @@ left in the retained shared column layout.
 ## Verification and follow-up boundaries
 
 Both test suites read `tests/fixtures/page_templates_cases.json`, which contains
-282 complete input/output cases, including independent colors for two groups on
+304 complete input/output cases, including independent colors for two groups on
 one fabric photo, optional opening copy, MD paragraphs, per-line contrast,
 white/ivory/dark swatches in both templates, and a four-color shared grid.
 Exact measurement-region parity is included. Separate semantic assertions check card counts,
@@ -830,16 +853,38 @@ Fixtures are never regenerated by a test run. Run
 `node scripts/regenerate-page-template-fixtures.mjs` explicitly: it checks exact
 JS/Python agreement before writing the new expected results.
 
-WO2 owns seed construction, storyboard validation/storage, template selection
-and removal of v3 code. WO3 owns new copy generation, editor draft badges and the
-font bundles/weight table. Serif is defined in the catalog but is not exercised
-as an active style in WO1 tests. No browser, paid model or network call is needed
-for the WO1 tests.
+Seed construction (`seed.js`), storyboard validation (`validateStoryboard.js`,
+`server/app/agents/content_roles.py`) and template selection on the analysis page
+are in place. Only taxonomy 4 storyboards are accepted; old v3 projects are test
+data and are not kept compatible. All four `fontStyles` (template, plainGothic,
+serif, boldGothic) are selectable in the storyboard header. Pretendard, Gowun
+Batang, Gowun Dodum and Cormorant are bundled in `src/fonts`; Cal Sans and Roboto
+Mono load from Google Fonts in `seller.html`. `pendingFontBundles` is empty. No
+browser, paid model or network call is needed for these tests.
 
-For WO3, reserve or reconcile layout when late copy changes text height or the
-recommendation item count (four to six). The existing late-copy merger preserves
-seller geometry, so adding more copy roles must also handle the additional
-panels/slots. WO1 tests verify the completed assembly and bypass the legacy
-skeleton height correction; they do not claim to implement that WO3 merge.
+Copy is always on. AI text fills the two-line part description
+(`analysis.partDescriptionCopy`) in point items, the intro body and the review
+draft (name defaults to 김태희, five stars). The page job's copy step produces
+only `headline` texts (`server/app/workers/detail_page_job.py` `_gen_copy`), and
+no catalog text slot uses that role, so the other `ai` and `aiDraft` slots are
+assembled empty with their placeholders. The intro body (`seller+ai`) takes the
+seller's MD comment (`analysis.mdComment`) in both templates; AI rewrites it in
+the voice and format set by the copywriting work, and until that rewrite is
+connected the comment is placed verbatim. Without a comment, AI writes a draft.
+Elements from `aiDraft` slots, and a `seller+ai` body without a
+comment, carry `aiDraft: true`; the editor
+does not show a draft badge for it. The copy system (which slot gets which copy,
+and where bold or emphasis goes) is decided in separate copywriting work.
+
+Open items for that work: late copy can change text height and the
+recommendation item count (default four, at most six). The existing late-copy
+merger (`src/lib/editorWaitSkeleton.js`) preserves seller geometry, so new copy
+roles also need a rule for the additional panels and slots (확인 중). These tests
+verify the completed assembly and bypass the legacy skeleton height correction;
+they do not cover that merge.
+
+Cases named `woc17-*` cover the intro MD comment in both templates: a
+multi-line seller comment, no comment with an AI body, no comment with an empty AI
+body, and a whitespace-only comment.
 
 WOC14 R2 retains 10 shared cases for P01-D09 and its ghost pair: unplated top/center/bottom and plated center/bottom. The two top+plate cases are removed.
