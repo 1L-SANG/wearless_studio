@@ -149,6 +149,32 @@ _CONFIRMED_FIT_GATE = (
     "11. fitClosureAllowedMutation — selected MANNEQUIN visibly judgeable fit, length, hem, tuck, silhouette and\n"
     "   drape hold; closure equals storyboard intent; PRODUCT construction and matching-apparel boundaries remain unchanged."
 )
+_CONFIRMED_PRODUCT_AUTHORITY = (
+    "- PRODUCT images alone own the target garment's construction, material, pattern, hardware, garment\n"
+    "  text/logo and visibly judgeable garment-local color. The analysis fit value in soldProductFit and PRODUCT\n"
+    "  evidence own the sold-product fit, silhouette and drape; when soldProductFit is null, use PRODUCT evidence.\n"
+    "  Seller-only uncertainty remains unresolved. The storyboard still owns direction, shot, face handling, model,\n"
+    "  matching apparel, closure and any explicit pose; its base-color selection does not override PRODUCT pixels.\n"
+    "  Scene light may naturally affect the garment; example colors or a global grade may not recolor it."
+)
+_CONFIRMED_PRODUCT_CONSTRUCTION_GATE = (
+    "5. garmentConstruction — PRODUCT neckline, panels, sleeves, seams and permanent construction match; "
+    "PRODUCT evidence owns the visibly judgeable garment silhouette subject only to the declared analysis fit."
+)
+_CONFIRMED_PRODUCT_COLOR_GATE = (
+    "6. garmentColor — selected PRODUCT garment-local color is faithful where judgeable; natural scene light "
+    "may affect the garment, but scene/example/global grade must not recolor it."
+)
+_CONFIRMED_PRODUCT_FIT_GATE = (
+    "11. fitClosureAllowedMutation — the analysis fit value in soldProductFit and PRODUCT evidence own the\n"
+    "   sold-product fit, silhouette and drape; when soldProductFit is null, use PRODUCT evidence. Closure equals\n"
+    "   storyboard intent; PRODUCT construction and matching-apparel boundaries remain unchanged."
+)
+_CONFIRMED_PRODUCT_AUTHORITY_MARKER = {
+    "garmentLocalColor": True,
+    "analysisFitAndProductEvidence": True,
+    "productPermanentConstructionStillFinal": True,
+}
 
 MAX_EVIDENCE_LENGTH = 240
 MAX_CORRECTION_OPERATIONS = 5
@@ -301,13 +327,39 @@ _CONFIRMED_GPT_CORRECTIONS = MappingProxyType({
         "MANNEQUIN visibly judgeable worn drape."
     ),
 })
+_CONFIRMED_GPT_PRODUCT_CORRECTIONS = MappingProxyType({
+    **_CORRECTIONS,
+    "garmentConstruction": (
+        "Restore PRODUCT-evidenced neckline, panels, sleeves, seams, permanent construction "
+        "and visibly judgeable garment silhouette within the declared analysis fit."
+    ),
+    "garmentColor": (
+        "Restore the PRODUCT garment-local color where judgeable, allowing natural scene light; "
+        "do not borrow color from the example or a global grade."
+    ),
+    "fitClosureAllowedMutation": (
+        "Restore sold-product fit from the analysis fit value and PRODUCT evidence, or PRODUCT "
+        "evidence alone when no analysis fit is supplied; preserve PRODUCT construction and storyboard closure."
+    ),
+})
+
+
+def _has_confirmed_product_authority(contract: Mapping[str, Any]) -> bool:
+    marker = contract.get("confirmedGptProductAuthority")
+    return (
+        isinstance(marker, Mapping)
+        and set(marker) == set(_CONFIRMED_PRODUCT_AUTHORITY_MARKER)
+        and all(value is True for value in marker.values())
+    )
 
 
 def _correction_map_for(
     contract: Mapping[str, Any], authority_profile: str,
 ) -> Mapping[str, str]:
     base = (
-        _CONFIRMED_GPT_CORRECTIONS if authority_profile == "confirmed_gpt_v1"
+        _CONFIRMED_GPT_PRODUCT_CORRECTIONS
+        if authority_profile == "confirmed_gpt_v1" and _has_confirmed_product_authority(contract)
+        else _CONFIRMED_GPT_CORRECTIONS if authority_profile == "confirmed_gpt_v1"
         else _HORIZON_TONE_CORRECTIONS
         if contract.get("recipeFamily") == "horizon"
         and horizon_background.normalize_runtime(contract.get("horizonBackground"))
@@ -706,7 +758,18 @@ def build_prompt(
     with open(_PROMPT_FILE, encoding="utf-8") as handle:
         template = handle.read()
     if authority_profile == "confirmed_gpt_v1":
+        product_authority = _has_confirmed_product_authority(contract) or (
+            any(reference.role == "product" for reference in references)
+            and not any(reference.role == "mannequin" for reference in references)
+        )
         replacements = (
+            (_GENERIC_MANNEQUIN_AUTHORITY, _CONFIRMED_PRODUCT_AUTHORITY),
+            (_GENERIC_GARMENT_CONSTRUCTION_GATE, _CONFIRMED_PRODUCT_CONSTRUCTION_GATE),
+            (_GENERIC_GARMENT_COLOR_GATE, _CONFIRMED_PRODUCT_COLOR_GATE),
+            (_GENERIC_FIT_GATE, _CONFIRMED_PRODUCT_FIT_GATE),
+            ("EXAMPLE, PRODUCT or MANNEQUIN body evidence", "EXAMPLE or PRODUCT body evidence"),
+            ("MODEL FACE/SHEET, PRODUCT, MANNEQUIN, MATCHING", "MODEL FACE/SHEET, PRODUCT, MATCHING"),
+        ) if product_authority else (
             (_GENERIC_MANNEQUIN_AUTHORITY, _CONFIRMED_MANNEQUIN_AUTHORITY),
             (_GENERIC_GARMENT_CONSTRUCTION_GATE, _CONFIRMED_GARMENT_CONSTRUCTION_GATE),
             (_GENERIC_GARMENT_COLOR_GATE, _CONFIRMED_GARMENT_COLOR_GATE),
@@ -777,19 +840,34 @@ def _confirmed_authority_contract(
     baseline. The owner-confirmed historical route instead supplies an already
     resolved selected mannequin whose visible garment-local color and fit pixels are
     final. Changing only the prose would leave contradictory owners in planContract.
+    Without that input, PRODUCT evidence and the analysis fit value own those attributes.
     """
 
     aligned = dict(contract)
     owners = dict(_mapping(contract.get("attributeOwners")))
-    for attribute in ("color", "length", "silhouette", "declaredFit"):
-        if attribute in owners:
-            owners[attribute] = "mannequin"
+    if getattr(getattr(prompt_input, "scope", None), "selected_mannequin", True) is False:
+        owners["color"] = "productTruth"
+        for attribute in ("length", "silhouette"):
+            if attribute in owners:
+                owners[attribute] = "productTruth"
+        fit = getattr(prompt_input, "sold_product_fit", None)
+        fit = fit if isinstance(fit, str) else None
+        aligned["soldProductFit"] = fit or None
+        aligned["declaredFitAxisCount"] = 1 if fit else 0
+        owners.pop("declaredFit", None)
+        if fit:
+            owners["declaredFit"] = "fitProfile"
+        aligned["confirmedGptProductAuthority"] = dict(_CONFIRMED_PRODUCT_AUTHORITY_MARKER)
+    else:
+        for attribute in ("color", "length", "silhouette", "declaredFit"):
+            if attribute in owners:
+                owners[attribute] = "mannequin"
+        aligned["confirmedGptMannequinAuthority"] = {
+            "garmentLocalColor": True,
+            "garmentLocalFitLengthSilhouetteDrape": True,
+            "productPermanentConstructionStillFinal": True,
+        }
     aligned["attributeOwners"] = dict(sorted(owners.items()))
-    aligned["confirmedGptMannequinAuthority"] = {
-        "garmentLocalColor": True,
-        "garmentLocalFitLengthSilhouetteDrape": True,
-        "productPermanentConstructionStillFinal": True,
-    }
     try:
         framing = confirmed_gpt_framing_contract(prompt_input)
     except ConfirmedGptPromptError as exc:
@@ -1193,6 +1271,8 @@ async def verdict(
         "attributeOwners": contract["attributeOwners"],
         "referenceAllowedAttributes": contract["referenceAllowedAttributes"],
     }
+    if authority_context is not None and _has_confirmed_product_authority(contract):
+        authority_context["confirmedGptProductAuthority"] = contract["confirmedGptProductAuthority"]
     if authority_context is not None and contract.get("productPresentation") is not None:
         authority_context.update(
             recipeFamily=contract["recipeFamily"], productVariant=contract["productVariant"],

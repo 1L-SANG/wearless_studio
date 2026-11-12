@@ -26,6 +26,8 @@ from .confirmed_gpt_prompt import (
     SellerUncertainty,
 )
 from .gemini_image import InlineImage
+from .fit_axes import build_fit_profile_block
+from .prompts import clean_text
 from . import product_evidence_contract
 from ..services import seller_evidence_grid
 
@@ -112,9 +114,10 @@ def _image(value: object, field: str) -> InlineImage:
     return value
 
 
-def _manifest(*, matching_attached: bool, outfit_roles: tuple[str, ...] = ()) -> str:
+def _manifest(*, matching_attached: bool, outfit_roles: tuple[str, ...] = (),
+              selected_mannequin: bool = True) -> str:
     labels = [
-        "MANNEQUIN — selected garment-local color and fit authority",
+        *(("MANNEQUIN — selected garment-local color and fit authority",) if selected_mannequin else ()),
         "MODEL FACE — direction sheet",
         "MODEL FULL BODY — direction sheet",
         "PRODUCT — sold-product labelled evidence grid",
@@ -128,6 +131,22 @@ def _manifest(*, matching_attached: bool, outfit_roles: tuple[str, ...] = ()) ->
             labels.append(f"OUTFIT {role.upper()} - directly selected item evidence")
     labels.append("EXAMPLE REFERENCE (scope: all) — service reference")
     return "\n".join(f"{index}. {label}" for index, label in enumerate(labels, 1))
+
+
+def _analysis_fit(analysis: dict | None) -> str | None:
+    """Use the generic path's fit sources, excluding length, sleeves and matching axes."""
+    analysis = analysis if isinstance(analysis, dict) else {}
+    profile = analysis.get("fitProfile")
+    if isinstance(profile, dict):
+        axes = profile.get("axes")
+        block = build_fit_profile_block({
+            **profile,
+            "axes": {"fit": axes.get("fit")} if isinstance(axes, dict) else {},
+            "version": 2,
+            "matchingFit": None,
+        })
+        return block.splitlines()[1].removeprefix("- ") if block else None
+    return clean_text(analysis.get("fit"), 200) or None
 
 
 def _front_seller_facts(contract: dict) -> tuple[SellerFact, ...]:
@@ -176,7 +195,7 @@ def build_packet(
     selected_model_id: str | None,
     effective_model_id: str | None,
     uses_base_color: bool,
-    mannequin_image: InlineImage,
+    mannequin_image: InlineImage | None,
     face_direction_sheet: InlineImage,
     full_body_direction_sheet: InlineImage,
     seller_images: tuple[tuple[str, InlineImage], ...],
@@ -184,6 +203,7 @@ def build_packet(
     example_image: InlineImage,
     evidence_contract: object,
     outfit_images: tuple[tuple[str, InlineImage], ...] = (),
+    analysis: dict | None = None,
 ) -> ConfirmedGptRuntimePacket:
     """Build the exact ordered provider packet or reject the cut without fallback."""
 
@@ -212,7 +232,7 @@ def build_packet(
         raise ConfirmedGptRuntimeError("confirmed_gpt_inner_requires_outer_product")
     extras = tuple((role, _image(value, role)) for role, value in outfit_images)
 
-    mannequin = _image(mannequin_image, "mannequin")
+    mannequin = _image(mannequin_image, "mannequin") if mannequin_image is not None else None
     face_sheet = _image(face_direction_sheet, "face_direction_sheet")
     body_sheet = _image(full_body_direction_sheet, "full_body_direction_sheet")
     example = _image(example_image, "service_example")
@@ -295,7 +315,7 @@ def build_packet(
     if not front_facts:
         raise ConfirmedGptRuntimeError("confirmed_gpt_front_hard_facts_required")
     roles = (
-        InputRole.SELECTED_MANNEQUIN_CUT,
+        *((InputRole.SELECTED_MANNEQUIN_CUT,) if mannequin is not None else ()),
         InputRole.MODEL_FACE_DIRECTION_SHEET,
         InputRole.MODEL_FULL_BODY_DIRECTION_SHEET,
         InputRole.SOLD_PRODUCT_LABELED_EVIDENCE_GRID,
@@ -311,7 +331,7 @@ def build_packet(
             pose="auto",
             reference_direction_compatible=True,
             space_group_id=None,
-            selected_mannequin=True,
+            selected_mannequin=mannequin is not None,
             example_source="service",
         ),
         ordered_roles=roles,
@@ -325,16 +345,21 @@ def build_packet(
             )
             for fact in contract["uncertainties"]
         ),
-        outfit=replace(directing.outfit_lock(matching_attached=matching_attached), selected_roles=outfit_roles),
+        outfit=replace(
+            directing.outfit_lock(matching_attached=matching_attached),
+            selected_roles=outfit_roles,
+        ),
         pose_semantics=directing.pose_semantics,
+        sold_product_fit=_analysis_fit(analysis) if mannequin is None else None,
     )
     grid = InlineImage("image/png", grid_bytes)
-    images = (mannequin, face_sheet, body_sheet, grid,
+    images = (*((mannequin,) if mannequin is not None else ()), face_sheet, body_sheet, grid,
               *(image for role, image in extras if role == "inner"), *matches,
               *(image for role, image in extras if role != "inner"), example)
     return ConfirmedGptRuntimePacket(
         prompt_input=prompt_input,
         images=images,
-        manifest=_manifest(matching_attached=matching_attached, outfit_roles=outfit_roles),
+        manifest=_manifest(matching_attached=matching_attached, outfit_roles=outfit_roles,
+                           selected_mannequin=mannequin is not None),
         evidence_grid_sha256=sha256(grid_bytes).hexdigest(),
     )

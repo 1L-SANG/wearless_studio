@@ -121,6 +121,15 @@ def qc_system_prompt(family: str, context=None) -> str:
             raise ValueError("missing_qc_authority_context")
         if family == "cut":
             profile = _qc_choice(context["authorityProfile"], {"generic_v1", "confirmed_gpt_v1"})
+            product_authority = {}
+            if "confirmedGptProductAuthority" in context:
+                marker = context["confirmedGptProductAuthority"]
+                if (profile != "confirmed_gpt_v1" or not isinstance(marker, dict)
+                        or set(marker) != {"garmentLocalColor", "analysisFitAndProductEvidence",
+                                           "productPermanentConstructionStillFinal"}
+                        or not all(value is True for value in marker.values())):
+                    raise ValueError("invalid_qc_confirmed_product_authority")
+                product_authority = {"confirmedGptProductAuthority": dict(marker)}
             presentation = {}
             if "productPresentation" in context:
                 if profile != "generic_v1":
@@ -137,11 +146,14 @@ def qc_system_prompt(family: str, context=None) -> str:
             owners = {}
             for attribute, owner in raw_owners.items():
                 allowed = ({"storyboard"} if presentation and attribute in _QC_PRODUCT_PRESENTATION_ATTRIBUTES
+                           else {"productTruth"} if product_authority and attribute == "color"
                            else _QC_OWNER_CHOICES.get(attribute))
                 if allowed is not None:
                     owners[attribute] = _qc_choice(owner, allowed)
                     if owner == "mannequin" and profile != "confirmed_gpt_v1":
                         raise ValueError("invalid_qc_mannequin_authority")
+                    if owner == "mannequin" and product_authority:
+                        raise ValueError("invalid_qc_confirmed_product_owner")
             if presentation and any(owners.get(key) != "storyboard" for key in _QC_PRODUCT_PRESENTATION_ATTRIBUTES):
                 raise ValueError("missing_qc_product_presentation_authority")
             references = context["referenceAllowedAttributes"]
@@ -149,7 +161,7 @@ def qc_system_prompt(family: str, context=None) -> str:
                 raise ValueError("missing_qc_reference_contract")
             safe = {"authorityProfile": profile, "attributeOwners": owners,
                     "referenceAllowedAttributes": sorted({_qc_choice(value, _QC_REFERENCE_ATTRIBUTES) for value in references}),
-                    **presentation}
+                    **presentation, **product_authority}
         elif family == "image":
             count = _qc_count(context["productCount"], minimum=0)
             roles = _qc_roles(context["imageRoles"], _QC_IMAGE_ROLES)
