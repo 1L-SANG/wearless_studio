@@ -10,6 +10,9 @@ SHARED EVIDENCE AND SAFETY
 - Describe only the construction named by the label and supported product facts.
   You have no photograph in this request. Do not invent a position, depth, thickness,
   number of fasteners, fabric feel or other property absent from those facts.
+- Never state where a length, hem or waist lands on the body (골반, 엉덩이, 허벅지,
+  무릎, 발목, 허리선 위치 and similar) unless PRODUCT FACTS give it. A length label
+  without such a fact gets no description.
 - Never assert breathability, warmth, cooling, water/wind resistance, UV protection,
   sweat absorption, odour control, wrinkle/pilling resistance, stretch, durability,
   opacity, skin comfort, slimming or body correction. A material name proves none of
@@ -31,17 +34,22 @@ PAGE PARTS → partDescriptionCopy
 - Freshly compose a description for EVERY supportable part, even if the same label
   also belongs to SELLER HIGHLIGHTS. Do not use a seller dictionary sentence.
 - Exactly TWO lines separated by one newline (JSON escape \n). No extra line break.
-- Each line is at most {{MAX_LINE_CHARS}} characters INCLUDING spaces and punctuation;
-  aim for a natural short line, never pad it to the limit. Rewrite overlong lines.
+- Each line is at most {{MAX_LINE_CHARS}} characters INCLUDING spaces and punctuation.
+  Write a specific, full phrase (usually 13 to 20 characters), never pad it to the
+  limit, and rewrite overlong lines.
 - Line 1 names the part's visible construction/shape and ends with ~로 or ~라.
 - Line 2 gives its modest visible benefit when worn or styled, in friendly 해요체,
-  ending ~어요, ~아요 or ~해요; natural contractions such as 보여요, 잡혀요,
-  돼요 and 예요 are welcome (an optional final period is allowed).
+  ending ~어요, ~아요 or ~해요. Use the natural spoken contraction: 줘요 (not 주어요),
+  돼요 (not 되어요), 봐요 (not 보아요); 보여요, 잡혀요 and 예요 are welcome
+  (an optional final period is allowed).
 - The two lines form one connected thought. Do not write two unrelated feature
   fragments, a heading, or a generic '디테일을 확인할 수 있습니다' sentence.
-- Keep the benefit visual: neckline, outline, clothing balance, or a neat impression.
-  Do not infer comfort, tactile feel, material performance or a body-changing effect.
-- Vary the construction and benefit; avoid identical canned wording across parts.
+- Keep the benefit visible: neckline, outline, how the garment falls or sits when
+  worn (품이 여유롭게 떨어져요, 어깨선이 자연스럽게 내려와요), clothing balance or
+  styling. Do not infer comfort, tactile feel, material performance or a
+  body-changing effect.
+- Vary the construction and benefit. Within one response, use each benefit word at
+  most once (for example 단정한 or 깔끔하게 may appear in only one part).
 
 Original style examples (structure only; adapt to the actual supplied label/facts):
 1. 라운드 넥
@@ -54,8 +62,8 @@ Original style examples (structure only; adapt to the actual supplied label/fact
    단추가 더해진 여밈으로
    차분한 옷차림을 완성해요
 4. 드롭 숄더
-   어깨 아래로 내려온 절개라
-   상체 윤곽이 한결 느긋해요
+   어깨선이 팔 쪽으로 내려온 절개라
+   품이 여유롭게 떨어져요
 5. 옆 포켓
    옆선에 자리 잡은 포켓으로
    옆모습에 작은 포인트를 더해요

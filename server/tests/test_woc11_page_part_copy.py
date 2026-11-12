@@ -137,7 +137,8 @@ def test_parts_keep_exact_newline_and_map_sanitized_label_back_to_original():
 
 
 @pytest.mark.parametrize("ending", ["옷차림이 단정해 보여요", "옷의 윤곽이 깔끔하게 잡혀요",
-                                     "옷차림에 포인트가 돼요", "옆모습의 포인트예요"])
+                                     "옷차림에 포인트가 돼요", "옆모습의 포인트예요",
+                                     "소맷단에 입체적인 포인트가 생겨요"])
 def test_parts_accept_natural_contracted_polite_endings(ending):
     desc = f"단추가 더해진 여밈으로\n{ending}"
     assert page_part_copy.validate_parts([{"point": "단추", "desc": desc}], ["단추"]) == {"단추": desc}

@@ -27,7 +27,8 @@ _PART_BANNED = (*feature_copy._BANNED, *feature_copy._HYPE,
                 "건조", "수축", "변형", "견고", "튼튼", "내구", "가벼운무게", "체형보정",
                 "체형을보정", "누구나", "하루종일", "바람을막", "바람차단", "바람막",
                 "물을막", "물차단", "물이안", "물이새지", "물이스며들지", "젖지않")
-_END = re.compile(r"(?:어요|아요|해요|여요|혀요|려요|돼요|예요|에요|워요|져요|춰요|켜요|와요|봐요|나요|줘요|둬요)\.?$")
+# Any Hangul syllable before 요 is polite 해요체 (생겨요, 가벼워요); 합니다체 never ends in 요.
+_END = re.compile(r"[가-힣]요\.?$")
 _PLAIN_LINE = re.compile(r"[가-힣A-Za-z0-9 ,·()/\-]+")
 
 
