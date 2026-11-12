@@ -8,6 +8,7 @@ import {
   CAPTION_STYLE,
   captionHeight,
 } from './editorTextSlots.js';
+import { editedTextElement } from '../features/editor/editorTextEdit.js';
 import { getBlockRenderHeight } from '../features/editor/editorGeometry.js';
 
 const autoBlockHeight = (elements) => Math.max(
@@ -53,7 +54,7 @@ export function patchTemplateElement(block, elementId, patch) {
     && sameValue(element.style, element.genAutoStyle)
     && sameValue(copyGeometry(element), element.genAutoGeometry);
   const elements = block.elements.map(item => item.id === elementId
-    ? { ...item, ...patch, ...(autoHeight ? { genAutoGeometry: { ...item.genAutoGeometry, h: patch.h } } : {}) } : item);
+    ? { ...editedTextElement(item, patch), ...(autoHeight ? { genAutoGeometry: { ...item.genAutoGeometry, h: patch.h } } : {}) } : item);
   const next = { ...block, elements };
   if (autoHeight && block.h === block.genTemplateBaseline.h)
     next.genTemplateBaseline = { ...block.genTemplateBaseline, h: getBlockRenderHeight(next) };

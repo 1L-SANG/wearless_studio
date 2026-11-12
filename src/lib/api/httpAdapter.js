@@ -715,12 +715,8 @@ export const httpAdapter = {
     ]);
     const colors = product?.colors || [];
     const outdated = saved?.some(block => block.taxonomyVersion !== 4);
-    const fallbackStyle = analysis?.pageStyle || (!outdated && saved?.length
-      ? { ...defaultPageStyle(), templateId: saved[0].pageSectionKey.split('.')[0] }
-      : await this.getLastPageStyle());
-    const effectiveAnalysis = analysis?.pageStyle ? analysis : { ...analysis, pageStyle: fallbackStyle };
     const generated = outdated && (project?.status === 'done' || !!(await this.getEditorBlocks(projectId))?.length);
-    const resolved = resolveStoryboardEntry(saved, product || {}, effectiveAnalysis, {
+    const resolved = resolveStoryboardEntry(saved, product || {}, analysis || {}, {
       projectId, generated,
       identityKind: identityKindOf(isRealModelSelection(analysis?.selectedModelId || analysis?.selected_model_id)),
     });

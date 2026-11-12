@@ -21,6 +21,8 @@ import { jobFailure, jobFailureMessage } from '@/lib/api/jobFailure.js';
 import { getJobSettlement } from '@/lib/api/facemarket.js';
 import { SettlementReceiptChain } from '@/features/editor/SettlementReceiptChain.jsx';
 import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
+import { editedTextElement } from './editorTextEdit.js';
+import { useEditedTemplateContrast } from './useEditedTemplateContrast.js';
 import { alignSkeletonToServer, canSafelyMergeServerBlocks, clearFailedJobPreviewBlocks, decorateGenBlocks, failedJobPreviewUrls, fillGenBlocks, mergeServerBlocks, patchTemplateElement } from '@/lib/editorWaitSkeleton.js';
 import { incompleteMessage, retryOfIncomplete, retryReuseHint } from '@/lib/detailPageJobFailure.js';
 import {
@@ -101,7 +103,7 @@ import { resolveTextSpacing } from './textSpacing.js';
 import { canvasBlockRuns, defaultStitchedMode, readStitchedPreference, writeStitchedPreference } from './editorViewMode.js';
 import { hasTemplateContrastLines, TemplateContrastText } from './TemplateContrastText.jsx';
 
-const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)', 'Gowun Dodum': 'var(--font-soft)' };
+const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)', 'Gowun Dodum': 'var(--font-soft)', 'Gowun Batang': 'var(--font-batang)' };
 
 /* 스냅 엔진 상시 on — 포인터 이동은 editorSnap, Moveable 리사이즈는 elementGuidelines를 쓴다.
    DEV 게이트 없이 prod 배포에서도 같은 기준으로 동작한다. */
@@ -416,6 +418,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   // deps는 높이에 실제로 영향 주는 필드만 — onPatch(매 렌더 재생성)를 넣으면 마퀴·줌마다
   // 전 텍스트가 강제 리플로우를 밟는다.
   const hSyncArmed = useRef(false);
+  const contrastElement = useEditedTemplateContrast(el, ref, { editing, preview });
   const s0 = el.style || {};
   useLayoutEffect(() => {
     const armed = hSyncArmed.current;
@@ -427,7 +430,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     const h = Math.max(1, Math.ceil(node.offsetHeight));
     if (Math.round(Number(el.h || 0)) !== h) onPatch(blockId, el.id, { h });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [el.text, el.w, el.textSizing, s0.size, s0.weight, s0.lineHeight, s0.tracking, s0.spacingMode, s0.font, s0.list, editing, preview, el.hidden]);
+  }, [el.text, el.w, el.textSizing, s0.size, s0.weight, s0.lineHeight, s0.tracking, s0.spacingMode, s0.font, s0.list, editing, preview, el.hidden, contrastElement.contrastLines]);
   // StrictMode(dev)는 마운트 효과를 setup→cleanup→setup 으로 두 번 돌린다. ref 는 cleanup 으로
   // 되돌아가지 않으므로 두 번째 setup 에서 위 가드가 이미 'armed' 라, 문서를 여는 것만으로
   // 전 텍스트의 h 가 재기록되고 자동저장 PUT 이 나갔다(dev 는 실서버가 기본이라 저장본이
@@ -627,7 +630,10 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
         onClick={finishClick}
         onDoubleClick={(e) => { e.stopPropagation(); pendingTextSize.current = null; onEdit(el.id); }}
         contentEditable={editing} suppressContentEditableWarning
-        onInput={(e) => { if (editing) previewAutoTextSize(e.currentTarget); }}
+        onInput={(e) => { if (editing) {
+          if (el.keepWords) e.currentTarget.classList.toggle('el-keep-words', editableText(e.currentTarget) === el.text);
+          previewAutoTextSize(e.currentTarget);
+        } }}
         onBlur={(e) => {
           const value = editableText(e.currentTarget);
           const nextSize = pendingTextSize.current || previewAutoTextSize(e.currentTarget);
@@ -637,7 +643,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
           if (onTextCommit) onTextCommit(blockId, el.id, value, nextSize);
           else onPatch(blockId, el.id, { text: value });
         }}>
-        {editing ? el.text : (!emptyText && hasTemplateContrastLines(el) ? <TemplateContrastText element={el} /> : textDisplay)}</div>
+        {editing ? el.text : (!emptyText && hasTemplateContrastLines(contrastElement) ? <TemplateContrastText element={contrastElement} /> : textDisplay)}</div>
     );
   }
   if (el.type === 'license-verify') {
@@ -2208,7 +2214,7 @@ export function Editor() {
     const selected = bs.flatMap(b => b.elements).find(e => e.id === selEl);
     if (!selected || Object.entries(patch).every(([key, value]) => JSON.stringify(selected[key]) === JSON.stringify(value))) return bs;
     return bs.map(b => b.elements.some(e => e.id === selEl)
-      ? { ...b, elements: b.elements.map(e => e.id === selEl ? { ...e, ...patch } : e) } : b);
+      ? { ...b, elements: b.elements.map(e => e.id === selEl ? editedTextElement(e, patch) : e) } : b);
   });
   const patchBubbleAppearance = (patch) => setBlocks((bs) => patchSelectedBubbleAppearance(bs, selEls.length ? selEls : [selEl], patch));
   const patchElById = (blockId, elId, patch) => setBlocks((bs) => bs.map((b) => b.id === blockId ? patchTemplateElement(b, elId, patch) : b));
@@ -2222,7 +2228,7 @@ export function Editor() {
     return {
       ...b,
       elements: b.elements.map((element) => element.id === elementId
-        ? { ...element, text: value, ...elementPatch }
+        ? editedTextElement(element, { text: value, ...elementPatch })
         : element),
     };
   }));
@@ -3245,7 +3251,7 @@ export function Editor() {
           const textSize = el.type === 'text' && el.shape !== 'bubble' && el.textSizing === 'auto'
             ? { w: Math.max(1, Math.round(node.offsetWidth)), h: Math.max(1, Math.round(node.offsetHeight)) }
             : {};
-          return { ...el, text, ...textSize };
+          return editedTextElement(el, { text, ...textSize });
         }) }));
         latestBlocks.current = bs;
       }

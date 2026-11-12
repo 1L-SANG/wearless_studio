@@ -164,6 +164,7 @@ export function seedStoryboard(product = {}, analysis = {}, context = {}) {
 }
 
 export function resolveStoryboardEntry(saved, product, analysis, { generated = false, ...context } = {}) {
+  analysis = { ...analysis, pageStyle: analysisPageStyle(analysis?.pageStyle, saved) };
   const outdated = saved?.length && saved.some(b => b.taxonomyVersion !== 4);
   if (outdated && generated) return { blocks: saved, notice: 'legacyGenerated' };
   if (outdated || !saved?.length) return { blocks: seedStoryboard(product, analysis, context), notice: outdated ? 'rebuilt' : null };

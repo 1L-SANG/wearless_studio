@@ -425,7 +425,7 @@ test("token resolution uses the base swatch, preserves body fonts and does not m
         baseColorOf(product).swatchId,
     );
     assert.equal(tokens.colors.accentInk, catalog.pointPalette.blue.accentInk);
-    assert.equal(tokens.fonts.titleKo.weight, 800);
+    assert.equal(tokens.fonts.titleKo.weight, 700);
     assert.equal(tokens.fonts.labelEn.font, "Cal Sans");
     assert.equal(tokens.fonts.body.font, "Pretendard");
     assert.equal(tokens.fonts.body.weight, 400);

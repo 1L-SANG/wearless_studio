@@ -826,7 +826,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     shopName }), [catalogs, detailPreviewDimensions, shopName]);
   const styleSaves = useMemo(() => createStoryboardStyleSaveQueue(style => saveStoryboardPageStyle(projectId, style), { projectId }), [projectId]);
   const styleRequest = useRef(0);
-  const selectedPageStyle = analysisPageStyle(catalogs?.analysis?.pageStyle);
+  const selectedPageStyle = analysisPageStyle(catalogs?.analysis?.pageStyle, blocks);
   const styleValueRef = useRef(selectedPageStyle);
   useLayoutEffect(() => { styleValueRef.current = selectedPageStyle; styleSaves.seed(selectedPageStyle); }, [projectId, selectedPageStyle, styleSaves]);
   const [pageStyleError, setPageStyleError] = useState('');
@@ -1140,7 +1140,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     const run = added[0];
     const name = templateSectionName(run);
     showUndo(previous, assigned, { label: '섹션 추가', standalone: true,
-      message: `${name}을 넣었어요` });
+      message: `${name} 섹션을 넣었어요` });
     setInsertedSectionKey(run.pageSectionKey); setActiveSectionKey(run.pageSectionKey); setOverview(false); setSelectedId(null); setSelectedViewId(null);
     setSetPicker(null); setDrawer({ mode: 'add' });
     if (flightSource) requestAnimationFrame(() => {
@@ -1170,7 +1170,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     const run = sectionRuns(blocks).find(item => item.key === key);
     if (!run) return;
     setActiveSectionKey(key); setOverview(false); setSelectedId(null); setSelectedViewId(null); setHighlightedPosition(null); setSetPicker(null);
-    if (drawer?.mode === 'design') setDrawer({ mode: 'design', runKey: key });
+    if (drawer?.mode === 'design' && sectionDesignChoices(run, { storyboard: blocks, product: catalogs.detailProduct }).length > 1) setDrawer({ mode: 'design', runKey: key });
     else setDrawer(null);
   };
   const swapPosition = (from, to) => {
@@ -1235,7 +1235,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     // 생성 입력은 서버가 저장된 콘티에서 읽는다 — 다음 단계로 넘기기 전에 반드시 저장.
     // 같은 직렬 체인 경유: 비행 중 자동저장 뒤에 줄서서 최신 스냅샷이 마지막에 반영됨을 보장.
     await continueAfterStoryboardFlush({
-      flush: async () => { await styleSaves.wait(); await ensureV4StoryboardCopywriting(projectId, useAppStore.getState); return saveNow(projectId); },
+      flush: async () => { await styleSaves.flush(() => styleValueRef.current); await ensureV4StoryboardCopywriting(projectId, useAppStore.getState); return saveNow(projectId); },
       navigate: () => navigate('/create/mannequin'),
       onFailure: (message, error) => toast.push(message, { variant: 'error', error,
         kind: 'save_error', actionName: 'save', messageCode: 'storyboard_save_failed', blocking: true }),

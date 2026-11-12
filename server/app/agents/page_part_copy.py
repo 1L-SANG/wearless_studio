@@ -64,6 +64,7 @@ def validate_parts(items, labels):
         point, desc = wanted.get(item["point"]), item.get("desc")
         if point is None or not isinstance(desc, str):
             continue
+        desc = desc.replace("\\n", "\n")
         # Explicit LF is the only permitted control character. Keep the exact line
         # break for the renderer; tabs, CR, bidi/zero-width controls and markup fail.
         if any((unicodedata.category(char).startswith("C") and char != "\n")

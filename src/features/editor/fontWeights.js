@@ -25,6 +25,7 @@ const SUPPORTED = {
   'Cormorant': [300, 400, 500, 600, 700],    // 가변 300~700
   'Roboto Mono': [500, 600],                 // index.html 쿼리가 받는 두 굵기
   'Cal Sans': [600],                         // 단일 굵기 — 저장값은 600(아래 CSS_FACE 참고)
+  'Gowun Batang': [400, 700],                // bundled Regular/Bold
   'Gowun Dodum': [400],                      // Regular 단일
 };
 

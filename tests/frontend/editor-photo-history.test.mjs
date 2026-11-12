@@ -1,3 +1,4 @@
+import { editedTextElement } from '../../src/features/editor/editorTextEdit.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -42,7 +43,7 @@ test('blurring an unchanged photo size field does not append a duplicate undo st
   let current = [{ id: 'a', elements: [{ id: 'p', type: 'image', w: 900, h: 573 }] }];
   const original = current;
   const begin = source.indexOf('  const patchEl ='), end = source.indexOf('  const patchBubbleAppearance =', begin);
-  const patch = new Function('selEl', 'setBlocks', `${source.slice(begin,end)}; return patchEl;`)('p', update => { current = update(current); });
+  const patch = new Function('editedTextElement', 'selEl', 'setBlocks', `${source.slice(begin,end)}; return patchEl;`)(editedTextElement, 'p', update => { current = update(current); });
   patch({ w: 900, h: 573 });
   assert.equal(current, original);
   patch({ w: 880 });

@@ -1,3 +1,4 @@
+import { toBytesUrl, isAssetBytesUrl } from '../../../src/features/editor/editorAssetBytes.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import JSZip from 'jszip';
@@ -7,7 +8,7 @@ import { isGifImage } from '../../../src/lib/gif/gifMedia.js';
 
 const exportSource = readFileSync(new URL('../../../src/features/editor/editorExport.js', import.meta.url), 'utf8');
 const publishSource = readFileSync(new URL('../../../src/features/editor/detailPublish.js', import.meta.url), 'utf8');
-const executable = source => source.replace(/^import .+;\r?\n/gm, '').replace(/\bexport (?=(?:async )?(?:function|const))/g, '');
+const executable = source => source.replace(/^export \{.*\} from .*;\r?\n/gm, '').replace(/^import .+;\r?\n/gm, '').replace(/\bexport (?=(?:async )?(?:function|const))/g, '');
 
 // Real preflight, blur, capture ordering, stitching, split encoding and public
 // export entrypoints run here. Only DOM, network and codec boundaries are fake.
@@ -76,13 +77,13 @@ export function blurExportHarness(t, { omitBake = false } = {}) {
     events.push('svg'); return 'baked-svg';
   };
   const scope = {
-    document, JSZip, ASSET_CACHE_VERSION: 1, hasBackdropBlur, isGifImage, bakeExportBackdrops, rasterizeBackdropImage,
+    waitForEditedContrast: async () => {}, document, JSZip, toBytesUrl, isAssetBytesUrl, ASSET_CACHE_VERSION: 1, hasBackdropBlur, isGifImage, bakeExportBackdrops, rasterizeBackdropImage,
     collectExportImageProbes: async clone => {
       assert.equal(clone.querySelector('[data-editor-blur]').dataset.blurBaked, 'true', 'probes must sample baked pixels');
       events.push('probe'); return [];
     },
     rasterizeExportSvg: (svg, options) => rasterizeExportSvg(svg, options, { createCanvas: canvas, loadImage: async () => ({}) }),
-    getFontEmbedCSS: async () => '', toSvg, recordClientAction() {},
+    getPageFontEmbedCSS: async () => '', toSvg, recordClientAction() {},
     clientApiFetch: async url => { assert.match(url, /\/bytes\?e=/); events.push('bytes'); return new Response(new Blob(['image']), { headers: { 'content-type': 'image/png' } }); },
     readClientResponse: (response, method) => response[method](), attachResponseError: error => error,
     FileReader: class { readAsDataURL() { this.result = 'data:image/png;base64,SOURCE'; this.onload(); } },

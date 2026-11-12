@@ -28,9 +28,7 @@
     "Gowun Dodum",
     "Gowun Batang"
   ],
-  "pendingFontBundles": [
-    "Gowun Batang"
-  ],
+  "pendingFontBundles": [],
   "defaults": {
     "templateId": "emo",
     "fontStyle": "template",
@@ -938,7 +936,7 @@
       },
       "titleKo": {
         "font": "Pretendard",
-        "weight": 800,
+        "weight": 700,
         "italic": false,
         "trackingEm": -0.03
       }

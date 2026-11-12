@@ -1,3 +1,4 @@
+import { editedTextElement } from '../../src/features/editor/editorTextEdit.js';
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -85,7 +86,7 @@ test('blur edits use the existing immutable document patch and undo history incl
   let current = original;
   const past = [], future = [];
   const begin = source.indexOf('  const patchEl ='), end = source.indexOf('  const patchBubbleAppearance =', begin);
-  const patch = new Function('selEl', 'setBlocks', `${source.slice(begin, end)}; return patchEl;`)('p', update => {
+  const patch = new Function('editedTextElement', 'selEl', 'setBlocks', `${source.slice(begin, end)}; return patchEl;`)(editedTextElement, 'p', update => {
     const next = update(current); if (next !== current) past.push(current); current = next;
   });
   patch({ blur: 0 });
