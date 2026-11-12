@@ -72,8 +72,8 @@ test('publisher keeps each document revision date consistent in metadata and bod
   // 가중치의 보관·파기 범위가 더해졌고, 받지 않는 사이즈·스타일과 "만료" 표기를 뺐다.
   const revised = {
     'terms-seller': { version: 'v1.4', effectiveDate: '2026-11-23' },
-    // 2026-10-19 · privacy-seller v1.2: AI 생성 처리 안내와 위탁 사업자 표기 정리.
-    'privacy-seller': { version: 'v1.2', effectiveDate: '2026-10-19' },
+    // 2026-11-23 · privacy-seller v1.3: 서비스 제공 목적과 AI 처리 안내의 기능 명칭 정리.
+    'privacy-seller': { version: 'v1.3', effectiveDate: '2026-11-23' },
     'refund': { version: 'v1.3', effectiveDate: '2026-11-23' },
     'biometric-consent': { version: '2026-09-v4', effectiveDate: '2026-09-18' },
     'overseas-transfer': { version: '2026-09-v4', effectiveDate: '2026-09-18' },
@@ -103,7 +103,7 @@ test('publisher keeps each document revision date consistent in metadata and bod
 
   const datedSellerDocuments = [
     ['terms-seller.md', /2026년 11월 23일\*\*부터 시행합니다/],
-    ['privacy-seller.md', /2026년 10월 19일\*\*부터 적용됩니다/],
+    ['privacy-seller.md', /2026년 11월 23일\*\*부터 적용됩니다/],
     ['refund.md', /2026년 11월 23일\*\*부터 시행합니다/],
   ];
   for (const [file, effectiveCopy] of datedSellerDocuments) {
