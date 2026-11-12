@@ -4604,6 +4604,7 @@
     },
     "WEAR-STYLING-FRAME-COLUMN-03": {
       "id": "WEAR-STYLING-FRAME-COLUMN-03",
+      "pickerHidden": true,
       "displayName": "한 열 액자 3장",
       "kind": "wear",
       "padding": 56,
@@ -4760,6 +4761,7 @@
     },
     "WEAR-STYLING-FRAME-2COL-03": {
       "id": "WEAR-STYLING-FRAME-2COL-03",
+      "pickerHidden": true,
       "displayName": "2열 액자 3장",
       "kind": "wear",
       "padding": 56,
@@ -4916,6 +4918,7 @@
     },
     "WEAR-STYLING-FRAME-HERO-03": {
       "id": "WEAR-STYLING-FRAME-HERO-03",
+      "pickerHidden": true,
       "displayName": "큰 사진 아래 두 칸 액자 3장",
       "kind": "wear",
       "padding": 56,

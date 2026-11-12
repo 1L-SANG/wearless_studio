@@ -91,7 +91,7 @@ test('common wear candidates use effective physical usage and preserve the numbe
   assert.deepEqual(sectionDesignChoices(runOf(studio), { storyboard: studio }).map(d => d.id), ['WEAR-FIT-COLUMN-01', 'WEAR-FIT-2COL-01', 'WEAR-FIT-HERO-01']);
   const life = [1, 2].map(i => worn('styling', i, { pageSectionKey: 'show.wear_styling_2', pageDesignId: 'P02-D01' }));
   assert.deepEqual(sectionDesignChoices(runOf(life), { storyboard: life }).map(d => d.id), [
-    'P02-D01', 'WEAR-STYLING-2COL-01', 'WEAR-STYLING-FRAME-COLUMN-01', 'WEAR-STYLING-FRAME-COLUMN-02',
+    'P02-D01', 'WEAR-STYLING-2COL-01', 'WEAR-STYLING-FRAME-COLUMN-02',
   ]);
   for (const blocks of [studio, life])
     for (const design of sectionDesignChoices(runOf(blocks), { storyboard: blocks }))

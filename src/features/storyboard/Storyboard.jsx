@@ -365,6 +365,14 @@ export function Storyboard({ toastOverride = null } = {}) {
   const [setPickerError, setSetPickerError] = useState(null);
   const [insertedSectionKey, setInsertedSectionKey] = useState(null);
   const sectionRefs = useRef(new Map());
+  const designFocusId = drawer?.mode === 'design' ? blocks?.find(block => block.pageSectionKey === drawer.runKey)?.pageDesignId : null;
+  useEffect(() => {
+    if (drawer?.mode !== 'design' || !blocks) return undefined;
+    if (!designFocusId) { setDrawer(null); return undefined; }
+    setActiveSectionKey(drawer.runKey); setOverview(false);
+    const frame = requestAnimationFrame(() => sectionRefs.current.get(drawer.runKey)?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+    return () => cancelAnimationFrame(frame);
+  }, [drawer?.mode, drawer?.runKey, designFocusId]);
   const [loadError, setLoadError] = useState(null);
   const [loadRetry, setLoadRetry] = useState(0);
   const [mannequinFailure, setMannequinFailure] = useState(null);
@@ -379,6 +387,13 @@ export function Storyboard({ toastOverride = null } = {}) {
   const undoEntryRef = useRef(null);
   const undoTimerRef = useRef(null);
   const undoHoveredRef = useRef(false);
+  const leaveDesignUndoRef = useRef(null);
+  const designUndoVisible = drawer?.mode === 'design' && Boolean(undoEntry && !undoExiting);
+  useEffect(() => {
+    // A removed pane/status cannot emit mouseleave or blur. Resume the shared
+    // expiry path before the next change, without resetting a still-visible hover.
+    if (!designUndoVisible && undoHoveredRef.current) leaveDesignUndoRef.current?.();
+  }, [designUndoVisible]);
   const defaultToast = useToast();
   const toast = toastOverride || defaultToast;
   const pushToast = toast.push;
@@ -938,6 +953,15 @@ export function Storyboard({ toastOverride = null } = {}) {
     } else dismissUndo();
     toast.push('변경을 되돌렸어요', { icon: 'undo' });
   };
+  const enterUndo = () => {
+    undoHoveredRef.current = true;
+    const entry = undoEntryRef.current;
+    if (!entry) return;
+    entry.remainingMs = entry.deadline == null ? entry.remainingMs || UNDO_WINDOW_MS : Math.max(1, entry.deadline - Date.now());
+    entry.deadline = null; clearTimeout(undoTimerRef.current);
+  };
+  const leaveUndo = () => { undoHoveredRef.current = false; const entry = undoEntryRef.current; if (entry) scheduleUndoDismiss(entry, entry.remainingMs || UNDO_WINDOW_MS); };
+  leaveDesignUndoRef.current = leaveUndo;
   const patch = (id, changes, { undoLabel = null } = {}) => {
     if (atomicSavingRef.current) return;
     const previous = blocks;
@@ -1234,7 +1258,7 @@ export function Storyboard({ toastOverride = null } = {}) {
   const pickerRun = runs.find(run => run.sectionId === setPicker?.targetSid);
   const pickerMembers = setPicker?.spaceGroupId ? blocks.filter(block => block.spaceGroupId === setPicker.spaceGroupId) : [];
   const usedExampleIds = usedGalleryExampleIds(blocks, selectedId);
-  return <div className={`wizard wide sb-page sb-v5-theme sb-content-enter sb-initial-reveal ${styles.page}${drawer ? ` ${styles.drawerOpen}` : ''}${initialBoardRevealed ? ' is-revealed' : ''}${atomicSaving ? ' is-atomic-saving' : ''}`}
+  return <div className={`wizard wide sb-page sb-v5-theme sb-content-enter sb-initial-reveal ${styles.page}${drawer ? ` ${styles.drawerOpen}` : ''}${drawer?.mode === 'design' ? ` ${styles.designDrawerOpen}` : ''}${initialBoardRevealed ? ' is-revealed' : ''}${atomicSaving ? ' is-atomic-saving' : ''}`}
     aria-busy={!initialBoardRevealed || atomicSaving || undefined}
     onClickCapture={atomicSaving ? event => { event.preventDefault(); event.stopPropagation(); } : undefined}
     onKeyDownCapture={atomicSaving ? event => { if (!['Tab', 'Escape'].includes(event.key)) { event.preventDefault(); event.stopPropagation(); } } : undefined}
@@ -1299,7 +1323,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       focusKey={`${drawer.mode}:${drawer.runKey || ''}:${drawer.beforeSectionKey || ''}:${selectedId || ''}`}>
       {['add', 'design'].includes(drawer.mode) ? <StoryboardSectionPicker mode={drawer.mode} runKey={drawer.runKey}
         blocks={blocks} catalogs={previewCatalogs} gender={exampleGender} identityKind={identityKind} busy={atomicSaving}
-        undoEntry={undoEntry} onUndo={undoLatest}
+        undoEntry={undoEntry} undoExiting={undoExiting} onUndo={undoLatest} onUndoEnter={enterUndo} onUndoLeave={leaveUndo}
         onChoose={(kind, usage, designId, source) => drawer.mode === 'design' ? changeDesign(designId)
           : addSection(kind, usage, designId, automaticSectionInsertionKey(blocks, kind, usage), null, source)}
         onDragChange={setDraggingSectionChoice} />
@@ -1327,14 +1351,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     <StoryboardContinue hidden={Boolean(drawer)} count={photoBlocks.length} credits={detailPageCreditCost(generationCutCount)}
       undoEntry={undoEntry} undoExiting={undoExiting} onUndo={undoLatest}
       onUndoAnimationEnd={event => { if (event.target === event.currentTarget && undoExiting) finishUndoDismiss(); }}
-      onUndoEnter={() => {
-        undoHoveredRef.current = true;
-        const entry = undoEntryRef.current;
-        if (!entry) return;
-        entry.remainingMs = entry.deadline == null ? entry.remainingMs || UNDO_WINDOW_MS : Math.max(1, entry.deadline - Date.now());
-        entry.deadline = null; clearTimeout(undoTimerRef.current);
-      }}
-      onUndoLeave={() => { undoHoveredRef.current = false; const entry = undoEntryRef.current; if (entry) scheduleUndoDismiss(entry, entry.remainingMs || UNDO_WINDOW_MS); }}
+      onUndoEnter={enterUndo} onUndoLeave={leaveUndo}
       onContinue={goToMannequin} warning={unsupportedAiBlock ? 'AI 컷 설정 확인 필요' : null}
       disabled={!photoBlocks.length || Boolean(unsupportedAiBlock) || blocks.some(block => block.source === 'ai' && (!block.contentRole || !block.cutType))} />
   </div>;

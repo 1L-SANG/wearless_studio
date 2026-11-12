@@ -118,39 +118,42 @@ tools use the inside-thumbnail fallback. Up/down arrows expand on hover/focus
 and remain keyboard reachable. The opening has no tools. Boundary arrows use aria-disabled without losing
 focus, and a completed move restores the same arrow/grip. Titles also drag.
 Drop gaps appear during dragging; there are no between-section add buttons or
-notches. The outline and actual-photo design previews use emphasizeText to make
+notches. The outline previews use emphasizeText to make
 faint text bars legible; generated text geometry is unchanged. The stage's white
 pencil button reads 섹션 디자인 변경. Design mode has one title/close header and no
 removal action, default badge or checkmark. Removal remains in the outline.
 
-The 520px-token drawer uses two columns: layout glyphs and decoration/design
-thumbnails on the left, and a keyboard-scrollable 완성 모습 on the right. Layout
-glyphs show only column/twoColumn/heroPair or color-column/grid structure, never
-decoration. Actual thumbnails clip the section top at196px and do not fit or
-sample the whole section into that height. The right region contains the full
-section and resets to its top only when the selected section/design changes.
-Selection uses one2px ink border; frame counts use white pills inside a gray group
-named 액자에 넣을 사진 directly below the decoration thumbnails. Stages with one
+Only the section-design drawer is 330px wide (`--sb-design-drawer-width`).
+Photo and add drawers retain `--sb-drawer-width` (520px capped at40vw). The open
+page and design drawer share the active width token: header and stage use at most
+`100vw - drawerWidth - 12px - 16px - 24px`, leaving the same16px gap. Opening a
+design selects that section on the stage and scrolls its outline row into view;
+design changes immediately update the assembled outline. There is no completed
+preview column. While the floating continue bar is hidden, the design pane shows
+the existing change count and undo action at its bottom, including the same
+hover/focus timeout pause and undo/save path.
+
+Layout glyphs show only column/twoColumn/heroPair or color-column/grid structure.
+The wear twoColumn glyph has two columns and three rows. Tile names are available
+through aria-label/title only. The decoration and flat-design stage both read
+디자인 선택. Their fixed silver SVG illustrations contain only photo rectangles,
+panels and text bars: two openings, basic/frame styling, two detail designs and
+two fabric designs. Product photos, selected layout, frame count and page tone
+never change these illustrations. Their five silver roles live in tokens.css.
+The actual-assembly design-preview cache was removed; the outline remains the
+live assembled result and the separate add-menu preview is unchanged.
+
+Selection uses one2px ink border without checks/default badges. Stages with one
 choice disappear. Native buttons support Tab/Enter/Space; Left/Right arrows also
-select and focus the adjacent option. Saving disables all options.
+select and focus the adjacent option. Saving disables all options. At1440×900,
+a330px drawer leaves288px after borders/padding (276px with a12px scrollbar).
+Two illustration tiles are140px/134px wide and121.33px/116.13px high;
+the76px layout tiles and both headings fit comfortably above the bottom undo.
 
-At1440×900 the drawer's existing1px borders/padding leave478px: the16px gap and
-18:11 columns yield286.76/175.24px. Body height798px contains the completed-region
-heading28px plus770px scroller; the complete left controls stay below500px.
-At viewport heights840px or less, outer scrolling is permitted. Other drawer
-modes retain their scrolling/padding and the outer width token is unchanged.
-
-createSectionDesignPreviewCache stores bounded per-panel assemblies by full
-requested design ID. Its context excludes only current-run design/seed metadata,
-retains paired attachment intent, and includes real source/settings/dependency,
-selected-example, text/tone, size and shop inputs. Design-only saves reuse pages;
-real input changes invalidate them. Memoized SVG children reuse unchanged page
-objects. The assembler and saved storyboard format are unchanged.
-
-`sectionDesignAxes` derives 배치 and 꾸밈 from catalog `choiceAxes` metadata.
+`sectionDesignAxes` derives 배치 and 디자인 선택 from catalog `choiceAxes` metadata.
 Each complete combination is still one `pageDesignId`: choosing a layout keeps
-the current decoration and frame count. Decoration/count changes retain the current
-layout when it remains eligible, otherwise frame transitions resolve to column.
+the current decoration. Frame choices use the automatic photo count below and
+retain the current layout when eligible, otherwise resolve to column.
 Each axis row disappears when it has at most one eligible option. Non-axis
 sections retain the flat design list. `pickerHidden` only hides choices; it does
 not invalidate or migrate saved layouts. Existing same-kind/usage/photo-count
@@ -165,22 +168,24 @@ odd tails fill the row; hero-pair repeats one full-width photo and a pair, with
 one remaining photo full width or two remaining photos paired. Photos remain
 4:5 and all fit layouts retain direction captions. Curated wildcard repeats
 include loose/similar photos at their stored positions. Legacy hidden layouts
-without axes retain their previous overflow behavior. Design mode never creates
-a sample or canonical group; real stored groups and the full photo count reach
-assembly. The separate add-menu sample helper retains its representative role.
+without axes retain their previous overflow behavior. The live outline uses real stored groups and the full photo count. The separate
+add-menu sample helper retains its representative role.
 
-The frame decoration adds nine styling-only designs: WEAR-STYLING-FRAME-
+The frame decoration has nine styling-only definitions: WEAR-STYLING-FRAME-
 {COLUMN,2COL,HERO}-{01,02,03}. `framePhotos` is catalog metadata; only the complete
-pageDesignId is saved. Entering frame chooses two photos, or one when only one
-exists. Its 액자에 넣을 사진 row shows one, two and three only when the section
-has enough photos. Framed layout minima use total photos minus framePhotos:
-column supports0/1 remaining, twoColumn needs2, heroPair needs3. Layout options hold
-the current count fixed. Increasing count or entering frame from basic preserves
-the requested/default count first, falling back to column when the current layout
-no longer fits. Four total withframe2 has column/twoColumn; frame3 hides the
-layout stage. Stored older ineligible IDs are still rendered as saved on read;
-explicit new choices resolve to eligible full IDs as one existing undo/save.
-The backdrop remains a reuse, not another storyboard position or generated cut.
+pageDesignId is saved. New explicit choices use one framed photo when the section
+has one photo, and two otherwise. There is no photo-count selector. All three
+03 designs are pickerHidden, but saved one/three-photo variants still render
+unchanged and show 액자 selected. An explicit layout/decoration choice from a
+saved variant resolves to the eligible automatic one/two-photo design.
+
+Framed layout minima use total photos minus the automatic count: column supports
+0/1 remaining, twoColumn needs2, heroPair needs3. Four total withframe2 offers
+column/twoColumn; three total offers only column and hides the layout stage.
+When the current layout no longer fits, a frame choice falls back to column.
+Reading old IDs never migrates them; an explicit new choice is one existing
+undo/save. The backdrop remains a reuse, not another storyboard position or
+generated cut. Frame selection and assembly rules below remain unchanged.
 
 `selectFramePhotos` chooses the first contiguous group with enough medium shots.
 Otherwise it picks the first group with the most medium shots, fills from that

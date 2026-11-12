@@ -85,12 +85,14 @@ function displaysProductColors(run, design, storyboard, product) {
   return colors.every(id => represented.has(id));
 }
 
-// Frame photos are already consumed by the decoration. The remaining layout
-// uses its basic counterpart's minimum; a column also supports no remainder.
+// New frame choices automatically use one photo for a single-photo run and
+// two otherwise. Saved variants still assemble through their original IDs.
+// The remaining layout uses its basic counterpart's minimum; a column also
+// supports no remainder.
 function hasFrameLayoutPhotos(design, photoCount, designs) {
   if (design.framePhotos == null) return true;
+  if (photoCount < 1 || design.framePhotos !== Math.min(photoCount, 2)) return false;
   const remaining = photoCount - design.framePhotos;
-  if (remaining < 0) return false;
   const layout = design.choiceAxes?.layout.id;
   if (layout === 'column') return true;
   const basic = designs.find(candidate => candidate.kind === design.kind && candidate.usage === design.usage

@@ -21,7 +21,10 @@ def test_saved_catalog_designs_and_current_defaults_without_sns_by_default():
     assert [len([s for s in t["sections"] if s["presence"] == "default"]) for t in CATALOG["templates"]] == [10, 7]
     assert [s["instanceKey"] for s in get_template("show")["sections"] if s["kind"] == "points"] == ["points"]
     assert len(CATALOG["designs"]) == 52
-    assert sum(bool(design.get("pickerHidden")) for design in CATALOG["designs"].values()) == 24
+    assert sum(bool(design.get("pickerHidden")) for design in CATALOG["designs"].values()) == 27
+    assert [design["id"] for design in CATALOG["designs"].values() if design.get("framePhotos") and design.get("pickerHidden")] == [
+        "WEAR-STYLING-FRAME-COLUMN-03", "WEAR-STYLING-FRAME-2COL-03", "WEAR-STYLING-FRAME-HERO-03",
+    ]
     for template in CATALOG["templates"]:
         for section in template["sections"]:
             if section["kind"] == "wear":

@@ -9,7 +9,7 @@ const fontValue = tree => nodes(tree).find(n => n.props?.['data-font-style'])?.p
 const band = tree => nodes(tree).find(n => n.type === 'svg' && n.props.className?.includes('stageToneBand'))?.props.children;
 const bandFill = tree => nodes(band(tree)).find(n => n.type === 'rect')?.props.fill;
 
-test('WOC9 pointer/focus leaves stage, outline and design candidates at their selected colors', async t => {
+test('WOC9 pointer/focus keeps the selected tone; WOC12 design illustrations stay silver across tone changes', async t => {
   const h = await storyboardScreenHarness({ pairedFirst: true }); t.after(() => h.close());
   h.render(); await h.flush();
   const before = structuredClone(h.DB.analysis.pageStyle);
@@ -24,9 +24,11 @@ test('WOC9 pointer/focus leaves stage, outline and design candidates at their se
     assert.equal(tinted(outline()), 0); assert.equal(tinted(dialog()), 0);
     assert.deepEqual(h.DB.analysis.pageStyle, before);
   }
+  const silver=()=>nodes(dialog()).filter(n=>n.type==='svg'&&n.props['data-design-illustration']).map(svg=>nodes(svg).filter(n=>n.type==='rect').map(n=>({x:n.props.x,y:n.props.y,width:n.props.width,height:n.props.height,fill:n.props.fill})));
+  const beforePictures=silver();assert.equal(beforePictures.length,2);
   button(h.tree, '다음 페이지 색감').props.onClick(); h.render();
   assert.equal(bandFill(h.tree), '#edf4ff');
-  assert.ok(tinted(outline()) > 0); assert.ok(tinted(dialog()) > 0);
+  assert.ok(tinted(outline()) > 0); assert.equal(tinted(dialog()), 0);assert.deepEqual(silver(),beforePictures);
   await h.waitForStyle(); await h.flush();
   assert.equal(h.DB.analysis.pageStyle.colorMode, 'point');
 });

@@ -126,13 +126,15 @@ test('WOC4 product mode failed save keeps retry for the same whole-run request',
   } finally {h.close();}
 });
 
-test('WOC10 section selection omits removal and badges while names remain concise',()=>{
+test('WOC12 section selection omits removal and badges while names remain accessible',()=>{
   const blocks=board(),run=sectionRuns(blocks).find(r=>r.kind==='wear');
   const html=render(Picker,{mode:'design',runKey:run.key,blocks,catalogs});assert.doesNotMatch(html,/>섹션 빼기<\/button>/);
   assert.doesNotMatch(html,/컷 줄어요|카페, 골목, 집처럼/);
   const first=render(Picker,{mode:'design',runKey:blocks[0].pageSectionKey,blocks,catalogs});assert.doesNotMatch(first,/>섹션 빼기<\/button>/);
   assert.doesNotMatch(html, /<small>기본<\/small>|designCheck/);
-  assert.match(html, /완성 모습/);
+  assert.match(html, /aria-label="디자인 선택 · 기본" title="기본"/);
+  assert.match(html, /aria-label="디자인 선택 · 액자" title="액자"/);
+  assert.doesNotMatch(html, /완성 모습|>기본<|>액자<|<image/);
 });
 
 test('WOC4 stage has the new subtitle, white pencil design button and color dots without face/place captions',()=>{

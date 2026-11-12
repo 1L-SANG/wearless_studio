@@ -32,37 +32,38 @@ const choices = blocks => sectionDesignChoices(daily(blocks), { storyboard: bloc
 const frameIds = blocks => choices(blocks).filter(design => design.framePhotos).map(design => design.id);
 const withoutDesign = blocks => blocks.map(({ pageDesignId, ...block }) => block);
 
-test('WOC10 four photos offer hero only with one framed photo and keep layout count fixed', () => {
+test('WOC10 four photos offer column and two-column layouts with two automatic framed photos', () => {
   const blocks = board(4, 'WEAR-STYLING-FRAME-COLUMN-02');
   assert.deepEqual(frameIds(blocks), [
-    'WEAR-STYLING-FRAME-COLUMN-01', 'WEAR-STYLING-FRAME-COLUMN-02', 'WEAR-STYLING-FRAME-COLUMN-03',
-    'WEAR-STYLING-FRAME-2COL-01', 'WEAR-STYLING-FRAME-2COL-02', 'WEAR-STYLING-FRAME-HERO-01',
+    'WEAR-STYLING-FRAME-COLUMN-02', 'WEAR-STYLING-FRAME-2COL-02',
   ]);
   assert.deepEqual(axes(blocks).layouts.map(option => [option.id, option.designId]), [
     ['column', 'WEAR-STYLING-FRAME-COLUMN-02'], ['twoColumn', 'WEAR-STYLING-FRAME-2COL-02'],
   ]);
-  assert.deepEqual(axes(board(4, 'WEAR-STYLING-FRAME-COLUMN-03')).layouts.map(option => option.id), ['column']);
+  assert.deepEqual(axes(board(4, 'WEAR-STYLING-FRAME-COLUMN-03')).layouts.map(option => option.id), ['column', 'twoColumn']);
 });
 
-test('WOC10 increasing frame count preserves requested count and falls back to column', () => {
-  const blocks = board(4, 'WEAR-STYLING-FRAME-2COL-02');
-  assert.deepEqual(axes(blocks).framePhotoChoices, [
-    { count: 1, designId: 'WEAR-STYLING-FRAME-2COL-01', selected: false },
-    { count: 2, designId: 'WEAR-STYLING-FRAME-2COL-02', selected: true },
-    { count: 3, designId: 'WEAR-STYLING-FRAME-COLUMN-03', selected: false },
-  ]);
+test('WOC10 an explicit frame action from a saved one-frame hero falls back to the automatic two-frame column', () => {
+  const blocks = board(4, 'WEAR-STYLING-FRAME-HERO-01'), before = structuredClone(blocks);
+  const value = axes(blocks);
+  assert.equal(Object.hasOwn(value, 'framePhotoChoices'), false);
+  assert.equal(value.currentLayoutId, 'heroPair');
+  assert.equal(value.decorations.find(option => option.id === 'frame').selected, true);
+  assert.equal(value.decorations.find(option => option.id === 'frame').designId, 'WEAR-STYLING-FRAME-COLUMN-02');
+  assert.deepEqual(blocks, before);
 });
 
 for (const [total, frameCount, expectedLayouts] of [
   [1, 1, ['column']], [2, 1, ['column']], [2, 2, ['column']], [3, 3, ['column']],
-  [3, 1, ['column', 'twoColumn']], [4, 1, ['column', 'twoColumn', 'heroPair']],
-  [5, 3, ['column', 'twoColumn']], [6, 3, ['column', 'twoColumn', 'heroPair']],
-]) test(`WOC10 ${total} actual photos with ${frameCount} framed expose layouts for the remainder`, () => {
+  [3, 1, ['column']], [4, 1, ['column', 'twoColumn']],
+  [5, 3, ['column', 'twoColumn', 'heroPair']], [6, 3, ['column', 'twoColumn', 'heroPair']],
+]) test(`WOC10 ${total} actual photos with ${frameCount} saved frames expose layouts for the automatic remainder`, () => {
   const blocks = board(total, `WEAR-STYLING-FRAME-COLUMN-0${frameCount}`), value = axes(blocks);
   assert.deepEqual(value.layouts.map(option => option.id), expectedLayouts);
-  assert.deepEqual(value.framePhotoChoices.map(option => option.count), Array.from({ length: Math.min(3, total) }, (_, i) => i + 1));
-  assert.equal(value.framePhotoChoices.find(option => option.selected).count, frameCount);
-  assert.ok(value.layouts.every(option => catalog.designs[option.designId].framePhotos === frameCount));
+  assert.equal(value.currentDecorationId, 'frame');
+  assert.equal(value.currentLayoutId, 'column');
+  assert.equal(currentSectionDesignId(daily(blocks), blocks), `WEAR-STYLING-FRAME-COLUMN-0${frameCount}`);
+  assert.ok(value.layouts.every(option => catalog.designs[option.designId].framePhotos === (total === 1 ? 1 : 2)));
   assert.ok(choices(blocks).every(design => sectionDesignGenerationCount(daily(blocks), design.id, blocks, product) === total));
 });
 
@@ -73,7 +74,7 @@ for (const [total, initial, target] of [
   [4, 'WEAR-STYLING-HERO-01', 'WEAR-STYLING-FRAME-COLUMN-02'],
   [4, 'WEAR-STYLING-2COL-01', 'WEAR-STYLING-FRAME-2COL-02'],
   [5, 'WEAR-STYLING-HERO-01', 'WEAR-STYLING-FRAME-HERO-02'],
-]) test(`WOC10 entering frame from ${initial} with ${total} photos chooses the default count first`, () => {
+]) test(`WOC10 entering frame from ${initial} with ${total} photos chooses the automatic count first`, () => {
   const blocks = board(total, initial), value = axes(blocks);
   assert.equal(value.decorations.find(option => option.id === 'frame')?.designId, target);
   assert.deepEqual(value.layouts.map(option => option.id), ['column', 'twoColumn', 'heroPair'].slice(0, Math.min(3, total)));
@@ -88,9 +89,9 @@ test('WOC10 stored ineligible frame design remains current without changing its 
   assert.equal(currentSectionDesignId(daily(blocks), blocks), 'WEAR-STYLING-FRAME-HERO-03');
   assert.equal(value.currentLayoutId, 'heroPair');
   assert.equal(value.currentDecorationId, 'frame');
-  assert.deepEqual(value.layouts.map(option => [option.id, option.selected]), [['column', false]]);
-  assert.equal(value.framePhotoChoices.find(option => option.selected)?.count, 3);
-  assert.equal(value.framePhotoChoices.find(option => option.count === 3).designId, 'WEAR-STYLING-FRAME-COLUMN-03');
+  assert.deepEqual(value.layouts.map(option => [option.id, option.selected]), [['column', false], ['twoColumn', false]]);
+  assert.equal(value.decorations.find(option => option.id === 'frame').selected, true);
+  assert.equal(value.decorations.find(option => option.id === 'frame').designId, 'WEAR-STYLING-FRAME-COLUMN-02');
   assert.deepEqual(blocks, saved);
   assert.deepEqual(assemblePage({ storyboard: blocks, product, analysis }), before);
 });
@@ -106,7 +107,7 @@ function designActionHarness(initial) {
   };
   const handlers = new Function('scope', `with (scope) {
     ${slice('  const showUndo =', '  const clearUndoForSnapshot =')}
-    ${slice('  const undoLatest =', '  const patch =')}
+    ${slice('  const undoLatest =', '  const enterUndo =')}
     ${slice('  const changeDesign =', '  const selectSection =')}
     return { changeDesign, undoLatest };
   }`)(scope);
@@ -117,13 +118,15 @@ function designActionHarness(initial) {
 }
 
 test('WOC10 real design action rejects invalid IDs, changes the full run once, and undoes the fallback exactly', () => {
-  const original = board(4, 'WEAR-STYLING-FRAME-2COL-02'), saved = structuredClone(original);
+  const original = board(4, 'WEAR-STYLING-FRAME-HERO-03'), saved = structuredClone(original);
   const key = daily(original).key, cuts = uniqueGenerationCutCount(original, product), h = designActionHarness(original);
-  h.choose('WEAR-STYLING-FRAME-HERO-02');
-  assert.equal(h.blocks, original); assert.equal(h.undo, null);
-  const option = axes(h.blocks).framePhotoChoices.find(choice => choice.count === 3);
+  for (const id of ['WEAR-STYLING-FRAME-HERO-02', 'WEAR-STYLING-FRAME-COLUMN-01', 'WEAR-STYLING-FRAME-COLUMN-03']) {
+    h.choose(id);
+    assert.equal(h.blocks, original); assert.equal(h.undo, null);
+  }
+  const option = axes(h.blocks).decorations.find(choice => choice.id === 'frame');
   h.choose(option.designId);
-  assert.ok(h.blocks.filter(block => block.pageSectionKey === key).every(block => block.pageDesignId === 'WEAR-STYLING-FRAME-COLUMN-03'));
+  assert.ok(h.blocks.filter(block => block.pageSectionKey === key).every(block => block.pageDesignId === 'WEAR-STYLING-FRAME-COLUMN-02'));
   assert.equal(validateStoryboardV4(h.blocks), h.blocks);
   assert.equal(h.undo.operationCount, 1); assert.equal(h.undo.standalone, true);
   assert.equal(uniqueGenerationCutCount(h.blocks, product), cuts);

@@ -8,6 +8,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 // Real modules and callbacks, including api -> mockAdapter -> mock.saveAnalysis.
 // Only the React host/DOM boundary is inert; no browser or network image loads.
 export async function storyboardScreenHarness({ pairedFirst = false, lockSource = 'cut', savedStyle = {}, pauseLoad = false, withToast = false, viewportWidth = 1440, hasFrame = false, mallConnections = {} } = {}) {
+  const scrollCalls = [];
   const descriptors = new Map(['window', 'document', 'requestAnimationFrame', 'cancelAnimationFrame'].map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
   const host = () => ({ nodeType: 1, classList: { add() {}, remove() {}, contains: () => false },
     focus() {}, contains: () => true, querySelector: () => null, querySelectorAll: () => [],
@@ -100,7 +101,7 @@ export async function storyboardScreenHarness({ pairedFirst = false, lockSource 
       finally { currentDispatcher.current = previous; }
       return expand(child, `${path}.render`);
     }
-    if (node.ref) { const element = host(); if (typeof node.ref === 'function') node.ref(element); else node.ref.current = element; }
+    if (node.ref) { const element = host(); element.scrollIntoView = options => scrollCalls.push({ sectionKey: node.props?.['data-section-key'], options }); if (typeof node.ref === 'function') node.ref(element); else node.ref.current = element; }
     return { type, props: { ...node.props, children: expand(node.props?.children, `${path}.children`) } };
   };
   const render = () => {
@@ -117,7 +118,7 @@ export async function storyboardScreenHarness({ pairedFirst = false, lockSource 
     return tree;
   };
   const flush = async () => { for (let i = 0; i < 20; i++) { await new Promise(setImmediate); if (dirty) render(); } return tree; };
-  return { DB, api, queryClient, store: useAppStore, render, flush, get tree() { return tree; }, waitForStyle: () => waitForAnalysisEditSave(DB.project.id),
+  return { DB, api, queryClient, store: useAppStore, scrollCalls, render, flush, get tree() { return tree; }, waitForStyle: () => waitForAnalysisEditSave(DB.project.id),
     notify(message = '마네킹컷이 만들어졌어요') { return notifications.push(message, { variant: 'mannequinCompletion', sticky: true }); },
     dismissNotification(id) { notifications.dismiss(id, 'mannequinCompletion'); },
     async releaseLoad() { await originalLoad(); waitingLoads.splice(0).forEach(resolve => resolve()); },

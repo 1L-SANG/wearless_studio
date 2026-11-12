@@ -50,7 +50,7 @@ function boardHarness() {
   Object.defineProperty(scope, 'blocks', { get: () => blocks });
   const actions = evaluate(`
     ${slice('  const showUndo =', '  const clearUndoForSnapshot =')}
-    ${slice('  const undoLatest =', '  const patch =')}
+    ${slice('  const undoLatest =', '  const enterUndo =')}
     ${slice('  const commitSectionRemoval =', '  async function retryAtomicSave()')}
     return { addSection, removeSection, undoLatest, showUndo };
   `, scope);

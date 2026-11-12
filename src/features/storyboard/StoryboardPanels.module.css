@@ -213,5 +213,5 @@
 
 :global(.sb-v5-theme) .mineToggle:hover, :global(.sb-v5-theme) .studioChange:hover { border-color: var(--fg-2); }
 
-:global(.sb-v5-theme).designDrawer .drawerBody { flex: 1; overflow: hidden; scrollbar-gutter: auto; }
-@media (max-height: 840px) { :global(.sb-v5-theme).designDrawer .drawerBody { overflow-y: auto; } }
+:global(.sb-v5-theme).designDrawer { --sb-drawer-width: var(--sb-design-drawer-width); }
+:global(.sb-v5-theme).designDrawer .drawerBody { display: flex; flex-direction: column; flex: 1; overflow-y: auto; scrollbar-gutter: stable; }

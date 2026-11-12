@@ -247,7 +247,7 @@ for (const templateId of ['emo', 'show']) {
     };
     const addFrameCase = (suffix, layout, count, groups, extra = {}, metrics = { width: 900, height: 1200 }) => {
         const { board, key } = makeBoard(groups), id = `WEAR-STYLING-FRAME-${layout}-0${count}`;
-        const storyboard = changeTemplateSectionDesign(board, key, id, { product });
+        const storyboard = restoreSavedDesign(board, key, id);
         if (storyboard.find(block => block.pageSectionKey === key).pageDesignId !== id) throw new Error(`WOC6B frame fixture rejected ${id}`);
         appendCase(`woc6b-${templateId}-${suffix}`, { product, analysis, shopName, ...extra, storyboard }, metrics);
     };

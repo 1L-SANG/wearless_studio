@@ -17,6 +17,7 @@
 .page:global(.sb-page) > :global(.page-head) .introCopy { margin: var(--sp-8) 0 0; color: var(--fg-2); font-size: var(--sb-fs-intro); line-height: 1.5; text-wrap: pretty; }
 @media (max-width: 1109px) { .pageHeadWithTheme { grid-template-columns: minmax(0, 1fr); gap: var(--sp-16); } }
 .page.page.drawerOpen { margin-inline-start: 0; }
+.page.designDrawerOpen { --sb-drawer-width: var(--sb-design-drawer-width); }
 .pageHeadingCopy { transition: opacity var(--sb-t-base) var(--sb-ease); }
 .drawerOpen > :global(.page-head) > .pageHeadingCopy { opacity: .4; }
 .page button, .continueBar button { letter-spacing: inherit; }
@@ -186,6 +187,7 @@
   .stage, .overview { min-height: 0; max-height: none; height: 100%; overscroll-behavior: contain; }
   .drawerOpen:global(.wizard.wide) { padding-bottom: var(--sp-16); }
   .page.drawerOpen .pageHeadWithTheme { width: min(100%, calc(100vw - var(--sb-drawer-width) - var(--sp-12) - var(--sp-16) - var(--sp-24))); grid-template-columns: minmax(0, 1fr); }
+  .page.designDrawerOpen .layout { width: min(100%, calc(100vw - var(--sb-drawer-width) - var(--sp-12) - var(--sp-16) - var(--sp-24))); }
   .drawerOpen .styleControlsWrap { justify-self: start; }
 }
 /* (1078px page + 2 * (40px gutter - 24px padding)) = 1110px.
@@ -201,3 +203,10 @@
 .photoCaption .captionGarment { display: inline-flex; gap: var(--sp-4); align-items: center; min-width: 0; padding: 0; background: transparent; color: var(--fg-2); font-size: var(--sb-fs-meta); }
 .captionGarment .captionColorName { min-width: 0; padding: 0; background: transparent; text-wrap: balance; }
 .photoCaption > strong { flex: none; font-size: var(--sb-fs-meta); white-space: nowrap; }
+/* The 330px design drawer leaves 100vw - 382px for the page. From 1412px that is
+   at least the closed 1030px page, so the title and style controls stay side by side
+   instead of dropping the stage below the controls. */
+@media (min-width: 1412px) {
+  .page.designDrawerOpen .pageHeadWithTheme { grid-template-columns: minmax(0, 1fr) auto; }
+  .page.designDrawerOpen .styleControlsWrap { justify-self: end; }
+}

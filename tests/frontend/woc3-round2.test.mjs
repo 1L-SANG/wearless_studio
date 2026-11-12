@@ -116,7 +116,7 @@ for (const [templateId, kind, defaultId, selectedId] of [
       assert.equal(attrs(cards.find(([, attributes]) => attrs(attributes)['data-design-thumbnail'] === selectedId)[1])['aria-pressed'], 'true');
     } else {
       assert.equal(cards.length, 0, 'one-option stage is hidden');
-      assert.match(html, /완성 모습/);
+      assert.doesNotMatch(html, /role="group"|완성 모습|data-design-illustration=/);
     }
     assert.equal(validateStoryboardV4(changed), changed);
   });

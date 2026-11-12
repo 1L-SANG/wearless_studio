@@ -11,11 +11,10 @@ import * as photoChoices from '../../../src/lib/pageTemplates/storyboardPhotoCho
 import * as gallery from '../../../src/lib/pageTemplates/storyboardGallery.js';
 import { assembleStoryboardPreview } from '../../../src/features/storyboard/storyboardPreview.js';
 import { stageAdditions } from '../../../src/lib/pageTemplates/stageAdditions.js';
-import { pairedPhotoSlot } from '../../../src/lib/pageTemplates/pairedDesigns.js';
+import { pairedPhotoSlot, baseDesignId } from '../../../src/lib/pageTemplates/pairedDesigns.js';
 import { reconcileSectionDependencies } from '../../../src/lib/pageTemplates/sectionDependencies.js';
 import { baseColorOf, resolvePageTokens } from '../../../src/lib/pageTemplates/tokens.js';
 import { hasBackdropBlur, backdropEdgeTiles } from '../../../src/features/editor/editorImageBlur.js';
-import { createSectionDesignPreviewCache } from '../../../src/features/storyboard/storyboardDesignPreview.js';
 import { sectionDesignAxes } from '../../../src/lib/pageTemplates/designAxes.js';
 const extraBindings = { storyboardPositions, storyboardPositionId, isHiddenStoryboardKind, positionSwapReason, storyboardPositionSwapReason,
   wearUsageForBlock, automaticSectionInsertionKey, colorDisplayName, isTextOnlySection, visibleSectionRuns,
@@ -37,7 +36,12 @@ export const readStoryboardSources = () => ['Storyboard.jsx', 'StoryboardPhotoPa
 // Execute the actual JSX and callbacks with hook storage supplied by the test.
 // This never starts a browser, server, fetch, or image request.
 export async function loadStoryboardComponent(file, name, bindings = {}) {
-  bindings = { designStyles: componentStyles, createSectionDesignPreviewCache, ...extraBindings, ...bindings };
+  bindings = { designStyles: componentStyles, ...extraBindings, ...bindings };
+  if (file === 'StoryboardSectionPicker.jsx' && !bindings.StoryboardDesignIllustration) {
+    const raw = readStoryboard('StoryboardDesignIllustration.jsx').replace(/^import[\s\S]*?from ['"][^'"]+['"];\s*/gm, '').replace(/\bexport (?=(function|const))/g, '');
+    const { code } = await transformWithEsbuild(raw, 'StoryboardDesignIllustration.jsx', { jsx: 'transform' });
+    bindings.StoryboardDesignIllustration = new Function('React', 'baseDesignId', `${code}; return StoryboardDesignIllustration;`)(React, baseDesignId);
+  }
   if (file === 'StoryboardPreview.jsx' && !bindings.BackdropSvg) {
     const raw = readFileSync(new URL('../../../src/features/editor/EditorBackdropImage.jsx', import.meta.url), 'utf8')
       .replace(/^import[\s\S]*?from ['"][^'"]+['"];\s*/gm, '').replace(/\bexport (?=(function|const))/g, '');

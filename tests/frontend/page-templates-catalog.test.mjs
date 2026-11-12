@@ -15,7 +15,7 @@ test("catalog keeps saved designs and exposes the current defaults without SNS b
     assert.equal(validateCatalog(catalog), catalog);
     assert.equal(Object.keys(catalog.kinds).length, 10);
     assert.equal(Object.keys(catalog.designs).length, 52);
-    assert.equal(Object.values(catalog.designs).filter(design => design.pickerHidden).length, 24);
+    assert.equal(Object.values(catalog.designs).filter(design => design.pickerHidden).length, 27);
     assert.equal(
         (catalog.firstTitleBand.top + catalog.firstTitleBand.bottom) / 2,
         0.5,
