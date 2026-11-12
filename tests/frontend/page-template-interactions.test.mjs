@@ -131,7 +131,7 @@ test('adding an existing singleton and removing an unknown key create no undo or
 
 for (const reduced of [false, true]) test(`inserted section scroll/highlight waits for flight then lasts one second and cleans up (reduced motion: ${reduced})`, () => {
   const scrolls = [], frames = new Map(), timers = new Map(); let cleanup, insertedKey = 'emo.wear_1';
-  const effect = slice('  useEffect(() => {\n    if (!insertedSectionKey)', '  useLayoutEffect(() => { composeModeSeedRef');
+  const effect = slice('  useEffect(() => {\n    if (!insertedSectionKey)', '  useLayoutEffect(() => { storyboardSeedContextRef');
   evaluate(effect, {
     insertedSectionKey: insertedKey,
     sectionRefs: { current: new Map([[insertedKey, { scrollIntoView: options => scrolls.push(options) }]]) },

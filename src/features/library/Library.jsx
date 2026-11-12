@@ -42,7 +42,7 @@ export function Library() {
   // (과거엔 진행 중 마네킹 job 이 있으면 강제로 그 화면으로 보냈다 — 콘티가 마네킹보다 먼저
   // 오는 지금은 생성이 도는 동안 사용자가 있어야 할 곳도 콘티라, '새로 만들기' 를 다른 작업의
   // 진행 중 job 이 가로챌 이유가 없다.)
-  const onNew = () => { entryToken.current += 1; navigate('/create/input'); };
+  const onNew = () => { entryToken.current += 1; navigate('/create/input', { state: { startNewFromResume: true } }); };
   const onOpen = (it) => {
     if (isMobileDevice()) {
       push('완성본은 PC에서 열어 주세요');

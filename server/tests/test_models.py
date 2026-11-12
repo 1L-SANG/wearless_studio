@@ -14,9 +14,9 @@ from app.models import Account, Product, ProductPatch, Project, ProjectPatch
 
 def test_project_patch_ignores_server_only_fields():
     # adjustCount·status는 모델에 없어 무시돼야 한다 (계약 §6)
-    patch = ProjectPatch(**{"composeMode": "extended", "adjustCount": 99, "status": "done"})
+    patch = ProjectPatch(**{"copywriting": False, "adjustCount": 99, "status": "done"})
     dumped = patch.model_dump(exclude_unset=True)
-    assert dumped == {"compose_mode": "extended"}
+    assert dumped == {"copywriting": False}
     assert "adjust_count" not in dumped
     assert "status" not in dumped
 
@@ -27,16 +27,16 @@ def test_project_patch_exclude_unset_only_sent_fields():
 
 
 def test_project_patch_rejects_explicit_null_on_non_nullable():
-    # {"composeMode": null} / {"copywriting": null} → 422 (NOT NULL 컬럼 500 방지)
-    with pytest.raises(ValidationError):
-        ProjectPatch(**{"composeMode": None})
+    # {"copywriting": null} → 422 (NOT NULL 컬럼 500 방지)
     with pytest.raises(ValidationError):
         ProjectPatch(**{"copywriting": None})
 
 
-def test_project_patch_rejects_retired_simple_mode():
-    with pytest.raises(ValidationError):
-        ProjectPatch(**{"composeMode": "simple"})
+@pytest.mark.parametrize("field", ["composeMode", "compose_mode"])
+@pytest.mark.parametrize("value", ["basic", "extended", "simple", None])
+def test_project_patch_ignores_retired_compose_mode(field, value):
+    patch = ProjectPatch(**{field: value, "copywriting": False})
+    assert patch.model_dump(exclude_unset=True) == {"copywriting": False}
 
 
 def test_project_patch_allows_null_mannequin_and_omitted_fields():
@@ -92,7 +92,6 @@ def test_project_serializes_to_camel():
         id="p1",
         status="draft",
         title="",
-        compose_mode="basic",
         copywriting=True,
         selected_mannequin_id=None,
         adjust_count=0,
@@ -100,7 +99,7 @@ def test_project_serializes_to_camel():
         updated_at=now,
     )
     out = proj.model_dump(by_alias=True)
-    assert "composeMode" in out
+    assert "composeMode" not in out
     assert "selectedMannequinId" in out
     assert "adjustCount" in out
     assert "createdAt" in out and "updatedAt" in out
@@ -108,17 +107,18 @@ def test_project_serializes_to_camel():
     assert "compose_mode" not in out
 
 
-def test_project_rejects_retired_simple_mode():
+def test_project_omits_retired_database_column_from_response():
     now = datetime(2026, 6, 16, tzinfo=timezone.utc)
-    with pytest.raises(ValidationError):
-        Project(
-            id="p1",
-            status="draft",
-            title="",
-            compose_mode="simple",
-            copywriting=True,
-            selected_mannequin_id=None,
-            adjust_count=0,
-            created_at=now,
-            updated_at=now,
-        )
+    project = Project(
+        id="p1",
+        status="draft",
+        title="",
+        compose_mode="simple",
+        copywriting=True,
+        selected_mannequin_id=None,
+        adjust_count=0,
+        created_at=now,
+        updated_at=now,
+    )
+    assert "composeMode" not in project.model_dump(by_alias=True)
+    assert "compose_mode" not in project.model_dump()

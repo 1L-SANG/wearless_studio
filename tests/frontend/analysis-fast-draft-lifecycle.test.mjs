@@ -154,7 +154,7 @@ for (const phase of ['flush', 'hash', 'prepared']) test(`분석 준비 ${phase} 
     onAnalysis: (next) => { analysis = next; }, onProduct: (next) => { currentProduct = next; } });
   const run = runtime.createDraftFeatureRun({ product: currentProduct, analysis, ...bindings() });
   const startedAt = Date.now();
-  const requesting = run.startAnalysis({ runId: 'preparing_run_123', startedAt, composeMode: 'basic' });
+  const requesting = run.startAnalysis({ runId: 'preparing_run_123', startedAt });
   await drainDraftTasks();
   assert.equal(run.getRecord().stage, 'preparing'); assert.equal(coreCalls, 0);
   storage.releaseWrites();
@@ -318,7 +318,7 @@ for (const sellerEdited of [false, true]) for (const coreFirst of [false, true])
   const blob = new Blob(['product B'], { type: 'image/jpeg' });
   const src = URL.createObjectURL(blob); t.after(() => URL.revokeObjectURL(src));
   const productB = product(src); productB.colors[0].images[0].id = 'photo-b';
-  draftStore.queueProductDraftSave(productB, null, 'basic', 'revision-b'); await draftStore.flushProductDraftSave();
+  draftStore.queueProductDraftSave(productB, null, 'revision-b'); await draftStore.flushProductDraftSave();
   let analysisB = null;
   const runB = runtime.createDraftFeatureRun({ product: productB, readAnalysis: () => analysisB, onAnalysis: (next) => { analysisB = next; } });
   const prepared = await preparePublicAnalysis(productB, { fetchBlob: async () => blob });

@@ -200,7 +200,7 @@ for (const fast of [false, true]) test(`공개 분석 메모는 로그인 승격
     analysis.featureRun = run.getRecord(); features.setActiveFeatureRun(run);
     assert.equal(featureDraft.getDraftFeatureRun({ analysis }), run);
   }
-  await sync.promoteDraftToProject({ product: { name: '옷', colors: [] }, analysis, photos: [], composeMode: 'basic' });
+  await sync.promoteDraftToProject({ product: { name: '옷', colors: [] }, analysis, photos: [] });
   assert.equal(saved.length, 1); assert.equal(saved[0].mdComment, '로그인 전 판매 메모');
 });
 test('MD 코멘트 PATCH는 매칭 갱신 없이 보낸 키만 저장한다', async (t) => {

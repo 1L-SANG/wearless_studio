@@ -295,7 +295,7 @@ function prepareStoryboardEntry(
     productName: p.name || '',
     colorOpts: colorOpts.length ? colorOpts : fallbackColor,
     detailColorOpts: allColorOpts.length ? allColorOpts : fallbackColor,
-    composeModeSeed: {
+    storyboardSeedContext: {
       colors: p.colors || [],
       targetGenders: a?.targetGenders || [],
       subCategory: a?.subCategory || null,
@@ -344,7 +344,7 @@ export function Storyboard({ toastOverride = null } = {}) {
   const [hasDetailImage, setHasDetailImage] = useState(() => initialEntry?.hasDetailImage || false);
   const [autosaveFailed, setAutosaveFailed] = useState(false);
   const [entryNotice, setEntryNotice] = useState(() => api.storyboardEntryNotice?.(useAppStore.getState().projectId));
-  const [composeModeSeed, setComposeModeSeed] = useState(() => initialEntry?.composeModeSeed || ({
+  const [storyboardSeedContext, setStoryboardSeedContext] = useState(() => initialEntry?.storyboardSeedContext || ({
     colors: [],
     targetGenders: [],
     matchClothing: [],
@@ -417,7 +417,7 @@ export function Storyboard({ toastOverride = null } = {}) {
   const customMatchPromotionExpectedRef = useRef(location.state?.customMatchPromotionStarted === true);
   const customMatchPromotionHandledRef = useRef(new Set());
   const promotedMatchClothingRef = useRef({ projectId: null, items: null });
-  const composeModeSeedRef = useRef(composeModeSeed);
+  const storyboardSeedContextRef = useRef(storyboardSeedContext);
   const projectId = useAppStore((s) => s.projectId);
   const shopName = useStoryboardShopName(blocks);
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
@@ -446,10 +446,10 @@ export function Storyboard({ toastOverride = null } = {}) {
           const nextMatchClothing = refreshed || [];
           promotedMatchClothingRef.current = { projectId, items: nextMatchClothing };
           setMatchClothing(nextMatchClothing);
-          setComposeModeSeed((current) => ({ ...current, matchClothing: nextMatchClothing }));
+          setStoryboardSeedContext((current) => ({ ...current, matchClothing: nextMatchClothing }));
           setBlocks((current) => applyPromotedMatchSelection(
             current,
-            composeModeSeedRef.current.colors,
+            storyboardSeedContextRef.current.colors,
             nextMatchClothing,
           ));
         } catch {
@@ -465,18 +465,18 @@ export function Storyboard({ toastOverride = null } = {}) {
 
   // 승격 실패 안내 — 어느 화면이 떠 있든 프로젝트당 한 번. 콘티보드 언마운트로 유실되지 않는다.
   useEffect(() => onCustomMatchPromotionFailure(() => {
-    pushToast('내 옷을 등록하지 못했어요. 분석 화면에서 다시 올려주세요.', { icon: 'alertCircle' });
+    pushToast('내 옷을 등록하지 못했어요. 다시 올리려면 새로 시작해 주세요.', { icon: 'alertCircle' });
   }), [pushToast]);
 
   // 새로고침·이탈로 메모리 프라미스가 유실된 경우 새 백엔드 인프라를 만들지 않는다. 이미 서버
-  // 목록에 내 옷이 없다면 기존 실패 안내로 수렴해 분석 화면의 재업로드 경로를 알려준다.
+  // 목록에 내 옷이 없다면 기존 실패 안내로 수렴해 새 작업에서 다시 올리도록 알려준다.
   useEffect(() => {
     if (!customMatchPromotionExpectedRef.current || !projectId || matchClothing === null) return;
     if (getCustomMatchPromotionTask(projectId)) return;
     if ((matchClothing || []).some((item) => item.isCustom)) return;
     if (customMatchPromotionHandledRef.current.has(projectId)) return;
     customMatchPromotionHandledRef.current.add(projectId);
-    pushToast('내 옷을 등록하지 못했어요. 분석 화면에서 다시 올려주세요.', { icon: 'alertCircle' });
+    pushToast('내 옷을 등록하지 못했어요. 다시 올리려면 새로 시작해 주세요.', { icon: 'alertCircle' });
   }, [matchClothing, projectId, pushToast]);
 
   useEffect(() => () => clearTimeout(undoTimerRef.current), []);
@@ -490,7 +490,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     const timer = setTimeout(() => setInsertedSectionKey(null), prefersReducedMotion() ? 1000 : 1520);
     return () => { cancelAnimationFrame(frame); clearTimeout(timer); };
   }, [insertedSectionKey]);
-  useLayoutEffect(() => { composeModeSeedRef.current = composeModeSeed; }, [composeModeSeed]);
+  useLayoutEffect(() => { storyboardSeedContextRef.current = storyboardSeedContext; }, [storyboardSeedContext]);
   const v4CopyReady = entryNotice !== 'legacyGenerated' && Boolean(blocks?.length) && blocks.every(block => block.taxonomyVersion === 4);
   useStoryboardTheme(v4CopyReady);
   useEffect(() => {
@@ -641,7 +641,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         const initBlocks = promotedMatchClothing
           ? applyPromotedMatchSelection(
             prepared.blocks,
-            prepared.composeModeSeed.colors,
+            prepared.storyboardSeedContext.colors,
             promotedMatchClothing,
           )
           : prepared.blocks;
@@ -657,9 +657,9 @@ export function Storyboard({ toastOverride = null } = {}) {
           setHasDetailImage(prepared.hasDetailImage);
           setDetailColorOpts(prepared.detailColorOpts);
           setColorOpts(prepared.colorOpts);
-          setComposeModeSeed(promotedMatchClothing
-            ? { ...prepared.composeModeSeed, matchClothing: promotedMatchClothing }
-            : prepared.composeModeSeed);
+          setStoryboardSeedContext(promotedMatchClothing
+            ? { ...prepared.storyboardSeedContext, matchClothing: promotedMatchClothing }
+            : prepared.storyboardSeedContext);
         }
         if (notice !== 'legacyGenerated' && notice !== 'rebuilt' && (prepared.normalized || prepared.assignment.changed
           || usePending || promotionChangedBlocks)) {
@@ -796,10 +796,10 @@ export function Storyboard({ toastOverride = null } = {}) {
     saveRepairContext.current = {
       catalogs,
       clothingType,
-      targetGenders: composeModeSeed.targetGenders,
+      targetGenders: storyboardSeedContext.targetGenders,
       identityKind,
     };
-  }, [catalogs, clothingType, composeModeSeed, identityKind]);
+  }, [catalogs, clothingType, storyboardSeedContext, identityKind]);
   useEffect(() => {
     sbSetSaveRepair((pid, snapshot, error) => {
       const ctx = saveRepairContext.current;
@@ -1351,7 +1351,7 @@ export function Storyboard({ toastOverride = null } = {}) {
           </div> : <StoryboardPhotoPanel key={selectedId} block={selected} blocks={blocks} busy={atomicSaving} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts}
             fixedProduct={activeRun?.kind === 'first' && pairedPhotoSlot(activeRun.designId) === 'ghost'
               && (selectedViewId?.includes(':first.ghost:') || selected?.slotKey === 'first.ghost')}
-            clothingType={clothingType} subCategory={composeModeSeed.subCategory} customCategory={composeModeSeed.customCategory}
+            clothingType={clothingType} subCategory={storyboardSeedContext.subCategory} customCategory={storyboardSeedContext.customCategory}
             exampleGender={exampleGender} identityKind={identityKind} hasDetailImage={hasDetailImage} projectId={projectId}
             onChange={(patchValue, options) => patch(selectedId, patchValue, options)} onAtomicChange={(patchValue, options) => atomicPatch(selectedId, patchValue, options)}
             onRetryAtomicSave={retryAtomicSave} matchClothing={matchClothing} customMatchPromotionPending={customMatchPromotionPending}

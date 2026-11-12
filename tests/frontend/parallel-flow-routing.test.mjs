@@ -45,8 +45,7 @@ test('the mannequin wires edit refreshes through the guarded behavior runner', (
 test('adoptProject preserves the dirty flag only when acquiring identity for the same in-progress work', () => {
   // store: null projectId 에서 채택할 때만, 그리고 호출자가 명시적으로 요청했을 때만 보존한다.
   assert.match(storeSource, /preserveGenerationDirty = false/);
-  // sameWorkContinuation = "같은 작업이 신원을 얻는 경로" 판정 — dirty 보존과 composeMode 보존이
-  // 같은 판정을 공유한다(둘 다 게스트 구간의 상태를 로그인 너머로 잇는 일이라서).
+  // 같은 작업이 서버 신원을 얻는 경로에서 게스트 편집 신호를 로그인 뒤에도 보존한다.
   assert.match(storeSource, /const sameWorkContinuation = preserveGenerationDirty && current\.projectId === null/);
   assert.match(storeSource, /const preserveDirty = sameWorkContinuation && current\.generationRelevantEditsDirty/);
   assert.match(storeSource, /adoptGenerationRelevantEdits\(projectId, \{ preserveDirty \}\)/);

@@ -133,13 +133,12 @@ test('four menu groups insert optional and repeated sections at the page end wit
   assert.equal(deriveSections(before).some(s => s.pageSectionKey === fitKey), true); // undo snapshot remains complete
 });
 
-test('only untouched templates rebuild for changed product conditions; compose mode is ignored', () => {
+test('only untouched templates rebuild for changed product conditions', () => {
   const p = product(1), a = analysis('show'), b = seedStoryboard(p, a);
   assert.equal(resolveStoryboardEntry(b, p, a).blocks, b);
   assert.notEqual(resolveStoryboardEntry(b, product(2), a).blocks, b);
   const edited = b.map((block, i) => i === 0 ? { ...block, colorId: 'seller-color' } : block);
   assert.equal(resolveStoryboardEntry(edited, product(2), a).blocks, edited);
-  assert.deepEqual(seedStoryboard(p, a, { composeMode: 'basic' }).map(b => b.cutType), seedStoryboard(p, a, { composeMode: 'extended' }).map(b => b.cutType));
 });
 
 test('old boards rebuild before generation and give an editor notice after generation', () => {
