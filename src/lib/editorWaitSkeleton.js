@@ -26,6 +26,10 @@ const copyTextPatch = (element, text) => {
     : { text };
 };
 
+const isSellerIntroBody = (block, element) => block.pageSectionKind === 'intro'
+  && element.copyRole === 'body' && !element.aiDraft
+  && typeof element.text === 'string' && Boolean(element.text.trim());
+
 const copyIdentity = element => `${element.copyRole}:${element.paragraphIndex ?? ''}:${element.factLabel || ''}:${element.factPart || ''}`;
 const templateSnapshot = element => structuredClone(Object.fromEntries(Object.entries(element).filter(([key]) => !key.startsWith('gen'))));
 const templateBlockSnapshot = block => Object.fromEntries(Object.entries(block).filter(([key]) => !key.startsWith('gen') && !['elements', 'h'].includes(key)));
@@ -165,6 +169,7 @@ export function decorateGenBlocks(blocks, job, exThumbById) {
           } : {}) };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId) {
+        if (isSellerIntroBody(b, el)) return markAutoCopy(el);
         const t = (job.copy[el.sourceBlockId] || []).find((x) => x.role === el.copyRole)?.text;
         if (t) {
           copyChanged = true;
@@ -208,6 +213,7 @@ export function fillGenBlocks(blocks, job) {
             ...(info.sourceBlockId !== undefined ? { genFailSourceBlockId: info.sourceBlockId } : {}) } : {}) };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId && 'genAutoText' in el) {
+        if (isSellerIntroBody(b, el)) return el;
         const t = (job.copy[el.sourceBlockId] || []).find((x) => x.role === el.copyRole)?.text;
         if (t && t !== el.text && el.text === el.genAutoText) {
           copyChanged = true;

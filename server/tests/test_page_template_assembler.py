@@ -54,10 +54,11 @@ def test_first_text_group_is_centered_and_uses_group_contrast(measured):
 
 
 def test_copy_pending_off_and_fact_sources():
-    pending = assemble_input(case_input("emo-copy-pending"))
+    pending_input = case_input("emo-copy-pending")
+    pending = assemble_input(pending_input)
     assert text(section(pending, "emo.first"), "name")[0]["text"] == "데일리 코튼 셔츠"
     assert not text(section(pending, "emo.first"), "tagline")
-    assert text(section(pending, "emo.intro"), "body")[0]["text"] == ""
+    assert text(section(pending, "emo.intro"), "body")[0]["text"] == pending_input["analysis"]["mdComment"]
     off_value = case_input("emo-copy-off-seller")
     off = assemble_input(off_value)
     assert text(section(off, "emo.intro"), "body")[0]["text"] == off_value["analysis"]["mdComment"]

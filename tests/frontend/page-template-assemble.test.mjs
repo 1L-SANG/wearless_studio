@@ -145,14 +145,14 @@ test("first-page text is centered as one group and uses its measured black/white
     }
 });
 
-test("static/fact slots survive pending/disabled copy; seller MD text is used only when copywriting is off", () => {
-    const pending = assemblePage(caseOf("emo-copy-pending"));
+test("static/fact slots and seller MD text survive pending or disabled AI copy", () => {
+    const pendingInput = caseOf("emo-copy-pending"), pending = assemblePage(pendingInput);
     assert.equal(
         text(section(pending, "emo.first"), "name")[0].text,
         "데일리 코튼 셔츠",
     );
     assert.equal(text(section(pending, "emo.first"), "tagline").length, 0);
-    assert.equal(text(section(pending, "emo.intro"), "body")[0].text, "");
+    assert.equal(text(section(pending, "emo.intro"), "body")[0].text, pendingInput.analysis.mdComment);
     const offInput = caseOf("emo-copy-off-seller"),
         off = assemblePage(offInput);
     assert.equal(

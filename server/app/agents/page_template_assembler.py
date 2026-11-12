@@ -246,6 +246,11 @@ def _fact_text(role, ctx):
     return ""
 
 
+def _seller_comment(ctx):
+    text = _string(ctx.analysis.get("mdComment"))
+    return text if text.strip() else ""
+
+
 def _content_for(node, ctx):
     if node.get("literal") is not None:
         text = _string(node["literal"]).replace("{number}", str((ctx.index or 0) + 1).zfill(2)).replace("{initial}", _string(ctx.profile.get("display_name"))[:1] or "MD")
@@ -259,8 +264,8 @@ def _content_for(node, ctx):
         text = node.get("default", "Fit" if role == "label" and ctx.section.get("usage") == "fit" else slot["default"])
     elif slot["source"] == "fact":
         text = _fact_text(role, ctx)
-    elif not ctx.copywriting and slot["source"] == "seller+ai":
-        text = _string(ctx.analysis.get("mdComment"))
+    elif slot["source"] == "seller+ai" and _seller_comment(ctx):
+        text = _seller_comment(ctx)
     elif ctx.copywriting:
         text = ctx.copy.get(role) or ""
         if re.fullmatch(r"items\.\d+\.desc", role):
@@ -349,7 +354,7 @@ def _render_text(node, x, y, width, ctx):
         element.update(sourceBlockId=ctx.source_id, copyRole=role, textSlotVersion=1)
         if not text:
             element["placeholder"] = (display if title_wrap else node.get("default") or slot["default"]) or "내용을 입력해 주세요"
-        if slot["source"] == "aiDraft" or (slot["source"] == "seller+ai" and not ctx.analysis.get("mdComment")):
+        if slot["source"] == "aiDraft" or (slot["source"] == "seller+ai" and not _seller_comment(ctx)):
             element["aiDraft"] = True
     if getattr(ctx, "paragraph_role", None) == role and role is not None:
         element.update(paragraphIndex=ctx.paragraph_index, paragraphCount=ctx.paragraph_count)
@@ -763,7 +768,10 @@ def _content_width(elements, x):
 def _render_paragraphs(node, x, y, width, ctx):
     role = node["splitParagraphs"]
     source = next(child for child in node["nodes"] if child.get("copyRole") == role)
-    paragraphs = [text.strip() for text in re.split(r"\n+", _content_for(source, ctx)[0]) if text.strip()]
+    content, slot, _ = _content_for(source, ctx)
+    # Seller copy keeps all whitespace/newlines in a single bubble.
+    paragraphs = ([content] if slot["source"] == "seller+ai" and _seller_comment(ctx) else
+                  [text.strip() for text in re.split(r"\n+", content) if text.strip()])
     parts = paragraphs[:2] + (["\n".join(paragraphs[2:])] if len(paragraphs) > 2 else []) if paragraphs else [""]
     cursor, elements = y, []
     for index, text in enumerate(parts):

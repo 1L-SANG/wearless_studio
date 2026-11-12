@@ -380,6 +380,11 @@ function factText(role, ctx) {
     return "";
 }
 
+const sellerComment = (ctx) => {
+    const text = string(ctx.analysis.mdComment);
+    return text.trim() ? text : "";
+};
+
 function contentFor(node, ctx) {
     if (node.literal != null)
         return {
@@ -406,8 +411,8 @@ function contentFor(node, ctx) {
                 ? "Fit"
                 : slot.default);
     else if (slot.source === "fact") text = factText(role, ctx);
-    else if (!ctx.copywriting && slot.source === "seller+ai")
-        text = string(ctx.analysis.mdComment);
+    else if (slot.source === "seller+ai" && sellerComment(ctx))
+        text = sellerComment(ctx);
     else if (ctx.copywriting) {
         text = ctx.copy[role] || "";
         if (/^items\.\d+\.desc$/.test(role)) {
@@ -581,7 +586,7 @@ function renderText(node, x, y, width, ctx) {
                 "내용을 입력해 주세요";
         if (
             content.slot.source === "aiDraft" ||
-            (content.slot.source === "seller+ai" && !ctx.analysis.mdComment)
+            (content.slot.source === "seller+ai" && !sellerComment(ctx))
         )
             element.aiDraft = true;
     }
@@ -1292,8 +1297,11 @@ function contentWidth(elements, x) {
 function renderParagraphs(node, x, y, width, ctx) {
     const role = node.splitParagraphs;
     const source = node.nodes.find((child) => child.copyRole === role);
-    const paragraphs = contentFor(source, ctx)
-        .text.split(/\n+/)
+    const content = contentFor(source, ctx);
+    // Seller copy stays in one bubble so whitespace and explicit newlines survive.
+    const paragraphs = content.slot.source === "seller+ai" && sellerComment(ctx)
+        ? [content.text]
+        : content.text.split(/\n+/)
         .map((text) => text.trim())
         .filter(Boolean);
     // Keep all copy: excess paragraphs share the third bubble.

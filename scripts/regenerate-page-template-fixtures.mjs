@@ -43,6 +43,8 @@ fixture.cases = fixture.cases.filter(item => !/^woc(?:[2356]|6b|11)-/.test(item.
     return { name: item.name.replace(/^guide-/, 'common-'), input };
 });
 fixture.catalogVersion = pageTemplatesCatalog.catalogVersion;
+// This retained case exercises AI paragraph splitting without seller-owned copy.
+fixture.cases.find(item => item.name === 'emo-md-paragraphs').input.analysis.mdComment = '';
 // These original fixtures describe deliberate ghost recipes, not undecided
 // legacy products. Make that intention explicit under the section mode contract.
 for (const item of fixture.cases) for (const block of item.input.storyboard) {
@@ -323,6 +325,27 @@ for (const designId of ['P01-D09', 'P01-D09-G']) for (const plated of [false, tr
         overlayTextPositions: { [key]: position }, overlayTextPlates: { [key]: plated } } : cut);
     validateStoryboardV4(input.storyboard);
     fixture.cases.push({ name: `woc14-${designId}-${plated ? 'plate' : 'plain'}-${position}`, input });
+}
+// Seller MD copy has priority over generated copy and retains its original text.
+fixture.cases = fixture.cases.filter(item => !item.name.startsWith('woc17-'));
+for (const templateId of ['emo', 'show']) for (const copywriting of [true, false]) {
+    const aiBody = 'AI 첫 문단\n\nAI 둘째 문단\nAI 셋째 문단\nAI 넷째 문단';
+    for (const [suffix, mdComment, body] of [
+        ['seller-multiline', '  Cotton 셔츠를 추천해요.  \n\n  둘째 줄\n셋째 줄\n넷째 줄  \n', aiBody],
+        ['absent-ai', '', aiBody],
+        ['absent-empty', '', ''],
+        ['blank-ai', ' \t\n ', aiBody],
+    ]) {
+        const input = structuredClone(fixture.cases.find(item => item.name === `${templateId}-2-mono`).input);
+        const intro = input.storyboard.find(block => block.pageSectionKind === 'intro');
+        intro.pageDesignId = 'T01-D07';
+        input.analysis.mdComment = mdComment;
+        input.copywriting = copywriting;
+        input.copyResults = input.copyResults.filter(copy => copy.blockId !== intro.id);
+        input.copyResults.push({ blockId: intro.id, texts: [{ role: 'body', text: body }] });
+        validateStoryboardV4(input.storyboard);
+        fixture.cases.push({ name: `woc17-${templateId}-${copywriting ? 'on' : 'off'}-${suffix}`, input });
+    }
 }
 for (const item of fixture.cases.filter(item => /^woc(?:[2356]|6b|11)-/.test(item.name))) validateStoryboardV4(item.input.storyboard);
 const outputs = fixture.cases.map(({ input }) => ({
