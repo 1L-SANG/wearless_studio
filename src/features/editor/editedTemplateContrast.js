@@ -26,28 +26,36 @@ export function editedLineContrast(data) {
 // Browser line boxes, after font loading and wrapping, are the measurement source.
 export function measureWrappedTextLines(node) {
   const doc = node.ownerDocument, walker = doc.createTreeWalker(node, 4), range = doc.createRange(), lines = [];
-  let textNode;
+  const lineHeight = parseFloat(doc.defaultView.getComputedStyle(node).lineHeight);
+  const bounds = node.getBoundingClientRect();
+  const scale = node.offsetWidth ? bounds.width / node.offsetWidth : 1;
+  const blankLine = () => {
+    const previous = lines.at(-1);
+    const top = previous ? previous.top + (lineHeight > 0 ? lineHeight * scale : previous.bottom - previous.top) : bounds.top;
+    const left = previous?.left ?? bounds.left;
+    lines.push({ text: '', top, bottom: top, left, right: left });
+  };
+  let textNode, line = null, endsWithNewline = false;
   while ((textNode = walker.nextNode())) {
     for (let index = 0; index < textNode.textContent.length; index++) {
       const text = textNode.textContent[index];
-      if (text === '\n') continue;
+      if (text === '\n') {
+        if (!line) blankLine();
+        line = null;
+        endsWithNewline = true;
+        continue;
+      }
       range.setStart(textNode, index); range.setEnd(textNode, index + 1);
       const rect = range.getBoundingClientRect();
       if (!rect.height) continue;
-      let line = lines.at(-1);
       if (!line || Math.abs(line.top - rect.top) > 1) {
-        // Preserve intentionally blank lines as well as automatic wrapping.
-        if (line) {
-          const lineHeight = parseFloat(doc.defaultView.getComputedStyle(node).lineHeight);
-          const scale = node.offsetWidth ? node.getBoundingClientRect().width / node.offsetWidth : 1;
-          const gap = lineHeight > 0 ? Math.round((rect.top - line.top) / (lineHeight * scale)) - 1 : 0;
-          for (let blank = 0; blank < gap; blank++) lines.push({ text: '', top: line.top, bottom: line.bottom, left: line.left, right: line.left });
-        }
         line = { text: '', left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }; lines.push(line);
       }
+      endsWithNewline = false;
       line.text += text; line.left = Math.min(line.left, rect.left); line.right = Math.max(line.right, rect.right); line.bottom = Math.max(line.bottom, rect.bottom);
     }
   }
+  if (endsWithNewline) blankLine();
   range.detach?.();
   return lines;
 }
@@ -79,6 +87,7 @@ export async function measureEditedTemplateContrast(node, { signal, loadImage = 
     && Boolean(image.compareDocumentPosition(node) & 4));
   const decoded = new Map(), output = [];
   for (const line of lines) {
+    if (!line.text) { output.push({ text: '', ...editedLineContrast(null) }); continue; }
     const match = images.filter(image => {
       const r = image.closest('.el').getBoundingClientRect();
       return r.left <= line.left && r.right >= line.right && r.top <= line.top && r.bottom >= line.bottom;

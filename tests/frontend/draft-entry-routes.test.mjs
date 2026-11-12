@@ -9,6 +9,7 @@ import * as mobileGuestSave from '../../src/lib/mobileGuestSave.js';
 import { readCafe24Launch } from '../../src/lib/cafe24Launch.js';
 import { checkDraftEntry, canAutoOpenInput } from '../../src/lib/draftEntryCheck.js';
 import * as flow from '../../src/lib/flowSession.js';
+import { resolveStoryboardResume, STORYBOARD_REVIEW_MESSAGE } from '../../src/lib/pageTemplates/entryNotices.js';
 import { loadDraft as readStoredDraft, clearDraft as clearStoredDraft, hasPendingDraft as hasStoredPendingDraft, saveProductDraft, queueProductDraftSave, flushProductDraftSave } from '../../src/lib/draftStore.js';
 import { draftStoreFixture } from './helpers/draft-store-fixture.mjs';
 import { createDraftSlotSync, formatDraftRelativeTime, localDraftMeta, draftSlot as storedDraftSlot } from '../../src/lib/draftSlot.js';
@@ -123,6 +124,7 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
   state.adoptProject = (id) => { calls.push(`adopt:${id}`); };
   state.confirmProductInfo = () => { calls.push('confirm'); };
   const bindings = {
+    resolveStoryboardResume, STORYBOARD_REVIEW_MESSAGE,
     readCafe24Launch,
     useClientErrorCapture() {}, getMobileGuestDraft: () => null, getMobileGuestSave: (session) => typeof guestSave === 'function' ? guestSave(session) : guestSave, clearMobileGuestSave() { guestSave = null; calls.push('clearGuest'); },
     ...entry, ...flow, canAutoOpenInput, checkDraftEntry: (client, options) => checkDraftEntry(client, { ...options, setTimer: (fn, ms) => ms === 8000 ? setTimeout(fn, ms) : setImmediate(fn), clearTimer: clearTimeout }), getDraftDeviceNoun, isMobileDraftWriter, flowScreenName, shouldWarnFlowAbandon, notifyFlowKept, draftSlot, useAppStore, formatDraftRelativeTime, localDraftMeta,
@@ -202,6 +204,7 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
     s: new Proxy({}, { get: (_, key) => key }),
     window: windowEvents, document: documentEvents, Link: 'Link', STEPPER_STEPS: [],
     api: {
+      async getStoryboard() { return [{ taxonomyVersion: 4 }]; },
       async getProduct(id) { calls.push(`product:${id}`); if (id && !auth.session) throw new Error('로그인이 필요해요'); return { colors: [{}] }; },
       async getCatalogs() { return {}; }, async getAnalysis(id) { calls.push(`analysis:${id}`); return { projectId: id }; },
     },

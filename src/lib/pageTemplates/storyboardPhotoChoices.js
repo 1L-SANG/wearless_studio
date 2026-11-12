@@ -1,7 +1,7 @@
 import toneOrder from '../../data/exampleToneOrder.json' with { type: 'json' };
 import tags from '../../../server/app/data/example_tags.json' with { type: 'json' };
 import { hashSeed } from '../storyboardEntryPlacement.js';
-import { selectGenerationExamples } from '../generationExamples.js';
+import { selectGenerationExamples, generationGalleryPageForExample } from '../generationExamples.js';
 import { blockAllowedForModel, filterSpaceSetsForModel } from '../identityScope.js';
 import { PLACE_TABS, examplePlace, exampleSpaceSet, groupGalleryExamples } from './storyboardGallery.js';
 
@@ -11,7 +11,11 @@ export const PHOTO_LIGHTS = Object.freeze([
 ]);
 export const isSinglePhotoSection = block => ['first', 'review', 'faq'].includes(block?.pageSectionKind);
 export const resolvePhotoPlace = (place, tabs) => tabs.some(tab => tab.value === place) ? place : tabs[0]?.value ?? null;
-export const initialPhotoPlace = (example, tabs = PHOTO_PLACE_TABS) => resolvePhotoPlace(examplePlace(example).value, tabs);
+const photoPlaceValue = example => {
+  const place = examplePlace(example).value;
+  return example?.cutType === 'styling' && place === 'studio' ? 'indoor' : place;
+};
+export const initialPhotoPlace = (example, tabs = PHOTO_PLACE_TABS) => resolvePhotoPlace(photoPlaceValue(example), tabs);
 export const initialPhotoFraming = (block, example = null) => {
   if (String(example?.id || block?.exampleId || '').startsWith('sig_')) return 'medium';
   return ['full', 'medium'].includes(example?.shot) ? example.shot : 'medium';
@@ -27,7 +31,7 @@ export function exampleLight(example) {
 
 export function visiblePhotoPlaces(examples, { light = 'all' } = {}) {
   const places = new Set(examples.filter(example => light === 'all' || exampleLight(example) === light)
-    .map(example => examplePlace(example).value));
+    .map(photoPlaceValue));
   return PHOTO_PLACE_TABS.filter(tab => places.has(tab.value));
 }
 
@@ -61,7 +65,7 @@ export function photoGalleryChoices(catalog, sets, {
   });
   const tabs = visiblePhotoPlaces(candidates, { light });
   const activePlace = place === 'studio' ? 'studio' : resolvePhotoPlace(place, tabs);
-  const filtered = candidates.filter(example => (activePlace === 'studio' ? example.cutType === 'horizon' : examplePlace(example).value === activePlace)
+  const filtered = candidates.filter(example => (activePlace === 'studio' ? example.cutType === 'horizon' : photoPlaceValue(example) === activePlace)
     && (light === 'all' || exampleLight(example) === light));
   const entries = groupGalleryExamples(filtered, allowedSets, { selectedId, minimumSetMembers: 1 });
   return { candidates, tabs, place: activePlace,
@@ -74,4 +78,8 @@ export function photoChoicePages(entries, signature = null, pageSize = 6) {
     pages.push([...(signature ? [{ id: signature.id, kind: 'signature', example: signature }] : []), ...entries.slice(index, index + size)]);
   }
   return pages;
+}
+
+export function photoChoicePageForExample(pages, exampleId) {
+  return generationGalleryPageForExample(pages.map(page => page.flatMap(entry => entry.members || [entry.example])), exampleId);
 }

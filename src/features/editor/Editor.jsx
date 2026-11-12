@@ -13,7 +13,7 @@ import { templateSectionName } from '@/lib/pageTemplates/slots.js';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Moveable from 'react-moveable';
 import QRCode from 'qrcode';
 import { api, isMockMode } from '@/lib/api/index.js';
@@ -21,11 +21,15 @@ import { jobFailure, jobFailureMessage } from '@/lib/api/jobFailure.js';
 import { getJobSettlement } from '@/lib/api/facemarket.js';
 import { SettlementReceiptChain } from '@/features/editor/SettlementReceiptChain.jsx';
 import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
+import { pageTemplatesCatalog } from '@/lib/pageTemplates/catalog.js';
+import { selectFrameShopName } from '@/lib/frameShopName.js';
+import { storyboardShopOwner, storyboardShopQueryOptions } from '@/features/storyboard/storyboardShopName.js';
 import { useTitlePlatePreview } from './editorTitlePlatePreview.js';
 import { fitTitlePlateBlocks } from './editorTitlePlateFit.js';
 import { hasTitlePlate } from '../../lib/pageTemplates/titlePlate.js';
 import { editedTextElement } from './editorTextEdit.js';
 import { useEditedTemplateContrast } from './useEditedTemplateContrast.js';
+import { createEditorContrastStore, EditorContrastContext } from './editorContrastStore.js';
 import { alignSkeletonToServer, canSafelyMergeServerBlocks, clearFailedJobPreviewBlocks, decorateGenBlocks, failedJobPreviewUrls, fillGenBlocks, mergeServerBlocks, patchTemplateElement } from '@/lib/editorWaitSkeleton.js';
 import { incompleteMessage, retryOfIncomplete, retryReuseHint } from '@/lib/detailPageJobFailure.js';
 import {
@@ -1024,7 +1028,7 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
               <div style={{ position: 'absolute', top: 0, left: 0, width: 1000, height: blockH,
                 transform: `scale(${(thumbW || 140) / 1000})`, transformOrigin: 'top left', pointerEvents: 'none' }}>
                 {b.elements.map((el) => (
-                  <CanvasElement key={el.id} el={el} preview imageWidth={MINI_IMAGE_WIDTH} selected={false} onSelect={() => {}} onEdit={() => {}} />
+                  <CanvasElement key={el.id} el={el} titlePlate={hasTitlePlate(el, b.elements)} preview imageWidth={MINI_IMAGE_WIDTH} selected={false} onSelect={() => {}} onEdit={() => {}} />
                 ))}
               </div>
             </div>
@@ -1086,6 +1090,7 @@ const normDeg = (d) => { let n = ((d % 360) + 360) % 360; return n > 180 ? n - 3
 export function Editor() {
   const navigate = useNavigate();
   const { id: projectId } = useParams();             // /editor/:id = projectId (계약 §2 — mock 은 무시)
+  const contrastStore = useMemo(createEditorContrastStore, [projectId]);
   const account = useAppStore((s) => s.account);     // 크레딧 단일 표시 소스 (frontend_state_model §6)
   const syncCredits = useAppStore((s) => s.syncCredits);
   const [blocks, setBlocksState] = useState(null);
@@ -1187,6 +1192,20 @@ export function Editor() {
     void warmFaceRender(modelId);       // 실패는 무시 — 켜기는 거들 뿐이고 잡이 다시 기다린다
   }, [analysis?.selectedModelId]);
 
+  const waitShopQueryClient = useQueryClient();
+  const loadWaitingShopName = useCallback(async (storyboard) => {
+    const userId = storyboardShopOwner(useAppStore.getState().accountUserId);
+    const hasFrame = (storyboard || []).some(block => block.taxonomyVersion === 4
+      && pageTemplatesCatalog.designs[block.pageDesignId]?.framePhotos);
+    if (!userId || !hasFrame) return null;
+    const options = storyboardShopQueryOptions(userId, hasFrame);
+    try {
+      const connections = await waitShopQueryClient.fetchQuery(options);
+      if (userId !== storyboardShopOwner(useAppStore.getState().accountUserId)
+          || waitShopQueryClient.getQueryState(options.queryKey)?.status === 'error') return null;
+      return selectFrameShopName(connections);
+    } catch { return null; }
+  }, [waitShopQueryClient]);
   const [waitBoardError, setWaitBoardError] = useState('');
   const [waitBoardAttempt, setWaitBoardAttempt] = useState(0);
   // 콘티를 못 받아 대기 화면을 못 만든 경우, 뒤에서 계속 다시 받아 스스로 복구한다.
@@ -1203,6 +1222,8 @@ export function Editor() {
           isCancelled: () => cancelled,
         });
         if (cancelled) return;
+        const shopName = await loadWaitingShopName(sb);
+        if (cancelled) return;
         const cw = useAppStore.getState().copywriting;
         const dj = useAppStore.getState().detailPageJob;
         const exThumb = {};
@@ -1213,14 +1234,14 @@ export function Editor() {
           }
         }
         const skeleton = upgradeLegacyKiwiTemplateBlocks(stripPhotoBlockTextElements(decorateGenBlocks(
-          alignSkeletonToServer(buildEditorBlocksFromStoryboard(sb || [], product, cw, analysis || {}), cw), dj, exThumb)), uid);
+          alignSkeletonToServer(buildEditorBlocksFromStoryboard(sb || [], product, cw, analysis || {}, shopName), cw), dj, exThumb)), uid);
         setBlocks(skeleton);
         setSelBlock(skeleton[0]?.id);
         setWaitBoardError('');
       } catch { /* 재시도까지 실패 — 화면의 [다시 불러오기]·[보관함으로]가 남아 있다 */ }
     })();
     return () => { cancelled = true; };
-  }, [waitBoardError, waitBoardAttempt, blocks, product, analysis, catalogs, projectId]);
+  }, [waitBoardError, waitBoardAttempt, blocks, product, analysis, catalogs, projectId, loadWaitingShopName]);
   // 화면 대기(3분)를 넘긴 생성 잡의 백그라운드 추적 — 훅은 로딩 early-return 위에만 둔다.
   const slowJobs = useRef(new Set());
   const slowJobTimers = useRef(new Set());
@@ -1464,6 +1485,7 @@ export function Editor() {
 
   useEffect(() => {
     setLoadError(null);
+    let cancelled = false;
     const enteringJob = useAppStore.getState().detailPageJob;
     // 내용과 기준 리비전을 지금 한 번에 읽는다 — 서버 응답 뒤에 기준만 다시 읽으면 그새 다른
     // 탭이 공유 키를 지워 짝이 어긋난다(loadEditorWaitDraftEntry 주석).
@@ -1496,7 +1518,8 @@ export function Editor() {
         : api.getStoryboard(projectId)).catch(() => null),
       // AI 탭 '매칭 의류 바꾸기' 목록 — 콘티보드와 동일 소스, 실패해도 에디터는 뜬다
       api.getMatchClothing(projectId).catch(() => [])])
-      .then(([b, w, c, _a, p, fm, an, sb, mc]) => {
+      .then(async ([b, w, c, _a, p, fm, an, sb, mc]) => {
+        if (cancelled) return;
         fetched = true;   // 여기부터 터지면 통신이 아니라 조립 문제다
         const hydratedCatalogs = withStoryboardSpaceSetExamples(c);
         let withH = b.map((blk) => normalizeEditorBlockRole(blk));
@@ -1535,6 +1558,8 @@ export function Editor() {
         if (genMode) {
           // 생성 중 진입 — 저장된 blocks(구 데모 시드·빈 값) 대신 콘티 스켈레톤이 캔버스가 된다.
           // 컷·카피는 store 이벤트가 채우고, 완료 시 mergeServerBlocks 로 같은 화면에서 확정.
+          const shopName = await loadWaitingShopName(sb);
+          if (cancelled) return;
           const cw = useAppStore.getState().copywriting;
           const exThumb = {};
           for (const blk of sb || []) {
@@ -1544,7 +1569,7 @@ export function Editor() {
             }
           }
           const skeleton = decorateGenBlocks(
-            alignSkeletonToServer(buildEditorBlocksFromStoryboard(sb || [], p, cw, an || {}), cw), dj, exThumb);
+            alignSkeletonToServer(buildEditorBlocksFromStoryboard(sb || [], p, cw, an || {}, shopName), cw), dj, exThumb);
           // 생성 중 임시 작업본은 서버 완성본과 분리한다. 재진입 시 문구뿐 아니라 배치·추가 요소도
           // 그대로 복원하고, 이후 재수신되는 생성 이벤트가 새 이미지/카피만 채운다.
           withH = savedDraft || skeleton;
@@ -1616,9 +1641,10 @@ export function Editor() {
       // 필수 데이터를 못 받으면 스피너를 영원히 돌리지 않는다 — 무슨 일인지 말하고 다시 시도.
       // 단 위 조립 본문에서 터진 것은 '못 받은 것'이 아니라 우리 버그다. 같은 응답으로 다시
       // 시도해도 똑같이 터지므로 재시도를 권하지 않게 표식을 붙인다(2026-08-17 리뷰).
-      .catch((error) => setLoadError({ error, ...classifyEditorLoadError(
+      .catch((error) => !cancelled && setLoadError({ error, ...classifyEditorLoadError(
         fetched ? Object.assign(error instanceof Error ? error : new Error(String(error)), { duringRender: true }) : error,
       ) }));
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadAttempt]);
 
@@ -3876,6 +3902,7 @@ export function Editor() {
   const genReuseHint = dpJob.status === 'running' ? retryReuseHint(dpJob) : '';
 
   return (
+    <EditorContrastContext.Provider value={contrastStore}>
     <div className="editor">
       {/* 저장 실패 배너 — 조용히 실패하면 셀러가 한참 작업한 뒤에야 전부 날아간 걸 안다.
           편집분은 이미 이 브라우저에 임시 보관돼 있으므로 그 사실부터 말하고, 원인별로
@@ -4287,7 +4314,7 @@ export function Editor() {
           <div className="preview-sheet">
             {blocks.map((b) => (
               <div key={b.id} style={{ position: 'relative', height: getBlockRenderHeight(b, { forExport: true }), background: colorWithOpacity(b.bg, b.bgOpacity), overflow: 'hidden', boxSizing: 'border-box' }}>
-                {b.elements.map((el) => <CanvasElement key={el.id} el={el} preview selected={false} onSelect={() => {}} onEdit={() => {}} />)}
+                {b.elements.map((el) => <CanvasElement key={el.id} el={el} titlePlate={hasTitlePlate(el, b.elements)} preview selected={false} onSelect={() => {}} onEdit={() => {}} />)}
               </div>
             ))}
           </div>
@@ -4349,6 +4376,7 @@ export function Editor() {
           onDraftCopy={draftFeatureCopy} />
       )}
     </div>
+    </EditorContrastContext.Provider>
   );
 }
 

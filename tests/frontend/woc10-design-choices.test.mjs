@@ -43,11 +43,11 @@ test('WOC10 four photos offer column and two-column layouts with two automatic f
   assert.deepEqual(axes(board(4, 'WEAR-STYLING-FRAME-COLUMN-03')).layouts.map(option => option.id), ['column', 'twoColumn']);
 });
 
-test('WOC10 an explicit frame action from a saved one-frame hero falls back to the automatic two-frame column', () => {
+test('WOC15 a saved one-frame hero projects to the available automatic two-frame column', () => {
   const blocks = board(4, 'WEAR-STYLING-FRAME-HERO-01'), before = structuredClone(blocks);
   const value = axes(blocks);
   assert.equal(Object.hasOwn(value, 'framePhotoChoices'), false);
-  assert.equal(value.currentLayoutId, 'heroPair');
+  assert.equal(value.currentLayoutId, 'column');
   assert.equal(value.decorations.find(option => option.id === 'frame').selected, true);
   assert.equal(value.decorations.find(option => option.id === 'frame').designId, 'WEAR-STYLING-FRAME-COLUMN-02');
   assert.deepEqual(blocks, before);
@@ -82,14 +82,14 @@ for (const [total, initial, target] of [
   assert.equal(value.decorations.find(option => option.id === 'basic').isDefault, true);
 });
 
-test('WOC10 stored ineligible frame design remains current without changing its preview or saved blocks', () => {
+test('WOC15 an ineligible saved frame projects valid axes without changing its preview or saved blocks', () => {
   const blocks = board(4, 'WEAR-STYLING-FRAME-HERO-03'), saved = structuredClone(blocks);
   const before = assemblePage({ storyboard: blocks, product, analysis });
   const value = axes(blocks);
   assert.equal(currentSectionDesignId(daily(blocks), blocks), 'WEAR-STYLING-FRAME-HERO-03');
-  assert.equal(value.currentLayoutId, 'heroPair');
+  assert.equal(value.currentLayoutId, 'column');
   assert.equal(value.currentDecorationId, 'frame');
-  assert.deepEqual(value.layouts.map(option => [option.id, option.selected]), [['column', false], ['twoColumn', false]]);
+  assert.deepEqual(value.layouts.map(option => [option.id, option.selected]), [['column', true], ['twoColumn', false]]);
   assert.equal(value.decorations.find(option => option.id === 'frame').selected, true);
   assert.equal(value.decorations.find(option => option.id === 'frame').designId, 'WEAR-STYLING-FRAME-COLUMN-02');
   assert.deepEqual(blocks, saved);

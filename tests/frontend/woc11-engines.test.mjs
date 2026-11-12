@@ -198,10 +198,17 @@ const legacyDigests = {
   'show:PT-COLUMN-CARD-01': '4f724cfc71e23cb2d5dd414ae53e6a9eb5f8ae141a2215738381325cc412df41',
   'show:PT-BELOW-CARD-01': 'a93efd8b1279dc88352b87ae1ad3bfbde425eaac5830f9209e4dba35d077431c',
 };
-test('WOC11 hiding preserves all eight saved legacy renderings byte for byte', () => {
+test('WOC11 hiding preserves all eight saved legacy renderings apart from explicit contain metadata', () => {
   for (const [key, expected] of Object.entries(legacyDigests)) {
     const [templateId, designId] = key.split(':');
-    assert.equal(createHash('sha256').update(JSON.stringify(blocksOf(inputFor(templateId, designId)))).digest('hex'), expected, key);
+    const blocks = blocksOf(inputFor(templateId, designId));
+    const legacy = blocks.map(block => ({ ...block, elements: block.elements.map(element => {
+      if (element.type !== 'image') return element;
+      assert.equal(element.fit, 'contain', key);
+      const { fit, ...previous } = element;
+      return previous;
+    }) }));
+    assert.equal(createHash('sha256').update(JSON.stringify(legacy)).digest('hex'), expected, key);
   }
 });
 

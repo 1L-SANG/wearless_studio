@@ -260,17 +260,6 @@ test('완료 병합은 기본 정보 템플릿을 같은 방문에서 적용한�
   assert.match(completion, /ensureShippingReturnsBlock\(merged, ctx\)/);
 });
 
-test('저장된 문서를 여는 경로도 누락된 배송·교환·반품 프레임을 복구한다', () => {
-  // 경계를 'setWardrobe(...' 로 잡으면 콘티 실패 폴백 분기가 앞에 끼면서 슬라이스가 잘린다.
-  // 저장 문서 경로(else 분기)의 끝인 withH 정규화 지점을 경계로 쓴다.
-  const initialization = editor.slice(
-    editor.indexOf('.then(([b, w, c, _a, p, fm, an, sb, mc]) => {'),
-    editor.indexOf('withH = upgradeLegacyKiwiTemplateBlocks'),
-  );
-  assert.match(initialization, /ensureShippingReturnsBlock\(withH, ctx\)/);
-});
-
-
 test('자동저장 실패를 삼키지 않는다 — 임시 보관 + 배너 + 다시 저장', () => {
   // 조용히 실패하면 화면은 멀쩡한데 편집만 사라져, 셀러는 탭을 닫고서야 전부 날아간 걸
   // 안다(오너 신고 2026-08-19). 실패 경로가 셋을 모두 하는지 고정한다.

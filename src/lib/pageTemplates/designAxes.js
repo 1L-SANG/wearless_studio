@@ -7,9 +7,15 @@ export function sectionDesignAxes(run, { storyboard = run?.blocks || [], product
   const choices = sectionDesignChoices(run, { storyboard, product });
   const defaultId = defaultSectionDesignId(run, storyboard);
   const currentId = currentSectionDesignId(run, storyboard);
-  const currentDesign = pageTemplatesCatalog.designs[currentId];
-  const current = currentDesign?.choiceAxes;
+  const stored = pageTemplatesCatalog.designs[currentId]?.choiceAxes;
   const fallback = choices.find(design => design.id === defaultId) || choices[0];
+  // Saved layouts may outlive their photo count. Project onto a valid choice,
+  // retaining the decoration and a compatible saved frame layout when possible.
+  const currentDesign = choices.find(design => design.id === currentId)
+    || choices.find(design => design.choiceAxes?.layout.id === stored?.layout.id && design.choiceAxes?.decoration.id === stored?.decoration.id)
+    || choices.find(design => design.choiceAxes?.decoration.id === stored?.decoration.id && design.choiceAxes?.layout.id === 'column')
+    || fallback;
+  const current = stored ? currentDesign?.choiceAxes : null;
   const active = current || fallback?.choiceAxes;
   const defaults = pageTemplatesCatalog.designs[defaultId]?.choiceAxes;
   const frames = choices.filter(design => design.choiceAxes?.decoration.id === 'frame');

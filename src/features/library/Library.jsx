@@ -15,6 +15,7 @@ import tagStyles from '@/components/NotFound.module.css';
 import { isMobileDevice } from '@/lib/deviceClass.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { authorizeFlowContinuation } from '@/lib/flowSession.js';
+import { resolveStoryboardResume, STORYBOARD_REVIEW_MESSAGE } from '@/lib/pageTemplates/entryNotices.js';
 import { PublicationsPanel } from './PublicationsPanel.jsx';
 import publicationStyles from './PublicationsPanel.module.css';
 
@@ -66,13 +67,15 @@ export function Library() {
       const project = await api.getProject(item.id);
       if (!isCurrent()) return;
       if (project?.id !== item.id) throw new Error('만들던 상품을 찾지 못했어요.');
-      const path = resumePath(project);
+      const { path, review } = await resolveStoryboardResume(api, item.id, resumePath(project));
+      if (!isCurrent()) return;
       adoptProject(item.id, { serverSnapshot: project });
       const store = useAppStore.getState();
       store.confirmProductInfo(item.id);
       authorizeFlowContinuation(item.id, path);
       store.markFlowUsed(userId);
       store.setResumePath(path);
+      if (review) push(STORYBOARD_REVIEW_MESSAGE);
       navigate(path);
     } catch (error) {
       if (isCurrent()) push(error?.message || '만들던 상품을 열지 못했어요.');

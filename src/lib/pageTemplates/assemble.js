@@ -727,6 +727,7 @@ function renderPhoto(node, x, y, width, ctx) {
         h,
         src,
         radius: node.radius || 0,
+        ...(node.fit ? { fit: node.fit } : {}),
         slotKey: ctx.targetSlot
             ? `${ctx.section.instanceKey}.${ctx.targetSlot}`
             : card && card.pageSectionKey === ctx.key && card.slotKey

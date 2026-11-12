@@ -106,7 +106,7 @@ test('all color mutations share the debounced existing analysis-save queue', () 
   assert.match(productInputSource, /registerAnalysisEditSave\(analysisProjectId, analysisSaveChainRef\.current\)/);
   const storyboardLoad = storyboardSource.slice(
     storyboardSource.indexOf('await useAppStore.getState().loadProject()'),
-    storyboardSource.indexOf('await sbSaveIdle()'),
+    storyboardSource.indexOf('// 직전 이탈 저장 실패분 복원'),
   );
   assert.match(storyboardLoad, /await waitForAnalysisEditSave\(pid\)/);
   assert.ok(

@@ -48,6 +48,7 @@ import { genderForClothingType } from '@/lib/productGender.js';
 import { detachSpaceMembership, insertSpaceSet, rekeySeparatedSpaceRuns, replaceSpaceSetRun } from '@/lib/storyboardSpaceSets.js';
 import { consumeStoryboardEntry, loadStoryboardEntry, peekStoryboardEntry } from './storyboardEntryPrefetch.js';
 import { sbLastSaved, sbPending, sbSaveIdle, sbSaveNow, sbSetSaveRepair, sbSetConflictHandler, sbStable } from './storyboardPersistence.js';
+import { setStoryboardEntryNotice, STORYBOARD_REVIEW_MESSAGE } from '@/lib/pageTemplates/entryNotices.js';
 import { storyboardWorkCopies, restoreWorkCopyOnce } from '@/lib/conflictWorkCopy.js';
 import { renderGroups } from '@/lib/storyboardRenderGroups.js';
 import { prewarmImages } from '@/lib/imagePrewarm.js';
@@ -595,16 +596,18 @@ export function Storyboard({ toastOverride = null } = {}) {
         // fail-open 결과도 resolve되므로 등록 실패가 마네킹 생성을 막지는 않는다.
         const customMatchTask = getCustomMatchPromotionTask(pid);
         const customMatchReady = customMatchTask?.promise.catch(() => null) || Promise.resolve();
-        void customMatchReady.then(() => isAnalysisFastEntryEnabled()
-          ? (active ? requestMannequinGeneration(pid, { isActive: () => active }) : null)
-          : requestMannequinGeneration(pid)).catch((error) => {
-          if (active) setMannequinFailure(error?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.');
-        });
         await sbSaveIdle();     // 직전 인스턴스의 비행 중 저장(이탈 플러시)이 착지한 뒤에 읽는다 — 스테일 로드 방지
         const entry = await consumeStoryboardEntry(pid) || await loadStoryboardEntry(pid);
         const [board] = entry;
         const notice = api.storyboardEntryNotice?.(pid);
         if (active) setEntryNotice(notice);
+        if (notice !== 'rebuilt' && notice !== 'legacyGenerated') {
+          void customMatchReady.then(() => isAnalysisFastEntryEnabled()
+            ? (active ? requestMannequinGeneration(pid, { isActive: () => active }) : null)
+            : requestMannequinGeneration(pid)).catch((error) => {
+            if (active) setMannequinFailure(error?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.');
+          });
+        }
 
         // 직전 이탈 저장 실패분 복원 — 단, "서버가 우리가 마지막으로 알던 상태 그대로"일 때만.
         // 서버가 변했다면 다른 탭/기기의 더 새로운 저장이므로 보관분을 폐기하고 서버본을 따른다(침묵 덮어쓰기 금지).
@@ -620,7 +623,8 @@ export function Storyboard({ toastOverride = null } = {}) {
           sbPending.delete(pid);
           toast.push('다른 곳에서 저장된 최신 콘티를 불러왔어요 — 이전에 저장 못 한 변경은 반영되지 않았어요');
         }
-        if (!usePending) sbLastSaved.set(pid, board);   // 이번 로드의 서버 상태를 기준선으로 기록
+        if (notice === 'rebuilt') sbLastSaved.delete(pid); // 메모리에서 바꾼 보드는 아직 서버 저장본이 아니다.
+        else if (!usePending) sbLastSaved.set(pid, board);   // 이번 로드의 서버 상태를 기준선으로 기록
         const reuseInitialEntry = shouldReuseInitialStoryboardEntry({
           usePending,
           promotionObserved: productPhotoPromotionObserved,
@@ -657,7 +661,7 @@ export function Storyboard({ toastOverride = null } = {}) {
             ? { ...prepared.composeModeSeed, matchClothing: promotedMatchClothing }
             : prepared.composeModeSeed);
         }
-        if (notice !== 'legacyGenerated' && (prepared.normalized || prepared.assignment.changed
+        if (notice !== 'legacyGenerated' && notice !== 'rebuilt' && (prepared.normalized || prepared.assignment.changed
           || usePending || promotionChangedBlocks)) {
           const autoAssignmentOnly = prepared.assignment.assignedIds.length > 0
             && prepared.assignment.protectedIds.length === 0 && !prepared.normalized
@@ -710,7 +714,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         latestBlocks.current = kept;
         setBlocks(kept);
         try {
-          await sbSaveNow(pid, () => kept, { restoreConflict: true });
+          if (api.storyboardEntryNotice?.(pid) !== 'rebuilt') await sbSaveNow(pid, () => kept, { restoreConflict: true });
           storyboardWorkCopies.clear(pid, copy);
           setAutosaveFailed(false);
         } catch (error) { setAutosaveFailed(error); }
@@ -742,9 +746,17 @@ export function Storyboard({ toastOverride = null } = {}) {
     clearTimeout(saveTimer.current);
     saveTimer.current = null;
     if (api.storyboardEntryNotice?.(pid) === 'legacyGenerated') return Promise.resolve();
-    return sbSaveNow(pid, () => latestBlocks.current, options);
+    if (api.storyboardEntryNotice?.(pid) === 'rebuilt' && !options.confirmRebuilt) return Promise.resolve();
+    const { confirmRebuilt: _confirmRebuilt, ...saveOptions } = options;
+    return sbSaveNow(pid, () => latestBlocks.current, saveOptions);
   };
-  const saveNow = (pid) => flushLatest(pid);
+  const saveNow = async (pid) => {
+    await flushLatest(pid, { confirmRebuilt: true });
+    if (api.storyboardEntryNotice?.(pid) === 'rebuilt') {
+      setStoryboardEntryNotice(pid, null);
+      setEntryNotice(null);
+    }
+  };
   // 저장이 다시 성공하면 배너를 거둔다.
   const retryAutosave = () => flushLatest(projectId)
     .then(() => setAutosaveFailed(false))
@@ -760,7 +772,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       directSaveSnapshots.current.delete(blocks);
       return;
     }
-    if (entryNotice === 'legacyGenerated') return undefined;
+    if (entryNotice === 'legacyGenerated' || entryNotice === 'rebuilt') return undefined;
     return scheduleStoryboardAutosave(saveTimer, () => {
       // 자동저장 실패를 침묵시키지 않는다 — 서버가 4xx 로 거절하면 재전송도 없어서
       // 그 세션의 저장이 통째로 죽는데 화면엔 아무 표시가 없었다(자체 리뷰 high 의 2차 피해).
@@ -986,7 +998,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     directSaveSnapshots.current.add(next);
     setBlocks(next);
     try {
-      await sbSaveNow(projectId, () => next);
+      if (api.storyboardEntryNotice?.(projectId) !== 'rebuilt') await sbSaveNow(projectId, () => next);
       atomicRetryRef.current = null;
     } catch (error) {
       if (error?.code === 'revision_conflict') throw error;
@@ -1014,7 +1026,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     directSaveSnapshots.current.add(next);
     setBlocks(next);
     try {
-      await sbSaveNow(projectId, () => next);
+      if (api.storyboardEntryNotice?.(projectId) !== 'rebuilt') await sbSaveNow(projectId, () => next);
       atomicRetryRef.current = null;
       if (nextSelectedId) {
         setSelectedId(nextSelectedId);
@@ -1204,7 +1216,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     directSaveSnapshots.current.add(atomicRetry.next);
     setBlocks(atomicRetry.next);
     try {
-      await sbSaveNow(projectId, () => atomicRetry.next);
+      if (api.storyboardEntryNotice?.(projectId) !== 'rebuilt') await sbSaveNow(projectId, () => atomicRetry.next);
       atomicRetryRef.current = null;
       showUndo(atomicRetry.previous, atomicRetry.next, { blockId: 'retry', label: '설정' });
       return true;
@@ -1287,7 +1299,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       }}>마네킹 다시 만들기{mannequinQuoteConfirmation.pending(projectId)
         ? ` · ${mannequinQuoteLabel(mannequinQuoteConfirmation.pending(projectId).quote)}` : ''}</Button>
     </div>}
-    {entryNotice === 'rebuilt' && <p role="status" className="sb-entry-notice">새 템플릿 구성으로 다시 만들었어요</p>}
+    {entryNotice === 'rebuilt' && <p role="status" className="sb-entry-notice">{STORYBOARD_REVIEW_MESSAGE}</p>}
     {autosaveFailed && <div className="sb-save-error sb-autosave-error" role="alert">
       <ClientErrorCapture point="storyboardSave" error={autosaveFailed instanceof Error ? autosaveFailed : undefined} projectId={projectId} />
       <span>변경 내용을 저장하지 못했어요. 잠시 뒤 다시 시도해주세요.</span><button type="button" onClick={retryAutosave}>다시 저장</button>

@@ -1447,7 +1447,7 @@ export const api = {
       identityKind: identityKindOf(isRealModelSelection(DB.analysis.selectedModelId)),
     });
     setStoryboardEntryNotice(DB.project.id, resolved.notice);
-    if (resolved.notice !== 'legacyGenerated') DB.storyboard = resolved.blocks;
+    if (resolved.notice !== 'legacyGenerated' && resolved.notice !== 'rebuilt') DB.storyboard = resolved.blocks;
     return clone(resolved.notice === 'legacyGenerated' ? [] : resolved.blocks);
   },
   storyboardEntryNotice,

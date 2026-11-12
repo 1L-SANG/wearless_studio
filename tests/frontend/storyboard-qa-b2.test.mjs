@@ -279,7 +279,7 @@ test('pagehide flush waits for the save chain, uses keepalive, and overlapping e
   assert.equal(calls[1].options.keepalive, true);
   persistence.dispose();
 
-  assert.match(storyboardSource, /const flushLatest = \(pid, options = \{\}\) => \{[\s\S]*?return sbSaveNow\(pid, \(\) => latestBlocks\.current, options\)/);
+  assert.match(storyboardSource, /const flushLatest = \(pid, options = \{\}\) => \{[\s\S]*?return sbSaveNow\(pid, \(\) => latestBlocks\.current, saveOptions\)/);
   assert.match(storyboardSource, /bindStoryboardExitFlush\(\{[\s\S]*?getProjectId: \(\) => pidRef\.current,[\s\S]*?flushLatest/);
 });
 

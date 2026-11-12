@@ -9,6 +9,7 @@ import { createInitialGenerationAttempts, runInitialGenerationAttempt } from '..
 import { createMannequinGenerationRunner } from '../../src/features/mannequin/generationRunnerCore.js';
 import { decorateGenBlocks } from '../../src/lib/editorWaitSkeleton.js';
 import * as flowSession from '../../src/lib/flowSession.js';
+import { resolveStoryboardResume, STORYBOARD_REVIEW_MESSAGE } from '../../src/lib/pageTemplates/entryNotices.js';
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 const memoryStorage = () => {
@@ -44,7 +45,7 @@ function libraryHarness({ progress = rows, done = [{ id: 'done', title: '완성 
     setResumePath: (path) => calls.push(['resumePath', path]) };
   const useAppStore = (selector) => selector(state);
   useAppStore.getState = () => state;
-  const bindings = { React, publicationStyles: {}, PublicationsPanel: 'aside', useAppStore, useRef: (value) => { const index = refIndex++; refs[index] ||= { current: value }; return refs[index]; }, useState: (value) => {
+  const bindings = { React, resolveStoryboardResume, STORYBOARD_REVIEW_MESSAGE, publicationStyles: {}, PublicationsPanel: 'aside', useAppStore, useRef: (value) => { const index = refIndex++; refs[index] ||= { current: value }; return refs[index]; }, useState: (value) => {
       const index = stateIndex++;
       if (!(index in states)) states[index] = typeof value === 'function' ? value() : value;
       return [states[index], (next) => { states[index] = typeof next === 'function' ? next(states[index]) : next; }];
@@ -53,7 +54,7 @@ function libraryHarness({ progress = rows, done = [{ id: 'done', title: '완성 
     useNavigate: () => (path) => calls.push(['navigate', path]), useToast: () => ({ push: (msg) => calls.push(['toast', msg]) }),
     useAuth: () => ({ session: { user: { id: 'seller' } } }), isMobileDevice: () => mobile,
     authorizeFlowContinuation: (id, path) => calls.push(['authorize', id, path]),
-    api: { async getProject(id) { calls.push(['get', id]); return getProject(id); }, getInProgressLibrary() {}, getLibrary() {} },
+    api: { async getProject(id) { calls.push(['get', id]); return getProject(id); }, getStoryboard: async () => [{ taxonomyVersion: 4 }], getInProgressLibrary() {}, getLibrary() {} },
     useQuery: (query) => {
       queries.push(query);
       return query.queryKey.length === 1 ? { data: done }
@@ -436,7 +437,7 @@ test('real store, shared runner, editor entry and mock rows honor server resume 
         wardrobeContext: { current: {} }, isMockMode: true, api: globalThis.__libraryU2Api, retryRead: (get) => get(),
         withStoryboardSpaceSetExamples: identity, normalizeEditorBlockRole: identity, buildColorOpts: () => [], visibleColorOpts: identity,
         hexForCol: () => '', buildEditorBlocksFromStoryboard: () => [{ id: 'waiting', elements: [] }], alignSkeletonToServer: identity,
-        decorateGenBlocks, buildInfoCtx: () => ({}), needsDefaultTemplate: () => false, editorWaitDraftDecision: () => 'none',
+        decorateGenBlocks, loadWaitingShopName: async () => null, buildInfoCtx: () => ({}), needsDefaultTemplate: () => false, editorWaitDraftDecision: () => 'none',
         clearEditorWaitDraft() {}, mergeServerBlocks: identity, ensureShippingReturnsBlock: identity,
         upgradeLegacyKiwiTemplateBlocks: identity, stripPhotoBlockTextElements: identity, uid: () => 'id',
         mergeEditorImagesIntoWardrobe: ({ wardrobe }) => wardrobe, classifyEditorLoadError: identity, toast: { push() {} },

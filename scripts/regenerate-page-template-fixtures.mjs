@@ -260,6 +260,14 @@ for (const templateId of ['emo', 'show']) {
     addFrameCase('no-shop', 'COLUMN', 2, standard, { shopName: null });
     addFrameCase('no-remainder', 'COLUMN', 2, [['medium', 'medium']]);
     addFrameCase('unknown-size', '2COL', 2, standard, {}, {});
+    for (const [shape, width, height] of [['square', 600, 600], ['landscape', 900, 450]]) {
+        const { board, key } = makeBoard([['medium']]);
+        const photo = board.find(block => block.pageSectionKey === key && block.source !== 'text');
+        const src = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"/>`)}`;
+        const mine = patchStoryboardPhoto(board, photo.id, { source: 'mine', cutType: null, ownImages: [src] }, product);
+        appendCase(`woc6b-${templateId}-frame-mine-unknown-${shape}`, { product, analysis, shopName,
+            storyboard: restoreSavedDesign(mine, key, 'WEAR-STYLING-FRAME-COLUMN-01') }, {});
+    }
     const parts = { ...analysis, partDescriptionCopy: ['목선', '단추', '소맷단'].map(point => ({ point, desc: `${point} 설명` })) };
     const detailBoard = seedStoryboard(product, parts);
     const detailKey = sectionRuns(detailBoard).find(run => run.kind === 'points').key;

@@ -482,6 +482,8 @@ def _render_photo(node, x, y, width, ctx):
         slot_key = ctx.section["instanceKey"] + "." + ctx.target_slot
     element = {"type": "image", "x": x, "y": y, "w": width, "h": height, "src": src or None, "radius": node.get("radius") or 0,
                "slotKey": slot_key, "roleHint": "custom" if (card or {}).get("source") == "mine" else slot.get("contentRole") or (card or {}).get("contentRole") or "coordination"}
+    if node.get("fit"):
+        element["fit"] = node["fit"]
     if card:
         element["sourceBlockId"] = card["id"]
         if card.get("cutType"):

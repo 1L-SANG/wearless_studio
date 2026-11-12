@@ -4,8 +4,9 @@ import {readFileSync} from 'node:fs';
 import {editedTextElement} from '../../src/features/editor/editorTextEdit.js';
 import {editedLineContrast,measureEditedTemplateContrast,measureWrappedTextLines} from '../../src/features/editor/editedTemplateContrast.js';
 import {patchTemplateElement} from '../../src/lib/editorWaitSkeleton.js';
-import {trackEditedContrast,waitForEditedContrast} from '../../src/features/editor/editorContrastPending.js';
+import {waitForEditedContrast} from '../../src/features/editor/editorContrastPending.js';
 import {hookHarness} from './helpers/storyboardComponents.mjs';
+import {loadEditedContrastHook} from './helpers/editorContrast.mjs';
 const title={id:'title',type:'text',text:'원래 제목',keepWords:true,x:10,y:20,w:200,h:40,style:{font:'Gowun Batang',size:30},contrastFor:{text:'원래 제목',x:10,y:20,w:200,style:{font:'Gowun Batang',size:30}}};
 test('WOC13 only changed text or size releases keepWords; saved originals and undo snapshots remain fixed',()=>{
  const before=structuredClone(title);
@@ -65,8 +66,7 @@ test('WOC13 wrapped browser lines are sampled at their new photo regions',async(
 });
 test('WOC13 edited contrast hook recomputes text/size and export waits for that same DOM result',async()=>{
  const h=hookHarness();let resolve,calls=0;const node={},root={contains:n=>n===node};
- const source=readFileSync('src/features/editor/useEditedTemplateContrast.js','utf8').replace(/^import .*;\n/gm,'').replace('export function','function');
- const hook=new Function('useLayoutEffect','useState','measureEditedTemplateContrast','trackEditedContrast',source+';return useEditedTemplateContrast;')(h.hooks.useEffect,h.hooks.useState,()=>{calls++;return new Promise(r=>{resolve=r;});},trackEditedContrast);
+ const hook=loadEditedContrastHook(h,()=>{calls++;return new Promise(r=>{resolve=r;});});
  const run=el=>h.render(()=>hook(el,{current:node},{editing:false,preview:false}),{});
  try{
   assert.equal(run(title),title);assert.equal(calls,0);

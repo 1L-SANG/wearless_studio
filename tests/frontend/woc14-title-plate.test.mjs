@@ -1,3 +1,4 @@
+import {loadEditedContrastHook} from './helpers/editorContrast.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -49,8 +50,8 @@ test('WOC14 editor state refits functional text patches and undo leaves exact sn
  new Function('scope',`with(scope){${source.slice(undoStart,undoEnd)};undo();}`)({croppingRef:{current:null},hist:{current:{past:[before],future:[]}},prevBlocks:{current:blocks},fromHistory:{current:false},clearSel(){},setBlocks:update,toast:{push(){}}});
  assert.deepEqual(blocks,before);
 
- const h=hookHarness();let calls=0;const hookSrc=readFileSync('src/features/editor/useEditedTemplateContrast.js','utf8').replace(/^import .*;\n/gm,'').replace('export function','function');
- const hook=new Function('useLayoutEffect','useState','measureEditedTemplateContrast','trackEditedContrast',hookSrc+';return useEditedTemplateContrast;')(h.hooks.useEffect,h.hooks.useState,()=>{calls++;return Promise.resolve([])},()=>{});
+ const h=hookHarness();let calls=0;
+ const hook=loadEditedContrastHook(h,()=>{calls++;return Promise.resolve([])});
  const title=first(page()).elements.find(e=>e.copyRole==='name');h.render(()=>hook({...title,keepWords:false,text:'길어진 제목'}, {current:{}},{editing:false,preview:false,plated:true}),{});assert.equal(calls,0);h.close();
 });
 test('WOC14 JS sampling plans expose the shared clothing bands and padded plate positions',()=>{
