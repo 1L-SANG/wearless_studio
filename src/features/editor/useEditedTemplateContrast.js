@@ -2,9 +2,9 @@ import { useLayoutEffect, useState } from 'react';
 import { measureEditedTemplateContrast } from './editedTemplateContrast.js';
 import { trackEditedContrast } from './editorContrastPending.js';
 
-export function useEditedTemplateContrast(element, ref, { editing, preview }) {
+export function useEditedTemplateContrast(element, ref, { editing, preview, plated = false }) {
   const [measured, setMeasured] = useState(null);
-  const needsMeasure = element.type === 'text' && element.keepWords === false && Boolean(element.contrastFor)
+  const needsMeasure = !plated && element.type === 'text' && element.keepWords === false && Boolean(element.contrastFor)
     && element.style?.color === element.contrastFor.style?.color;
   const key = needsMeasure ? JSON.stringify([element.text, element.x, element.y, element.w, element.style]) : null;
   useLayoutEffect(() => {

@@ -556,50 +556,77 @@ def _render_groups(groups, x, y, width, height, ctx, photo):
     elements = []
     for group in groups or []:
         group_key = f"{ctx.key}:{photo['slotKey']}:{group['id']}"
-        colors = ctx.cuts.get(photo.get("sourceBlockId"), {}).get("overlayTextColors")
-        measured = colors.get(group_key) if isinstance(colors, dict) else None
-        fixed_color = ctx.tokens["colors"].get(group.get("textColor")) or group.get("textColor")
-        on_photo = fixed_color or (measured if measured in ctx.catalog["overlayColors"].values() else ctx.catalog["overlayColors"]["light"])
-        gx = group.get("x") or 0
-        result, h = _render_nodes(group.get("nodes"), x + gx, 0, min(group.get("w") or width, width - gx),
-                                  _fork(ctx, on_photo=on_photo, overlay_group_key=group_key, fixed_overlay_color=fixed_color, opaque_background=False, surface_color=None, photo_width=width))
-        top = min(0, *(el["y"] for el in result))
-        bottom = max(0, *(el["y"] + el["h"] for el in result))
-        band = ctx.catalog[group["band"]] if group.get("band") else None
-        if group.get("anchor") == "center":
-            gy = y + height * ((band["top"] + band["bottom"]) / 2 if band else .5) - (top + bottom) / 2
-        else:
-            gy = y + (max(0, height - (group.get("y") or 0) - h) if group.get("anchor") == "bottom" else group.get("y") or 0)
+        meta = ctx.cuts.get(photo.get("sourceBlockId")) or {}
         policy = group.get("positionFallback") if ctx.design_id in ("P01-D09", "P01-D09-G") else None
-        offsets = {}
-        if policy:
-            inset = max(0, min(height * policy["edgeInsetRatio"], (height - (bottom - top)) / 2))
-            offsets = {"center": gy, "top": y + inset - top, "bottom": y + height - inset - bottom}
-            positions = ctx.cuts.get(photo.get("sourceBlockId"), {}).get("overlayTextPositions")
-            measured_position = positions.get(group_key) if isinstance(positions, dict) else None
-            gy = offsets.get(measured_position, gy) if isinstance(measured_position, str) else gy
-        placed = [{**el, "y": el["y"] + gy} for el in result]
+        plate_style = ctx.catalog["firstTitlePlate"]
+        plates = meta.get("overlayTextPlates") if isinstance(meta.get("overlayTextPlates"), dict) else {}
+        colors = meta.get("overlayTextColors") if isinstance(meta.get("overlayTextColors"), dict) else {}
+        positions = meta.get("overlayTextPositions") if isinstance(meta.get("overlayTextPositions"), dict) else {}
+        plated = bool(policy and plates.get(group_key) is True)
+        measured = colors.get(group_key)
+        fixed_color = ctx.tokens["colors"].get(group.get("textColor")) or group.get("textColor")
+        on_photo = ctx.catalog["overlayColors"]["light"] if plated else fixed_color or (measured if measured in ctx.catalog["overlayColors"].values() else ctx.catalog["overlayColors"]["light"])
+        gx = group.get("x") or 0
+        group_width = min(group.get("w") or width, width - gx)
+
+        def make(with_plate):
+            inner_width = max(1, group_width - plate_style["paddingX"] * 2) if with_plate else group_width
+            nodes = [node for node in group["nodes"] if node["type"] != "rule"] if with_plate else group.get("nodes")
+            result, h = _render_nodes(nodes, x + gx + (group_width - inner_width) / 2, 0, inner_width,
+                _fork(ctx, on_photo=ctx.catalog["overlayColors"]["light"] if with_plate else on_photo,
+                      overlay_group_key=group_key, fixed_overlay_color=None if with_plate else fixed_color, opaque_background=False, surface_color=None, photo_width=width))
+            texts = [el for el in result if el.get("_overlayGroupKey") == group_key]
+            plate = None
+            if with_plate and texts:
+                w = min(group_width, max(1, *(measure_text_width(el.get("text") or el.get("placeholder"), el["w"], el["style"]["size"], ctx.catalog["textMetrics"], el["style"]["tracking"]) for el in texts)) + plate_style["paddingX"] * 2)
+                top = min(el["y"] for el in texts) - plate_style["paddingTop"]
+                bottom = max(el["y"] + el["h"] for el in texts) + plate_style["paddingBottom"]
+                plate = {"x": x + gx + group_width / 2 - w / 2, "y": top, "w": w, "h": bottom - top}
+            top = plate["y"] if plate else min(0, *(el["y"] for el in result))
+            bottom = plate["y"] + plate["h"] if plate else max(0, *(el["y"] + el["h"] for el in result))
+            band = ctx.catalog[group["band"]] if group.get("band") else None
+            center = y + height * ((band["top"] + band["bottom"]) / 2 if band else .5) - (top + bottom) / 2
+            inset = max(0, min(height * policy["edgeInsetRatio"], (height - (bottom - top)) / 2)) if policy else 0
+            return dict(elements=result, h=h, texts=texts, plate=plate,
+                        offsets={"center": center, "top": y + inset - top, "bottom": y + height - inset - bottom})
+
+        normal, plate_version = make(False), make(True) if policy and (plated or ctx.overlay_regions is not None) else None
+        result = plate_version if plated else normal
+        gy = result["offsets"]["center"] if group.get("anchor") == "center" else y + max(0, height - (group.get("y") or 0) - result["h"]) if group.get("anchor") == "bottom" else y + (group.get("y") or 0)
+        position = positions.get(group_key)
+        if policy and position in (plate_style["platePreference"] if plated else policy["anchors"]):
+            gy = result["offsets"][position]
+        placed = [{**el, "y": el["y"] + gy, **({"groupId": f"title-plate:{group_key}"} if plated else {})} for el in result["elements"]]
         bare = [el for el in placed if el.get("_overlayGroupKey") == group_key]
         boxes = _overlay_boxes(bare, group_key, x, y, width, height, ctx.catalog["textMetrics"], bool(policy)) if bare else None
         line_boxes = boxes["lines"] if boxes else []
         if bare and photo.get("sourceBlockId") and ctx.overlay_regions is not None:
             plan = {"sourceBlockId": photo["sourceBlockId"], "key": group_key,
-                    "frame": {"w": photo["w"], "h": photo["h"], **({"crop": photo["crop"]} if photo.get("crop") else {})},
-                    **_region_plan(boxes)}
+                    "frame": {"w": photo["w"], "h": photo["h"], **({"crop": photo["crop"]} if photo.get("crop") else {})}, **_region_plan(boxes)}
             if policy:
-                raw_bare = [el for el in result if el.get("_overlayGroupKey") == group_key]
                 plan["positionCandidates"] = [{"position": position, **_region_plan(_overlay_boxes(
-                    [{**el, "y": el["y"] + offsets[position]} for el in raw_bare], group_key, x, y, width, height, ctx.catalog["textMetrics"], True))}
+                    [{**el, "y": el["y"] + normal["offsets"][position]} for el in normal["texts"]], group_key, x, y, width, height, ctx.catalog["textMetrics"], True))}
                     for position in policy["anchors"]]
+                plate = plate_version["plate"]
+                plan["plateCandidates"] = [{"position": position, "region": {
+                    "left": (plate["x"] - x) / width, "right": (plate["x"] + plate["w"] - x) / width,
+                    "top": (plate["y"] + plate_version["offsets"][position] - y) / height,
+                    "bottom": (plate["y"] + plate_version["offsets"][position] + plate["h"] - y) / height}}
+                    for position in plate_style["platePreference"]]
+                card = next((card for card in ctx.storyboard if card.get("id") == photo.get("sourceBlockId")), {})
+                plan["garmentBand"] = plate_style["garmentBands"].get(ctx.product.get("clothingType") or ctx.product.get("clothing_type"), {}).get("medium" if card.get("shot") == "medium" else "full", plate_style["fallbackGarmentBand"])
             ctx.overlay_regions.append(plan)
-        measured_lines = ctx.cuts.get(photo.get("sourceBlockId"), {}).get("overlayTextLines") or {}
+        measured_lines = meta.get("overlayTextLines") or {}
         if not isinstance(measured_lines, dict):
             measured_lines = {}
         for element_index, el in enumerate(bare):
             lines = [line for line in line_boxes if line["key"].startswith(f"{group_key}:{element_index}:")]
-            if lines and all(isinstance(measured_lines.get(line["key"]), dict) and measured_lines[line["key"]].get("color") in ctx.catalog["overlayColors"].values() for line in lines):
-                el["contrastLines"] = [{"text": line["text"], "color": on_photo if policy else measured_lines[line["key"]]["color"], "shade": measured_lines[line["key"]].get("shade") is True} for line in lines]
+            if lines and (plated or all(isinstance(measured_lines.get(line["key"]), dict) and measured_lines[line["key"]].get("color") in ctx.catalog["overlayColors"].values() for line in lines)):
+                el["contrastLines"] = [{"text": line["text"], "color": on_photo if policy else measured_lines[line["key"]]["color"], "shade": not plated and measured_lines.get(line["key"], {}).get("shade") is True} for line in lines]
                 el["contrastFor"] = {"text": el["text"], "x": el["x"], "y": el["y"], "w": el["w"], "style": dict(el["style"])}
+        if plated:
+            placed.insert(0, {"type": "shape", "shape": "rect", **result["plate"], "y": result["plate"]["y"] + gy,
+                              "fill": ctx.catalog["neutralColors"][plate_style["fillToken"]], "opacity": plate_style["opacity"], "groupId": f"title-plate:{group_key}"})
         elements.extend({k: v for k, v in el.items() if k != "_overlayGroupKey"} for el in placed)
     return elements
 

@@ -1,3 +1,4 @@
+import { titlePlateBounds, titlePlateGroup } from './titlePlate.js';
 import {
     getTemplate,
     pageTemplatesCatalog,
@@ -886,147 +887,72 @@ function regionPlan(boxes) {
 function renderGroups(groups, x, y, width, height, ctx, photo) {
     return (groups || []).flatMap((group) => {
         const groupKey = `${ctx.key}:${photo.slotKey}:${group.id}`;
-        const measured =
-            ctx.cuts[photo.sourceBlockId]?.overlayTextColors?.[groupKey];
+        const meta = ctx.cuts[photo.sourceBlockId] || {};
+        const policy = ["P01-D09", "P01-D09-G"].includes(ctx.designId) ? group.positionFallback : null;
+        const plateStyle = ctx.catalog.firstTitlePlate;
+        const plated = Boolean(policy && meta.overlayTextPlates?.[groupKey] === true);
+        const measured = meta.overlayTextColors?.[groupKey];
         const fixedColor = ctx.tokens.colors[group.textColor] || group.textColor;
-        const onPhoto = fixedColor || (Object.values(ctx.catalog.overlayColors).includes(
-            measured,
-        )
-            ? measured
-            : ctx.catalog.overlayColors.light);
-        const result = renderNodes(
-            group.nodes,
-            x + (group.x || 0),
-            0,
-            Math.min(group.w || width, width - (group.x || 0)),
-            {
-                ...ctx,
-                onPhoto,
-                overlayGroupKey: groupKey,
-                fixedOverlayColor: fixedColor,
-                opaqueBackground: false,
-                surfaceColor: null,
-                photoWidth: width,
-            },
-        );
-        const top = Math.min(0, ...result.elements.map((element) => element.y));
-        const bottom = Math.max(
-            0,
-            ...result.elements.map((element) => element.y + element.h),
-        );
-        const band = group.band ? ctx.catalog[group.band] : null;
-        let gy =
-            y +
-            (group.anchor === "center"
-                ? height * (band ? (band.top + band.bottom) / 2 : 0.5) -
-                  (top + bottom) / 2
-                : group.anchor === "bottom"
-                  ? Math.max(0, height - (group.y || 0) - result.h)
-                  : group.y || 0);
-        const policy =
-            ["P01-D09", "P01-D09-G"].includes(ctx.designId) ? group.positionFallback : null;
-        let offsets;
-        if (policy) {
-            const inset = Math.max(
-                0,
-                Math.min(
-                    height * policy.edgeInsetRatio,
-                    (height - (bottom - top)) / 2,
-                ),
-            );
-            offsets = {
-                center: gy,
-                top: y + inset - top,
-                bottom: y + height - inset - bottom,
-            };
-            const position =
-                ctx.cuts[photo.sourceBlockId]?.overlayTextPositions?.[groupKey];
-            if (policy.anchors.includes(position)) gy = offsets[position];
-        }
-        const placed = result.elements.map((element) => ({
-            ...element,
-            y: element.y + gy,
-        }));
-        const bare = placed.filter(
-            (element) => element._overlayGroupKey === groupKey,
-        );
-        const boxes = bare.length
-            ? overlayBoxes(
-                  bare,
-                  groupKey,
-                  x,
-                  y,
-                  width,
-                  height,
-                  ctx.catalog.textMetrics,
-                  Boolean(policy),
-              )
-            : null;
+        const onPhoto = plated ? ctx.catalog.overlayColors.light : fixedColor
+            || (Object.values(ctx.catalog.overlayColors).includes(measured) ? measured : ctx.catalog.overlayColors.light);
+        const groupWidth = Math.min(group.w || width, width - (group.x || 0));
+        const make = withPlate => {
+            const innerWidth = withPlate ? Math.max(1, groupWidth - plateStyle.paddingX * 2) : groupWidth;
+            const result = renderNodes(withPlate ? group.nodes.filter(node => node.type !== 'rule') : group.nodes,
+                x + (group.x || 0) + (groupWidth - innerWidth) / 2, 0, innerWidth,
+                { ...ctx, onPhoto: withPlate ? ctx.catalog.overlayColors.light : onPhoto,
+                    overlayGroupKey: groupKey, fixedOverlayColor: withPlate ? null : fixedColor,
+                    opaqueBackground: false, surfaceColor: null, photoWidth: width });
+            const texts = result.elements.filter(el => el._overlayGroupKey === groupKey);
+            const plate = withPlate && texts.length ? titlePlateBounds(texts, plateStyle,
+                el => measureTextWidth(el.text || el.placeholder, el.w, el.style.size, ctx.catalog.textMetrics, el.style.tracking),
+                groupWidth, x + (group.x || 0) + groupWidth / 2) : null;
+            const top = plate ? plate.y : Math.min(0, ...result.elements.map(el => el.y));
+            const bottom = plate ? plate.y + plate.h : Math.max(0, ...result.elements.map(el => el.y + el.h));
+            const band = group.band ? ctx.catalog[group.band] : null;
+            const center = y + height * (band ? (band.top + band.bottom) / 2 : .5) - (top + bottom) / 2;
+            const inset = policy ? Math.max(0, Math.min(height * policy.edgeInsetRatio, (height - (bottom - top)) / 2)) : 0;
+            const offsets = { center, top: y + inset - top, bottom: y + height - inset - bottom };
+            return { ...result, texts, plate, offsets };
+        };
+        const normal = make(false), plateVersion = policy && (plated || ctx.overlayRegions) ? make(true) : null;
+        const result = plated ? plateVersion : normal;
+        let gy = group.anchor === 'center' ? result.offsets.center : group.anchor === 'bottom'
+            ? y + Math.max(0, height - (group.y || 0) - result.h) : y + (group.y || 0);
+        if (policy && (plated ? plateStyle.platePreference : policy.anchors).includes(meta.overlayTextPositions?.[groupKey])) gy = result.offsets[meta.overlayTextPositions[groupKey]];
+        const placed = result.elements.map(element => ({ ...element, y: element.y + gy,
+            ...(plated ? { groupId: titlePlateGroup(groupKey) } : {}) }));
+        const bare = placed.filter(element => element._overlayGroupKey === groupKey);
+        const boxes = bare.length ? overlayBoxes(bare, groupKey, x, y, width, height, ctx.catalog.textMetrics, Boolean(policy)) : null;
         const lineBoxes = boxes?.lines || [];
         if (bare.length && photo.sourceBlockId && ctx.overlayRegions) {
-            const plan = {
-                sourceBlockId: photo.sourceBlockId,
-                key: groupKey,
-                frame: {
-                    w: photo.w,
-                    h: photo.h,
-                    ...(photo.crop ? { crop: photo.crop } : {}),
-                },
-                ...regionPlan(boxes),
-            };
+            const plan = { sourceBlockId: photo.sourceBlockId, key: groupKey,
+                frame: { w: photo.w, h: photo.h, ...(photo.crop ? { crop: photo.crop } : {}) }, ...regionPlan(boxes) };
             if (policy) {
-                const rawBare = result.elements.filter(
-                    (el) => el._overlayGroupKey === groupKey,
-                );
-                plan.positionCandidates = policy.anchors.map((position) => ({
-                    position,
-                    ...regionPlan(
-                        overlayBoxes(
-                            rawBare.map((el) => ({
-                                ...el,
-                                y: el.y + offsets[position],
-                            })),
-                            groupKey,
-                            x,
-                            y,
-                            width,
-                            height,
-                            ctx.catalog.textMetrics,
-                            true,
-                        ),
-                    ),
-                }));
+                plan.positionCandidates = policy.anchors.map(position => ({ position,
+                    ...regionPlan(overlayBoxes(normal.texts.map(el => ({ ...el, y: el.y + normal.offsets[position] })),
+                        groupKey, x, y, width, height, ctx.catalog.textMetrics, true)) }));
+                plan.plateCandidates = plateStyle.platePreference.map(position => ({ position, region: {
+                    left: (plateVersion.plate.x - x) / width, right: (plateVersion.plate.x + plateVersion.plate.w - x) / width,
+                    top: (plateVersion.plate.y + plateVersion.offsets[position] - y) / height,
+                    bottom: (plateVersion.plate.y + plateVersion.offsets[position] + plateVersion.plate.h - y) / height } }));
+                const card = ctx.storyboard.find(item => item.id === photo.sourceBlockId);
+                plan.garmentBand = plateStyle.garmentBands[ctx.product.clothingType || ctx.product.clothing_type]?.[card?.shot === 'medium' ? 'medium' : 'full'] || plateStyle.fallbackGarmentBand;
             }
             ctx.overlayRegions.push(plan);
         }
-        const measuredLines =
-            ctx.cuts[photo.sourceBlockId]?.overlayTextLines || {};
+        const measuredLines = meta.overlayTextLines || {};
         bare.forEach((el, elementIndex) => {
-            const lines = lineBoxes.filter((line) =>
-                line.key.startsWith(`${groupKey}:${elementIndex}:`),
-            );
-            if (
-                !lines.length ||
-                !lines.every((line) =>
-                    Object.values(ctx.catalog.overlayColors).includes(
-                        measuredLines[line.key]?.color,
-                    ),
-                )
-            )
-                return;
-            el.contrastLines = lines.map((line) => ({
-                text: line.text,
+            const lines = lineBoxes.filter(line => line.key.startsWith(`${groupKey}:${elementIndex}:`));
+            if (!lines.length || !plated && !lines.every(line => Object.values(ctx.catalog.overlayColors).includes(measuredLines[line.key]?.color))) return;
+            el.contrastLines = lines.map(line => ({ text: line.text,
                 color: policy ? onPhoto : measuredLines[line.key].color,
-                shade: measuredLines[line.key].shade === true,
-            }));
-            el.contrastFor = {
-                text: el.text,
-                x: el.x,
-                y: el.y,
-                w: el.w,
-                style: { ...el.style },
-            };
+                shade: !plated && measuredLines[line.key]?.shade === true }));
+            el.contrastFor = { text: el.text, x: el.x, y: el.y, w: el.w, style: { ...el.style } };
         });
+        if (plated) placed.unshift({ type: 'shape', shape: 'rect', ...result.plate,
+            y: result.plate.y + gy, fill: ctx.catalog.neutralColors[plateStyle.fillToken], opacity: plateStyle.opacity,
+            groupId: titlePlateGroup(groupKey) });
         return placed.map(({ _overlayGroupKey, ...element }) => element);
     });
 }

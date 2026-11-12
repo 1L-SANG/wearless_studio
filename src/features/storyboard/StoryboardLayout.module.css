@@ -104,7 +104,7 @@
 .groupPhotos[data-columns="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .groupPhotos[data-columns="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .photoCard { min-width: 0; transition: opacity var(--sb-t-base) var(--sb-ease), transform var(--sb-t-fast) var(--sb-ease); }
-.photoCard:hover { transform: translateY(-2px); }
+.photoCard:not([data-planned-detail]):hover { transform: translateY(-2px); }
 .photoFrame { position: relative; }
 .photo { display: block; position: relative; width: 100%; padding: 0; border: 0; border-radius: var(--r-4); aspect-ratio: 3 / 4; overflow: hidden; background: var(--bg-2); cursor: pointer; }
 .photo img { display: block; width: 100%; height: 100%; object-fit: cover; }
@@ -210,3 +210,15 @@
   .page.designDrawerOpen .pageHeadWithTheme { grid-template-columns: minmax(0, 1fr) auto; }
   .page.designDrawerOpen .styleControlsWrap { justify-self: end; }
 }
+
+/* Storyboard-only planned detail photographs. Hover never reveals a different source. */
+.detailSource { filter: saturate(.8); }
+.detailVeil { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(to bottom, color-mix(in srgb, var(--bg-1) calc(var(--sb-detail-veil-start) * 100%), transparent) 52%, color-mix(in srgb, var(--bg-1) calc(var(--sb-detail-veil-end) * 100%), transparent)); }
+.detailNotice { position: absolute; inset-inline: var(--sp-12); bottom: calc(var(--sp-8) + var(--sp-2)); display: flex; flex-direction: column; gap: var(--sp-2); text-align: left; color: var(--fg-1); pointer-events: none; }
+.detailNotice b { font: 650 var(--sb-detail-title-size)/1.3 var(--font-body); letter-spacing: -.02em; text-wrap: balance; }
+.detailNotice small { color: var(--fg-2-read); font: 400 var(--sb-detail-note-size)/1.35 var(--font-body); text-wrap: balance; }
+.detailFadeStart { stop-opacity: var(--sb-detail-veil-start); }
+.detailFadeEnd { stop-opacity: var(--sb-detail-veil-end); }
+.previewDetailNotice { pointer-events: none; text-anchor: start; }
+.previewDetailTitle { fill: var(--fg-1); font: 650 var(--sb-detail-overview-title)/1.3 var(--font-body); text-wrap: balance; }
+.previewDetailNote { fill: var(--fg-2-read); font: 400 var(--sb-detail-overview-note)/1.35 var(--font-body); text-wrap: balance; }

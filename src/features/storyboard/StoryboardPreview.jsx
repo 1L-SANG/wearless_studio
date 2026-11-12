@@ -3,6 +3,7 @@ import { storyboardPositionId } from '../../lib/pageTemplates/storyboardPosition
 import { BackdropSvg } from '../editor/EditorBackdropImage.jsx';
 import { hasBackdropBlur } from '../editor/editorImageBlur.js';
 import styles from './StoryboardLayout.module.css';
+import { detailNoticeLines } from './storyboardPreview.js';
 
 const rgbaPaint = value => {
   const match = value?.match(/^rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)$/);
@@ -21,7 +22,7 @@ const shadowPaint = shadow => {
 
 const tonePaint = (paint, colors) => colors && [colors.accentBg, colors.accentLine, colors.accentInk].includes(paint) ? paint : undefined;
 
-function PreviewElement({ element: el, wireframe, onScrim, photoPanel, emphasizeText, toneColors }) {
+function PreviewElement({ element: el, wireframe, onScrim, photoPanel, emphasizeText, toneColors, detailLabels }) {
   const clipId = React.useId();
   if (el.hidden) return null;
   if (hasBackdropBlur(el)) return wireframe
@@ -30,8 +31,22 @@ function PreviewElement({ element: el, wireframe, onScrim, photoPanel, emphasize
   if (el.type === 'image') return <svg x={el.x} y={el.y} width={el.w} height={el.h} viewBox={`0 0 ${el.w} ${el.h}`}>
     <defs><clipPath id={clipId}><rect width={el.w} height={el.h} rx={el.radius || 0} /></clipPath></defs>
     <rect width={el.w} height={el.h} className={wireframe ? styles.previewWirePhoto : styles.previewEmpty} rx={el.radius || 0} />
-    {!wireframe && el.src && <image href={el.src} width={el.crop?.iw || el.w} height={el.crop?.ih || el.h}
+    {!wireframe && el.src && el.previewDetailLabel && el.crop && (el.crop.iw < el.w || el.crop.ih < el.h) &&
+      <image className={styles.detailSource} href={el.src} width={el.w} height={el.h} preserveAspectRatio="xMidYMid slice" clipPath={`url(#${clipId})`} />}
+    {!wireframe && el.src && <image className={el.previewDetailLabel ? styles.detailSource : undefined} href={el.src} width={el.crop?.iw || el.w} height={el.crop?.ih || el.h}
       x={-(el.crop?.ox || 0)} y={-(el.crop?.oy || 0)} preserveAspectRatio="xMidYMid slice" clipPath={`url(#${clipId})`} />}
+    {!wireframe && el.previewDetailLabel && <>
+      <defs><linearGradient id={`${clipId}-detail`} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor="var(--bg-1)" className={styles.detailFadeStart} />
+        <stop offset="52%" stopColor="var(--bg-1)" className={styles.detailFadeStart} />
+        <stop offset="100%" stopColor="var(--bg-1)" className={styles.detailFadeEnd} />
+      </linearGradient></defs>
+      <rect width={el.w} height={el.h} rx={el.radius || 0} fill={`url(#${clipId}-detail)`} data-detail-veil />
+      {detailLabels && <g className={styles.previewDetailNotice} data-detail-notice>
+        {detailNoticeLines(el.w, el.h, el.previewDetailLabel).map((line, index) =>
+          <text key={index} x={line.x} y={line.y} className={line.title ? styles.previewDetailTitle : styles.previewDetailNote}>{line.text}</text>)}
+      </g>}
+    </>}
   </svg>;
   if (el.type === 'shape') {
     const gradient = gradientPaint(el.fill), shadow = shadowPaint(el.boxShadow);
@@ -78,7 +93,7 @@ function PreviewElement({ element: el, wireframe, onScrim, photoPanel, emphasize
 
 // Preview geometry is assembled once. Copy stays as faint lines until generation.
 export function StoryboardPreview({ blocks = [], label = '페이지 미리보기', fit = false, wireframe = false,
-  highlightedPosition, selectedSourceId, selectedPositionId, onPositionClick, emphasizeText = false, toneColors }) {
+  highlightedPosition, selectedSourceId, selectedPositionId, onPositionClick, emphasizeText = false, toneColors, detailLabels = false }) {
   const visible = (Array.isArray(blocks) ? blocks : []).filter(block => block && Number.isFinite(block.h) && block.h > 0);
   const height = visible.reduce((sum, block) => sum + block.h, 0) || 1;
   let y = 0;
@@ -104,7 +119,7 @@ export function StoryboardPreview({ blocks = [], label = '페이지 미리보기
             const viewId = storyboardPositionId(block, element);
             const highlighted = highlightedPosition === viewId || (!highlightedPosition && (selectedPositionId
               ? viewId === selectedPositionId : selectedSourceId && element.sourceBlockId === selectedSourceId));
-            return <React.Fragment key={element.id}><PreviewElement element={element} wireframe={wireframe} onScrim={onScrim} photoPanel={photoPanel} emphasizeText={emphasizeText} toneColors={toneColors} />
+            return <React.Fragment key={element.id}><PreviewElement element={element} wireframe={wireframe} onScrim={onScrim} photoPanel={photoPanel} emphasizeText={emphasizeText} toneColors={toneColors} detailLabels={detailLabels} />
               {element.type === 'image' && !hasBackdropBlur(element) && (onPositionClick || highlighted) && <rect x={element.x} y={element.y} width={element.w} height={element.h}
                 data-preview-position={viewId} className={`${styles.positionHit}${highlighted ? ` ${styles.positionHighlight}` : ''}`}
                 vectorEffect="non-scaling-stroke" onClick={onPositionClick ? event => { event.stopPropagation(); onPositionClick({ viewId, sourceBlockId: element.sourceBlockId, slotKey: element.slotKey }); } : undefined} />}

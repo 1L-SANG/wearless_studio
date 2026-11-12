@@ -21,6 +21,9 @@ import { jobFailure, jobFailureMessage } from '@/lib/api/jobFailure.js';
 import { getJobSettlement } from '@/lib/api/facemarket.js';
 import { SettlementReceiptChain } from '@/features/editor/SettlementReceiptChain.jsx';
 import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
+import { useTitlePlatePreview } from './editorTitlePlatePreview.js';
+import { fitTitlePlateBlocks } from './editorTitlePlateFit.js';
+import { hasTitlePlate } from '../../lib/pageTemplates/titlePlate.js';
 import { editedTextElement } from './editorTextEdit.js';
 import { useEditedTemplateContrast } from './useEditedTemplateContrast.js';
 import { alignSkeletonToServer, canSafelyMergeServerBlocks, clearFailedJobPreviewBlocks, decorateGenBlocks, failedJobPreviewUrls, fillGenBlocks, mergeServerBlocks, patchTemplateElement } from '@/lib/editorWaitSkeleton.js';
@@ -272,7 +275,7 @@ function ImageDropGuide({ scale, width, height, rotate = 0 }) {
 
 /* render-only element (selection + inline text edit). Position dragging enters the
    shared pointer engine; the single <Moveable> owns only resize/rotate controls. */
-function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onElementDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart, imageWidth = null, canvasAiJob, onCanvasAiCancel, onCanvasAiDismiss }) {
+function CanvasElement({ el, blockId, titlePlate = false, titlePlateElements, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onElementDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart, imageWidth = null, canvasAiJob, onCanvasAiCancel, onCanvasAiDismiss }) {
   /* imageWidth = 이 렌더가 실제로 필요한 이미지 폭(px). 미니 미리보기처럼 작게 그리는
      곳만 넘긴다 — 캔버스 본체와 전체화면 미리보기는 넘기지 않는다(그쪽이 내보내기 캡처
      원본이자 셀러 최종 확인 화면이라 원본 해상도를 지켜야 한다). */
@@ -418,7 +421,8 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   // deps는 높이에 실제로 영향 주는 필드만 — onPatch(매 렌더 재생성)를 넣으면 마퀴·줌마다
   // 전 텍스트가 강제 리플로우를 밟는다.
   const hSyncArmed = useRef(false);
-  const contrastElement = useEditedTemplateContrast(el, ref, { editing, preview });
+  const previewTitlePlate = useTitlePlatePreview(el, titlePlateElements, ref, editing);
+  const contrastElement = useEditedTemplateContrast(el, ref, { editing, preview, plated: titlePlate });
   const s0 = el.style || {};
   useLayoutEffect(() => {
     const armed = hSyncArmed.current;
@@ -632,7 +636,9 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
         contentEditable={editing} suppressContentEditableWarning
         onInput={(e) => { if (editing) {
           if (el.keepWords) e.currentTarget.classList.toggle('el-keep-words', editableText(e.currentTarget) === el.text);
-          previewAutoTextSize(e.currentTarget);
+          const plateSize = previewTitlePlate(e.currentTarget, editableText(e.currentTarget));
+          if (plateSize) pendingTextSize.current = plateSize;
+          else previewAutoTextSize(e.currentTarget);
         } }}
         onBlur={(e) => {
           const value = editableText(e.currentTarget);
@@ -899,7 +905,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
       <div className="block-clip">
         {block.elements.map((el) => (
           (crop && crop.elId === el.id) ? null : (
-            <CanvasElement key={el.id} el={el} blockId={block.id} scale={scale} preview={false}
+            <CanvasElement key={el.id} el={el} blockId={block.id} titlePlate={hasTitlePlate(el, block.elements)} titlePlateElements={block.elements} scale={scale} preview={false}
               selected={selEls && selEls.includes(el.id)} selectionCount={selEls?.length || 0} editing={editEl === el.id}
               onSelect={(e, additive) => onSelectEl(block.id, e, additive)}
               onSelectBlock={() => onSelectBlock(block.id)} onPickBelowText={pickBelowBlankText}
@@ -1094,7 +1100,8 @@ export function Editor() {
   const setBlocks = useCallback((u) => setBlocksState((prev) => {
     const source = typeof u === 'function' ? u(prev) : u;
     if (source === prev) { latestBlocks.current = prev; return prev; }
-    const next = normalizeEditorSelectionGroups(expandBlockHeights(upgradeLegacyKiwiTemplateBlocks(source, uid)));
+    const fitted = typeof u === 'function' ? fitTitlePlateBlocks(prev, source) : source;
+    const next = normalizeEditorSelectionGroups(expandBlockHeights(upgradeLegacyKiwiTemplateBlocks(fitted, uid)));
     latestBlocks.current = next;
     return next;
   }), []);
@@ -3250,9 +3257,10 @@ export function Editor() {
           if (el.id !== editEl) return el;
           const textSize = el.type === 'text' && el.shape !== 'bubble' && el.textSizing === 'auto'
             ? { w: Math.max(1, Math.round(node.offsetWidth)), h: Math.max(1, Math.round(node.offsetHeight)) }
-            : {};
+            : hasTitlePlate(el, b.elements) && text !== el.text ? { h: Math.max(1, Math.round(node.offsetHeight)) } : {};
           return editedTextElement(el, { text, ...textSize });
         }) }));
+        bs = fitTitlePlateBlocks(latestBlocks.current, bs);
         latestBlocks.current = bs;
       }
     }

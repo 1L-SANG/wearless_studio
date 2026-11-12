@@ -84,7 +84,7 @@ def test_infeasible_copy_keeps_every_word_at_the_font_floor(name):
 
 
 @pytest.mark.parametrize('name', ['two-line-balance', 'size-44', 'size-38-three', 'bracket-boundary'])
-@pytest.mark.parametrize('position,bad', [('top', ['center']), ('bottom', ['center', 'top'])])
+@pytest.mark.parametrize('position,bad', [('bottom', ['center']), ('top', ['center', 'bottom'])])
 def test_wrapped_name_relocation_samples_the_new_line_bounds(name, position, bad):
     case = next(c for c in CASES if c['name'] == name)
     value = case_input('emo-2-mono')

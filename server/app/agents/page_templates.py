@@ -99,6 +99,15 @@ def validate_catalog(catalog):
           and _aspect_ratio(frame_style.get("fallbackAspect"))
           and all(frame_style.get(key) in COLORS and isinstance(catalog.get("neutralColors", {}).get(frame_style[key]), str) and HEX.fullmatch(catalog["neutralColors"][frame_style[key]]) for key in ("paper", "ink")), "frame style")
     check(all(isinstance((catalog.get("swatchHex") or {}).get(key), str) and HEX.fullmatch(catalog["swatchHex"][key]) for key in catalog.get("swatchLabels") or {}), "swatch colors")
+    plate = catalog.get("firstTitlePlate") or {}
+    def band_valid(value):
+        return isinstance(value, list) and len(value) == 2 and all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in value) and 0 <= value[0] < value[1] <= 1
+    check(bool(HEX.fullmatch(catalog.get("neutralColors", {}).get(plate.get("fillToken"), "")))
+          and all(_positive(plate.get(key)) for key in ("paddingX", "paddingTop", "paddingBottom", "threshold"))
+          and all(isinstance(plate.get(key), (int, float)) and not isinstance(plate[key], bool) and math.isfinite(plate[key]) and 0 <= plate[key] <= 1 for key in ("opacity", "nearBestRatio", "maxGarmentOverlap"))
+          and plate.get("preference") == ["center", "bottom", "top"]
+          and plate.get("platePreference") == ["center", "bottom"] and band_valid(plate.get("fallbackGarmentBand"))
+          and all(band_valid(plate.get("garmentBands", {}).get(kind, {}).get(shot)) for kind in ("top", "outer", "bottom", "dress") for shot in ("full", "medium")), "first title plate")
     defaults, band = catalog.get("defaults") or {}, catalog.get("firstTitleBand") or {}
     check(defaults.get("templateId") in ("emo", "show") and isinstance(defaults.get("fontStyle"), str) and defaults["fontStyle"] in catalog.get("fontStyles", {}) and defaults.get("colorMode") in ("mono", "point"), "default page style")
     check(all(isinstance(band.get(k), (int, float)) and math.isfinite(band[k]) and 0 <= band[k] <= 1 for k in ("left", "right", "top", "bottom")) and band.get("left", 1) < band.get("right", 0) and band.get("top", 1) < band.get("bottom", 0), "first title band")

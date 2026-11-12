@@ -29,7 +29,7 @@ const editorSource = readFileSync(new URL('../../src/features/editor/Editor.jsx'
 const componentSource = editorSource.slice(editorSource.indexOf('function CanvasElement('), editorSource.indexOf('\nconst IMAGE_IMPORT_COPY'));
 const fontMapSource = editorSource.match(/^const FONT_MAP = .*;$/m)[0];
 const compiled = await transformWithEsbuild(`${fontMapSource}\n${componentSource}`, 'CanvasElement.jsx', { jsx: 'transform' });
-const bindings = { React, useEditedTemplateContrast: el => el, useRef: current => ({ current }), useState: initial => [initial, () => {}],
+const bindings = { React, useEditedTemplateContrast: el => el, useTitlePlatePreview: () => () => null, useRef: current => ({ current }), useState: initial => [initial, () => {}],
   useCallback: fn => fn, useLayoutEffect() {}, isEmptyTextElement, isSpeechBubbleElement, cssWeight,
   hasTemplateContrastLines: () => false };
 const CanvasElement = new Function(...Object.keys(bindings), `${compiled.code}; return CanvasElement;`)(...Object.values(bindings));

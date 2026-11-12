@@ -332,8 +332,8 @@ the candidate's bounded region and exact `selectPublicAnalysisPhotos` sourceInde
 on the base color, also checking sourceSlot. `detailTargetPresentation` keeps its
 overview-first src/label/target contract for editing and retry. Only storyboard
 presentation uses `assembleStoryboardPreview`: it decorates transient image
-elements with region-centered crop geometry and `previewDetailCrop`, shared by
-the stage, outline and overview. These are never saved block fields. Missing
+elements with contain-region crop geometry and `previewDetailCrop`, shared by
+the stage, outline and overview. Bound candidates also carry previewDetailLabel. A fixed white gradient (56% through52%, ending84%) marks these planned AI details. Stage tiles show the part name plus 확대컷 and AI가 이 부분을 새로 만들어요; outline thumbnails omit that copy, while overview includes it. The notice is anchored 12px from the stage photo sides and 10px from its bottom. Overview uses wrapped SVG text with explicit coordinates inside the photo, avoiding foreignObject height resolution. Planned-detail cards have no hover translation; the source, mask and notice remain fixed. These are never saved block fields. Missing
 candidates, invalid regions or missing originals keep the existing whole-photo
 fallback. Real generated cutResults take priority and remain ordinary assembled
 results; the raw JS/Python assemblers and worn-crop rendering are unchanged.
@@ -341,11 +341,10 @@ results; the raw JS/Python assemblers and worn-crop rendering are unchanged.
 `useDetailPreviewDimensions` reads intrinsic sizes of the distinct bound originals
 while the board is open, without canvas/pixel access, API calls or Product changes.
 The transient URL-keyed map preserves square/landscape source proportions and
-applies the same 30%-width/native-1x cap. Source changes and unmount release image
+keeps the30%-source-width zoom cap, without a native-1x cap. Source changes and unmount release image
 callbacks. Before measurement, or if a source cannot load, the explicitly unknown
 1024×1365 preview estimate uses only the 30% rule. Existing source metadata with
-valid native dimensions needs no additional measurement. An undersized original
-stays smaller than its slot rather than being enlarged past 1x.
+valid native dimensions needs no additional measurement. Small originals may upscale. detailStageGeometry recomputes the same contain formula for its 3:4 viewport from transient source/region metadata. Scale is min(slotWidth / regionPixelWidth, slotHeight / regionPixelHeight, slotWidth / (sourceWidth × .3)). Surrounding original pixels fill the remaining viewport. If the source itself is too narrow or short to fill it, the contained source stays above a full-viewport copy of that same photo, so no blank gutter is exposed.
 SVG originals use their intrinsic aspect but have no bitmap pixel cap; the mock
 SVG sources therefore retain distinct enlarged region previews after loading.
 
@@ -723,7 +722,7 @@ Fixed white over a 30% black scrim cannot guarantee a contrast threshold for
 every possible source photo; this follows the owner's fixed design rather than
 claiming that a thin scrim provides automatic contrast assurance.
 
-P01-D09 alone adds centered 1.5px rules above the English label and below
+P01-D09 and its ghost pair add centered 1.5px rules when unplated above the English label and below
 the colors, each 18px from the copy and using the group's selected ink. Both
 rules use `matchText: "name"`: the longest measured name line (rounded up to a
 pixel by the existing text metrics), clamped to 48px–60% of the 888px group
@@ -739,34 +738,41 @@ difference (then the longest width; ties use the earlier break). An individual
 word that still exceeds the budget at 38px can additionally break after `]`
 or before `(`. No other internal word boundary or ellipsis is introduced.
 The chosen breaks are saved as newlines in the text element; `product.name`
-is unchanged. `keepWords` applies `white-space: pre`, `word-break: keep-all`
+is unchanged. Untouched `keepWords` text applies `white-space: pre`, `word-break: keep-all`
 and `overflow-wrap: normal`
 in the editor and its cloned export DOM, including the unmeasured mock/pending
 path. Stored newlines are the only rendered breaks, including around hyphens
 and other punctuation. Heights, contrast-line keys and placement candidates use
-these same lines.
+these same lines. A seller text/size edit releases keepWords for that element,
+using the ordinary fixed-width wrapping and measured-height path instead.
 Infeasible input (over three lines at 38px, or an oversized indivisible word)
 keeps all words at 38px, permitting excess rows/width rather than truncation
 or arbitrary internal breaks. This exception preserves the font floor and copy.
 
-Its `positionFallback` policy lists
-`center`, `top`, `bottom` in that order with `edgeInsetRatio: 0.08`. Edge insets
-apply to the entire group including both rules; exceptionally tall groups
-reduce the inset to keep the group within the photo when it fits.
-`collectOverlayRegions` exposes exact `positionCandidates` line rectangles,
-using the same layout and cover/crop mapping as final assembly. For each
-candidate the server scores each ink by its worst line's lower-decile ratio.
-The first candidate reaching 3:1 with one ink on every line wins; if none
-does, the highest score wins (ties retain the earlier position). Only lines
-below 3:1 in that chosen ink receive the existing shade.
-Empty or whitespace-only first-title lines retain their line indices but have
-no measured ink footprint and never cause relocation or shade.
-The worker includes `overlayTextPositions[groupKey]` alongside the selected
-group color and line metadata in the generated cut result. Both assemblers
-apply that position to the copy and both rules; first-title lines use the
-shared group ink. Missing/invalid positions, mock output and pending skeletons
-remain centered. Other photo overlays ignore position metadata and retain
-their existing independent line colors and geometry.
+P01-D09 and its ghost pair omit tagline; saved P01-D01/P01-D11 still use it.
+Its positionFallback retains center/top/bottom candidates and edgeInsetRatio0.08.
+The server measures every line at all three positions. Among positions at least
+3:1, choose the highest score; within10% of that score prefer center, bottom, top.
+Empty text lines keep their indices without contributing a failing footprint.
+
+When none passes (including unavailable pixels), firstTitlePlate supplies a
+60%-opaque neutral black rectangle and fixed white unshaded copy. Rules are
+omitted. Plate candidates include padding26+18 above,64 horizontally and20+18
+below. Width follows the widest measured text plus padding, capped at888px.
+The common garmentBands table estimates vertical garment intervals by type/shot,
+using seed anatomical bounds for full shots and an explicit medium-shot crop
+approximation. A plate covering50% or more of its height with that interval is
+avoided; scan only center/bottom (platePreference), or choose the least overlap when both fail. Ties keep center. Top remains a valid unplated title position only; invalid top+plate input resolves to center.
+
+Generated cut metadata carries overlayTextPositions and overlayTextPlates.
+Both assemblers emit the same ordinary rectangle and text with an existing
+groupId prefixed title-plate:. This is not an object-library selection group:
+the rectangle can be selected/deleted independently. Editor functional text
+patches reflow following copy and refit the plate using measured text heights;
+direct undo snapshots retain their exact geometry. A present plate disables
+WOC13 photo-ink remeasurement. No new storyboard field is stored. Pending/mock
+pages without measured metadata remain unplated and centered; other overlays
+retain their existing independent line colors and geometry.
 
 Template pages default to stitched editor view. Explicit choices are kept per
 project in browser storage; unavailable storage leaves the template default.
@@ -835,3 +841,5 @@ recommendation item count (four to six). The existing late-copy merger preserves
 seller geometry, so adding more copy roles must also handle the additional
 panels/slots. WO1 tests verify the completed assembly and bypass the legacy
 skeleton height correction; they do not claim to implement that WO3 merge.
+
+WOC14 R2 retains 10 shared cases for P01-D09 and its ghost pair: unplated top/center/bottom and plated center/bottom. The two top+plate cases are removed.

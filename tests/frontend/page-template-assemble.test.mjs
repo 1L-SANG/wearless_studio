@@ -128,7 +128,7 @@ test("first-page text is centered as one group and uses its measured black/white
         const first = section(assemblePage(input), "emo.first");
         const image = photos(first)[0];
         const copy = elements(first).filter((el) => el.copyRole);
-        assert.equal(copy.length, 4);
+        assert.equal(copy.length, 3);
         const top = Math.min(...copy.map((el) => el.y));
         const bottom = Math.max(...copy.map((el) => el.y + el.h));
         assert.equal((top + bottom) / 2, image.y + image.h / 2);
@@ -151,8 +151,7 @@ test("static/fact slots survive pending/disabled copy; seller MD text is used on
         text(section(pending, "emo.first"), "name")[0].text,
         "데일리 코튼 셔츠",
     );
-    assert.equal(text(section(pending, "emo.first"), "tagline")[0].text, "");
-    assert.ok(text(section(pending, "emo.first"), "tagline")[0].placeholder);
+    assert.equal(text(section(pending, "emo.first"), "tagline").length, 0);
     assert.equal(text(section(pending, "emo.intro"), "body")[0].text, "");
     const offInput = caseOf("emo-copy-off-seller"),
         off = assemblePage(offInput);

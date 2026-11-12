@@ -303,6 +303,19 @@ for (const templateId of ['emo', 'show']) {
                 pointItems: block.pointItems.map((item, i) => ({ ...item, cropRegion: oldRegions[i] })) } : block) }, metadata);
     }
 }
+// Explicit server decisions: preserve the same generation inputs and exercise
+// ordinary titles at three positions and plates at center/bottom only.
+fixture.cases = fixture.cases.filter(item => !item.name.startsWith('woc14-'));
+for (const designId of ['P01-D09', 'P01-D09-G']) for (const plated of [false, true]) for (const position of (plated ? ['center', 'bottom'] : ['top', 'center', 'bottom'])) {
+    const input = structuredClone(fixture.cases.find(item => item.name === 'emo-2-mono').input);
+    input.storyboard = input.storyboard.map(block => block.pageSectionKind === 'first' ? { ...block, pageDesignId: designId } : block);
+    const hero = input.storyboard.find(block => block.pageSectionKind === 'first' && block.source !== 'text');
+    const key = `${hero.pageSectionKey}:${hero.slotKey}:center`;
+    input.cutResults = input.cutResults.map(cut => cut.blockId === hero.id ? { ...cut,
+        overlayTextPositions: { [key]: position }, overlayTextPlates: { [key]: plated } } : cut);
+    validateStoryboardV4(input.storyboard);
+    fixture.cases.push({ name: `woc14-${designId}-${plated ? 'plate' : 'plain'}-${position}`, input });
+}
 for (const item of fixture.cases.filter(item => /^woc(?:[2356]|6b|11)-/.test(item.name))) validateStoryboardV4(item.input.storyboard);
 const outputs = fixture.cases.map(({ input }) => ({
     blocks: assemblePage(input),

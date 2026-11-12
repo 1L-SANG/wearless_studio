@@ -18,7 +18,8 @@
     "invertLine": "#3a3a3a",
     "panelMuted": "#5c5c5c",
     "framePaper": "#fbfaf7",
-    "frameInk": "#6b6b6b"
+    "frameInk": "#6b6b6b",
+    "titlePlate": "#111111"
   },
   "editorFonts": [
     "Pretendard",
@@ -1238,14 +1239,6 @@
                     "maxLines": 2,
                     "minSizeMaxLines": 3
                   }
-                },
-                {
-                  "type": "text",
-                  "copyRole": "tagline",
-                  "gap": 8,
-                  "size": 25,
-                  "color": "onPhoto",
-                  "align": "center"
                 },
                 {
                   "type": "text",
@@ -3581,14 +3574,6 @@
                     "maxLines": 2,
                     "minSizeMaxLines": 3
                   }
-                },
-                {
-                  "type": "text",
-                  "copyRole": "tagline",
-                  "gap": 8,
-                  "size": 25,
-                  "color": "onPhoto",
-                  "align": "center"
                 },
                 {
                   "type": "text",
@@ -6734,5 +6719,70 @@
     "fallbackAspect": "3/4",
     "paper": "framePaper",
     "ink": "frameInk"
+  },
+  "firstTitlePlate": {
+    "fillToken": "titlePlate",
+    "opacity": 0.6,
+    "paddingX": 64,
+    "paddingTop": 44,
+    "paddingBottom": 38,
+    "threshold": 3,
+    "nearBestRatio": 0.9,
+    "maxGarmentOverlap": 0.5,
+    "preference": [
+      "center",
+      "bottom",
+      "top"
+    ],
+    "platePreference": [
+      "center",
+      "bottom"
+    ],
+    "garmentBands": {
+      "top": {
+        "full": [
+          0.2,
+          0.51
+        ],
+        "medium": [
+          0.133,
+          0.65
+        ]
+      },
+      "outer": {
+        "full": [
+          0.2,
+          0.64
+        ],
+        "medium": [
+          0.133,
+          0.867
+        ]
+      },
+      "bottom": {
+        "full": [
+          0.36,
+          0.96
+        ],
+        "medium": [
+          0.086,
+          0.943
+        ]
+      },
+      "dress": {
+        "full": [
+          0.2,
+          0.86
+        ],
+        "medium": [
+          0.133,
+          1
+        ]
+      }
+    },
+    "fallbackGarmentBand": [
+      0.2,
+      0.96
+    ]
   }
 }
