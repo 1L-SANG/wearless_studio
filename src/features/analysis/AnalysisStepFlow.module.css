@@ -35,7 +35,7 @@
 .outfitHead p { margin: 3px 0 0; color: var(--fg-2); font-size: 12px; }
 .outfitHead:focus { outline: none; }
 .hint { position: absolute; right: 0; bottom: 14px; font-size: 12px; color: var(--fg-2); background: var(--bg-1); border-radius: var(--r-pill); padding: 8px 12px; box-shadow: var(--elev-card); animation: hintIn 180ms ease-out; }
-.confirm { margin-top: -80px; pointer-events: none; z-index: 8; }
+.confirm { margin-top: 0; pointer-events: none; z-index: 8; }
 .confirm > * { pointer-events: auto; }
 .error { color: var(--accent-error); font-size: 13px; text-align: right; }
 .credit { display: inline-block; white-space: pre; overflow: hidden; vertical-align: middle; font-variant-numeric: tabular-nums; }

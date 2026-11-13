@@ -1,0 +1,17 @@
+.options { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; }
+.option { display: flex; min-width: 44px; max-width: 100%; flex-direction: column; align-items: center; }
+.choice { display: flex; min-width: 44px; min-height: 44px; max-width: 100%; flex-direction: column; align-items: center; gap: 7px; padding: 5px; border: 0; border-radius: var(--r-2); background: transparent; color: var(--fg-1); font: inherit; cursor: pointer; }
+.swatch { display: block; box-sizing: border-box; width: 34px; height: 34px; flex: none; padding: 3px; border-radius: 50%; }
+.swatch svg { display: block; width: 100%; height: 100%; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--ring-strong); }
+.choice[aria-pressed='false']:hover:not(:disabled) .swatch { box-shadow: 0 0 0 1px var(--ring-strong); }
+.swatch.selected { box-shadow: 0 0 0 2px var(--fg-1); }
+.choice:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.choice:disabled { cursor: default; }
+.choice:disabled .swatch { opacity: .4; }
+.name, .reason { font-size: 12px; line-height: 1.5; text-align: center; }
+.name { max-width: 96px; }
+.reason { max-width: 96px; color: var(--fg-2); }
+.source { display: flex; align-items: center; gap: 10px; margin-top: 12px; color: var(--fg-1); font-size: 12px; line-height: 1.5; }
+.source img { display: block; width: 44px; aspect-ratio: 3 / 4; flex: none; object-fit: cover; border-radius: var(--r-2); }
+.source p, .message { margin: 4px 0 0; color: var(--fg-2); font-size: 12px; line-height: 1.5; }
+.message { margin-top: 10px; }

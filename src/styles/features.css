@@ -39,6 +39,7 @@
 .tile.add .add-cap small { font-size: 10.5px; color: var(--fg-3); letter-spacing: .2px; }
 .tile.add .add-limit { max-width: 12ch; line-height: 1.45; text-align: center; word-break: keep-all; }
 .cap-note { font-size: 12px; color: var(--fg-3); margin-top: 10px; }
+.color-reference-note { margin: 10px 0; color: var(--fg-2); font-size: 12px; line-height: 1.5; }
 .pi-optional-label { font-family: var(--font-body); font-size: 12px; font-weight: 500; color: var(--fg-3); }
 .wizard-cta-reason { font-size: 13px; font-weight: 600; color: var(--fg-2); }
 .wizard-cta-reason.is-link { color: var(--link); }
@@ -2213,6 +2214,18 @@
 .ed-canvas.stitched .canvas-block.photo-move-target { box-shadow: inset 0 0 0 calc(1.5px * var(--inv, 1)) var(--fg-1); }
 .ed-canvas.stitched:not(.frame-dragging) .canvas-droprow { height: 0; }
 .ed-canvas.stitched { box-shadow: var(--elev-card); }
+.canvas-template-section { margin-bottom: 8px; box-shadow: var(--elev-card); }
+.canvas-template-section .canvas-block { margin-bottom: 0; box-shadow: none; }
+.canvas-template-section .canvas-block.on { outline: 2px solid var(--link); }
+.ed-canvas.has-template:not(.frame-dragging) .canvas-droprow { height: 0; }
+.ed-canvas.stitched .canvas-template-section { margin-bottom: 0; box-shadow: none; }
+.el-text.editing:not(.el-keep-words) { white-space: pre-wrap; }
+.el-text.el-keep-words { word-break: keep-all; overflow-wrap: normal; white-space: pre; }
+.template-contrast-line { white-space: pre; }
+.template-contrast-line.is-light { color: var(--page-overlay-light); }
+.template-contrast-line.is-dark { color: var(--page-overlay-dark); }
+.template-contrast-line.is-light.has-shade { text-shadow: 0 0 .08em color-mix(in srgb, var(--page-overlay-dark) 70%, transparent), 0 0 .2em color-mix(in srgb, var(--page-overlay-dark) 55%, transparent); }
+.template-contrast-line.is-dark.has-shade { text-shadow: 0 0 .08em color-mix(in srgb, var(--page-overlay-light) 70%, transparent), 0 0 .2em color-mix(in srgb, var(--page-overlay-light) 55%, transparent); }
 .ed-canvas-wrap.panning { cursor: grab; }
 .ed-canvas-wrap.panning:active { cursor: grabbing; }
 .ed-canvas-wrap.panning .canvas-block,
@@ -3778,3 +3791,26 @@
 @keyframes spFeaturePulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .sp-feature-progress { animation: none; } }
 .sb-feature-preparation { margin-block: var(--sp-3); color: var(--fg-2); font-size: 14px; text-align: center; text-wrap: balance; }
+
+.af-template-picker { display: grid; gap: var(--sp-16); width: 100%; min-width: 0; margin-top: 28px; padding-top: 22px; box-shadow: 0 -1px 0 var(--ring); }
+.af-template-picker > [role="alert"] { color: var(--accent-error); font-size: 14px; text-wrap: balance; }
+.af-template-confirm.modal-actions { width: 100%; margin: 0; justify-content: flex-end; }
+.af-template-confirm .af-cta-confirm.btn { min-width: 0; flex: initial; font-size: 15px; padding-inline: var(--sp-24); }
+
+.sb-shooting-label { font-size: 11px; color: var(--fg-2); border-radius: var(--r-pill); background: var(--bg-2); padding: 3px 8px; }
+.sb-shooting-oncard { position: absolute; top: var(--sp-12); right: var(--sp-12); z-index: 1; background: var(--bg-1); }
+
+/* 템플릿 콘티 다듬기(2026-10-28 디자인 점검): 글 카드는 사진 칸에 끼우지 않고 한 줄을 다 쓴다. */
+.sb-canvas-grid > .sb-grid-text { grid-column: 1 / -1; }
+.sb-entry-notice { display: flex; align-items: center; gap: 8px; margin: 0 0 2px; padding: 10px 14px; border-radius: var(--r-5); background: rgba(255, 255, 255, .72); box-shadow: 0 0 0 1px var(--sb-hair); color: var(--sb-ink-2); font-size: 13.5px; text-wrap: balance; }
+.sb-entry-notice::before { content: ''; width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--fg-1); }
+.sb-detail-notice { margin: 0; padding: 6px 10px 12px; }
+.sb-legacy-actions.modal-actions { display: grid; }
+.sb-deck.is-section-added { scroll-margin-top: 100px; animation: sb-section-added 1s ease-out; }
+@keyframes sb-section-added {
+  0%, 55% { background-color: color-mix(in srgb, var(--ring-flow-2) 18%, transparent); }
+  100% { background-color: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sb-deck.is-section-added { animation: none; background-color: color-mix(in srgb, var(--ring-flow-2) 18%, transparent); }
+}

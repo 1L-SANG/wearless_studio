@@ -1,7 +1,10 @@
+import { referenceFeedbackPatch as feedback } from '../../src/lib/storyboardExampleFeedback.js';
+import { readStoryboardSources } from './helpers/storyboardComponents.mjs';
+import { v4Fixture } from './helpers/templateStoryboard.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { defaultStoryboard } from '../../src/lib/api/shapes.js';
+import { seedTemplateFixture as defaultStoryboard } from './helpers/templateStoryboard.mjs';
 import { ensureSections } from '../../src/lib/sections.js';
 import { assignGenerationExamples } from '../../src/lib/generationExamples.js';
 import { directionSpecFromExample, generationExampleSelectionPatch } from '../../src/lib/storyboardExampleSelection.js';
@@ -9,22 +12,19 @@ import { isProductDetail, preserveDetailTargetBinding } from '../../src/lib/deta
 import * as taxonomy from '../../src/lib/storyboardTaxonomy.js';
 import { referenceScopeForBlock } from '../../src/lib/referenceMode.js';
 
-const board = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
-const feedbackBody = board.slice(board.indexOf('function referenceFeedbackPatch('), board.indexOf('\nconst CARD_DRAG_THRESHOLD'));
-const feedback = new Function('preserveDetailTargetBinding', 'isProductDetail', 'directionSpecFromExample', 'exampleThumbFor', 'referenceScopeForBlock',
-  `${feedbackBody}; return referenceFeedbackPatch;`)(preserveDetailTargetBinding, isProductDetail, directionSpecFromExample, (_catalog, id) => `thumb:${id}`, referenceScopeForBlock);
+const board = readStoryboardSources();
 const example = (shot = 'ghost') => ({ id: `example-${shot}`, cutType: 'product', shot, direction: 'front',
   thumb: '/example.jpg', variants: ['all'], applicableClothingTypes: ['top'], gender: null, rank: 1 });
 const catalogs = { genExamples: [example(), example('detail')] };
 
 test('상의 확장형의 앞면과 뒷면 고스트는 불러오기와 자동 배정 뒤에도 서로 다른 면이다', () => {
-  const product = { clothingType: 'top', colors: [{ id: 'base', isBase: true, images: [] }] };
+  const product = { clothingType: 'top', colors: [{ id: 'base', isBase: true, images: [{ slot: 'Back' }] }] };
   const seeds = defaultStoryboard(product.colors, 'extended', product);
   const catalog = JSON.parse(readFileSync(new URL('../../src/data/genExamples.json', import.meta.url), 'utf8'));
   const assigned = assignGenerationExamples(seeds, { catalog, product, gender: 'women' }).blocks;
   const ghosts = assigned.filter(block => block.cutType === 'product' && block.shot === 'ghost');
   assert.deepEqual(ghosts.map(block => block.exampleId), ['ex_product_top_ghost_01', 'ex_product_top_ghost_01']);
-  const loaded = ensureSections(assigned).map(block => ({ ...block, ...feedback(block, {}, { genExamples: catalog }) }));
+  const loaded = ensureSections(v4Fixture(assigned)).map(block => ({ ...block, ...feedback(block, {}, { genExamples: catalog }) }));
   assert.deepEqual(loaded.filter(block => block.cutType === 'product' && block.shot === 'ghost').map(block => block.direction), ['front', 'back']);
 });
 
@@ -58,11 +58,11 @@ test('콘티 샷 전환 확정은 기존 원본 면을 보존하고 착용컷의
   const body = board.slice(board.indexOf('  const commitPendingRecipe ='), board.indexOf('  const generationExamplePatch ='));
   for (const direction of ['front', 'back', 'side']) {
     let changes;
-    const scope = { ...taxonomy, referenceFeedbackPatch: feedback,
+    const scope = { ...taxonomy, generationExampleSelectionPatch, referenceFeedbackPatch: feedback,
       block: { id: 'card', source: 'ai', cutType: 'horizon', contentRole: 'fit', direction, shot: 'full', colorId: 'base' },
-      pendingRecipe: { cutType: 'product', shot: 'ghost' }, pendingSaving: false, catalogs,
+      pendingRecipe: { cutType: 'product', shot: 'ghost' }, pendingSaving: false, catalogs, guideCatalogs: catalogs,
       effectiveSectionRole: 'product', hasDetailImage: false, colorOpts: [{ id: 'base' }], detailColorOpts: [{ id: 'base' }],
-      clothingType: 'top', closureOptions: [], pendingInSpace: false,
+      clothingType: 'top', WORN_CUT_TYPES: new Set(['styling', 'horizon']), closureOptions: [], pendingInSpace: false,
       setPendingChoice() {}, setPendingSaving() {}, setPendingError() {}, setPendingRecipe() {},
       onAtomicChange: value => { changes = value; },
     };
@@ -72,13 +72,9 @@ test('콘티 샷 전환 확정은 기존 원본 면을 보존하고 착용컷의
   }
 });
 
-test('제품 예시를 끌어 새 카드를 추가해도 예시의 뒷면이 원본 면을 정하지 않는다', () => {
-  const catalog = JSON.parse(readFileSync(new URL('../../src/data/genExamples.json', import.meta.url), 'utf8'));
-  const droppedExample = catalog.find(example => example.id === 'ex_product_bottom_detail_stone_pocket_01');
-  assert.equal(droppedExample.direction, 'back');
-  const purposePatch = taxonomy.blockPatchForContentRole(null, 'productOverview', { clothingType: 'bottom' });
-  const body = board.slice(board.indexOf('    const insertionRecipe ='), board.indexOf('    const initialColorOpts ='));
-  const recipe = new Function('droppedExample', 'droppedCutType', 'purposePatch', `${body}; return insertionRecipe;`)(droppedExample, droppedExample.cutType, purposePatch);
-  assert.equal(recipe.direction, 'front');
-  assert.equal(recipe.shot, 'detail');
+test('제품 예시의 뒷면은 고른 상품 원본의 앞면을 덮어쓰지 않는다', () => {
+  const block = { source: 'ai', cutType: 'product', shot: 'detail', direction: 'front', colorId: 'base' };
+  const chosen = { id: 'back-example', cutType: 'product', shot: 'detail', direction: 'back' };
+  assert.equal(generationExampleSelectionPatch(block, chosen).patch.direction, undefined);
+  assert.equal({ ...block, ...feedback(block, generationExampleSelectionPatch(block, chosen).patch, { genExamples: [chosen] }) }.direction, 'front');
 });

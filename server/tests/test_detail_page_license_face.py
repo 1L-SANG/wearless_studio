@@ -4,6 +4,7 @@
 큐에 고정된 모델·라이선스의 현재 얼굴 증거가 컷 생성 입력에 들어가고, 그 사실이 고지에
 정확히 반영되며, 라이선스 없는 기존 경로는 한 톨도 변하지 않는다(해커톤 필수 경로).
 """
+from storyboard_v4_cases import v4_blocks
 
 import asyncio
 import contextlib
@@ -219,7 +220,7 @@ def _patch_inputs(monkeypatch, captured, *, project, storyboard=None, product=No
         return project
 
     async def fake_sb(conn, pid):
-        return storyboard or [{"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full"}]
+        return v4_blocks(storyboard or [{"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full"}])
 
     async def fake_prod(conn, pid):
         return product or {"clothing_type": "top",
@@ -239,7 +240,7 @@ def _patch_inputs(monkeypatch, captured, *, project, storyboard=None, product=No
         return b"IMG", "image/png"
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, *,
-                      license_notice=None):
+                      license_notice=None, **_template_kwargs):
         captured["license_notice"] = license_notice
         captured["cut_results"] = cut_results
         return [{"id": "b0", "kind": "benefit", "contentRole": "hero", "elements": []}]

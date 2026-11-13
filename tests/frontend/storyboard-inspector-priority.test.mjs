@@ -2,22 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { transformWithEsbuild } from 'vite';
-
-test('requesting a set gallery overrides a selected similar-cut inspector', async () => {
+test('the requested set panel takes precedence over a selected similar-cut panel', async () => {
   const source = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
-  const start = source.indexOf('  const inspector =');
-  const end = source.indexOf('  const selectedOrdinal =', start);
-  const { code } = await transformWithEsbuild(source.slice(start, end) + '\nreturn inspector;', 'inspector.jsx', { loader: 'jsx' });
-  const React = { createElement: (type, props, ...children) => ({ type, props, children }) };
-  const values = { selected: { id: 'child', similarSourceBlockId: 'root' }, similarSource: null,
-    setPicker: { mode: 'add' }, React, Icon: 'Icon', SpaceSetGallery: 'SpaceSetGallery',
-    catalogs: {}, catalogContext: { catalog: [] } };
-  // Unused event handlers remain inert; evaluate the actual render decision.
-  const scope = new Proxy(values, {
-    has: (_, key) => key !== 'inspector',
-    get: (target, key) => key === Symbol.unscopables ? undefined : target[key],
-  });
-  const rendered = new Function('scope', `with (scope) { ${code} }`)(scope);
-  assert.equal(rendered.type, 'SpaceSetGallery');
-  assert.equal(rendered.props.mode, 'add');
+  const start = source.indexOf('drawer && <StoryboardDrawer'), end = source.indexOf('</StoryboardDrawer>}', start) + '</StoryboardDrawer>'.length;
+  const { code } = await transformWithEsbuild(`return (${source.slice(start, end)});`, 'drawer-choice.jsx', { jsx: 'transform' });
+  const values = { React: { createElement: (type, props, ...children) => ({ type, props, children }) }, drawer: { mode: 'set' },
+    StoryboardDrawer: 'Drawer', StoryboardSpaceSetPanel: 'Sets', selected: { id: 'child', similarSourceBlockId: 'root' },
+    setPicker: { mode: 'add' }, pickerMembers: [], pickerRun: null, blocks: [] };
+  const scope = new Proxy(values, { has: () => true, get: (target, key) => key === Symbol.unscopables ? undefined : target[key] });
+  const tree = new Function('scope', `with(scope) { ${code} }`)(scope);
+  assert.equal(tree.type, 'Drawer'); assert.equal(tree.children[0].type, 'Sets'); assert.equal(tree.children[0].props.mode, 'add');
 });

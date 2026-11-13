@@ -1,4 +1,5 @@
 """Storyboard follow-ups execute from generated originals without provider calls in tests."""
+from storyboard_v4_cases import v4_blocks
 
 import asyncio
 import contextlib
@@ -44,12 +45,12 @@ def test_relationship_inherits_canonical_source_and_preserves_child_layout(monke
                      hookFramePosition="middle", colorwayMemberRole="old")
     blocks = [original, followup]
     untouched = copy.deepcopy(blocks)
-    out = content_roles.canonicalize_storyboard(blocks, for_storage=True)
+    out = content_roles.canonicalize_storyboard(v4_blocks(blocks), for_storage=True)
     result = next(b for b in out if b["id"] == "next")
     assert (result["cutType"], result["direction"], result["sideStyle"], result["shot"]) == (
         "styling", "side", "threeQuarter", "medium")
     assert (result["colorId"], result["exampleId"], result["matchIds"]) == ("black", "ex", ["m1"])
-    assert (result["sectionId"], result["layoutRowId"], result["sectionLayout"]) == ("s2", "row2", "pair")
+    assert (result["sectionId"], result.get("layoutRowId"), result["sectionLayout"]) == ("s1", None, "stack")
     assert result.get("spaceGroupId") == original["spaceGroupId"]
     assert result.get("spaceVariation") == original["spaceVariation"]
     assert not any(key in result for key in ("spaceSetId", "hookFramePosition", "colorwayMemberRole"))
@@ -65,13 +66,12 @@ def test_relationship_inherits_canonical_source_and_preserves_child_layout(monke
     [source(contentRole="custom"), child()],
     [source(cutType="product", contentRole="productOverview"), child()],
     [source(cutType="product", contentRole="detail", shot="detail"), child()],
-    [source(sectionRole="product"), child()],
     [source(), child(source="mine")],
     [source(), child(similarSourceBlockId=3)],
 ])
 def test_invalid_relationship_is_rejected_before_canonicalization(blocks):
     with pytest.raises(ValueError, match="invalid_similar_cut_relationship"):
-        content_roles.canonicalize_storyboard(blocks, for_storage=True)
+        content_roles.canonicalize_storyboard(v4_blocks(blocks), for_storage=True)
 
 
 def test_each_followup_is_billable_while_exact_duplicate_remains_reused():
@@ -105,7 +105,7 @@ def test_save_relationship_is_persisted_with_latest_source_recipe(client, make_t
     monkeypatch.setattr(routes.repo, "save_storyboard", save)
     patch_route_db(monkeypatch, routes)
     response = client.put("/v1/projects/p1/storyboard", headers=auth_headers(make_token),
-                          json=[source(colorId="black"), child(colorId="wrong")])
+                          json=v4_blocks([source(colorId="black"), child(colorId="wrong")]))
     assert response.status_code == 200
     assert seen["blocks"][1]["similarSourceBlockId"] == "original"
     assert seen["blocks"][1]["colorId"] == "black"
@@ -121,7 +121,7 @@ def test_save_missing_source_is_400_without_persisting(client, make_token, monke
     monkeypatch.setattr(routes.repo, "save_storyboard", forbidden)
     monkeypatch.setattr(routes.repo, "get_project", project)
     patch_route_db(monkeypatch, routes)
-    response = client.put("/v1/projects/p1/storyboard", headers=auth_headers(make_token), json=[child()])
+    response = client.put("/v1/projects/p1/storyboard", headers=auth_headers(make_token), json=v4_blocks([child()]))
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_similar_cut_relationship"
 
@@ -310,7 +310,7 @@ def test_worker_dependency_finalization_and_credits_use_existing_policy(monkeypa
         return {"copywriting": False}
 
     async def storyboard(*args):
-        return [source(), child()]
+        return v4_blocks([source(), child()])
 
     async def product(*args):
         return {"clothingType": "top", "name": "known shirt", "colors": [{
@@ -330,7 +330,7 @@ def test_worker_dependency_finalization_and_credits_use_existing_policy(monkeypa
         seen["failure"] = kwargs
         return True
 
-    for name, fn in (("get_project", project), ("get_storyboard", storyboard), ("get_product", product),
+    for name, fn in (("get_project", project), ("get_storyboard", v4_blocks(storyboard)), ("get_product", product),
                      ("get_analysis", analysis), ("get_asset_for_user", asset),
                      ("finalize_detail_page_success", success), ("finalize_detail_page_failure", failed)):
         monkeypatch.setattr(repo, name, fn)
@@ -367,7 +367,7 @@ def test_reservation_counts_seven_followups_without_duplicate_discount(client, m
         return {"id": "p1"}
 
     async def storyboard(*args):
-        return [source(), {**source(), "id": "duplicate"}, *[child(f"child-{i}") for i in range(7)]]
+        return v4_blocks([source(), {**source(), "id": "duplicate"}, *[child(f"child-{i}") for i in range(7)]])
 
     async def empty(*args):
         return {}

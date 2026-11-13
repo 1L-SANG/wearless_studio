@@ -10,6 +10,7 @@ from app.agents.cut_plan import compile_cut_plan
 from app.agents.horizon_background import restore_failed_retry
 from app.workers.detail_page_job import _duplicate_source_indexes
 from conftest import make_settings
+from storyboard_v4_cases import v4_blocks
 
 
 PRODUCT = {"clothingType": "top", "colors": [{
@@ -24,8 +25,11 @@ def spec(**changes):
 
 
 @pytest.mark.parametrize("mode", ["ghost", "flat", "natural_light"])
-def test_selected_presentation_survives_recipe_storage_and_failed_slot_retry(mode):
+@pytest.mark.parametrize("as_v4", [False, True])
+def test_selected_presentation_survives_recipe_storage_and_failed_slot_retry(mode, as_v4):
     block = spec(id="product-1", productPresentation=mode)
+    if as_v4:
+        block = v4_blocks([block])[0]
     stored = content_roles.canonicalize_storyboard_block(block, for_storage=True)
     assert stored["productPresentation"] == mode
     assert asset_recipe.project_recipe(stored)["productPresentation"] == mode
@@ -42,8 +46,12 @@ def test_selected_presentation_survives_recipe_storage_and_failed_slot_retry(mod
     {"shot": "detail", "productPresentation": "flat"},
     {"source": "mine", "productPresentation": "flat"},
 ])
-def test_irrelevant_or_invalid_modes_are_removed_before_storage(changes):
-    block = content_roles.canonicalize_storyboard_block(spec(**changes), for_storage=True)
+@pytest.mark.parametrize("as_v4", [False, True])
+def test_irrelevant_or_invalid_modes_are_removed_before_storage(changes, as_v4):
+    source = spec(**changes)
+    if as_v4:
+        source = v4_blocks([source])[0]
+    block = content_roles.canonicalize_storyboard_block(source, for_storage=True)
     assert "productPresentation" not in block
     if block.get("cutType"):
         assert "productPresentation" not in cg.normalize_spec(block)
@@ -246,7 +254,7 @@ def test_save_keeps_inactive_example_choice_without_validating_it_for_explicit_m
     monkeypatch.setattr(routes.cut_generator, "load_example_asset_registry", registry)
     response = client.put("/v1/projects/p1/storyboard",
         headers={"Authorization": f"Bearer {make_token()}"},
-        json=[spec(id="product", productPresentation=mode, exampleId="retired-example", refScope=scope)])
+        json=v4_blocks([spec(id="product", productPresentation=mode, exampleId="retired-example", refScope=scope)]))
     assert response.status_code == 200, response.text
     assert saved[0]["exampleId"] == "retired-example"
     assert saved[0]["productPresentation"] == mode

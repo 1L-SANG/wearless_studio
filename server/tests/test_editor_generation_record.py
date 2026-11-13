@@ -1,4 +1,5 @@
 """에디터 성공 기록은 실제 생성 설정과 변주의 원본을 보존한다."""
+from storyboard_v4_cases import v4_blocks
 import asyncio
 from copy import deepcopy
 from unittest.mock import AsyncMock
@@ -53,7 +54,7 @@ def recording_runtime(monkeypatch):
     monkeypatch.setattr(worker.repo, "get_project", AsyncMock(return_value={}))
     monkeypatch.setattr(worker.repo, "get_product", AsyncMock(side_effect=lambda *_: state["product"]))
     monkeypatch.setattr(worker.repo, "get_analysis", AsyncMock(side_effect=lambda *_: state["analysis"]))
-    monkeypatch.setattr(worker.repo, "get_storyboard", AsyncMock(return_value=[]))
+    monkeypatch.setattr(worker.repo, "get_storyboard", AsyncMock(return_value=v4_blocks([])))
     monkeypatch.setattr(worker.repo, "get_asset_for_user", asset)
     monkeypatch.setattr(worker.repo, "get_project_asset_for_user", asset)
     monkeypatch.setattr(worker.repo, "finalize_editor_image_success", success)

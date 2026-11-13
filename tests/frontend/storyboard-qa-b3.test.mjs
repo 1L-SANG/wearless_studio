@@ -1,3 +1,5 @@
+import { readStoryboardSources } from './helpers/storyboardComponents.mjs';
+import { v4Fixture } from './helpers/templateStoryboard.mjs';
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -13,10 +15,7 @@ import { mineImageUrl, normalizeMineImages } from '../../src/lib/storyboardMineI
 import { detachSpaceMembership, rekeySeparatedSpaceRuns } from '../../src/lib/storyboardSpaceSets.js';
 import { spaceSetGroupId, storyboardSpaceSetsFor } from '../../src/lib/storyboardSpaceSetCatalog.js';
 
-const storyboardSource = readFileSync(
-  new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url),
-  'utf8',
-);
+const storyboardSource = readStoryboardSources();
 const featureStyles = readFileSync(
   new URL('../../src/styles/features.css', import.meta.url),
   'utf8',
@@ -156,24 +155,14 @@ test('1-01 mock picker keeps its existing placeholder contract while HTTP owns t
   assert.doesNotMatch(apiIndexSource, /CLIENT_ONLY = \[[^\]]*pickAnyImage/);
 });
 
-test('1-01 Storyboard passes projectId, stores only URLs, and cancellation cannot create a null mine block', () => {
-  assert.equal((storyboardSource.match(/api\.pickAnyImage\(projectId\)/g) || []).length, 3);
-  assert.doesNotMatch(storyboardSource, /api\.pickAnyImage\(\)/);
-
-  const addMineBlock = storyboardSource.slice(
-    storyboardSource.indexOf('const addMineBlock ='),
-    storyboardSource.indexOf('// drag-to-reorder blocks'),
-  );
-  assert.match(addMineBlock, /const src = mineImageUrl\(picked\);\s*if \(!src\) return;/);
-  assert.ok(addMineBlock.indexOf('if (!src) return;') < addMineBlock.indexOf('const nb = mineBlock'));
-  assert.deepEqual(normalizeMineImages([mineImageUrl(null)]), []);
-  const mineBlock = storyboardSource.slice(
-    storyboardSource.indexOf('const mineBlock ='),
-    storyboardSource.indexOf('const addMineBlock ='),
-  );
-  assert.match(mineBlock, /ownImages: \[src\], thumb: src/);
+test('seller-photo replacement stores the selected URL on the existing photo', async () => {
+  const { storyboardPhotoPanelHarness } = await import('./helpers/storyboardPhotoPanelHarness.mjs');
+  const { nodes } = await import('./helpers/storyboardComponents.mjs');
+  const h = await storyboardPhotoPanelHarness({ block: { id: 'photo', source: 'ai', cutType: 'styling', shot: 'full' }, projectId: 'project' });
+  const guide = nodes(h.render()).find(node => node.type === 'mood-guide');
+  guide.props.onUseMine({ url: '/seller-photo.webp' });
+  assert.deepEqual(h.block.ownImages, ['/seller-photo.webp']); assert.equal(h.block.thumb, '/seller-photo.webp'); h.close();
 });
-
 test('N4 initial blocks auto-assign while a user-added manual block stays empty after reload', () => {
   const catalog = [{
     id: 'example-1',
@@ -241,50 +230,28 @@ test('N4 choosing an example ends manual waiting and HTTP save preserves the fie
   assert.deepEqual(JSON.parse(request.options.body), blocks);
 });
 
-test('N4 general add is manual-empty, dropped examples are not, and the inspector still opens', () => {
-  const addBlock = storyboardSource.slice(
-    storyboardSource.indexOf('const addBlock ='),
-    storyboardSource.indexOf('const mineBlock ='),
-  );
-  assert.match(addBlock, /\.\.\.\(!droppedExample \? \{ exampleChoice: 'manual' \} : \{\}\)/);
-  assert.match(addBlock, /assignGenerationExamples\(out,[\s\S]*onlyBlockIds: \[nb\.id\]/);
-  assert.match(addBlock, /setSelectedId\(nb\.id\); setSplitOpen\(true\)/);
-  // 2026-08-15 오너: 빈 컷 안내는 짧게 — "분위기 예시를 골라주세요."
-  assert.match(storyboardSource, /분위기 예시를 골라주세요\./);
-  assert.match(storyboardSource, /이 조합의 예시를 준비하지 못했어요 — 컷 설정을 바꾸거나 직접 예시를 골라주세요/);
-  assert.match(featureStyles, /\.sb-cutcard\.manual-empty, \.sb-frame-half\.manual-empty \{[^}]*border-style: dashed;[^}]*background: color-mix\(in srgb, var\(--accent-blue\) 4%, var\(--bg-1\)\)/);
+test('v5 cut addition fills an eligible example automatically', async () => {
+  const { seedStoryboard } = await import('../../src/lib/pageTemplates/seed.js');
+  const { addStoryboardPhoto } = await import('../../src/lib/pageTemplates/photoActions.js');
+  const { withStoryboardSpaceSetExamples } = await import('../../src/lib/storyboardSpaceSetCatalog.js');
+  const catalog = withStoryboardSpaceSetExamples({ genExamples: JSON.parse(readFileSync(new URL('../../src/data/genExamples.json', import.meta.url), 'utf8')) }).genExamples;
+  const product = { clothingType: 'top', colors: [{ id: 'base', isBase: true }] }, before = seedStoryboard(product, { targetGenders: ['women'] });
+  const host = before.find(block => block.pageSectionUsage === 'styling');
+  const after = addStoryboardPhoto(before, host.pageSectionKey, { catalog, product, gender: 'women' });
+  const added = after.find(block => !before.some(old => old.id === block.id)); assert.ok(added.exampleId); assert.notEqual(added.exampleChoice, 'manual');
 });
-
-test('N5 generation-example dataTransfer reaches an addzone and inserts after the exact card index', () => {
-  const payload = new Map();
-  const dataTransfer = {
-    effectAllowed: 'none',
-    setData(type, value) { payload.set(type, value); },
-    getData(type) { return payload.get(type) || ''; },
-  };
-  dataTransfer.effectAllowed = 'copy';
-  dataTransfer.setData('text/example-id', 'example-dragged');
-
-  const blocks = [
-    { id: 'a', sectionRole: 'styling' },
-    { id: 'b', sectionRole: 'styling' },
-    { id: 'c', sectionRole: 'styling' },
-  ];
-  const styling = renderGroups(blocks).find((group) => group.key === 'styling');
-  const addzoneIndex = styling.items.find((item) => item.block.id === 'b').index;
-  const inserted = [...blocks];
-  inserted.splice(addzoneIndex, 0, { id: dataTransfer.getData('text/example-id') });
-  assert.deepEqual(inserted.map((block) => block.id), ['a', 'b', 'example-dragged', 'c']);
-
-  assert.match(storyboardSource, /event\.dataTransfer\.setData\('text\/example-id', example\.id\)/);
-  assert.match(storyboardSource, /const exampleId = e\.dataTransfer\.getData\('text\/example-id'\) \|\| dragExampleId/);
-  assert.match(storyboardSource, /addBlock\(idx, targetSid, targetRole, targetSpaceGroupId, targetGroupKey, exampleId\)/);
-  // 2026-08-16: 세트 안 '사이 자리'는 언제나 드롭을 받고, ＋(직접 추가)만 예비 멤버가 남았을 때 열린다.
-  assert.match(storyboardSource, /canAdd: !\(targetSpaceGroupId && !reservation\)/);
-  assert.match(storyboardSource, /onAdd=\{canAdd \? \(\(event\) =>/);
-  assert.match(storyboardSource, /const m = \[\.\.\.blocks\]; m\.splice\(idx, 0, nb\)/);
+test('v5 example drops use the selected section gap and lower run key', async () => {
+  const { loadStoryboardComponent, hookHarness, nodes } = await import('./helpers/storyboardComponents.mjs');
+  const { templateSectionName } = await import('../../src/lib/pageTemplates/slots.js');
+  const { reuseSlotsForBlock } = await import('../../src/lib/pageTemplates/sectionDependencies.js');
+  const h = hookHarness(), calls = [];
+  const List = await loadStoryboardComponent('StoryboardPageList.jsx', 'StoryboardPageList', { ...h.hooks, Icon: 'svg', StoryboardPreview: 'preview', templateSectionName, reuseSlotsForBlock, CATALOG_DRAG_MIME: 'catalog' });
+  const runs = ['first', 'wear'].map((kind, index) => ({ key: `emo.${kind}`, kind, blocks: [{ source: 'ai', pageSectionKind: kind }] }));
+  const tree = h.render(List, { runs, page: [], onAdd() {}, onMove() {}, onDropContent: (...args) => calls.push(args), sectionRefs: { current: new Map() } });
+  const transfer = { getData: () => '', types: ['text/example-id'] };
+  nodes(tree).find(node => node.props?.['data-section-drop'] === 'emo.wear').props.onDrop({ dataTransfer: transfer, preventDefault() {} });
+  assert.equal(calls[0][1], 'emo.wear'); h.close();
 });
-
 test('N5 drop-on shifts both adjacent cards, keeps terminal hit areas, and disables motion when requested', () => {
   assert.match(featureStyles, /\.sb-addzone\.end \{[^}]*display: grid;[^}]*width: 24px/);
   assert.match(featureStyles, /:has\(\.sb-addzone:hover, \.sb-addzone:focus-within, \.sb-addzone\.drop-on\) \.sb-cutcard,[\s\S]*?translate3d\(-5px, 0, 0\)/);
@@ -302,7 +269,7 @@ const persistedSplitBoard = () => {
     detachSpaceMembership({ id: 'mine-middle', source: 'mine', sectionId: 'styling', sectionRole: 'styling', sectionLayout: 'stack', spaceGroupId: originalGroupId, spaceVariation: 'subtle', spaceSetMemberOrder: 3, refScope: 'pose', ownImages: ['mine.webp'] }),
     { id: 'set-c', source: 'ai', sectionId: 'styling', sectionRole: 'styling', sectionLayout: 'stack', cutType: 'styling', spaceGroupId: originalGroupId, spaceVariation: 'subtle', spaceSetMemberOrder: 3, refScope: 'pose' },
   ];
-  return rekeySeparatedSpaceRuns(source, (setId) => spaceSetGroupId(setId, 'roundtrip-split'));
+  return rekeySeparatedSpaceRuns(v4Fixture(source).map(({ layoutRowId, layoutRowVersion, ...b }) => b), (setId) => spaceSetGroupId(setId, 'roundtrip-split'));
 };
 
 test('B5 mock save and reload preserve split-run order, mine placement, and row layout fields', async () => {
@@ -332,7 +299,7 @@ test('B5 HTTP PUT and reload preserve the same server-valid split board', async 
     if (pathname.endsWith('/storyboard')) return jsonResponse({ blocks: stored || [], revision: stored ? 1 : 0 });
     if (pathname.endsWith('/product')) return jsonResponse({ clothingType: 'top', colors: [] });
     if (pathname.endsWith('/analysis')) return jsonResponse({ targetGenders: ['women'] });
-    if (pathname === '/v1/projects/http-b5') return jsonResponse({ composeMode: 'basic' });
+    if (pathname === '/v1/projects/http-b5') return jsonResponse({ id: 'http-b5' });
     throw new Error(`unexpected request: ${pathname}`);
   };
   try {

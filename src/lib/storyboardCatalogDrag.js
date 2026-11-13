@@ -1,7 +1,8 @@
-import { isStoryboardSpaceSetEligible } from './storyboardSpaceSetCatalog.js';
+import { isStoryboardSpaceSetEligible, spaceSetGroupId } from './storyboardSpaceSetCatalog.js';
 import { storedExampleConditionStatus } from './generationExamples.js';
 import { detachSpaceMembership } from './storyboardSpaceSets.js';
-import { stripHookFrameFields } from './storyboardHookFrame.js';
+import { singleMemberSpaceSet } from './storyboardSetSelection.js';
+import { uid } from './ids.js';
 
 export const CATALOG_DRAG_MIME = 'application/x-wearless-set';
 
@@ -38,12 +39,12 @@ export function insertCatalogBlocks(blocks, index, added) {
 export function catalogMemberTarget(blocks, { targetSid, targetRole, spaceGroupId, fallbackIndex }) {
   const host = spaceGroupId ? blocks.find((block) => block.spaceGroupId === spaceGroupId) : null;
   const sectionRole = targetRole || host?.sectionRole;
-  const live = (id) => id && blocks.some((block) => block.sectionId === id && block.sectionRole === sectionRole);
+  const live = (id) => id && blocks.some((block) => block.sectionId === id);
   const sectionId = live(targetSid) ? targetSid
     : live(host?.sectionId) ? host.sectionId
     : blocks.find((block) => block.sectionRole === sectionRole)?.sectionId || targetSid || host?.sectionId;
   const end = blocks.reduce((last, block, index) => (
-    block.sectionId === sectionId && block.sectionRole === sectionRole ? index + 1 : last
+    block.sectionId === sectionId ? index + 1 : last
   ), -1);
   return { sectionId, sectionRole, index: end >= 0 ? end : (fallbackIndex ?? blocks.length) };
 }
@@ -86,17 +87,27 @@ export function independentSpaceSetChoices(set, { catalog = [], gender, clothing
   });
 }
 
-// Independent catalog cuts use their published complete reference, never a set plate/pose binding.
+// A leftover catalog photo is a new one-member set, with the released scene contract.
 export function createIndependentCatalogMembers(set, exampleIds, template, { makeId, ...context }) {
   const requested = new Set(exampleIds);
   const choices = independentSpaceSetChoices(set, context).filter(({ member }) => requested.has(member.exampleId));
   if (!requested.size || choices.length !== requested.size || requested.size !== exampleIds.length) throw new Error('catalog_member_unavailable');
-  const { layoutRowId, layoutRowVersion, setSelectionOrigin, ownImages, exampleChoice, ...base } = stripHookFrameFields(detachSpaceMembership(template || {}));
+  const { layoutRowId, layoutRowVersion, setSelectionOrigin, ownImages, exampleChoice, ...base } = detachSpaceMembership(template || {});
   delete base.similarSourceBlockId;
-  return choices.map(({ member, example }, index) => ({ ...base, id: makeId(member, index), source: 'ai',
+  for (const key of Object.keys(base)) if (key.startsWith('hook')) delete base[key];
+  return choices.map(({ member, example }, index) => {
+    const single = singleMemberSpaceSet({ ...base, id: makeId(member, index), source: 'ai', slotKey: null,
     sectionRole: context.sectionRole, contentRole: context.sectionRole === 'studio' ? 'fit' : 'coordination',
     cutType: member.cutType, direction: member.direction, shot: member.shot, exampleId: example.id, exampleSelectionOrigin: 'user',
     refScope: 'all', thumb: example.thumb || example.assetUrl, baseThumb: null,
     angle: 'same', faceExposure: base.faceExposure || 'same', refImages: [], refAssetIds: [],
-  }));
+    }, { origin: 'user' });
+    if (single.spaceGroupId) return single;
+    // Callers may supply a catalog independently of the bundled release. Its
+    // validated member data still supplies membership, never fabricated assets.
+    return { ...single, spaceGroupId: spaceSetGroupId(set.id, uid('sg')),
+      spaceVariation: set.spaceVariation || 'subtle', spaceSetMemberOrder: member.order,
+      setSelectionOrigin: 'user', refScope: member.cutType === 'styling' ? 'pose' : 'all',
+      horizonBackgroundMode: member.cutType === 'horizon' ? 'reference' : null };
+  });
 }

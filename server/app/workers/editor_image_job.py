@@ -15,6 +15,7 @@ from PIL import Image
 
 from .. import facemarket, fm_fingerprint_store, repo
 from ..services import fm_fingerprint, matching, outfit_generation
+from ..services import garment_color as color_storage
 from ..agents import (
     asset_recipe,
     content_roles,
@@ -24,6 +25,8 @@ from ..agents import (
     cut_variator,
     detail_recommendations,
     garment_edit,
+    garment_color,
+    garment_color_qc,
     identity_source,
     image_qc,
     horizon_background,
@@ -177,6 +180,10 @@ async def run_editor_image_job(app, job: dict) -> None:
     generation_source_asset_id: str | None = None
     fallback_metadata: list[dict] = []
     contract_error_logged = False
+    color_execution = None
+    internal_masters = []
+    staged_outputs = []
+    finalization_started = False
 
     def _log_contract_error(exc: ValueError) -> None:
         nonlocal contract_error_logged
@@ -199,6 +206,16 @@ async def run_editor_image_job(app, job: dict) -> None:
             _log_contract_error(exc)
         await _fail(message, {"error": reason, "detailQc": getattr(exc, "metadata", {})},
                     code=reason if reason == "invalid_cut_spec" else "generation_failed")
+
+    async def _check_color(master, target, output, clothing_type):
+        report = await garment_color_qc.check(s, master, target, output, clothing_type=clothing_type)
+        report = {**report, "checkedOutputSha256": hashlib.sha256(output.data).hexdigest(),
+                  "scope": "color_stage_before_neck_repair"}
+        color_execution["colorCheck"] = report
+        if report["status"] == "failed":
+            raise garment_color.GarmentColorError("color_check_failed")
+        if report["status"] in ("unavailable", "indeterminate"):
+            example_warnings.append({"code": f"color_check_{report['status']}"})
 
     async def _fail(
         message: str,
@@ -248,6 +265,10 @@ async def run_editor_image_job(app, job: dict) -> None:
         face_pass_outcome: dict = {}      # applied / skipped:<reason> / fallback:<reason> — 자산 메타·이벤트용
         horizon_decision = None
         signature_decision = None
+        color_plan = None
+        color_target_asset = None
+        color_target_image = None
+        color_master_image = None
 
         if mode == "vary":
             source = payload.get("source") or {}
@@ -322,8 +343,36 @@ async def run_editor_image_job(app, job: dict) -> None:
             generation_recipe = asset_recipe.project_recipe(
                 (source_recipes.get(generation_source_asset_id) or {}).get("recipe"))
             target_img = None
+            color_master_asset = None
+            similar_color = False
             inner_reference_img = None
             selected_inner_img = None
+            prior_color = source_metadata.get("colorExecution") or {}
+            if similar_envelope and prior_color.get("version") == 1 and prior_color.get("mode") == "base_then_color":
+                async with pool.connection() as conn:
+                    candidate = await asset_recipe.resolve_color_master_asset(conn, user_id, project_id, src_asset)
+                    if candidate is not src_asset:
+                        color_master_asset = candidate
+                        similar_color = True
+                        edit_product = await repo.get_product(conn, project_id) or {}
+                        edit_analysis = await repo.get_analysis(conn, project_id) or {}
+                        front_closure = outer_closure.front_closure_of(edit_analysis)
+                        color_plan = garment_color.plan_for(edit_product, {"cutType": source["cutType"],
+                            "colorId": prior_color.get("targetColorId")})
+                        color_plan = replace(color_plan, mode=prior_color["mode"],
+                                             render_color_id=prior_color.get("renderColorId"))
+                        evidence = next(iter(prior_color.get("targetEvidence") or []), {})
+                        target_id = evidence.get("assetId")
+                        target_asset = (await repo.get_project_asset_for_user(conn, user_id, project_id, target_id)
+                                        if target_id in color_plan.target_asset_ids else None)
+                        if target_asset is None:
+                            raise garment_color.GarmentColorError("color_reference_unavailable")
+                if similar_color:
+                    target_img = InlineImage(target_asset["mime_type"], await asyncio.to_thread(
+                        app.state.r2.get_bytes, target_asset["r2_key"]))
+                    if hashlib.sha256(target_img.data).hexdigest() != evidence.get("sha256"):
+                        raise garment_color.GarmentColorError("color_reference_changed")
+                    group = color_plan.target_color_id
             if edit_mode:
                 trusted_type = garment_edit.source_cut_type(
                     src_asset, source_recipes.get(generation_source_asset_id) or {})
@@ -337,7 +386,14 @@ async def run_editor_image_job(app, job: dict) -> None:
                     edit_analysis = await repo.get_analysis(conn, project_id) or {}
                     front_closure = outer_closure.front_closure_of(edit_analysis)
                     if edit_mode == "color":
-                        image_ids = garment_edit.target_image_ids(edit_product, payload.get("colorId"))
+                        color_master_asset = await asset_recipe.resolve_color_master_asset(
+                            conn, user_id, project_id, src_asset)
+                        color_plan = garment_color.plan_for(edit_product, {"cutType": trusted_type, "colorId": payload.get("colorId")})
+                        previous_execution = source_metadata.get("colorExecution") or {}
+                        color_plan = replace(color_plan, mode="base_then_color", render_color_id=(
+                            previous_execution.get("renderColorId") if color_master_asset is not src_asset
+                            else (generation_recipe or {}).get("colorId")))
+                        image_ids = list(color_plan.target_asset_ids)
                         selected_target = (payload.get("_garmentEdit") or {}).get("targetAssetId")
                         if selected_target:
                             image_ids = [selected_target] if selected_target in (image_ids or []) else []
@@ -440,9 +496,20 @@ async def run_editor_image_job(app, job: dict) -> None:
                             vary_lora_spec = await asyncio.to_thread(
                                 face_identity.with_references, vary_lora_spec, _ref_faces,
                                 getattr(s, "fm_face_qc_dir", None))
+            read_asset = color_master_asset or src_asset
             src_img = InlineImage(
-                src_asset["mime_type"],
-                await asyncio.to_thread(app.state.r2.get_bytes, src_asset["r2_key"]))
+                read_asset["mime_type"],
+                await asyncio.to_thread(app.state.r2.get_bytes, read_asset["r2_key"]))
+            if edit_mode == "color" or similar_color:
+                master_sha256 = hashlib.sha256(src_img.data).hexdigest()
+                expected_sha256 = ((source_metadata.get("colorExecution") or {}).get("masterSha256")
+                                   if color_master_asset is not src_asset else None)
+                if expected_sha256 and expected_sha256 != master_sha256:
+                    raise garment_color.GarmentColorError("color_master_unavailable")
+                color_execution = garment_color.execution(color_plan, target_asset, target_img,
+                    master_asset_id=str(read_asset["id"]), master_sha256=master_sha256)
+                color_execution["masterSource"] = "stored_master" if read_asset is not src_asset else "selected_asset_fallback"
+
             await _emit(pool, job_id, "progress", {"progress": 20, "phase": "inputs_loaded"})
 
             cut_type = source.get("cutType")
@@ -456,10 +523,19 @@ async def run_editor_image_job(app, job: dict) -> None:
                         edit_kwargs["selected_inner_image"] = selected_inner_img
                     elif inner_reference_img is not None:
                         edit_kwargs["inner_reference_image"] = inner_reference_img
-                    image, mime = await garment_edit.generate(
-                        editor_settings, app.state.gemini, src_img, target_img, cut_type,
-                        mode=edit_mode, clothing_type=edit_product.get("clothingType") or edit_product.get("clothing_type") or "top",
-                        closure_state=payload.get("outerClosureState"), front_closure=front_closure, **edit_kwargs)
+                    edit_clothing_type = edit_product.get("clothingType") or edit_product.get("clothing_type") or "top"
+                    if edit_mode == "color" and color_master_asset is not src_asset:
+                        image, mime = await garment_color.apply(
+                            editor_settings, app.state.gemini, src_img, target_img, color_plan,
+                            cut_type=cut_type, clothing_type=edit_clothing_type,
+                            front_closure=front_closure, **edit_kwargs)
+                    else:
+                        image, mime = await garment_edit.generate(
+                            editor_settings, app.state.gemini, src_img, target_img, cut_type,
+                            mode=edit_mode, clothing_type=edit_clothing_type,
+                            closure_state=payload.get("outerClosureState"), front_closure=front_closure, **edit_kwargs)
+                    if edit_mode == "color":
+                        await _check_color(src_img, target_img, InlineImage(mime, image), edit_clothing_type)
                 elif similar_envelope is not None:
                     await _emit(pool, job_id, "progress", {"progress": 25, "phase": "planning"})
                     similar_cut_metadata, similar_context = await _plan_similar_cut(
@@ -477,6 +553,17 @@ async def run_editor_image_job(app, job: dict) -> None:
                             lambda: identity_source.active_face_backend_url(pool, _vary_model_id))
                     image, mime = await cut_variator.generate(
                         editor_settings, app.state.gemini, src_img, [], cut_type, **_vary_kw)
+                    if similar_color:
+                        color_master_image = InlineImage(mime, image)
+                        color_face_kwargs = {key: _vary_kw[key] for key in
+                            ("face_identity_spec", "face_pass_outcome", "face_pass_url_provider") if key in _vary_kw}
+                        edit_clothing_type = edit_product.get("clothingType") or edit_product.get("clothing_type") or "top"
+                        image, mime = await garment_color.apply(
+                            editor_settings, app.state.gemini, color_master_image, target_img, color_plan,
+                            cut_type=cut_type, clothing_type=edit_clothing_type,
+                            front_closure=front_closure, **color_face_kwargs)
+                        await _check_color(color_master_image, target_img, InlineImage(mime, image), edit_clothing_type)
+
                 else:
                     # 소유 자산의 레시피로 같은 대상과 원본 면을 다시 촬영한다.
                     detail_spec = {**prior_recipe, "cutType": "product", "shot": "detail"}
@@ -528,6 +615,15 @@ async def run_editor_image_job(app, job: dict) -> None:
             async with pool.connection() as conn:
                 project = await repo.get_project(conn, user_id, project_id) or {}
                 product = await repo.get_product(conn, project_id) or {}
+                color_plan = garment_color.plan_for(product, new_payload)
+                if color_plan.mode == "base_then_color":
+                    for target_id in color_plan.target_asset_ids:
+                        color_target_asset = await repo.get_project_asset_for_user(conn, user_id, project_id, target_id)
+                        if color_target_asset:
+                            color_target_asset = {**color_target_asset, "slot": "Front"}
+                            break
+                    if color_target_asset is None:
+                        raise garment_color.GarmentColorError("color_reference_unavailable")
                 # analysis 도 로드 — 프롬프트 ground truth(소재·강조특징)와 확정 fitProfile
                 # 텍스트 제약이 detail_page 경로와 동일하게 반영되도록(컷 파이프라인 계약 정합).
                 analysis = await repo.get_analysis(conn, project_id) or {}
@@ -567,7 +663,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                     image_refs, detail_color_transfer = cut_generator.detail_reference_images(
                         product, requested_color_id, direction=detail_direction)
                 else:
-                    image_refs = cut_generator.color_images(product, requested_color_id)
+                    image_refs = cut_generator.color_images(product, color_plan.render_color_id)
                     detail_color_transfer = None
                 assets = []
                 for slot, aid in image_refs:
@@ -594,6 +690,11 @@ async def run_editor_image_job(app, job: dict) -> None:
                     ma = await repo.get_asset_for_user(conn, user_id, rid)  # 소유 검증 겸함
                     if ma:
                         mood_rows.append(ma)
+            if color_target_asset is not None:
+                color_target_image = InlineImage(color_target_asset["mime_type"],
+                    await asyncio.to_thread(app.state.r2.get_bytes, color_target_asset["r2_key"]))
+            color_execution = (garment_color.execution(color_plan, color_target_asset, color_target_image)
+                               if color_plan.target_color_id is not None else None)
             # 방향 근거(같은 쪽 디테일 또는 원본)가 전무할 때만 사전 실패 — 원본만 있으면
             # 렌더가 구조 확대 모드로 처리한다(2026-08-07 스펙 §5).
             _detail_slot = "BackDetail" if detail_direction == "back" else "Detail"
@@ -697,9 +798,9 @@ async def run_editor_image_job(app, job: dict) -> None:
                 if base_color is not None and base_color.get("id") is not None
                 else None
             )
-            uses_base_color = requested_color_id is None or (
+            uses_base_color = color_plan.render_color_id is None or (
                 base_color_id is not None
-                and str(requested_color_id) == base_color_id
+                and str(color_plan.render_color_id) == base_color_id
             )
             cut_mannequin_asset = (
                 mannequin_asset
@@ -882,13 +983,15 @@ async def run_editor_image_job(app, job: dict) -> None:
                     app.state.r2.get_bytes, a["r2_key"]))
                 for a in assets
             ]
+            background_assets = [color_target_asset] if color_target_asset else assets
+            background_images = [color_target_image] if color_target_image else product_images
             if cut_generator.is_signature_cut(cut_spec):
                 signature_palette = horizon_background.resolve_signature(
                     product,
                     cut_spec.get("colorId"),
                     analysis=analysis,
                     sources=horizon_background.loaded_sources(
-                        product, cut_spec.get("colorId"), assets, product_images),
+                        product, cut_spec.get("colorId"), background_assets, background_images),
                 )
                 cut_spec = horizon_background.apply_signature_runtime(
                     cut_spec, signature_palette)
@@ -898,7 +1001,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 cut_spec = horizon_background.apply_runtime(
                     cut_spec, horizon_background.palettes_for_blocks(
                         [cut_spec], product, analysis=analysis,
-                        sources=horizon_background.loaded_sources(product, cut_spec.get("colorId"), assets, product_images),
+                        sources=horizon_background.loaded_sources(product, cut_spec.get("colorId"), background_assets, background_images),
                     ),
                 )
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
@@ -1102,6 +1205,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 # 무드 레퍼런스는 생성 입력 키 밖에서 따로 읽으므로 실제로 넘긴 값을 그대로 남긴다.
                 "refAssetIds": [str(r) for r in (new_payload.get("refAssetIds") or [])][:3],
             })
+            cut_spec = garment_color.render_spec(cut_spec, color_plan)
             # 값이 없으면 키 자체를 넣지 않는다 — 기존 프롬프트·기존 목(mock) 시그니처를 깨지 않는다.
             # 얼굴 패스 결과(applied / skipped:<reason> / fallback:<reason>)를 받아 자산 메타와 이벤트에 남긴다.
             face_pass_outcome: dict = {}
@@ -1204,6 +1308,22 @@ async def run_editor_image_job(app, job: dict) -> None:
                         e,
                     )
                     example_warnings.append({"code": "cut_output_qc_unavailable"})
+            if color_plan.mode == "base_then_color":
+                color_master_image = chosen
+                prior_outcome = dict(face_pass_outcome)
+                color_face_kwargs = {key: generate_kwargs[key] for key in
+                    ("face_identity_spec", "face_pass_outcome", "face_pass_url_provider") if key in generate_kwargs}
+                image, mime = await garment_color.apply(
+                    cut_generation_settings, app.state.gemini, color_master_image, color_target_image,
+                    color_plan, cut_type=normalized["cutType"], clothing_type=clothing_type,
+                    front_closure=outer_closure.front_closure_of(analysis), **color_face_kwargs)
+                chosen = InlineImage(mime, image)
+                await _check_color(color_master_image, color_target_image, chosen, clothing_type)
+                face_pass_outcome.update({**prior_outcome, **face_pass_outcome})
+                _remember_outcome(image)
+                face_pass_outcome.update(outcome_by_image[hashlib.sha256(image).hexdigest()])
+                if cut_qc_metadata is not None:
+                    cut_qc_metadata = {**cut_qc_metadata, "scope": "representative_color_master"}
             if (
                 fm_lora_spec is not None
                 and real_horizon_neck_repair.eligible(
@@ -1233,6 +1353,13 @@ async def run_editor_image_job(app, job: dict) -> None:
             return
 
         await _emit(pool, job_id, "progress", {"progress": 70, "phase": "generated"})
+
+        if color_master_image is not None:
+            master = await color_storage.stage_master(app, job, color_master_image,
+                cut_type=cut_type, real_derived=fm_face_injected, stored_outputs=staged_outputs)
+            internal_masters.append(master)
+            color_execution = {**color_execution, "masterAssetId": master["asset_id"],
+                               "masterSha256": master["sha256"]}
 
         # R2 저장
         ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
@@ -1272,6 +1399,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             "size": len(image), "width": w, "height": h,
             "cleanup_intent_id": cleanup_intent_id,
             "sha256": img_sha256,
+            **({"internal_masters": internal_masters} if internal_masters else {}),
             **({"fingerprint": fingerprint} if fingerprint else {}),
             "provenance": (
                 {"license_id": str(fm_license_row["id"]),
@@ -1282,6 +1410,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             "metadata": {
                 "facemarket_real_derived": fm_face_injected,
                 "cut_type": cut_type,
+                **({"colorExecution": color_execution} if color_execution else {}),
                 "generation": {
                     "version": 1,
                     "origin": (
@@ -1355,14 +1484,20 @@ async def run_editor_image_job(app, job: dict) -> None:
                     model_id=str(snapshot.get("modelId") or ""),
                     brand_use_category=payload.get("brandUseCategory"),
                 )
+            finalization_started = True
             out = await repo.finalize_editor_image_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
                 project_id=project_id, image=image_row, group=group, cut_type=cut_type,
                 reserved=reserved, charge=charge,
                 metadata=success_metadata)
+            if out is not None:
+                await color_storage.persist_masters(conn, job=job, outputs=[image_row])
             await conn.commit()
         if out is None:  # lease 상실(복구) → 결과 폐기 + 방금 저장한 R2 객체 best-effort 정리
             await _delete_output_candidate(key, cleanup_intent_id)
+            for master in staged_outputs:
+                await _delete_output_candidate(master["key"], master.get("cleanup_intent_id"))
+            staged_outputs.clear()
             written_key = None
             written_cleanup_intent_id = None
         elif (fm_face_injected and fm_license_row is not None
@@ -1387,8 +1522,20 @@ async def run_editor_image_job(app, job: dict) -> None:
             # written_key 를 비운 **뒤**라, 만에 하나 여기서 무슨 일이 나도 확정된 컷을 안 지운다.
             await fm_fingerprint_store.record_cut_fingerprints(
                 pool, fm_fingerprint_store.cut_fingerprint_items([image_row]))
+    except asyncio.CancelledError:
+        if not finalization_started:
+            if written_key:
+                await asyncio.shield(_delete_output_candidate(written_key, written_cleanup_intent_id))
+            for master in staged_outputs:
+                await asyncio.shield(_delete_output_candidate(master["key"], master.get("cleanup_intent_id")))
+        await asyncio.shield(_fail("작업 서버가 종료되어 생성이 중단됐어요. 다시 시도해 주세요.",
+                                 {"error": "worker_shutdown"}, code="worker_shutdown"))
+        raise
     except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
-        if written_key:
+        if not finalization_started:
+            for master in staged_outputs:
+                await _delete_output_candidate(master["key"], master.get("cleanup_intent_id"))
+        if written_key and not finalization_started:
             await _delete_output_candidate(written_key, written_cleanup_intent_id)
         detail = e.detail if isinstance(e, facemarket.HTTPException) else None
         code = detail.get("code") if isinstance(detail, dict) else "generation_failed"
@@ -1402,4 +1549,5 @@ async def run_editor_image_job(app, job: dict) -> None:
             log.warning("editor_image face pass unavailable (%s) for job %s", e, job_id)
             code, message = _FACE_PASS_FAILURE
         code, message = _seller_facing_failure(code, message)
-        await _fail(message, {"error": str(e)[:300]}, code=code)
+        await _fail(message, {"error": str(e)[:300],
+                              **({"colorExecution": color_execution} if color_execution else {})}, code=code)

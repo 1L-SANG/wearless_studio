@@ -1,0 +1,49 @@
+.picker { width: 100%; min-width: 0; margin: 0; padding: 0; border: 0; }
+.picker legend { padding: 0; font-size: 16px; line-height: 1.3; font-weight: 600; text-wrap: balance; }
+.note { margin: 3px 0 var(--sp-16); color: var(--fg-2); font-size: 12px; text-wrap: balance; }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-12); max-width: 720px; }
+.card { position: relative; display: grid; min-width: 0; padding: var(--sp-8); cursor: pointer; border-radius: var(--r-5); background: var(--bg-1); box-shadow: var(--elev-card); }
+.card:has(input:checked) { box-shadow: 0 0 0 2px var(--fg-1), var(--elev-card); }
+.card:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 4px; }
+.choice { display: grid; min-width: 0; cursor: inherit; }
+.card input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.preview { position: relative; display: block; overflow: hidden; aspect-ratio: 4 / 5; border-radius: var(--r-3); background: var(--bg-2); }
+.preview img { display: block; width: 100%; }
+.fallbackSheet { position: absolute; inset: 0; display: block; }
+.fallbackSheet > img { height: 100%; object-fit: cover; }
+.longImage { position: absolute; top: 0; left: 0; height: auto; }
+.loading { visibility: hidden; }
+.sampleTitle { position: absolute; inset: 40% var(--sp-8) auto; display: grid; gap: var(--sp-4); text-align: center; color: var(--bg-1); text-shadow: 0 1px 3px var(--fg-1); }
+.sampleTitle small { font-size: 10px; }
+.sampleTitle b { font-size: 15px; text-wrap: balance; }
+.show .fallbackSheet { padding-bottom: 20%; }
+.show .sampleTitle { inset: auto 0 0; padding: var(--sp-8); color: var(--fg-1); background: var(--bg-1); text-shadow: none; }
+.label { display: grid; gap: var(--sp-4); padding: var(--sp-12) var(--sp-4); text-wrap: balance; }
+.label b { font-size: 15px; }
+.label small { font-size: 12px; color: var(--fg-2); }
+.picker:disabled .card { cursor: default; }
+.previewActions:global(.modal-actions) { position: absolute; top: var(--sp-12); right: var(--sp-12); margin: 0; }
+.previewActions:global(.modal-actions) button { padding: 0 10px; font-size: 12px; }
+.previewButton:global(.btn) { background: var(--glass-bg); color: var(--fg-1); box-shadow: 0 0 0 1px var(--ring-strong); }
+.previewDialog { position: fixed; inset: 0; margin: auto; width: min(840px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; border: 0; border-radius: var(--r-6); background: var(--bg-1); color: var(--fg-1); box-shadow: var(--elev-lift); overflow: hidden; }
+.previewDialog[open] { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.previewDialog::backdrop { background: var(--ink-overlay); }
+.dialogHead { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-16); padding: var(--sp-16) var(--sp-24); box-shadow: 0 1px 0 var(--ring); }
+.dialogHead h2 { margin: 0; font-size: 18px; text-wrap: balance; }
+.dialogHead :global(.modal-actions) { flex: none; margin: 0; }
+.dialogScroll { min-height: 0; max-height: calc(100dvh - 120px); overflow-y: auto; overscroll-behavior: contain; }
+.dialogScroll:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.fullPreview { aspect-ratio: auto; border-radius: 0; overflow: visible; }
+.fullPreview.fallback { aspect-ratio: 4 / 5; }
+.fullPreview.hasLongImage .longImage { position: relative; }
+@media (prefers-reduced-motion: reduce) { .longImage { transform: none !important; } }
+@media (max-width: 480px) {
+  .cards { gap: var(--sp-8); }
+  .card { padding: var(--sp-4); }
+  .label b { font-size: 14px; }
+  .sampleTitle small { display: none; }
+  .sampleTitle b { font-size: 10px; }
+  .previewActions:global(.modal-actions) { top: var(--sp-8); right: var(--sp-8); }
+  .previewActions:global(.modal-actions) button { padding: 0 8px; font-size: 11px; }
+  .dialogHead { padding: var(--sp-12); }
+}

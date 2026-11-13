@@ -89,6 +89,17 @@ function setup(t, adapter = {}) {
   return { sync, timers, storage, puts, uploads, discarded, advance: (ms) => { time += ms; } };
 }
 
+test('WOC16 server draft save sends content and revision without photo-volume state', async (t) => {
+  const { sync, puts } = setup(t);
+  const input = snapshot({ id: 'front', src: 'https://img.test/front.jpg', slot: 'Front' });
+  const saving = sync.saveAll(input);
+  await sync.flush();
+  assert.equal((await saving).status, 'saved');
+  assert.equal(puts[0].payload.product.name, '상품');
+  assert.deepEqual(payloadImages(puts[0]), input.product.colors[0].images);
+  assert.equal(Object.hasOwn(puts[0].payload, 'composeMode'), false);
+});
+
 test('saveAll waits for every delayed upload and counts the images in the successful payload', async (t) => {
   const front = deferred();
   const back = deferred();

@@ -10,7 +10,7 @@ from . import content_roles, cut_generator, mannequin, outer_closure, product_ph
 
 
 _PHOTO_ROWS = {"twocol", "threecol", "grid2x2", "colorcmp"}
-_UNSUPPORTED = {"info", "size", "care", "ai-notice"}
+_UNSUPPORTED = {"size", "care", "ai-notice", "common-notice"}
 _WORN = {"styling", "horizon"}
 _DIRECTIONS = ("front", "side", "back")
 _DEFAULT_PURPOSE = {"hooking": "hero", "styling": "coordination", "studio": "fit", "product": "productOverview"}
@@ -18,8 +18,14 @@ _DETAIL_NAMES = {"neckline": "목선", "closure": "여밈", "pocket": "주머니
                  "hem": "밑단", "construction": "봉제", "surface": "표면", "fabric": "원단", "label": "라벨"}
 
 
+def _is_page_section(block):
+    key = block.get("pageSectionKey")
+    return isinstance(key, str) and bool(key.strip())
+
+
 def _unsupported_block(block):
-    return not isinstance(block, dict) or block.get("kind") in _UNSUPPORTED or bool(block.get("auto")) or bool(block.get("hidden"))
+    return (not isinstance(block, dict) or block.get("kind") in _UNSUPPORTED or bool(block.get("auto"))
+            or bool(block.get("hidden")) or block.get("kind") == "info" and not _is_page_section(block))
 
 
 def slot_kind(block, element, storyboard_by_id):
@@ -33,7 +39,7 @@ def slot_kind(block, element, storyboard_by_id):
     if element.get("genFailed"):
         return "planned"
     source = (storyboard_by_id or {}).get(element.get("sourceBlockId")) or {}
-    generated = not block.get("templateId") and (
+    generated = _is_page_section(block) or not block.get("templateId") and (
         block.get("kind") in _PHOTO_ROWS or bool(block.get("contentRole") and block["contentRole"] != "custom")
     )
     return "planned" if source.get("source") == "ai" and generated else "unplanned"

@@ -33,7 +33,7 @@ for (const code of ['outfit_context_changed', 'internal_error', 'api_network']) 
     },
     promoteOutfitRecommendation: async () => { events.push('outfit'); throw error; },
     promoteConfirmedGptEvidence: async () => events.push('evidence'),
-    patchProject: async () => events.push('project'), getCustomMatchDraft: () => null,
+    getCustomMatchDraft: () => null,
   };
   for (const [key, value] of Object.entries(replacement)) t.mock.method(api, key, value);
   t.mock.method(clientEvents, 'report', details => { reports.push(details); return collector.report(details); });
@@ -47,7 +47,7 @@ for (const code of ['outfit_context_changed', 'internal_error', 'api_network']) 
   assert.equal(task.status, 'settled');
   assert.equal(task.error, null);
   assert.deepEqual(failures, []); // The shell's photo-upload toast only subscribes to failures.
-  assert.deepEqual(events, ['product', 'analysis', 'outfit', 'evidence', 'project']);
+  assert.deepEqual(events, ['product', 'analysis', 'outfit', 'evidence']);
   assert.equal(reports.length, 1);
   assert.equal(reports[0].error, error);
   assert.equal(reports[0].error.code, code);
@@ -65,7 +65,7 @@ for (const stage of ['uploadPhoto', 'saveProduct', 'saveAnalysis']) test(`${stag
   const replacement = { uploadPhoto: async () => ({ assetId: 'asset', url: '/photo' }),
     saveProduct: async () => {}, saveAnalysis: async () => {},
     promoteOutfitRecommendation: async () => assert.fail('failed saves cannot promote'),
-    patchProject: async () => assert.fail('failed saves cannot confirm'), getCustomMatchDraft: () => null };
+    getCustomMatchDraft: () => null };
   replacement[stage] = async () => { throw error; };
   for (const [key, value] of Object.entries(replacement)) t.mock.method(api, key, value);
   t.mock.method(clientEvents, 'report', details => reports.push(details));
@@ -97,13 +97,13 @@ test('확정 승격은 후보를 클라이언트 저장에서 제외하고 사�
     promoteOutfitRecommendation: async (id, value, selections) => {
       events.push('outfit'); assert.equal(id, 'project'); assert.deepEqual(value, handoff); assert.deepEqual(selections, choices);
     },
-    patchProject: async () => events.push('project'), getCustomMatchDraft: () => null,
+    getCustomMatchDraft: () => null,
   };
   for (const [key, value] of Object.entries(replacement)) t.mock.method(api, key, value);
   t.after(() => sync.resetDraftSyncSingleFlight());
   await sync.promoteDraftToProject({ product: { colors: [] }, photos: [], analysis: { clothingType: 'dress',
     outfitSelections: choices, outfitRecommendation: { candidates: { footwear: [] } }, outfitRecommendationHandoff: handoff } });
-  assert.deepEqual(events, ['product', 'analysis', 'outfit', 'project']);
+  assert.deepEqual(events, ['product', 'analysis', 'outfit']);
 });
 
 for (const timing of ['fast', 'late', 'edited']) test(`${timing} 추천 뒤 확정 요청의 선택은 훅이 표시한 선택과 같다`, async t => {
@@ -131,7 +131,7 @@ for (const timing of ['fast', 'late', 'edited']) test(`${timing} 추천 뒤 확�
     createProject: async () => ({ id: 'project' }), saveProduct: async () => {},
     saveAnalysis: async (_id, data) => confirmations.push(data.outfitSelections),
     promoteOutfitRecommendation: async (_id, _handoff, selections) => confirmations.push(selections),
-    patchProject: async () => {}, getCustomMatchDraft: () => null,
+    getCustomMatchDraft: () => null,
   };
   for (const [key, value] of Object.entries(replacement)) t.mock.method(api, key, value);
   t.after(() => sync.resetDraftSyncSingleFlight());
@@ -161,14 +161,14 @@ for (const truncation of ['save', 'promotion']) test(`multi-accessory ${truncati
   for (const [key, value] of Object.entries({ createProject: async () => ({ id: 'multi-draft' }),
     saveProduct: async () => {}, saveAnalysis: adapter.saveAnalysis.bind(adapter),
     promoteOutfitRecommendation: adapter.promoteOutfitRecommendation.bind(adapter),
-    patchProject: async () => events.push('confirmed'), getCustomMatchDraft: () => null })) t.mock.method(api, key, value);
+    getCustomMatchDraft: () => null })) t.mock.method(api, key, value);
   t.after(() => sync.resetDraftSyncSingleFlight());
   if (truncation === 'save') {
     await assert.rejects(sync.promoteDraftToProject(draft), { code: 'outfit_selection_not_saved', projectId: 'multi-draft' });
     assert.deepEqual(events, ['save']);
   } else {
     await sync.promoteDraftToProject(draft);
-    assert.deepEqual(events, ['save', 'promotion', 'save', 'confirmed']);
+    assert.deepEqual(events, ['save', 'promotion', 'save']);
   }
   assert.deepEqual(draft, original);
 });
@@ -191,7 +191,7 @@ for (const readiness of ['missing', 'warming']) test(`stale multi draft stays un
   for (const [key, value] of Object.entries({ createProject: async () => ({ id: 'stale-multi' }),
     saveProduct: async () => {}, saveAnalysis: adapter.saveAnalysis.bind(adapter),
     promoteOutfitRecommendation: adapter.promoteOutfitRecommendation.bind(adapter),
-    patchProject: async () => events.push('confirmed'), getCustomMatchDraft: () => null })) t.mock.method(api, key, value);
+    getCustomMatchDraft: () => null })) t.mock.method(api, key, value);
   t.after(() => sync.resetDraftSyncSingleFlight());
   await assert.rejects(sync.promoteDraftToProject(draft), { code: 'outfit_selection_not_saved', projectId: 'stale-multi' });
   assert.deepEqual(events, []);

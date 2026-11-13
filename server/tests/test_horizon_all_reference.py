@@ -1,4 +1,5 @@
 """Complete horizon references use the existing provider and preserve source frames."""
+from storyboard_v4_cases import v4_blocks
 import pytest
 from app.agents import cut_generator as cg, cut_plan, content_roles
 
@@ -100,11 +101,11 @@ def test_legacy_pose_on_a_set_member_does_not_override_the_example(pose):
 def test_snake_case_set_members_are_also_skipped_by_studio_pose_rotation():
     grouped = [{"sectionRole": "studio", "cutType": "horizon", "pose": "auto",
                 "space_group_id": "ssg1__set__one", "exampleId": "ss_example"} for _ in range(3)]
-    assert all(b.get("pose") in (None, "", "auto") for b in content_roles.canonicalize_storyboard(grouped))
+    assert all(b.get("pose") in (None, "", "auto") for b in content_roles.canonicalize_storyboard(v4_blocks(grouped)))
 
 
 def test_reference_frame_metadata_cannot_be_saved_from_client():
-    stored = content_roles.canonicalize_storyboard([{"id": "one", "source": "ai", **_bound()}], for_storage=True)[0]
+    stored = content_roles.canonicalize_storyboard(v4_blocks([{"id": "one", "source": "ai", **_bound()}]), for_storage=True)[0]
     assert "_horizonReferenceShot" not in stored
 
 

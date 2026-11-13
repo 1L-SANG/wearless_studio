@@ -1,11 +1,10 @@
-import { applyHookStyle } from '../../src/lib/storyboardHookFrame.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSimilarCutBlock, inheritSimilarCutRecipes, canPlanSimilarCut, reconcileSimilarCutMutation } from '../../src/lib/storyboardSimilarCuts.js';
+import { createSimilarCutBlock, inheritSimilarCutRecipes, canPlanSimilarCut, reconcileSimilarCutMutation, keepSimilarFamiliesAfterSources } from '../../src/lib/storyboardSimilarCuts.js';
 import { uniqueGenerationCutCount } from '../../src/lib/generationCutCount.js';
-import { createSpaceSetMembers } from '../../src/lib/storyboardSpaceSets.js';
+import { createSpaceSetMembers, moveBlockWithSpaceMembership } from '../../src/lib/storyboardSpaceSets.js';
 import { normalizeBoard } from '../../src/lib/sections.js';
-const source = { id: 'a', source: 'ai', cutType: 'horizon', contentRole: 'fit', sectionRole: 'studio', taxonomyVersion: 3, sectionId: 'studio', sectionLayout: 'stack', exampleId: 'example', shot: 'full', colorId: 'navy', modelId: 'mA', thumb: 'example.jpg', spaceGroupId: 'set', hookFrameId: 'frame' };
+const source = { id: 'a', source: 'ai', cutType: 'horizon', contentRole: 'fit', sectionRole: 'studio', taxonomyVersion: 4, pageSectionKey: 'show.wear_fit', pageSectionKind: 'wear', pageSectionUsage: 'fit', pageDesignId: 'P04-D01', slotKey: null, sectionId: 'studio', sectionLayout: 'stack', exampleId: 'example', shot: 'full', colorId: 'navy', modelId: 'mA', thumb: 'example.jpg', spaceGroupId: 'set', hookFrameId: 'frame' };
 
 test('new set members do not inherit a follow-up template relationship', () => {
   const original = { ...source, spaceGroupId: undefined, hookFrameId: undefined };
@@ -35,7 +34,7 @@ test('a moved follow-up retains its placement and follows source edits by ID', (
   const result = inheritSimilarCutRecipes([child, { ...source, colorId: 'ivory', exampleId: 'updated', thumb: 'updated.jpg' }]);
   assert.equal(result[0].colorId, 'ivory');
   assert.equal(result[0].exampleId, 'updated');
-  assert.equal(result[0].sectionId, 'other');
+  assert.equal(result[0].sectionId, source.sectionId);
   assert.equal(result[0].layoutRowId, 'row');
   assert.equal(inheritSimilarCutRecipes(result), result);
 });
@@ -63,18 +62,22 @@ test('source deletion and conversion produce the same cleaned save and undo stat
   assert.equal(reconcileSimilarCutMutation(before, converted), converted);
 });
 
-test('shrinking a hooking frame removes follow-ups whose original slot was removed', () => {
-  let n = 0;
-  const template = { ...source, id: 'first', sectionRole: 'hooking', contentRole: 'hero', sectionId: 'hook', cutType: 'styling', spaceGroupId: undefined, hookFrameId: undefined };
-  const make = slot => ({ ...template, ...slot, id: `cut${++n}` });
-  let grid = applyHookStyle([template], 'moodGrid', { colors: [], createBlock: make });
-  grid = grid.map(block => ({ ...block, exampleId: `example-${block.id}` }));
-  const original = grid.at(-1);
-  const before = [...grid, createSimilarCutBlock(original, 'child')];
-  const fitted = applyHookStyle(before, 'pair', { colors: [], createBlock: make });
-  assert.ok(!fitted.some(block => block.id === original.id));
-  assert.ok(fitted.some(block => block.id === 'child'));
-  const saved = reconcileSimilarCutMutation(before, fitted);
-  assert.ok(!saved.some(block => block.id === 'child'));
-  assert.equal(reconcileSimilarCutMutation(before, saved), saved);
+
+test('moving a standalone original carries its follow-ups without adding a generation card', () => {
+  const root = { ...source, spaceGroupId: undefined };
+  const child = createSimilarCutBlock(root, 'child');
+  const other = { ...root, id: 'other' };
+  const moved = moveBlockWithSpaceMembership([root, child, other], root.id, 3);
+  assert.deepEqual(moved.map(b => b.id), ['other', root.id, child.id]);
+  assert.equal(moved.length, 3);
+});
+test('swapping originals carries both families and unrelated insertions preserve manual order', () => {
+  const root = { ...source, spaceGroupId: undefined };
+  const other = { ...root, id: 'other' };
+  const child = createSimilarCutBlock(root, 'child'), second = createSimilarCutBlock(other, 'second');
+  const before = [root, child, other, second];
+  const swapped = keepSimilarFamiliesAfterSources(before, [other, child, root, second]);
+  assert.deepEqual(swapped.map(b => b.id), ['other','second',root.id,'child']);
+  const inserted = [{ ...root, id: 'new' }, ...before];
+  assert.equal(keepSimilarFamiliesAfterSources(before, inserted), inserted);
 });

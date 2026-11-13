@@ -20,6 +20,7 @@ import { mergeOutfitSaveResponse, outfitContextKey, syncOutfitLegacySelection } 
 import { mannequinGenerationTotal, normalizePlanTier } from '../../src/lib/limits.js';
 import { mannequinGenerationCreditShortfall } from '../../src/lib/creditPreflight.js';
 import { confirmDraftPhotos } from '../../src/lib/draftPhotoConfirmation.js';
+import { defaultPageStyle, validPageStyle } from '../../src/lib/pageTemplates/pageStyle.js';
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 const clean = (source) => source.replace(/^import [\s\S]*?;\n/gm, '').replace(/^export default .*;$/gm, '').replace(/^export /gm, '');
@@ -51,13 +52,17 @@ function confirmButton(props, effects) {
   const source = read('src/features/analysis/AnalysisForm.jsx');
   const start = source.indexOf('  const confirmAnalysis = async () =>');
   const end = source.indexOf('  const [customMatchOpen,', start);
+  const style = defaultPageStyle();
   const bindings = {
     confirming: false, onBeforeConfirm: props.onBeforeConfirm, onNext: props.onNext,
     setConfirming: () => effects.push('confirming'), onConfirmingChange: () => effects.push('lock'),
-    commitMdComment: () => effects.push('mdSave'), composeModeSaveRef: { current: Promise.resolve() },
+    commitMdComment: () => effects.push('mdSave'), pageStyleSaveRef: { current: Promise.resolve() }, pageStyleValueRef: { current: style }, setPageStyleError() {},
+    a: { pageStyle: style }, pageStyleReady: true, validPageStyle,
+    onChange: () => assert.fail('unchanged template saved again'),
     mannequinGenerationCost: 45,
   };
-  return new Function(...Object.keys(bindings), `${source.slice(start, end)}; return confirmAnalysis;`)(...Object.values(bindings));
+  const persist = source.slice(source.indexOf('  const persistSelectedPageStyle ='), source.indexOf('  const prepareOutfit ='));
+  return new Function(...Object.keys(bindings), `${persist}\n${source.slice(start, end)}; return confirmAnalysis;`)(...Object.values(bindings));
 }
 
 function harness({ mobile = true, analysis = null, fastEntry = false, analyze = null, prepare = null, featureFactory = null, restoreFeature = null, saveAll, transcode, photos = product(), doneBlocked = false, persisted = false, stagedDraft = true, initialSavedMeta = null, session = { user: { id: 'seller' } }, authLoading = false, draftStore = null, slotClient = null, previewRegistry = null, autoSaveIntent = null, sellerConsentReady, slotApi, consentRetry } = {}) {
@@ -72,9 +77,9 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
   let pendingHandler, conflictHandler, visualHandler, featureController, nextImageId = 0;
   const frames = new Map();
   let active, cursor, effects = [], dirty = false;
-  let staged = stagedDraft ? { payload: typeof stagedDraft === 'object' ? stagedDraft : { product: photos, analysis, composeMode: 'basic' } } : null;
-  const state = { projectId: persisted ? 'desktop' : null, projectPersisted: persisted, composeMode: 'basic', mannequinJob: {}, projectGeneration: 0,
-    markFlowUsed() {}, resumePath: '/create/input', restoreComposeMode() {}, adoptProject(id) { calls.push(['adopt', id]); }, async beginProject() { calls.push('begin'); }, setInputPromotionLocked() {} };
+  let staged = stagedDraft ? { payload: typeof stagedDraft === 'object' ? stagedDraft : { product: photos, analysis } } : null;
+  const state = { projectId: persisted ? 'desktop' : null, projectPersisted: persisted, mannequinJob: {}, projectGeneration: 0,
+    markFlowUsed() {}, resumePath: '/create/input', adoptProject(id) { calls.push(['adopt', id]); }, async beginProject() { calls.push('begin'); }, setInputPromotionLocked() {} };
   const useAppStore = (select) => select(state);
   useAppStore.getState = () => state;
   const location = { key: 'input', pathname: '/create/input', state: null };
@@ -213,7 +218,7 @@ test('M2 mobile CTA saves the full snapshot, locks editing, and never analyzes',
   const snapshot = h.calls.find((call) => call[0] === 'saveAll')[1];
   assert.equal(snapshot.product.name, '니트');
   assert.equal(snapshot.analysis, null);
-  assert.equal(snapshot.composeMode, 'basic');
+  assert.equal(Object.hasOwn(snapshot, 'composeMode'), false);
   assert.ok(snapshot.localUpdatedAt);
   finish({ status: 'saved', photoCount: 2 }); await saving;
   tree = await h.settle();
