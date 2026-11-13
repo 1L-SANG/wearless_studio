@@ -2748,7 +2748,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 imgs = list(confirmed_packet.images)
                 manifest = confirmed_packet.manifest
                 cut_spec["_confirmedGptVariant"] = (
-                    "selected_mannequin_v1" if confirmed_packet.prompt_input.scope.selected_mannequin
+                    "selected_mannequin_v1" if cut_mannequin_image is not None
                     else "product_evidence_v2"
                 )
             else:
