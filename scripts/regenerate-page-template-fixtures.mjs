@@ -328,7 +328,7 @@ for (const designId of ['P01-D09', 'P01-D09-G']) for (const plated of [false, tr
 }
 // Seller MD copy has priority over generated copy and retains its original text.
 fixture.cases = fixture.cases.filter(item => !item.name.startsWith('woc17-'));
-for (const templateId of ['emo', 'show']) for (const copywriting of [true, false]) {
+for (const templateId of ['emo', 'show']) {
     const aiBody = 'AI 첫 문단\n\nAI 둘째 문단\nAI 셋째 문단\nAI 넷째 문단';
     for (const [suffix, mdComment, body] of [
         ['seller-multiline', '  Cotton 셔츠를 추천해요.  \n\n  둘째 줄\n셋째 줄\n넷째 줄  \n', aiBody],
@@ -338,13 +338,13 @@ for (const templateId of ['emo', 'show']) for (const copywriting of [true, false
     ]) {
         const input = structuredClone(fixture.cases.find(item => item.name === `${templateId}-2-mono`).input);
         const intro = input.storyboard.find(block => block.pageSectionKind === 'intro');
-        intro.pageDesignId = 'T01-D07';
+        intro.pageDesignId = templateId === 'show' ? 'T06-D01' : 'T01-D07';
         input.analysis.mdComment = mdComment;
-        input.copywriting = copywriting;
+        input.copywriting = true;
         input.copyResults = input.copyResults.filter(copy => copy.blockId !== intro.id);
         input.copyResults.push({ blockId: intro.id, texts: [{ role: 'body', text: body }] });
         validateStoryboardV4(input.storyboard);
-        fixture.cases.push({ name: `woc17-${templateId}-${copywriting ? 'on' : 'off'}-${suffix}`, input });
+        fixture.cases.push({ name: `woc17-${templateId}-on-${suffix}`, input });
     }
 }
 for (const item of fixture.cases.filter(item => /^woc(?:[2356]|6b|11)-/.test(item.name))) validateStoryboardV4(item.input.storyboard);

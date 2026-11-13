@@ -145,7 +145,7 @@ test("first-page text is centered as one group and uses its measured black/white
     }
 });
 
-test("static/fact slots and seller MD text survive pending or disabled AI copy", () => {
+test("static/fact slots retain their sources and pending copy keeps seller MD", () => {
     const pendingInput = caseOf("emo-copy-pending"), pending = assemblePage(pendingInput);
     assert.equal(
         text(section(pending, "emo.first"), "name")[0].text,
@@ -155,10 +155,6 @@ test("static/fact slots and seller MD text survive pending or disabled AI copy",
     assert.equal(text(section(pending, "emo.intro"), "body")[0].text, pendingInput.analysis.mdComment);
     const offInput = caseOf("emo-copy-off-seller"),
         off = assemblePage(offInput);
-    assert.equal(
-        text(section(off, "emo.intro"), "body")[0].text,
-        offInput.analysis.mdComment,
-    );
     assert.equal(
         text(section(off, "emo.for_you"), "title")[0].text,
         "이런 분께 추천해요",

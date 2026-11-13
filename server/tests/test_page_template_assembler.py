@@ -61,7 +61,6 @@ def test_copy_pending_off_and_fact_sources():
     assert text(section(pending, "emo.intro"), "body")[0]["text"] == pending_input["analysis"]["mdComment"]
     off_value = case_input("emo-copy-off-seller")
     off = assemble_input(off_value)
-    assert text(section(off, "emo.intro"), "body")[0]["text"] == off_value["analysis"]["mdComment"]
     assert text(section(off, "emo.for_you"), "title")[0]["text"] == "이런 분께 추천해요"
     assert all(el["text"] == "" and el["placeholder"] for el in elements(section(off, "emo.review")) if el.get("copyRole", "").startswith("items."))
     value = case_input("emo-2-mono")

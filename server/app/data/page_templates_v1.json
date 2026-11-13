@@ -552,7 +552,7 @@
       "emptySellerNote": "AI가 초안을 써요",
       "kind": "intro",
       "storyboardPhotoNote": "",
-      "storyboardTextNote": "MD 코멘트를 그대로 보여줘요"
+      "storyboardTextNote": "MD 코멘트를 넣어요"
     },
     "points": {
       "name": "디테일 요소",
@@ -2327,7 +2327,7 @@
         "aspect": "source",
         "gap": 40
       },
-      "storyboardTextNote": "MD 코멘트를 그대로 보여줘요"
+      "storyboardTextNote": "MD 코멘트를 넣어요"
     },
     "T06-D01": {
       "id": "T06-D01",
@@ -2367,6 +2367,24 @@
           "padding": 56,
           "fill": "summaryBg",
           "nodes": [
+            {
+              "type": "text",
+              "copyRole": "label",
+              "gap": 12,
+              "size": 32,
+              "x": 56,
+              "w": 776,
+              "whenTemplate": "show"
+            },
+            {
+              "type": "text",
+              "copyRole": "body",
+              "gap": 30,
+              "size": 25,
+              "x": 56,
+              "w": 776,
+              "whenTemplate": "show"
+            },
             {
               "type": "factTable",
               "copyRole": "facts",
