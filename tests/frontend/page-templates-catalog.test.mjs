@@ -11,9 +11,11 @@ import {
     resolvePageTokens,
 } from "../../src/lib/pageTemplates/tokens.js";
 
-test("catalog contains the ten kinds, four menu groups, approved first-phase designs and ordered defaults", () => {
+test("catalog keeps saved designs and exposes the current defaults without SNS by default", () => {
     assert.equal(validateCatalog(catalog), catalog);
     assert.equal(Object.keys(catalog.kinds).length, 10);
+    assert.equal(Object.keys(catalog.designs).length, 52);
+    assert.equal(Object.values(catalog.designs).filter(design => design.pickerHidden).length, 27);
     assert.equal(
         (catalog.firstTitleBand.top + catalog.firstTitleBand.bottom) / 2,
         0.5,
@@ -43,6 +45,19 @@ test("catalog contains the ten kinds, four menu groups, approved first-phase des
                 .filter((slot) => slot.recipe?.detailPool === "points")
                 .every((slot) => slot.count.max === 3),
         );
+        for (const section of template.sections) {
+            if (section.kind === "wear")
+                assert.equal(section.designId, section.usage === "fit" ? "WEAR-FIT-COLUMN-01" : "P02-D01");
+            if (section.kind === "color_product") assert.equal(section.designId, "CP-COLUMN-01");
+            if (section.kind === "points") assert.equal(section.designId, template.id === "emo" ? "PT-PHOTO-CARD-01" : "PT-TEXT-PHOTO-01");
+            if (section.kind === "sns") assert.equal(section.presence, "optional");
+            if (section.presence === "default") assert.notEqual(catalog.designs[section.designId].pickerHidden, true);
+        }
+        assert.equal(template.addPlacements.wear.designId, "P02-D01");
+        assert.equal(template.addPlacements.color_product.designId, "CP-COLUMN-01");
+        assert.equal(template.addPlacements.points.designId, template.id === "emo" ? "PT-PHOTO-CARD-01" : "PT-TEXT-PHOTO-01");
+        assert.deepEqual(template.addPlacements.sns.designIds, ["I09-D14", "P07-D08"]);
+        assert.ok(template.addPlacements.sns.designIds.every(id => catalog.designs[id].pickerHidden));
     }
     assert.deepEqual(
         catalog.menuGroups.map((group) => group.name),
@@ -84,14 +99,25 @@ test("catalog contains the ten kinds, four menu groups, approved first-phase des
         "P01-D09",
         "P01-D01",
         "P01-D11",
+        "P01-D09-G",
+        "P01-SHOW-01-G",
+        "P01-SHOW-01",
         "P02-D01",
         "P02-D02",
         "P04-D01",
+        "WEAR-STYLING-2COL-01",
+        "WEAR-STYLING-HERO-01",
+        "WEAR-FIT-COLUMN-01",
+        "WEAR-FIT-2COL-01",
+        "WEAR-FIT-HERO-01",
+        "CP-COLUMN-01",
         "CP-EMO-01",
         "CP-SHOW-01",
         "CP-GUIDE-01",
         "T03-D01",
         "T03-D06",
+        "T03-D01-P",
+        "T03-D06-P",
         "T03-GUIDE-01",
         "T03-TEXT-01",
         "T01-D07",
@@ -99,11 +125,18 @@ test("catalog contains the ten kinds, four menu groups, approved first-phase des
         "PT-EMO-01",
         "PT-EMO-TEXT",
         "P06-D01",
+        "PT-COLUMN-01",
+        "PT-COLUMN-CARD-01",
+        "PT-BELOW-CARD-01",
+        "PT-PHOTO-CARD-01",
+        "PT-TEXT-PHOTO-01",
         "T05-D07",
         "T07-D06",
         "T08-D01",
         "I09-D06",
+        "I09-SCRIM-01",
         "T08-D07",
+        "T08-SCRIM-01",
         "I09-D14",
         "P07-D08",
     ])
@@ -392,7 +425,7 @@ test("token resolution uses the base swatch, preserves body fonts and does not m
         baseColorOf(product).swatchId,
     );
     assert.equal(tokens.colors.accentInk, catalog.pointPalette.blue.accentInk);
-    assert.equal(tokens.fonts.titleKo.weight, 800);
+    assert.equal(tokens.fonts.titleKo.weight, 700);
     assert.equal(tokens.fonts.labelEn.font, "Cal Sans");
     assert.equal(tokens.fonts.body.font, "Pretendard");
     assert.equal(tokens.fonts.body.weight, 400);

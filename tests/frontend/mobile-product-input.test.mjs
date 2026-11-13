@@ -77,9 +77,9 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
   let pendingHandler, conflictHandler, visualHandler, featureController, nextImageId = 0;
   const frames = new Map();
   let active, cursor, effects = [], dirty = false;
-  let staged = stagedDraft ? { payload: typeof stagedDraft === 'object' ? stagedDraft : { product: photos, analysis, composeMode: 'basic' } } : null;
-  const state = { projectId: persisted ? 'desktop' : null, projectPersisted: persisted, composeMode: 'basic', mannequinJob: {}, projectGeneration: 0,
-    markFlowUsed() {}, resumePath: '/create/input', restoreComposeMode() {}, adoptProject(id) { calls.push(['adopt', id]); }, async beginProject() { calls.push('begin'); }, setInputPromotionLocked() {} };
+  let staged = stagedDraft ? { payload: typeof stagedDraft === 'object' ? stagedDraft : { product: photos, analysis } } : null;
+  const state = { projectId: persisted ? 'desktop' : null, projectPersisted: persisted, mannequinJob: {}, projectGeneration: 0,
+    markFlowUsed() {}, resumePath: '/create/input', adoptProject(id) { calls.push(['adopt', id]); }, async beginProject() { calls.push('begin'); }, setInputPromotionLocked() {} };
   const useAppStore = (select) => select(state);
   useAppStore.getState = () => state;
   const location = { key: 'input', pathname: '/create/input', state: null };
@@ -218,7 +218,7 @@ test('M2 mobile CTA saves the full snapshot, locks editing, and never analyzes',
   const snapshot = h.calls.find((call) => call[0] === 'saveAll')[1];
   assert.equal(snapshot.product.name, '니트');
   assert.equal(snapshot.analysis, null);
-  assert.equal(snapshot.composeMode, 'basic');
+  assert.equal(Object.hasOwn(snapshot, 'composeMode'), false);
   assert.ok(snapshot.localUpdatedAt);
   finish({ status: 'saved', photoCount: 2 }); await saving;
   tree = await h.settle();

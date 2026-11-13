@@ -1,7 +1,6 @@
 /* WOC1b presentation. Values shared by portals live in tokens.css .sb-v5-theme. */
 .page {
   --conti-outline-width: calc(var(--sb-toc-thumb) + var(--sb-toc-tools-space));
-  --conti-stage-width: 742px;
   --conti-gap: var(--sp-28);
   --conti-photo-gap: var(--sp-12);
   color: var(--fg-1);
@@ -9,15 +8,22 @@
   letter-spacing: -.01em;
 }
 .page:global(.wizard.wide) { max-width: 1078px; padding: var(--sp-16) var(--sp-24) 104px; overflow: visible; margin-inline: max(0px, calc((100% - 1078px) / 2)) auto; transition: margin-inline-start var(--sb-t-base) var(--sb-ease); }
-.page:global(.sb-page) > :global(.page-head) { padding: var(--sp-28) 0 var(--sp-24); text-align: left; transition: opacity var(--sb-t-base) var(--sb-ease); }
+.page:global(.sb-page) > :global(.page-head) { width: 100%; margin-inline: 0; padding: var(--sp-28) 0 var(--sp-24); text-align: left; transition: opacity var(--sb-t-base) var(--sb-ease); }
 .page:global(.sb-page) > :global(.page-head) h1 { font-size: var(--sb-fs-title); font-weight: 700; line-height: 1.25; letter-spacing: -.03em; text-wrap: balance; }
 .page:global(.sb-page) > :global(.page-head) p { margin-top: var(--sp-8); color: var(--fg-2); font-size: var(--sb-fs-body); line-height: 1.35; letter-spacing: -.01em; }
+.pageHeadWithTheme { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--sp-8) var(--sp-20); }
+.pageHeadingCopy { min-width: 0; }
+.styleControlsWrap { justify-self: end; min-width: 0; max-width: 100%; }
+.page:global(.sb-page) > :global(.page-head) .introCopy { margin: var(--sp-8) 0 0; color: var(--fg-2); font-size: var(--sb-fs-intro); line-height: 1.5; text-wrap: pretty; }
+@media (max-width: 1109px) { .pageHeadWithTheme { grid-template-columns: minmax(0, 1fr); gap: var(--sp-16); } }
 .page.page.drawerOpen { margin-inline-start: 0; }
-.drawerOpen > :global(.page-head) { opacity: .4; transition: opacity var(--sb-t-base) var(--sb-ease); }
+.page.designDrawerOpen { --sb-drawer-width: var(--sb-design-drawer-width); }
+.pageHeadingCopy { transition: opacity var(--sb-t-base) var(--sb-ease); }
+.drawerOpen > :global(.page-head) > .pageHeadingCopy { opacity: .4; }
 .page button, .continueBar button { letter-spacing: inherit; }
 .page button:disabled, .continueBar button:disabled { opacity: .42; cursor: default; }
 .page button:focus-visible, .continueBar button:focus-visible { outline: 2px solid var(--focus); outline-offset: var(--sp-2); }
-.layout { display: grid; grid-template-columns: var(--conti-outline-width) minmax(0, var(--conti-stage-width)); gap: var(--conti-gap); align-items: start; opacity: 1; transform: translateY(0); transition: opacity var(--sb-t-base) var(--sb-ease), transform var(--sb-t-base) var(--sb-ease); }
+.layout { min-height: 0; display: grid; grid-template-columns: var(--conti-outline-width) minmax(0, 1fr); gap: var(--conti-gap); align-items: start; opacity: 1; transform: translateY(0); transition: opacity var(--sb-t-base) var(--sb-ease), transform var(--sb-t-base) var(--sb-ease); }
 .page:global(.sb-initial-reveal):not(:global(.is-revealed)) .layout { opacity: 0; transform: translateY(var(--sp-8)); pointer-events: none; }
 .layout.overviewLayout { grid-template-columns: minmax(0, 1fr); }
 .outline { min-width: 0; padding: 0 var(--sp-12) var(--sp-8) var(--sp-8); border: 1px solid var(--sb-panel-border); border-radius: var(--r-6); background: var(--sb-panel-bg); box-shadow: var(--sb-panel-shadow); }
@@ -36,7 +42,7 @@
 .sectionRow:hover .sectionTitle strong { text-decoration: underline; text-underline-offset: var(--sp-3); }
 .selectedSection .sectionTitle, .selectedSection .sectionTitle em { color: var(--fg-1); }
 .thumbnailWrap { position: relative; }
-.sectionSelect { display: block; width: var(--sb-toc-thumb); min-width: 0; border: 1px solid var(--sb-toc-border); border-radius: var(--r-4); overflow: hidden; background: var(--bg-1); cursor: pointer; }
+.sectionSelect { position: relative; display: block; width: var(--sb-toc-thumb); min-width: 0; border: 1px solid var(--sb-toc-border); border-radius: var(--r-4); overflow: hidden; background: var(--bg-1); cursor: pointer; }
 .selectedSection .sectionSelect { border-color: var(--fg-1); box-shadow: inset 0 0 0 1px var(--fg-1); }
 .selectedSection .sectionSelect::after { content: ''; position: absolute; inset: 0; border: 2px solid var(--fg-1); border-radius: var(--r-4); pointer-events: none; }
 .page .sectionSelect:focus-visible { outline: 2px solid var(--focus); outline-offset: var(--sp-2); }
@@ -45,14 +51,16 @@
 .previewEmpty, .previewWireShape { fill: var(--sb-wire-1); }
 .previewWireCanvas { fill: var(--bg-1); }
 .previewWirePhoto { fill: var(--sb-wire-photo); stroke: var(--sb-wire-comp); }
+.previewWireBackdrop { fill: var(--sb-wire-inv); }
 .previewTextLine { fill: var(--sb-wire-3); }
 .previewTextOnScrim { fill: var(--bg-1); }
 .previewRule { stroke: var(--sb-wire-comp); }
 .positionHit { fill: transparent; stroke: none; cursor: pointer; }
 .positionHighlight { fill: var(--sb-position-veil); stroke: var(--fg-1); stroke-width: 2.4px; pointer-events: auto; }
-.sectionTools { position: absolute; z-index: 3; top: var(--sp-6); right: var(--sp-6); display: flex; align-items: center; padding: var(--sp-3); gap: var(--sp-1); border-radius: var(--r-pill); background: var(--bg-1); box-shadow: var(--elev-card); opacity: 0; pointer-events: none; transition: opacity var(--sb-t-fast); }
-.sectionRow:hover .sectionTools, .sectionRow:focus-within .sectionTools { opacity: 1; pointer-events: auto; }
-.sectionTools button { display: grid; place-items: center; width: 25px; height: 26px; border: 0; border-radius: var(--r-pill); padding: 0; background: transparent; color: var(--fg-1); cursor: pointer; }
+.sectionTools { position: absolute; z-index: 3; top: var(--sp-6); left: var(--sp-6); display: flex; align-items: center; padding: 0; gap: var(--sp-1); border-radius: var(--r-pill); background: var(--bg-1); box-shadow: var(--elev-card); }
+.sectionTools button { display: grid; place-items: center; width: var(--sp-28); height: var(--sp-28); flex: none; border: 0; border-radius: var(--r-pill); padding: 0; background: transparent; color: var(--fg-1); cursor: pointer; }
+.sectionMoveTools { display: flex; gap: var(--sp-1); width: 0; overflow: hidden; opacity: 0; pointer-events: none; }
+.sectionTools:hover .sectionMoveTools, .sectionTools:focus-within .sectionMoveTools { width: calc(var(--sp-28) * 2 + var(--sp-1)); overflow: visible; opacity: 1; pointer-events: auto; }
 .sectionTools button:hover { background: var(--bg-2); }
 .sectionTools button[aria-disabled="true"] { opacity: .3; cursor: default; }
 .sectionTools .removeSection { color: var(--fg-2); }
@@ -66,16 +74,21 @@
 .dragging .dropOn::after { height: 3px; opacity: 1; }
 .insertedSection .sectionSelect { animation: insertedFlash 900ms var(--sb-ease) var(--sb-flight-duration); }
 @keyframes insertedFlash { 50% { box-shadow: 0 0 0 3px var(--fg-1); } }
-.stage { min-width: 0; max-height: calc(100vh - 302px); overflow-y: auto; scrollbar-width: thin; scrollbar-gutter: stable; border: 1px solid var(--sb-panel-border); border-radius: var(--r-6); background: var(--sb-panel-bg); box-shadow: var(--sb-panel-shadow); }
-.stageHead { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-12); padding: var(--sp-16) var(--sp-20) 14px; border-bottom: 1px solid var(--sb-panel-border); background: var(--bg-2); }
+.stage { display: flex; flex-direction: column; min-width: 0; min-height: 0; max-height: calc(100vh - 302px); overflow: hidden; border: 1px solid var(--sb-panel-border); border-radius: var(--r-6); background: var(--sb-panel-bg); box-shadow: var(--sb-panel-shadow); }
+.stageHead { flex: none; position: relative; isolation: isolate; display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-12); padding: var(--sp-16) var(--sp-20) 14px; border-bottom: 1px solid var(--sb-panel-border); background: var(--bg-2); }
+.stageToneBand { position: absolute; z-index: -1; inset: 0; pointer-events: none; }
+.stageToneBand rect, .preview rect, .preview line { transition: fill var(--sb-tone-transition) var(--sb-ease), stroke var(--sb-tone-transition) var(--sb-ease); }
 .stageHead h2 { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-12); font: 650 var(--sb-fs-head)/1.3 var(--font-body); letter-spacing: -.02em; text-wrap: balance; margin: 0; }
 .stageHead h2 em { font: italic 500 var(--sb-fs-sub)/1.2 var(--sb-font-index); color: var(--fg-2-read); letter-spacing: 0; }
 .stageHead p { margin: var(--sp-8) 0 0; color: var(--fg-2); font: 400 var(--sb-fs-note)/1.45 var(--font-body); letter-spacing: -.01em; }
 .stageActions:global(.modal-actions) { display: flex; flex: none; gap: var(--sp-8); margin: 0; }
-.designButton { min-height: 32px; border: 0; border-radius: var(--r-pill); padding: 0 14px; background: var(--cta-bg); color: var(--cta-fg); box-shadow: var(--elev-btn-hi); font: 540 var(--sb-fs-btn)/1.2 var(--font-body); cursor: pointer; transition: background-color var(--sb-t-fast), box-shadow var(--sb-t-fast); }
-.designButton:hover { background: var(--cta-bg-hover); }
+.designButton { display: inline-flex; align-items: center; gap: var(--sp-6); min-height: 32px; border: 0; border-radius: var(--r-pill); padding: 0 14px; background: var(--bg-1); color: var(--fg-1); box-shadow: inset 0 0 0 1px var(--sb-line-control); font: 540 var(--sb-fs-btn)/1.2 var(--font-body); cursor: pointer; transition: background-color var(--sb-t-fast), box-shadow var(--sb-t-fast); }
+.designButton:hover { box-shadow: inset 0 0 0 1px var(--fg-2); }
 .page .designButton:focus-visible, .continueBar .continue:focus-visible { outline: none; box-shadow: var(--cta-focus-ring); }
-.stageBody { padding: var(--sp-16) var(--sp-20) var(--sp-24); }
+.stageBody { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-gutter: stable; overscroll-behavior: contain; padding: var(--sp-16) var(--sp-20) var(--sp-24); }
+.stageSourceNote { margin: 0 0 var(--sp-12); color: var(--fg-2); font: 400 var(--sb-fs-note)/1.45 var(--font-body); }
+.captionColor { display: block; width: 14px; height: 14px; flex: none; }
+.captionColor circle { stroke: var(--ring-strong); stroke-width: 1px; }
 .stageRow { display: grid; align-items: start; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--conti-photo-gap); margin-bottom: var(--sp-20); }
 .stageRow:last-child { margin-bottom: 0; }
 .stageGroup { min-width: 0; }
@@ -91,7 +104,7 @@
 .groupPhotos[data-columns="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .groupPhotos[data-columns="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .photoCard { min-width: 0; transition: opacity var(--sb-t-base) var(--sb-ease), transform var(--sb-t-fast) var(--sb-ease); }
-.photoCard:hover { transform: translateY(-2px); }
+.photoCard:not([data-planned-detail]):hover { transform: translateY(-2px); }
 .photoFrame { position: relative; }
 .photo { display: block; position: relative; width: 100%; padding: 0; border: 0; border-radius: var(--r-4); aspect-ratio: 3 / 4; overflow: hidden; background: var(--bg-2); cursor: pointer; }
 .photo img { display: block; width: 100%; height: 100%; object-fit: cover; }
@@ -120,14 +133,13 @@
 .pill { min-height: 32px; border: 1px solid var(--sb-line-control); border-radius: var(--r-pill); padding: 0 14px; background: var(--bg-1); color: var(--fg-1); font: 540 var(--sb-fs-btn)/1.2 var(--font-body); cursor: pointer; transition: border-color var(--sb-t-fast), background-color var(--sb-t-fast); }
 .pill:hover { border-color: var(--fg-2); }
 .pill:active { background: var(--bg-2); }
-.addSlot small { margin-top: var(--sp-2); color: var(--fg-2); font-size: var(--sb-fs-meta); text-align: center; font-variant-numeric: tabular-nums; }
 .overview { width: 100%; max-height: calc(100vh - 284px); overflow-y: auto; scrollbar-gutter: stable; padding: 0 var(--sp-20) var(--sp-24) 0; }
 .overviewHead { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-16); margin-bottom: var(--sp-16); }
 .overviewHead h2 { font: 650 var(--sb-fs-head)/1.3 var(--font-body); letter-spacing: -.02em; text-wrap: balance; }
 .overviewHead .back { font-size: var(--sb-fs-btn); white-space: nowrap; }
 .overviewSection { display: block; width: min(100%, 560px); border: 0; background: var(--bg-1); padding: 0; cursor: pointer; }
 .overviewSection:hover { outline: 2px solid var(--focus); outline-offset: -2px; }
-.continueBar { position: fixed; z-index: 220; right: max(24px, calc((100vw - 1030px) / 2)); bottom: var(--sp-16); display: flex; align-items: center; gap: var(--sp-16); max-width: calc(100vw - 48px); padding: var(--sp-8) var(--sp-8) var(--sp-8) var(--sp-20); background: var(--glass-bg); backdrop-filter: var(--glass-blur); border: 0; border-radius: var(--r-pill); box-shadow: var(--elev-lift); color: var(--fg-2); font: 400 var(--sb-fs-btn)/1.2 var(--font-body); letter-spacing: -.01em; font-variant-numeric: tabular-nums; transition: opacity var(--sb-t-base), transform var(--sb-t-base) var(--sb-ease), visibility var(--sb-t-base); }
+.continueBar { position: fixed; z-index: 220; right: var(--sb-page-edge); bottom: calc(var(--sb-footer-height) + var(--sp-16)); display: flex; align-items: center; gap: var(--sp-16); max-width: calc(100vw - 48px); padding: var(--sp-8) var(--sp-8) var(--sp-8) var(--sp-20); background: var(--glass-bg); backdrop-filter: var(--glass-blur); border: 0; border-radius: var(--r-pill); box-shadow: var(--elev-lift); color: var(--fg-2); font: 400 var(--sb-fs-btn)/1.2 var(--font-body); letter-spacing: -.01em; font-variant-numeric: tabular-nums; transition: opacity var(--sb-t-base), transform var(--sb-t-base) var(--sb-ease), visibility var(--sb-t-base); }
 .continueBar strong { color: var(--fg-1); font-weight: 600; }
 .continueBar .continue { min-height: var(--cta-height); font: 540 var(--sb-fs-sub)/1.3 var(--font-body); padding: 0 22px; letter-spacing: -.01em; white-space: nowrap; animation-duration: var(--sb-spin); }
 .continueHidden { opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(var(--sp-8)); }
@@ -163,3 +175,50 @@
 .removeDialog button { flex: 1; min-height: 44px; border: 1px solid var(--sb-line-control); border-radius: var(--r-pill); background: var(--bg-1); color: var(--fg-1); font: 540 var(--sb-fs-body)/1.4 var(--font-body); cursor: pointer; }
 .removeDialog button:last-child { background: var(--cta-bg); color: var(--cta-fg); border-color: var(--cta-bg); }
 @media (prefers-reduced-motion: reduce) { .backdrop i { animation: none; } }
+
+/* The desktop shell owns document height; only these two panes scroll. */
+@media (min-width: 1024px) {
+  .page:global(.wizard.wide) { display: flex; flex-direction: column; flex: 1; min-height: 0; height: 100%; padding-bottom: calc(var(--sb-continue-height) + var(--sp-16) * 2); }
+  .page > :global(.page-head) { flex: none; }
+  .layout { flex: 1 1 0; min-height: 0; grid-template-rows: minmax(0, 1fr); align-items: stretch; }
+  .outline { display: flex; flex-direction: column; min-height: 0; }
+  .outlineHead { flex: none; }
+  .outlineScroll { flex: 1 1 0; min-height: 0; max-height: none; overscroll-behavior: contain; }
+  .stage, .overview { min-height: 0; max-height: none; height: 100%; overscroll-behavior: contain; }
+  .drawerOpen:global(.wizard.wide) { padding-bottom: var(--sp-16); }
+  .page.drawerOpen .pageHeadWithTheme { width: min(100%, calc(100vw - var(--sb-drawer-width) - var(--sp-12) - var(--sp-16) - var(--sp-24))); grid-template-columns: minmax(0, 1fr); }
+  .page.designDrawerOpen .layout { width: min(100%, calc(100vw - var(--sb-drawer-width) - var(--sp-12) - var(--sp-16) - var(--sp-24))); }
+  .drawerOpen .styleControlsWrap { justify-self: start; }
+}
+/* (1078px page + 2 * (40px gutter - 24px padding)) = 1110px.
+   An open drawer moves the page to the24px edge, so it uses the inside fallback. */
+@media (min-width: 1110px) {
+  .page:not(.drawerOpen) .outlineScroll { margin-left: calc(-1 * (var(--sb-outside-tools) + var(--sp-8))); padding-left: calc(var(--sb-outside-tools) + var(--sp-8) + var(--sp-4)); }
+  .page:not(.drawerOpen) .thumbnailWrap { position: static; }
+  .page:not(.drawerOpen) .sectionTools { left: calc(-1 * (var(--sb-outside-tools) + var(--sp-8))); flex-direction: column; }
+  .page:not(.drawerOpen) .sectionMoveTools { flex-direction: column; width: var(--sp-28); height: 0; }
+  .page:not(.drawerOpen) .sectionTools:hover .sectionMoveTools,
+  .page:not(.drawerOpen) .sectionTools:focus-within .sectionMoveTools { width: var(--sp-28); height: calc(var(--sp-28) * 2 + var(--sp-1)); }
+}
+.photoCaption .captionGarment { display: inline-flex; gap: var(--sp-4); align-items: center; min-width: 0; padding: 0; background: transparent; color: var(--fg-2); font-size: var(--sb-fs-meta); }
+.captionGarment .captionColorName { min-width: 0; padding: 0; background: transparent; text-wrap: balance; }
+.photoCaption > strong { flex: none; font-size: var(--sb-fs-meta); white-space: nowrap; }
+/* The 330px design drawer leaves 100vw - 382px for the page. From 1412px that is
+   at least the closed 1030px page, so the title and style controls stay side by side
+   instead of dropping the stage below the controls. */
+@media (min-width: 1412px) {
+  .page.designDrawerOpen .pageHeadWithTheme { grid-template-columns: minmax(0, 1fr) auto; }
+  .page.designDrawerOpen .styleControlsWrap { justify-self: end; }
+}
+
+/* Storyboard-only planned detail photographs. Hover never reveals a different source. */
+.detailSource { filter: saturate(.8); }
+.detailVeil { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(to bottom, color-mix(in srgb, var(--bg-1) calc(var(--sb-detail-veil-start) * 100%), transparent) 52%, color-mix(in srgb, var(--bg-1) calc(var(--sb-detail-veil-end) * 100%), transparent)); }
+.detailNotice { position: absolute; inset-inline: var(--sp-12); bottom: calc(var(--sp-8) + var(--sp-2)); display: flex; flex-direction: column; gap: var(--sp-2); text-align: left; color: var(--fg-1); pointer-events: none; }
+.detailNotice b { font: 650 var(--sb-detail-title-size)/1.3 var(--font-body); letter-spacing: -.02em; text-wrap: balance; }
+.detailNotice small { color: var(--fg-2-read); font: 400 var(--sb-detail-note-size)/1.35 var(--font-body); text-wrap: balance; }
+.detailFadeStart { stop-opacity: var(--sb-detail-veil-start); }
+.detailFadeEnd { stop-opacity: var(--sb-detail-veil-end); }
+.previewDetailNotice { pointer-events: none; text-anchor: start; }
+.previewDetailTitle { fill: var(--fg-1); font: 650 var(--sb-detail-overview-title)/1.3 var(--font-body); text-wrap: balance; }
+.previewDetailNote { fill: var(--fg-2-read); font: 400 var(--sb-detail-overview-note)/1.35 var(--font-body); text-wrap: balance; }

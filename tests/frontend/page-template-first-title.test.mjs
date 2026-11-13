@@ -38,8 +38,8 @@ for (const color of ["#ffffff", "#111111"])
         assert.deepEqual(
             rules.map((e) => [e.x, e.y, e.w, e.h, e.fill]),
             [
-                [309, 498, 382, 1.5, color],
-                [309, 750.5, 382, 1.5, color],
+                [309, 522, 382, 1.5, color],
+                [309, 726.5, 382, 1.5, color],
             ],
         );
         assert.equal(label.y - rules[0].y - rules[0].h, 18);
@@ -52,9 +52,9 @@ for (const color of ["#ffffff", "#111111"])
     });
 
 for (const [position, labelY, ruleY] of [
-    ["center", 517.5, 498],
+    ["center", 541.5, 522],
     ["top", 119.5, 100],
-    ["bottom", 915.5, 896],
+    ["bottom", 963.5, 944],
 ])
     test(`saved ${position} position moves text and both rules together`, () => {
         const value = inputOf();
@@ -73,7 +73,7 @@ for (const [position, labelY, ruleY] of [
         );
         assert.deepEqual(
             plan.positionCandidates.map((p) => p.lines[0].region.top),
-            [0.414, 0.0956, 0.7324],
+            [0.4332, 0.0956, 0.7708],
         );
     });
 
@@ -83,7 +83,7 @@ for (const position of [undefined, "left", null, { y: 0 }, 10])
         value.cutResults[0].overlayTextPositions = { [KEY]: position };
         assert.equal(
             titleOf(value).elements.find((e) => e.copyRole === "label").y,
-            517.5,
+            541.5,
         );
     });
 
@@ -107,7 +107,7 @@ test("mock and pending title start centered, and untouched generation adopts mea
     const final = assemblePage(finalInput);
     assert.equal(
         first(final).elements.find((e) => e.copyRole === "label").y,
-        915.5,
+        963.5,
     );
     assert.deepEqual(first(mergeServerBlocks(live, final)), first(final));
 });

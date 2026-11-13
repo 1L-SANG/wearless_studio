@@ -189,7 +189,7 @@ export async function ensureDraftRemotePhotos(draft, fetchBlob = fetchPhotoBlob)
   return { ...draft, photos: [...photos.filter((photo) => !replaced.has(photo.imageId)), ...collected.photos] };
 }
 
-export async function saveProductDraft(product, analysis = null, composeMode = 'basic', updatedAt = new Date().toISOString(), customMatch = null, isCurrent = () => true) {
+export async function saveProductDraft(product, analysis = null, updatedAt = new Date().toISOString(), customMatch = null, isCurrent = () => true) {
   const ownerUserId = draftSlot.getUserId();
   const identityEpoch = draftSlot.getIdentityEpoch();
   const current = () => isCurrent() && ownerUserId === draftSlot.getUserId()
@@ -207,7 +207,6 @@ export async function saveProductDraft(product, analysis = null, composeMode = '
     ...(!stored || Object.hasOwn(stored, 'ownerUserId') ? { ownerUserId } : {}),
     product: cleanProduct,
     analysis,
-    composeMode: composeMode === 'extended' ? 'extended' : 'basic',
     updatedAt,
     photos,
     customMatch: customMatch && customMatch.uploads?.length ? customMatch : null,
@@ -242,7 +241,6 @@ function commitPendingSnapshot() {
     return saveProductDraft(
       snapshot.product,
       snapshot.analysis,
-      snapshot.composeMode,
       snapshot.updatedAt,
       customMatch,
       isCurrent,
@@ -256,10 +254,9 @@ function commitPendingSnapshot() {
 export function queueProductDraftSave(
   product,
   analysis = null,
-  composeMode = 'basic',
   updatedAt = new Date().toISOString(),
 ) {
-  pendingSnapshot = { product, analysis, composeMode, updatedAt,
+  pendingSnapshot = { product, analysis, updatedAt,
     userId: draftSlot.getUserId(), identityEpoch: draftSlot.getIdentityEpoch() };
   clearTimeout(pendingTimer);
   pendingTimer = setTimeout(() => { void commitPendingSnapshot().catch(() => null); }, DRAFT_DEBOUNCE_MS);
@@ -317,7 +314,6 @@ export async function loadDraft() {
     ...draft,
     ...(ownerUserId ? { ownerUserId } : {}),
     analysis: normalizeAnalysisFit(draft.analysis),
-    composeMode: draft.composeMode === 'extended' ? 'extended' : 'basic',
   } : null;
 }
 

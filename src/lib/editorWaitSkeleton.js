@@ -8,6 +8,7 @@ import {
   CAPTION_STYLE,
   captionHeight,
 } from './editorTextSlots.js';
+import { editedTextElement } from '../features/editor/editorTextEdit.js';
 import { getBlockRenderHeight } from '../features/editor/editorGeometry.js';
 
 const autoBlockHeight = (elements) => Math.max(
@@ -24,6 +25,10 @@ const copyTextPatch = (element, text) => {
     ? { text, textSlotVersion: 1, h: captionHeight(text), style: { ...(element.style || {}), ...CAPTION_STYLE } }
     : { text };
 };
+
+const isSellerIntroBody = (block, element) => block.pageSectionKind === 'intro'
+  && element.copyRole === 'body' && !element.aiDraft
+  && typeof element.text === 'string' && Boolean(element.text.trim());
 
 const copyIdentity = element => `${element.copyRole}:${element.paragraphIndex ?? ''}:${element.factLabel || ''}:${element.factPart || ''}`;
 const templateSnapshot = element => structuredClone(Object.fromEntries(Object.entries(element).filter(([key]) => !key.startsWith('gen'))));
@@ -53,7 +58,7 @@ export function patchTemplateElement(block, elementId, patch) {
     && sameValue(element.style, element.genAutoStyle)
     && sameValue(copyGeometry(element), element.genAutoGeometry);
   const elements = block.elements.map(item => item.id === elementId
-    ? { ...item, ...patch, ...(autoHeight ? { genAutoGeometry: { ...item.genAutoGeometry, h: patch.h } } : {}) } : item);
+    ? { ...editedTextElement(item, patch), ...(autoHeight ? { genAutoGeometry: { ...item.genAutoGeometry, h: patch.h } } : {}) } : item);
   const next = { ...block, elements };
   if (autoHeight && block.h === block.genTemplateBaseline.h)
     next.genTemplateBaseline = { ...block.genTemplateBaseline, h: getBlockRenderHeight(next) };
@@ -164,6 +169,7 @@ export function decorateGenBlocks(blocks, job, exThumbById) {
           } : {}) };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId) {
+        if (isSellerIntroBody(b, el)) return markAutoCopy(el);
         const t = (job.copy[el.sourceBlockId] || []).find((x) => x.role === el.copyRole)?.text;
         if (t) {
           copyChanged = true;
@@ -207,6 +213,7 @@ export function fillGenBlocks(blocks, job) {
             ...(info.sourceBlockId !== undefined ? { genFailSourceBlockId: info.sourceBlockId } : {}) } : {}) };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId && 'genAutoText' in el) {
+        if (isSellerIntroBody(b, el)) return el;
         const t = (job.copy[el.sourceBlockId] || []).find((x) => x.role === el.copyRole)?.text;
         if (t && t !== el.text && el.text === el.genAutoText) {
           copyChanged = true;

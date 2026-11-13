@@ -185,7 +185,7 @@ test('actual draftSync uploads a remote image without a local blob or fails befo
   const { promoteDraftToProject } = await import(`data:text/javascript;base64,${Buffer.from(declarations + source).toString('base64')}`);
   const draft = { product: productWith({ id: 'remote', src: remote, slot: 'Front' }), photos: [] };
   await promoteDraftToProject(draft);
-  assert.deepEqual(events, ['fetch', 'create', 'upload', 'save', 'patch']);
+  assert.deepEqual(events, ['fetch', 'create', 'upload', 'save']);
   events.length = 0;
   globalThis.fetch.mock.mockImplementation(async () => { events.push('fetch'); return new Response('missing', { status: 404 }); });
   await assert.rejects(promoteDraftToProject(draft), /사진 1장을 불러오지 못했어요/);

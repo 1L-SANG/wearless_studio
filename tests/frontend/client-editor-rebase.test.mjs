@@ -76,9 +76,9 @@ test('the new download entry records one action for default JPG and original PNG
   for (const original of [false, true]) {
     const actions = [];
     const stop = new Error('stop before browser capture');
-    const bindings = { recordClientAction: (action) => actions.push(action), normalizeExportSettings: (value) => value,
+    const bindings = { waitForEditedContrast: async () => {}, recordClientAction: (action) => actions.push(action), normalizeExportSettings: (value) => value,
       exportNodeHeight: () => 100, buildExportSummary: () => ({}), exportPreset: () => ({ original }),
-      getFontEmbedCSS: async () => { throw stop; },
+      getPageFontEmbedCSS: async () => { throw stop; },
       exportLongPng: async () => { actions.push('download'); throw stop; } };
     const run = new Function(...Object.keys(bindings), `${source}; return exportStorefrontDownload;`)(...Object.values(bindings));
     await assert.rejects(run([{}], 'product', null, { format: original ? 'png' : 'jpeg', delivery: original ? 'single' : 'split' }), stop);

@@ -10,6 +10,7 @@ export function defaultAnalysisShape(clothingType = 'top') {
     customCategory: null,
     fit: null, suggestedName: '',
     materials: [], sellingPoints: [], aiSuggestedPoints: [], mdComment: '',
+    partDescriptionCopy: [],
     styleTags: [], swatchSuggestions: [],
     selectedModelId: null, stylingModelId: null, brandUseCategory: null, models: [],
     matchClothing: [],

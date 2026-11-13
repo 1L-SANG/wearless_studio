@@ -114,11 +114,11 @@ export function createDraftFeatureRun({ product, analysis, readProduct, readAnal
     return coreRequest;
   };
   run.requestCore = (options) => preparing || requestCore(options);
-  run.startAnalysis = ({ runId, startedAt, composeMode = 'basic' }) => {
+  run.startAnalysis = ({ runId, startedAt }) => {
     if (preparing) return preparing;
     const record = run.prepare({ runId, startedAt });
     latest = { featureRun: record, dismissedAiPoints: [] };
-    queueProductDraftSave(readProduct?.() || product, latest, composeMode);
+    queueProductDraftSave(readProduct?.() || product, latest);
     onAnalysis?.(latest);
     preparing = (async () => {
       try { await flushProductDraftSave(); }
@@ -193,7 +193,7 @@ export async function restoreDraftFeatureRun(draft, { promotion = false, project
   if (saved.stage === 'preparing') {
     if (promotion) return null;
     const run = existing || createDraftFeatureRun({ product: currentProduct, analysis: draft.analysis, onAnalysis, onProduct, swatchColors, readProduct, readAnalysis, isCurrent });
-    await run.startAnalysis({ runId: saved.runId, startedAt: saved.startedAt, composeMode: draft.composeMode });
+    await run.startAnalysis({ runId: saved.runId, startedAt: saved.startedAt });
     return run;
   }
   let options = {};

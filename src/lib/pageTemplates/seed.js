@@ -9,18 +9,23 @@ import { matchingIdsForColor } from '../colorwayMatching.js';
 import { ensureSections } from '../sections.js';
 import { productPresentationOf } from '../storyboardTaxonomy.js';
 import { Placeholder } from '../../mock/placeholders.js';
+import { wornCropRegion } from './wornCropGeometry.js';
 
 const colorList = product => product?.colors?.length ? product.colors : [{ id: 'col1', isBase: true }];
 const baseColor = product => { const colors = colorList(product); return colors.find(c => c.isBase) || colors[0]; };
 const numbered = section => section.kind === 'points' && section.photoSlots?.some(slot => slot.recipe?.detailPool === 'points');
 
-// Fractions of the original worn image, applied only when binding a new source.
-export const wornCropRegions = {
+// Private anatomical anchors retain the established subject focus. Exported
+// defaults are already 4:5 for unknown generated wear (3:4 source aspect).
+// Binding a known source adjusts these defaults without touching saved ROIs.
+const wornCropAnchors = {
   top: [ ['shoulder', '어깨선', [0.44, 0.20, 0.30, 0.16]], ['neckline', '목선이 앉는 모양', [0.36, 0.20, 0.28, 0.17]], ['length', '입었을 때 기장', [0.30, 0.27, 0.40, 0.24]] ],
   outer: [ ['shoulder', '어깨선', [0.44, 0.20, 0.30, 0.16]], ['silhouette', '입었을 때 실루엣', [0.28, 0.20, 0.44, 0.34]], ['length', '입었을 때 기장', [0.30, 0.40, 0.40, 0.24]] ],
   bottom: [ ['waistline', '입었을 때 허리선', [0.34, 0.36, 0.32, 0.14]], ['silhouette', '입었을 때 실루엣', [0.30, 0.40, 0.40, 0.50]], ['length', '입었을 때 기장', [0.30, 0.72, 0.40, 0.24]] ],
   dress: [ ['shoulder', '어깨선', [0.44, 0.20, 0.30, 0.16]], ['silhouette', '입었을 때 실루엣', [0.30, 0.30, 0.40, 0.40]], ['length', '입었을 때 기장', [0.30, 0.60, 0.40, 0.26]] ],
 };
+export const wornCropRegions = Object.fromEntries(Object.entries(wornCropAnchors).map(([clothingType, regions]) =>
+  [clothingType, regions.map(([bodyPart, label, region]) => [bodyPart, label, wornCropRegion(region)])]));
 
 export function storyboardFingerprint(blocks) {
   const ids = new Map((blocks || []).map((block, index) => [block.id, index]));
@@ -159,6 +164,7 @@ export function seedStoryboard(product = {}, analysis = {}, context = {}) {
 }
 
 export function resolveStoryboardEntry(saved, product, analysis, { generated = false, ...context } = {}) {
+  analysis = { ...analysis, pageStyle: analysisPageStyle(analysis?.pageStyle, saved) };
   const outdated = saved?.length && saved.some(b => b.taxonomyVersion !== 4);
   if (outdated && generated) return { blocks: saved, notice: 'legacyGenerated' };
   if (outdated || !saved?.length) return { blocks: seedStoryboard(product, analysis, context), notice: outdated ? 'rebuilt' : null };

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Icon } from '@/components/ui.jsx';
 import styles from './StoryboardPanels.module.css';
 
-export function StoryboardDrawer({ mode, busy, onClose, children, focusKey }) {
+export function StoryboardDrawer({ mode, title, busy, onClose, children, focusKey }) {
   const ref = useRef(null), closeRef = useRef(onClose);
   const returnFocus = useRef(null);
   const [scrolled, setScrolled] = useState(false);
@@ -34,10 +34,10 @@ export function StoryboardDrawer({ mode, busy, onClose, children, focusKey }) {
       (trigger?.isConnected ? trigger : fallback)?.focus({ preventScroll: true });
     };
   }, []);
-  return createPortal(<aside ref={ref} className={`sb-v5-theme ${styles.drawer}`} tabIndex={-1} role="dialog"
+  return createPortal(<aside ref={ref} className={`sb-v5-theme ${styles.drawer}${mode === 'design' ? ` ${styles.designDrawer}` : ''}`} tabIndex={-1} role="dialog"
     aria-label={mode === 'photo' ? '사진 바꾸기' : mode === 'design' ? '섹션 디자인 바꾸기' : '구성 편집'} aria-busy={busy || undefined}>
     <div className={`${styles.drawerBar}${scrolled ? ` ${styles.drawerScrolled}` : ''}`}>
-      <div />
+      {title ? <h2>{title}</h2> : <div />}
       <button type="button" className={styles.close} disabled={busy} onClick={onClose} aria-label="옆 판 닫기"><Icon name="x" size={16} /></button>
     </div>
     <div className={styles.drawerBody} data-storyboard-scroll

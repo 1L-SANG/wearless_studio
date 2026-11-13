@@ -246,6 +246,11 @@ def _fact_text(role, ctx):
     return ""
 
 
+def _seller_comment(ctx):
+    text = _string(ctx.analysis.get("mdComment"))
+    return text if text.strip() else ""
+
+
 def _content_for(node, ctx):
     if node.get("literal") is not None:
         text = _string(node["literal"]).replace("{number}", str((ctx.index or 0) + 1).zfill(2)).replace("{initial}", _string(ctx.profile.get("display_name"))[:1] or "MD")
@@ -259,14 +264,21 @@ def _content_for(node, ctx):
         text = node.get("default", "Fit" if role == "label" and ctx.section.get("usage") == "fit" else slot["default"])
     elif slot["source"] == "fact":
         text = _fact_text(role, ctx)
-    elif not ctx.copywriting and slot["source"] == "seller+ai":
-        text = _string(ctx.analysis.get("mdComment"))
+    elif slot["source"] == "seller+ai" and _seller_comment(ctx):
+        text = _seller_comment(ctx)
     elif ctx.copywriting:
         text = ctx.copy.get(role) or ""
-        if re.fullmatch(r"items\.\d+\.desc", role) and ((ctx.card or {}).get("pointItem") or {}).get("kind") != "wornCrop":
+        if re.fullmatch(r"items\.\d+\.desc", role):
             name = _fact_text(role[:-5] + ".name", ctx)
-            feature = next((item.get("desc") for item in ctx.analysis.get("featureCopy") or [] if isinstance(item, dict) and item.get("point") == name), None)
-            text = feature or text
+            part = next((item.get("desc") for item in ctx.analysis.get("partDescriptionCopy") or [] if isinstance(item, dict) and item.get("point") == name), None)
+            if node.get("copyPolicy") == "partOnly":
+                lines = _string(part).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+                # Saved one-line copy stays available to legacy layouts only.
+                text = "\n".join(lines) if len(lines) == 2 and all(line.strip() for line in lines) else ""
+            else:
+                legacy = (next((item.get("desc") for item in ctx.analysis.get("featureCopy") or [] if isinstance(item, dict) and item.get("point") == name), None)
+                          if ((ctx.card or {}).get("pointItem") or {}).get("kind") != "wornCrop" else None)
+                text = part or legacy or text
     if getattr(ctx, "paragraph_role", None) == role:
         text = ctx.paragraph_text
     return _string(text), slot, role
@@ -280,11 +292,14 @@ def _render_text(node, x, y, width, ctx):
         return [], 0
     token = node.get("style") or (slot or {}).get("style") or "body"
     font_key = "body" if token == "small" else "labelEn" if token == "num" else token
-    font = ctx.tokens["fonts"][font_key]
+    font = {**ctx.tokens["fonts"][font_key], **({"weight": 300} if node.get("weight") == "light" else {}),
+            **({"trackingEm": node["trackingEm"]} if node.get("trackingEm") is not None else {})}
     metrics = ctx.catalog["textMetrics"]
     uppercase = (slot or {}).get("uppercase") or (font.get("uppercase") and (slot or {}).get("kind") != "fact")
     if uppercase:
         text = text.upper()
+    if node.get("numberPrefix") and text:
+        text = f"{(ctx.index or 0) + 1}. {text}"
     if node.get("singleLine"):
         text = re.sub(r"\s+", " ", text).strip()
     layout_width = max(1, width - (18 if node.get("swatchDot") else 0))
@@ -293,7 +308,7 @@ def _render_text(node, x, y, width, ctx):
     display = text or (fallback.upper() if uppercase else fallback)
     if node.get("singleLine"):
         display = re.sub(r"\s+", " ", display).strip()
-    title_wrap = node.get("titleWrap") if ctx.design_id == "P01-D09" and role == "name" else None
+    title_wrap = node.get("titleWrap") if ctx.design_id in ("P01-D09", "P01-D09-G") and role == "name" else None
     if title_wrap:
         layout_width = min(layout_width, ctx.photo_width * title_wrap["photoWidthRatio"])
         size, lines = _layout_product_title(display, layout_width, title_wrap, metrics, font.get("trackingEm") or 0)
@@ -312,7 +327,7 @@ def _render_text(node, x, y, width, ctx):
         longest = max(1, *(_text_units(word, metrics) + len(word) * (font.get("trackingEm") or 0) * metrics["unitsPerEm"] for word in re.split(r"\s+", display)))
         size = min(size, max(1, math.floor(layout_width * ctx.catalog["textMetrics"]["unitsPerEm"] / longest)))
     factor = metrics["titleLineHeight"] if font_key == "titleKo" else metrics["labelLineHeight"] if font_key == "labelEn" else metrics["lineHeight"]
-    line_height = math.ceil(size * factor / metrics["unitsPerEm"])
+    line_height = math.ceil(size * node["lineHeight"] if node.get("lineHeight") is not None else size * factor / metrics["unitsPerEm"])
     color = node.get("color") or (slot or {}).get("color") or "ink"
     if not node.get("color") and font_key == "titleKo":
         color = "accentInk" if ctx.tokens["template"]["id"] != "show" and ctx.tokens["colorMode"] == "point" else "ink"
@@ -339,7 +354,7 @@ def _render_text(node, x, y, width, ctx):
         element.update(sourceBlockId=ctx.source_id, copyRole=role, textSlotVersion=1)
         if not text:
             element["placeholder"] = (display if title_wrap else node.get("default") or slot["default"]) or "내용을 입력해 주세요"
-        if slot["source"] == "aiDraft" or (slot["source"] == "seller+ai" and not ctx.analysis.get("mdComment")):
+        if slot["source"] == "aiDraft" or (slot["source"] == "seller+ai" and not _seller_comment(ctx)):
             element["aiDraft"] = True
     if getattr(ctx, "paragraph_role", None) == role and role is not None:
         element.update(paragraphIndex=ctx.paragraph_index, paragraphCount=ctx.paragraph_count)
@@ -367,22 +382,38 @@ def _resolve_photo(slot_key, ctx):
     if not slot or slot["fill"] != "reuse":
         return None
     ref = slot["reuseFrom"]
+    original = next((section for section in ctx.tokens["template"]["sections"] if section["kind"] == ref["kind"]
+                     and (not ref.get("usage") or section.get("usage") == ref["usage"])), None)
+    original_key = ctx.tokens["template"]["id"] + "." + original["instanceKey"] if original else None
+    original_run = [card for card in ctx.storyboard if card.get("pageSectionKey") == original_key]
+    # A first-page ghost is a reference to one explicitly ghost-mode product
+    # run. Missing/mixed modes and another same-kind instance never substitute.
+    if ref["kind"] == "color_product" and slot_key == "ghost":
+        whole_cuts = [card for card in original_run if card.get("source") == "ai"
+                      and card.get("cutType") == "product" and card.get("shot") == "ghost"]
+        if not whole_cuts or any(card.get("productPresentation") != "ghost" for card in whole_cuts):
+            return None
     candidates = []
-    for card in ctx.storyboard:
-        if card.get("source") == "text" or card.get("pageSectionKind") != ref["kind"]:
+    for card in original_run:
+        if card.get("source") == "text" or card.get("similarSourceBlockId") or card.get("pageSectionKind") != ref["kind"]:
             continue
         if ref.get("color") == "base" and _string(card.get("colorId")) != _string(ctx.base_color.get("id")):
             continue
+        if ref["kind"] == "color_product":
+            ai_front = (card.get("source") == "ai" and card.get("cutType") == "product"
+                        and card.get("shot") == "ghost" and card.get("direction") == "front")
+            own_images = card.get("ownImages")
+            mine_front = (card.get("source") == "mine" and card.get("direction") in (None, "front")
+                          and isinstance(own_images, list) and bool(own_images)
+                          and isinstance(own_images[0], str) and bool(own_images[0]))
+            if not ai_front and not (slot_key == "product" and mine_front):
+                continue
         section = {"instanceKey": ".".join(_string(card.get("pageSectionKey")).split(".")[1:])}
         if _matches(_local_slot(card, section), ref["slot"]):
             candidates.append(card)
     index = ref.get("index") or 0
-    original = next((section for section in ctx.tokens["template"]["sections"] if section["kind"] == ref["kind"]
-                     and (not ref.get("usage") or section.get("usage") == ref["usage"])), None)
-    original_key = ctx.tokens["template"]["id"] + "." + original["instanceKey"] if original else None
     candidates = [card for card in candidates if not ref.get("usage") or card.get("pageSectionUsage") == ref["usage"] or card["pageSectionKey"] == original_key]
-    ordered = [card for card in candidates if card["pageSectionKey"] == original_key and not card.get("similarSourceBlockId")]
-    return ordered[index] if len(ordered) > index else None
+    return candidates[index] if len(candidates) > index else None
 
 
 def _select_cards(node, ctx):
@@ -390,11 +421,53 @@ def _select_cards(node, ctx):
         return [ctx.card]
     if node.get("slots"):
         return [_resolve_photo(slot, ctx) for slot in node["slots"]]
+    # Curated wildcards include loose/similar photos in place; legacy layouts
+    # keep their existing overflow behavior for photos without slot keys.
+    if node.get("slot") == "*" and (node["type"] == "photoFlow" or node.get("includeLoose") or ctx.catalog["designs"][ctx.design_id].get("choiceAxes")):
+        return ctx.photos
     return [card for card in ctx.photos if _matches(_local_slot(card, ctx.section), node.get("slot") or "*")]
+
+
+def _natural_photo(node):
+    return node.get("fit") == "contain" and node.get("aspect") == "source"
+
+
+def _known_image_size(meta):
+    return _number(meta.get("width")) > 0 and _number(meta.get("height")) > 0 and meta.get("dimensionsKnown") is not False
+
+
+def _natural_image_size(node, meta, catalog):
+    if _known_image_size(meta):
+        return _number(meta["width"]), _number(meta["height"])
+    return tuple(map(float, (node.get("fallbackAspect") or catalog["textMetrics"]["fallbackAspect"]).split("/")))
+
+
+def _cover_image_size(card, meta, product):
+    def known(value):
+        return (isinstance(value, dict) and value.get("dimensionsKnown") is not False
+                and all(isinstance(value.get(key), (int, float)) and not isinstance(value[key], bool)
+                        and math.isfinite(value[key]) and value[key] > 0 for key in ("width", "height")))
+
+    card = card or {}
+    own_image = (card.get("ownImages") or [None])[0]
+    if known(meta) and (card.get("source") != "mine" or meta.get("imageUrl") == own_image):
+        return meta["width"], meta["height"]
+    if card.get("source") == "mine":
+        image = next((image for color in product.get("colors") or [] for image in color.get("images") or []
+                      if image.get("src") == own_image and known(image)), None)
+        if image:
+            return image["width"], image["height"]
+    return None
 
 
 def _image_height(node, width, card, ctx):
     meta = ctx.cuts.get((card or {}).get("id")) or {}
+    if _natural_photo(node):
+        sw, sh = _natural_image_size(node, meta, ctx.catalog)
+        item = (card or {}).get("pointItem") or {}
+        region = item["cropRegion"] if item.get("kind") == "wornCrop" else None
+        # A derived photo's natural aspect belongs to its selected region.
+        return max(1, _round(width * sh * (region[3] if region else 1) / (sw * (region[2] if region else 1))))
     ratio = node.get("aspect")
     if not ratio or ratio == "source":
         ratio = f"{meta['width']}/{meta['height']}" if _number(meta.get("width")) > 0 and _number(meta.get("height")) > 0 else ctx.catalog["textMetrics"]["fallbackAspect"]
@@ -414,25 +487,42 @@ def _render_photo(node, x, y, width, ctx):
         slot_key = ctx.section["instanceKey"] + "." + ctx.target_slot
     element = {"type": "image", "x": x, "y": y, "w": width, "h": height, "src": src or None, "radius": node.get("radius") or 0,
                "slotKey": slot_key, "roleHint": "custom" if (card or {}).get("source") == "mine" else slot.get("contentRole") or (card or {}).get("contentRole") or "coordination"}
+    if node.get("fit"):
+        element["fit"] = node["fit"]
     if card:
         element["sourceBlockId"] = card["id"]
         if card.get("cutType"):
             element["cutType"] = card["cutType"]
         if card.get("pageSectionKey") == ctx.key:
             ctx.used.add(card["id"])
-    if node.get("cropTop"):
+    if node.get("cropTop") and node.get("fit") != "contain":
         sw = _number(meta.get("width")) if _number(meta.get("width")) > 0 else 2
         sh = _number(meta.get("height")) if _number(meta.get("height")) > 0 else 3
         scale = max(width / sw, height / (sh * (1 - node["cropTop"])))
         iw, ih = max(width, _round(sw * scale)), max(height, _round(sh * scale))
         element["crop"] = {"iw": iw, "ih": ih, "ox": _round((iw - width) / 2), "oy": min(ih - height, _round(sh * scale * node["cropTop"]))}
-    if ((card or {}).get("pointItem") or {}).get("kind") == "wornCrop":
+    cover_size = _cover_image_size(card, meta, ctx.product) if node.get("fit") == "cover" else None
+    if node.get("fit") == "cover" and (cover_size or ((card or {}).get("pointItem") or {}).get("kind") == "wornCrop"):
+        item = (card or {}).get("pointItem") or {}
+        worn = item.get("kind") == "wornCrop"
+        # Ordinary unknown photos use native center-cover; ROI fallback is wear 3:4.
+        sw, sh = cover_size or (3, 4)
+        rx, ry, rw, rh = item["cropRegion"] if worn else (0, 0, 1, 1)
+        # Explicit fixed cover may upscale; natural legacy nodes keep their caps.
+        scale = max(width / (sw * rw), height / (sh * rh))
+        iw, ih = max(width, _round(sw * scale)), max(height, _round(sh * scale))
+        element["crop"] = {"iw": iw, "ih": ih,
+                           "ox": max(0, min(iw - width, _round((rx + rw / 2) * iw - width / 2))),
+                           "oy": max(0, min(ih - height, _round((ry + rh / 2) * ih - height / 2)))}
+        if worn:
+            element.update(pointItemKind="wornCrop", bodyPart=item["bodyPart"])
+    elif ((card or {}).get("pointItem") or {}).get("kind") == "wornCrop":
         item = card["pointItem"]
         rx, ry, rw, rh = item["cropRegion"]
-        sw = _number(meta.get("width")) if _number(meta.get("width")) > 0 else 2
-        sh = _number(meta.get("height")) if _number(meta.get("height")) > 0 else 3
-        dimensions_known = (_number(meta.get("width")) > 0 and _number(meta.get("height")) > 0
-                            and meta.get("dimensionsKnown") is not False)
+        sw, sh = (_natural_image_size(node, meta, ctx.catalog) if _natural_photo(node) else
+                  (_number(meta.get("width")) if _number(meta.get("width")) > 0 else 2,
+                   _number(meta.get("height")) if _number(meta.get("height")) > 0 else 3))
+        dimensions_known = _known_image_size(meta)
         scale = min(max(width / (sw * rw), height / (sh * rh)), width / (sw * .3),
                     1 if dimensions_known else math.inf)
         # Keep undersized native images small instead of undoing the pixel cap.
@@ -473,50 +563,77 @@ def _render_groups(groups, x, y, width, height, ctx, photo):
     elements = []
     for group in groups or []:
         group_key = f"{ctx.key}:{photo['slotKey']}:{group['id']}"
-        colors = ctx.cuts.get(photo.get("sourceBlockId"), {}).get("overlayTextColors")
-        measured = colors.get(group_key) if isinstance(colors, dict) else None
+        meta = ctx.cuts.get(photo.get("sourceBlockId")) or {}
+        policy = group.get("positionFallback") if ctx.design_id in ("P01-D09", "P01-D09-G") else None
+        plate_style = ctx.catalog["firstTitlePlate"]
+        plates = meta.get("overlayTextPlates") if isinstance(meta.get("overlayTextPlates"), dict) else {}
+        colors = meta.get("overlayTextColors") if isinstance(meta.get("overlayTextColors"), dict) else {}
+        positions = meta.get("overlayTextPositions") if isinstance(meta.get("overlayTextPositions"), dict) else {}
+        plated = bool(policy and plates.get(group_key) is True)
+        measured = colors.get(group_key)
         fixed_color = ctx.tokens["colors"].get(group.get("textColor")) or group.get("textColor")
-        on_photo = fixed_color or (measured if measured in ctx.catalog["overlayColors"].values() else ctx.catalog["overlayColors"]["light"])
+        on_photo = ctx.catalog["overlayColors"]["light"] if plated else fixed_color or (measured if measured in ctx.catalog["overlayColors"].values() else ctx.catalog["overlayColors"]["light"])
         gx = group.get("x") or 0
-        result, h = _render_nodes(group.get("nodes"), x + gx, 0, min(group.get("w") or width, width - gx),
-                                  _fork(ctx, on_photo=on_photo, overlay_group_key=group_key, fixed_overlay_color=fixed_color, opaque_background=False, surface_color=None, photo_width=width))
-        top = min(0, *(el["y"] for el in result))
-        bottom = max(0, *(el["y"] + el["h"] for el in result))
-        band = ctx.catalog[group["band"]] if group.get("band") else None
-        if group.get("anchor") == "center":
-            gy = y + height * ((band["top"] + band["bottom"]) / 2 if band else .5) - (top + bottom) / 2
-        else:
-            gy = y + (max(0, height - (group.get("y") or 0) - h) if group.get("anchor") == "bottom" else group.get("y") or 0)
-        policy = group.get("positionFallback") if ctx.design_id == "P01-D09" else None
-        offsets = {}
-        if policy:
-            inset = max(0, min(height * policy["edgeInsetRatio"], (height - (bottom - top)) / 2))
-            offsets = {"center": gy, "top": y + inset - top, "bottom": y + height - inset - bottom}
-            positions = ctx.cuts.get(photo.get("sourceBlockId"), {}).get("overlayTextPositions")
-            measured_position = positions.get(group_key) if isinstance(positions, dict) else None
-            gy = offsets.get(measured_position, gy) if isinstance(measured_position, str) else gy
-        placed = [{**el, "y": el["y"] + gy} for el in result]
+        group_width = min(group.get("w") or width, width - gx)
+
+        def make(with_plate):
+            inner_width = max(1, group_width - plate_style["paddingX"] * 2) if with_plate else group_width
+            nodes = [node for node in group["nodes"] if node["type"] != "rule"] if with_plate else group.get("nodes")
+            result, h = _render_nodes(nodes, x + gx + (group_width - inner_width) / 2, 0, inner_width,
+                _fork(ctx, on_photo=ctx.catalog["overlayColors"]["light"] if with_plate else on_photo,
+                      overlay_group_key=group_key, fixed_overlay_color=None if with_plate else fixed_color, opaque_background=False, surface_color=None, photo_width=width))
+            texts = [el for el in result if el.get("_overlayGroupKey") == group_key]
+            plate = None
+            if with_plate and texts:
+                w = min(group_width, max(1, *(measure_text_width(el.get("text") or el.get("placeholder"), el["w"], el["style"]["size"], ctx.catalog["textMetrics"], el["style"]["tracking"]) for el in texts)) + plate_style["paddingX"] * 2)
+                top = min(el["y"] for el in texts) - plate_style["paddingTop"]
+                bottom = max(el["y"] + el["h"] for el in texts) + plate_style["paddingBottom"]
+                plate = {"x": x + gx + group_width / 2 - w / 2, "y": top, "w": w, "h": bottom - top}
+            top = plate["y"] if plate else min(0, *(el["y"] for el in result))
+            bottom = plate["y"] + plate["h"] if plate else max(0, *(el["y"] + el["h"] for el in result))
+            band = ctx.catalog[group["band"]] if group.get("band") else None
+            center = y + height * ((band["top"] + band["bottom"]) / 2 if band else .5) - (top + bottom) / 2
+            inset = max(0, min(height * policy["edgeInsetRatio"], (height - (bottom - top)) / 2)) if policy else 0
+            return dict(elements=result, h=h, texts=texts, plate=plate,
+                        offsets={"center": center, "top": y + inset - top, "bottom": y + height - inset - bottom})
+
+        normal, plate_version = make(False), make(True) if policy and (plated or ctx.overlay_regions is not None) else None
+        result = plate_version if plated else normal
+        gy = result["offsets"]["center"] if group.get("anchor") == "center" else y + max(0, height - (group.get("y") or 0) - result["h"]) if group.get("anchor") == "bottom" else y + (group.get("y") or 0)
+        position = positions.get(group_key)
+        if policy and position in (plate_style["platePreference"] if plated else policy["anchors"]):
+            gy = result["offsets"][position]
+        placed = [{**el, "y": el["y"] + gy, **({"groupId": f"title-plate:{group_key}"} if plated else {})} for el in result["elements"]]
         bare = [el for el in placed if el.get("_overlayGroupKey") == group_key]
         boxes = _overlay_boxes(bare, group_key, x, y, width, height, ctx.catalog["textMetrics"], bool(policy)) if bare else None
         line_boxes = boxes["lines"] if boxes else []
         if bare and photo.get("sourceBlockId") and ctx.overlay_regions is not None:
             plan = {"sourceBlockId": photo["sourceBlockId"], "key": group_key,
-                    "frame": {"w": photo["w"], "h": photo["h"], **({"crop": photo["crop"]} if photo.get("crop") else {})},
-                    **_region_plan(boxes)}
+                    "frame": {"w": photo["w"], "h": photo["h"], **({"crop": photo["crop"]} if photo.get("crop") else {})}, **_region_plan(boxes)}
             if policy:
-                raw_bare = [el for el in result if el.get("_overlayGroupKey") == group_key]
                 plan["positionCandidates"] = [{"position": position, **_region_plan(_overlay_boxes(
-                    [{**el, "y": el["y"] + offsets[position]} for el in raw_bare], group_key, x, y, width, height, ctx.catalog["textMetrics"], True))}
+                    [{**el, "y": el["y"] + normal["offsets"][position]} for el in normal["texts"]], group_key, x, y, width, height, ctx.catalog["textMetrics"], True))}
                     for position in policy["anchors"]]
+                plate = plate_version["plate"]
+                plan["plateCandidates"] = [{"position": position, "region": {
+                    "left": (plate["x"] - x) / width, "right": (plate["x"] + plate["w"] - x) / width,
+                    "top": (plate["y"] + plate_version["offsets"][position] - y) / height,
+                    "bottom": (plate["y"] + plate_version["offsets"][position] + plate["h"] - y) / height}}
+                    for position in plate_style["platePreference"]]
+                card = next((card for card in ctx.storyboard if card.get("id") == photo.get("sourceBlockId")), {})
+                plan["garmentBand"] = plate_style["garmentBands"].get(ctx.product.get("clothingType") or ctx.product.get("clothing_type"), {}).get("medium" if card.get("shot") == "medium" else "full", plate_style["fallbackGarmentBand"])
             ctx.overlay_regions.append(plan)
-        measured_lines = ctx.cuts.get(photo.get("sourceBlockId"), {}).get("overlayTextLines") or {}
+        measured_lines = meta.get("overlayTextLines") or {}
         if not isinstance(measured_lines, dict):
             measured_lines = {}
         for element_index, el in enumerate(bare):
             lines = [line for line in line_boxes if line["key"].startswith(f"{group_key}:{element_index}:")]
-            if lines and all(isinstance(measured_lines.get(line["key"]), dict) and measured_lines[line["key"]].get("color") in ctx.catalog["overlayColors"].values() for line in lines):
-                el["contrastLines"] = [{"text": line["text"], "color": on_photo if policy else measured_lines[line["key"]]["color"], "shade": measured_lines[line["key"]].get("shade") is True} for line in lines]
+            if lines and (plated or all(isinstance(measured_lines.get(line["key"]), dict) and measured_lines[line["key"]].get("color") in ctx.catalog["overlayColors"].values() for line in lines)):
+                el["contrastLines"] = [{"text": line["text"], "color": on_photo if policy else measured_lines[line["key"]]["color"], "shade": not plated and measured_lines.get(line["key"], {}).get("shade") is True} for line in lines]
                 el["contrastFor"] = {"text": el["text"], "x": el["x"], "y": el["y"], "w": el["w"], "style": dict(el["style"])}
+        if plated:
+            placed.insert(0, {"type": "shape", "shape": "rect", **result["plate"], "y": result["plate"]["y"] + gy,
+                              "fill": ctx.catalog["neutralColors"][plate_style["fillToken"]], "opacity": plate_style["opacity"], "groupId": f"title-plate:{group_key}"})
         elements.extend({k: v for k, v in el.items() if k != "_overlayGroupKey"} for el in placed)
     return elements
 
@@ -651,7 +768,10 @@ def _content_width(elements, x):
 def _render_paragraphs(node, x, y, width, ctx):
     role = node["splitParagraphs"]
     source = next(child for child in node["nodes"] if child.get("copyRole") == role)
-    paragraphs = [text.strip() for text in re.split(r"\n+", _content_for(source, ctx)[0]) if text.strip()]
+    content, slot, _ = _content_for(source, ctx)
+    # Seller copy keeps all whitespace/newlines in a single bubble.
+    paragraphs = ([content] if slot["source"] == "seller+ai" and _seller_comment(ctx) else
+                  [text.strip() for text in re.split(r"\n+", content) if text.strip()])
     parts = paragraphs[:2] + (["\n".join(paragraphs[2:])] if len(paragraphs) > 2 else []) if paragraphs else [""]
     cursor, elements = y, []
     for index, text in enumerate(parts):
@@ -681,16 +801,117 @@ def _render_fact_table(node, x, y, width, ctx):
     return elements, cursor - y
 
 
+def _photo_group_key(card):
+    return f"space:{card['spaceGroupId']}" if (card or {}).get("spaceGroupId") else "color:" + _string((card or {}).get("colorId"))
+
+
+def _contiguous_photo_groups(cards):
+    groups = []
+    for card in cards:
+        if groups and _photo_group_key(groups[-1][0]) == _photo_group_key(card):
+            groups[-1].append(card)
+        else:
+            groups.append([card])
+    return groups
+
+
+def select_frame_photos(cards, count):
+    """Existing photos only; disjoint original groups never merge after selection."""
+    groups = _contiguous_photo_groups(cards)
+
+    def medium(group):
+        return [card for card in group if card.get("shot") == "medium"]
+
+    winner = next((group for group in groups if len(medium(group)) >= count), None)
+    if winner is None:
+        winner = max(groups, key=lambda group: len(medium(group)), default=[])
+    seen, frame = set(), []
+    for card in [*medium(winner), *(card for card in winner if card.get("shot") == "full"), *cards]:
+        if len(frame) >= count:
+            break
+        if card["id"] in seen:
+            continue
+        seen.add(card["id"])
+        frame.append(card)
+    unused = [card for card in winner if card["id"] not in seen]
+    remaining_groups = [remaining for group in groups if (remaining := [card for card in group if card["id"] not in seen])]
+    background = next((card for card in unused if card.get("shot") == "full"), None) or (unused[0] if unused else frame[0] if frame else None)
+    return {"frame": frame, "remaining": [card for group in remaining_groups for card in group], "remainingGroups": remaining_groups, "background": background}
+
+
+def _render_frame_fact(text, role, x, y, width, ctx):
+    if not text:
+        return [], 0
+    frame = ctx.catalog["frameStyle"]
+    style = {"font": ctx.tokens["fonts"]["body"]["font"], "size": frame["textSize"], "weight": frame["textWeight"], "italic": False,
+             "tracking": _round(frame["textTrackingEm"] * frame["textSize"] * 100) / 100, "lineHeight": frame["textLineHeight"],
+             "align": "center", "color": ctx.tokens["colors"][frame["ink"]]}
+    height = estimate_text_height(text, width, style["size"], style["lineHeight"], ctx.catalog["textMetrics"], style["tracking"])
+    return [{"type": "text", "x": x, "y": y, "w": width, "h": height, "text": text, "style": style,
+             "sourceBlockId": ctx.source_id, "copyRole": role, "textSlotVersion": 1}], height
+
+
+def _render_frame_band(selection, y, ctx):
+    if not selection["frame"]:
+        return [], 0
+    frame = ctx.catalog["frameStyle"]
+    card_x, card_y = (ctx.catalog["canvasWidth"] - frame["cardWidth"]) / 2, y + frame["bandPadding"]
+    photo_x, photo_width = card_x + frame["paddingX"], frame["cardWidth"] - frame["paddingX"] * 2
+    cursor = card_y + frame["paddingTop"]
+    content, head_height = _render_frame_fact(_string(ctx.product.get("name")), "name", photo_x, cursor, photo_width, ctx)
+    cursor += head_height + (frame["photoTop"] if head_height else 0)
+    for index, card in enumerate(selection["frame"]):
+        elements, height, _ = _render_photo({"type": "photo", "slot": "$current", "fit": "contain", "aspect": "source", "fallbackAspect": frame["fallbackAspect"]},
+                                           photo_x, cursor, photo_width, _fork(ctx, card=card, index=ctx.photos.index(card)))
+        content.extend(elements)
+        cursor += height + (frame["photoGap"] if index + 1 < len(selection["frame"]) else 0)
+    shop_name = ctx.shop_name
+    if shop_name:
+        cursor += frame["footerGap"]
+        foot, foot_height = _render_frame_fact(shop_name, "who", photo_x, cursor, photo_width, ctx)
+        content.extend(foot)
+        cursor += foot_height
+    card_height = cursor + frame["paddingBottom"] - card_y
+    height = card_height + frame["bandPadding"] * 2
+    # Reusing a backdrop does not consume a remaining original photograph.
+    backdrop, _, _ = _render_photo({"type": "photo", "slot": "$current", "aspect": "4/5"}, 0, y, ctx.catalog["canvasWidth"],
+                                   _fork(ctx, card=selection["background"], index=ctx.photos.index(selection["background"]), used=set()))
+    return [{**backdrop[0], "h": height, "blur": frame["blur"]},
+            {"type": "shape", "shape": "rect", "x": card_x, "y": card_y, "w": frame["cardWidth"], "h": card_height,
+             "fill": ctx.tokens["colors"][frame["paper"]], "radius": 0}, *content], height
+
+
+def _photo_flow_rows(node, cards):
+    def group_key(card):
+        if node.get("groupBy") == "none":
+            return "all"
+        return _photo_group_key(card)
+
+    rows, start = [], 0
+    while start < len(cards):
+        end = start + 1
+        while end < len(cards) and group_key(cards[end]) == group_key(cards[start]):
+            end += 1
+        index, row = start, 0
+        while index < end:
+            remaining = end - index
+            count = min(remaining, 2 if node["pattern"] == "twoColumn" or remaining <= 2 or row % 2 else 1)
+            rows.append((index, cards[index:index + count]))
+            index, row = index + count, row + 1
+        start = end
+    return rows
+
+
 def _render_repeated(node, cards, ctx, x, y, width):
-    if node["type"] == "photoGrid":
-        columns = min(node["columns"], ctx.grid_card_count)
+    if node["type"] in ("photoGrid", "photoFlow"):
+        columns = len(cards) if node["type"] == "photoFlow" else min(node["columns"], ctx.grid_card_count)
         gap = node.get("gap") or 0
         cell_w = math.floor((width - gap * (columns - 1)) / columns)
         start_x = x + ((width - (len(cards) * cell_w + gap * (len(cards) - 1))) / 2 if len(cards) < columns else 0)
         cells = []
         for index, card in enumerate(cards):
             color_index = next((i for i, color in enumerate(ctx.product.get("colors") or []) if _string(color.get("id")) == _string((card or {}).get("colorId"))), index)
-            item = _fork(ctx, card=card, index=color_index if ctx.kind["kind"] == "color_product" else ctx.index + index, target_slot=node["slots"][ctx.index + index] if node.get("slots") else None)
+            item = _fork(ctx, card=card, index=color_index if node["type"] == "photoGrid" and ctx.kind["kind"] == "color_product" else getattr(ctx, "photo_indexes", {}).get((card or {}).get("id"), ctx.index + index), target_slot=node["slots"][ctx.index + index] if node.get("slots") else None)
             px = start_x + index * (cell_w + gap)
             photo, ph, _ = _render_photo({"type": "photo", "slot": "$current", "aspect": node.get("aspect")}, px, y, cell_w, item)
             captions, ch = _render_nodes(node.get("captions"), px, y + ph + 16, cell_w, item)
@@ -699,7 +920,11 @@ def _render_repeated(node, cards, ctx, x, y, width):
         return [el for elements, _ in cells for el in elements], max(0, *(h for _, h in cells))
     card = cards[0]
     if node["type"] == "photoStack":
-        return _render_nodes(node.get("items"), x, y, width, _fork(ctx, card=card))
+        item = _fork(ctx, card=card, index=getattr(ctx, "photo_indexes", {}).get((card or {}).get("id"), ctx.index))
+        if ctx.kind["kind"] == "color_product" and ctx.catalog["designs"][ctx.design_id].get("choiceAxes"):
+            item.index = next((i for i, color in enumerate(ctx.product.get("colors") or [])
+                               if _string(color.get("id")) == _string((card or {}).get("colorId"))), ctx.index)
+        return _render_nodes(node.get("items"), x, y, width, item)
     pad, gap = node.get("padding") or 0, node.get("gap") or 0
     photo_w = min(node["photoWidth"], width - 2 * pad)
     reverse = node.get("alternate") and ctx.index % 2
@@ -734,7 +959,7 @@ def point_photos_for_run(run, storyboard):
 
 
 def assemble_v4(storyboard, cut_results, copy_results, product, copywriting, *, analysis=None,
-                page_style=None, base_swatch_id=None, failed_cuts=None, license_notice=None, profile=None, overlay_regions=None):
+                page_style=None, base_swatch_id=None, failed_cuts=None, license_notice=None, profile=None, shop_name=None, overlay_regions=None):
     from .page_assembler import build_auto_blocks
 
     catalog, analysis = CATALOG, analysis or {}
@@ -773,45 +998,87 @@ def assemble_v4(storyboard, cut_results, copy_results, product, copywriting, *, 
         design = catalog["designs"].get(design_id) or {}
         if not kind or design.get("kind") != first.get("pageSectionKind") or any(card.get("pageSectionKind") != first.get("pageSectionKind") or card.get("pageDesignId") != first.get("pageDesignId") for card in run):
             raise ValueError("Invalid page section design")
-        section_style = section_tokens(tokens, section)
-        ctx = SimpleNamespace(catalog=catalog, storyboard=storyboard, product=product, analysis=analysis, profile=profile or {}, copywriting=copywriting,
+        render_section = section if design.get("invert") is None else {**section, "block": {**section.get("block", {}), "invert": design["invert"]}}
+        section_style = section_tokens(tokens, render_section)
+        ctx = SimpleNamespace(catalog=catalog, storyboard=storyboard, product=product, analysis=analysis, profile=profile or {},
+                              shop_name=shop_name.strip() if isinstance(shop_name, str) else "", copywriting=copywriting,
                               key=key, section=section, kind=kind, cuts=cuts, copy=copies.get(first["id"]) or {}, source_id=first["id"], base_color=base_color_of(product),
                               tokens=section_style, photos=photos, used=set(), failed_cuts=failed_cuts or {}, align=design.get("align") or tokens["template"]["align"],
                               on_photo=catalog["overlayColors"]["light"], index=0, card=None, overlay_regions=overlay_regions, design_id=design_id,
-                              surface_color=tokens["colors"]["invertBg"] if (section.get("block") or {}).get("invert") else section_style["colors"][design.get("surface") or "canvas"])
+                              surface_color=tokens["colors"]["invertBg"] if (render_section.get("block") or {}).get("invert") else section_style["colors"][design.get("surface") or "canvas"])
         pad = design.get("padding") or 0
         width = catalog["canvasWidth"] - pad * 2
         y, elements, part = design.get("top") or 0, [], 0
         last_text_width = None
 
-        def flush():
+        def flush(bottom=None):
             nonlocal y, elements, part
             if not elements:
                 return
             block_id = f"b{len(blocks)}"
-            height = max(y, *(el["y"] + el["h"] for el in elements)) + (design.get("bottom") or 0)
+            height = max(y, *(el["y"] + el["h"] for el in elements)) + ((design.get("bottom") or 0) if bottom is None else bottom)
             blocks.append({"id": block_id, "name": template_section_name(first), "kind": first.get("sectionRole") or "info", "pageSectionKey": key,
                            "pageSectionKind": first["pageSectionKind"], "pageDesignId": design_id,
-                           "bg": tokens["colors"]["invertBg"] if (section.get("block") or {}).get("invert") else section_style["colors"][design.get("surface") or "canvas"],
+                           "bg": tokens["colors"]["invertBg"] if (render_section.get("block") or {}).get("invert") else section_style["colors"][design.get("surface") or "canvas"],
                            "h": height, "elements": [{"id": f"{block_id}e{index}", **el} for index, el in enumerate(elements)]})
             elements, y, part = [], 0, part + 1
 
         for node in design["layout"]:
             if node.get("whenTemplate") and node["whenTemplate"] != tokens["template"]["id"]:
                 continue
-            if node["type"] in ("photoStack", "pointRows", "photoGrid"):
+            if node["type"] == "photoFrame":
+                selection = select_frame_photos(_select_cards(node, ctx), node["count"])
+                if any(el["type"] == "image" for el in elements):
+                    flush()
+                frame, frame_height = _render_frame_band(selection, y, ctx)
+                elements.extend(frame)
+                y += frame_height
+                rows = []
+                for group in selection["remainingGroups"]:
+                    rows.extend([[card] for card in group] if node["pattern"] == "column" else [cards for _, cards in _photo_flow_rows({**node, "groupBy": "none"}, group)])
+                remainder_node = ({"type": "photoStack", "items": [{"type": "photo", "slot": "$current", "aspect": node["aspect"], "radius": 16}, *node["captions"]]}
+                                  if node["pattern"] == "column" else {**node, "type": "photoFlow"})
+                photo_indexes = {card["id"]: index for index, card in enumerate(ctx.photos)}
+                if rows:
+                    y += catalog["frameStyle"]["remainderGap"]
+                    flush()
+                for row_index, cards in enumerate(rows):
+                    if row_index:
+                        flush()
+                    result, height = _render_repeated(remainder_node, cards, _fork(ctx, photo_indexes=photo_indexes, index=photo_indexes[cards[0]["id"]]), pad, y, width)
+                    elements.extend(result)
+                    y += height
+                    if row_index + 1 < len(rows):
+                        y += tokens["template"]["spacing"]["photoGap"]
+                if rows and node["pattern"] != "column":
+                    y += node.get("gap") or 0
+            elif node["type"] == "photoFlow":
+                rows = _photo_flow_rows(node, _select_cards(node, ctx))
+                if any(el["type"] == "image" for el in elements):
+                    flush()
+                for row_index, (index, cards) in enumerate(rows):
+                    if row_index:
+                        flush()
+                    result, height = _render_repeated(node, cards, _fork(ctx, index=index), pad, y, width)
+                    elements.extend(result)
+                    y += height
+                    if row_index + 1 < len(rows):
+                        y += tokens["template"]["spacing"]["photoGap"]
+                if rows:
+                    y += node.get("gap") or 0
+            elif node["type"] in ("photoStack", "pointRows", "photoGrid"):
                 selected = _select_cards(node, ctx)
                 step = node["columns"] if node["type"] == "photoGrid" else 1
                 if any(el["type"] == "image" for el in elements):
                     flush()
                 for index in range(0, len(selected), step):
                     if index:
-                        flush()
+                        flush(0 if node.get("itemGap") is not None else None)
                     result, height = _render_repeated(node, selected[index:index + step], _fork(ctx, index=index, grid_card_count=len(selected)), pad, y, width)
                     elements.extend(result)
                     y += height
                     if index + step < len(selected):
-                        y += tokens["template"]["spacing"]["photoGap"]
+                        y += node["itemGap"] if node.get("itemGap") is not None else tokens["template"]["spacing"]["photoGap"]
                 if selected:
                     y += node.get("gap") or 0
             else:

@@ -1,6 +1,6 @@
 # 프론트 상태 모델 (Frontend State Model)
 
-> 상태: 확정 (2026-06-11, 갱신 2026-07-17) · 짝 문서: `documents/common_data_contract.md` · 결정 기록: `docs/adr/0002`, `docs/adr/0005`
+> 상태: 확정 (2026-06-11, 갱신 2026-11-13) · 짝 문서: `documents/common_data_contract.md` · 결정 기록: `docs/adr/0002`, ADR-0026(템플릿 콘티, ADR-0005 대체)
 > 현재 코드와 이 모델의 차이(갭·적용 순서)는 루트 `TODOS.md`가 추적한다 — 문서가 목표 상태다.
 
 ---
@@ -23,7 +23,7 @@ Q2. (아니라면) 라우트를 넘어 살아야 하나?
 | ② 전역 클라이언트 | `useAppStore` | projectId, 플로우 선택값(아래 §3) | 유지 (선택값은 patchProject로 서버 동기화) |
 | ③ 화면 로컬 | 컴포넌트 useState/useRef | 폼 draft, hover, 패널 펼침, 로딩 phase, 편집 중 selection, 에디터 undo 히스토리 | 유지 |
 
-주의: `composeMode`·`copywriting`·`selectedMannequinId`는 **②이면서 서버 동기화 대상**이다. Zustand가 작업 사본을 들고, 변경 시 `api.patchProject`로 동기화한다. `adjustCount`는 이전 프로젝트를 읽기 위해 store와 응답에 남아 있는 legacy 값일 뿐, 현재 조정 흐름의 상태나 `patchProject` 동기화 대상이 아니다.
+주의: `copywriting`·`selectedMannequinId`는 **②이면서 서버 동기화 대상**이다. Zustand가 작업 사본을 들고, 변경 시 `api.patchProject`로 동기화한다. 템플릿 콘티는 카피를 늘 켠다. 콘티 화면은 열릴 때와 진행 CTA로 마네킹 단계에 넘어가기 전에 `copywriting=true`를 다시 맞춘다(`src/features/storyboard/v4Copywriting.js`). 페이지 스타일(`pageStyle`)은 store에 두지 않는 ① 서버 상태이며 Analysis에 저장한다(§2). `adjustCount`는 이전 프로젝트를 읽기 위해 store와 응답에 남아 있는 legacy 값일 뿐, 현재 조정 흐름의 상태나 `patchProject` 동기화 대상이 아니다.
 
 ---
 
@@ -34,8 +34,9 @@ Q2. (아니라면) 라우트를 넘어 살아야 하나?
 | Project | `getProject` | `createProject` `patchProject` | 새 제작 시작 / 선택값 변경 / 단계 전환 |
 | Product | `getProduct` | `saveProduct` | 입력 완료 시, 분석 폼에서 실측·의류 종류 수정 시 |
 | Analysis | `analyzeProduct` | `saveAnalysis` | 분석 폼 수정 시 (Product 소유 필드 제외) |
+| 페이지 스타일 (`analysis.pageStyle`) | 분석 응답, 값이 없을 때 `getLastPageStyle` | `saveAnalysis({ pageStyle })` | 분석의 템플릿 고르기, 콘티의 글자 스타일·색감 변경 시. 마네킹 작업이 시작된 뒤에는 서버가 템플릿 변경만 409 `page_style_locked`로 거절한다 |
 | MannequinCut[] | `getMannequins` | `generateMannequins` `regenerateMannequin({fitProfile})` | 마네킹 단계 |
-| StoryboardBlock[] | `getStoryboard` | `saveStoryboard` | **생성 CTA 클릭 시** (편집 중엔 로컬 working copy). 로드할 때 v2 역할 검증·누락값 방어 정규화 |
+| StoryboardBlock[] | `getStoryboard` | `saveStoryboard` | 마지막 편집 10초 뒤 자동 저장, 화면을 떠날 때 저장, 진행 CTA에서 마지막 저장. 로드할 때 `taxonomyVersion: 4`가 아닌 저장본은 변환하지 않는다(§4) |
 | EditorBlock[] | `getEditorBlocks` `generateDetailPage` | `saveEditorBlocks` | 에디터 로드 / 저장·디바운스(구현됨) |
 | Wardrobe | `getWardrobe` | `generateImage` `uploadAsset` | 에디터 |
 | Account / Catalogs / Library | `getAccount` `getCatalogs` `getLibrary` | — (credits는 봉투 응답으로 갱신) | 앱 셸 / 보관함 |
@@ -58,12 +59,11 @@ useAppStore = {
 
   /* ② 플로우 선택값 — project 필드의 작업 사본. setter는 store 갱신 + api.patchProject 동기화 */
   selectedMannequinId: string | null,  selectMannequin(id),
-  composeMode: 'basic' | 'extended',   setComposeMode(v),
   copywriting: true,                   setCopywriting(v),
   }
 ```
 
-`composeMode`는 `basic | extended`만 허용한다. 서버는 읽기와 쓰기 모두 다른 값을 거부하며, 프론트도 두 값만 생성·동기화한다.
+기본형·확장형 사진 양(`composeMode`)은 store, 화면, 초안 저장, API 응답에서 지웠다. DB의 `projects.compose_mode` 컬럼만 남고 서버와 프론트 모두 읽지 않는다.
 
 **store에서 제거하는 것** (현재 선언만 있고 사용처 0): `product` `analysis` `mannequins` `storyboard`와 그 setter들(`setProduct` `patchProduct` `setAnalysis` `patchAnalysis` `setMannequins` `setStoryboard`). 이 데이터는 ① 서버 상태다 — 화면이 api로 fetch한다 (ADR-0002).
 
@@ -73,14 +73,16 @@ useAppStore = {
 
 | 라우트 | 읽는 서버 상태 | 저장(쓰기) 트리거 | store 사용 | 대표 로컬 상태(③) |
 |---|---|---|---|---|
-| `/create/input` | getProduct, getCatalogs → analyzeProduct | 입력 완료 → `saveProduct`(+uploadComplete) 후 분석; 분석 폼 변경 → 필드 소유자 따라 `saveAnalysis` 또는 `saveProduct` | projectId 없으면 `startProject()` | phase(input/analyzing/done), expanded, 칩 draft, 소재 편집 인덱스 |
-| `/create/mannequin` | getMannequins(비면 generateMannequins), getProduct, getProject | 조정/재생성 → api 호출 → `syncCredits`; 컷 선택 → `selectMannequin`; 사진 양 → `setComposeMode` | selectedMannequinId, composeMode | progress, busy, picking, confirmRegen, 조정 세그 선택값 |
-| `/create/storyboard` | getStoryboard, getProduct(색상), getAnalysis(매칭 후보·선택) | **생성 CTA → `saveStoryboard` → navigate** | copywriting(`setCopywriting`) | blocks working copy, selectedId, splitOpen, dirty, 스냅샷 ref, drag 상태 |
+| `/create/input` | getProduct, getCatalogs → analyzeProduct | 입력 완료 → `saveProduct`(+uploadComplete) 후 분석; 분석 폼 변경 → 필드 소유자 따라 `saveAnalysis` 또는 `saveProduct`; 템플릿 고르기는 `saveAnalysis({ pageStyle })` | projectId 없으면 `startProject()` | phase(input/analyzing/done), expanded, 칩 draft, 소재 편집 인덱스 |
+| `/create/mannequin` | getMannequins(비면 generateMannequins), getProduct, getProject | 조정/재생성 → api 호출 → `syncCredits`; 컷 선택 → `selectMannequin` | selectedMannequinId | progress, busy, picking, confirmRegen, 조정 세그 선택값 |
+| `/create/storyboard` | getStoryboard, getProduct(색상), getAnalysis(매칭 후보·선택, pageStyle) | 불러온 뒤 마네킹컷 생성을 뒤에서 시작; 자동 저장과 이탈 저장으로 `saveStoryboard`; 글자 스타일·색감은 `saveAnalysis({ pageStyle })`; 진행 CTA에서 마지막 저장 뒤 마네킹 단계로 이동 | copywriting(늘 true로 맞춤) | blocks working copy, selectedId, splitOpen, dirty, 스냅샷 ref, drag 상태 |
 | `/create/generating` | generateDetailPage(projectId) | 완료 시 서버가 status='done' | projectId, syncCredits | progress, steps |
 | `/editor/:projectId` | getEditorBlocks, getWardrobe, getCatalogs, getAccount, getProduct | 이미지 생성/변형 → `generateImage` + `syncCredits`; 저장 → `saveEditorBlocks`(저장 버튼+디바운스) | account(표시), syncCredits, projectId | blocks + undo 히스토리, selEls/selBlock, cropping, scale, tab, layerFloat, pendingSlot, varyTarget |
 | `/library` | getLibrary | 새 상세페이지 → `startProject()` | startProject | phase, items |
 
-콘티보드의 blocks는 "서버 상태의 working copy" 패턴이다: 진입 시 fetch → v2 저장본을 `taxonomyVersion:3`의 후킹·스타일링·스튜디오·의류 확인으로 승격 → `sectionRole`, `contentRole`과 섹션별 허용 `cutType`·`shot`을 검증하고 내부 역할을 자동 정규화 → 로컬에서 편집(스냅샷/원래대로 포함) → 생성 CTA에서 한 번에 `saveStoryboard`. 후킹의 역할은 순서(첫 AI=`hero`), 스타일링·스튜디오의 역할은 섹션과 선택한 컷, 의류 확인의 역할은 선택한 샷으로 파생한다. 카드 단위 '수정 완료'는 로컬 확정일 뿐 서버 저장이 아니다. UI는 `contentRole`은 노출하지 않고, 현재 섹션에 허용된 컷 종류와 생성예시·세부 옵션을 보여준다. 생성예시는 현재 `cutType`에 정확히 맞는 후보만 최대 6장 보여준다.
+콘티보드의 blocks는 "서버 상태의 working copy" 패턴이다. 진입 시 `getStoryboard`가 저장본, 상품, 분석을 읽고 `resolveStoryboardEntry`(`src/lib/pageTemplates/seed.js`)로 보여 줄 콘티를 정한다. 저장본이 없으면 분석의 템플릿과 상품으로 새로 깐다(`seedStoryboard`). 손대지 않은 콘티는 상품 조건(옷 종류, 하위 분류와 직접 입력한 의류 이름, 색과 뒷면 사진, 성별, 디테일 추천, 강조 특징, 템플릿)이 바뀌었을 때만 다시 깐다(`seedProductKey`). `taxonomyVersion: 4`가 아닌 옛 저장본은 변환하지 않는다. 아직 생성하지 않은 프로젝트는 새로 깔고 다시 확인하라는 안내를 띄우며, 이미 생성한 프로젝트는 빈 콘티를 보여 준다. 편집은 로컬에서 하고 자동 저장으로 서버에 보낸다. 서버는 v4 규칙(같은 `pageSectionKey`가 이어진 묶음, 템플릿 하나, 첫 장은 맨 위)을 검증하고, 사진 칸 정의에 맞춰 `cutType`·`shot`·`contentRole`을 정리한다. 첫 장의 첫 AI 착용 카드만 `hero`이고 `sectionRole`은 파생 내부값이다. UI는 `contentRole`을 노출하지 않는다. 카드 단위 '수정 완료' 잠금은 없고, 바로 전 변경은 되돌리기로 취소한다.
+
+콘티에 들어간 프로젝트는 입력·분석으로 돌아가지 않는다. 콘티 화면이 열리면 브라우저 저장소에 `sb-entered-{projectId}` 표식을 남기고, 같은 프로젝트로 `/create/input`이나 `/create/analysis`를 열면 `/create/storyboard`로 돌려보내며 "콘티를 만든 뒤에는 분석으로 돌아갈 수 없어요"를 띄운다(`src/lib/storyboardEntered.js`, `src/apps/seller/App.jsx`). 생성을 마쳤거나 에디터에 들어간 프로젝트는 콘티 대신 "초안 단계로 돌아갈 수 없어요" 창을 띄우고 에디터로 보낸다(`src/features/shell/shell.jsx`의 `useStoryboardInputGuard`, `DoneGuardModal`). 새 제작은 다른 프로젝트이므로 입력부터 시작한다. 표식은 브라우저마다 따로 남는다.
 
 ---
 
@@ -90,15 +92,18 @@ useAppStore = {
 [새 제작]   startProject() → api.createProject() → projectId 확보, 선택값 초기화
 [입력]      입력 완료 → saveProduct({name, colors, uploadComplete:true}) → analyzeProduct()
 [분석 확인]  폼 수정 → saveAnalysis(patch) / 실측·의류 종류는 saveProduct(patch)
-            "마네킹컷 만들기" → navigate (분석은 이미 저장돼 있음)
-[마네킹]    진입 시 자동 generateMannequins → syncCredits
+            템플릿 고르기도 saveAnalysis({ pageStyle })로 저장한다. 값이 없으면 마지막에 쓴 스타일(getLastPageStyle)로 시작한다
+            확정 CTA를 누르면 /create/storyboard로 간다 (분석은 이미 저장돼 있음)
+[콘티]      getStoryboard(projectId). 저장본이 없거나 아직 생성하지 않은 옛 콘티면 분석의 템플릿과 상품으로 새로 깐다(seedStoryboard)
+            콘티를 불러오면 마네킹컷 생성(generateMannequins)을 뒤에서 함께 시작한다
+            서버 저장 때 taxonomyVersion=4 검증(같은 pageSectionKey 연속 묶음, 템플릿 하나, 첫 장 맨 위)을 하고, cutType·shot은 사진 칸 허용값으로 정리한다
+            편집은 로컬에서 하고 마지막 편집 10초 뒤 자동 저장. 진행 CTA에서 copywriting=true를 맞추고 마지막 saveStoryboard 뒤 /create/mannequin으로 간다
+            콘티에 들어간 뒤에는 같은 프로젝트의 입력·분석 주소가 콘티로 돌아온다
+            마네킹 작업이 시작된 뒤에는 서버가 템플릿 변경을 거절한다(글자 스타일과 색감은 콘티에서 바꿀 수 있다)
+[마네킹]    getMannequins로 콘티에서 시작한 마네킹 작업 결과를 읽는다(비어 있으면 generateMannequins 뒤 syncCredits)
             핏 확인 스텝(유지/조정) → 변경 시 regenerateMannequin({fitProfile}) → syncCredits, 새 버전 자동 선택
-            컷 선택 → selectMannequin(id) → patchProject({selectedMannequinId})
-            사진 양(기본형/확장형) → setComposeMode(v) → patchProject({composeMode})
-[콘티]      getStoryboard(projectId)  ← project.composeMode 기반 구성
-            taxonomyVersion=3 검증(후킹→스타일링→스튜디오→의류 확인, 허용 cutType·shot 및 내부 contentRole 방어 정규화)
-            편집은 로컬 → 생성 CTA → saveStoryboard(blocks) + setCopywriting 동기화 → navigate
-[생성 대기]  generateDetailPage(projectId) — 서버가 저장된 콘티·selectedMannequinId·copywriting을 읽음
+            컷 선택 → selectMannequin(id) → patchProject({selectedMannequinId}), 이어서 /create/generating으로 간다
+[생성 대기]  generateDetailPage(projectId) — 서버가 저장된 콘티·selectedMannequinId·copywriting과 분석의 pageStyle을 읽음
             완료 → navigate(/editor/:projectId)
 [에디터]    getEditorBlocks(projectId) → 로컬 편집 + undo. 저장은 saveEditorBlocks(저장 버튼+1.5s 디바운스+이탈 플러시, 구현됨)
 [보관함]    getLibrary() → 카드 클릭 → /editor/:projectId

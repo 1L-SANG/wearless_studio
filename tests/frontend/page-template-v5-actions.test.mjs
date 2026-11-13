@@ -12,6 +12,8 @@ import { generationExampleSelectionPatch } from '../../src/lib/storyboardExample
 import { detachSpaceMembership } from '../../src/lib/storyboardSpaceSets.js';
 import { withStoryboardSpaceSetExamples, storyboardSpaceSetsFor, spaceSetIdFromGroupId } from '../../src/lib/storyboardSpaceSetCatalog.js';
 import { reconcileSectionDependencies } from '../../src/lib/pageTemplates/sectionDependencies.js';
+import { sectionRuns, changeTemplateSectionDesign as storedRunDesign } from '../../src/lib/pageTemplates/sectionRuns.js';
+import { sectionDesignChoices } from '../../src/lib/pageTemplates/designChoices.js';
 import rawExamples from '../../src/data/genExamples.json' with { type: 'json' };
 import { assignGenerationExamples } from '../../src/lib/generationExamples.js';
 
@@ -74,21 +76,22 @@ function boardSnapshot(value) { return structuredClone(value); }
 
 test('design changes update every block in the run and reject another kind', () => {
   const original = board(), source = original.find(b => b.pageSectionUsage === 'fit');
-  const next = valid(actions.changeTemplateSectionDesign(original, source.pageSectionKey, 'P02-D02'));
-  assert.ok(next.filter(b => b.pageSectionKey === source.pageSectionKey).every(b => b.pageDesignId === 'P02-D02'));
+  const next = valid(actions.changeTemplateSectionDesign(original, source.pageSectionKey, 'WEAR-FIT-2COL-01'));
+  assert.ok(next.filter(b => b.pageSectionKey === source.pageSectionKey).every(b => b.pageDesignId === 'WEAR-FIT-2COL-01'));
   assert.deepEqual(next.filter(b => b.pageSectionKey !== source.pageSectionKey), original.filter(b => b.pageSectionKey !== source.pageSectionKey));
-  assert.equal(actions.changeTemplateSectionDesign(original, source.pageSectionKey, 'T08-D01'), original);
+  assert.equal(actions.changeTemplateSectionDesign(original, source.pageSectionKey, 'T08-D07'), original);
 });
 
-for (const templateId of ['emo', 'show', 'guide']) test(`${templateId}: every catalog design keeps its required photo slots filled`, () => {
+for (const templateId of ['emo', 'show', 'guide']) test(`${templateId}: every offered design changes the run and keeps its required photo slots filled`, () => {
   const original = board(templateId), a = analysisFor(templateId);
-  for (const runKey of keys(original)) {
-    const run = original.filter(block => block.pageSectionKey === runKey);
-    for (const design of Object.values(pageTemplatesCatalog.designs).filter(design => design.kind === run[0].pageSectionKind)) {
-      const changed = valid(actions.changeTemplateSectionDesign(original, runKey, design.id, { product }));
+  for (const run of sectionRuns(original)) {
+    for (const design of sectionDesignChoices(run, { storyboard: original, product })) {
+      const changed = valid(actions.changeTemplateSectionDesign(original, run.key, design.id, { product }));
+      assert.ok(changed.filter(block => block.pageSectionKey === run.key).every(block => block.pageDesignId === design.id),
+        `${templateId} ${design.id} must actually be selected`);
       const page = assemblePage({ storyboard: changed, product, analysis: a,
         cutResults: changed.filter(block => block.source === 'ai').map(block => ({ blockId: block.id, imageUrl: `photo:${block.id}` })) });
-      const images = page.filter(block => block.pageSectionKey === runKey).flatMap(block => block.elements).filter(element => element.type === 'image');
+      const images = page.filter(block => block.pageSectionKey === run.key).flatMap(block => block.elements).filter(element => element.type === 'image');
       assert.ok(images.every(image => image.src && image.sourceBlockId), `${templateId} ${design.id} has an empty photo`);
     }
   }
@@ -128,14 +131,20 @@ for (const templateId of ['emo', 'show', 'guide']) test(`${templateId}: reuse sl
   assert.equal(restored.some(b => b.pageSectionKind === 'sns' && b.source === 'ai'), false);
 });
 
-test('retained showroom ghost design materializes one product cut when its source section is removed', () => {
-  const original = actions.changeTemplateSectionDesign(board('show'), 'show.first', 'P01-D01', { product });
+test('stored hidden showroom ghost design still reuses its source and materializes one cut on source removal', () => {
+  // A persisted hidden design is valid even though it is no longer a picker item.
+  const original = valid(JSON.parse(JSON.stringify(storedRunDesign(board('show'), 'show.first', 'P01-D01'))));
   const source = original.find(b => b.pageSectionKind === 'color_product');
+  const rendered = assemblePage({ storyboard: original, product, analysis: analysisFor('show') });
+  const reused = rendered.filter(block => block.pageSectionKind === 'first').flatMap(block => block.elements)
+    .find(element => element.slotKey === 'first.ghost');
+  assert.equal(reused.sourceBlockId, source.id);
   const next = valid(actions.removeTemplateSection(original, source.pageSectionKey, { product }));
   const fallback = next.filter(b => b.pageSectionKind === 'first' && b.cutType === 'product');
   assert.equal(fallback.length, 1);
   assert.equal(fallback[0].slotKey, 'first.ghost');
   assert.equal(fallback[0].shot, 'ghost');
+  assert.equal(fallback[0].productPresentation, 'ghost');
   assert.equal(next.filter(b => b.source === 'ai').length, original.filter(b => b.source === 'ai' && b.pageSectionKey !== source.pageSectionKey).length + 1);
 });
 

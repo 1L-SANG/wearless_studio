@@ -2,6 +2,7 @@ import { getTemplate, pageTemplatesCatalog, sectionDefinition } from './catalog.
 import { pointPhotosForRun } from './assemble.js';
 import { wearUsageForBlock } from './slots.js';
 import { reuseSourceForSlot, openingSourceProduct } from './sectionDependencies.js';
+import { baseDesignId } from './pairedDesigns.js';
 
 const definitionFor = run => sectionDefinition(getTemplate(String(run.key).split('.')[0]), run.key, run.kind, run.usage);
 const photosFor = (run, storyboard) => pointPhotosForRun(run.blocks, storyboard);
@@ -17,7 +18,7 @@ export function defaultSectionDesignId(run, storyboard = run?.blocks || []) {
 export function currentSectionDesignId(run, storyboard = run?.blocks || []) {
   if (!run) return null;
   const definition = definitionFor(run);
-  return !photosFor(run, storyboard).length && definition.fallbackDesignId || run.designId || definition.designId;
+  return !photosFor(run, storyboard).length && definition.fallbackDesignId || baseDesignId(run.designId) || definition.designId;
 }
 
 // Count the layout's photo positions, including reuse positions. Counting assembled
@@ -27,14 +28,14 @@ function countDesignPhotos(run, designId, storyboard, borrowedSlots = new Set())
   const photos = photosFor(run, storyboard);
   const matches = (card, slot = '*') => {
     const key = String(card.slotKey || '').replace(`${definition.instanceKey}.`, '');
-    return Boolean(key && (slot === '*' || key === slot || key.startsWith(`${slot}.`) || new RegExp(`^${slot}\\d+$`).test(key)));
+    return slot === '*' || Boolean(key && (key === slot || key.startsWith(`${slot}.`) || new RegExp(`^${slot}\\d+$`).test(key)));
   };
   const count = (list = []) => list.reduce((sum, node) => {
     if (node.whenTemplate && node.whenTemplate !== templateId) return sum;
     if (node.type === 'photo' || node.type === 'overlay') return sum + (borrowedSlots.has(node.slot) ? 0 : 1);
     const selected = node.slots ? node.slots.filter(slot => !borrowedSlots.has(slot)).length
       : borrowedSlots.has(node.slot) ? 0 : photos.filter(card => matches(card, node.slot)).length;
-    if (node.type === 'photoGrid' || node.type === 'pointRows') return sum + selected;
+    if (['photoGrid', 'photoFlow', 'photoFrame', 'pointRows'].includes(node.type)) return sum + selected;
     if (node.type === 'photoStack') return sum + selected * count(node.items);
     return sum + count(node.nodes) + count(node.items) + count(node.captions)
       + (node.columns || []).reduce((n, column) => n + count(column.nodes), 0);
@@ -84,8 +85,27 @@ function displaysProductColors(run, design, storyboard, product) {
   return colors.every(id => represented.has(id));
 }
 
+// New frame choices automatically use one photo for a single-photo run and
+// two otherwise. Saved variants still assemble through their original IDs.
+// The remaining layout uses its basic counterpart's minimum; a column also
+// supports no remainder.
+function hasFrameLayoutPhotos(design, photoCount, designs) {
+  if (design.framePhotos == null) return true;
+  if (photoCount < 1 || design.framePhotos !== Math.min(photoCount, 2)) return false;
+  const remaining = photoCount - design.framePhotos;
+  const layout = design.choiceAxes?.layout.id;
+  if (layout === 'column') return true;
+  const basic = designs.find(candidate => candidate.kind === design.kind && candidate.usage === design.usage
+    && candidate.choiceAxes?.decoration.id === 'basic' && candidate.choiceAxes.layout.id === layout);
+  const minimum = basic?.minPhotos ?? { twoColumn: 2, heroPair: 3 }[layout] ?? design.minPhotos ?? 0;
+  return remaining >= minimum;
+}
+
 export function sectionDesignChoices(run, { storyboard = run?.blocks || [], product } = {}) {
   if (!run) return [];
+  // A paired attachment is toggled on the stage, not a new layout choice. Apply
+  // the unchanged candidate rules to its base layout and retain it on selection.
+  run = { ...run, designId: baseDesignId(run.designId) };
   const definition = definitionFor(run);
   if (!photosFor(run, storyboard).length && definition.fallbackDesignId) return [pageTemplatesCatalog.designs[definition.fallbackDesignId]];
   const current = run.designId || definition.designId;
@@ -93,9 +113,15 @@ export function sectionDesignChoices(run, { storyboard = run?.blocks || [], prod
   const wearBlock = run.blocks.find(block => ['horizon', 'styling'].includes(block.cutType)) || run.blocks[0];
   const usage = wearUsageForBlock(wearBlock) || run.usage;
   const cropped = run.blocks.some(block => block.pointItems?.some(item => item.kind === 'wornCrop'));
-  const choices = Object.values(pageTemplatesCatalog.designs).filter(design => design.kind === run.kind
+  const photoCount = photosFor(run, storyboard).length;
+  const colorCount = product?.colors?.length || new Set(photosFor(run, storyboard).map(card => card.colorId).filter(id => id != null)).size;
+  const designs = Object.values(pageTemplatesCatalog.designs);
+  const choices = designs.filter(design => !design.pickerHidden && design.kind === run.kind
     && (run.kind !== 'wear' || design.usage === usage)
     && (!cropped || design.supportsWornCrop !== false)
+    && (design.minPhotos == null || photoCount >= design.minPhotos)
+    && hasFrameLayoutPhotos(design, photoCount, designs)
+    && (design.minColors == null || colorCount >= design.minColors)
     && sectionDesignGenerationCount(run, design.id, storyboard, product) === count
     && displaysProductColors(run, design, storyboard, product));
   const defaultId = defaultSectionDesignId(run, storyboard);

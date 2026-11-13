@@ -5,7 +5,8 @@ export function createLateDetailCatalog() {
     remember(projectId, recommendations) { saved = { projectId, recommendations }; },
     merge(projectId, catalogs) {
       return catalogs && saved?.projectId === projectId
-        ? { ...catalogs, detailRecommendations: saved.recommendations } : catalogs;
+        ? { ...catalogs, detailRecommendations: saved.recommendations,
+          analysis: { ...catalogs.analysis, detailRecommendations: saved.recommendations } } : catalogs;
     },
   };
 }

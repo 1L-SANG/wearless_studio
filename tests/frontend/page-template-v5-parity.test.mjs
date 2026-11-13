@@ -4,7 +4,8 @@ import { spawnSync } from 'node:child_process';
 import { seedStoryboard } from '../../src/lib/pageTemplates/seed.js';
 import { defaultPageStyle } from '../../src/lib/pageTemplates/pageStyle.js';
 import { sectionRuns, changeTemplateSectionDesign as savedRunDesign } from '../../src/lib/pageTemplates/sectionRuns.js';
-import { addTemplateSection, removeTemplateSection, changeTemplateSectionDesign } from '../../src/lib/pageTemplates/sectionActions.js';
+import { addTemplateSection, removeTemplateSection } from '../../src/lib/pageTemplates/sectionActions.js';
+import { addStageAddition, stageAdditions } from '../../src/lib/pageTemplates/stageAdditions.js';
 import { patchStoryboardPhoto } from '../../src/lib/pageTemplates/photoActions.js';
 import { assemblePage } from '../../src/lib/pageTemplates/assemble.js';
 import { validateStoryboardV4 } from '../../src/lib/pageTemplates/validateStoryboard.js';
@@ -19,6 +20,11 @@ for (const templateId of ['emo', 'show']) {
   // one-photo section may no longer switch to a different photo count.
   original = savedRunDesign(original, original.find(block => block.pageSectionKind === 'sns').pageSectionKey, 'P07-D08');
   original = addTemplateSection(original, product, analysis, 'wear', 'styling');
+  // Reconstruct a saved hidden opening; current UI choices intentionally exclude it.
+  original = savedRunDesign(original, original[0].pageSectionKey, 'P01-D11');
+  const tile = stageAdditions(original, original[0].pageSectionKey, { product, analysis }).find(item => item.id === 'firstGhost');
+  original = addStageAddition(original, original[0].pageSectionKey, tile, { product, analysis });
+  assert.equal(original[0].pageDesignId, 'P01-D01');
   for (const seed of [7, 19, 41, 83]) {
     const runs = sectionRuns(original), rest = runs.slice(1); let state = seed;
     for (let i = rest.length - 1; i > 0; i--) {
@@ -31,9 +37,9 @@ for (const templateId of ['emo', 'show']) {
   }
   let removed = original;
   for (const run of sectionRuns(original).filter(run => run.kind === 'wear' && run.blocks.some(block => /\.g\d+$/.test(block.slotKey)))) removed = removeTemplateSection(removed, run.key, { product });
-  removed = changeTemplateSectionDesign(removed, removed[0].pageSectionKey, 'P01-D01', { product });
   const cp = removed.find(block => block.pageSectionKind === 'color_product');
   removed = removeTemplateSection(removed, cp.pageSectionKey, { product });
+  assert.equal(removed.filter(block => block.pageSectionKind === 'first' && block.slotKey === 'first.ghost').length, 1);
   inputs.push({ storyboard: removed, product, analysis });
   const fallback = removed.find(block => block.pageSectionKind === 'sns' && block.source === 'ai');
   const mine = patchStoryboardPhoto(removed, fallback.id, { source: 'mine', cutType: null, thumb: 'seller:photo', ownImages: ['seller:photo'] }, product);

@@ -72,16 +72,18 @@ test('D206 v4 show first auto-assignment uses signature framing and leaves emo a
   assert.deepEqual(result.blocks.slice(1), blocks.slice(1));
 });
 
-test('D206 already-saved show first repairs ordinary and wrong-garment choices without touching seller settings', () => {
-  const before = first({ exampleId: 'ordinary', exampleSelectionOrigin: 'user', colorId: 'seller-color',
+test('D206 already-saved show first repairs wrong-garment signatures and preserves ordinary choices without touching seller settings', () => {
+  const before = first({ exampleId: 'sig_men_01', exampleSelectionOrigin: 'user', colorId: 'seller-color',
     faceExposure: 'hide', matchIds: ['selected'], refImages: ['kept'], angle: 'same' });
   const result = assignGenerationExamples([before], { catalog: [], product: { clothingType: 'bottom', subCategory: '스커트' }, gender: 'women' });
-  assert.match(result.blocks[0].exampleId, /^sig_women_bottom_skirt_0[12]$/);
+  assert.match(result.blocks[0].exampleId, /^sig_women_bottom_skirt_0[2-9]$/);
   assert.equal(result.blocks[0].shot, 'medium');
   assert.equal(result.blocks[0].colorId, 'seller-color');
   assert.deepEqual(result.blocks[0].matchIds, ['selected']);
   assert.deepEqual(result.blocks[0].refImages, ['kept']);
-  assert.equal(before.exampleId, 'ordinary');
+  assert.equal(before.exampleId, 'sig_men_01');
+  const ordinary = first({exampleId:'ordinary',exampleSelectionOrigin:'user'});
+  assert.equal(assignGenerationExamples([ordinary], {catalog:[],product:{clothingType:'top'},gender:'women'}).blocks[0], ordinary);
 });
 
 const { singleMemberSpaceSet } = await import('../../src/lib/storyboardSetSelection.js');
@@ -167,10 +169,10 @@ test('D204 singleton member reservations keep published member order and stop wh
 
 for (const [clothingType, gender, subCategory, prefix, count] of [
   ['top', 'men', '', 'sig_men_', 5], ['outer', 'women', '', 'sig_women_', 4],
-  ['bottom', 'women', '치마', 'sig_women_bottom_skirt_', 2],
-  ['bottom', 'women', 'shorts', 'sig_women_bottom_pants_', 2],
-  ['bottom', 'men', 'skirt', 'sig_men_bottom_pants_', 2],
-  ['dress', 'women', '', 'sig_women_dress_', 2], ['dress', 'men', '', 'sig_men_', 5],
+  ['bottom', 'women', '치마', 'sig_women_bottom_skirt_', 8],
+  ['bottom', 'women', 'shorts', 'sig_women_bottom_pants_', 9],
+  ['bottom', 'men', 'skirt', 'sig_men_bottom_pants_', 7],
+  ['dress', 'women', '', 'sig_women_dress_', 6], ['dress', 'men', '', 'sig_men_', 5],
 ]) test(`D206 signature pool ${gender}/${clothingType}/${subCategory}`, () => {
   const pool = signatureCutsFor({ clothingType, gender, subCategory });
   assert.equal(pool.length, count);
@@ -188,7 +190,7 @@ test('D206 signature gender and ordinary gallery boundaries follow the operating
   assert.equal(signatureGenderFor({ clothingType: 'dress', targetGenders: ['men'] }), 'women');
   assert.equal(signatureGenderFor({ targetGenders: ['남성', 'women'] }), 'men');
   assert.equal(signatureGenderFor({ targetGenders: [] }), 'women');
-  assert.equal(signatureExamplesForBlock(first({ pageSectionKey: 'emo.first' })), null);
+  assert.equal(signatureExamplesForBlock(first({ pageSectionKey: 'emo.first' })).length, 4);
   assert.equal(signatureExamplesForBlock(first({ slotKey: 'first.ghost' })), null);
 });
 

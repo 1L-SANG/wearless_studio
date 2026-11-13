@@ -46,7 +46,7 @@ def test_first_text_group_is_centered_and_uses_group_contrast(measured):
     first = section(assemble_input(value), "emo.first")
     image = photos(first)[0]
     copy = [el for el in elements(first) if el.get("copyRole")]
-    assert len(copy) == 4
+    assert len(copy) == 3
     top, bottom = min(el["y"] for el in copy), max(el["y"] + el["h"] for el in copy)
     assert (top + bottom) / 2 == image["y"] + image["h"] / 2
     for element in copy:
@@ -54,14 +54,13 @@ def test_first_text_group_is_centered_and_uses_group_contrast(measured):
 
 
 def test_copy_pending_off_and_fact_sources():
-    pending = assemble_input(case_input("emo-copy-pending"))
+    pending_input = case_input("emo-copy-pending")
+    pending = assemble_input(pending_input)
     assert text(section(pending, "emo.first"), "name")[0]["text"] == "데일리 코튼 셔츠"
-    assert text(section(pending, "emo.first"), "tagline")[0]["text"] == ""
-    assert text(section(pending, "emo.first"), "tagline")[0]["placeholder"]
-    assert text(section(pending, "emo.intro"), "body")[0]["text"] == ""
+    assert not text(section(pending, "emo.first"), "tagline")
+    assert text(section(pending, "emo.intro"), "body")[0]["text"] == pending_input["analysis"]["mdComment"]
     off_value = case_input("emo-copy-off-seller")
     off = assemble_input(off_value)
-    assert text(section(off, "emo.intro"), "body")[0]["text"] == off_value["analysis"]["mdComment"]
     assert text(section(off, "emo.for_you"), "title")[0]["text"] == "이런 분께 추천해요"
     assert all(el["text"] == "" and el["placeholder"] for el in elements(section(off, "emo.review")) if el.get("copyRole", "").startswith("items."))
     value = case_input("emo-2-mono")

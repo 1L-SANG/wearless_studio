@@ -279,7 +279,7 @@ test('pagehide flush waits for the save chain, uses keepalive, and overlapping e
   assert.equal(calls[1].options.keepalive, true);
   persistence.dispose();
 
-  assert.match(storyboardSource, /const flushLatest = \(pid, options = \{\}\) => \{[\s\S]*?return sbSaveNow\(pid, \(\) => latestBlocks\.current, options\)/);
+  assert.match(storyboardSource, /const flushLatest = \(pid, options = \{\}\) => \{[\s\S]*?return sbSaveNow\(pid, \(\) => latestBlocks\.current, saveOptions\)/);
   assert.match(storyboardSource, /bindStoryboardExitFlush\(\{[\s\S]*?getProjectId: \(\) => pidRef\.current,[\s\S]*?flushLatest/);
 });
 
@@ -320,7 +320,7 @@ test('next-step flush failure blocks navigation and reports a toast message', as
   assert.equal(moved, false);
   assert.deepEqual(navigations, []);
   assert.deepEqual(toasts, ['세트 저장에 실패했어요']);
-  assert.match(storyboardSource, /continueAfterStoryboardFlush\(\{[\s\S]*?flush: async \(\) => \{ await ensureV4StoryboardCopywriting\(projectId, useAppStore.getState\); return saveNow\(projectId\); \},[\s\S]*?onFailure: \(message, error\) => toast\.push\(message, \{ variant: \'error\', error/);
+  assert.match(storyboardSource, /continueAfterStoryboardFlush\(\{[\s\S]*?flush: async \(\) => \{ await styleSaves\.flush\(\(\) => styleValueRef.current\); await ensureV4StoryboardCopywriting\(projectId, useAppStore.getState\); return saveNow\(projectId\); \},[\s\S]*?onFailure: \(message, error\) => toast\.push\(message, \{ variant: \'error\', error/);
   assert.doesNotMatch(storyboardSource, /\{saveError && <div className="sb-save-error">/);
   assert.match(storyboardSource, /pickerSaveError && <div className="sb-save-error">/);
   assert.match(storyboardSource, /setSetPickerError\('장소 세트를 저장하지 못했어요\. 다시 시도해주세요\.'/);

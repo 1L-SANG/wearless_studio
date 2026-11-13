@@ -3,7 +3,7 @@ import publicCombinationTable from '../../data/genexamples_public_combinations.j
 import { filterExamplesForModel } from './identityScope.js';
 import { exampleDirectionFamilyMatches, isSupportedCutType, poseExampleDirectionCompatible, productPresentationOf } from './storyboardTaxonomy.js';
 import { isSourceBasedDetailRecipe } from './detailRecommendations.js';
-import { isSignatureBlock, pickSignatureCut, signatureExamplesForBlock } from './signatureCutPool.js';
+import { usesSignaturePool, pickSignatureCut, signatureExamplesForBlock } from './signatureCutPool.js';
 import { singleMemberSpaceSet } from './storyboardSetSelection.js';
 import { inheritSimilarCutRecipes } from './storyboardSimilarCuts.js';
 import {
@@ -263,7 +263,7 @@ export function canRerollGenerationExample(block, { catalog, product, analysis, 
 }
 
 function candidatesForBlock(block, catalog, product, gender, analysis, identityKind = null) {
-  const signature = signatureExamplesForBlock(block, { product, analysis, gender });
+  const signature = usesSignaturePool(block) && signatureExamplesForBlock(block, { product, analysis, gender });
   if (signature) return signature;
   // 이 모델로 만들 수 없는 예시는 후보에서 아예 뺀다(판정은 서버 규칙 표 — lib/identityScope.js).
   return filterExamplesForModel(selectGenerationExamples(catalog, {
@@ -379,7 +379,7 @@ export function assignGenerationExamples(blocks, {
       && !only?.has(block.id)) return block;
     if (!block || block.source !== 'ai' || block.similarSourceBlockId) return block;
     if (only && !only.has(block.id)) return block;
-    if (isSignatureBlock(block)) {
+    if (usesSignaturePool(block)) {
       const pool = signatureExamplesForBlock(block, { product, analysis, gender });
       const avoidId = avoidByBlockId?.[block.id];
       const preferred = pickSignatureCut({ ...product, analysis, gender, projectId, slotKey: block.slotKey });
@@ -392,7 +392,7 @@ export function assignGenerationExamples(blocks, {
       changed = true;
       assignedIds.push(block.id);
       return { ...block, exampleId: example.id, exampleSelectionOrigin: block.exampleSelectionOrigin || 'auto',
-        shot: 'medium', direction: 'front', sideStyle: null, refScope: 'all',
+        cutType: 'horizon', shot: 'medium', direction: 'front', sideStyle: null, refScope: 'all',
         spaceGroupId: null, spaceVariation: null, spaceSetMemberOrder: null,
         setSelectionOrigin: null, horizonBackgroundMode: null,
         baseThumb: block.baseThumb ?? block.thumb ?? null, thumb: example.thumb };

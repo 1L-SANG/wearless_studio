@@ -12,10 +12,10 @@ test('analysis confirmation presents two sample template cards and awaits style 
   assert.match(picker, /견본 사진이에요/);
   assert.match(picker, /type="radio" name="page-template"/);
   assert.deepEqual(pageTemplatesCatalog.templates.map(t => t.id), ['emo','show']);
-  assert.doesNotMatch(form, /상세페이지 사진 양|composeModeSaveRef/);
+  assert.doesNotMatch(form, /상세페이지 사진 양|기본형|확장형/);
 });
 test('storyboard uses section components with no photo-volume or hook-style selector', () => {
   const storyboard = read('src/features/storyboard/Storyboard.jsx');
   for (const component of ['StoryboardPageList','StoryboardStage','StoryboardDrawer']) assert.match(storyboard, new RegExp(`<${component}`));
-  assert.doesNotMatch(storyboard, /ComposeModeSegment|HookStyleChip|deriveFixedSections/);
+  assert.doesNotMatch(storyboard, /상세페이지 사진 양|기본형|확장형|HookStyleChip|deriveFixedSections/);
 });

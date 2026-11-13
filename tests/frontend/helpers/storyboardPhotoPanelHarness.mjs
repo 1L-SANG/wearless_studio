@@ -5,6 +5,7 @@ import * as closure from '../../../src/lib/outerClosure.js';
 import * as mine from '../../../src/lib/storyboardMineImages.js';
 import { signatureExamplesForBlock } from '../../../src/lib/signatureCutPool.js';
 import { photoSlotForBlock } from '../../../src/lib/pageTemplates/slots.js';
+import { productSectionState } from '../../../src/lib/pageTemplates/productPresentation.js';
 import { productSourceColorPatch } from '../../../src/lib/productSourcePhotos.js';
 import { garmentColorSelectionPatch } from '../../../src/lib/garmentColors.js';
 import { horizonBackgroundAvailability } from '../../../src/lib/horizonBackgroundAvailability.js';
@@ -20,7 +21,7 @@ export async function storyboardPhotoPanelHarness(initialProps, api = {}) {
     changes.push(patch); props = { ...props, block: { ...props.block, ...patch } };
   };
   const Component = await loadStoryboardComponent('StoryboardPhotoPanel.jsx', 'StoryboardPhotoPanel', { ...h.hooks,
-    ...taxonomy, ...examples, ...details, ...closure, ...mine, photoSlotForBlock, productSourceColorPatch, garmentColorSelectionPatch,
+    ...taxonomy, ...examples, ...details, ...closure, ...mine, photoSlotForBlock, productSectionState, productSourceColorPatch, garmentColorSelectionPatch,
     signatureExamplesForBlock, horizonBackgroundAvailability, generationExampleSelectionPatch, referenceFeedbackPatch, api,
     Icon: 'svg', OuterClosureField: 'closure-field', DetailTargetPicker: 'detail-target', ProductSourcePicker: 'product-source',
     HorizonBackgroundControl: 'horizon-background', UnderlineTabs: 'underline-tabs', GarmentColorField: 'color-dots',

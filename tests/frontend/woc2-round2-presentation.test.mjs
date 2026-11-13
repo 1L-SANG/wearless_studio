@@ -86,12 +86,13 @@ test('R2-3 header spacing is retained for blank groups sharing a row with a name
   assert.equal(declarations('.addWithHeading')['margin-top'], 'calc(var(--sb-group-head-height) + var(--sp-8))');
   assert.ok(rule('.groupHead .pill'), 'the compact group replacement pill keeps its own dimensions');
 });
-test('R2-4 color-product captions show product names or back, with no group headings', () => {
+test('WOC8 color-product captions show color dots, names and ordinals without group headings', () => {
   const photos = colors.map((color, i) => photo(`front${i}`, 'color_product', { colorId: color.id, cutType: 'product' }));
   photos.push(photo('back', 'color_product', { cutType: 'product', direction: 'back', slotKey: 'color_product.back' }));
   const tree = stageTree('color_product', photos);
   assert.equal(withClass(tree, styles.groupHead).length, 0);
-  assert.deepEqual(withClass(tree, styles.photoCaption).map(caption => textOf(caption.props.children[0])), ['아이보리','네이비','민트','차콜','뒷면']);
+  assert.deepEqual(withClass(tree, styles.captionColorName).map(textOf), ['아이보리','네이비','민트','차콜','아이보리']);
+  assert.ok(withClass(tree, styles.captionColor).every(dot => dot.type === 'svg' && dot.props['aria-hidden']));
   assert.doesNotMatch(textOf(tree), /두 번째 색/);
 });
 test('R2-4 everyday extra colors use their names and added base-color groups retain the existing label', () => {
@@ -110,23 +111,26 @@ test('R2-5 outline add is the outlined plus pill while overview remains a text a
   assert.match(addRule.border || '', /^1px solid var\(/);
   assert.equal(declarations('.outlineHead button, .back')['text-decoration'], 'underline');
 });
-test('R2-6 unclassified places omit the gray badge while known locations and the ordinal stay', () => {
+test('WOC4 place captions stay absent for both unknown and known locations while ordinals remain', () => {
   const block = photo('hero', 'first');
   const unknown = stageTree('first', [block]);
-  assert.equal(withClass(unknown, styles.photoCaption)[0].props.children[0], null);
+  assert.equal(withClass(unknown, styles.captionColor)[0].type, 'svg');
+  assert.equal(withClass(unknown, styles.captionColorName).length, 1);
   assert.doesNotMatch(textOf(unknown), /기타/); assert.match(textOf(unknown), /1번째 컷/);
   const known = stageTree('first', [block], { catalogs: { genExamples: [{ id: 'unclassified', cutType: 'styling', placeType: 'cafe' }] } });
-  assert.match(textOf(known), /카페/); assert.match(textOf(known), /1번째 컷/);
+  assert.doesNotMatch(textOf(known), /카페/); assert.match(textOf(known), /1번째 컷/);
 });
 test('R2-7 worn crops clip the exact assembled area inside a contained, letterboxed stage viewport', () => {
-  const originalRegions = {
-    top: [['shoulder','어깨선',[0.44,0.20,0.30,0.16]],['neckline','목선이 앉는 모양',[0.36,0.20,0.28,0.17]],['length','입었을 때 기장',[0.30,0.27,0.40,0.24]]],
-    outer: [['shoulder','어깨선',[0.44,0.20,0.30,0.16]],['silhouette','입었을 때 실루엣',[0.28,0.20,0.44,0.34]],['length','입었을 때 기장',[0.30,0.40,0.40,0.24]]],
-    bottom: [['waistline','입었을 때 허리선',[0.34,0.36,0.32,0.14]],['silhouette','입었을 때 실루엣',[0.30,0.40,0.40,0.50]],['length','입었을 때 기장',[0.30,0.72,0.40,0.24]]],
-    dress: [['shoulder','어깨선',[0.44,0.20,0.30,0.16]],['silhouette','입었을 때 실루엣',[0.30,0.30,0.40,0.40]],['length','입었을 때 기장',[0.30,0.60,0.40,0.26]]],
+  const expectedRegions = {
+    top: [['shoulder','어깨선',[.44,.139375,.30,.28125]],['neckline','목선이 앉는 모양',[.36,.15375,.28,.2625]],['length','입었을 때 기장',[.30,.2025,.40,.375]]],
+    outer: [['shoulder','어깨선',[.44,.139375,.30,.28125]],['silhouette','입었을 때 실루엣',[.28,.16375,.44,.4125]],['length','입었을 때 기장',[.30,.3325,.40,.375]]],
+    bottom: [['waistline','입었을 때 허리선',[.34,.28,.32,.30]],['silhouette','입었을 때 실루엣',[.30,.4625,.40,.375]],['length','입었을 때 기장',[.30,.625,.40,.375]]],
+    dress: [['shoulder','어깨선',[.44,.139375,.30,.28125]],['silhouette','입었을 때 실루엣',[.30,.3125,.40,.375]],['length','입었을 때 기장',[.30,.5425,.40,.375]]],
   };
-  assert.deepEqual(crops, originalRegions);
-  for (const clothingType of Object.keys(originalRegions)) {
+  const normalized = Object.fromEntries(Object.entries(crops).map(([kind, rows]) => [kind,
+    rows.map(([bodyPart, label, region]) => [bodyPart, label, region.map(value => Number(value.toFixed(12)))])]));
+  assert.deepEqual(normalized, expectedRegions);
+  for (const clothingType of Object.keys(expectedRegions)) {
     const product = { clothingType, colors: [colors[0]] }, analysis = { targetGenders: ['women'], pageStyle: defaultPageStyle() };
     const original = seed(product, analysis), blocks = add(original, product, analysis, 'points');
     const run = runs(blocks).find(run => run.kind === 'points'), catalogs = { detailProduct: product };

@@ -112,7 +112,7 @@ test('v5 floating action keeps the cut count and credit estimate alongside the n
   const { loadStoryboardComponent, textOf } = await import('./helpers/storyboardComponents.mjs');
   const Continue = await loadStoryboardComponent('StoryboardContinue.jsx', 'StoryboardContinue', { Toggle: 'toggle' });
   const tree = Continue({ count: 7, credits: 88, copyOn: true });
-  const text = textOf(tree); assert.ok(text.includes('구성컷 7개')); assert.ok(text.includes('예상 88크레딧')); assert.ok(text.includes('다음: 마네킹컷 선택'));
+  const text = textOf(tree); assert.ok(text.includes('구성 7컷')); assert.ok(text.includes('예상 88크레딧')); assert.ok(text.includes('다음: 마네킹컷 선택'));
 });
 test('1-12 classifies 404 separately from retryable network errors', () => {
   assert.deepEqual(storyboardNotFoundError(), {
@@ -146,7 +146,7 @@ test('N1 collapsed decks use the same card width and 3 by 4 ratio as expanded ca
 test('v5 overlay starts twelve pixels from the viewport top with a 520px width', () => {
   const css = readFileSync(new URL('../../src/features/storyboard/StoryboardPanels.module.css', import.meta.url), 'utf8');
   assert.match(css, /\.drawer[^}]*top: var\(--sp-12\)/);
-  assert.match(css, /width: min\(520px, 40vw\)/);
+  assert.match(css, /width: var\(--sb-drawer-width\)/);
 });
 test('N9 undo text is compact and dismissal fades before DOM removal', () => {
   assert.match(storyboardSource, /const message = `\$\{operationCount\}건 변경`/);

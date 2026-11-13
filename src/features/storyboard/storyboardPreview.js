@@ -1,8 +1,10 @@
 import { generationExampleImageSources } from '../../lib/generationExamples.js';
 import { signatureCutById } from '../../lib/signatureCutPool.js';
-import { detailTargetPresentation, detailTargetPreview } from '../../lib/detailRecommendations.js';
+import { detailTargetPresentation, detailTargetPreview, detailTargetById, isProductDetail } from '../../lib/detailRecommendations.js';
 import { mineImageUrl } from '../../lib/storyboardMineImages.js';
-import { assemblePage } from '../../lib/pageTemplates/assemble.js';
+import { analysisPageStyle } from '../../lib/pageTemplates/pageStyle.js';
+import { assemblePage, wrapText } from '../../lib/pageTemplates/assemble.js';
+import { pageTemplatesCatalog } from '../../lib/pageTemplates/catalog.js';
 import { productPresentationOf } from '../../lib/storyboardTaxonomy.js';
 import { productSourcePhotos } from '../../lib/productSourcePhotos.js';
 
@@ -62,20 +64,45 @@ export function observeDetailPreviewDimensions(urls, onMeasure, {
   };
 }
 
-// Same center/cover and zoom caps as wornCrop. Native size is used only for the
-// original's crop; the layout continues using its existing thumbnail estimate.
+// Preview may upscale even known small originals. Keep the 30%-of-source-width
+// zoom cap; generation and saved wornCrop geometry have their own unchanged rules.
 export function detailPreviewCrop(width, height, preview) {
   if (![width, height].every(value => Number.isFinite(value) && value > 0) || !preview?.region) return null;
   const { x, y, w, h } = preview.region;
   const sized = [preview.width, preview.height].every(value => Number.isFinite(value) && value > 0);
-  const known = sized && preview.dimensionsKnown !== false;
   const sw = sized ? preview.width : estimatedSize.width, sh = sized ? preview.height : estimatedSize.height;
-  const scale = Math.min(Math.max(width / (sw * w), height / (sh * h)), width / (sw * .3), known ? 1 : Infinity);
+  const scale = Math.min(width / (sw * w), height / (sh * h), width / (sw * .3));
   const iw = Math.round(sw * scale), ih = Math.round(sh * scale);
-  return { iw, ih,
-    ox: Math.max(0, Math.min(iw - width, Math.round((x + w / 2) * iw - width / 2))),
-    oy: Math.max(0, Math.min(ih - height, Math.round((y + h / 2) * ih - height / 2))),
-  };
+  // Keep the whole region visible and use surrounding original pixels. When a
+  // source edge is reached, clamp to it; if the source is narrower than the
+  // viewport, center it over the same photograph used as an edge backdrop.
+  const offset = (center, extent, viewport) => extent < viewport ? Math.round((extent - viewport) / 2)
+    : Math.max(0, Math.min(extent - viewport, Math.round(center * extent - viewport / 2)));
+  return { iw, ih, ox: offset(x + w / 2, iw, width), oy: offset(y + h / 2, ih, height) };
+}
+
+// Recompute against the stage's actual 3:4 viewport, without a second cover
+// zoom. The source/region is ephemeral preview metadata, never saved blocks.
+export function detailStageGeometry(element) {
+  if (!element?.previewDetailSource) return element;
+  const h = element.w * 4 / 3;
+  return { ...element, h, crop: detailPreviewCrop(element.w, h, element.previewDetailSource) };
+}
+
+// SVG labels avoid a foreignObject percentage-height dependency in overview.
+// These canvas-unit font sizes match the scoped overview typography tokens.
+export function detailNoticeLines(width, height, label) {
+  const x = 24, w = Math.max(1, width - x * 2);
+  const lines = [
+    ...wrapText(`${label} 확대컷`, w, 32).map(text => ({ text, size: 32, lineHeight: 32 * 1.3, title: true })),
+    ...wrapText('AI가 이 부분을 새로 만들어요', w, 26).map(text => ({ text, size: 26, lineHeight: 26 * 1.35, title: false })),
+  ];
+  let y = height - 20 - 4 - lines.reduce((sum, line) => sum + line.lineHeight, 0);
+  return lines.map((line, index) => {
+    if (index && lines[index - 1].title !== line.title) y += 4;
+    y += line.lineHeight;
+    return { ...line, x, y: y - (line.lineHeight - line.size), w };
+  });
 }
 
 // Only the storyboard presentation calls this wrapper. The generated page and
@@ -87,19 +114,25 @@ export function assembleStoryboardPreview({ catalogs = {}, cutResults = [], ...i
     detailRecommendations: catalogs.detailRecommendations ?? analysis.detailRecommendations };
   const completed = new Map(cutResults.filter(cut => cut?.imageUrl).map(cut => [cut.blockId, cut]));
   const cuts = [...storyboardPreviewCuts(storyboard, previewCatalogs).filter(cut => !completed.has(cut.blockId)), ...completed.values()];
+  const byId = new Map(storyboard.map(block => [block.id, block]));
   const targets = new Map(storyboard.map(block => [block.id,
     detailTargetPreview(block, product, previewCatalogs.detailRecommendations)]));
-  return assemblePage({ ...input, storyboard, product, analysis, cutResults: cuts }).map(block => {
+  const shopName = input.shopName ?? (storyboard.some(block => pageTemplatesCatalog.designs[block.pageDesignId]?.framePhotos)
+    ? catalogs.shopName : undefined);
+  return assemblePage({ ...input, storyboard, product, analysis, pageStyle: input.pageStyle || analysisPageStyle(analysis.pageStyle, storyboard), shopName, cutResults: cuts }).map(block => {
     let changed = false;
     const elements = block.elements.map(element => {
       if (element.type !== 'image' || completed.has(element.sourceBlockId)) return element;
       const target = targets.get(element.sourceBlockId);
       const measured = target && catalogs.detailPreviewDimensions?.[target.src];
-      const crop = target && detailPreviewCrop(element.w, element.h,
-        measured ? { ...target, ...measured, dimensionsKnown: measured.dimensionsKnown !== false } : target);
-      if (!crop) return element;
+      const previewSource = measured ? { ...target, ...measured, dimensionsKnown: measured.dimensionsKnown !== false } : target;
+      const crop = target && detailPreviewCrop(element.w, element.h, previewSource);
+      const source = byId.get(element.sourceBlockId);
+      const planned = isProductDetail(source) && Boolean(source.detailTargetId);
+      if (!crop && !planned) return element;
       changed = true;
-      return { ...element, src: target.src, crop, previewDetailCrop: true };
+      return { ...element, ...(crop ? { src: target.src, crop, previewDetailCrop: true, previewDetailSource: previewSource } : {}),
+        ...(planned ? { previewDetailLabel: detailTargetById(previewCatalogs.detailRecommendations, source.detailTargetId)?.label || '디테일' } : {}) };
     });
     return changed ? { ...block, elements } : block;
   });

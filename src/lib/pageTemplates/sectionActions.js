@@ -13,13 +13,15 @@ import { entryStylingMembers } from '../storyboardEntryPlacement.js';
 import { samePlaceExamplePair } from './storyboardGallery.js';
 import { singleMemberSpaceSet } from '../storyboardSetSelection.js';
 import { directionSpecFromExample } from '../storyboardExampleSelection.js';
+import { isPairedDesign, pairedDesignId } from './pairedDesigns.js';
+import { wornCropRegion, wornCropSourceAspect } from './wornCropGeometry.js';
 
 export { moveTemplateSection } from './sectionRuns.js';
 
 export function changeTemplateSectionDesign(blocks, key, designId, { product = {} } = {}) {
   const run = sectionRuns(blocks).find(run => run.key === key);
   if (!sectionDesignChoices(run, { storyboard: blocks, product }).some(design => design.id === designId)) return blocks;
-  const next = changeRunDesign(blocks, key, designId);
+  const next = changeRunDesign(blocks, key, isPairedDesign(run.designId) ? pairedDesignId(designId) || designId : designId);
   return next === blocks ? blocks : reconcileSectionDependencies(blocks, next, openingSourceProduct(run, product));
 }
 
@@ -97,7 +99,9 @@ export function addTemplateSection(blocks, product, analysis, kind, usage, conte
     const source = preferredWornCropSource(blocks);
     if (!source) return blocks;
     const crops = wornCropRegions[product.clothingType] || wornCropRegions.top;
-    lead.pointItems = crops.map(([bodyPart, label, cropRegion]) => ({ kind: 'wornCrop', sourceBlockId: source.id, bodyPart, label, cropRegion }));
+    const sourceAspect = wornCropSourceAspect(source, { product, cutResults: context.cutResults });
+    lead.pointItems = crops.map(([bodyPart, label, region]) => ({ kind: 'wornCrop', sourceBlockId: source.id,
+      bodyPart, label, cropRegion: wornCropRegion(region, sourceAspect) }));
   }
   added = added.map(({ seedFingerprint, seedProductKey, ...b }) => ({ ...b, sectionCustom: true }));
   const next = [...blocks];
@@ -107,31 +111,36 @@ export function addTemplateSection(blocks, product, analysis, kind, usage, conte
     if (!sectionDesignChoices(run && { ...run, designId: original?.designId || placement.designId }, { storyboard: next, product })
       .some(design => design.id === context.designId)) return blocks;
   }
-  return reconcileSectionDependencies(blocks, next, product, { cropRegions: wornCropRegions[product.clothingType] || wornCropRegions.top });
+  return reconcileSectionDependencies(blocks, next, product,
+    { cropRegions: wornCropRegions[product.clothingType] || wornCropRegions.top, cutResults: context.cutResults });
 }
 
-export function removeTemplateSection(blocks, key, { product = {} } = {}) {
+export function removeTemplateSection(blocks, key, { product = {}, cutResults = [] } = {}) {
   const target = blocks.find(block => block.pageSectionKey === key);
   if (!target || target.pageSectionKind === 'first') return blocks;
   const next = blocks.filter(block => block.pageSectionKey !== key);
-  return reconcileSectionDependencies(blocks, next, product, { cropRegions: wornCropRegions[product.clothingType] || wornCropRegions.top });
+  return reconcileSectionDependencies(blocks, next, product,
+    { cropRegions: wornCropRegions[product.clothingType] || wornCropRegions.top, cutResults });
 }
 
-export function sectionRemovalImpact(blocks, key, { product = {} } = {}) {
+export function sectionRemovalImpact(blocks, key, { product = {}, cutResults = [] } = {}) {
   const target = blocks.find(block => block.pageSectionKey === key);
-  const nextBlocks = removeTemplateSection(blocks, key, { product });
+  const nextBlocks = removeTemplateSection(blocks, key, { product, cutResults });
   const confirmationRequired = target?.pageSectionKind === 'wear';
   if (!confirmationRequired || nextBlocks === blocks) return { nextBlocks, confirmationRequired, consequenceText: '' };
   const consequences = [];
   const oldPoints = blocks.filter(block => block.pointItems?.some(item => item.kind === 'wornCrop'));
   const newById = new Map(nextBlocks.map(block => [block.id, block]));
   const removed = oldPoints.some(block => !newById.has(block.id));
+  const cropsRemoved = oldPoints.some(block => newById.has(block.id)
+    && !newById.get(block.id).pointItems?.some(item => item.kind === 'wornCrop'));
   const retargeted = oldPoints.some(block => {
     const next = newById.get(block.id);
     return next && block.pointItems.some((item, index) => item.kind === 'wornCrop'
-      && next.pointItems?.[index]?.sourceBlockId !== item.sourceBlockId);
+      && next.pointItems?.[index]?.kind === 'wornCrop' && next.pointItems[index].sourceBlockId !== item.sourceBlockId);
   });
   if (removed) consequences.push('남은 착용 사진이 없어 디테일 요소도 함께 빠져요');
+  else if (cropsRemoved) consequences.push('따온 사진만 빠지고 디테일 사진은 남아요');
   else if (retargeted) consequences.push('디테일 요소의 원본을 남은 착용 사진으로 옮겨요');
   const beforeAi = new Set(blocks.filter(block => block.source === 'ai').map(block => block.id));
   const snsAdded = nextBlocks.filter(block => block.pageSectionKind === 'sns' && block.source === 'ai' && !beforeAi.has(block.id)).length;

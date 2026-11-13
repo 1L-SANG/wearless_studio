@@ -43,12 +43,12 @@ export const filterGalleryExamples = (examples, { place = 'all', shot = 'all' } 
   (place === 'all' || examplePlace(example).value === place) && (shot === 'all' || example.shot === shot));
 
 // These entries and their shuffle belong to the picker session, never to saved blocks.
-export function groupGalleryExamples(examples, sets, { selectedId, setsOnly = false } = {}) {
+export function groupGalleryExamples(examples, sets, { selectedId, setsOnly = false, minimumSetMembers = 2 } = {}) {
   const byId = new Map(examples.map(example => [example.id, example]));
   const groups = new Map(), byMember = new Map();
   for (const set of sets) {
     const members = set.members.map(member => byId.get(member.exampleId)).filter(Boolean);
-    if (!members.length || (!setsOnly && members.length < 2)) continue;
+    if (!members.length || (!setsOnly && members.length < minimumSetMembers)) continue;
     const entry = { id: set.id, kind: 'stack', set, members,
       example: members.find(example => example.id === selectedId) || members[0] };
     groups.set(set.id, entry);

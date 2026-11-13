@@ -12,6 +12,8 @@ from app.workers import detail_page_job as dpj
 from conftest import auth_headers, FakeConn, patch_route_db
 from storyboard_v4_cases import v4_blocks
 
+_REAL_PAGE_STYLE_LOCKED = repo.page_style_locked
+
 
 def style(**patch):
     return {**page_style.default_page_style(), "updatedAt": "2026-10-28T12:00:00Z", **patch}
@@ -109,11 +111,30 @@ def test_page_style_allowlist(client, make_token, analysis_db, patch):
 
 
 @pytest.mark.parametrize("field,value", [("templateId", "show"), ("fontStyle", "serif"), ("colorMode", "point"), ("updatedAt", "2026-10-28T12:01:00Z")])
-def test_every_page_style_value_is_locked_after_mannequin(client, make_token, analysis_db, monkeypatch, field, value):
-    monkeypatch.setattr(repo, "page_style_locked", AsyncMock(return_value=True))
+@pytest.mark.parametrize("source", ["cut", "job"])
+def test_only_template_is_locked_after_mannequin(client, make_token, analysis_db, monkeypatch, field, value, source):
+    real_locked = _REAL_PAGE_STYLE_LOCKED
+
+    class Cursor:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): pass
+        async def execute(self, sql, params):
+            assert "mannequin_cuts" in sql and "jobs" in sql
+            assert params == ("p1", "p1")
+        async def fetchone(self): return {"locked": source in ("cut", "job")}
+
+    class Conn:
+        def cursor(self): return Cursor()
+
+    monkeypatch.setattr(repo, "page_style_locked", lambda _conn, project_id: real_locked(Conn(), project_id))
     res = client.patch("/v1/projects/p1/analysis?merge=1", headers=auth_headers(make_token), json={"pageStyle": style(**{field: value})})
-    assert res.status_code == 409 and res.json()["error"]["code"] == "page_style_locked"
-    assert analysis_db["pageStyle"] == style()
+    if field == "templateId":
+        assert res.status_code == 409 and res.json()["error"]["code"] == "page_style_locked"
+        assert analysis_db["pageStyle"] == style()
+    else:
+        assert res.status_code == 200
+        assert res.json()["pageStyle"] == style(**{field: value})
+        assert analysis_db["pageStyle"] == style(**{field: value})
 
 
 def test_same_style_saves_after_lock_and_unrelated_merge_preserves_it(client, make_token, analysis_db, monkeypatch):
@@ -122,6 +143,15 @@ def test_same_style_saves_after_lock_and_unrelated_merge_preserves_it(client, ma
         res = client.patch("/v1/projects/p1/analysis?merge=1", headers=auth_headers(make_token), json=patch)
         assert res.status_code == 200
         assert res.json()["pageStyle"] == style()
+
+
+def test_legacy_missing_style_uses_default_template_for_the_lock(client, make_token, analysis_db, monkeypatch):
+    analysis_db.pop("pageStyle")
+    monkeypatch.setattr(repo, "page_style_locked", AsyncMock(return_value=True))
+    res = client.patch("/v1/projects/p1/analysis?merge=1", headers=auth_headers(make_token), json={"pageStyle": style(fontStyle="serif")})
+    assert res.status_code == 200 and res.json()["pageStyle"]["fontStyle"] == "serif"
+    blocked = client.patch("/v1/projects/p1/analysis?merge=1", headers=auth_headers(make_token), json={"pageStyle": style(templateId="show")})
+    assert blocked.status_code == 409
 
 
 def test_last_page_style_is_user_scoped_and_has_a_default(client, make_token, monkeypatch):

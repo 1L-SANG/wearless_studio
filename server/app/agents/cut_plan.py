@@ -275,7 +275,7 @@ def _signature_framing(
     if clothing_type == "bottom":
         return "bottom"
     if clothing_type == "dress" and example_id in {
-        "sig_women_dress_01", "sig_women_dress_02",
+        *(f"sig_women_dress_{i:02d}" for i in range(1, 7)),
     }:
         return "dress"
     return None

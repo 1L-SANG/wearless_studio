@@ -386,7 +386,7 @@ test("C10 color title uses native Korean counters through ten", () => {
         "두 가지 색이에요",
     );
 });
-test("C11 MD paragraphs get at most three individually sized bubbles without losing copy", () => {
+test("C11 AI paragraphs without seller MD get at most three individually sized bubbles without losing copy", () => {
     const page = assemblePage(inputOf("emo-md-paragraphs")),
         intro = section(page, "emo.intro");
     const body = texts(intro).filter((e) => e.copyRole === "body"),

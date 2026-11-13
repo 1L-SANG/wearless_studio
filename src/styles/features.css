@@ -2219,6 +2219,7 @@
 .canvas-template-section .canvas-block.on { outline: 2px solid var(--link); }
 .ed-canvas.has-template:not(.frame-dragging) .canvas-droprow { height: 0; }
 .ed-canvas.stitched .canvas-template-section { margin-bottom: 0; box-shadow: none; }
+.el-text.editing:not(.el-keep-words) { white-space: pre-wrap; }
 .el-text.el-keep-words { word-break: keep-all; overflow-wrap: normal; white-space: pre; }
 .template-contrast-line { white-space: pre; }
 .template-contrast-line.is-light { color: var(--page-overlay-light); }

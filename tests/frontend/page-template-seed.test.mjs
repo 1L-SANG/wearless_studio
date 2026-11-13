@@ -72,16 +72,25 @@ for (const template of ['emo', 'show']) for (const count of [0, 1, 2, 3, 4]) tes
   assert.equal(lead.pointItems.length, detailCount || cropCount);
   assert.equal(lead.pointItems.filter(i => i.kind === 'detail').length, detailCount);
   assert.equal(lead.pointItems.filter(i => i.kind === 'wornCrop').length, cropCount);
-  assert.ok(lead.pointItems.filter(i => i.kind === 'wornCrop').every(i => i.cropRegion[2] > 0));
+  const cropItems = lead.pointItems.filter(i => i.kind === 'wornCrop');
+  // Seeds have no generated dimensions yet, so new ROIs use the wear 3:4 fallback.
+  assert.ok(cropItems.every(({ cropRegion: [x, y, w, h] }) => w > 0 && h > 0
+    && x >= 0 && y >= 0 && x + w <= 1 && y + h <= 1 && Math.abs(w * .75 / h - .8) < 1e-9));
   assert.equal(uniqueGenerationCutCount(b), uniqueGenerationCutCount(b.filter(b => b.source === 'ai')));
   const run = b.filter(b => b.pageSectionKey === lead.pageSectionKey);
   assert.equal(pointPhotosForRun(run, b).length, detailCount || cropCount);
   const cutResults = b.filter(b => b.source === 'ai').map(b => ({ blockId: b.id, imageUrl: `generated:${b.id}`, width: 1024, height: 1536 }));
   const page = assemblePage({ storyboard: b, product: p, analysis: a, cutResults });
-  const crops = page.filter(s => s.pageSectionKey === lead.pageSectionKey).flatMap(s => s.elements).filter(e => e.pointItemKind === 'wornCrop');
+  const pointImages = page.filter(s => s.pageSectionKey === lead.pageSectionKey).flatMap(s => s.elements).filter(e => e.type === 'image');
+  assert.equal(pointImages.length, detailCount || cropCount);
+  assert.ok(pointImages.every(e => e.w / e.h === .8), 'new defaults give every detail a 4:5 viewport');
+  const crops = pointImages.filter(e => e.pointItemKind === 'wornCrop');
   assert.equal(crops.length, cropCount);
-  assert.ok(crops.every(e => e.sourceBlockId && e.crop && e.w / e.crop.iw >= .3 - .0001
-    && e.crop.iw <= 1024 && e.crop.ih <= 1536));
+  assert.deepEqual(crops.map(e => e.sourceBlockId), cropItems.map(item => item.sourceBlockId));
+  assert.ok(crops.every(e => e.src === `generated:${e.sourceBlockId}` && e.crop
+    && e.crop.iw >= e.w && e.crop.ih >= e.h && e.crop.ox >= 0 && e.crop.oy >= 0
+    && e.crop.ox + e.w <= e.crop.iw && e.crop.oy + e.h <= e.crop.ih
+    && Math.abs(e.crop.iw / e.crop.ih - 2 / 3) < .001), 'new cover crops fill the viewport and retain actual source proportions');
   if (crops.length) {
     const sourceId = crops[0].sourceBlockId;
     const failed = assemblePage({ storyboard: b, product: p, analysis: a, failedCuts: { [sourceId]: { reason: 'source_failed', retryable: true } } });
@@ -95,7 +104,7 @@ for (const template of ['emo', 'show']) for (const count of [0, 1, 2, 3, 4]) tes
 test('v4 slot recipes, shooting groups and hero assignment preserve page order', () => {
   const b = seedStoryboard(product(2), analysis('emo'));
   const first = b[0], fit = b.find(b => b.pageSectionUsage === 'fit');
-  assert.deepEqual(photoSlotForBlock(first).recipe.allowedCutTypes, ['styling']);
+  assert.deepEqual(photoSlotForBlock(first).recipe.allowedCutTypes, ['styling', 'horizon']);
   assert.equal(normalizedRecipePatch({ ...first, cutType: 'product', shot: 'detail' }, 'hero').cutType, 'styling');
   const child = createSimilarCutBlock({ ...first, exampleId: 'example' }, 'similar');
   assert.equal(child.slotKey, null);
@@ -124,13 +133,12 @@ test('four menu groups insert optional and repeated sections at the page end wit
   assert.equal(deriveSections(before).some(s => s.pageSectionKey === fitKey), true); // undo snapshot remains complete
 });
 
-test('only untouched templates rebuild for changed product conditions; compose mode is ignored', () => {
+test('only untouched templates rebuild for changed product conditions', () => {
   const p = product(1), a = analysis('show'), b = seedStoryboard(p, a);
   assert.equal(resolveStoryboardEntry(b, p, a).blocks, b);
   assert.notEqual(resolveStoryboardEntry(b, product(2), a).blocks, b);
   const edited = b.map((block, i) => i === 0 ? { ...block, colorId: 'seller-color' } : block);
   assert.equal(resolveStoryboardEntry(edited, product(2), a).blocks, edited);
-  assert.deepEqual(seedStoryboard(p, a, { composeMode: 'basic' }).map(b => b.cutType), seedStoryboard(p, a, { composeMode: 'extended' }).map(b => b.cutType));
 });
 
 test('old boards rebuild before generation and give an editor notice after generation', () => {

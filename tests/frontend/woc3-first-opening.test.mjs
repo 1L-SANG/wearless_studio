@@ -6,6 +6,7 @@ import { seedStoryboard } from '../../src/lib/pageTemplates/seed.js';
 import { sectionRuns } from '../../src/lib/pageTemplates/sectionRuns.js';
 import { sectionDesignChoices, sectionDesignPhotoCount } from '../../src/lib/pageTemplates/designChoices.js';
 import { changeTemplateSectionDesign, removeTemplateSection } from '../../src/lib/pageTemplates/sectionActions.js';
+import { addStageAddition, removePairedPhoto, stageAdditions } from '../../src/lib/pageTemplates/stageAdditions.js';
 import { assemblePage } from '../../src/lib/pageTemplates/assemble.js';
 import { assignGenerationExamples } from '../../src/lib/generationExamples.js';
 import { uniqueGenerationCutCount } from '../../src/lib/generationCutCount.js';
@@ -48,42 +49,68 @@ test('E10 a long product name still occupies one line and both assemblers agree 
   assert.deepEqual(JSON.parse(py.stdout), assemblePage(args));
 });
 
-test('E10 borrowed ghost opening is offered without another generated cut and design roundtrip restores the board', () => {
+test('E10 a pale ghost toggle reuses a cut, survives design selection and removes back to the original board', () => {
   const initial = board(), snapshot = structuredClone(initial), run = sectionRuns(initial)[0];
   const choices = sectionDesignChoices(run, { storyboard: initial, product });
-  assert.ok(choices.some(d => d.id === 'P01-SHOW-01')); assert.ok(choices.some(d => d.id === 'P01-D01'));
+  assert.ok(choices.some(d => d.id === 'P01-SHOW-01')); assert.ok(choices.some(d => d.id === 'P01-D09'));
+  assert.ok(choices.every(d => !d.pickerHidden));
+  assert.equal(changeTemplateSectionDesign(initial, run.key, 'P01-D01', { product }), initial);
   assert.equal(sectionDesignPhotoCount(run, 'P01-SHOW-01', initial), 1);
   assert.equal(sectionDesignPhotoCount(run, 'P01-D01', initial), 2, 'visual positions remain separate from generation eligibility');
-  const changed = changeTemplateSectionDesign(initial, run.key, 'P01-D01', { product });
+  const base = changeTemplateSectionDesign(initial, run.key, 'P01-D09', { product });
+  const tile = stageAdditions(base, run.key, { product, analysis }).find(item => item.id === 'firstGhost');
+  assert.ok(tile);
+  const changed = addStageAddition(base, run.key, tile, { product, analysis });
   assert.notEqual(changed, initial); assert.equal(validateStoryboardV4(changed), changed);
+  assert.equal(changed[0].pageDesignId, 'P01-D09-G');
   assert.equal(uniqueGenerationCutCount(changed), uniqueGenerationCutCount(initial));
   assert.deepEqual(changed.map(b => b.id), initial.map(b => b.id));
   assert.equal(elements(opening(input(changed))).filter(el => el.type === 'image').length, 2);
-  const restored = changeTemplateSectionDesign(changed, run.key, 'P01-SHOW-01', { product });
+  assert.deepEqual(removePairedPhoto(changed, run.key, product), base);
+  const switched = changeTemplateSectionDesign(changed, run.key, 'P01-SHOW-01', { product });
+  assert.equal(switched[0].pageDesignId, 'P01-SHOW-01-G');
+  const restored = removePairedPhoto(switched, run.key, product);
   assert.deepEqual(restored, snapshot); assert.deepEqual(initial, snapshot);
 });
 
-test('E10 a ghost alternative cannot silently create an extra cut when its borrowed product source is absent', () => {
+test('E10 a missing borrowed source adds a cut only through the explicit pale ghost toggle', () => {
   const initial = board(), productRun = sectionRuns(initial).find(run => run.kind === 'color_product');
   const removed = removeTemplateSection(initial, productRun.key, { product }), run = sectionRuns(removed)[0];
   assert.equal(validateStoryboardV4(removed), removed);
   assert.ok(sectionDesignChoices(run, { storyboard: removed, product }).some(d => d.id === 'P01-SHOW-01'));
   assert.ok(!sectionDesignChoices(run, { storyboard: removed, product }).some(d => d.id === 'P01-D01'));
   assert.equal(changeTemplateSectionDesign(removed, run.key, 'P01-D01', { product }), removed);
+  const base = changeTemplateSectionDesign(removed, run.key, 'P01-D09', { product });
+  assert.equal(uniqueGenerationCutCount(base), uniqueGenerationCutCount(removed));
+  const tile = stageAdditions(base, run.key, { product, analysis }).find(item => item.id === 'firstGhost');
+  assert.ok(tile);
+  const added = addStageAddition(base, run.key, tile, { product, analysis });
+  const ghost = added.find(block => block.slotKey === 'first.ghost');
+  assert.equal(ghost.productPresentation, 'ghost');
+  assert.equal(ghost.direction, 'front');
+  assert.equal(uniqueGenerationCutCount(added), uniqueGenerationCutCount(base) + 1);
+  assert.deepEqual(removePairedPhoto(added, run.key, product), base);
 });
 
-test('E10 design actions without a product option infer the same base color as candidate eligibility', () => {
-  const initial = board();
-  const changed = changeTemplateSectionDesign(initial, 'show.first', 'P01-D01');
-  assert.ok(changed.some(block => block.pageDesignId === 'P01-D01'));
+test('E10 visible design actions without a product option retain an enabled ghost and infer its base color', () => {
+  const seed = board();
+  const tile = stageAdditions(seed, 'show.first', { product, analysis }).find(item => item.id === 'firstGhost');
+  const initial = addStageAddition(seed, 'show.first', tile, { product, analysis });
+  const changed = changeTemplateSectionDesign(initial, 'show.first', 'P01-D09');
+  assert.ok(changed.some(block => block.pageDesignId === 'P01-D09-G'));
   assert.equal(uniqueGenerationCutCount(changed), uniqueGenerationCutCount(initial));
   assert.deepEqual(changed.map(block => block.id), initial.map(block => block.id));
   assert.equal(validateStoryboardV4(changed), changed);
 });
 
-test('E10 common opening candidates allow a zero-cost borrowed ghost but SNS still requires the same visual position count', () => {
-  const emo = seedStoryboard(product, { ...analysis, pageStyle: { ...analysis.pageStyle, templateId: 'emo' } });
-  assert.ok(sectionDesignChoices(sectionRuns(emo)[0], { storyboard: emo, product }).some(d => d.id === 'P01-D01'));
+test('E10 common openings keep ghost toggles separate from visible layouts and retain single-line validation', () => {
+  const emoAnalysis = { ...analysis, pageStyle: { ...analysis.pageStyle, templateId: 'emo' } };
+  const emo = seedStoryboard(product, emoAnalysis);
+  assert.ok(sectionDesignChoices(sectionRuns(emo)[0], { storyboard: emo, product }).every(d => !d.pickerHidden));
+  const tile = stageAdditions(emo, 'emo.first', { product, analysis: emoAnalysis }).find(item => item.id === 'firstGhost');
+  const added = addStageAddition(emo, 'emo.first', tile, { product, analysis: emoAnalysis });
+  assert.equal(added[0].pageDesignId, 'P01-D09-G');
+  assert.equal(uniqueGenerationCutCount(added), uniqueGenerationCutCount(emo));
   const bad = structuredClone(pageTemplatesCatalog);
   bad.designs['P01-SHOW-01'] = { ...bad.designs['P01-D11'], id: 'P01-SHOW-01', layout: [{ type: 'text', copyRole: 'name', singleLine: 'yes' }] };
   assert.throws(() => validateCatalog(bad), /single line/);
