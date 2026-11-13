@@ -14,6 +14,10 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.fixture(scope="module")
 def drafts():
+    # 서버 CI에는 프론트 패키지(vite)가 없다. 프론트 CI가 같은 파일을
+    # tests/frontend/woc3-mock-details-contract.test.mjs 로 돌려 검사를 이어 간다.
+    if not (ROOT / "node_modules" / "vite").exists():
+        pytest.skip("frontend dependencies are not installed")
     script = """import {createServer} from 'vite';
 const vite=await createServer({configFile:false,resolve:{alias:{'@':process.cwd()+'/src'}},
  optimizeDeps:{noDiscovery:true,include:[]},server:{middlewareMode:true,watch:null,ws:false},appType:'custom',logLevel:'silent'});

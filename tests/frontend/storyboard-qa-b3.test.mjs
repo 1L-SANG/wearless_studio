@@ -299,7 +299,7 @@ test('B5 HTTP PUT and reload preserve the same server-valid split board', async 
     if (pathname.endsWith('/storyboard')) return jsonResponse({ blocks: stored || [], revision: stored ? 1 : 0 });
     if (pathname.endsWith('/product')) return jsonResponse({ clothingType: 'top', colors: [] });
     if (pathname.endsWith('/analysis')) return jsonResponse({ targetGenders: ['women'] });
-    if (pathname === '/v1/projects/http-b5') return jsonResponse({ composeMode: 'basic' });
+    if (pathname === '/v1/projects/http-b5') return jsonResponse({ id: 'http-b5' });
     throw new Error(`unexpected request: ${pathname}`);
   };
   try {

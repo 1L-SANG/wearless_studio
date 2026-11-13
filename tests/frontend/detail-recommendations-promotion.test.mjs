@@ -35,7 +35,7 @@ test('signed detail handoff is promoted only after source upload, product and an
       photos: [{ imageId: 'local', mime: 'image/jpeg' }],
       analysis: { detailRecommendations: { status: 'ready', candidates: [{ id: 'cannot-promote-unsigned' }] }, detailRecommendationsHandoff: handoff },
     });
-    assert.deepEqual(events, ['create', 'upload', 'product', 'analysis', 'promote', 'project']);
+    assert.deepEqual(events, ['create', 'upload', 'product', 'analysis', 'promote']);
     const evidence = { signature: 'opaque', contract: { server: 'bound' }, frontClosure: {
       version: 1, kind: 'none', range: null, secondary: null, evidenceSlots: ['Front'], note: null,
     } };
@@ -59,7 +59,7 @@ test('signed detail handoff is promoted only after source upload, product and an
     } finally {
       console.warn = warn;
     }
-    assert.deepEqual(events, ['create', 'product', 'analysis', 'promote', 'evidence', 'project']);
+    assert.deepEqual(events, ['create', 'product', 'analysis', 'promote', 'evidence']);
     assert.equal(warned.length, 1);
 
     // 원본 불일치·저장 충돌·일시 오류는 지금처럼 확정을 막는다(재시도하면 다시 승격한다).

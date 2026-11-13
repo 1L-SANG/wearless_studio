@@ -258,7 +258,7 @@ test('new ordinary text starts as an immediately editable Figma-style point text
   assert.match(editorSource, /const previewAutoTextSize = useCallback/);
   assert.match(editorSource, /naturalTextWidth\(node, value\)/);
   assert.match(editorSource, /h:\s*Math\.max\(1, Math\.ceil\(node\.scrollHeight\)\)/);
-  assert.match(editorSource, /onInput=\{\(e\) => \{ if \(editing\) previewAutoTextSize\(e\.currentTarget\); \}\}/);
+  assert.match(editorSource, /onInput=\{\(e\) => \{ if \(editing\) \{[\s\S]*?previewAutoTextSize\(e\.currentTarget\);/);
   // 텍스트 커밋은 항상 onTextCommit(commitText)으로, 빈 텍스트 정리는 편집 종료 감시가 맡는다 —
   // blur를 안 타는 종료 경로(패널 클릭 등)에서도 유령 요소가 남지 않아야 한다. 단 copyRole/
   // sourceBlockId가 달린 카피 자리는 생성 완료 때 AI 카피가 착지할 슬롯이라 지우면 안 된다.

@@ -17,7 +17,13 @@ export function validPageStyle(value) {
       && Number.isFinite(Date.parse(value.updatedAt)) && /(?:Z|[+-]\d\d:\d\d)$/.test(value.updatedAt));
 }
 
-export function analysisPageStyle(value) {
+export function analysisPageStyle(value, storyboard = []) {
+  // Read-only fallback for pre-style projects. Existing v4 runs determine their
+  // template; a fresh/legacy board uses the catalog default, never another project.
+  if (value == null && storyboard?.length && storyboard.every(block => block.taxonomyVersion === 4)) {
+    const templateId = storyboard[0].pageSectionKey?.split('.')[0];
+    if (getTemplate(templateId)) return { ...defaultPageStyle(), templateId };
+  }
   if (validPageStyle(value)) return value;
   // A catalog option can retire without changing this project's template/tone.
   // Keep the usual validation for every other field and do not mutate storage.

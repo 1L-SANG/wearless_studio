@@ -22,6 +22,7 @@ OFL이 요구하는 조건은 셋이다.
 | Pretendard | `../PretendardVariable.woff2` | [OFL 1.1](./OFL-Pretendard.txt) | Kil Hyung-jin 외 (Source·Inter·M PLUS 1 포함) |
 | Cormorant | `../Cormorant-VariableFont_wght.woff2` | [OFL 1.1](./OFL-Cormorant.txt) | The Cormorant Project Authors |
 | Cormorant Garamond Italic (500, 라틴 서브셋) | `../CormorantGaramond-Italic-500-latin.woff2` | [OFL 1.1](./OFL-Cormorant.txt) | The Cormorant Project Authors |
+| Gowun Batang (고운바탕, 400·700) | `../GowunBatang-Regular.woff2`, `../GowunBatang-Bold.woff2` | [OFL 1.1](./OFL-GowunBatang.txt) | The Gowun Batang Project Authors |
 | Gowun Dodum (고운돋움) | `../GowunDodum-Regular.woff2` | [OFL 1.1](./OFL-GowunDodum.txt) | The Gowun Dodum Project Authors (류양희) |
 
 **Reserved Font Name 주의** — Pretendard의 OFL에는 예약 폰트명(`Pretendard`, `Source`, `Inter`,
@@ -44,6 +45,8 @@ Cormorant·Gowun Dodum의 OFL에는 예약 폰트명 문구가 없다.
 에디터에서 셀러가 어떤 글자를 칠지 알 수 없기 때문이다 — 빠진 글자가 있으면 그 글자만 다른
 글씨체로 튀어 최종 산출물의 결함이 된다.
 
+**Gowun Batang 파일 출처** — 구글 폰트 공식 저장소 `ofl/gowunbatang`의 원본 TTF를 woff2로 형식만 변환했다. 400·700 두 굵기, 한글 11,172자 전체이며 서브셋하지 않았다. 고운돋움과 같이 앱에서 직접 서빙한다.
+
 ## Google Fonts CDN에서 불러오는 폰트
 
 `index.html`의 `<link>`가 불러온다. 파일을 우리가 배포하지 않으므로 **조건 2는 적용되지 않는다.**
@@ -65,4 +68,4 @@ CDN을 끊고 자체 호스팅으로 바꾸는 순간 이 4종도 조건 2의 �
 2. 번들한다면 라이선스 전문을 이 폴더에 넣고 위 표에 한 줄 추가한다.
 3. 배선은 네 군데다 — `src/styles/tokens.css`(@font-face + 토큰),
    `src/mock/db.js`(`catalogs.fonts`), `src/features/editor/Editor.jsx`(`FONT_MAP`),
-   그리고 필요하면 `index.html`.
+   그리고 필요하면 `index.html`. 굵기는 `src/features/editor/fontWeights.js`의 지원 표도 함께 맞춘다.

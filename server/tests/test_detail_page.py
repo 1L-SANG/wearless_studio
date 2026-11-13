@@ -3392,11 +3392,11 @@ def test_assembler_wires_source_block_id_and_copy_role():
         "pageSectionKey": "emo.first", "pageSectionKind": "first", "pageDesignId": "P01-D09", "slotKey": "first.hero",
         "contentRole": "hero", "cutType": "styling", "shot": "full"}]
     cut_results = [{"blockId": "sb1", "imageUrl": "/v1/assets/x/file", "width": 880, "height": 1320}]
-    copy_results = [{"blockId": "sb1", "texts": [{"role": "tagline", "text": "한 줄 소개"}]}]
+    copy_results = [{"blockId": "sb1", "texts": [{"role": "label", "text": "Daily Shirt"}]}]
     blocks = dpj.page_assembler.assemble(storyboard, cut_results, copy_results, {}, True)
     elements = [e for b in blocks for e in b["elements"]]
     assert next(e for e in elements if e["type"] == "image")["sourceBlockId"] == "sb1"
-    assert next(e for e in elements if e.get("copyRole") == "tagline")["sourceBlockId"] == "sb1"
+    assert next(e for e in elements if e.get("copyRole") == "label")["sourceBlockId"] == "sb1"
 
 
 def test_job_events_poll_returns_json_with_after_cursor(client, make_token, monkeypatch):

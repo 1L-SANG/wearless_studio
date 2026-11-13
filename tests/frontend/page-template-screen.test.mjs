@@ -58,7 +58,7 @@ test('both loaded storyboard screens and the old-page notice render without a br
   DB.storyboard = DB.storyboard.map(b => ({ ...b, taxonomyVersion: 3 }));
   invalidateStoryboardEntryPrefetch(DB.project.id);
   await prefetchStoryboardEntry(DB.project.id);
-  assert.match(render(), /새 템플릿 구성으로 다시 만들었어요/);
+  assert.match(render(), /콘티가 새 방식으로 바뀌었어요\. 확인하고 다음을 눌러 주세요/);
   DB.storyboard = DB.storyboard.map(b => ({ ...b, taxonomyVersion: 3 }));
   DB.project.status = 'done';
   invalidateStoryboardEntryPrefetch(DB.project.id);

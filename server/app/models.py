@@ -13,7 +13,6 @@ from pydantic.alias_generators import to_camel
 
 ProjectStatus = Literal["draft", "generating", "done"]
 PlanTier = Literal["free", "starter", "seller", "pro"]
-ComposeMode = Literal["basic", "extended"]
 # 가입 출처. 입력으로 받는 값과 저장되는 값이 다르다 — 'both' 는 서버가 승격시켜
 # 만드는 값이라 클라이언트가 주장할 수 없다 (app_origin.py).
 AppName = Literal["seller", "facemarket"]
@@ -79,7 +78,6 @@ class Project(CamelModel):
     id: str
     status: ProjectStatus
     title: str
-    compose_mode: ComposeMode
     copywriting: bool
     selected_mannequin_id: str | None
     adjust_count: int
@@ -252,19 +250,17 @@ class ProductPatch(CamelModel):
 
 
 class ProjectPatch(CamelModel):
-    """patchProject 수용 화이트리스트 (계약 §6): 이 3개만. adjustCount·status는 서버 전용."""
+    """patchProject 수용 화이트리스트: 이 2개만. adjustCount·status는 서버 전용."""
 
-    compose_mode: ComposeMode | None = None
     copywriting: bool | None = None
     selected_mannequin_id: str | None = None
 
     @model_validator(mode="after")
     def _reject_explicit_null_on_non_nullable(self):
-        # composeMode·copywriting은 NOT NULL 컬럼 — 명시적 null로 보내면 422 (500 방지).
+        # copywriting은 NOT NULL 컬럼 — 명시적 null로 보내면 422 (500 방지).
         # 미전송(생략)은 허용, selectedMannequinId만 null 허용.
-        for field in ("compose_mode", "copywriting"):
-            if field in self.model_fields_set and getattr(self, field) is None:
-                raise ValueError(f"{field}는 null일 수 없습니다.")
+        if "copywriting" in self.model_fields_set and self.copywriting is None:
+            raise ValueError("copywriting는 null일 수 없습니다.")
         return self
 
 

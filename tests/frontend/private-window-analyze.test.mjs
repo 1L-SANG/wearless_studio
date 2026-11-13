@@ -125,7 +125,7 @@ test('구조화 복제한 undefined, Date, 중첩 객체와 File을 저장 실�
   const file = new File(['original upload'], 'upload.jpg', { type: 'image/jpeg' });
   file.preview = 'local preview';
   const metadata = { unset: undefined, createdAt: new Date('2026-10-20T00:00:00Z'), nested: { z: 1, a: { b: 2, a: undefined } } };
-  await f.store.saveProductDraft({ ...f.product, metadata }, null, 'basic', '2026-10-20T00:00:00Z', { uploads: [{ file }] });
+  await f.store.saveProductDraft({ ...f.product, metadata }, null, '2026-10-20T00:00:00Z', { uploads: [{ file }] });
   assert.deepEqual(f.storage.saved.product.metadata, metadata);
   assert.equal(f.storage.saved.customMatch.uploads[0].file.size, 15);
   assert.equal(f.storage.saved.customMatch.uploads[0].file.type, 'image/jpeg');

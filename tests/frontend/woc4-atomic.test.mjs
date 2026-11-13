@@ -17,7 +17,7 @@ test('WOC4 actual board atomic action saves one run, rolls back all its cards, b
   const photo=before.find(b=>b.pageSectionKind==='color_product');let state=before,undos=[];
   const saves=[],pending=[],atomicRetryRef={current:null};
   const context={...spaces,spaceSetGroupId,uid:()=> 'new-group',normalizeBoard,inheritSimilarCutRecipes,patchStoryboardPhoto,preserveDetailTargetBinding,
-    atomicSavingRef:{current:false},setAtomicSaving(){},catalogs:{detailProduct:product},projectId:'p',atomicRetryRef,sbPending:new Map(),
+    atomicSavingRef:{current:false},setAtomicSaving(){},catalogs:{detailProduct:product},projectId:'p',atomicRetryRef,sbPending:new Map(),api:{},
     directSaveSnapshots:{current:new WeakSet()},setBlocks:next=>{state=next;},undoLabelForPatch:()=> '촬영 방식',
     showUndo:(previous,next)=>undos.push({previous,next}),clearUndoForSnapshot:next=>{undos=undos.filter(item=>item.next!==next);},
     sbSaveNow:(_id,get)=>{saves.push(get());return new Promise((resolve,reject)=>pending.push({resolve,reject}));},

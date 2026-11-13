@@ -28,7 +28,7 @@
 | `profiles` | user_id pk=auth.users, display_name, avatar_asset_id, plan | Account 매핑 (계약 §3.7) |
 | `credit_accounts` | user_id pk, **balance, reserved** | 잔액+예약 분리 — §6. 응답 `credits` = balance−reserved |
 | `credit_ledger` | id, user_id, project_id, job_id, action_key, delta, balance_after, available_after, idempotency_key uq, metadata, created_at | **append-only** (update/delete 금지). action_key = creditCosts 키 + grant/refund |
-| `projects` | id, user_id, status chk, title, compose_mode, copywriting, selected_mannequin_id, **storyboard jsonb, editor_blocks jsonb, editor_revision**, cover_asset_id, created/updated/deleted_at | 계약 §2. 보관함 조회는 컬럼 선택(블록 jsonb 제외). soft delete. 과거 `adjust_count`는 읽기 호환용이며 새 조정 제한에 사용하지 않음 |
+| `projects` | id, user_id, status chk, title, compose_mode(옛 사진 양 값, DB 컬럼만 남고 API와 화면은 쓰지 않음), copywriting, selected_mannequin_id, **storyboard jsonb, editor_blocks jsonb, editor_revision**, cover_asset_id, created/updated/deleted_at | 계약 §2. 보관함 조회는 컬럼 선택(블록 jsonb 제외). soft delete. 과거 `adjust_count`는 읽기 호환용이며 새 조정 제한에 사용하지 않음 |
 | `products` | id, project_id uq, name, clothing_type, colors jsonb, measurements jsonb, measurements_unknown, upload_complete | 계약 §3.1. colors 내 이미지 src는 asset URL |
 | `analyses` | project_id pk, payload jsonb, locked | 계약 §3.2 (Product 소유 필드 제외) |
 | `mannequin_cuts` | id, project_id, candidate chk, version, asset_id, base_fit, fit_adjust, length_adjust, match_adjust jsonb | uq(project_id, candidate, version). candidate는 저장 ID 호환용이며 신규 단일컷은 A. 과거 fit_adjust·length_adjust·match_adjust는 읽기 호환용 |

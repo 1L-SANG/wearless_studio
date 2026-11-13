@@ -170,11 +170,7 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
         await api.promoteConfirmedGptEvidence(projectId, evidenceHandoff);
       }
     }
-    await api.patchProject(projectId, {
-      composeMode: draft.composeMode === 'extended' ? 'extended' : 'basic',
-    });
-
-    // CTA 대기 경계는 여기까지다: 프로젝트 생성·상품 사진·상품·분석·사진 양 저장만 확정에
+    // CTA 대기 경계는 여기까지다: 프로젝트 생성·상품 사진·상품·분석 저장만 확정에
     // 필요하다. 아래 내 옷 승격은 프라미스만 시작해 콘티보드 진입 로딩과 겹쳐 진행한다.
     const customMatchPromotion = startCustomMatchPromotion(api, projectId, customDraft, {
       // 승격이 analysis.matchClothing 을 바꾸므로, 입력 화면에서 데운 콘티 캐시는 완료 즉시 폐기한다.

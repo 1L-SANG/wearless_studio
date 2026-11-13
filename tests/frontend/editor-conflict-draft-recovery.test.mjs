@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createConflictWorkCopies, restoreWorkCopyOnce } from '../../src/lib/conflictWorkCopy.js';
 import { clearEditorWaitDraft, editorWaitDraftDecision, loadEditorWaitDraftEntry, saveEditorWaitDraft } from '../../src/lib/editorWaitDraft.js';
+import { ensureShippingReturnsBlock, needsDefaultTemplate } from '../../src/features/editor/presets/infoPresets.js';
 
 const source = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
 const entry = source.slice(source.indexOf('  useEffect(() => {\n    setLoadError(null);'), source.indexOf('  // 상세페이지 생성 사진은'));
@@ -50,6 +51,18 @@ function harness({ storage = memoryStorage(), copies = createConflictWorkCopies(
     async enter() { evaluate(entry, bindings); await new Promise(setImmediate); assert.equal(view.LoadError, null); },
   };
 }
+
+test('저장된 문서를 여는 경로도 누락된 배송·교환·반품 프레임을 복구한다', async () => {
+  const saved = [{ id: 'saved-header', kind: 'info', infoType: 'header', elements: [] },
+    { id: 'saved-photo', kind: 'image', elements: [] }];
+  const h = harness({ server: saved });
+  Object.assign(h.bindings, { ensureShippingReturnsBlock, needsDefaultTemplate });
+  await h.enter();
+  assert.deepEqual(h.view.Blocks.slice(0, 2), saved);
+  assert.equal(h.view.Blocks.length, 3);
+  assert.equal(h.view.Blocks.at(-1).kind, 'info');
+  assert.equal(h.view.Blocks.at(-1).infoType, 'shipping_returns');
+});
 
 for (const loadAttempt of [0, 1]) test(`newer post-conflict draft restores without an older recovery action, load attempt ${loadAttempt}`, async () => {
   const h = harness({ loadAttempt });

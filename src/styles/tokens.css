@@ -48,6 +48,21 @@
   font-style: normal;
   font-display: swap;
 }
+/* Gowun Batang — bundled full Korean/Latin faces for magazine titles and editor export. */
+@font-face {
+  font-family: "Gowun Batang";
+  src: url("../fonts/GowunBatang-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Gowun Batang";
+  src: url("../fonts/GowunBatang-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
 /* Cormorant — self-hosted variable serif (Latin only). Editor text-tool option. */
 @font-face {
   font-family: "Cormorant";
@@ -63,6 +78,12 @@
   --sb-continue-height: calc(var(--cta-height) + var(--sp-8) * 2);
   --sb-page-edge: max(var(--sp-24), calc((100vw - 1030px) / 2));
   --sb-drawer-width: min(520px, 40vw);
+  --sb-detail-veil-start: .56;
+  --sb-detail-veil-end: .84;
+  --sb-detail-title-size: 15px;
+  --sb-detail-note-size: 12px;
+  --sb-detail-overview-title: 32px;
+  --sb-detail-overview-note: 26px;
   --sb-design-drawer-width: min(330px, calc(100vw - var(--sp-24)));
   --sb-outside-tools: 40px;
   /* Generated page content: independent of the surrounding editor theme. */
@@ -73,6 +94,7 @@
   --font-body: "Pretendard Variable", "Inter", "Inter Placeholder", system-ui, sans-serif;
   --font-mono: "Roboto Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --font-serif: "Cormorant", Georgia, "Times New Roman", serif;
+  --font-batang: "Gowun Batang", Georgia, serif;
   --font-soft: "Gowun Dodum", "Pretendard Variable", system-ui, sans-serif;
 
   /* ---- Ink & surface (design.md overrides Cal's #242424) ---- */

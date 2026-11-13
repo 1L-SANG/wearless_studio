@@ -43,6 +43,8 @@ fixture.cases = fixture.cases.filter(item => !/^woc(?:[2356]|6b|11)-/.test(item.
     return { name: item.name.replace(/^guide-/, 'common-'), input };
 });
 fixture.catalogVersion = pageTemplatesCatalog.catalogVersion;
+// This retained case exercises AI paragraph splitting without seller-owned copy.
+fixture.cases.find(item => item.name === 'emo-md-paragraphs').input.analysis.mdComment = '';
 // These original fixtures describe deliberate ghost recipes, not undecided
 // legacy products. Make that intention explicit under the section mode contract.
 for (const item of fixture.cases) for (const block of item.input.storyboard) {
@@ -260,6 +262,14 @@ for (const templateId of ['emo', 'show']) {
     addFrameCase('no-shop', 'COLUMN', 2, standard, { shopName: null });
     addFrameCase('no-remainder', 'COLUMN', 2, [['medium', 'medium']]);
     addFrameCase('unknown-size', '2COL', 2, standard, {}, {});
+    for (const [shape, width, height] of [['square', 600, 600], ['landscape', 900, 450]]) {
+        const { board, key } = makeBoard([['medium']]);
+        const photo = board.find(block => block.pageSectionKey === key && block.source !== 'text');
+        const src = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"/>`)}`;
+        const mine = patchStoryboardPhoto(board, photo.id, { source: 'mine', cutType: null, ownImages: [src] }, product);
+        appendCase(`woc6b-${templateId}-frame-mine-unknown-${shape}`, { product, analysis, shopName,
+            storyboard: restoreSavedDesign(mine, key, 'WEAR-STYLING-FRAME-COLUMN-01') }, {});
+    }
     const parts = { ...analysis, partDescriptionCopy: ['목선', '단추', '소맷단'].map(point => ({ point, desc: `${point} 설명` })) };
     const detailBoard = seedStoryboard(product, parts);
     const detailKey = sectionRuns(detailBoard).find(run => run.kind === 'points').key;
@@ -301,6 +311,40 @@ for (const templateId of ['emo', 'show']) {
         appendCase(`woc11-${templateId}-${designId}-saved-worn`, { product, analysis: cropCopy,
             storyboard: cropBoard.map(block => block.pointItems ? { ...block,
                 pointItems: block.pointItems.map((item, i) => ({ ...item, cropRegion: oldRegions[i] })) } : block) }, metadata);
+    }
+}
+// Explicit server decisions: preserve the same generation inputs and exercise
+// ordinary titles at three positions and plates at center/bottom only.
+fixture.cases = fixture.cases.filter(item => !item.name.startsWith('woc14-'));
+for (const designId of ['P01-D09', 'P01-D09-G']) for (const plated of [false, true]) for (const position of (plated ? ['center', 'bottom'] : ['top', 'center', 'bottom'])) {
+    const input = structuredClone(fixture.cases.find(item => item.name === 'emo-2-mono').input);
+    input.storyboard = input.storyboard.map(block => block.pageSectionKind === 'first' ? { ...block, pageDesignId: designId } : block);
+    const hero = input.storyboard.find(block => block.pageSectionKind === 'first' && block.source !== 'text');
+    const key = `${hero.pageSectionKey}:${hero.slotKey}:center`;
+    input.cutResults = input.cutResults.map(cut => cut.blockId === hero.id ? { ...cut,
+        overlayTextPositions: { [key]: position }, overlayTextPlates: { [key]: plated } } : cut);
+    validateStoryboardV4(input.storyboard);
+    fixture.cases.push({ name: `woc14-${designId}-${plated ? 'plate' : 'plain'}-${position}`, input });
+}
+// Seller MD copy has priority over generated copy and retains its original text.
+fixture.cases = fixture.cases.filter(item => !item.name.startsWith('woc17-'));
+for (const templateId of ['emo', 'show']) {
+    const aiBody = 'AI 첫 문단\n\nAI 둘째 문단\nAI 셋째 문단\nAI 넷째 문단';
+    for (const [suffix, mdComment, body] of [
+        ['seller-multiline', '  Cotton 셔츠를 추천해요.  \n\n  둘째 줄\n셋째 줄\n넷째 줄  \n', aiBody],
+        ['absent-ai', '', aiBody],
+        ['absent-empty', '', ''],
+        ['blank-ai', ' \t\n ', aiBody],
+    ]) {
+        const input = structuredClone(fixture.cases.find(item => item.name === `${templateId}-2-mono`).input);
+        const intro = input.storyboard.find(block => block.pageSectionKind === 'intro');
+        intro.pageDesignId = templateId === 'show' ? 'T06-D01' : 'T01-D07';
+        input.analysis.mdComment = mdComment;
+        input.copywriting = true;
+        input.copyResults = input.copyResults.filter(copy => copy.blockId !== intro.id);
+        input.copyResults.push({ blockId: intro.id, texts: [{ role: 'body', text: body }] });
+        validateStoryboardV4(input.storyboard);
+        fixture.cases.push({ name: `woc17-${templateId}-on-${suffix}`, input });
     }
 }
 for (const item of fixture.cases.filter(item => /^woc(?:[2356]|6b|11)-/.test(item.name))) validateStoryboardV4(item.input.storyboard);

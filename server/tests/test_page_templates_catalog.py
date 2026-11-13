@@ -157,7 +157,7 @@ def test_token_resolution_uses_base_swatch_and_keeps_body_font():
     product = {"colors": [{"swatchId": "red"}, {"swatchId": "blue", "isBase": True}]}
     tokens = resolve_page_tokens({"templateId": "emo", "fontStyle": "boldGothic", "colorMode": "point"}, base_color_of(product)["swatchId"])
     assert tokens["colors"]["accentInk"] == CATALOG["pointPalette"]["blue"]["accentInk"]
-    assert tokens["fonts"]["titleKo"]["weight"] == 800
+    assert tokens["fonts"]["titleKo"]["weight"] == 700
     assert tokens["fonts"]["labelEn"]["font"] == "Cal Sans"
     assert tokens["fonts"]["body"]["font"] == "Pretendard"
     assert tokens["fonts"]["body"]["weight"] == 400

@@ -48,6 +48,7 @@ import { genderForClothingType } from '@/lib/productGender.js';
 import { detachSpaceMembership, insertSpaceSet, rekeySeparatedSpaceRuns, replaceSpaceSetRun } from '@/lib/storyboardSpaceSets.js';
 import { consumeStoryboardEntry, loadStoryboardEntry, peekStoryboardEntry } from './storyboardEntryPrefetch.js';
 import { sbLastSaved, sbPending, sbSaveIdle, sbSaveNow, sbSetSaveRepair, sbSetConflictHandler, sbStable } from './storyboardPersistence.js';
+import { setStoryboardEntryNotice, STORYBOARD_REVIEW_MESSAGE } from '@/lib/pageTemplates/entryNotices.js';
 import { storyboardWorkCopies, restoreWorkCopyOnce } from '@/lib/conflictWorkCopy.js';
 import { renderGroups } from '@/lib/storyboardRenderGroups.js';
 import { prewarmImages } from '@/lib/imagePrewarm.js';
@@ -294,7 +295,7 @@ function prepareStoryboardEntry(
     productName: p.name || '',
     colorOpts: colorOpts.length ? colorOpts : fallbackColor,
     detailColorOpts: allColorOpts.length ? allColorOpts : fallbackColor,
-    composeModeSeed: {
+    storyboardSeedContext: {
       colors: p.colors || [],
       targetGenders: a?.targetGenders || [],
       subCategory: a?.subCategory || null,
@@ -343,7 +344,7 @@ export function Storyboard({ toastOverride = null } = {}) {
   const [hasDetailImage, setHasDetailImage] = useState(() => initialEntry?.hasDetailImage || false);
   const [autosaveFailed, setAutosaveFailed] = useState(false);
   const [entryNotice, setEntryNotice] = useState(() => api.storyboardEntryNotice?.(useAppStore.getState().projectId));
-  const [composeModeSeed, setComposeModeSeed] = useState(() => initialEntry?.composeModeSeed || ({
+  const [storyboardSeedContext, setStoryboardSeedContext] = useState(() => initialEntry?.storyboardSeedContext || ({
     colors: [],
     targetGenders: [],
     matchClothing: [],
@@ -416,7 +417,7 @@ export function Storyboard({ toastOverride = null } = {}) {
   const customMatchPromotionExpectedRef = useRef(location.state?.customMatchPromotionStarted === true);
   const customMatchPromotionHandledRef = useRef(new Set());
   const promotedMatchClothingRef = useRef({ projectId: null, items: null });
-  const composeModeSeedRef = useRef(composeModeSeed);
+  const storyboardSeedContextRef = useRef(storyboardSeedContext);
   const projectId = useAppStore((s) => s.projectId);
   const shopName = useStoryboardShopName(blocks);
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
@@ -445,10 +446,10 @@ export function Storyboard({ toastOverride = null } = {}) {
           const nextMatchClothing = refreshed || [];
           promotedMatchClothingRef.current = { projectId, items: nextMatchClothing };
           setMatchClothing(nextMatchClothing);
-          setComposeModeSeed((current) => ({ ...current, matchClothing: nextMatchClothing }));
+          setStoryboardSeedContext((current) => ({ ...current, matchClothing: nextMatchClothing }));
           setBlocks((current) => applyPromotedMatchSelection(
             current,
-            composeModeSeedRef.current.colors,
+            storyboardSeedContextRef.current.colors,
             nextMatchClothing,
           ));
         } catch {
@@ -464,18 +465,18 @@ export function Storyboard({ toastOverride = null } = {}) {
 
   // 승격 실패 안내 — 어느 화면이 떠 있든 프로젝트당 한 번. 콘티보드 언마운트로 유실되지 않는다.
   useEffect(() => onCustomMatchPromotionFailure(() => {
-    pushToast('내 옷을 등록하지 못했어요. 분석 화면에서 다시 올려주세요.', { icon: 'alertCircle' });
+    pushToast('내 옷을 등록하지 못했어요. 다시 올리려면 새로 시작해 주세요.', { icon: 'alertCircle' });
   }), [pushToast]);
 
   // 새로고침·이탈로 메모리 프라미스가 유실된 경우 새 백엔드 인프라를 만들지 않는다. 이미 서버
-  // 목록에 내 옷이 없다면 기존 실패 안내로 수렴해 분석 화면의 재업로드 경로를 알려준다.
+  // 목록에 내 옷이 없다면 기존 실패 안내로 수렴해 새 작업에서 다시 올리도록 알려준다.
   useEffect(() => {
     if (!customMatchPromotionExpectedRef.current || !projectId || matchClothing === null) return;
     if (getCustomMatchPromotionTask(projectId)) return;
     if ((matchClothing || []).some((item) => item.isCustom)) return;
     if (customMatchPromotionHandledRef.current.has(projectId)) return;
     customMatchPromotionHandledRef.current.add(projectId);
-    pushToast('내 옷을 등록하지 못했어요. 분석 화면에서 다시 올려주세요.', { icon: 'alertCircle' });
+    pushToast('내 옷을 등록하지 못했어요. 다시 올리려면 새로 시작해 주세요.', { icon: 'alertCircle' });
   }, [matchClothing, projectId, pushToast]);
 
   useEffect(() => () => clearTimeout(undoTimerRef.current), []);
@@ -489,7 +490,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     const timer = setTimeout(() => setInsertedSectionKey(null), prefersReducedMotion() ? 1000 : 1520);
     return () => { cancelAnimationFrame(frame); clearTimeout(timer); };
   }, [insertedSectionKey]);
-  useLayoutEffect(() => { composeModeSeedRef.current = composeModeSeed; }, [composeModeSeed]);
+  useLayoutEffect(() => { storyboardSeedContextRef.current = storyboardSeedContext; }, [storyboardSeedContext]);
   const v4CopyReady = entryNotice !== 'legacyGenerated' && Boolean(blocks?.length) && blocks.every(block => block.taxonomyVersion === 4);
   useStoryboardTheme(v4CopyReady);
   useEffect(() => {
@@ -595,16 +596,18 @@ export function Storyboard({ toastOverride = null } = {}) {
         // fail-open 결과도 resolve되므로 등록 실패가 마네킹 생성을 막지는 않는다.
         const customMatchTask = getCustomMatchPromotionTask(pid);
         const customMatchReady = customMatchTask?.promise.catch(() => null) || Promise.resolve();
-        void customMatchReady.then(() => isAnalysisFastEntryEnabled()
-          ? (active ? requestMannequinGeneration(pid, { isActive: () => active }) : null)
-          : requestMannequinGeneration(pid)).catch((error) => {
-          if (active) setMannequinFailure(error?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.');
-        });
         await sbSaveIdle();     // 직전 인스턴스의 비행 중 저장(이탈 플러시)이 착지한 뒤에 읽는다 — 스테일 로드 방지
         const entry = await consumeStoryboardEntry(pid) || await loadStoryboardEntry(pid);
         const [board] = entry;
         const notice = api.storyboardEntryNotice?.(pid);
         if (active) setEntryNotice(notice);
+        if (notice !== 'rebuilt' && notice !== 'legacyGenerated') {
+          void customMatchReady.then(() => isAnalysisFastEntryEnabled()
+            ? (active ? requestMannequinGeneration(pid, { isActive: () => active }) : null)
+            : requestMannequinGeneration(pid)).catch((error) => {
+            if (active) setMannequinFailure(error?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.');
+          });
+        }
 
         // 직전 이탈 저장 실패분 복원 — 단, "서버가 우리가 마지막으로 알던 상태 그대로"일 때만.
         // 서버가 변했다면 다른 탭/기기의 더 새로운 저장이므로 보관분을 폐기하고 서버본을 따른다(침묵 덮어쓰기 금지).
@@ -620,7 +623,8 @@ export function Storyboard({ toastOverride = null } = {}) {
           sbPending.delete(pid);
           toast.push('다른 곳에서 저장된 최신 콘티를 불러왔어요 — 이전에 저장 못 한 변경은 반영되지 않았어요');
         }
-        if (!usePending) sbLastSaved.set(pid, board);   // 이번 로드의 서버 상태를 기준선으로 기록
+        if (notice === 'rebuilt') sbLastSaved.delete(pid); // 메모리에서 바꾼 보드는 아직 서버 저장본이 아니다.
+        else if (!usePending) sbLastSaved.set(pid, board);   // 이번 로드의 서버 상태를 기준선으로 기록
         const reuseInitialEntry = shouldReuseInitialStoryboardEntry({
           usePending,
           promotionObserved: productPhotoPromotionObserved,
@@ -637,7 +641,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         const initBlocks = promotedMatchClothing
           ? applyPromotedMatchSelection(
             prepared.blocks,
-            prepared.composeModeSeed.colors,
+            prepared.storyboardSeedContext.colors,
             promotedMatchClothing,
           )
           : prepared.blocks;
@@ -653,11 +657,11 @@ export function Storyboard({ toastOverride = null } = {}) {
           setHasDetailImage(prepared.hasDetailImage);
           setDetailColorOpts(prepared.detailColorOpts);
           setColorOpts(prepared.colorOpts);
-          setComposeModeSeed(promotedMatchClothing
-            ? { ...prepared.composeModeSeed, matchClothing: promotedMatchClothing }
-            : prepared.composeModeSeed);
+          setStoryboardSeedContext(promotedMatchClothing
+            ? { ...prepared.storyboardSeedContext, matchClothing: promotedMatchClothing }
+            : prepared.storyboardSeedContext);
         }
-        if (notice !== 'legacyGenerated' && (prepared.normalized || prepared.assignment.changed
+        if (notice !== 'legacyGenerated' && notice !== 'rebuilt' && (prepared.normalized || prepared.assignment.changed
           || usePending || promotionChangedBlocks)) {
           const autoAssignmentOnly = prepared.assignment.assignedIds.length > 0
             && prepared.assignment.protectedIds.length === 0 && !prepared.normalized
@@ -710,7 +714,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         latestBlocks.current = kept;
         setBlocks(kept);
         try {
-          await sbSaveNow(pid, () => kept, { restoreConflict: true });
+          if (api.storyboardEntryNotice?.(pid) !== 'rebuilt') await sbSaveNow(pid, () => kept, { restoreConflict: true });
           storyboardWorkCopies.clear(pid, copy);
           setAutosaveFailed(false);
         } catch (error) { setAutosaveFailed(error); }
@@ -742,9 +746,17 @@ export function Storyboard({ toastOverride = null } = {}) {
     clearTimeout(saveTimer.current);
     saveTimer.current = null;
     if (api.storyboardEntryNotice?.(pid) === 'legacyGenerated') return Promise.resolve();
-    return sbSaveNow(pid, () => latestBlocks.current, options);
+    if (api.storyboardEntryNotice?.(pid) === 'rebuilt' && !options.confirmRebuilt) return Promise.resolve();
+    const { confirmRebuilt: _confirmRebuilt, ...saveOptions } = options;
+    return sbSaveNow(pid, () => latestBlocks.current, saveOptions);
   };
-  const saveNow = (pid) => flushLatest(pid);
+  const saveNow = async (pid) => {
+    await flushLatest(pid, { confirmRebuilt: true });
+    if (api.storyboardEntryNotice?.(pid) === 'rebuilt') {
+      setStoryboardEntryNotice(pid, null);
+      setEntryNotice(null);
+    }
+  };
   // 저장이 다시 성공하면 배너를 거둔다.
   const retryAutosave = () => flushLatest(projectId)
     .then(() => setAutosaveFailed(false))
@@ -760,7 +772,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       directSaveSnapshots.current.delete(blocks);
       return;
     }
-    if (entryNotice === 'legacyGenerated') return undefined;
+    if (entryNotice === 'legacyGenerated' || entryNotice === 'rebuilt') return undefined;
     return scheduleStoryboardAutosave(saveTimer, () => {
       // 자동저장 실패를 침묵시키지 않는다 — 서버가 4xx 로 거절하면 재전송도 없어서
       // 그 세션의 저장이 통째로 죽는데 화면엔 아무 표시가 없었다(자체 리뷰 high 의 2차 피해).
@@ -784,10 +796,10 @@ export function Storyboard({ toastOverride = null } = {}) {
     saveRepairContext.current = {
       catalogs,
       clothingType,
-      targetGenders: composeModeSeed.targetGenders,
+      targetGenders: storyboardSeedContext.targetGenders,
       identityKind,
     };
-  }, [catalogs, clothingType, composeModeSeed, identityKind]);
+  }, [catalogs, clothingType, storyboardSeedContext, identityKind]);
   useEffect(() => {
     sbSetSaveRepair((pid, snapshot, error) => {
       const ctx = saveRepairContext.current;
@@ -826,7 +838,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     shopName }), [catalogs, detailPreviewDimensions, shopName]);
   const styleSaves = useMemo(() => createStoryboardStyleSaveQueue(style => saveStoryboardPageStyle(projectId, style), { projectId }), [projectId]);
   const styleRequest = useRef(0);
-  const selectedPageStyle = analysisPageStyle(catalogs?.analysis?.pageStyle);
+  const selectedPageStyle = analysisPageStyle(catalogs?.analysis?.pageStyle, blocks);
   const styleValueRef = useRef(selectedPageStyle);
   useLayoutEffect(() => { styleValueRef.current = selectedPageStyle; styleSaves.seed(selectedPageStyle); }, [projectId, selectedPageStyle, styleSaves]);
   const [pageStyleError, setPageStyleError] = useState('');
@@ -986,7 +998,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     directSaveSnapshots.current.add(next);
     setBlocks(next);
     try {
-      await sbSaveNow(projectId, () => next);
+      if (api.storyboardEntryNotice?.(projectId) !== 'rebuilt') await sbSaveNow(projectId, () => next);
       atomicRetryRef.current = null;
     } catch (error) {
       if (error?.code === 'revision_conflict') throw error;
@@ -1014,7 +1026,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     directSaveSnapshots.current.add(next);
     setBlocks(next);
     try {
-      await sbSaveNow(projectId, () => next);
+      if (api.storyboardEntryNotice?.(projectId) !== 'rebuilt') await sbSaveNow(projectId, () => next);
       atomicRetryRef.current = null;
       if (nextSelectedId) {
         setSelectedId(nextSelectedId);
@@ -1140,7 +1152,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     const run = added[0];
     const name = templateSectionName(run);
     showUndo(previous, assigned, { label: '섹션 추가', standalone: true,
-      message: `${name}을 넣었어요` });
+      message: `${name} 섹션을 넣었어요` });
     setInsertedSectionKey(run.pageSectionKey); setActiveSectionKey(run.pageSectionKey); setOverview(false); setSelectedId(null); setSelectedViewId(null);
     setSetPicker(null); setDrawer({ mode: 'add' });
     if (flightSource) requestAnimationFrame(() => {
@@ -1170,7 +1182,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     const run = sectionRuns(blocks).find(item => item.key === key);
     if (!run) return;
     setActiveSectionKey(key); setOverview(false); setSelectedId(null); setSelectedViewId(null); setHighlightedPosition(null); setSetPicker(null);
-    if (drawer?.mode === 'design') setDrawer({ mode: 'design', runKey: key });
+    if (drawer?.mode === 'design' && sectionDesignChoices(run, { storyboard: blocks, product: catalogs.detailProduct }).length > 1) setDrawer({ mode: 'design', runKey: key });
     else setDrawer(null);
   };
   const swapPosition = (from, to) => {
@@ -1204,7 +1216,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     directSaveSnapshots.current.add(atomicRetry.next);
     setBlocks(atomicRetry.next);
     try {
-      await sbSaveNow(projectId, () => atomicRetry.next);
+      if (api.storyboardEntryNotice?.(projectId) !== 'rebuilt') await sbSaveNow(projectId, () => atomicRetry.next);
       atomicRetryRef.current = null;
       showUndo(atomicRetry.previous, atomicRetry.next, { blockId: 'retry', label: '설정' });
       return true;
@@ -1235,7 +1247,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     // 생성 입력은 서버가 저장된 콘티에서 읽는다 — 다음 단계로 넘기기 전에 반드시 저장.
     // 같은 직렬 체인 경유: 비행 중 자동저장 뒤에 줄서서 최신 스냅샷이 마지막에 반영됨을 보장.
     await continueAfterStoryboardFlush({
-      flush: async () => { await styleSaves.wait(); await ensureV4StoryboardCopywriting(projectId, useAppStore.getState); return saveNow(projectId); },
+      flush: async () => { await styleSaves.flush(() => styleValueRef.current); await ensureV4StoryboardCopywriting(projectId, useAppStore.getState); return saveNow(projectId); },
       navigate: () => navigate('/create/mannequin'),
       onFailure: (message, error) => toast.push(message, { variant: 'error', error,
         kind: 'save_error', actionName: 'save', messageCode: 'storyboard_save_failed', blocking: true }),
@@ -1287,7 +1299,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       }}>마네킹 다시 만들기{mannequinQuoteConfirmation.pending(projectId)
         ? ` · ${mannequinQuoteLabel(mannequinQuoteConfirmation.pending(projectId).quote)}` : ''}</Button>
     </div>}
-    {entryNotice === 'rebuilt' && <p role="status" className="sb-entry-notice">새 템플릿 구성으로 다시 만들었어요</p>}
+    {entryNotice === 'rebuilt' && <p role="status" className="sb-entry-notice">{STORYBOARD_REVIEW_MESSAGE}</p>}
     {autosaveFailed && <div className="sb-save-error sb-autosave-error" role="alert">
       <ClientErrorCapture point="storyboardSave" error={autosaveFailed instanceof Error ? autosaveFailed : undefined} projectId={projectId} />
       <span>변경 내용을 저장하지 못했어요. 잠시 뒤 다시 시도해주세요.</span><button type="button" onClick={retryAutosave}>다시 저장</button>
@@ -1339,7 +1351,7 @@ export function Storyboard({ toastOverride = null } = {}) {
           </div> : <StoryboardPhotoPanel key={selectedId} block={selected} blocks={blocks} busy={atomicSaving} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts}
             fixedProduct={activeRun?.kind === 'first' && pairedPhotoSlot(activeRun.designId) === 'ghost'
               && (selectedViewId?.includes(':first.ghost:') || selected?.slotKey === 'first.ghost')}
-            clothingType={clothingType} subCategory={composeModeSeed.subCategory} customCategory={composeModeSeed.customCategory}
+            clothingType={clothingType} subCategory={storyboardSeedContext.subCategory} customCategory={storyboardSeedContext.customCategory}
             exampleGender={exampleGender} identityKind={identityKind} hasDetailImage={hasDetailImage} projectId={projectId}
             onChange={(patchValue, options) => patch(selectedId, patchValue, options)} onAtomicChange={(patchValue, options) => atomicPatch(selectedId, patchValue, options)}
             onRetryAtomicSave={retryAtomicSave} matchClothing={matchClothing} customMatchPromotionPending={customMatchPromotionPending}

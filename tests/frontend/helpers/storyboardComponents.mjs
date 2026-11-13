@@ -9,7 +9,7 @@ import { isTextOnlySection, visibleSectionRuns } from '../../../src/lib/pageTemp
 import * as signature from '../../../src/lib/signatureCutPool.js';
 import * as photoChoices from '../../../src/lib/pageTemplates/storyboardPhotoChoices.js';
 import * as gallery from '../../../src/lib/pageTemplates/storyboardGallery.js';
-import { assembleStoryboardPreview } from '../../../src/features/storyboard/storyboardPreview.js';
+import { assembleStoryboardPreview, detailStageGeometry, detailNoticeLines } from '../../../src/features/storyboard/storyboardPreview.js';
 import { stageAdditions } from '../../../src/lib/pageTemplates/stageAdditions.js';
 import { pairedPhotoSlot, baseDesignId } from '../../../src/lib/pageTemplates/pairedDesigns.js';
 import { reconcileSectionDependencies } from '../../../src/lib/pageTemplates/sectionDependencies.js';
@@ -18,7 +18,7 @@ import { hasBackdropBlur, backdropEdgeTiles } from '../../../src/features/editor
 import { sectionDesignAxes } from '../../../src/lib/pageTemplates/designAxes.js';
 const extraBindings = { storyboardPositions, storyboardPositionId, isHiddenStoryboardKind, positionSwapReason, storyboardPositionSwapReason,
   wearUsageForBlock, automaticSectionInsertionKey, colorDisplayName, isTextOnlySection, visibleSectionRuns,
-  ...signature, ...gallery, ...photoChoices, assembleStoryboardPreview, stageAdditions, pairedPhotoSlot, reconcileSectionDependencies, baseColorOf, resolvePageTokens, sectionDesignAxes,
+  ...signature, ...gallery, ...photoChoices, assembleStoryboardPreview, detailStageGeometry, detailNoticeLines, stageAdditions, pairedPhotoSlot, reconcileSectionDependencies, baseColorOf, resolvePageTokens, sectionDesignAxes,
   hasBackdropBlur,
   StoryboardPaleSlot: 'pale-slot', StoryboardStackPopup: 'stack-popup',
   ProductPresentationPicker: 'product-presentations', PhotoChoiceFilters: 'photo-filters', PhotoFraming: 'photo-framing', PhotoChoicePager: 'photo-pages', ExampleThumb: 'example-thumb' };

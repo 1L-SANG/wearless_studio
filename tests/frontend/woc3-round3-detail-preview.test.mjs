@@ -67,7 +67,7 @@ for (const template of ['emo', 'show']) test(`R3-2 ${template} mock full resolve
     const run = sectionRuns(draft.storyboard).find(run => run.kind === kind);
     const html = renderToStaticMarkup(React.createElement(Stage, { ...common, run, number: 3 }));
     const expected = cropped.filter(el => run.blocks.some(block => block.id === el.sourceBlockId));
-    assert.deepEqual(svgImages(html).map(imageTuple), expected.map(expectedTuple));
+    assert.deepEqual(svgImages(html).map(imageTuple), expected.map(preview.detailStageGeometry).map(expectedTuple));
     assert.ok(svgImages(html).length === (kind === 'points' ? 3 : 1));
   }
   const outline = renderToStaticMarkup(React.createElement(PageList, { runs: visibleSectionRuns(draft.storyboard), page,
@@ -104,7 +104,7 @@ test('R3-2 generated photos keep their normal assembly instead of being replaced
   assert.equal(actual.previewDetailCrop, undefined);
 });
 
-test('R3-2 measured source dimensions preserve a landscape original and its native pixel limit', () => {
+test('R3-2 measured source dimensions preserve landscape aspect while allowing preview upscaling', () => {
   requirePreview(); const { draft, catalogs, input } = full('emo');
   const fabric = detailCards(draft.storyboard).find(card => card.pageSectionKind === 'fabric');
   const candidate = draft.analysis.detailRecommendations.candidates.find(item => item.id === fabric.detailTargetId);
@@ -113,7 +113,7 @@ test('R3-2 measured source dimensions preserve a landscape original and its nati
   catalogs.detailPreviewDimensions = { [target.src]: { width: 400, height: 200 } };
   const saved = structuredClone(draft.product);
   const image = images(preview.assembleStoryboardPreview(input)).find(el => el.sourceBlockId === fabric.id);
-  assert.deepEqual(image.crop, { iw: 400, ih: 200, ox: 0, oy: 0 });
+  assert.ok(image.crop.iw > 400 && image.crop.iw <= Math.round(image.w/.3)); assert.ok(Math.abs(image.crop.ih/image.crop.iw-.5)<.01);
   assert.deepEqual(draft.product, saved, 'measured dimensions remain transient');
 });
 
@@ -125,7 +125,7 @@ test('R3-2 measured bitmap dimensions replace an explicitly unknown source-size 
   Object.assign(source, { src: '/bitmap-original.webp', width: 1024, height: 1365, dimensionsKnown: false });
   catalogs.detailPreviewDimensions = { [source.src]: { width: 100, height: 150 } };
   const image = images(preview.assembleStoryboardPreview(input)).find(el => el.sourceBlockId === fabric.id);
-  assert.deepEqual(image.crop, { iw: 100, ih: 150, ox: 0, oy: 0 });
+  assert.ok(image.crop.iw > 100 && image.crop.iw <= Math.round(image.w/.3)); assert.ok(Math.abs(image.crop.ih/image.crop.iw-1.5)<.01);
 });
 
 test('R3-2 measured mock SVG originals keep four distinct regions without a bitmap pixel cap', () => {
@@ -154,9 +154,9 @@ test('R3-2 measured mock SVG originals keep four distinct regions without a bitm
 for (const [name, size, expected] of [
   ['unknown estimate', {}, { iw: 1333, ih: 1777, ox: 400, oy: 244 }],
   ['explicit aspect estimate', { width: 1024, height: 1365, dimensionsKnown: false }, { iw: 1333, ih: 1777, ox: 400, oy: 244 }],
-  ['native 1x', { width: 1000, height: 1500 }, { iw: 1000, ih: 1500, ox: 250, oy: 175 }],
-  ['tiny native stays tiny', { width: 100, height: 150 }, { iw: 100, ih: 150, ox: 0, oy: 0 }],
-]) test(`R3-2 crop zoom obeys the existing 30% / native limit (${name})`, () => {
+  ['known large bitmap', { width: 1000, height: 1500 }, { iw: 1333, ih: 2000, ox: 400, oy: 300 }],
+  ['tiny bitmap upscales', { width: 100, height: 150 }, { iw: 1333, ih: 2000, ox: 400, oy: 300 }],
+]) test(`R3-2 crop zoom obeys the preview 30% limit without a native-pixel cap (${name})`, () => {
   assert.equal(typeof preview.detailPreviewCrop, 'function');
   const target = { ...size, region: { x: .4, y: .2, w: .1, h: .1 } };
   assert.deepEqual(preview.detailPreviewCrop(400, 400, target), expected);
