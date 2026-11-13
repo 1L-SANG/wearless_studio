@@ -1,5 +1,5 @@
 import JSZip from 'jszip';
-import { getFontEmbedCSS } from 'html-to-image';
+import { getPageFontEmbedCSS } from './editorExportFonts.js';
 import { EXPORT_PRESETS, MAX_SPLIT_HEIGHT, MAX_JPEG_BYTES, captureBlockCanvasSlices, renderStorefrontFiles } from './editorExport.js';
 import { publicationFetch } from '../../lib/api/detailPublications.js';
 
@@ -63,7 +63,7 @@ export async function publishDetailPage(blockNodes, { projectId, productName, pr
     const render = deps.renderStorefrontFiles || renderStorefrontFiles;
     let captureBlock = deps.captureBlock;
     if (!deps.renderStorefrontFiles && !captureBlock) {
-      const fontEmbedCSS = await getFontEmbedCSS(blockNodes[0]);
+      const fontEmbedCSS = await getPageFontEmbedCSS(blockNodes);
       captureBlock = (node, ratio) => captureBlockCanvasSlices(node, ratio, fontEmbedCSS, MAX_SPLIT_HEIGHT, imageCache);
     }
     const rendered = await render(blockNodes, { preset: selected.id, format: 'jpeg', delivery: 'split' }, {

@@ -1,4 +1,5 @@
 """Producer gates keep multi-accessory drafts away from older rolling API workers."""
+from storyboard_v4_cases import v4_blocks
 import asyncio
 from copy import deepcopy
 from dataclasses import replace
@@ -179,7 +180,7 @@ def test_release_gate_restored_editor_retry_before_job_or_charge(client, make_to
     frozen = {'version': 1, 'slots': selected('0', '3', '4')['slots']}
     block = {'id': 'failed', 'source': 'ai', 'cutType': 'styling', 'shot': 'full',
         'outfitSelectionsSnapshot': frozen}
-    monkeypatch.setattr(repo, 'get_storyboard', AsyncMock(return_value=[block]))
+    monkeypatch.setattr(repo, 'get_storyboard', AsyncMock(return_value=v4_blocks([block])))
     monkeypatch.setattr(repo, 'get_editor_blocks', AsyncMock(return_value=[{'elements': [
         {'type': 'image', 'src': None, 'sourceBlockId': 'failed'}]}]))
     monkeypatch.setattr(repo, 'get_failed_cut_outfit_recipe', AsyncMock(return_value={

@@ -1377,16 +1377,17 @@ _SIGNATURE_UPPER_IDS = {
 }
 _SIGNATURE_BOTTOM_PANTS_IDS = {
     "men": (
-        "sig_men_bottom_pants_01", "sig_men_bottom_pants_02",
+        "sig_men_bottom_pants_01",
+        *(f"sig_men_bottom_pants_{i:02d}" for i in range(3, 9)),
     ),
     "women": (
-        "sig_women_bottom_pants_01", "sig_women_bottom_pants_02",
+        *(f"sig_women_bottom_pants_{i:02d}" for i in range(1, 10)),
     ),
 }
 _SIGNATURE_BOTTOM_SKIRT_IDS = (
-    "sig_women_bottom_skirt_01", "sig_women_bottom_skirt_02",
+    *(f"sig_women_bottom_skirt_{i:02d}" for i in range(2, 10)),
 )
-_SIGNATURE_DRESS_IDS = ("sig_women_dress_01", "sig_women_dress_02")
+_SIGNATURE_DRESS_IDS = tuple(f"sig_women_dress_{i:02d}" for i in range(1, 7))
 
 
 def is_signature_cut(spec: dict) -> bool:

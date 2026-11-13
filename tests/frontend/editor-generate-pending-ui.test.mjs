@@ -24,6 +24,8 @@ const pending = { cutType: 'product', shot: 'ghost', colorId: 'white', modelId: 
 function render(extra = {}) {
   return renderToStaticMarkup(React.createElement(AIPanel, {
     catalogs, colorOpts: [{ id: 'white', label: '흰색' }, { id: 'black', label: '검은색' }],
+    product: { colors: [{ id: 'white', isBase: true, images: [{ slot: 'Front', src: '/white.jpg' }] },
+      { id: 'black', images: [{ slot: 'Front', src: '/black.jpg' }] }] },
     onGenerate() {}, onConfirmPendingGenerate() {}, ...extra,
   }));
 }
@@ -103,4 +105,14 @@ test('실제 모델의 브랜드 유형은 새 폼에서 고른 모델을 기준
   assert.doesNotMatch(ready, /<button[^>]*disabled[^>]*class="[^"]*btn-primary/);
   const saving = render({ catalogs: realModelCatalogs, brandUseCategory: '일반 의류', brandUseCategorySaving: true });
   assert.match(saving, /<button[^>]*disabled[^>]*class="[^"]*btn-primary/);
+});
+
+test('원본 사진이 사라진 선택색은 다른 색으로 바꾸지 않고 생성을 막는다', () => {
+  const html = render({ product: { colors: [{ id: 'white', isBase: true, images: [] },
+    { id: 'black', images: [{ slot: 'Front', src: '/black.jpg' }] }] } });
+  assert.match(html, /aria-label="흰색" aria-pressed="true"/);
+  assert.match(html, /정면 사진 필요/);
+  assert.match(html, /이 색상의 원본 사진을 올려 주세요/);
+  assert.match(html, /<button[^>]*disabled[^>]*class="[^"]*btn-primary/);
+  assert.doesNotMatch(html, /src="\/black.jpg"/);
 });

@@ -63,3 +63,15 @@ test('moving to the centre, leaving the window, blur and Escape stop edge motion
     cleanup();
   }
 });
+
+test('v5 dragging scrolls the outlined section list instead of the window, including wheel input', () => {
+  const win = fixture(), calls = [];
+  const outline = { scrollHeight: 1800, clientHeight: 500, getBoundingClientRect: () => ({ top: 200, height: 500 }),
+    scrollBy: value => calls.push(value.top) };
+  win.document.closest = () => outline;
+  const cleanup = attachStoryboardDragScroll(win);
+  win.fire('dragover', { clientX: 100, clientY: 695 }); win.tick(0); win.tick(16);
+  assert.ok(calls.length && calls.every(top => top > 0)); assert.deepEqual(win.calls, []);
+  win.fire('wheel', { deltaY: 2, deltaMode: 1 }); assert.equal(calls.at(-1), 32);
+  cleanup();
+});

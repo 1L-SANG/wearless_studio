@@ -1,4 +1,4 @@
-"""셀러 선택 메모는 저장만 하고 생성 프롬프트에는 넣지 않는다."""
+"""기존 생성 프롬프트는 MD 메모를 읽지 않는다. v4 조립은 계약 v2 §7.1을 따른다."""
 import asyncio
 import contextlib
 from pathlib import Path
@@ -126,9 +126,14 @@ def test_image_prompt_and_selling_point_guidance_ignore_md_comment(canon):
         {**ANALYSIS, "mdComment": MEMO}["sellingPoints"])
 
 
-def test_generation_modules_do_not_read_the_storage_only_key():
+def test_legacy_generation_modules_do_not_read_md_comment():
     app = Path(__file__).resolve().parents[1] / "app"
     paths = list((app / "agents").glob("*.py")) + list((app / "workers").glob("*.py"))
     paths += list((app / "services").glob("matching*.py"))
     for path in paths:
+        # WO1: the v4 catalog declares this fact path, and the v4 assembler uses
+        # seller text verbatim when copywriting is off. Legacy AI inputs stay
+        # protected by this check and the behavioral prompt tests above.
+        if path.name in {"page_templates.py", "page_template_assembler.py"}:
+            continue
         assert "mdComment" not in path.read_text(), path.name

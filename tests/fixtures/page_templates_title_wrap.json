@@ -1,0 +1,256 @@
+{
+  "cases": [
+    {
+      "name": "short",
+      "title": "코튼 셔츠",
+      "size": 51,
+      "lines": [
+        "코튼 셔츠"
+      ],
+      "lineWidths": [
+        215.73
+      ],
+      "ruleWidth": 216
+    },
+    {
+      "name": "rule-minimum",
+      "title": "I",
+      "size": 51,
+      "lines": [
+        "I"
+      ],
+      "lineWidths": [
+        34.68
+      ],
+      "ruleWidth": 48
+    },
+    {
+      "name": "one-line-boundary",
+      "title": "가나다라마바사아자차카타파하",
+      "size": 51,
+      "lines": [
+        "가나다라마바사아자차카타파하"
+      ],
+      "lineWidths": [
+        699.72
+      ],
+      "ruleWidth": 532.8
+    },
+    {
+      "name": "one-line-space-over",
+      "title": "가나다라마바사 아자차카타파하",
+      "size": 51,
+      "lines": [
+        "가나다라마바사",
+        "아자차카타파하"
+      ],
+      "lineWidths": [
+        349.86,
+        349.86
+      ],
+      "ruleWidth": 350
+    },
+    {
+      "name": "two-line-balance",
+      "title": "가나다라 마바사아 자차카타 파하거너",
+      "size": 51,
+      "lines": [
+        "가나다라 마바사아",
+        "자차카타 파하거너"
+      ],
+      "lineWidths": [
+        415.65,
+        415.65
+      ],
+      "ruleWidth": 416
+    },
+    {
+      "name": "size-44",
+      "title": "가나다라마바사 아자차카타파하 거너더러머버서 어저처커터퍼허",
+      "size": 44,
+      "lines": [
+        "가나다라마바사 아자차카타파하",
+        "거너더러머버서 어저처커터퍼허"
+      ],
+      "lineWidths": [
+        617.32,
+        617.32
+      ],
+      "ruleWidth": 532.8
+    },
+    {
+      "name": "size-38-two",
+      "title": "가나다라마바사아 자차카타파하거너 더러머버서어저처 커터퍼허고노도로",
+      "size": 38,
+      "lines": [
+        "가나다라마바사아 자차카타파하거너",
+        "더러머버서어저처 커터퍼허고노도로"
+      ],
+      "lineWidths": [
+        607.62,
+        607.62
+      ],
+      "ruleWidth": 532.8
+    },
+    {
+      "name": "size-38-three",
+      "title": "가나다라마바사아자차 카타파하거너더러머버 서어저처커터퍼허고노",
+      "size": 38,
+      "lines": [
+        "가나다라마바사아자차",
+        "카타파하거너더러머버",
+        "서어저처커터퍼허고노"
+      ],
+      "lineWidths": [
+        372.4,
+        372.4,
+        372.4
+      ],
+      "ruleWidth": 373
+    },
+    {
+      "name": "long-unspaced",
+      "title": "남녀공용오버핏코튼반팔티셔츠세트",
+      "size": 44,
+      "lines": [
+        "남녀공용오버핏코튼반팔티셔츠세트"
+      ],
+      "lineWidths": [
+        689.92
+      ],
+      "ruleWidth": 532.8
+    },
+    {
+      "name": "bracket-boundary",
+      "title": "[당일출고]남녀공용오버핏코튼반팔티셔츠",
+      "size": 38,
+      "lines": [
+        "[당일출고]",
+        "남녀공용오버핏코튼반팔티셔츠"
+      ],
+      "lineWidths": [
+        190.0,
+        521.36
+      ],
+      "ruleWidth": 522
+    },
+    {
+      "name": "parenthesis-boundary",
+      "title": "남녀공용오버핏코튼반팔티셔츠(당일출고)",
+      "size": 38,
+      "lines": [
+        "남녀공용오버핏코튼반팔티셔츠",
+        "(당일출고)"
+      ],
+      "lineWidths": [
+        521.36,
+        190.0
+      ],
+      "ruleWidth": 522
+    },
+    {
+      "name": "bracket-kept-before-floor",
+      "title": "[당일출고]코튼반팔티셔츠",
+      "size": 51,
+      "lines": [
+        "[당일출고]코튼반팔티셔츠"
+      ],
+      "lineWidths": [
+        604.86
+      ],
+      "ruleWidth": 532.8
+    },
+    {
+      "name": "uppercase-ascii",
+      "title": "ABCDEFGHIJKLMN OPQRSTUVWXYZ",
+      "size": 51,
+      "lines": [
+        "ABCDEFGHIJKLMN",
+        "OPQRSTUVWXYZ"
+      ],
+      "lineWidths": [
+        485.52,
+        416.16
+      ],
+      "ruleWidth": 486
+    },
+    {
+      "name": "repeated-spaces",
+      "title": "가나다라  마바사아  자차카타  파하거너",
+      "size": 51,
+      "lines": [
+        "가나다라  마바사아",
+        "자차카타  파하거너"
+      ],
+      "lineWidths": [
+        431.46,
+        431.46
+      ],
+      "ruleWidth": 432
+    },
+    {
+      "name": "explicit-newline",
+      "title": "코튼 셔츠\n데일리",
+      "size": 51,
+      "lines": [
+        "코튼 셔츠",
+        "데일리"
+      ],
+      "lineWidths": [
+        215.73,
+        149.94
+      ],
+      "ruleWidth": 216
+    },
+    {
+      "name": "astral-codepoints",
+      "title": "🧵🧵🧵🧵🧵🧵🧵 🧵🧵🧵🧵🧵🧵🧵",
+      "size": 51,
+      "lines": [
+        "🧵🧵🧵🧵🧵🧵🧵",
+        "🧵🧵🧵🧵🧵🧵🧵"
+      ],
+      "lineWidths": [
+        349.86,
+        349.86
+      ],
+      "ruleWidth": 350
+    },
+    {
+      "name": "uppercase-one-line-boundary",
+      "title": "ABCDEFGHIJKLMNOPQRST",
+      "size": 51,
+      "lines": [
+        "ABCDEFGHIJKLMNOPQRST"
+      ],
+      "lineWidths": [
+        693.6
+      ],
+      "ruleWidth": 532.8
+    },
+    {
+      "name": "uppercase-over-boundary",
+      "title": "ABCDEFGHIJKLMNOPQRSTU",
+      "size": 44,
+      "lines": [
+        "ABCDEFGHIJKLMNOPQRSTU"
+      ],
+      "lineWidths": [
+        628.32
+      ],
+      "ruleWidth": 532.8
+    },
+    {
+      "name": "bracket-kept-at-44",
+      "title": "[당일출고]코튼반팔티셔츠세트",
+      "size": 44,
+      "lines": [
+        "[당일출고]코튼반팔티셔츠세트"
+      ],
+      "lineWidths": [
+        608.08
+      ],
+      "ruleWidth": 532.8
+    }
+  ]
+}

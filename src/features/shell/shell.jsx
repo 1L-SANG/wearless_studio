@@ -11,6 +11,7 @@ import { api } from '@/lib/api/index.js';
 import { Icon, Modal, Button, useToast } from '@/components/ui.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { hasEditorEntered } from '@/lib/editorEntered.js';
+import { hasStoryboardEntered } from '@/lib/storyboardEntered.js';
 import { IS_FACEMARKET } from '@/lib/host.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { WIZARD_STEPS, STEP_INDEX } from '@/lib/wizardSteps.js';
@@ -345,6 +346,34 @@ export function useDoneGuard(enabled = true) {
     return () => { cancelled = true; };
   }, [enabled]);
   return blocked;
+}
+
+export function useStoryboardInputGuard(enabled = true) {
+  const projectId = useAppStore(s => s.projectId);
+  const projectPersisted = useAppStore(s => s.projectPersisted);
+  const generation = useAppStore(s => s.projectGeneration);
+  const userId = useAppStore(s => s.userId);
+  const [result, setResult] = useState(null);
+  const guarded = enabled && projectPersisted && hasStoryboardEntered(projectId);
+  useEffect(() => {
+    if (!guarded) return;
+    let active = true;
+    const current = () => active && useAppStore.getState().projectId === projectId
+      && useAppStore.getState().projectGeneration === generation && useAppStore.getState().userId === userId;
+    const finish = phase => { if (current()) setResult({ projectId, generation, userId, phase }); };
+    (async () => {
+      await useAppStore.getState().loadProject();
+      if (!current()) return;
+      const project = await api.getProject(projectId);
+      // 삭제되었거나 mock의 다른 프로젝트면 입력 복구를 허용한다. 에디터 보호가 우선이다.
+      finish(project?.id !== projectId ? 'open'
+        : project.status === 'done' || hasEditorEntered(projectId) ? 'editor' : 'storyboard');
+    })().catch(() => finish(hasEditorEntered(projectId) ? 'editor' : 'storyboard'));
+    return () => { active = false; };
+  }, [guarded, projectId, generation, userId]);
+  if (!guarded) return 'open';
+  return result?.projectId === projectId && result.generation === generation && result.userId === userId
+    ? result.phase : 'checking';
 }
 
 export function DoneGuardModal() {

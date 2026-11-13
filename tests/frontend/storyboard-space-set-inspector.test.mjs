@@ -1,62 +1,35 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { nodes } from './helpers/storyboardComponents.mjs';
+import { storyboardPhotoPanelHarness } from './helpers/storyboardPhotoPanelHarness.mjs';
+import { storyboardSpaceSetsFor, spaceSetGroupId } from '../../src/lib/storyboardSpaceSetCatalog.js';
+const set = storyboardSpaceSetsFor({ gender: 'women', clothingType: 'top' }).find(item => item.setType === 'horizon-rotation');
+const block = { id: 'photo', source: 'ai', cutType: 'horizon', shot: 'full', direction: 'front', contentRole: 'fit', exampleId: set.members[0].exampleId,
+  spaceGroupId: spaceSetGroupId(set.id, 'inspector'), colorId: 'base' };
 
-import { spaceSetDisplayName } from '../../src/lib/spaceSetDisplayNames.js';
-
-const storyboardSource = readFileSync(
-  new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url),
-  'utf8',
-);
-const inspectorSource = storyboardSource.slice(
-  storyboardSource.indexOf('function Inspector('),
-  storyboardSource.indexOf('export function Storyboard()'),
-);
-const spaceSetCardSource = storyboardSource.slice(
-  storyboardSource.indexOf('function SpaceSetCard('),
-  storyboardSource.indexOf('function SpaceSetInspectorHeader('),
-);
-const spaceSetHeaderSource = storyboardSource.slice(
-  storyboardSource.indexOf('function SpaceSetInspectorHeader('),
-  storyboardSource.indexOf('function SpaceSetGallery('),
-);
-
-test('selecting a space-set block omits the generation gallery, shot tabs, and my-photo tab', () => {
-  assert.match(storyboardSource, /shouldRenderGenerationExampleGuide\(block\) \{\s*return !block\?\.spaceGroupId;/);
-  // 갤러리 게이트는 두 곳(대기 레시피 / 일반). 시그니처 슬롯은 전용 갤러리를 쓰므로
-  // 일반 쪽 게이트에 !isSignatureSlot 이 붙는다 — 두 게이트 모두 여전히 존재해야 한다.
-  assert.equal((inspectorSource.match(/\{shouldRenderGenerationExamples && /g) || []).length, 2);
-  assert.match(inspectorSource, /\{shouldRenderGenerationExamples && !isSignatureSlot && \(/);
-  assert.match(inspectorSource, /isMine && !block\.spaceGroupId/);
-  assert.match(storyboardSource, /aria-label="생성예시 갤러리"/);
-  assert.match(storyboardSource, /<ShotSegment/);
-  assert.match(storyboardSource, /MINE_SHOT_OPTION/);
+test('a studio set member keeps a one-photo example gallery and offers a whole-set replacement action', async () => {
+  const calls = [], h = await storyboardPhotoPanelHarness({ block, onChangeSpaceSet: () => calls.push('replace'), spaceContext: { set, siblings: [block] } });
+  const tree = h.render(), gallery = nodes(tree).find(node => node.type === 'mood-guide');
+  assert.ok(gallery); assert.equal(gallery.props.exampleId, block.exampleId);
+  const button = nodes(tree).find(node => node.type === 'button' && node.props.children === '다른 스튜디오 세트로 바꾸기');
+  button.props.onClick(); assert.deepEqual(calls, ['replace']);
+  assert.ok(nodes(tree).some(node => node.type === 'horizon-background'));
+  assert.equal(nodes(tree).some(node => node.type === 'underline-tabs'), false); h.close();
 });
-
-test('selecting a regular block keeps the generation gallery, shot tabs, and my-photo tab', () => {
-  assert.match(storyboardSource, /shouldRenderGenerationExampleGuide\(block\) \{\s*return !block\?\.spaceGroupId;/);
-  assert.match(inspectorSource, /\{shouldRenderGenerationExamples && \(\s*<MoodGuide/);
-  assert.match(storyboardSource, /MINE_SHOT_OPTION = Object\.freeze\(\{ value: 'mine', label: '내 이미지' \}\)/);
+test('an ordinary photo keeps example selection, color choice, matching and seller-photo replacement', async () => {
+  const h = await storyboardPhotoPanelHarness({ block: { ...block, spaceGroupId: null }, matchClothing: [{ id: 'pants', name: '바지' }] });
+  const tree = h.render();
+  assert.ok(nodes(tree).some(node => node.type === 'mood-guide' && node.props.onUseMine));
+  assert.ok(nodes(tree).some(node => node.type === 'color-dots'));
+  assert.ok(nodes(tree).some(node => node.type === 'underline-tabs')); h.close();
 });
-
-test('a selected set member uses a compact cut header instead of the large set card', () => {
-  assert.doesNotMatch(spaceSetHeaderSource, /<SpaceSetCard/);
-  assert.match(storyboardSource, /<StoryboardSelectionThumbnail src=\{selectedThumbnail\}/);
-  assert.doesNotMatch(spaceSetHeaderSource, /sb-space-current-thumb/);
-  assert.match(spaceSetHeaderSource, /세트 설정/);
-  assert.match(spaceSetHeaderSource, /세트 공통/);
-  assert.doesNotMatch(inspectorSource, /<HorizonBackgroundControl/);
-  assert.doesNotMatch(inspectorSource, /label className="lbl[^"]*">방향/);
-  assert.match(inspectorSource, /label className="lbl">대상 색상/);
-});
-
-test('an individual horizon cut backed by a published complete example cannot change its shot independently', () => {
-  assert.match(inspectorSource, /onShotChange=\{block\.cutType === 'horizon' && block\.exampleId && \(block\.refScope \|\| 'all'\) === 'all' \? null : onShotChange\}/);
-  assert.match(storyboardSource, /cut === 'horizon' && exampleId && refScope === 'all' \? '선택한 예시 구도 유지' : '내 사진은 이 프로젝트에서만'/);
-});
-
-test('set gallery guide says what a set click does and that a single cut can be dragged in', () => {
-  const gallerySource = storyboardSource.slice(storyboardSource.indexOf('function SpaceSetGallery('));
-  // 세트 변경 화면에서 누르면 교체되고, 추가 화면에서 누르면 추가된다. 한 컷은 미리보기에서 끌어 온다.
-  assert.match(gallerySource, /replacing \? '세트를 눌러 바꾸거나 한 컷만 끌어서 추가하세요\.' : '세트를 눌러 추가하거나 한 컷만 끌어서 추가하세요\.'/);
+test('replacing a set member with a different example clears membership in the saved change', async () => {
+  const next = { id: 'new', cutType: 'horizon', shot: 'medium', direction: 'side', variants: ['all'] };
+  const h = await storyboardPhotoPanelHarness({ block, spaceContext: { set, siblings: [block] }, catalogs: {
+    genExamples: [next], shotTypes: [{ value: 'full' }, { value: 'medium' }], productShotTypes: [{ value: 'ghost' }],
+  } });
+  const guide = nodes(h.render()).find(node => node.type === 'mood-guide');
+  await guide.props.onExampleChange('new', 'all');
+  assert.equal(h.block.spaceGroupId, null); assert.equal(h.block.spaceSetMemberOrder, null); assert.equal(h.block.setSelectionOrigin, null);
+  assert.equal(h.block.refScope, 'all'); assert.equal(h.block.shot, 'medium'); h.close();
 });

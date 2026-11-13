@@ -1,3 +1,4 @@
+import { v4Fixture } from './helpers/templateStoryboard.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ensureSections, normalizeBoard } from '../../src/lib/sections.js';
@@ -12,7 +13,7 @@ for (const scope of ['pose', 'bg']) {
   test(`old ${scope} selection cannot reactivate a single-cut mode`, () => {
     const saved = { ...base, refScope: scope, ref_scope: scope };
     for (const normalize of [ensureSections, normalizeBoard]) {
-      const [result] = normalize([saved]);
+      const [result] = normalize(v4Fixture([saved]));
       assert.equal(result.refScope, 'all');
       assert.equal(result.ref_scope, undefined);
       assert.equal(result.exampleId, 'chosen');
@@ -29,6 +30,6 @@ test('place series retain internal pose input and detach into full-example refer
   const [member] = createSpaceSetMembers({ spaceVariation: 'subtle', members: [
     { exampleId: 'chosen', order: 1, cutType: 'styling', shot: 'full', direction: 'front' },
   ] }, base, { spaceGroupId: 'ssg1__set-one__instance-one' });
-  assert.equal(ensureSections([member])[0].refScope, 'pose');
+  assert.equal(ensureSections(v4Fixture([member]))[0].refScope, 'pose');
   assert.equal(detachSpaceMembership(member).refScope, 'all');
 });

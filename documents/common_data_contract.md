@@ -10,7 +10,7 @@
 
 1. **저장되는 key와 enum 값은 영문 토큰, 한국어는 표시 라벨로만.** 라벨은 `catalogs`의 `{ value, label }`에서 파생한다. 단, **사용자가 직접 입력하는 자유 텍스트**(상품명, 소재명, 강조 특징, 카피, 텍스트 요소)는 한국어 그대로 저장한다.
 2. **필드명은 camelCase.** DB(snake_case) 매핑은 백엔드 어댑터 책임이며 프론트 계약은 camelCase 고정.
-3. **enum 토큰은 소문자 단일어 또는 snake_case**(`semi_over`). 기존 토큰 `ai-notice`, `arrow-l`은 마이그레이션 비용 대비 이득이 없어 예외로 유지한다.
+3. **enum 토큰은 소문자 단일어 또는 snake_case**(`semi_over`). 기존 토큰 `ai-notice`, `arrow-l`은 마이그레이션 비용 대비 이득이 없어 예외로 유지한다. 같은 자동 블록 계열인 `common-notice`도 예외다.
 4. **id는 불투명 문자열.** 클라이언트 임시 id는 `{prefix}_{rand}`(prefix: `prj` `prd` `col` `img` `blk` `b` `el` `w`)이며, 서버 도입 후 서버 발급 id로 대체된다. 프론트는 id 형식에 의존하지 않는다.
 5. **시간은 ISO 8601 문자열**(`updatedAt`). '2시간 전' 같은 상대 표시는 화면에서 파생한다.
 6. **이미지 `src`는 URL 문자열.** 현재는 objectURL/placeholder, 백엔드 이후 R2 URL. 클라 전용 표시 필드(`loading`, `fresh` 등)는 계약에 포함하지 않는다.
@@ -19,20 +19,21 @@
 
 ## 2. 최상위 엔티티: Project
 
-플로우 전체(입력 → 분석 → 마네킹 → 콘티 → 생성 → 에디터 → 보관함)를 묶는 단위. 모든 API는 `projectId`를 첫 인자로 받는다 (ADR-0001).
+입력, 분석, 콘티, 마네킹, 생성, 에디터, 보관함 순서의 플로우 전체를 묶는 단위. 모든 API는 `projectId`를 첫 인자로 받는다 (ADR-0001).
 
 ```ts
 Project {
   id: string
   status: ProjectStatus            // draft | generating | done
   title: string                    // = product.name 미러 (보관함 표시용)
-  composeMode: ComposeMode         // 기본 'basic'
-  copywriting: boolean             // 기본 true
+  copywriting: boolean             // 기본 true. 템플릿 콘티는 콘티에 들어갈 때와 다음 단계로 넘어가기 전에 true로 저장한다. 화면에 켜고 끄기는 없다
   selectedMannequinId: string | null
   adjustCount?: number             // 과거 저장값 읽기 전용. 새 입력·제한·프론트 동기화에 사용하지 않음
   createdAt: string                // ISO
   updatedAt: string                // ISO
 }
+// 폐기(2026-11): composeMode. DB `projects.compose_mode` 컬럼(기본 'basic')만 남는다.
+//   서버는 이 컬럼을 읽거나 응답에 넣지 않고, PATCH로 composeMode나 compose_mode가 와도 무시한다(오류 아님)
 
 ProjectSummary {                   // 보관함 카드 (구 LibraryItem)
   id: string
@@ -46,7 +47,8 @@ ProjectSummary {                   // 보관함 카드 (구 LibraryItem)
 }
 ```
 
-- `composeMode` `copywriting` `selectedMannequinId`는 **서버 동기화 대상 선택값**이다. 프론트는 Zustand에 작업 사본을 두고 변경 시 `patchProject`로 동기화한다 (→ `frontend_state_model.md`).
+- `copywriting` `selectedMannequinId`는 **서버 동기화 대상 선택값**이다. 프론트는 Zustand에 작업 사본을 두고 변경 시 `patchProject`로 동기화한다 (→ `frontend_state_model.md`).
+- 콘티에 한 번 들어간 프로젝트는 입력(`/create/input`)이나 분석(`/create/analysis`) 주소로 가면 콘티로 돌려보내고 "콘티를 만든 뒤에는 분석으로 돌아갈 수 없어요"를 보여 준다. 생성이 끝났거나 에디터에 들어간 프로젝트는 기존 완료 안내(PRD §10.17)가 먼저다. 진입 표식은 브라우저 저장소(`sb-entered-<projectId>`)에만 두는 화면 상태이며 서버 필드가 아니다. 저장소를 쓸 수 없으면 막지 않는다(`src/lib/storyboardEntered.js`, `src/apps/seller/App.jsx`).
 - 핏 설정은 `analysis.fitProfile`로 저장하고 이미지 반영은 재생성으로 처리한다. 재생성 횟수 제한은 없으며 적용 단가·무료 수정 정책은 PRD §12.2를 따른다.
 - `adjustCount`와 컷의 과거 조정 필드는 저장값 읽기 호환용이며 새 요청이나 제한 근거로 쓰지 않는다.
 
@@ -138,6 +140,8 @@ Analysis {
   materials: Material[]            // Material { name: string(자유 텍스트), ratio: number(%) }
   sellingPoints: string[]          // 자유 텍스트, max LIMITS.sellingPointMax(5)
   aiSuggestedPoints: string[]      // max LIMITS.aiSuggestedPointMax(2)
+  featureCopy?: { point: string, desc: string }[] // 판매 특징 설명. 구 상세 카드의 동일명 fallback도 유지한다.
+  partDescriptionCopy?: { point: string, desc: string }[] // 실제 상세 부위 카드 설명. detailTarget 후보 label 또는 wornCrop.label과 일치시킨다.
   mdComment: string                // 셀러 직접 입력 선택 메모. 기본값 ''. 앞뒤 공백 제거 후 최대 300자
   selectedModelId: string          // catalogs.models 참조
   matchCandidates: MatchClothing[] // AI가 제안한 매칭 의류 후보
@@ -145,7 +149,19 @@ Analysis {
   locked: boolean
   frontClosure?: FrontClosure       // AG-01이 사진에서 판정한 앞 여밈. 서버 소유, 클라이언트 PATCH 금지. 공개 분석은 기존 상품 증거 인계 봉투에 함께 서명해 원본 검증 후 저장한다. 없으면 판단 불가로 읽는다(ADR-0018)
   garmentColorEvidence?: GarmentColorSummary // 서버가 사진에서 측정한 공개 요약. 콘티보드 이탈 시 필요할 때만 생성하고, 없으면 상세페이지 생성이 한 번 더 잰다. 클라이언트 PATCH 금지
+  pageStyle?: PageStyle            // 상세페이지 템플릿과 글자 스타일, 페이지 색감. 아래 PageStyle 규칙
 }
+
+PageStyle {
+  version: 1
+  templateId: PageTemplateId       // 'emo'(감성형) | 'show'(쇼룸형)
+  fontStyle: FontStyle             // 카탈로그 fontStyles의 키. 현재 template | plainGothic | serif | boldGothic
+  colorMode: PageColorMode         // 'mono'(기본) | 'point'(의류 색감)
+  catalogVersion: string           // 카탈로그 catalogVersion과 같은 값만 받는다
+  updatedAt?: string               // 시간대가 붙은 ISO 8601. 마지막 스타일 조회의 정렬 기준
+}
+// 기본값 = { version: 1, templateId: 'emo', fontStyle: 'template', colorMode: 'mono', catalogVersion: <현재 카탈로그> }
+// 위 여섯 키 밖의 키는 받지 않는다.
 // fit·clothingType은 필수(null 불가) — 분석 폼에서 해제 불가 칩(PRD §6.3).
 // subCategory는 원피스에서 null, targetGenders는 일반 카테고리에서 비울 수 있으나 dress는 ['women']으로 정규화.
 
@@ -175,8 +191,22 @@ MatchClothing {
 //       Analysis.washCare (세탁 안내는 분석이 아니라 에디터 자동 블록 — M-02 규칙 기반 생성, PRD §10.14)
 ```
 
-`mdComment`는 지금은 저장만 하고 AI 입력에는 쓰지 않는다. 템플릿이 확정된 뒤 연결한다.
+`mdComment`는 감성형과 쇼룸형 모두 상품 소개 본문 칸(`source='seller+ai'`)에 들어가는 셀러 글이다(2026-11-13 오너 결정, ADR-0026 18항). 값이 공백만이 아니면 AI가 실제 쇼핑몰 상세페이지의 MD 코멘트처럼 다듬어 그 칸에 넣는다. 다듬는 말투와 형식은 카피라이팅 작업이 정한다. 다듬기가 붙기 전에는 템플릿 조립기가 저장된 값을 그대로 넣는다(앞뒤 공백은 저장할 때 지운다, `page_template_assembler.py`의 `_seller_comment`). 글 안의 줄바꿈과 공백을 지키고 문단으로 나누지 않아 글상자 하나가 되며, 그 요소에는 `aiDraft`를 붙이지 않는다. 값이 비었거나 공백뿐이면 그 칸은 AI 초안 자리이고 요소에 `aiDraft: true`를 붙인다(§5.1). 생성 대기 화면은 셀러 원문이 든 상품 소개 본문(`aiDraft`가 없고 글이 있는 `body` 요소)을 늦게 온 카피로 덮지 않는다(`src/lib/editorWaitSkeleton.js`).
 문자열이 아닌 값은 저장할 수 없다. `merge=1`에서 `null`은 기존 병합 규칙에 따라 키를 삭제한다.
+
+`pageStyle`은 분석이 소유하는 페이지 모양 선택이다. DB 마이그레이션 없이 분석 payload 안에 둔다.
+
+- 저장 시점: 분석 확인 화면에서 템플릿(감성형, 쇼룸형)을 누를 때마다 `saveAnalysis`의 병합 PATCH로 저장하고, 분석 확정 직전에 마지막 값을 한 번 더 맞춘다. 콘티보드의 글자 스타일과 페이지 색감 넘기기도 같은 직렬 저장 경로로 `fontStyle`, `colorMode`, `updatedAt`을 바꾼다. 템플릿을 새로 고르면 `fontStyle`은 카탈로그 기본값(`template`)으로 돌아가고 `colorMode`는 유지한다.
+- 처음 값: 프로젝트에 유효한 `pageStyle`이 없으면 화면은 `getLastPageStyle()`(로그인 사용자가 가장 최근에 저장한 스타일. 그 값이 검증을 통과하지 못하면 카탈로그 기본값)을 처음 값으로 보여 준다. 로그인하지 않았거나 조회가 실패하면 카탈로그 기본값을 쓴다.
+- 서버 검증: `version`은 정수 1, `templateId`는 `emo`나 `show`, `fontStyle`은 카탈로그 `fontStyles`의 키, `colorMode`는 `mono`나 `point`, `catalogVersion`은 현재 카탈로그 값과 같아야 하며 `updatedAt`은 시간대가 붙은 ISO 문자열이어야 한다. 하나라도 어긋나거나 모르는 키가 있으면 400 `invalid_page_style` "페이지 스타일을 다시 골라 주세요."다. `null`로 지우는 PATCH도 같은 오류다.
+- 템플릿 잠금: 그 프로젝트에 마네킹컷이 있거나 마네킹 작업(`mannequin`, `mannequin_adjust`)이 한 번이라도 만들어졌으면 `templateId`를 바꾸는 저장은 409 `page_style_locked` "마네킹컷을 만든 뒤에는 템플릿을 바꿀 수 없어요."다. 이전 값이 없으면 기본 템플릿(`emo`)과 비교한다. `fontStyle`, `colorMode`, `updatedAt`만 바꾸는 저장은 잠금 뒤에도 받는다.
+- 읽기 보정(화면만): 저장값이 없고 저장 콘티가 모두 taxonomyVersion 4면 콘티의 템플릿을 쓴다. 카탈로그에서 빠진 `fontStyle`만 기본 글자 스타일로 바꿔 읽고 템플릿과 색감은 유지한다. 그 밖의 무효 값은 기본값으로 읽는다. 읽을 때 저장값을 고쳐 쓰지 않는다.
+- 적용: 조립기는 `templateId`의 템플릿 글꼴과 색에 `fontStyle`의 글꼴 덮어쓰기를 얹는다. `colorMode='point'`는 기준 색상 스와치가 `white`, `gray`, `black`, 미지정이거나 팔레트에 없으면 실제로는 `mono`로 조립한다. 이때도 저장값은 바꾸지 않는다.
+- 콘티와의 관계: 저장 콘티의 템플릿(`pageSectionKey` 앞부분)은 `pageStyle.templateId`와 같아야 한다. 다르면 콘티 저장과 상세페이지 생성이 400 `page_style_mismatch`다(§6).
+
+`partDescriptionCopy`는 상세페이지의 `page_part_copy.generate`가 셀러 강조 특징의 사전 미스와 실제 부위 이름을 기존 completion 한 번에 묶어 얻는다. 출력은 `featureCopy`와 `partDescriptionCopy`로 분리하고 같은 이름도 각 규칙으로 따로 쓴다. 셀러 강조 특징의 기존 사전·60자 한 문장 규칙은 그대로이며 부위 설명에는 사전을 쓰지 않는다. 부위 설명은 줄바꿈으로 나뉜 두 줄, 각 줄 공백 포함 최대 22자다. 첫 줄은 확인된 부위 생김새를 쓰고 로/라로 잇고, 둘째 줄은 입었을 때의 보이는 장점을 해요체로 맺는다. 보온·통기·방수 같은 소재 기능 단정, 금지어·과장어·숨은 제어 문자·미요청 부위·길이/형식 위반은 거른다. 새 지시문은 `server/prompts/page_part_copy_v1.txt`이며 추가 교정 호출은 없다. 기존 제공자 폴백은 유지한다.
+
+실패나 일부 응답 누락은 저장된 설명을 지우지 않는다. 다만 새 디테일 요소 디자인(`copyPolicy: partOnly`)은 전용 설명의 명시적 두 줄만 읽고 옛 한 줄이나 featureCopy/개별 사진 카피로 대체하지 않는다. 유효한 새 설명이 없으면 기존 자리표시자가 남으며, 숨긴 디자인의 예전 설명 규칙은 유지한다. 분석 전문 저장의 필드 생략·null PATCH 보호와 두 목록의 저장 모양은 그대로이며 DB 마이그레이션이나 새 콘티 필드는 없다.
 
 `garmentColorEvidence`는 기존 13개 색상 계열/색상명을 HEX로 바꾸는 값이 아니다. 사진 분석은 이 값을 만들지 않는다. 셀러가 콘티보드에서 마네킹컷으로 넘어갈 때 서버가 필요할 때만 만든다. 필요 조건은 `horizonBackgroundMode='garment-tone'`인 호리존 세트 멤버가 있고 그 대상 색상의 측정 결과가 없는 경우다. 해당 색상의 첫 Front와 첫 Back 원본에서 관찰기는 판매 의류 안쪽 영역만 제안하고, 서버가 사진을 먼저 줄인 뒤 sRGB로 변환한 픽셀에서 색을 측정한다. 측정이 실패해도 이동은 막지 않는다. 생성이 시작될 때 필요한 색의 측정 결과가 아직 없으면(이동 때 측정이 끝나지 않았거나 실패했거나 측정 없이 넘어간 경우) 상세페이지 생성이 한 번 더 측정한다. 끝내 근거가 없으면 배경은 기존 예시를 유지한다. 사진의 관찰색이며 실물색 보정/인증 값은 아니다.
 
@@ -216,77 +246,120 @@ MannequinCut {
 
 ### 3.4 StoryboardBlock — 콘티보드 블록
 
+콘티는 `taxonomyVersion: 4` 블록의 배열이다. 배열 순서가 곧 페이지 순서이고, `pageSectionKey`가 같은 블록이 이어진 한 덩어리(run)가 섹션 하나다. 섹션 종류, 섹션 디자인, 사진 칸은 페이지 템플릿 카탈로그(§5)가 정한다. 서버 정규화는 `server/app/agents/content_roles.py`, 화면 검증은 `src/lib/pageTemplates/validateStoryboard.js`가 같은 규칙을 맞춘다.
+
 ```ts
 StoryboardBlock {
-  id: string
-  taxonomyVersion: 3               // 공식 4섹션 분류. v2 저장본은 읽을 때 자동 승격
-  sectionId: string                // 연속된 같은 섹션 블록이 공유하는 id
-  sectionRole: StoryboardSectionRole
-  sectionTitle?: string            // @deprecated 전환기 표시 캐시. sectionRole에서 다시 계산
-  sectionLayout: SectionLayout     // 기본 'stack'
-  sectionCustom?: boolean          // 사용자가 순서·구성을 직접 바꿨는지
-  contentRole: ContentRole         // 시스템이 배정하는 내부 사진 목적. 콘티 UI에서 선택·표시하지 않음
-  title?: string                   // @deprecated 전환기 표시 캐시. contentRole에서 다시 계산
-  source: BlockSource              // 'ai' | 'mine'
-  cutType: CutType | null          // 생성 레시피. 콘티 인스펙터에서 섹션별 허용 컷을 직접 선택. source='mine'이면 null
+  id: string                       // 콘티 안에서 유일, 빈 값 불가
+  taxonomyVersion: 4               // 이 값만 저장하고 생성한다
+  // 섹션 소속. 같은 run 안에서는 아래 다섯 값이 모두 같다
+  sectionId: string                // 같은 run의 블록이 공유. 하나의 sectionId는 하나의 pageSectionKey에만 쓴다
+  pageSectionKey: string           // `${templateId}.${instanceKey}`. 앞부분이 이 콘티의 템플릿
+  pageSectionKind: PageSectionKind // 카탈로그 kinds의 키
+  pageSectionUsage?: PageSectionUsage | null // wear에만 'styling'(일상 착용컷) 또는 'fit'(스튜디오 착용컷). 다른 종류는 없음
+  pageDesignId: string             // 카탈로그 designs의 ID. 그 디자인의 kind가 pageSectionKind와 같아야 한다
+  sectionTitle?: string            // 표시 캐시. 카탈로그 종류 이름에서 다시 계산
+  sectionLayout: 'stack'           // 템플릿 콘티에서는 늘 stack. 사진 배치는 pageDesignId가 정한다
+  sectionCustom?: boolean          // 셀러가 추가하거나 바꾼 섹션인지
+  title?: string                   // @deprecated 표시 캐시. 기준 데이터가 아니다
+  source: BlockSource              // 'ai' | 'mine' | 'text'
+  slotKey?: string | null          // `${instanceKey}.${카탈로그 slotKey}[번호]`. 카탈로그 사진 칸과 연결. text와 비슷한 컷 후속은 null
+  pointItems?: PointItem[]         // points 섹션의 text 블록에만
+  // 아래는 source='ai'의 생성 레시피
+  contentRole: ContentRole | null  // 시스템 배정 내부값. mine은 'custom', text는 null
+  sectionRole?: StoryboardSectionRole | null // contentRole에서 파생하는 내부값. mine과 text는 null. 화면의 섹션이 아니다
+  cutType: CutType | null          // 사진 칸 recipe의 allowedCutTypes 안에서만. mine과 text는 null
+  shot?: ShotType | ProductShotType // 사진 칸 recipe의 allowedShots 안에서만
   direction?: Direction | ProductDirection | null   // 착용컷은 생성예시에서 파생(ADR-0015). 제품컷은 셀러가 고른 원본 사진의 면이고 대상이 있는 디테일은 대상의 원본 면이다. 예시는 제품컷 방향을 바꾸지 않는다(ADR-0008 2026-10-10 개정)
-  shot?: ShotType | ProductShotType
+  sideStyle?: 'profile' | 'threeQuarter' | null // direction='side'일 때만. 그 밖에는 null
   productPresentation?: ProductPresentation // product/ghost 전용. 미지정은 기존 예시 주도 표현 유지(ADR-0024)
   detailTargetId?: string | null   // product/detail 촬영 대상. 서버 소유 분석 후보 ID만 선택; 좌표·사실은 서버에서 원본 검증 후 해석
   detailTargetOrigin?: 'auto' | 'user' // 추천 생성과 수동 선택/해제 구별. 사용자 편집을 재추천으로 덮지 않음
-  outerClosureState?: OuterClosureState | null       // 아우터 착용컷(styling·horizon) 전용. 누락·모르는 값은 open (ADR-0018)
+  outerClosureState?: OuterClosureState | null       // 아우터 착용컷 전용. 누락·모르는 값은 open (ADR-0018)
   colorId?: string                 // ColorGroup.id (단수 — 컬러별 컷은 블록을 색상마다 분리)
   matchIds: string[]               // 매칭 의류 후보 id (UI는 최대 1개, 배열 shape은 구 저장분 호환용)
-  faceExposure: FaceExposure       // 기본 'same'
+  faceExposure: FaceExposure | null // 착용컷 기본 'same', 제품컷 null
   angle: CameraAngle               // 기본 'same'
   refImages: string[]              // '내 레퍼런스' 업로드 (생성 입력에 포함) — 프로젝트 한정, 전역 저장 없음 (ADR-0004)
-  similarSourceBlockId?: string    // 원본 AI 착용 카드 ID. 원본 결과로 생성하고 별도 과금한다. 원본의 세트 소속을 상속하며 예비 멤버는 쓰지 않는다 (ADR-0016)
+  similarSourceBlockId?: string    // 원본 AI 착용 카드 ID. 원본 결과로 생성하고 별도 과금한다. 원본의 섹션과 세트 소속을 상속한다 (ADR-0016)
   exampleId?: string | null        // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
   exampleSelectionOrigin?: 'auto' | 'user' | null  // 자동 배정인지 사용자 확정인지. source와 다른 축
   setSelectionOrigin?: 'auto' | 'user' | null      // 촬영 세트의 진입 자동 배치인지 사용자 선택인지
   spaceGroupId?: string | null     // 발행된 촬영 세트 인스턴스. `ssg1__<setId>__<instanceId>`만 허용
   spaceVariation?: 'fixed' | 'subtle'  // 발행 세트가 정한 변화 강도. 임의 입력값은 허용하지 않음
+  spaceSetMemberOrder?: number     // 발행 세트 안에서 이 컷이 쓰는 멤버 순서
   horizonBackgroundMode?: 'reference' | 'garment-tone' // 호리존 세트 전용. 기본 reference; 같은 spaceGroupId의 모든 컷에 함께 저장
   refScope?: 'all' | 'pose' // 서버·클라이언트가 컷에서 도출하는 내부 값. 일반 컷·스튜디오 세트는 all, 스타일링 장소 세트만 pose.
-  layoutRowId?: string             // 2단·3단 배치에서 같은 행을 공유하는 id
-  layoutRowVersion?: 1
   ownImages: string[]              // source='mine'의 직접 업로드 이미지
   thumb: string                    // 예시 썸네일 (서버/목 생성, 최종 이미지 아님)
+  seedProductKey?: string          // 첫 블록에만. 화면이 기본 콘티를 만들 때의 상품·분석·템플릿 지문
+  seedFingerprint?: string         // 첫 블록에만. 기본 콘티를 만든 직후의 구성 지문
 }
-// 폐기: pose / poseThumb / poseLabel(별도 포즈 선택 제거), bgThumb / bgLabel(PRD §8.5에서 배경 제거),
+
+PointItem =
+  | { kind: 'detail', sourceBlockId: string, detailTargetId?: string | null }
+      // 같은 points run 안의 AI 디테일 블록(shot='detail')을 가리킨다
+  | { kind: 'wornCrop', sourceBlockId: string, bodyPart: WornCropBodyPart, label: string,
+      cropRegion: [x: number, y: number, w: number, h: number] }
+      // 착용 사진에서 따온 부위. 값은 0~1 정규화, w와 h는 0보다 크고 x+w, y+h는 1 이하
+// 폐기: taxonomyVersion 2·3 저장 shape(공식 4섹션 분류와 읽을 때 자동 승격),
+//       layoutRowId / layoutRowVersion(행 배치는 pageDesignId가 대신함),
+//       pose / poseThumb / poseLabel(별도 포즈 선택 제거), bgThumb / bgLabel(PRD §8.5에서 배경 제거),
 //       colorIds(미사용 잔재), kind(sectionRole/contentRole과 중복)
 ```
 
 불변식:
 
-- 자동 콘티의 섹션 순서는 `hooking → styling → studio → product`다. `구매 정보`와 `같은 장소`는 섹션을 만들지 않는다.
-- `hero|benefit`은 `hooking`, `coordination`은 `styling`, `fit`은 `studio`, `productOverview|detail`은 `product` 섹션에 속한다. `custom`은 사용자가 놓은 섹션을 따른다.
-- AI 카드의 `contentRole`은 사용자 입력값이 아니다. `hooking`은 카드 순서, `styling|studio`는 섹션과 `cutType`, `product`는 선택한 `shot`으로 자동 배정한다. `hooking` 섹션의 첫 AI 카드만 `hero`다. 이동·복제·삭제·순서 변경·컷·샷 변경·되돌리기와 서버 저장에서 다시 정규화한다.
-- `source='mine'`은 `cutType=null`, `contentRole='custom'`이다. 현재 UI에서 내 이미지는 AI 사진 목적을 다시 고르지 않으며, 어느 큰 섹션에 놓였는지는 `sectionRole`로 따로 저장한다. 내 이미지는 컷 종류가 아니다.
-- `cutType`은 생성 레시피 값이지만 콘티 인스펙터에서 컷 종류로 직접 고른다. `hooking`은 `styling | horizon`, `styling`은 `styling`, `studio`는 `horizon`만 허용한다. `product`는 `cutType='product'`로 고정하고 `ghost | detail` 샷을 고른다.
-- 생성예시 갤러리는 서로 다른 `cutType`을 섞지 않는다. 현재 카드의 `cutType`과 샷·성별·적용 의류 종류가 정확히 맞는 예시만 3열 2줄, 페이지당 최대 6장씩 보여 주고 나머지는 옆 페이지로 넘겨 모두 볼 수 있다. 예시 선택이 `cutType`을 바꾸지는 않는다.
+- 모든 블록이 `taxonomyVersion: 4`여야 한다. 하나라도 아니면 400 `storyboard_outdated`이며 서버는 옛 콘티를 변환하지 않는다. v2, v3 자동 승격은 폐기했다. 화면은 저장된 옛 콘티를 열 때 기본 콘티를 새로 만들고, 이미 생성까지 끝난 옛 프로젝트는 빈 콘티로 연다(§6 `getStoryboard`).
+- 한 콘티는 템플릿 하나만 쓴다. `pageSectionKey`의 앞부분은 카탈로그 템플릿 ID, 뒷부분은 비어 있지 않은 instanceKey다. 템플릿이 섞이면 `mixed_storyboard_templates`, 키 형식이나 `sectionId`가 어긋나면 `invalid_storyboard_section`이다.
+- 같은 `pageSectionKey`는 한 번만 이어서 나온다(`noncontiguous_storyboard_section`). run 안의 `sectionId`, `pageSectionKind`, `pageSectionUsage`, `pageDesignId`는 모두 같다(`invalid_storyboard_section`).
+- `first` 섹션은 맨 앞에만 둔다(`invalid_storyboard_first`). 카탈로그에서 `repeatable`인 종류는 `wear`뿐이고 나머지 종류는 콘티에 한 번만 나온다(`repeated_storyboard_section`).
+- `pageDesignId`의 디자인 kind는 `pageSectionKind`와 같아야 한다(`invalid_storyboard_design`). `pageSectionUsage`는 `wear`에서만 `styling | fit`이고 다른 종류에서는 없어야 한다(`invalid_storyboard_usage`).
+- `source`는 `ai | mine | text`만 받는다(`invalid_storyboard_source`). AI 블록의 `slotKey`가 그 섹션의 사진 칸과 맞지 않으면 `invalid_storyboard_slot`이다.
+- 글 카드(`source='text'`)는 섹션의 글 자리를 콘티에 표시하는 블록이며 사진을 만들지 않는다. run마다 최대 하나이고, 카탈로그 `kinds[kind].storyboardTextCard`가 위치를 정한다. `none`은 글 카드가 없고, `only`는 글 카드 하나만 있고 사진이 없으며, `lead`는 글 카드 하나가 run 맨 앞에 온다. `only` 종류라도 사진이 모두 재사용 칸을 대신 채운 AI 또는 내 이미지 카드면 `lead`로 본다. 사진이 없는 `fabric` run은 `only`로 본다. 어기면 `invalid_storyboard_text_card`다.
+- 글 카드는 `cutType`, `contentRole`, `sectionRole`, `slotKey`가 모두 null이고 생성 레시피 키(예시, 세트, 색상, 매칭, 참고 이미지, 방향, 샷, 썸네일 등)를 갖지 않는다. 있으면 `invalid_storyboard_text_card`다.
+- `pointItems`는 `points` 섹션의 글 카드에 둔다. 서버는 글 카드의 `pointItems`만 검사한다. 글 카드가 `points` 섹션 밖에 있거나, 배열이 아니거나, 항목 종류, 원본, 부위, 잘라낼 영역이 맞지 않으면 `invalid_storyboard_point_items`다(`server/app/agents/content_roles.py`의 `validate_storyboard_v4`). 사진 카드에 붙은 `pointItems`는 서버가 검사하지 않지만, 화면은 사진 카드에 이 값을 만들지 않고 프론트 검사(`src/lib/pageTemplates/validateStoryboard.js`)는 거절한다. `detail` 항목의 원본은 같은 run의 AI 디테일 블록, `wornCrop` 항목의 원본은 `wear` 섹션의 착용 사진(샷이 `full`이나 `medium`인 AI 착용컷, 또는 이미지가 있는 내 이미지)이다. 원본이 지워진 항목은 숨은 항목으로 남고 새 생성 요청이 되지 않는다. 디테일 요소의 사진 비율 규칙은 아래 "템플릿 v4 디테일 요소" 절을 따른다.
+- `source='mine'`은 서버가 `contentRole='custom'`, `cutType=null`, `sectionRole=null`로 저장하고 `exampleId`, `exampleSelectionOrigin`, `spaceGroupId`, `spaceVariation`, `spaceSetMemberOrder`, `refImages`, `refAssetIds`, `productPresentation`만 지운다(`content_roles.py`의 `_canonicalize_v4_block`). `setSelectionOrigin`, `horizonBackgroundMode`, `refScope` 같은 다른 키는 남는다. 콘티 화면에서 사진을 내 이미지로 바꿀 때는 세트 소속 키(`setSelectionOrigin`, `horizonBackgroundMode` 포함)를 함께 떼고 `refScope`를 `all`로 둔다(`src/lib/pageTemplates/photoActions.js`의 `patchStoryboardPhoto`, `src/lib/storyboardSpaceSets.js`의 `detachSpaceMembership`). 내 이미지는 컷 종류가 아니다.
+- AI 블록의 `cutType`과 `shot`은 연결된 사진 칸 recipe의 `allowedCutTypes`, `allowedShots` 안에서만 고른다. 일상 착용컷(`wear`, `styling`) 칸은 `styling | horizon`을 모두 허용한다. 범위 밖 값은 서버가 recipe 기본값으로 바꾸고, 그 때문에 컷이나 샷이 바뀌면 `exampleId`와 그 출처를 비우고 원래 썸네일로 되돌린다. 착용컷은 `full | medium`, 제품컷은 `ghost | detail`만 쓴다.
+- `contentRole`은 사진 칸의 `contentRole`에서 정하고, 칸이 없는 AI 블록은 `cutType`과 `shot`에서 정한다(`styling`은 `coordination`, `horizon`은 `fit`, 제품은 `productOverview` 또는 `detail`). `first` 섹션의 AI 착용 카드 중 첫 카드만 `hero`, 나머지와 비슷한 컷 후속은 `benefit`이다. `sectionRole`은 `contentRole`에서 다시 계산한다(`hero | benefit`은 `hooking`, `coordination`은 `styling`, `fit`은 `studio`, `productOverview | detail`은 `product`). 이 둘은 생성과 카피를 위한 내부값이며 콘티 화면에 섹션으로 보이지 않는다.
+- 제품컷은 `faceExposure=null`, `matchIds=[]`, `outerClosureState=null`로 저장한다. 착용컷의 `faceExposure`가 없거나 모르는 값이면 칸 recipe 값 또는 `same`이다.
+- 비슷한 컷 후속은 원본의 생성 설정, 세트 소속, `sectionId`, `pageSectionKey`, `pageSectionKind`, `pageSectionUsage`, `pageDesignId`를 물려받고 `slotKey=null`이다. 원본은 같은 콘티의 일반 AI 착용 카드 하나여야 한다(`invalid_similar_cut_relationship`).
+- 저장할 때 `hook`, `layoutRow`, `colorway`로 시작하는 키와 `pose`, `poseLabel`, `poseThumb`, `kind`를 지우고 `sectionLayout='stack'`으로 맞춘다. 서버는 정규화한 결과를 한 번 더 검증한다.
+- 저장 콘티의 템플릿은 `analysis.pageStyle.templateId`와 같아야 한다. 분석에 `pageStyle`이 있는데 다르면 400 `page_style_mismatch`다.
 - `contentRole='detail'`은 셀러 원본의 확인 가능한 부분을 근거로 만든다. 별도 `Detail` 슬롯 사진은 필수 조건이 아니다. 선택한 `detailTargetId`의 원본 바인딩과 영역을 서버가 검증하며, 입력·검수는 ADR-0012, 후보 선택·발행은 ADR-0014를 따른다.
-- `taxonomyVersion: 3`만 새로 저장한다. v2의 `benefit`은 `hooking`, `fit`은 `cutType='horizon'`이거나 `contentRole='fit'`이면 `studio`, 그 외에는 `styling`으로 읽을 때 자동 승격한다.
-- `sectionTitle`과 `title`은 현재 구현의 전환기 캐시일 뿐 기준 데이터가 아니다. 읽을 때 enum 라벨로 덮어쓰며, 후속 정리에서 저장 shape에서 제거한다.
+- 생성예시 갤러리는 서로 다른 `cutType`을 섞지 않는다. 예시 선택이 `cutType`을 바꾸지는 않는다.
+- `sectionTitle`은 표시 캐시일 뿐 기준 데이터가 아니다. 이름은 카탈로그와 사진 칸 recipe에서 다시 계산한다.
 - 공개된 정상 조합의 `source='ai'` 블록은 자동 배정 뒤 `exampleId`가 사실상 필수다. 같은 공간의 pose·방향 호환 자산이 0장인 예외에는 미배정 상태와 오류 안내를 유지하며 `all`로 강등하지 않는다.
 - 자동 배정은 `exampleSelectionOrigin='auto'`, 직접 선택·다른 예시 보기·참고 범위 변경·샷/컷 변경 확정은 `'user'`로 저장한다. `exampleId`가 있는데 이 필드가 없는 과거 저장분은 사용자 선택으로 간주해 `'user'`로 정규화한다.
 - 진입 시 자동 배치된 촬영 세트는 `setSelectionOrigin='auto'`, 셀러가 추가하거나 교체한 세트는 `'user'`로 저장한다. 이 값은 기본 콘티 지문에서 제외한다.
 - `exampleId`가 없으면 서버는 `exampleSelectionOrigin=null`을 강제한다. 레시피 정규화·섹션 이동 등으로 `exampleId`를 지울 때 예시 썸네일도 원래 카드 썸네일로 복원해 origin·thumb 고아 값을 남기지 않는다.
-- 기본 콘티 지문과 mock `storyboardDirty` 판정에서는 `exampleSelectionOrigin='auto'`인 `exampleId`와 그 배정이 정한 `refScope`를 기본값으로 취급한다. 따라서 자동 배정 저장만으로 사진 양 변경 시 기본 콘티 재시드가 막히지 않으며, `'user'` 또는 origin 없는 기존 선택은 사용자 수정으로 판정한다.
+- 기본 콘티 지문(`seedFingerprint`)은 `exampleSelectionOrigin='auto'`인 `exampleId`를 기본값으로 취급한다. 첫 블록의 지문이 현재 구성과 같고 `seedProductKey`(의류 종류, 하위 분류, 직접 입력한 의류 이름 `customCategory`, 색상 ID와 기준 색상 여부와 뒷면 사진 유무, 성별, 디테일 추천, 강조 특징, 템플릿. `src/lib/pageTemplates/seed.js`의 `seedProductKey`)가 바뀌었을 때만 화면이 기본 콘티를 다시 만든다. 셀러가 고친 콘티는 다시 만들지 않는다.
 
-사진 목적과 내부 생성값의 조합:
+섹션 종류와 사진 칸(카탈로그 `page_templates_v1.json` 기준):
 
-| contentRole | sectionRole | cutType | 허용 shot·direction |
-|---|---|---|---|
-| `hero` | `hooking` | `styling` 또는 `horizon` | 사람용 ShotType · front/back/side |
-| `benefit` | `hooking` | `styling` 또는 `horizon` | 사람용 ShotType · front/back/side |
-| `coordination` | `styling` | `styling` | 사람용 ShotType · front/back/side |
-| `fit` | `studio` | `horizon` | 사람용 ShotType · front/back/side |
-| `productOverview` | `product` | `product` | ghost · front/back |
-| `detail` | `product` | `product` | detail · front/back · 검증된 셀러 원본 근거 |
-| `custom` | 현재 놓인 섹션 | `null` | 직접 업로드한 내 이미지. AI 생성 옵션 없음 |
+| pageSectionKind | 화면 이름 | 카탈로그 `menuGroup`(화면은 묶지 않음) | 반복 | 글 카드 | 생성 사진 칸(contentRole, cutType, shot) |
+|---|---|---|---|---|---|
+| `first` | 첫 장 | 사진 | 아니오 | none | `hero` 1장. 착용컷 `styling` 또는 `horizon`, `full` 또는 `medium`. 제품 고스트 사진을 붙이는 짝 디자인을 고르면 재사용 칸 하나가 더 생긴다 |
+| `wear` + `styling` | 일상 착용컷 | 사진 | 예 | none | `coordination`. `styling` 또는 `horizon`, `full` 또는 `medium` |
+| `wear` + `fit` | 스튜디오 착용컷 | 사진 | 예 | none | 회전 세트는 `fit`, 쇼룸형 기본 연속 세트는 `coordination`. `horizon`, `full` 또는 `medium`. 회전 세트는 front, side, back 세 칸 |
+| `color_product` | 색상과 제품 | 옷 자세히 | 아니오 | none | `productOverview`. `product`, `ghost`. 앞면은 색마다, 뒷면은 기준 색상만이며 기준 색상에 뒷면 사진이 있을 때만 |
+| `fabric` | 원단 설명 | 옷 자세히 | 아니오 | none(사진 없는 옛 run은 only) | `detail` 1장. `product`, `detail`. 제품 사진을 붙이는 짝 디자인을 고르면 재사용 칸 하나가 더 생긴다 |
+| `intro` | 상품 소개 | 상품 설명 | 아니오 | only | 없음 |
+| `points` | 디테일 요소 | 상품 설명 | 아니오 | lead | `detail` 최대 3장. `product`, `detail`. 또는 착용 사진에서 따온 항목(`wornCrop`) |
+| `for_you` | 추천 대상 | 상품 설명 | 아니오 | only | 없음 |
+| `review` | 후기 | 후기와 소통 | 아니오 | lead | 배경 `coordination` 1장. `styling`, `full` 또는 `medium` |
+| `faq` | 궁금한 점 | 후기와 소통 | 아니오 | lead | 배경 `coordination` 1장. `styling`, `full` 또는 `medium` |
+| `sns` | SNS 화면 | 후기와 소통 | 아니오 | only | 재사용 칸 `sns1`, `sns2`. 원본이 빠지면 디자인이 쓰는 칸에만 대신 채울 카드를 만든다(아래 문단) |
 
-어댑터와 서버는 이 표에 맞지 않는 조합을 그대로 저장하거나 생성기에 보내지 않는다. 섹션·컷·샷이 바뀌면 내부 목적과 유효 옵션을 다시 맞추되, 섹션에서 허용된 사용자 컷 선택을 이전 `contentRole`의 기본 레시피로 덮어쓰지 않는다.
+어댑터와 서버는 이 표와 카탈로그 사진 칸에 맞지 않는 조합을 그대로 저장하거나 생성기에 보내지 않는다. 재사용 칸(`fill='reuse'`)은 같은 콘티의 다른 사진을 다시 쓰므로 그 자체로는 생성 컷 수와 크레딧에 들어가지 않는다. 다시 쓸 원본이 빠지면 화면이 그 칸에 대신 채울 카드를 만든다(`src/lib/pageTemplates/sectionDependencies.js`의 `reconcileSectionDependencies`). 이 카드는 바로 전에 그 칸이 다시 쓰던 원본 카드의 설정을 복제하므로, 원본이 내 이미지였으면 같은 이미지의 내 이미지 카드가 된다. 전 원본을 찾지 못하면 같은 종류 섹션의 AI 카드 설정을, 그것도 없으면 칸의 기본 레시피(제품 쪽은 앞면 고스트, 착용 쪽은 정면 전신 스타일링)를 쓴다. 예외로 첫 장의 고스트 칸은 늘 기준 색상 앞면 고스트 AI 카드로 채우고(색상과 제품 섹션의 촬영 방식을 먼저 골라야 할 때는 비워 둔다), 원단 설명의 제품 칸은 대신 채우지 않고 제품 사진이 없는 디자인으로 돌아간다. 대신 채운 카드가 AI 카드면 일반 AI 카드처럼 센다.
+
+#### 템플릿 v4 디테일 요소
+
+디테일 후보는 `PT-PHOTO-CARD-01`(사진과 글 칸 카드, 감성형 기본)과 `PT-TEXT-PHOTO-01`(제목, 설명, 사진, 쇼룸형 기본) 둘이다. 두 템플릿 모두 두 디자인을 고를 수 있으며 배치·꾸밈 축 없이 기존 `pageDesignId` 하나로 저장한다. PT-COLUMN-01, P06-D01, PT-COLUMN-CARD-01, PT-BELOW-CARD-01은 pickerHidden만 추가하고 기존 조립 정의를 유지한다. 텍스트 대체도 유지한다.
+
+새 디자인 사진은 모두 가운데 기준 4:5 cover다. 2:3 사진은 높이의 5/6이 남는다. 새 따온 항목의 기존 `pointItems[].cropRegion`은 원본 비율을 반영한 정규화 4:5 영역이며, 실제 크기를 모르면 생성 착용컷의 3:4를 기준으로 한다. 원래 부위 중심을 보존하되 이미지 안으로 경계를 옮긴다. 같은 원본의 저장 영역과 undo는 그대로이며 새 원본으로 바뀔 때만 새 영역을 만든다. 이미 저장된 다른 비율 영역도 새 디자인에서만 4:5로 조립한다. 새 cover 경로는 빈칸 없이 채우기 위해 확대를 허용한다. 숨긴 자연 비율 디자인의 30% 폭·원본 1배 확대 제한은 그대로다.
+
+카드형은 페이지 panel 색 바탕 위 흰 카드이며 부위 이름과 두 줄 설명을 가운데 정렬한다. 제목·설명·사진형은 원래 부위 이름 앞에 섹션 내부 번호만 붙여 왼쪽 정렬한다. 제목 글꼴과 굵기는 페이지 스타일을 따르고, 설명 노드의 `weight: 'light'`는 기존 에디터 `style.weight: 300`으로 조립된다. 카드형 설명에는 light 옵션을 쓰지 않는다. `trackingEm`, `lineHeight`, `numberPrefix`, `copyPolicy`, `includeLoose`, `itemGap`은 카탈로그 해석 옵션이며 새 콘티/DB 필드가 아니다. Pretendard 300은 기존 로컬 가변 WOFF2와 에디터·내려받기 font-weight 경로를 사용한다.
 
 ### 3.5 EditorBlock / Element — 에디터 캔버스
 
@@ -304,6 +377,13 @@ type EditorBlock =
   | EditorBlockBase & {
       kind: StoryboardSectionRole
       contentRole: ContentRole
+    }
+  | EditorBlockBase & {             // 템플릿 페이지 조립 결과(page_template_assembler, assemble.js)
+      kind: StoryboardSectionRole | 'info' // 섹션 첫 콘티 블록의 sectionRole. 첫 블록이 글 카드나 내 이미지라 비어 있으면 'info'
+      pageSectionKey: string        // 콘티 섹션 키. 한 섹션이 에디터 블록 여러 개로 나뉠 수 있다
+      pageSectionKind: PageSectionKind
+      pageDesignId: string
+      // contentRole과 infoType은 없다
     }
   | EditorBlockBase & {
       kind: 'info'
@@ -337,6 +417,7 @@ Element (type='image') + {
   frameSlot?: boolean              // true = drag/drop 교체·자르기·빼내기를 지원하는 이미지 슬롯
   cutType: CutType | null          // 생성 시 기록. null = 직접 업로드(미상)
   crop?: { ox: number, oy: number, iw: number, ih: number }   // 프레임 기준 원본 오프셋/크기
+  blur?: number                    // 유한한 0~100, 기준 폭 1000 캔버스의 px. 액자 배경에만 조립 기본값 48을 넣는다.
 }
 Element (type='text') + {
   text: string                     // 자유 텍스트
@@ -372,7 +453,15 @@ TextStyle {
 }
 ```
 
-빈 이미지 칸은 `genFailed`가 있거나, 템플릿이 아닌 페이지 생성 블록에서 `sourceBlockId`가 저장 콘티의 AI 블록을 가리키면 계획된 칸이다. 그 밖의 빈 사진 칸은 계획 없는 칸이며 프레임 자동 채움 뒤 지운 칸도 포함한다. 정보 블록, 자동 블록, 숨긴 칸과 생성 중인 칸은 AI로 채우기 대상에서 뺀다(ADR-0019).
+액자 하단의 상점 이름은 연결된 몰의 `mall_connections.shop_name`에서 읽는다. 유효한 연결과 비어 있지 않은 이름 중 카페24 자사몰을 먼저, 지그재그를 다음으로 고른다. 카페24 준비 상태·refresh 만료도 연결 API와 같은 기준으로 확인한다. 회원의 `profiles.display_name`이나 `account.name`, 몰 식별자로 대체하지 않는다. 조립 입력은 JS `shopName` / Python `shop_name`의 정리된 문자열 하나이며 콘티나 DB 필드가 아니다. 액자 없는 생성·콘티에는 이 조회를 새로 만들지 않는다. 몰 연결 API가 비활성이면 워커도 상점명을 조회하지 않는다. 콘티는 기존 계정별 몰 연결 캐시와 서비스 레이어를 재사용한다. 이름 없음·조회 실패는 하단 줄 생략으로 끝나며 다른 디자인의 profile 이니셜 동작은 그대로다.
+
+`image.blur`는 값 0을 포함해 필드가 있는 이미지 자체를 편집 가능한 액자 배경으로 구분한다. 별도 배경 표시 필드나 콘티 필드는 추가하지 않는다. 일반 이미지는 이 필드를 생략하며, 이미지 교체·저장·되돌리기는 값을 보존한다. 서버는 범위 밖·비유한 값·문자열·Boolean·null과 이미지가 아닌 요소의 blur를 `400 editor_blur_invalid`로 거절한다. 화면은 원래 crop/fit과 프레임 경계를 유지하고 가장자리 픽셀을 연장해 흐리게 한다. 블록·전체·ZIP·선택 배경 다운로드와 쇼핑몰 게시 이미지는 출력 배율만큼 흐림을 조절하고 JavaScript 픽셀 연산으로 PNG에 구워 넣는다. CSS/Canvas 필터 지원에 의존하지 않는다. 일반 사진의 원본 다운로드는 기존 원본 바이트를 유지한다.
+
+양수 흐림의 작업 래스터는 최대 1,048,576픽셀·한 변 4,096픽셀로 제한한다. 큰 배경은 작업 배율을 낮추고 흐림 반경에도 같은 배율을 적용한 뒤 원래 이미지 상자에 채워 넣는다. 따라서 최종 페이지 크기·crop과 캔버스 기준 흐림 너비는 유지되며 배경의 세부 해상도만 제한된다. 0 흐림의 페이지 내보내기는 원본 바이트와 crop/fit을 그대로 써서 긴 배경의 픽셀 버퍼를 만들지 않는다. 선택 배경만 다운로드할 때 0 흐림이 브라우저 캔버스 한도를 넘으면 분할 페이지 다운로드를 안내한다.
+
+빈 이미지 칸은 `genFailed`가 있거나, 페이지 생성 블록에서 `sourceBlockId`가 저장 콘티의 AI 블록을 가리키면 계획된 칸이다. 페이지 생성 블록은 `templateId`가 없고 `kind`가 사진 행이거나 `contentRole`이 `custom`이 아닌 블록과, `pageSectionKey`가 있는 템플릿 페이지 블록이다. 그 밖의 빈 사진 칸은 계획 없는 칸이며 프레임 자동 채움 뒤 지운 칸도 포함한다. `pageSectionKey`가 없는 정보 블록, 자동 블록, 숨긴 칸과 생성 중인 칸은 AI로 채우기 대상에서 뺀다(ADR-0019).
+
+템플릿 페이지 블록은 `contentRole`이 없고 `kind`가 사진 행 종류가 아니지만, 판정 코드(`server/app/agents/context_fill.py`의 `slot_kind`, `src/lib/editorSlotKind.js`)는 공백만이 아닌 문자열 `pageSectionKey`가 있으면 페이지 생성 블록으로 본다. `kind='info'`로 조립된 섹션(후기, 궁금한 점, 디테일 요소처럼 글 카드가 맨 앞인 섹션 등)의 사진 칸도 같다. 그래서 템플릿 페이지의 빈 사진 칸은 `genFailed`가 있으면 계획된 칸, 저장 콘티의 AI 블록에 연결돼 있으면 계획된 칸, 연결이 없거나 AI가 아닌 블록에 연결돼 있으면 계획 없는 칸이다. 자동 블록 넷(`size`, `care`, `ai-notice`, `common-notice`)은 `pageSectionKey`가 있어도 대상 밖이다.
 
 #### 3.5.1 `info` — `내용 추가` 폼 상태 (PRD §10.14)
 
@@ -449,14 +538,21 @@ Account { name: string, avatar: string, credits: number, plan: PlanTier }
 | SubCategory (outer) | `shirt` `jacket` `cardigan` `padding` `coat` | 셔츠/자켓/가디건/패딩/코트 | |
 | Gender | `women` `men` | 여자/남자 | |
 | Fit | `slim` `regular` `semi_over` `over` | 슬림핏/정핏/세미오버/오버핏 | |
-| ComposeMode | `basic` `extended` | 기본형/확장형 | 같은 섹션 구조에서 사진 수만 다름. 이 두 값 외에는 읽기·쓰기 모두 거부 |
-| **StoryboardSectionRole** | `hooking` `styling` `studio` `product` | 후킹/스타일링/스튜디오/의류 확인 | 사용자에게 보이는 공식 4섹션, 순서 고정 (ADR-0005) |
-| **ContentRole** | `hero` `benefit` `coordination` `fit` `productOverview` `detail` `custom` | 첫 장면/핵심 장점/코디 활용/핏 확인/제품 전체/디테일/직접 구성 | 콘티에서는 비노출 자동값. 후킹은 순서, 스타일링·스튜디오는 섹션과 컷, 의류 확인은 샷으로 파생. 에디터 새 이미지 추가에서도 컷·샷에서 파생하는 내부값 (ADR-0005) |
-| **CutType** | `styling` `horizon` `product` | 스타일링컷/호리존컷/제품컷 | 생성 레시피 값. 콘티 인스펙터는 섹션과 무관하게 세 촬영 방식의 선택지를 제공하며 내부 역할은 자동 결정 (ADR-0003~0005) |
-| **BlockSource** | `ai` `mine` | AI 생성/내 이미지 | ★ 신설 — '내 이미지'는 컷 종류가 아님 |
-| AutoBlockKind | `size` `care` `ai-notice` | 사이즈/세탁/AI 생성 안내 | 2026-06-09 결정 유지 |
-| EditorInfoType | `materials` `options` `shipping_returns` `required_notice` `benefit_copy` `fit_copy` `model_info` `fabric_properties` `color_description` `brand_story` `faq` `reviews` `related_products` `promotion` `social` `header` `fit_guide` `size_matrix` | 에디터의 구매 정보·문구·선택 콘텐츠 | `kind='info'`일 때 사용. AutoBlockKind 3종과 겹치지 않음. ★ `header`(타이포 상품명 헤더)·`fit_guide`(핏 도식 비교)·`size_matrix`(키×몸무게 추천 사이즈)는 2026-07-29 상세페이지 분석에서 승격 (§3.5.1) |
-| SectionLayout | `stack` `twoColumn` `threeColumn` `grid2x2` `colorCompare` | 세로 1열/2단/3단/2×2/컬러 비교 | 섹션 안 사진 배치 |
+| ComposeMode | `basic` `extended` | 기본형/확장형 | 폐기(2026-11). 화면, API, 스토어, 카탈로그에서 지웠고 DB `projects.compose_mode` 컬럼만 남는다. 서버는 읽거나 돌려주지 않고 PATCH로 와도 무시한다(§2) |
+| **StoryboardSectionRole** | `hooking` `styling` `studio` `product` | 후킹/스타일링/스튜디오/의류 확인 | 템플릿 콘티에서는 `contentRole`에서 파생하는 내부값이다. 화면의 섹션은 `PageSectionKind`가 정한다. 에디터 블록 `kind`와 생성 문맥이 이 값을 읽는다 |
+| **ContentRole** | `hero` `benefit` `coordination` `fit` `productOverview` `detail` `custom` | 첫 장면/핵심 장점/코디 활용/핏 확인/제품 전체/디테일/직접 구성 | 콘티에서는 비노출 자동값. 템플릿 콘티는 카탈로그 사진 칸의 값을 쓰고, 칸이 없으면 컷·샷으로 파생한다. 첫 장의 첫 AI 착용 카드만 `hero`. 에디터 새 이미지 추가에서도 컷·샷에서 파생하는 내부값 (ADR-0026) |
+| **CutType** | `styling` `horizon` `product` | 스타일링컷/호리존컷/제품컷 | 생성 레시피 값. 콘티 사진 판은 사진 칸 recipe의 `allowedCutTypes` 안에서만 고르게 하며 내부 역할은 자동 결정 (ADR-0003·0004·0026) |
+| **BlockSource** | `ai` `mine` `text` | AI 생성/내 이미지/글 카드 | '내 이미지'는 컷 종류가 아님. `text`는 템플릿 콘티에서 섹션의 글 자리를 표시하는 블록이며 사진을 만들지 않는다(§3.4) |
+| AutoBlockKind | `size` `care` `ai-notice` `common-notice` | 사이즈/세탁/AI 생성 안내/공통 주의 | 앞 셋은 2026-06-09 결정 유지. `common-notice`는 템플릿 조립기가 맨 끝에 붙이는 한 줄 안내(카탈로그 `commonNotice`, 화면에 따라 색이 달라 보일 수 있다는 문구)이며 `info`가 없다 |
+| EditorInfoType | `materials` `options` `shipping_returns` `required_notice` `benefit_copy` `fit_copy` `model_info` `fabric_properties` `color_description` `brand_story` `faq` `reviews` `related_products` `promotion` `social` `header` `fit_guide` `size_matrix` | 에디터의 구매 정보·문구·선택 콘텐츠 | `kind='info'`일 때 사용. AutoBlockKind 4종과 겹치지 않음. ★ `header`(타이포 상품명 헤더)·`fit_guide`(핏 도식 비교)·`size_matrix`(키×몸무게 추천 사이즈)는 2026-07-29 상세페이지 분석에서 승격 (§3.5.1) |
+| SectionLayout | `stack` `twoColumn` `threeColumn` `grid2x2` `colorCompare` | 세로 1열/2단/3단/2×2/컬러 비교 | 템플릿 콘티는 늘 `stack`으로 저장하고 사진 배치는 `pageDesignId`가 정한다 |
+| **PageTemplateId** | `emo` `show` | 감성형/쇼룸형 | `PageStyle.templateId`. 카탈로그 `templates`의 ID |
+| **PageSectionKind** | `first` `wear` `color_product` `fabric` `intro` `points` `for_you` `review` `faq` `sns` | 첫 장/착용컷/색상과 제품/원단 설명/상품 소개/디테일 요소/추천 대상/후기/궁금한 점/SNS 화면 | 템플릿 콘티의 섹션 종류. 카탈로그 `kinds`가 정본. `wear`만 여러 번 넣을 수 있다 |
+| **PageSectionUsage** | `styling` `fit` | 일상 착용컷/스튜디오 착용컷 | `wear` 섹션에만 쓴다 |
+| **FontStyle** | `template` `plainGothic` `serif` `boldGothic` | 템플릿 기본(감성형 다정, 쇼룸형 기본)/담백 고딕/매거진/볼드 | `PageStyle.fontStyle`. 카탈로그 `fontStyles`의 키가 정본이다. 빠진 값은 읽을 때 `template`로 본다 |
+| **PageColorMode** | `mono` `point` | 기본/의류 색감 | `PageStyle.colorMode`. 기준 색상이 흰색, 회색, 검정이거나 미지정이면 `point`도 `mono`로 조립 |
+| StoryboardTextCardPolicy | `none` `only` `lead` | 글 카드 없음/글 카드만/글 카드가 맨 앞 | 카탈로그 `kinds[].storyboardTextCard`. §3.4 불변식 |
+| WornCropBodyPart | `shoulder` `neckline` `length` `silhouette` `waistline` | 어깨선/목선/기장/실루엣/허리선 | `PointItem.kind='wornCrop'`의 부위 |
 | Direction | `front` `back` `side` | 정면/뒷면/사이드 | 모델 컷용 |
 | ProductDirection | `front` `back` | 앞면, 뒷면 | 고른 원본 사진의 면. 화면은 `productSourcePhotos`의 사진 고르기로 보여준다(ADR-0008 2026-10-10 개정) |
 | ShotType | `full` `medium` | 풀샷/중간샷 | 서비스 착용컷은 두 값만 쓴다. 생성예시 선별 도구의 `medium_knee`는 수집 원본 `knee`·`medium`을 합치는 선별 전용 토큰이며 서비스 저장값이 아니다(ADR-0007) |
@@ -527,18 +623,59 @@ GenerationExample {
 
 - **현행 추가**: `productSourcePhotos`(제품컷 원본 사진 고르기 라벨. `{ value: 'front', slot: 'Front', label: '내 앞면 사진' }`, `{ value: 'back', slot: 'Back', label: '내 뒷면 사진' }`, 2026-10-10에 `productDirections`를 대체), `productShotTypes`, `outerClosureStates`(아우터 열림 정도 5종, 화면 위에서 아래 순서. 항목은 `{ value, label, caption }`이며 caption은 카드 표시용: 가슴까지 열림, 배까지 열림), `measurementLabels`(key를 한국어로)
 - **로컬 의미 계약**: `storyboardSections`, `contentRoles`에 해당하는 값과 라벨은 `storyboardTaxonomy.js`가 제공한다. 카탈로그 응답과 중복 저장하지 않는다. `contentRoles` 라벨은 콘티보드에는 노출하지 않고 에디터의 `새 이미지 추가` 등 별도 흐름에서만 사용한다.
-- **컷 종류 노출 범위**: `CutType`은 생성 레시피의 정본이다. 콘티 인스펙터는 현재 섹션에서 허용된 값만 쉬운 라벨로 직접 고르게 하되, 별도 사용자 분류 enum·상단 탭·페이지 섹션으로 복제하지 않는다.
+- **컷 종류 노출 범위**: `CutType`은 생성 레시피의 정본이다. 콘티 사진 판은 사진 칸 recipe가 허용한 값만 쉬운 라벨로 직접 고르게 하되, 별도 사용자 분류 enum·상단 탭·페이지 섹션으로 복제하지 않는다.
 - **생성예시 불변 릴리스 기록(2단계 운영 적용 완료, 2026-07-20; 소비 규칙 2026-07-21 개정)**: `server/tools/release_genexamples.py`가 확정 manifest를 검증해 서버 레지스트리 v2와 위 프론트 카탈로그를 같은 릴리스에서 만든다. QC 승인 예시 192개(`all` 192·`pose` 12·`bg` 14)와 파생 thumb 192개를 R2 불변 경로 `2026-07-19-pilot-qc-01`로 발행했다. 레지스트리 v2는 원본 variant URL·thumb·적용 의류 종류·컷·샷·성별을 함께 가진다. 프론트 `MoodGuide`는 실제 v2 JSON을 소비해 현재 카드의 `cutType`·샷·상품 종류·성별로 정확히 필터링하고 페이지당 최대 6장을 노출한다. 서로 다른 착용 `cutType`을 한 갤러리에 섞지 않는다. 생성예시 원본·재생성본과 R2 릴리스 계약은 바꾸지 않는다.
 - **활성 생성예시 집합(2026-07-28 당시)**: 사용자 최종 제외 16개 ID는 활성 선택 원본·서비스 자산·프론트 카탈로그·서버 레지스트리에서 제거한다. 당시 활성 선택은 **191개(착용 169·제품 22)**이고, 생성 manifest의 기대 작업 수는 **529개(`all` 191 + `pose` 169 + `bg` 169)**였다. 당시 프론트·서버 활성 레지스트리는 **176개**를 소비했다. 제외 tombstone은 재선택·재생성을 막는 비활성 차단 기록으로만 남으며 카탈로그 항목으로 반환하지 않는다. 과거 선택 207개와 불변 R2 발행 192개는 감사·롤백 역사이므로 삭제하거나 덮어쓰지 않는다.
 - **아우터·원피스 개별 스타일링 보강 릴리스(2026-07-31, 이전 정본)**: 사용자 검토 52개 중 승인 43개와 수정 후 승인 2개를 합친 45개만 새 `all`로 발행하고 제외 7개는 발행하지 않았다. 기존 활성 176개를 함께 봉인한 불변 릴리스 `2026-07-31-individual-styling-01`에서 프론트·서버 활성 레지스트리는 **221개(착용 199·제품 22)**였다. R2는 `all` 221·`pose` 12·`bg` 14·결정적 WebP `thumb` 221, 총 **468개**이고 원격 key·파일 크기 전수 대조에서 누락·추가·불일치가 모두 0이었다. 신규 45개는 여성 아우터 13(풀 8·중간 5), 남성 아우터 16(풀 8·중간 8), 여성 원피스 16(풀 9·중간 7)이며, 이 여섯 스타일링 조합을 공개 조합표에 함께 열었다.
 - **상의·하의 개별 스타일링 보강 릴리스(2026-08-03, 현재 정본)**: 사용자 최종 확정 45개(여성 하의 11·여성 상의 12·남성 하의 11·남성 상의 11)를 포함한 불변 릴리스 `2026-08-03-individual-styling-01`이 현재 프론트·서버 카탈로그의 정본이다. 두 카탈로그는 같은 **254개(착용 244·제품 10)** ID를 소비한다. R2는 `all` 254·`pose` 12·`bg` 14·결정적 WebP `thumb` 254, 총 **534개**다. 2026-08-03 재검증에서 공개 R2 객체 534개를 다시 내려받아 로컬 봉인본과 SHA-256을 전수 대조했고 누락·추가·바이트 불일치가 모두 0이었다. 제작자 QC HOLD 8개는 사용자의 묶음별 최종 확정을 오너 승인으로 적용하되 원래 판정과 사유를 감사 기록에 보존한다.
 - **변경**: `subCategories`를 `{ value, label }[]`로 (현재 한국어 문자열 배열)
-- **유지**: `clothingTypes` `genders` `fits` `shotTypes` `angleSlots` `angleLabels` `swatchColors` `composeModes` `genExamples` `frames` `shapes` `lines` `fonts` `downloadOptions` `models` `creditCosts`(로컬 기본값은 `lib/limits.js`; 에디터 HTTP 가격은 서버 `credit-quote`로 확인). `genExamples`는 `cutType`·`shot`과 `applicableClothingTypes`의 현재 상품 `clothingType` 포함 여부로 필터링하고, 착용컷은 `gender`를 정확히 맞추되 제품컷의 `gender=null`은 성별 공용으로 취급한다. product detail의 `detailSubject`처럼 카드 조건보다 세밀한 축은 rank 순 라운드로빈으로 섞는다. styling의 `mood`는 자동 배정과 다시 뽑기 후보를 고를 때만 섞는다. 자동 배정과 다시 뽑기는 이 순서의 앞 6장에서 고르고, 갤러리는 조건에 맞는 예시 전부를 페이지당 최대 6장씩 보여 준다.
+- **유지**: `clothingTypes` `genders` `fits` `shotTypes` `angleSlots` `angleLabels` `swatchColors` `genExamples` `frames` `shapes` `lines` `fonts` `downloadOptions` `models` `creditCosts`(로컬 기본값은 `lib/limits.js`; 에디터 HTTP 가격은 서버 `credit-quote`로 확인). `genExamples`는 `cutType`·`shot`과 `applicableClothingTypes`의 현재 상품 `clothingType` 포함 여부로 필터링하고, 착용컷은 `gender`를 정확히 맞추되 제품컷의 `gender=null`은 성별 공용으로 취급한다. product detail의 `detailSubject`처럼 카드 조건보다 세밀한 축은 rank 순 라운드로빈으로 섞는다. styling의 `mood`는 자동 배정과 다시 뽑기 후보를 고를 때만 섞는다. 자동 배정과 다시 뽑기는 이 순서의 앞 6장에서 고르고, 갤러리는 조건에 맞는 예시 전부를 페이지당 최대 6장씩 보여 준다.
 
 `creditCosts`의 에디터 키는 `{ editorImage: 19, editorEdit: 5, editorSimilar: 8 }`이다. 같은 세 키를 인증·프로젝트 소유 확인을 거친 `GET /v1/projects/{id}/credit-quote`에서 반환한다(환경변수 설정값 반영). `editorEdit`는 착용컷·업로드의 색상과 열림 정도, `editorSimilar`는 비슷한 컷, `editorImage`는 새 이미지·고스트·디테일·빈 칸 등 나머지 행동의 표시 단가다. HTTP 화면은 로컬 새 키를 합치지 않고 서버 견적에서 새 키가 빠지면 `editorImage`로 대체한다. 서버는 검증·복원한 요청으로 예약액을 결정하며 성공 확정·실패 해제는 그 예약액을 그대로 쓴다. 원장 `action_key=editorImage`와 같은 키 재요청·409 키 재사용 거절 계약은 유지한다.
 
 - **폐기 예정**: `backgrounds`(콘티 배경 제거), `extendedColorPriority`(미사용), `cutSources`
 - **폐기됨(2026-10-10)**: `directions`(방향 칩, ADR-0015), `productDirections`(`productSourcePhotos`로 대체), `varyOptions`(현재 이미지 수정의 배경, 포즈, 표정 카드, ADR-0016 개정)
+- **폐기됨(2026-11)**: `composeModes`(사진 양 기본형, 확장형. 템플릿 선택으로 대체)
+
+### 5.1 페이지 템플릿 카탈로그 (`page_templates_v1.json`)
+
+템플릿 콘티와 상세페이지 조립이 함께 쓰는 카탈로그는 `server/app/data/page_templates_v1.json` 하나다. 프론트는 이 파일을 직접 import하고(`src/lib/pageTemplates/catalog.js`), 서버는 `app.agents.page_templates`가 읽어 검증한다. API는 시작할 때 이 파일을 검증하며, 잘못된 데이터는 다른 배치로 대체하지 않고 오류로 본다. 이 카탈로그는 `getCatalogs()` 응답이 아니다.
+
+| 키 | 내용 |
+|---|---|
+| `schemaVersion`, `catalogVersion` | 파일 형식 버전과 내용 버전. `PageStyle.catalogVersion`은 `catalogVersion`과 같아야 한다 |
+| `canvasWidth` | 페이지 기준 폭 1000. 카탈로그 검사가 `schemaVersion: 1`과 함께 이 값을 확인한다 |
+| `defaults` | `{ templateId: 'emo', fontStyle: 'template', colorMode: 'mono' }`. PageStyle 기본값 |
+| `templates[]` | 고를 수 있는 템플릿 두 개, `emo`(감성형)와 `show`(쇼룸형). 각 템플릿은 글꼴(`fonts`), 색(`colors`), 간격, 기본 섹션 순서(`sections`), 섹션 추가 때 쓰는 정의(`addPlacements`), 미리보기를 가진다 |
+| `templates[].sections[]` | `instanceKey`, `kind`, `designId`(기본 디자인), `usage`(wear만), `presence`(`optional`은 기본 콘티에 넣지 않음), `photoSlots[]` |
+| `photoSlots[]` | `slotKey`, `fill`(`generate`는 AI 카드, `reuse`는 같은 콘티의 다른 사진 재사용), `count`, `color`(`base`, `each`, `cycle`), `requiresBack`, `contentRole`, `recipe` |
+| `photoSlots[].recipe` | `cutType`, `allowedCutTypes`, `shot`, `allowedShots`, `direction`, `faceExposure`, `set`(`styling` 장소 세트, `sequence` 연속 세트, `rotation` 회전 세트, 없음), `detailPool`(`points`, `fabric`) |
+| `kinds` | 섹션 종류 10개. `name`(wear는 `namesByUsage`), `menuGroup`, `repeatable`, `usages`, `storyboardTextCard`, `textSlots` |
+| `menuGroups` | 섹션 추가 메뉴 묶음. `photo`(사진), `detail`(옷 자세히), `describe`(상품 설명), `social`(후기와 소통). 지금 콘티의 섹션 추가 판은 이 묶음으로 나누지 않고 한 목록으로 보인다(`StoryboardSectionPicker.jsx`) |
+| `designs` | 섹션 디자인 정의. `kind`, `displayName`, `usage`, `layout`과 선택 메타데이터 `choiceAxes`(`layout`: 한 열, 2열, 큰 사진 아래 두 칸, 색 격자 등. `decoration`: 기본, 액자, 부위별 카드), `minPhotos`, `minColors`, `framePhotos`, `pickerHidden` |
+| `fontStyles` | 글자 스타일 네 개. 템플릿의 `labelEn`, `titleKo` 글꼴을 덮어쓰는 값이며 `template`은 덮어쓰지 않는다 |
+| `fontStyleLabels` | 글자 스타일의 화면 이름. 지금은 `plainGothic`(담백 고딕) 하나만 있고, 나머지 이름은 화면 코드가 정한다(`StoryboardThemePicker.jsx`) |
+| `pendingFontBundles` | 아직 번들에 넣지 않은 글꼴 목록. 지금은 빈 배열이다 |
+| `pointPalette`, `swatchHex`, `neutralColors`, `overlayColors`, `canvasColor` | 페이지 색감과 고정 색. `point` 모드는 기준 색상 스와치의 `pointPalette` 값을 쓴다 |
+| `photoBudgets` | `{ detail: 4, maxExtraColors: 3 }`. `detail`은 페이지 전체 디테일 사진 한도다(`src/lib/pageTemplates/detailBudget.js`의 `DETAIL_PHOTO_CAP`). `maxExtraColors`는 코드가 읽지 않는다. 추가 색상 한도는 착용컷 사진 칸의 `count.maxExtraColors`(지금 3)가 정한다(`seed.js`의 `seedStoryboard`) |
+| `firstTitleBand`, `firstTitlePlate` | 첫 장 사진 위 상품명의 위치 후보와 자동 받침 규칙(PRD §8) |
+| `frameStyle` | 일상 착용컷 액자 꾸밈의 치수와 색 |
+| `textMetrics`, `factPaths`, `fitLabels`, `swatchLabels`, `commonNotice`, `autoBlocks`, `editorFonts` | 조립용 글자 측정값, 글 칸이 읽는 사실 경로, 표시 이름, 자동 블록 설정 |
+
+- `pageDesignId`는 배치와 꾸밈 조합 하나를 뜻하는 완성된 디자인 ID다. 화면은 `choiceAxes`로 배치와 디자인을 나눠 보여 주지만 저장값은 `pageDesignId` 하나다. `framePhotos` 같은 메타데이터는 콘티나 DB의 새 필드가 아니다.
+- `pickerHidden`은 고르기 목록에서만 숨긴다. 저장된 숨은 디자인은 그대로 조립하고 옮기지 않는다.
+- 첫 장과 원단 설명에는 제품 사진을 붙이는 짝 디자인(`P01-D09`와 `P01-D09-G`, `P01-SHOW-01`과 `P01-SHOW-01-G`, `T03-D01`과 `T03-D01-P`, `T03-D06`과 `T03-D06-P` 등)이 있다. 짝 쪽은 `pickerHidden`이다.
+- 예전 `guide` 템플릿은 카탈로그 `templates`에 없어 고를 수 없다. 그 템플릿용 디자인(`CP-GUIDE-01`, `T03-GUIDE-01`)은 `pickerHidden` 디자인으로 남아 있다.
+
+글 칸(`kinds[].textSlots`)의 `source`는 `static`(고정 문구), `fact`(상품명, 색 이름, 소재 혼용률 같은 사실), `ai`, `aiDraft`(셀러가 고칠 초안), `seller+ai`(셀러 입력이 있으면 그 글을 다듬어 쓰고, 없으면 AI 초안을 쓰는 칸. 지금은 상품 소개 본문 하나이며 §3.2 `mdComment` 참고)다. 글 칸에 연결된 글 요소는 `sourceBlockId`, `copyRole`, `textSlotVersion: 1`을 갖고, 글이 비면 편집 화면에만 보이는 `placeholder`(디자인 노드나 카탈로그의 `default`)를 단다. 동작은 다음과 같다.
+
+- `static` 칸은 고정 문구로, `fact` 칸은 값이 있으면 그 사실로 조립할 때 채운다.
+- AI가 채우는 칸은 디테일 요소의 부위 설명(`items.n.desc`, `analysis.partDescriptionCopy`를 읽는다. §3.2), 후기 초안, 상품 소개 본문이다.
+- 상품 소개 본문(`seller+ai`)은 `analysis.mdComment`가 있으면 그 글을 AI가 다듬어 넣고(다듬기가 붙기 전에는 원문 그대로 하나의 글상자), 없으면 AI 초안을 넣는다(§3.2). 감성형과 쇼룸형 모두 같다. 쇼룸형 상품 소개(`T06-D01`)는 요약 판 맨 위에 영문 라벨 `Comment`와 이 본문을 둔다.
+- 후기(`review`)는 셀러가 고치기 쉽도록 AI가 초안을 넣어 두고 셀러가 에디터에서 실제 후기로 고치는 칸이다(2026-10-26 오너 결정). 초안은 만들 때마다 조금씩 다르게 쓰고, 이름 칸 기본값은 `김태희`, 별점 기본값은 5개다.
+- 그 밖의 `ai`, `aiDraft` 칸(첫 장 영문 상품명, 착용컷 제목과 소개, 원단 제목과 설명, 색상 소개, 상품 소개의 제목과 요약, 디테일 요소 제목과 핏 설명, 추천 대상, 질문과 답 등)은 빈 글과 안내 문구로 나간다. 서버는 사진별 제목 카피(AG-02 `headline`)를 만들지만, 카탈로그에 `headline` 글 칸이 없어 조립에 쓰지 않는다(`server/app/workers/detail_page_job.py` `_gen_copy`, `page_template_assembler.py`의 `ctx.copy`).
+- 글 칸별로 무엇을 어떻게 쓸지, 어디를 강조할지 같은 카피 체계는 별도 카피라이팅 작업에서 정한다. 이 절은 그때 다시 고친다.
+
 
 ---
 
@@ -554,7 +691,7 @@ GenerationExample {
 |---|---|---|---|
 | `createProject()` | — | `Project` | 새 제작 시작. 구 `resetDraft()` 대체 |
 | `getProject(projectId)` | | `Project` | |
-| `patchProject(projectId, patch)` | 선택값 patch | `Project` | 수용 필드 **화이트리스트**: composeMode·copywriting·selectedMannequinId만. `status`는 생성 job의 부수효과로만 바꾸고 `adjustCount`는 과거 저장값 읽기 전용으로 새 요청에 받지 않는다. frontend_state_model §6 |
+| `patchProject(projectId, patch)` | 선택값 patch | `Project` | 수용 필드 **화이트리스트**: copywriting·selectedMannequinId만. 폐기한 `composeMode`, `compose_mode`는 보내도 무시하고 나머지만 반영한다. `status`는 생성 job의 부수효과로만 바꾸고 `adjustCount`는 과거 저장값 읽기 전용으로 새 요청에 받지 않는다. frontend_state_model §6 |
 | `getLibrary()` | | `ProjectSummary[]` | |
 | `getAccount()` | | `Account` | |
 | `getCatalogs()` | | `Catalogs` | |
@@ -564,11 +701,12 @@ GenerationExample {
 | `saveAnalysis(projectId, patch)` | | `Analysis` | |
 | `getMatchClothing(projectId)` | | `MatchClothing[]` | 각 항목의 `isCustom`·`isCompatible`을 보존한다. 분석·마네킹·콘티 화면이 같은 매칭 선택을 읽는다. |
 | `getMannequins(projectId)` | | `MannequinCut[]` | |
-| `generateMannequins(projectId, { onProgress })` | | `{ data: MannequinCut[], credits }` | `mannequinGenerate` · 페이지 최초 진입 시 자동 호출 |
+| `generateMannequins(projectId, { onProgress })` | | `{ data: MannequinCut[], credits }` | `mannequinGenerate` · 콘티 화면이 콘티를 불러온 뒤 자동 호출하고, 마네킹 화면 진입 때도 호출한다(진행 중이면 합류) |
 | `regenerateMannequin(projectId, { fitProfile, onProgress })` | 확인 스텝에서 확정한 FitProfile(축+matchCut) | `{ data: MannequinCut[], credits }` | `mannequinGenerate` · 요청 시에는 잡 스냅샷만 남기고, 성공 종결에서 새 버전과 analysis.fitProfile을 함께 확정·자동 선택 (구 `regenerateMannequins` 대체) |
-| `getStoryboard(projectId)` | | `StoryboardBlock[]` | 저장된 배열을 반환. 화면은 working copy를 만들기 전에 v2를 v3 공식 4섹션으로 승격하고 허용 컷·샷과 내부 역할을 정규화 |
-| `saveStoryboard(projectId, blocks)` | | `StoryboardBlock[]` | 생성 CTA 시 반드시 호출. taxonomyVersion=3만 저장 |
-| `generateDetailPage(projectId, { onProgress, onStep })` | | 완성분과 빈 칸의 `{ data: EditorBlock[], credits, creditsCharged, partial? }` | 일부 AI 컷 자리가 비면 완성분을 발행하고 그 유료 컷 값을 견적에서 뺀다(ADR-0017). 전부 실패만 미발행·예약 전액 해제. QC 미통과 디테일의 최선 생성 후보는 표시를 남겨 제공·정상 차감한다. AI 생성 컷 1~4장은 최소 5컷 값, 5장 이상은 실제 생성 컷 수 × `storyboardPerCut`. 내 이미지 블록은 제외 |
+| `getStoryboard(projectId)` | | `StoryboardBlock[]` | 서버 `GET /v1/projects/{id}/storyboard`는 저장된 배열을 그대로 돌려준다(`withRevision=1`이면 `{blocks, revision}`). 화면 어댑터는 저장 콘티가 없거나 taxonomyVersion 4가 아닌 블록이 있으면 분석의 `pageStyle` 템플릿으로 기본 콘티를 새로 만든다. 옛 콘티를 새로 만든 경우에만 알림 `rebuilt`를 달고, 셀러가 확인하기 전에는 저장하지 않는다. 옛 콘티인데 이미 생성이 끝났거나 에디터 블록이 있으면 빈 배열을 돌려준다(알림 `legacyGenerated`). 고치지 않은 기본 콘티는 `seedProductKey`가 바뀌었을 때만 다시 만든다 |
+| `saveStoryboard(projectId, blocks, options?)` | `options`: `{ keepalive?, autoAssignment? }` | HTTP 어댑터는 `{ blocks, revision }`, 목은 `StoryboardBlock[]` | 다음 단계로 넘어가기 전 반드시 호출. HTTP 어댑터는 이 탭이 마지막으로 읽은 revision을 늘 `baseRevision`으로 붙여 `PUT /v1/projects/{id}/storyboard?baseRevision=N`을 보내고, revision을 모르면 먼저 `withRevision=1`로 콘티를 읽는다(`src/lib/storyboardRevisionSync.js`). `keepalive`는 요청 옵션이고, `autoAssignment`는 목에서 자동 예시 배정만 한 저장을 셀러 수정으로 치지 않게 하는 표시다. 서버는 taxonomyVersion 4만 받고 §3.4 규칙으로 정규화한 뒤 저장한다. 요청 본문이 배열이 아니면 422 `validation_error`, 옛 콘티는 400 `storyboard_outdated`, 구성 위반은 400 해당 코드, 분석 템플릿과 다르면 400 `page_style_mismatch`, 다른 곳에서 먼저 저장했으면 409 `revision_conflict`(최신 콘티와 revision을 함께 줌). 서버는 `baseRevision`이 있으면 `{blocks, revision}`을, 없으면 정규화한 배열을 돌려준다 |
+| `getLastPageStyle()` | | `PageStyle` | `GET /v1/page-style/last`. 로그인 사용자의 삭제되지 않은 프로젝트 중 `analysis.pageStyle`이 객체인 가장 최근 값(`updatedAt`, 프로젝트 수정 시각 순)을 검증해 돌려준다. 없거나 검증에 실패하면 카탈로그 기본값이다. 화면은 로그인하지 않았으면 서버를 부르지 않고 기본값을 쓴다. 무과금 |
+| `generateDetailPage(projectId, { onProgress, onStep })` | | 완성분과 빈 칸의 `{ data: EditorBlock[], credits, creditsCharged, partial? }` | 일부 AI 컷 자리가 비면 완성분을 발행하고 그 유료 컷 값을 견적에서 뺀다(ADR-0017). 전부 실패만 미발행·예약 전액 해제. QC 미통과 디테일의 최선 생성 후보는 표시를 남겨 제공·정상 차감한다. AI 생성 컷 1~4장은 최소 5컷 값, 5장 이상은 실제 생성 컷 수 × `storyboardPerCut`. 내 이미지와 글 카드는 제외. 저장 콘티가 taxonomyVersion 4가 아니면 400 `storyboard_outdated`, 분석 템플릿과 다르면 400 `page_style_mismatch` |
 | `getEditorBlocks(projectId)` | | `EditorBlock[]` | |
 | `saveEditorBlocks(projectId, blocks)` | | `void` | 구현됨 — 저장 버튼 + 1.5s 디바운스 자동 저장 + 이탈 시 플러시 |
 | `getWardrobe(projectId)` | | `Wardrobe` | |
@@ -625,6 +763,34 @@ VaryRequest {                      // 캔버스에서 고른 사진으로 새 �
 
 **에러 규약**: 실패는 `Error`를 throw하고 `message`는 사용자에게 그대로 보여줄 한국어 문장이다.
 
+### 템플릿 콘티와 페이지 스타일 오류 (2026-11)
+
+콘티 저장(`PUT /v1/projects/{id}/storyboard`)과 상세페이지 생성 시작(`POST /v1/projects/{id}/detail-page:generate`)은 저장 콘티를 §3.4 규칙으로 검증한다. 콘티 오류의 문구는 `storyboard_outdated`만 "콘티를 다시 열어 주세요.", 아래 표에 문구를 따로 적은 코드를 뺀 나머지 구성 오류는 "콘티 구성을 다시 확인해 주세요."다.
+
+| 코드 | 상태 | 언제 나는가 |
+|---|---|---|
+| `validation_error` | 422 | 콘티 저장 요청 본문이 배열이 아니다. 서버 공통 입력 검사가 막으며 문구는 "요청 형식이 올바르지 않습니다."다(`server/app/main.py`의 `validation_exception_handler`) |
+| `storyboard_outdated` | 400 | 블록 중에 객체가 아니거나 taxonomyVersion 4가 아닌 것이 있다. 서버는 변환하지 않는다 |
+| `invalid_storyboard_block_id` | 400 | 블록 `id`가 없거나 겹친다 |
+| `invalid_storyboard_section` | 400 | `pageSectionKey` 형식, 템플릿, 종류가 카탈로그와 맞지 않거나, `sectionId`가 없거나 다른 섹션과 겹치거나, run 안의 섹션 값이 다르다 |
+| `mixed_storyboard_templates` | 400 | 한 콘티에 두 템플릿의 섹션이 섞였다 |
+| `noncontiguous_storyboard_section` | 400 | 같은 섹션이 떨어져서 두 번 나온다 |
+| `invalid_storyboard_first` | 400 | 첫 장 섹션이 맨 앞이 아니다 |
+| `repeated_storyboard_section` | 400 | 반복할 수 없는 섹션 종류가 두 번 나온다 |
+| `invalid_storyboard_design` | 400 | `pageDesignId`가 없거나 다른 종류의 디자인이다 |
+| `invalid_storyboard_usage` | 400 | `wear`에 `styling`, `fit`이 아닌 용도가 있거나, 다른 종류에 용도가 있다 |
+| `invalid_storyboard_source` | 400 | `source`가 `ai`, `mine`, `text`가 아니다 |
+| `invalid_storyboard_slot` | 400 | AI 블록의 `slotKey`가 그 섹션 사진 칸과 맞지 않는다 |
+| `invalid_storyboard_text_card` | 400 | 글 카드 수나 위치가 섹션 종류 정책과 다르거나, 글 카드에 생성 레시피 키가 있다 |
+| `invalid_storyboard_point_items` | 400 | 디테일 요소가 아닌 섹션의 글 카드에 `pointItems`가 있거나, 배열이 아니거나, 항목 종류, 원본, 부위, 잘라낼 영역이 맞지 않는다. 서버는 글 카드의 `pointItems`만 검사한다 |
+| `unknown_cut_type` | 400 | 지원하지 않는 컷 종류. 문구 "지원하지 않는 컷 종류예요." |
+| `invalid_similar_cut_relationship` | 400 | 비슷한 컷 후속의 원본이 같은 콘티의 일반 AI 착용 카드가 아니다. 문구 "비슷한 컷의 원본 사진 카드를 확인해 주세요." |
+| `page_style_mismatch` | 400 | 분석의 `pageStyle.templateId`가 있고 콘티 템플릿과 다르다. 문구 "고른 템플릿으로 콘티를 다시 열어 주세요." |
+| `invalid_page_style` | 400 | 분석 저장(`PATCH /v1/projects/{id}/analysis`)의 `pageStyle`이 §3.2 검증을 통과하지 못했다. 문구 "페이지 스타일을 다시 골라 주세요." |
+| `page_style_locked` | 409 | 마네킹컷이나 마네킹 작업이 있는 프로젝트에서 `templateId`를 바꾸려 했다. 문구 "마네킹컷을 만든 뒤에는 템플릿을 바꿀 수 없어요." |
+
+기존 생성예시와 촬영 세트 검증 오류(`unknown_example_id`, `example_not_applicable`, `example_cut_mismatch`, `example_gender_mismatch` 등)는 그대로다. 상세페이지 생성 작업도 시작할 때 저장 콘티를 같은 규칙으로 다시 정규화한다.
+
 ### 계획 없는 칸 AI로 채우기 (ADR-0019)
 
 화면은 에디터 저장 뒤 `POST /v1/projects/{projectId}/editor:generate-image`를 호출한다. `Idempotency-Key` 헤더는 필수다. 서버는 `slot` 외의 클라이언트 컷 설정과 `_contextFill`을 읽지 않고, 저장된 칸과 주변 사진, 상품, 분석으로 접수 때 한 번 판단한다. 상세페이지 생성 중에는 접수하지 않는다.
@@ -665,12 +831,12 @@ FillRequest {
 | 409 | `fill_slot_not_found` | 저장된 에디터에 칸 없음 | 저장 중이에요. 잠시 뒤 다시 눌러 주세요. |
 | 409 | `fill_slot_not_empty` | 이미 사진이 있음 | 이미 사진이 들어 있는 칸이에요. |
 | 400 | `fill_slot_planned` | 계획된 칸 | 이 칸은 원래 콘티대로 다시 만들어요. |
-| 400 | `fill_slot_unsupported` | 정보 블록, 자동 블록, 숨긴 칸 | 이 칸은 AI로 채울 수 없어요. |
+| 400 | `fill_slot_unsupported` | `pageSectionKey`가 없는 정보 블록, 자동 블록, 숨긴 칸 | 이 칸은 AI로 채울 수 없어요. |
 | 400 | `fill_slot_unsupported` | 생성 중인 칸 | 이 칸은 지금 만들고 있어요. |
 | 409 | `page_generation_active` | 상세페이지 생성 중 | 상세페이지를 만드는 중이에요. 끝나면 눌러 주세요. |
 | 409 | `fill_unavailable` | 만들 수 있는 컷 없음 | 이 칸에 만들 수 있는 컷이 없어요. |
 
-크레딧 부족의 402와 실제 모델 생성 닫힘의 409는 기존 규약을 따른다.
+크레딧 부족의 402와 실제 모델 생성 닫힘의 409는 기존 규약을 따른다. 템플릿 페이지 블록에서 어느 칸이 `fill_slot_planned`, `fill_slot_unsupported`가 되는지는 §3.5의 칸 판정 문단을 따른다.
 
 판단 기록은 `jobs.payload._contextFill`, `jobs.metadata.contextFill`, `assets.metadata.context_fill`에 남긴다. 자산 기록에는 `attempt`만 뺀다.
 
@@ -729,7 +895,35 @@ generation: {
 }
 ```
 
-새 컷은 `recipeFrom='self'`다. 비슷한 컷과 같은 부위 다시 촬영은 공용 `asset_recipe.resolve_asset_recipes`가 원본 설정을 찾으면 상속하고 `recipeFrom='anchor'`로 남기며, 못 찾으면 `recipe=null`이다. 직접 올린 자산은 `assets.source='upload'`로 판정하고 새 기록을 쓰지 않는다. 색상과 열림 편집은 `origin='editor_color'` 또는 `origin='editor_closure'`, `autoSelected=false`, 고른 원본의 `sourceAssetId`, `recipeFrom='anchor'`를 남긴다. 원본 레시피의 바꾼 필드만 고치며 레시피가 없으면 모든 필드를 `null`로 두고 바꾼 값만 채운다. 색상 결과의 의류 그룹은 목표 색이고 열림과 비슷한 컷은 원본의 의류 색 그룹을 물려받는다. 상세페이지의 `page` 기록은 후속 작업으로 미룬다.
+새 컷은 `recipeFrom='self'`다. 비슷한 컷과 같은 부위 다시 촬영은 공용 `asset_recipe.resolve_asset_recipes`가 원본 설정을 찾으면 상속하고 `recipeFrom='anchor'`로 남기며, 못 찾으면 `recipe=null`이다. 직접 올린 자산은 `assets.source='upload'`로 판정하고 새 기록을 쓰지 않는다. 색상과 열림 편집은 `origin='editor_color'` 또는 `origin='editor_closure'`, `autoSelected=false`, 고른 원본의 `sourceAssetId`, `recipeFrom='anchor'`를 남긴다. 원본 레시피의 바꾼 필드만 고치며 레시피가 없으면 모든 필드를 `null`로 두고 바꾼 값만 채운다. 색상 결과의 의류 그룹은 목표 색이고 열림과 비슷한 컷은 원본의 의류 색 그룹을 물려받는다. 상세페이지 컷은 `origin='page'`와 최종 목표색 레시피를 남긴다.
+
+#### 추가 색상 실행 기록 (ADR-0025)
+
+`block.colorId`와 `generation.recipe.colorId`는 최종 목표색이다. 내부에서 기준색으로 렌더하더라도 이 저장값을 바꾸지 않는다. 서버의 `garment_color.plan_for`와 `render_spec`만 별도 실행색을 계산한다. 제품 단독컷은 목표색 원본에서 직접 만든다.
+
+색 적용 결과에는 선택적으로 다음 서버 전용 실행 기록을 `assets.metadata.colorExecution`에 추가한다. 클라이언트가 이 값을 보내도 실행 권한이나 근거로 사용하지 않는다.
+
+```ts
+colorExecution: {
+  version: 1
+  mode: 'direct' | 'base_then_color'
+  targetColorId: string | null
+  baseColorId: string | null
+  renderColorId: string | null
+  targetEvidence: { assetId: string, sha256: string }[]
+  masterAssetId: string | null
+  masterSha256: string | null
+  colorCheck: {
+    status: 'not_run' | 'passed' | 'failed' | 'unavailable' | 'indeterminate'
+    policyVersion?: string
+    method?: 'ai_visual'
+  }
+}
+```
+
+`masterAssetId`는 같은 사용자와 프로젝트에 속하는 내부 기준색 이미지다. 의류 목록에 넣지 않고 최종 장수나 차감에 포함하지 않는다. 실행색, 목표색 근거와 검수 정책은 체크포인트의 동일성 판단에 포함한다. 색 적용 실패 시 기준색으로 성공 처리하지 않는다. `passed`는 AI 시각 판정의 통과이며 실물색 측정이나 동일 픽셀 보장이 아니다.
+
+`targetEvidence`는 별도 색 적용에 실제로 사용한 근거 목록이며 `direct`에서는 빈 목록일 수 있다. 직접 생성의 상품 사진 근거는 기존 생성 레시피와 입력 계약을 따른다. `colorCheck`는 선택적으로 검수한 이미지의 `checkedOutputSha256`과 `scope: 'color_stage_before_neck_repair'`를 남겨, 후속 목선 보정 결과까지 같은 바이트로 검수한 것처럼 해석하지 않게 한다.
 
 ---
 

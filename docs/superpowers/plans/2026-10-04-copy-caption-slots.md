@@ -1,5 +1,7 @@
 # AI 카피 캡션 슬롯 구현 계획
 
+> **대체됨(2026-11-13).** 템플릿 콘티(ADR-0026)가 이 계획을 대체했다. 현행 요구사항이 아니다.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** AI 카피를 사진 밖의 편집 가능한 캡션 슬롯으로 옮기고, 셀러 텍스트·시그니처 제목·규칙 라벨을 보존하며, 빈 안내 문구가 결과물에 포함되지 않게 한다.

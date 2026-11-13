@@ -8,7 +8,11 @@ import { createServer, transformWithEsbuild } from 'vite';
 import react from '@vitejs/plugin-react';
 import * as generation from '../../src/lib/generationExamples.js';
 import { generationExampleSelectionPatch } from '../../src/lib/storyboardExampleSelection.js';
-import { filterExamplesForModel } from '../../src/lib/identityScope.js';
+import * as gallery from '../../src/lib/pageTemplates/storyboardGallery.js';
+import { filterGalleryExamples, examplePlace, visiblePlaceTabs } from '../../src/lib/pageTemplates/storyboardGallery.js';
+import { spaceSetDisplayName } from '../../src/lib/spaceSetDisplayNames.js';
+import { storyboardSpaceSetsFor } from '../../src/lib/storyboardSpaceSetCatalog.js';
+import { filterSpaceSetsForModel, filterExamplesForModel } from '../../src/lib/identityScope.js';
 import { isSourceBasedDetailRecipe } from '../../src/lib/detailRecommendations.js';
 import { poseExampleDirectionCompatible } from '../../src/lib/storyboardTaxonomy.js';
 
@@ -19,7 +23,7 @@ const examples = Array.from({ length: 16 }, (_, index) => ({
   thumb: `/gallery-${index + 1}.webp`,
 }));
 const catalogs = { genExamples: examples, shotTypes: [{ value: 'full' }, { value: 'medium' }] };
-const baseProps = { catalogs, cut: 'horizon', shot: 'full', clothingType: 'top', gender: 'women', direction: 'front' };
+const baseProps = { catalogs, cut: 'horizon', shot: 'full', clothingType: 'top', gender: 'women', direction: 'front', gallerySeedFactory: () => 7 };
 const pages = generation.paginateGenerationGalleryItems(examples);
 
 test('gallery pagination keeps all 16 items in 6, 6, 4 order and keeps one empty page', () => {
@@ -69,21 +73,21 @@ async function loadGuide() {
 }
 after(async () => { await vite?.close(); });
 
-test('real MoodGuide SSR renders three pages and marks the selected third page immediately', async () => {
+test('real MoodGuide SSR keeps three pages and places the selected photo first immediately', async () => {
   const MoodGuide = await loadGuide();
   const markup = renderToStaticMarkup(React.createElement(MoodGuide, { ...baseProps, exampleId: examples[13].id }));
   const pageMarkup = markup.split(/<div class="sb-expage"/).slice(1);
   assert.equal(pageMarkup.length, 3);
   assert.deepEqual(pageMarkup.map((page) => (page.match(/class="sb-excell/g) || []).length), [6, 6, 4]);
-  assert.deepEqual(pageMarkup.map((page) => page.startsWith(' aria-hidden="true"')), [true, true, false]);
-  assert.equal((markup.match(/tabindex="-1"/g) || []).length, 12);
-  assert.match(pageMarkup[2], /class="sb-excell sel"[\s\S]*?src="\/gallery-14.webp"/);
+  assert.deepEqual(pageMarkup.map((page) => page.startsWith(' aria-hidden="true"')), [false, true, true]);
+  assert.equal((markup.match(/tabindex="-1"/g) || []).length, 10);
+  assert.match(pageMarkup[0], /class="sb-excell[^"]*sel[^"]*"[\s\S]*?src="\/gallery-14.webp"/);
   const dots = markup.match(/<button[^>]*aria-label="\d+페이지"[^>]*>/g) || [];
   assert.equal(dots.length, 3);
-  assert.doesNotMatch(dots[0] + dots[1], /aria-current/);
-  assert.match(dots[2], /aria-current="page"/);
-  assert.match(markup, /aria-label="총 3페이지 중 3페이지"/);
-  assert.match(markup, /aria-label="다음 예시 페이지" disabled=""/);
+  assert.doesNotMatch(dots[1] + dots[2], /aria-current/);
+  assert.match(dots[0], /aria-current="page"/);
+  assert.match(markup, /aria-label="총 3페이지 중 1페이지"/);
+  assert.match(markup, /aria-label="이전 예시 페이지" disabled=""/);
 });
 
 test('real MoodGuide SSR starts unselected and unknown IDs on page one and hides single-page controls', async () => {
@@ -103,8 +107,8 @@ test('real MoodGuide SSR starts unselected and unknown IDs on page one and hides
   }
 });
 
-const source = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
-const guideSource = source.slice(source.indexOf('export function MoodGuide('), source.indexOf('function Inspector('));
+const source = readFileSync(new URL('../../src/features/storyboard/StoryboardExampleGallery.jsx', import.meta.url), 'utf8');
+const guideSource = source.slice(source.indexOf('export function MoodGuide('));
 const { code } = await transformWithEsbuild(guideSource.replace('export function', 'function'), 'gallery-paging.jsx', { jsx: 'transform' });
 const nodes = (tree, predicate) => {
   if (Array.isArray(tree)) return tree.flatMap((child) => nodes(child, predicate));
@@ -139,7 +143,9 @@ function galleryHarness(initialProps = {}) {
     return slots[index].value;
   };
   const dependencies = {
-    ...generation, filterExamplesForModel, isSourceBasedDetailRecipe, poseExampleDirectionCompatible,
+    ...generation, ...gallery, spaceSetDisplayName, StoryboardStackPopup: () => null,
+    filterExamplesForModel, isSourceBasedDetailRecipe, poseExampleDirectionCompatible, filterSpaceSetsForModel, storyboardSpaceSetsFor, filterGalleryExamples, examplePlace, visiblePlaceTabs,
+    useMemo, styles: new Proxy({}, { get: (_, key) => String(key) }), PlaceTabs: () => null,
     React: { ...React, useMemo }, ExampleThumb: () => null, Icon: () => null, ShotSegment: () => null,
     MineImageTab: () => null, MINE_SHOT_OPTION: { value: 'mine' },
     setTimeout(callback) { timers.set(++timerId, callback); return timerId; },
@@ -216,7 +222,7 @@ function galleryHarness(initialProps = {}) {
   };
 }
 
-test('picking a third-page photo updates its direction and sideStyle without moving the gallery', () => {
+test('picking a third-page photo preserves its recipe and moves the selected photo to page one', () => {
   let block = { ...baseProps, source: 'ai', cutType: 'horizon', exampleId: examples[0].id };
   const changes = [];
   const h = galleryHarness({ ...block, onExampleChange(id, refScope) {
@@ -233,20 +239,20 @@ test('picking a third-page photo updates its direction and sideStyle without mov
   tree = h.render(block);
   assert.equal(block.direction, 'side');
   assert.equal(block.sideStyle, 'threeQuarter');
-  assert.equal(currentPage(tree), '3페이지');
-  assert.equal(h.scrolls.length, scrollCount, 'selection on the visible page never scrolls');
+  assert.equal(currentPage(tree), '1페이지');
+  assert.equal(h.scrolls.length, scrollCount + 1, 'the newly selected photo moves to the first page');
   tree = h.render({ direction: 'back', sideStyle: null });
-  assert.equal(currentPage(tree), '3페이지');
-  assert.equal(h.scrolls.length, scrollCount, 'direction-only changes never reset paging');
+  assert.equal(currentPage(tree), '1페이지');
+  assert.equal(h.scrolls.length, scrollCount + 1, 'direction-only changes never reset paging');
 });
 
 test('mounting, condition changes, outside-page selection and shrinking lists align to the right page', () => {
   const h = galleryHarness({ exampleId: examples[13].id });
   let tree = h.render();
-  assert.equal(currentPage(tree), '3페이지');
-  assert.deepEqual(h.scrolls[0], { left: 620, behavior: 'auto' });
+  assert.equal(currentPage(tree), '1페이지');
+  assert.deepEqual(h.scrolls[0], { left: 0, behavior: 'auto' });
   tree = h.render({ clothingType: 'outer' });
-  assert.equal(currentPage(tree), '3페이지');
+  assert.equal(currentPage(tree), '1페이지');
   assert.equal(h.scrolls.at(-1).behavior, 'auto');
   tree = h.render({ exampleId: examples[0].id });
   assert.equal(currentPage(tree), '1페이지');
@@ -255,14 +261,13 @@ test('mounting, condition changes, outside-page selection and shrinking lists al
   tree = h.render({ catalogs: { ...catalogs, genExamples: examples.slice(0, 8) } });
   assert.equal(currentPage(tree), '2페이지', 'a shorter list clamps to its last page, not the selection');
   tree = h.render({ shot: 'medium' });
-  assert.equal(byClass(tree, 'sb-expage')[0].props['aria-hidden'], false);
-  assert.equal(h.scrolls.at(-1).left, 0);
+  assert.equal(currentPage(tree), '2페이지', 'saved shot changes do not change the all-shot gallery filter');
 });
 
 test('each gallery condition returns to page one when the selected example leaves the list', () => {
-  for (const changes of [{ cut: 'styling' }, { shot: 'medium' }, { clothingType: 'bottom' }, { gender: 'men' }]) {
+  for (const changes of [{ cut: 'styling' }, { clothingType: 'bottom' }, { gender: 'men' }]) {
     const h = galleryHarness({ exampleId: examples[13].id });
-    assert.equal(currentPage(h.render()), '3페이지');
+    assert.equal(currentPage(h.render()), '1페이지');
     const tree = h.render(changes);
     assert.equal(byClass(tree, 'sb-expage')[0].props['aria-hidden'], false);
     assert.equal(byClass(tree, 'sb-excell').length, 0);
@@ -384,5 +389,5 @@ test('gallery CSS restores horizontal snap and top-aligned 3 by 2 pages without 
   assert.match(page, /scroll-snap-stop:\s*always/);
   assert.doesNotMatch(css, /\.sb-exsection|\.sb-expage-label|\.sb-expage-cells/);
   assert.doesNotMatch(guideSource, /onWheel|onMouseDown|onPointerDown|\binert\s*=/);
-  assert.match(guideSource, /limit:\s*\(catalogs\.genExamples \|\| \[\]\)\.length/);
+  assert.equal(generation.paginateGenerationGalleryItems(examples).flat().length, 16);
 });

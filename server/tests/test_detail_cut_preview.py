@@ -8,6 +8,7 @@ REAL 이면 라이선스를 지금 다시 확인한 뒤에만 바이트를 보�
   ③ 라이선스 철회·만료는 403 이고 저장소를 읽지도 않는다 ④ 비-REAL 잡도 같은 라우트
   ⑤ 로그·응답 어디에도 저장소 키·주소가 없다 ⑥ 워커는 표식에 블록 id 만 적고 원장은 그대로다.
 """
+from storyboard_v4_cases import v4_blocks
 
 import asyncio
 import contextlib
@@ -460,7 +461,7 @@ def _run_real_worker(monkeypatch, *, storyboard, tag=None):
         return {"copywriting": False, "facemarket_license_id": "later-lock"}
 
     async def fake_sb(conn, pid):
-        return storyboard
+        return v4_blocks(storyboard)
 
     async def fake_prod(conn, pid):
         return {"clothing_type": "top",

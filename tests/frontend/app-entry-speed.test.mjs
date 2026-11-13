@@ -154,13 +154,14 @@ test('ChromeLayout keeps the same entrance after landing cleanup and gives story
     useRef: () => ({ current: null }), useEffect() {}, useLayoutEffect() {},
     useLocation: () => location, useNavigate: () => () => {}, useAuth: () => ({ session: null }),
     useAppStore: (select) => select({ loadAccount() {}, loadCatalogs() {} }), useToast: () => ({ push() {} }),
-    TopNav: 'nav', SiteFooter: 'footer', Outlet: 'outlet',
+    TopNav: 'nav', SiteFooter: 'footer', StoryboardFooter: 'storyboard-footer', Outlet: 'outlet',
   };
   const ChromeLayout = new Function(...Object.keys(bindings), `${code}; return ChromeLayout;`)(...Object.values(bindings));
-  const main = (initialEntry) => {
+  const layout = (initialEntry) => {
     cursor = 0;
-    return ChromeLayout({ initialEntry }).props.children.find((child) => child?.props?.className?.startsWith('app-main'));
+    return ChromeLayout({ initialEntry });
   };
+  const main = (initialEntry) => layout(initialEntry).props.children.find((child) => child?.props?.className?.startsWith('app-main'));
   assert.equal(main(true).props.className, 'app-main page-enter-initial page-enter-landing');
   entry = null;
   assert.equal(main(true).props.className, 'app-main page-enter-initial page-enter-landing');
@@ -170,4 +171,12 @@ test('ChromeLayout keeps the same entrance after landing cleanup and gives story
   location.pathname = '/create/storyboard';
   assert.equal(main(true).props.className, 'app-main');
   assert.equal(main(false).props.className, 'app-main');
+  for (const [pathname, expectedFooter] of [
+    ['/create/storyboard', 'storyboard-footer'], ['/create/storyboard/', 'footer'],
+    ['/create/storyboard/history', 'footer'], ['/credits/history', 'footer'],
+    ['/subscription', 'footer'], ['/payment/success', 'footer'], ['/pricing', 'footer'],
+  ]) {
+    location.pathname = pathname;
+    assert.equal(layout(false).props.children.at(-1).type, expectedFooter, pathname);
+  }
 });

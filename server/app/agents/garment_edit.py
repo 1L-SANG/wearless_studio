@@ -116,7 +116,7 @@ def trusted_cut_type(asset: dict, record: dict) -> str | None:
 
 
 def source_cut_type(asset: dict | None, record: dict) -> str | None:
-    if not asset:
+    if not asset or (asset.get("metadata") or {}).get("internalGarmentMaster") is True:
         return None
     if asset.get("source") == "upload":
         return "styling"
@@ -196,7 +196,7 @@ async def generate(settings, gemini, source_image: InlineImage, target_image: In
                    front_closure: dict, inner_reference_image: InlineImage | None = None,
                    selected_inner_image: InlineImage | None = None,
                    face_identity_spec=None, face_pass_outcome=None,
-                   face_pass_url_provider=None) -> tuple[bytes, str]:
+                   face_pass_url_provider=None, output_size_override: str | None = None) -> tuple[bytes, str]:
     model = resolve_model(settings, "image_high")
     if not uses_inner_reference(mode, clothing_type, closure_state, front_closure):
         inner_reference_image = None
@@ -214,7 +214,7 @@ async def generate(settings, gemini, source_image: InlineImage, target_image: In
     image_size = getattr(settings, "detail_cut_image_size", None) or settings.mannequin_image_size
     size_options = {}
     if model.startswith("gpt-image"):
-        size_options["openai_size_override"] = await run_cpu_bound(similar_cut.openai_source_size, source_image, image_size)
+        size_options["openai_size_override"] = output_size_override or await run_cpu_bound(similar_cut.openai_source_size, source_image, image_size)
     result = await gemini.generate_content_image(model, prompt, images, image_size, aspect_ratio=None, **size_options)
     image, mime = result.image, result.mime
     if (face_identity_spec is not None and getattr(settings, "face_identity_enabled", False)

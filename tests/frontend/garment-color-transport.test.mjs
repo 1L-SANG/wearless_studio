@@ -70,7 +70,7 @@ test('draft promotion never promotes garment color evidence', async () => {
     const draft = { product: { colors: [{ images: [{ id: 'local', src: 'blob:photo' }] }] },
       photos: [{ imageId: 'local', mime: 'image/png' }], analysis: { clothingType: 'top' } };
     await module.promoteDraftToProject(draft);
-    assert.deepEqual(events, ['upload', 'product', 'analysis', 'project']);
+    assert.deepEqual(events, ['upload', 'product', 'analysis']);
   } finally {
     delete globalThis.__garmentColorHarness;
   }

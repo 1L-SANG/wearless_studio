@@ -121,9 +121,15 @@ def inherit_similar_cut_recipes(blocks: list) -> list:
         for key in ("spaceGroupId", "spaceVariation"):
             if key in source:
                 out[key] = source[key]
-        # The section owns contentRole; the source owns the worn generation recipe.
+        for key in ("sectionId", "sectionTitle", "pageSectionKey", "pageSectionKind", "pageSectionUsage", "pageDesignId"):
+            if key in source:
+                out[key] = source[key]
+            else:
+                out.pop(key, None)
+        out["slotKey"] = None
+        # The source owns section membership; a follow-up never becomes the hero.
         out["contentRole"] = (
-            block["contentRole"] if block.get("sectionRole") == "hooking"
+            "benefit" if source.get("pageSectionKind") == "first"
             else _FIT_ROLE_BY_CUT_TYPE[source["cutType"]]
         )
         result.append(out)
@@ -203,6 +209,8 @@ def resolve_content_role(block: dict | None) -> str:
     role = block.get("contentRole") or block.get("content_role")
     if role in CONTENT_ROLES:
         return role
+    if block.get("source") == "text":
+        return None
     if block.get("source") == "mine":
         return "custom"
     cut_type = block.get("cutType") or block.get("cut_type")
@@ -253,12 +261,15 @@ def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> 
     if not isinstance(block, dict):
         return block
 
+    if block.get("taxonomyVersion") == 4:
+        return _canonicalize_v4_block(block)
     out = dict(block)
     for retired in ("pose", "poseLabel", "poseThumb", "pose_label", "pose_thumb"):
         out.pop(retired, None)
     # taxonomy v3가 정규화 결과의 정본이다. StoryboardBlock 저장 shape에는
     # kind가 없으며, 비저장 경로에서도 EditorBlock의 sectionRole 동치만 남긴다.
-    out["taxonomyVersion"] = 3
+    # Standalone editor generation also uses this recipe helper.
+    out.pop("taxonomyVersion", None)
     out.pop("taxonomy_version", None)
     if for_storage or out.get("kind") not in SECTION_ROLES:
         out.pop("kind", None)
@@ -367,118 +378,194 @@ def _example_direction(block: dict, cut_type: str) -> dict | None:
 
 
 
-def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
-    """Canonicalize blocks and assign hidden roles from section/card order.
+def _v4_section(block):
+    from .page_templates import CATALOG, get_template, section_definition
+    key = block.get("pageSectionKey") or ""
+    template = get_template(key.split(".")[0])
+    kind = block.get("pageSectionKind")
+    if template is None or kind not in CATALOG["kinds"] or not key.startswith(template["id"] + ".") or not key.split(".", 1)[1]:
+        raise ValueError("invalid_storyboard_section")
+    section = section_definition(template, key, kind, block.get("pageSectionUsage"), block.get("pageDesignId"))
+    if CATALOG["designs"].get(block.get("pageDesignId"), {}).get("kind") != kind:
+        raise ValueError("invalid_storyboard_design")
+    if (kind == "wear" and block.get("pageSectionUsage") not in ("styling", "fit")) or (kind != "wear" and block.get("pageSectionUsage") is not None):
+        raise ValueError("invalid_storyboard_usage")
+    return section
 
-    Python's sort is stable, so the user's order inside each section is kept.
-    Custom blocks without a section inherit their neighboring section;
-    malformed non-dictionary entries remain at the end. The first AI image in
-    the hooking section is the only ``hero``; later hero values are demoted to
-    ``benefit``. AI custom/missing roles use the section's safe default.
-    """
+
+def _v4_slot(block, section):
+    import re
+    key = str(block.get("slotKey") or "")
+    prefix = section["instanceKey"] + "."
+    if key.startswith(prefix):
+        key = key[len(prefix):]
+    slot = next((slot for slot in section.get("photoSlots", [])
+                 if (key == slot["slotKey"] or key.startswith(slot["slotKey"] + ".") or re.fullmatch(re.escape(slot["slotKey"]) + r"\d+", key))), None)
+    if slot and block.get("pageSectionKind") == "wear" and block.get("pageSectionUsage") == "styling":
+        return {**slot, "recipe": {**(slot.get("recipe") or {}), "allowedCutTypes": ["styling", "horizon"]}}
+    return slot
+
+
+def _canonicalize_v4_block(block):
+    section = _v4_section(block)
+    out = dict(block)
+    for key in list(out):
+        if key.startswith(("hook", "layoutRow", "colorway")) or key in ("pose", "poseLabel", "poseThumb", "kind"):
+            out.pop(key, None)
+    out["sectionLayout"] = "stack"
+    source = out.get("source")
+    if source == "text":
+        forbidden = (set(GENERATION_RECIPE_FIELDS) - {"sectionRole", "contentRole", "cutType"}) | {
+            "refImages", "ownImages", "similarSourceBlockId", "colorIds", "angle", "exampleChoice",
+            "setSelectionOrigin", "thumb", "previewThumb", "baseThumb", "ref_scope", "space_set_member_order",
+        }
+        if any(key in block for key in forbidden) or any(block.get(key) is not None for key in ("cutType", "contentRole", "sectionRole", "slotKey")):
+            raise ValueError("invalid_storyboard_text_card")
+        out.update(cutType=None, contentRole=None, sectionRole=None, slotKey=None)
+        return out
+    if source == "mine":
+        out.update(contentRole="custom", cutType=None, sectionRole=None)
+        for key in ("exampleId", "exampleSelectionOrigin", "spaceGroupId", "spaceVariation", "spaceSetMemberOrder", "refImages", "refAssetIds", "productPresentation"):
+            out.pop(key, None)
+        return out
+    if source != "ai":
+        raise ValueError("invalid_storyboard_source")
+    slot = _v4_slot(out, section)
+    if out.get("slotKey") and not slot:
+        raise ValueError("invalid_storyboard_slot")
+    recipe = (slot or {}).get("recipe") or {}
+    cut_type = out.get("cutType")
+    if recipe and cut_type not in recipe["allowedCutTypes"]:
+        cut_type = recipe["cutType"]
+    if cut_type not in ("styling", "horizon", "product"):
+        raise ValueError("unknown_cut_type")
+    shot = out.get("shot")
+    if recipe and shot not in recipe["allowedShots"]:
+        shot = recipe["shot"]
+    worn = cut_type in ("styling", "horizon")
+    if shot not in (_WORN_SHOTS if worn else ("ghost", "detail")):
+        shot = "full" if worn else "ghost"
+    changed = cut_type != block.get("cutType") or shot != block.get("shot")
+    out.update(cutType=cut_type, shot=shot)
+    if changed:
+        out.update(exampleId=None, exampleSelectionOrigin=None, thumb=block.get("baseThumb") or block.get("thumb"), baseThumb=None, previewThumb=None)
+    direction = out.get("direction")
+    if direction not in (_WORN_DIRECTIONS if worn else _PRODUCT_DIRECTIONS):
+        direction = recipe.get("direction") or "front"
+    example = _example_direction(out, cut_type)
+    if example:
+        direction = example["direction"]
+    role = slot["contentRole"] if slot else ("detail" if shot == "detail" else "productOverview") if not worn else _FIT_ROLE_BY_CUT_TYPE[cut_type]
+    if out.get("pageSectionKind") == "first" and worn and block.get("contentRole") in ("hero", "benefit"):
+        role = block["contentRole"]
+    out.update(contentRole=role, sectionRole=_CONTENT_ROLE_TO_SECTION_ROLE.get(role), direction=direction)
+    side_style = (example or out).get("sideStyle")
+    out["sideStyle"] = side_style if direction == "side" and side_style in _SIDE_STYLES else None
+    if not worn:
+        out.update(faceExposure=None, matchIds=[], outerClosureState=None)
+    elif out.get("faceExposure") not in ("same", "show", "hide"):
+        out["faceExposure"] = recipe.get("faceExposure") or "same"
+    return _canonicalize_example_selection(out)
+
+
+def is_worn_crop_source(block):
+    if not block or block.get("pageSectionKind") != "wear":
+        return False
+    if block.get("source") == "mine":
+        images = block.get("ownImages") or []
+        return isinstance(images, list) and bool(images) and isinstance(images[0], str) and bool(images[0])
+    return (block.get("source") == "ai" and block.get("cutType") in ("styling", "horizon")
+            and block.get("shot") in ("full", "medium"))
+
+
+def validate_storyboard_v4(blocks):
+    from .page_templates import CATALOG
+    if not isinstance(blocks, list) or any(not isinstance(b, dict) or b.get("taxonomyVersion") != 4 for b in blocks):
+        raise ValueError("storyboard_outdated")
+    seen, section_ids, by_id, runs = set(), {}, {}, []
+    template_id = None
+    kinds = {}
+    for block in blocks:
+        if not isinstance(block.get("id"), str) or not block["id"] or block["id"] in by_id:
+            raise ValueError("invalid_storyboard_block_id")
+        by_id[block["id"]] = block
+        _v4_section(block)
+        key, sid = block["pageSectionKey"], block.get("sectionId")
+        if not isinstance(sid, str) or not sid:
+            raise ValueError("invalid_storyboard_section")
+        current_template = key.split(".")[0]
+        if template_id is not None and current_template != template_id:
+            raise ValueError("mixed_storyboard_templates")
+        template_id = current_template
+        if sid in section_ids and section_ids[sid] != key:
+            raise ValueError("invalid_storyboard_section")
+        section_ids[sid] = key
+        if not runs or runs[-1][0]["pageSectionKey"] != key:
+            if key in seen:
+                raise ValueError("noncontiguous_storyboard_section")
+            if block["pageSectionKind"] == "first" and runs:
+                raise ValueError("invalid_storyboard_first")
+            seen.add(key)
+            kind = block["pageSectionKind"]
+            kinds[kind] = kinds.get(kind, 0) + 1
+            if not CATALOG["kinds"][kind]["repeatable"] and kinds[kind] > 1:
+                raise ValueError("repeated_storyboard_section")
+            runs.append([])
+        first = runs[-1][0] if runs[-1] else block
+        if any(block.get(field) != first.get(field) for field in ("sectionId", "pageSectionKind", "pageSectionUsage", "pageDesignId")):
+            raise ValueError("invalid_storyboard_section")
+        runs[-1].append(block)
+    for run in runs:
+        kind = run[0]["pageSectionKind"]
+        text = [b for b in run if b.get("source") == "text"]
+        photos = [b for b in run if b.get("source") != "text"]
+        policy = CATALOG["kinds"][kind]["storyboardTextCard"]
+        if policy == "only" and photos:
+            section = _v4_section(run[0])
+            slots = {slot["slotKey"] for slot in section.get("photoSlots", []) if slot["fill"] == "reuse"}
+            prefix = section["instanceKey"] + "."
+            if all(b.get("source") in ("ai", "mine") and str(b.get("slotKey") or "").removeprefix(prefix) in slots for b in photos):
+                policy = "lead"
+        if kind == "fabric" and not photos:
+            policy = "only"
+        if len(text) > 1 or (policy == "none" and text) or (policy == "only" and (len(text) != 1 or photos)) or (policy == "lead" and (not text or run[0] is not text[0])):
+            raise ValueError("invalid_storyboard_text_card")
+        for lead in text:
+            items = lead.get("pointItems")
+            if items is None:
+                continue
+            if kind != "points" or not isinstance(items, list):
+                raise ValueError("invalid_storyboard_point_items")
+            for item in items:
+                if not isinstance(item, dict) or item.get("kind") not in ("detail", "wornCrop") or not isinstance(item.get("sourceBlockId"), str):
+                    raise ValueError("invalid_storyboard_point_items")
+                source = by_id.get(item["sourceBlockId"])
+                # A removed original remains a hidden item, never a new generation request.
+                if item["kind"] == "detail":
+                    if source and (source.get("pageSectionKey") != lead["pageSectionKey"] or source.get("source") != "ai" or source.get("shot") != "detail"):
+                        raise ValueError("invalid_storyboard_point_items")
+                else:
+                    region = item.get("cropRegion")
+                    if (item.get("bodyPart") not in ("shoulder", "neckline", "length", "silhouette", "waistline")
+                        or not isinstance(region, list) or len(region) != 4 or any(type(v) not in (int, float) or not 0 <= v <= 1 for v in region)
+                        or region[2] <= 0 or region[3] <= 0 or region[0] + region[2] > 1.00001 or region[1] + region[3] > 1.00001
+                        or source and not is_worn_crop_source(source)):
+                        raise ValueError("invalid_storyboard_point_items")
     validate_similar_cut_relationships(blocks)
-    defaults = {
-        "hooking": "hero",
-        "styling": "coordination",
-        "studio": "fit",
-        "product": "productOverview",
-    }
 
-    def canonicalize_for_storyboard(block):
-        if not isinstance(block, dict):
-            return block
-        candidate = dict(block)
-        requested_cut_type = candidate.get("cutType") or candidate.get("cut_type")
-        if (candidate.get("source") != "mine" and requested_cut_type
-                and requested_cut_type not in ("styling", "horizon", "product")):
-            raise ValueError("unknown_cut_type")
-        declared_section = candidate.get("sectionRole") or candidate.get("section_role")
-        if declared_section not in SECTION_ROLES:
-            declared_section = resolve_section_role(candidate)
 
-        # Storyboard-list 계약에서는 화면의 유효한 섹션이 정본이다. 단일 블록
-        # 헬퍼의 defensive explicit-role 우선 규칙은 에디터 등 다른 소비처를
-        # 위해 그대로 두고, 여기서만 섹션 안의 내부 역할을 다시 정한다.
-        if candidate.get("source") != "mine" and declared_section in SECTION_ROLES:
-            role = resolve_content_role(candidate)
-            if role == "custom" or _CONTENT_ROLE_TO_SECTION_ROLE.get(role) != declared_section:
-                role = defaults[declared_section]
-            if declared_section == "styling":
-                role = "coordination"
-                candidate["cutType"] = "styling"
-            elif declared_section == "studio":
-                role = "fit"
-                candidate["cutType"] = "horizon"
-            candidate["sectionRole"] = declared_section
-            candidate["contentRole"] = role
-
-        previous_recipe = (
-            block.get("cutType") or block.get("cut_type"),
-            block.get("direction"),
-            block.get("shot"),
-        )
-        updated = canonicalize_storyboard_block(candidate, for_storage=for_storage)
-        updated = horizon_background.normalize_block(updated)
-        next_recipe = (updated.get("cutType"), updated.get("direction"), updated.get("shot"))
-        recipe_incompatible = (
-            previous_recipe[0] != next_recipe[0]
-            or (previous_recipe[2] is not None and previous_recipe[2] != next_recipe[2])
-        )
-        if recipe_incompatible:
-            updated["exampleId"] = None
-            if block.get("baseThumb") or block.get("thumb"):
-                updated["thumb"] = block.get("baseThumb") or block.get("thumb")
-            updated["baseThumb"] = None
-        return _canonicalize_example_selection(updated)
-
-    # 호출자가 준 카드 배열을 변경하지 않고 과거 선택값을 정리한다.
-    raw = [dict(block) if isinstance(block, dict) else block for block in (blocks or [])]
-    canonical = [canonicalize_for_storyboard(block) for block in raw]
-    # Custom/mine cards without a semantic section inherit the preceding
-    # section; leading cards inherit the next valid section (or hooking when
-    # the board has no section at all). This mirrors frontend normalization.
-    previous_role = None
-    for block in canonical:
-        if not isinstance(block, dict):
-            continue
-        if block.get("sectionRole") not in SECTION_ROLES and previous_role:
-            block["sectionRole"] = previous_role
-        if block.get("sectionRole") in SECTION_ROLES:
-            previous_role = block["sectionRole"]
-    next_role = None
-    for block in reversed(canonical):
-        if not isinstance(block, dict):
-            continue
-        if block.get("sectionRole") not in SECTION_ROLES:
-            block["sectionRole"] = next_role or "hooking"
-        next_role = block["sectionRole"]
-
-    section_order = {"hooking": 0, "styling": 1, "studio": 2, "product": 3}
-    ordered = sorted(
-        canonical,
-        key=lambda block: section_order.get(block.get("sectionRole"), 3)
-        if isinstance(block, dict) else 3,
-    )
-
-    hero_assigned = False
-    out = []
-    for block in ordered:
-        if not isinstance(block, dict) or block.get("source") == "mine":
-            out.append(block)
-            continue
-
-        section_role = block.get("sectionRole")
-        role = block.get("contentRole")
-        if role == "custom" or _CONTENT_ROLE_TO_SECTION_ROLE.get(role) != section_role:
-            role = defaults.get(section_role, "hero")
-        if section_role == "hooking":
-            if not hero_assigned:
-                role = "hero"
+def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
+    """v4 preserves section runs and page order. It never converts an old board."""
+    validate_storyboard_v4(blocks)
+    canonical, hero_assigned = [], False
+    for block in blocks:
+        updated = _canonicalize_v4_block(dict(block))
+        if updated.get("source") == "ai" and updated.get("pageSectionKind") == "first" and updated.get("cutType") in ("styling", "horizon"):
+            updated["contentRole"] = "benefit" if hero_assigned or updated.get("similarSourceBlockId") else "hero"
+            updated["sectionRole"] = "hooking"
+            if not updated.get("similarSourceBlockId"):
                 hero_assigned = True
-            elif role == "hero":
-                role = "benefit"
-
-        updated = canonicalize_for_storyboard({**block, "contentRole": role})
-        out.append(updated)
-    validate_similar_cut_relationships(out)
-    return inherit_similar_cut_recipes(out)
+        canonical.append(horizon_background.normalize_block(updated) if updated.get("source") == "ai" else updated)
+    out = inherit_similar_cut_recipes(canonical)
+    validate_storyboard_v4(out)
+    return out

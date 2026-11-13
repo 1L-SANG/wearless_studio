@@ -5,6 +5,7 @@
 테스트는 제거: 스펙 위반은 이제 라우트 400 이 아니라 워커 정규화(ValueError→빈 슬롯/실패)로
 드러난다 — 그 계약은 아래 normalize 단위 테스트가 지킨다.
 """
+from storyboard_v4_cases import v4_blocks
 
 import json
 
@@ -93,13 +94,13 @@ def test_canonical_ignores_retired_kind_and_infers_from_cut_type():
         "fit", "studio", "horizon",
     )
     assert (fit["direction"], fit["shot"]) == ("side", "medium")
-    assert retired["taxonomyVersion"] == 3
+    assert "taxonomyVersion" not in retired
     assert "kind" not in retired
 
     stored = content_roles.canonicalize_storyboard_block({
         "kind": "hook", "cutType": "product", "shot": "detail",
     }, for_storage=True)
-    assert stored["taxonomyVersion"] == 3
+    assert "taxonomyVersion" not in stored
     assert "kind" not in stored
 
 
@@ -122,7 +123,7 @@ def test_canonical_mine_and_custom_blocks_do_not_invent_ai_recipe():
 
     assert mine["contentRole"] == "custom"
     assert mine["cutType"] is None
-    assert mine["taxonomyVersion"] == 3
+    assert "taxonomyVersion" not in mine
     assert mine["ownImages"] == ["asset-1"]
     assert custom["contentRole"] == "custom"
     assert custom["sectionRole"] == "hooking"
@@ -156,7 +157,7 @@ def test_canonical_storyboard_list_returns_normalized_copies():
         {"id": "b2", "source": "mine", "ownImages": ["asset-2"]},
     ]
 
-    normalized = content_roles.canonicalize_storyboard(raw)
+    normalized = content_roles.canonicalize_storyboard(v4_blocks(raw))
 
     assert normalized is not raw
     assert normalized[0] is not raw[0]
@@ -168,24 +169,24 @@ def test_canonical_storyboard_list_returns_normalized_copies():
     assert "contentRole" not in raw[0]  # 호출자의 원본 저장본을 제자리에서 바꾸지 않는다.
 
 
-def test_canonical_storyboard_stably_orders_the_four_sections():
-    normalized = content_roles.canonicalize_storyboard([
+def test_canonical_storyboard_preserves_page_order():
+    normalized = content_roles.canonicalize_storyboard(v4_blocks([
         {"id": "product-1", "source": "ai", "contentRole": "productOverview"},
         {"id": "fit-1", "source": "ai", "contentRole": "fit"},
         {"id": "benefit-1", "source": "ai", "contentRole": "hero"},
         {"id": "fit-2", "source": "ai", "contentRole": "coordination"},
         {"id": "custom", "source": "mine"},
         {"id": "benefit-2", "source": "ai", "contentRole": "benefit"},
-    ])
+    ]))
 
     assert [block["id"] for block in normalized] == [
-        "benefit-1", "benefit-2", "fit-2", "custom", "fit-1", "product-1",
+        "product-1", "fit-1", "benefit-1", "fit-2", "custom", "benefit-2",
     ]
     assert normalized[3]["sectionRole"] == "styling"  # 앞 이웃 섹션을 상속해 원래 위치를 지킨다.
 
 
 def test_canonical_storyboard_assigns_hidden_roles_and_only_one_hero():
-    normalized = content_roles.canonicalize_storyboard([
+    normalized = content_roles.canonicalize_storyboard(v4_blocks([
         {"id": "mine", "source": "mine", "sectionRole": "benefit"},
         {
             "id": "first-ai", "source": "ai", "sectionRole": "benefit",
@@ -200,7 +201,7 @@ def test_canonical_storyboard_assigns_hidden_roles_and_only_one_hero():
             "id": "fit-ai", "source": "ai", "sectionRole": "fit",
             "contentRole": "custom",
         },
-    ])
+    ]))
 
     assert [block["contentRole"] for block in normalized] == [
         "custom", "hero", "benefit", "coordination",
@@ -211,8 +212,8 @@ def test_canonical_storyboard_assigns_hidden_roles_and_only_one_hero():
     assert normalized[3]["cutType"] == "styling"
 
 
-def test_canonical_storyboard_section_wins_stale_internal_role_and_recipe():
-    normalized = content_roles.canonicalize_storyboard([
+def test_canonical_storyboard_unbound_recipe_wins_stale_shooting_group():
+    normalized = content_roles.canonicalize_storyboard(v4_blocks([
         {
             "id": "benefit-with-fit-recipe", "source": "ai", "sectionRole": "benefit",
             "cutType": "horizon", "direction": "front", "shot": "medium",
@@ -221,7 +222,7 @@ def test_canonical_storyboard_section_wins_stale_internal_role_and_recipe():
             "id": "product-with-fit-role", "source": "ai", "sectionRole": "product",
             "contentRole": "fit", "cutType": "horizon", "direction": "side", "shot": "full",
         },
-    ])
+    ]))
 
     assert [block["id"] for block in normalized] == [
         "benefit-with-fit-recipe", "product-with-fit-role",
@@ -231,30 +232,30 @@ def test_canonical_storyboard_section_wins_stale_internal_role_and_recipe():
     ) == ("hooking", "hero", "horizon")
     assert (
         normalized[1]["sectionRole"], normalized[1]["contentRole"], normalized[1]["cutType"]
-    ) == ("product", "productOverview", "product")
+    ) == ("studio", "fit", "horizon")
 
 
-def test_canonical_storyboard_studio_section_rejects_styling_recipe():
-    normalized = content_roles.canonicalize_storyboard([{
+def test_canonical_storyboard_shooting_group_does_not_force_recipe():
+    normalized = content_roles.canonicalize_storyboard(v4_blocks([{
         "id": "studio-with-styling-recipe", "source": "ai", "sectionRole": "studio",
         "contentRole": "coordination", "cutType": "styling", "direction": "side", "shot": "medium",
         "exampleId": "old-example", "thumb": "example.png", "baseThumb": "base.png",
-    }])
+    }]))
 
     block = normalized[0]
     assert (block["sectionRole"], block["contentRole"], block["cutType"]) == (
-        "studio", "fit", "horizon",
+        "styling", "coordination", "styling",
     )
-    assert block["exampleId"] is None
-    assert block["thumb"] == "base.png"
+    assert block["exampleId"] == "old-example"
+    assert block["thumb"] == "example.png"
 
 
 def test_canonical_storyboard_keeps_example_when_auto_role_changes_but_selected_cut_does_not():
-    normalized = content_roles.canonicalize_storyboard([{
+    normalized = content_roles.canonicalize_storyboard(v4_blocks([{
         "id": "first-benefit", "source": "ai", "sectionRole": "benefit",
         "contentRole": "benefit", "cutType": "horizon", "direction": "front", "shot": "medium",
         "exampleId": "example-1", "baseThumb": "base.png", "thumb": "example.png",
-    }])
+    }]))
 
     assert normalized[0]["contentRole"] == "hero"
     assert normalized[0]["cutType"] == "horizon"
@@ -368,7 +369,7 @@ def test_retired_cut_type_is_rejected_before_role_or_section_inference(hints):
     with pytest.raises(ValueError, match="unknown_cut_type"):
         cut.normalize_spec(raw)
     with pytest.raises(ValueError, match="unknown_cut_type"):
-        content_roles.canonicalize_storyboard([raw], for_storage=True)
+        content_roles.canonicalize_storyboard(v4_blocks([raw]), for_storage=True)
 
 
 def test_normalize_cut_type_only_request_uses_defensive_inference():
@@ -1163,8 +1164,8 @@ def _studio(n, **extra):
 def test_the_side_style_is_dropped_when_the_cut_is_not_a_side():
     """방향을 바꾼 카드에 옛 값이 따라다니면 안 된다."""
     out = content_roles.canonicalize_storyboard(
-        [{"sectionRole": "studio", "cutType": "horizon",
-          "direction": "front", "sideStyle": "threeQuarter"}])
+        v4_blocks([{"sectionRole": "studio", "cutType": "horizon",
+          "direction": "front", "sideStyle": "threeQuarter"}]))
     assert out[0]["sideStyle"] is None
 
 
@@ -1180,12 +1181,12 @@ def test_a_direction_the_storyboard_chose_always_wins():
         {"sectionRole": "studio", "cutType": "horizon", "direction": "front"},
         {"sectionRole": "studio", "cutType": "horizon", "direction": "back"},
     ]
-    out = content_roles.canonicalize_storyboard(blocks)
+    out = content_roles.canonicalize_storyboard(v4_blocks(blocks))
     assert [b["direction"] for b in out] == ["front", "front", "front", "back"]
 
 
 def test_seller_cards_are_never_reassigned():
-    out = content_roles.canonicalize_storyboard(_studio(5, source="mine"))
+    out = content_roles.canonicalize_storyboard(v4_blocks(_studio(5, source="mine")))
     assert all(b.get("direction") in (None, "front") for b in out)
 
 
@@ -1194,20 +1195,20 @@ def test_an_example_the_seller_picked_pins_the_direction():
     for b in blocks:
         b["exampleId"] = "ex_front_1"
         b["exampleSelectionOrigin"] = "user"
-    out = content_roles.canonicalize_storyboard(blocks)
+    out = content_roles.canonicalize_storyboard(v4_blocks(blocks))
     assert {b["direction"] for b in out} == {"front"}
     assert all(b["exampleId"] == "ex_front_1" for b in out)
 
 
 def test_the_caller_list_is_not_mutated():
     blocks = _studio(4)
-    content_roles.canonicalize_storyboard(blocks)
+    content_roles.canonicalize_storyboard(v4_blocks(blocks))
     assert all("direction" not in b for b in blocks)
 
 
 def test_other_sections_are_left_alone():
     blocks = [{"sectionRole": "styling", "cutType": "styling"} for _ in range(5)]
-    out = content_roles.canonicalize_storyboard(blocks)
+    out = content_roles.canonicalize_storyboard(v4_blocks(blocks))
     assert {b["direction"] for b in out} == {"front"}
 
 
@@ -1285,11 +1286,11 @@ def test_default_colorway_pairs_reach_the_worker_as_repeat_indexes(hz_registry):
                 "layoutRowId": f"row__colorway__{color}"}
         blocks += [card(color, "full", **pair), card(color, "medium", **pair)]
 
-    out = content_roles.canonicalize_storyboard(blocks)
+    out = content_roles.canonicalize_storyboard(v4_blocks(blocks))
     assert all("pose" not in b for b in out)
     assert dpj._example_repeat_indexes(out, "top") == [None, 0, 0, 1, 1, 2, 2]
 
 
 def test_seller_cards_keep_their_pose():
-    out = content_roles.canonicalize_storyboard(_studio(5, source="mine"))
+    out = content_roles.canonicalize_storyboard(v4_blocks(_studio(5, source="mine")))
     assert all(not b.get("pose") for b in out)

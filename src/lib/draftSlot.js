@@ -484,7 +484,6 @@ export function createDraftSlotSync({
       payload: {
         product,
         analysis: stripFeatureClientFields(snapshot.analysis) || null,
-        composeMode: snapshot.composeMode === 'extended' ? 'extended' : 'basic',
         ...(customMatch ? { customMatch } : {}),
         ...(Object.keys(serializedVisualRefs).length ? { draftVisuals: serializedVisualRefs } : {}),
       },

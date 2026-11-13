@@ -1,3 +1,4 @@
+import { readStoryboardSources } from './helpers/storyboardComponents.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -137,7 +138,7 @@ test('막힌 이유가 셀러에게 갈린다 — 문구는 서버 규칙 표에
     assert.equal(rejectionOfSection('studio', real), null);
   });
   // styling 섹션의 확정 프로필 예시는 섹션이 아니라 예시 때문에 막힌다 — 섹션 사유(코드)가
-  // 없으니 카드는 일반 문구('이 모델로는 만들 수 없는 컷')로 떨어진다.
+  // 없으니 카드는 일반 문구('이 모델로 만들 수 없는 컷')로 떨어진다.
   const profileInStyling = { ...PROFILE_BLOCK, sectionRole: 'styling' };
   assert.equal(blockAllowedForModel(profileInStyling, real), false);
   assert.equal(rejectionOfBlock(profileInStyling, real), null);
@@ -203,15 +204,13 @@ test('선택지에서도 빠진다 — 갤러리·자동 구성 공용 필터', 
 });
 
 test('콘티보드가 범위를 실제로 쓴다(배선 고정)', () => {
-  const board = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
+  const board = readStoryboardSources();
   assert.match(board, /identityKind/);
   assert.match(board, /filterSpaceSetsForModel\(/);
   assert.match(board, /filterExamplesForModel\(/);
-  assert.match(board, /이 모델로는 만들 수 없는 컷/);
-  assert.match(board, /outOfScope=\{block\.source === 'ai' && !blockAllowedForModel\(block, identityKind\)/);
+  assert.match(board, /이 모델로 만들 수 없는 컷/);
   // 막힌 이유가 둘로 갈린다 — 카드 문구도 그걸 따라간다(스튜디오 전용 vs 가상 전용 예시).
   assert.match(board, /rejectionOfBlock\(block, identityKind\)/);
-  assert.match(board, /rejectionOfSection\(sectionRole, identityKind\)/);
   // 견적도 서버 예약과 같은 수를 본다.
   assert.match(board, /uniqueGenerationCutCount\(blocksForModel\(blocks, identityKind\),\s*\{\s*clothingType, frontClosure: catalogs\?\.frontClosure/);
 

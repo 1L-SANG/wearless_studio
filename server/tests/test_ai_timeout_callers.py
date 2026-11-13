@@ -1,3 +1,4 @@
+from storyboard_v4_cases import v4_blocks
 import asyncio
 from unittest.mock import AsyncMock
 
@@ -88,7 +89,7 @@ def test_detail_page_feature_copy_passes_background_timeout(monkeypatch, backgro
 
     for name, value in (
         ("get_project", {"copywriting": False}),
-        ("get_storyboard", []),
+        ("get_storyboard", v4_blocks([])),
         ("get_product", {"name": "셔츠"}),
         ("get_analysis", {"sellingPoints": ["빈티지한 워싱감"]}),
     ):

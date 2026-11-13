@@ -4,6 +4,7 @@ REAL: 셀러가 실존 모델(selectedModelId)+활성 라이선스 → 그리드
 비공개 face 버킷에서 로드돼 컷에 주입되고, 단일 라이선스 얼굴은 미첨부(이중주입 0), 검증 배지 노출.
 REJECTED: 선택한 실존 모델에 검증된 라이선스가 없으면 자산 조회 전에 잡 전체 실패.
 """
+from storyboard_v4_cases import v4_blocks
 
 import asyncio
 import contextlib
@@ -185,8 +186,8 @@ def _patch(monkeypatch, captured, *, project=None, analysis=None, storyboard=Non
 
     async def fake_sb(conn, pid):
         if storyboard is not None:
-            return storyboard
-        return [{"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full"}]
+            return v4_blocks(storyboard)
+        return v4_blocks([{"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full"}])
 
     async def fake_prod(conn, pid):
         return {"clothing_type": "top",
@@ -207,7 +208,7 @@ def _patch(monkeypatch, captured, *, project=None, analysis=None, storyboard=Non
         return b"IMG", "image/png"
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, *,
-                      license_notice=None):
+                      license_notice=None, **_template_kwargs):
         captured["license_notice"] = license_notice
         return [{"id": "b0", "kind": "hook", "elements": []}]
 

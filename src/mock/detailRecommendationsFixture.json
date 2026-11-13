@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "status": "ready",
+  "candidates": [
+    {
+      "kind": "neckline",
+      "label": "목선",
+      "sourceIndex": 0,
+      "region": {
+        "x": 0.36,
+        "y": 0.16,
+        "w": 0.28,
+        "h": 0.15
+      },
+      "standaloneValue": "construction",
+      "rank": 1,
+      "photoUse": "standalone",
+      "visibility": "clear",
+      "reason": "목 화면 확인용 후보예요",
+      "informationGroup": "neckline",
+      "featurePoints": [
+        "목선 마감"
+      ],
+      "sourceSlot": "Front",
+      "sourceSha256": "f2044ea7c35290f34b928b79d4aa618cb1c9482aaeb5e798fbad8cd6f5732d12",
+      "direction": "front",
+      "id": "dt1_65c328f821f8757b1ca21356"
+    },
+    {
+      "kind": "cuff",
+      "label": "소맷단",
+      "sourceIndex": 0,
+      "region": {
+        "x": 0.2,
+        "y": 0.4,
+        "w": 0.2,
+        "h": 0.24
+      },
+      "standaloneValue": "finish_quality",
+      "rank": 2,
+      "photoUse": "standalone",
+      "visibility": "clear",
+      "reason": "목 화면 확인용 후보예요",
+      "informationGroup": "cuff",
+      "featurePoints": [
+        "소맷단 마감"
+      ],
+      "sourceSlot": "Front",
+      "sourceSha256": "f2044ea7c35290f34b928b79d4aa618cb1c9482aaeb5e798fbad8cd6f5732d12",
+      "direction": "front",
+      "id": "dt1_b70a597ced406ac8efd9e544"
+    },
+    {
+      "kind": "hem",
+      "label": "밑단",
+      "sourceIndex": 0,
+      "region": {
+        "x": 0.3,
+        "y": 0.57,
+        "w": 0.4,
+        "h": 0.18
+      },
+      "standaloneValue": "finish_quality",
+      "rank": 3,
+      "photoUse": "standalone",
+      "visibility": "clear",
+      "reason": "목 화면 확인용 후보예요",
+      "informationGroup": "hem",
+      "featurePoints": [
+        "밑단 마감"
+      ],
+      "sourceSlot": "Front",
+      "sourceSha256": "f2044ea7c35290f34b928b79d4aa618cb1c9482aaeb5e798fbad8cd6f5732d12",
+      "direction": "front",
+      "id": "dt1_0f75ccb34fef1b11e16103fa"
+    },
+    {
+      "kind": "fabric",
+      "label": "골지 원단",
+      "sourceIndex": 2,
+      "region": {
+        "x": 0.15,
+        "y": 0.15,
+        "w": 0.7,
+        "h": 0.7
+      },
+      "standaloneValue": "material",
+      "rank": 4,
+      "photoUse": "standalone",
+      "visibility": "clear",
+      "reason": "목 화면 확인용 후보예요",
+      "informationGroup": "fabric",
+      "featurePoints": [
+        "원단 조직"
+      ],
+      "sourceSlot": "Detail",
+      "sourceSha256": "e67b5914f4ead454b9a8c071a0111254eeda59e54f1edeeae583476a393eff9c",
+      "direction": "front",
+      "id": "dt1_085eb2ee8b92884946934942"
+    }
+  ]
+}

@@ -131,6 +131,9 @@ def _validate_facemarket_vc_settings(settings: Settings) -> None:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     _configure_logging()
+    from .agents.page_templates import load_catalog
+
+    load_catalog()  # Invalid template data must fail startup before opening connections.
     settings = settings or load_settings()
     # 지금 도는 코드가 어느 커밋인가 — 얼굴 렌더 파드에 **같은 sha 의 코드 묶음**을 주는 근거다.
     # 없으면 그 사실이 로그에 남아야 한다(조용히 빈 값으로 도는 것을 막는다).

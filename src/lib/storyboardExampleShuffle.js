@@ -63,7 +63,7 @@ const isRerollableOne = (block, sectionId) => (
    onlyBlockId: 지정하면 그 낱개 컷 하나만 재추첨한다(카드별 셔플 아이콘, 2026-08-16 —
    세트 교체는 건너뛴다). */
 export function shuffleSectionExamples(blocks, {
-  sectionId, catalog, product, gender, rotation = 0, uid = null,
+  sectionId, catalog, product, analysis, gender, rotation = 0, uid = null,
   onlySpaceGroupId = null, onlyBlockId = null, identityKind = null, colorEvidence = null,
 }) {
   const list = Array.isArray(blocks) ? blocks : [];
@@ -87,7 +87,7 @@ export function shuffleSectionExamples(blocks, {
     // 컬러웨이 짝이나 섹션을 옮겨 예시가 비워진 다른 컷까지 조용히 바뀐다(2026-08-17 리뷰).
     const rerolled = assignGenerationExamples(cleared, {
       identityKind,
-      catalog, product, gender, avoidByBlockId, onlyBlockIds: [onlyBlockId],
+      catalog, product, analysis, gender, avoidByBlockId, onlyBlockIds: [onlyBlockId],
     }).blocks;
     // 무변경이면 원본 참조를 그대로 돌려준다 — 호출부가 안내 토스트를 띄우고 되돌리기
     // 배너·자동저장이 헛돌지 않는다(자체 리뷰). 두 경우:
@@ -145,7 +145,7 @@ export function shuffleSectionExamples(blocks, {
     ));
     next = assignGenerationExamples(next, {
     identityKind,
-      catalog, product, gender, avoidByBlockId,
+      catalog, product, analysis, gender, avoidByBlockId,
     }).blocks;
   }
   return next;

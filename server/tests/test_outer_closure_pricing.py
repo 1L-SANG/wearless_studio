@@ -1,3 +1,4 @@
+from storyboard_v4_cases import v4_blocks
 import asyncio
 from copy import deepcopy
 from unittest.mock import AsyncMock
@@ -33,7 +34,7 @@ def _block(block_id, **changes):
 def _reserve_route(client, make_token, monkeypatch, blocks, analysis, *, balance=95):
     captured = {}
     for name, value in (("get_project", {}), ("get_analysis", analysis),
-                        ("get_editor_blocks", []), ("get_storyboard", blocks), ("get_product", _product())):
+                        ("get_editor_blocks", []), ("get_storyboard", v4_blocks(blocks)), ("get_product", _product())):
         monkeypatch.setattr(repo, name, AsyncMock(return_value=value))
 
     async def create(conn, **kwargs):
@@ -73,7 +74,7 @@ def test_reservation_counts_effective_outer_cuts_without_rejecting_affordable_bo
 
     app, seen = setup_generation(monkeypatch)
     results = asyncio.run(dpj._gen_cuts(
-        app, worker_job(), [item(b) for b in content_roles.canonicalize_storyboard(blocks)],
+        app, worker_job(), [item(b) for b in content_roles.canonicalize_storyboard(v4_blocks(blocks))],
         _product(), analysis))
     assert len(results[0]) == 6 and len(results[1]) == 5
     assert len(seen["generate"]) == 5
@@ -101,7 +102,7 @@ def test_outer_projection_reuses_cuts_without_counting_them_as_failed_charge_uni
     blocks = [_block(state, outerClosureState=state) for state in ("open", "partial", "closed")]
     blocks += [_block("medium", shot="medium"), _block("back", direction="back")]
     saved = deepcopy(blocks)
-    for name, value in (("get_project", {"copywriting": False}), ("get_storyboard", blocks),
+    for name, value in (("get_project", {"copywriting": False}), ("get_storyboard", v4_blocks(blocks)),
                         ("get_product", _product()), ("get_analysis", _analysis()),
                         ("get_asset_for_user", {"mime_type": "image/png", "r2_key": "garment-input"})):
         monkeypatch.setattr(repo, name, AsyncMock(return_value=value))
@@ -136,7 +137,7 @@ def test_unaffected_jobs_keep_the_reserved_requested_count(monkeypatch, clothing
     _IntentDB().install(monkeypatch)
     blocks = [_block("front"), _block("medium", shot="medium"), _block("back", direction="back")]
     product = {**_product(), "clothingType": clothing_type}
-    for name, value in (("get_project", {"copywriting": False}), ("get_storyboard", blocks),
+    for name, value in (("get_project", {"copywriting": False}), ("get_storyboard", v4_blocks(blocks)),
                         ("get_product", product), ("get_analysis", analysis),
                         ("get_asset_for_user", {"mime_type": "image/png", "r2_key": "garment-input"})):
         monkeypatch.setattr(repo, name, AsyncMock(return_value=value))
@@ -170,7 +171,7 @@ def test_projection_never_discounts_similar_children(client, make_token, monkeyp
     assert captured["metadata"]["aiCount"] == 3
     app, seen = setup_generation(monkeypatch)
     result = asyncio.run(dpj._gen_cuts(
-        app, worker_job(), [item(b) for b in content_roles.canonicalize_storyboard(blocks)],
+        app, worker_job(), [item(b) for b in content_roles.canonicalize_storyboard(v4_blocks(blocks))],
         _product(), _analysis()))
     assert len(result[0]) == 4 and len(result[1]) == 3
     assert len(seen["generate"]) == 1 and len(seen["vary"]) == 2

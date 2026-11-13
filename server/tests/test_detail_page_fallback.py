@@ -1,4 +1,5 @@
 """ADR-0017 runtime substitutions use local IO doubles and real worker contracts."""
+from storyboard_v4_cases import v4_blocks
 import asyncio
 import contextlib
 from copy import deepcopy
@@ -51,7 +52,7 @@ def _run(monkeypatch, blocks, recommendations=(), *, missing_rows=(), missing_as
                 active_connections["count"] -= 1
 
     async def get_project(*args): return {"copywriting": False}
-    async def get_storyboard(*args): return saved
+    async def get_storyboard(*args): return v4_blocks(saved)
     async def get_product(*args): return product
     async def get_analysis(*args): return analysis
     async def matching_asset(conn, item_id, user_id, project_id):
@@ -106,7 +107,7 @@ def _run(monkeypatch, blocks, recommendations=(), *, missing_rows=(), missing_as
         return True
     async def emit(pool, job_id, event_type, payload):
         captured["events"].append((event_type, payload))
-    for name, fn in [("get_project", get_project), ("get_storyboard", get_storyboard),
+    for name, fn in [("get_project", get_project), ("get_storyboard", v4_blocks(get_storyboard)),
                      ("get_product", get_product), ("get_analysis", get_analysis),
                      ("get_matching_item_asset", matching_asset),
                      ("get_matching_item_metadata", matching_metadata),
