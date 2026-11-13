@@ -9,6 +9,7 @@ import gifStyles from './GifThumbnailPanel.module.css';
 import { DetailTargetPicker } from '../storyboard/DetailTargetPicker.jsx';
 import OuterClosureField from '@/components/OuterClosureField.jsx';
 import { resizedPhotoPatch } from './editorCrop.js';
+import { hasBackdropBlur } from './editorImageBlur.js';
 import { ProductSourcePicker } from '../storyboard/ProductSourcePicker.jsx';
 import { productSourceColorPatch } from '../../lib/productSourcePhotos.js';
 import { garmentColorOptions, garmentColorSelectionPatch } from '../../lib/garmentColors.js';
@@ -704,6 +705,10 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, onDownload, download
         )}
       </PanelSection>
 
+      {hasBackdropBlur(el) && <PanelSection title="효과">
+        <RangeNumberControl label="흐림" value={el.blur} min={0} max={100} onChange={blur => onChange({ blur })} />
+      </PanelSection>}
+
       {isLine && (
         <PanelSection title="굵기">
           <div className="field-2up"><NumField iconText="굵기" value={el.strokeWidth || 2.5} min={1} max={40} onChange={(v) => onChange({ strokeWidth: v })} /><span /></div>
@@ -733,7 +738,7 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, onDownload, download
           <div className="image-property-actions">
             <Button variant="ghost" size="sm" icon="crop" disabled={!el.src || el.locked || !!el.genPending} onClick={() => onCrop && onCrop(el)}>자르기</Button>
             <Button variant="ghost" size="sm" icon={downloadBusy ? 'loader' : 'download'} disabled={!el.src || downloadBusy}
-              onClick={() => onDownload?.(el)}>{downloadBusy ? '받는 중' : '원본 다운로드'}</Button>
+              onClick={() => onDownload?.(el)}>{downloadBusy ? '받는 중' : hasBackdropBlur(el) ? '배경 다운로드' : '원본 다운로드'}</Button>
           </div>
         </PanelSection>
       )}

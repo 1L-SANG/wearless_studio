@@ -540,7 +540,6 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
     return next;
   });
   const [analysisProjectId, setAnalysisProjectId] = useState(null);
-  const composeMode = useAppStore((s) => s.composeMode);
   const visualsEnabled = useAppStore((s) => s.account?.draftVisualsEnabled === true);
   const [expanded, setExpanded] = useState(false);
   // AG-IC 입력 사진 동일성 경고. 서버가 warn 모드일 때만 내려온다(off 면 undefined).
@@ -591,14 +590,12 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   const latestProductRef = useRef(product);
   const latestAnalysisRef = useRef(analysis);
   const featureSavedAnalysisRef = useRef(null);
-  const latestComposeModeRef = useRef(composeMode);
   const promotionRunRef = useRef(0);
   const entryUserRef = useRef(null);
   entryUserRef.current = session?.user?.id || null;
   const mountedRef = useRef(false);
   latestProductRef.current = product;
   latestAnalysisRef.current = analysis;
-  latestComposeModeRef.current = composeMode;
   if (!photoPreviewRegistryRef.current) {
     photoPreviewRegistryRef.current = createProductPhotoPreviewRegistry({
       onChange: () => refreshPhotoPreviews((version) => version + 1),
@@ -623,7 +620,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   useEffect(() => draftSlot.onVisuals?.(() => {
     if (analysisMemoryOnly || getActiveFeatureRun()?.isMemoryOnly?.()) return;
     if (!session || mobile || session.user?.id !== draftSlot.getUserId() || !latestProductRef.current) return;
-    queueProductDraftSave(latestProductRef.current, latestAnalysisRef.current, latestComposeModeRef.current);
+    queueProductDraftSave(latestProductRef.current, latestAnalysisRef.current);
   }), [session?.user?.id, mobile, analysisMemoryOnly]);
 
   useEffect(() => {
@@ -643,11 +640,11 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
     draftHadContentRef.current = draftHadContentRef.current || hasContent;
     const localUpdatedAt = new Date().toISOString();
     latestLocalUpdatedAtRef.current = localUpdatedAt;
-    queueProductDraftSave(product, analysis, composeMode, localUpdatedAt);
+    queueProductDraftSave(product, analysis, localUpdatedAt);
     if (slotEnabled && !(mobile && session && sellerConsentReady === false)) {
-      draftSlot.queue({ product, analysis, composeMode, localUpdatedAt });
+      draftSlot.queue({ product, analysis, localUpdatedAt });
     }
-  }, [analysis, analysisMemoryOnly, composeMode, product, slotEnabled, mobileReadOnly, mobile, slotLock, handoff.gone, entryBusy, session, sellerConsentReady]);
+  }, [analysis, analysisMemoryOnly, product, slotEnabled, mobileReadOnly, mobile, slotLock, handoff.gone, entryBusy, session, sellerConsentReady]);
 
   useEffect(() => {
     if (!slotEnabled) return;
@@ -876,7 +873,6 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       latestSnapshot = {
         product: latestProductRef.current,
         analysis: latestAnalysisRef.current,
-        composeMode: latestComposeModeRef.current,
         localUpdatedAt: latestLocalUpdatedAtRef.current || new Date().toISOString(),
       };
       await confirmDraftPhotos({
@@ -893,7 +889,6 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
           queueProductDraftSave(
             nextProduct,
             latestSnapshot.analysis,
-            latestSnapshot.composeMode,
             latestSnapshot.localUpdatedAt,
           );
           return flushProductDraftSave();
@@ -1158,7 +1153,6 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
     void api.restoreInputDraft(restored, latestAnalysisRef.current, payload.customMatch);
     setProduct(restored);
     setAnalysis((mobile ? payload.analysis : normalizeAnalysisFit(payload.analysis)) || null);
-    useAppStore.getState().restoreComposeMode(payload.composeMode);
     setAnalysisProjectId(null);
     const canRestoreAnalysis = payload.analysis && (mobile || hasRequiredDraftPhotos(restored));
     const awaitingCore = payload.analysis?.featureRun?.coreReceived === false;
@@ -1206,7 +1200,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       setSlotLock(null);
       if (product) {
         const localUpdatedAt = latestLocalUpdatedAtRef.current || new Date().toISOString();
-        draftSlot.queue({ product, analysis, composeMode, localUpdatedAt });
+        draftSlot.queue({ product, analysis, localUpdatedAt });
         await draftSlot.flush();
         if (!isCurrent()) return;
       }
@@ -1227,7 +1221,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   const restartGoneWithLocal = async () => {
     try {
       const epoch = draftSlot.getIdentityEpoch();
-      const snapshot = product ? await draftSlot.recoverGonePhotos({ product, analysis, composeMode,
+      const snapshot = product ? await draftSlot.recoverGonePhotos({ product, analysis,
         localUpdatedAt: latestLocalUpdatedAtRef.current || new Date().toISOString() }) : null;
       if (epoch !== draftSlot.getIdentityEpoch()) return;
       if (!draftSlot.restartAfterGone()) return;
@@ -1259,7 +1253,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   const canSaveForPC = canDone && !hasPendingConversions && !mobileReadOnly;
   const saveForPC = async ({ automatic = false } = {}) => {
     if (!canSaveForPC || loginSaveRef.current) return;
-    const snapshot = { product, analysis, composeMode,
+    const snapshot = { product, analysis,
       localUpdatedAt: latestLocalUpdatedAtRef.current || new Date().toISOString() };
     if (slotEnabled) {
       const save = () => {
@@ -1294,7 +1288,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
     let localSaved = false;
     try {
       try {
-        queueProductDraftSave(product, analysis, composeMode, snapshot.localUpdatedAt);
+        queueProductDraftSave(product, analysis, snapshot.localUpdatedAt);
         const stored = await flushProductDraftSave({ timeoutMs: 8000 });
         localSaved = !stored?.failed;
       } catch { /* 로컬 보관 실패가 로그인을 막지 않게 한다. */ }
@@ -1302,7 +1296,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       if (!localSaved) {
         // Blob을 IndexedDB에 못 쓰는 브라우저도 이메일 로그인 동안에는 사진을 유지한다.
         loginDraftRef.current = collectDraftPhotos(product).then(({ photos, cleanProduct }) => ({
-          ownerUserId: null, product: cleanProduct, photos, analysis, composeMode, updatedAt: snapshot.localUpdatedAt,
+          ownerUserId: null, product: cleanProduct, photos, analysis, updatedAt: snapshot.localUpdatedAt,
         }));
       }
       rememberMobileGuestSave(snapshot.localUpdatedAt, excludedUserId, saveTappedAt, localSaved ? null : loginDraftRef.current);
@@ -1435,7 +1429,6 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
         draftSlot.adoptVisualHandoff?.(draft, restored);
         persistedColorsRef.current = restored.colors || [];
         setProduct(restored);
-        useAppStore.getState().restoreComposeMode(draft.composeMode);
         // 원격 주소는 로컬 바이트가 없어도 복원한다. 확정할 때 다시 수집하고 실패하면 막는다.
         // 로컬 사진은 저장된 blob이 있어야 필수 사진으로 인정한다.
         const draftColors = draft.product?.colors || [];
@@ -1572,7 +1565,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
     window.scrollTo({ top: 0, behavior: 'smooth' });
     try {
       if (!isAnalysisFastEntryEnabled()) {
-        queueProductDraftSave(product, analysis, composeMode);
+        queueProductDraftSave(product, analysis);
         try {
           await flushProductDraftSave();
           setAnalysisMemoryOnly(false);
@@ -1608,7 +1601,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
         });
         const runId = crypto.randomUUID();
         latestAnalysisRef.current = null;
-        a = await featureRun.startAnalysis({ runId, startedAt, composeMode });
+        a = await featureRun.startAnalysis({ runId, startedAt });
         if (!a || !mountedRef.current || getActiveFeatureRun() !== featureRun
           || useAppStore.getState().projectGeneration !== analysisGeneration
           || analysisPhotoKey(latestProductRef.current) !== key) return;

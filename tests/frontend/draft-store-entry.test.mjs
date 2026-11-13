@@ -1,10 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { draftSlot } from '../../src/lib/draftSlot.js';
-import { queueProductDraftSave, flushProductDraftSave } from '../../src/lib/draftStore.js';
+import { saveProductDraft, loadDraft, queueProductDraftSave, flushProductDraftSave } from '../../src/lib/draftStore.js';
 import { draftStoreFixture, drainDraftTasks } from './helpers/draft-store-fixture.mjs';
 
 const product = (name) => ({ name, colors: [] });
+
+test('WOC16 saving, restoring and updating a product draft keep content without photo-volume state', async (t) => {
+  const storage = draftStoreFixture(t), analysis = { sellingPoints: ['부드러운 촉감'] };
+  await saveProductDraft(product('저장한 니트'), analysis, '2026-11-13T00:00:00Z');
+  assert.equal(Object.hasOwn(storage.saved, 'composeMode'), false);
+  assert.equal(storage.saved.updatedAt, '2026-11-13T00:00:00Z');
+  const restored = await loadDraft();
+  assert.equal(restored.product.name, '저장한 니트');
+  assert.deepEqual(restored.analysis.sellingPoints, analysis.sellingPoints);
+  assert.equal(Object.hasOwn(restored, 'composeMode'), false);
+  queueProductDraftSave(product('수정한 니트'), analysis, '2026-11-13T00:01:00Z');
+  await flushProductDraftSave();
+  assert.equal(storage.saved.product.name, '수정한 니트');
+  assert.equal(storage.saved.updatedAt, '2026-11-13T00:01:00Z');
+  assert.equal(Object.hasOwn(storage.saved, 'composeMode'), false);
+});
 
 for (const change of ['account', 'epoch']) {
   test(`local entry flush never writes a pending snapshot from a previous ${change}`, async (t) => {

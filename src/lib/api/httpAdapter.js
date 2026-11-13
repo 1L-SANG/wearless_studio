@@ -715,12 +715,8 @@ export const httpAdapter = {
     ]);
     const colors = product?.colors || [];
     const outdated = saved?.some(block => block.taxonomyVersion !== 4);
-    const fallbackStyle = analysis?.pageStyle || (!outdated && saved?.length
-      ? { ...defaultPageStyle(), templateId: saved[0].pageSectionKey.split('.')[0] }
-      : await this.getLastPageStyle());
-    const effectiveAnalysis = analysis?.pageStyle ? analysis : { ...analysis, pageStyle: fallbackStyle };
     const generated = outdated && (project?.status === 'done' || !!(await this.getEditorBlocks(projectId))?.length);
-    const resolved = resolveStoryboardEntry(saved, product || {}, effectiveAnalysis, {
+    const resolved = resolveStoryboardEntry(saved, product || {}, analysis || {}, {
       projectId, generated,
       identityKind: identityKindOf(isRealModelSelection(analysis?.selectedModelId || analysis?.selected_model_id)),
     });
@@ -803,7 +799,7 @@ export const httpAdapter = {
   detailCutPreview(projectId, jobId, blockId, opts) {
     return httpBlob(detailCutPreviewPath(projectId, jobId, blockId), opts);
   },
-  // 프로젝트 단건 조회 (계약 §6) — {id,status,title,composeMode,copywriting,
+  // 프로젝트 단건 조회 (계약 §6) — {id,status,title,copywriting,
   // selectedMannequinId,adjustCount,createdAt,updatedAt,latestJobs}. projectId 필수:
   // store.loadProject 가 argless 로 부르던 과거 경로(mock 가짜 project 오염 → 404)는
   // useAppStore 에서 제거됐다. 방어적으로 pid 없으면 서버 호출 없이 null.

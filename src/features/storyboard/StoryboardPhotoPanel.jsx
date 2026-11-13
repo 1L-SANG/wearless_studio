@@ -61,8 +61,9 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
       if (changes) onChange(changes);
     }} /> : null;
   if (productMode) return <div className={`inspector ${styles.photoPanel}`}>
-    {colorField}<ProductPresentationPicker block={block} blocks={blocks} product={catalogs.detailProduct}
+    <ProductPresentationPicker block={block} blocks={blocks} product={catalogs.detailProduct}
       fixedProduct={fixedProduct} clothingType={clothingType} busy={busy} onChange={onAtomicChange || onChange} />
+    {colorField}
   </div>;
 
   const signatureExamples = signatureExamplesForBlock(block, { product: catalogs.detailProduct,
@@ -241,7 +242,6 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
   const outerClosureState = normalizeOuterClosureState(block.outerClosureState);
   return (
     <div className={`inspector ${styles.photoPanel}`}>
-      {colorField}
       {isMine && !block.spaceGroupId ? (
         <>
           <div className="sb-exhead">
@@ -357,6 +357,8 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
           </div>}
         </>
       )}
+
+      {colorField}
 
       {showOuterClosure && (
         <OuterClosureField id={`outer-closure-${block.id}`} value={outerClosureState}

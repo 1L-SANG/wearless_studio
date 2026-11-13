@@ -126,12 +126,15 @@ test('WOC4 product mode failed save keeps retry for the same whole-run request',
   } finally {h.close();}
 });
 
-test('WOC4 section panel removal is in its header except first; names have no descriptions',()=>{
+test('WOC12 section selection omits removal and badges while names remain accessible',()=>{
   const blocks=board(),run=sectionRuns(blocks).find(r=>r.kind==='wear');
-  const html=render(Picker,{mode:'design',runKey:run.key,blocks,catalogs});assert.match(html,/>섹션 빼기<\/button>/);
+  const html=render(Picker,{mode:'design',runKey:run.key,blocks,catalogs});assert.doesNotMatch(html,/>섹션 빼기<\/button>/);
   assert.doesNotMatch(html,/컷 줄어요|카페, 골목, 집처럼/);
   const first=render(Picker,{mode:'design',runKey:blocks[0].pageSectionKey,blocks,catalogs});assert.doesNotMatch(first,/>섹션 빼기<\/button>/);
-  assert.ok(html.indexOf('>기본</small>')<html.indexOf('<strong>'));
+  assert.doesNotMatch(html, /<small>기본<\/small>|designCheck/);
+  assert.match(html, /aria-label="디자인 선택 · 기본" title="기본"/);
+  assert.match(html, /aria-label="디자인 선택 · 액자" title="액자"/);
+  assert.doesNotMatch(html, /완성 모습|>기본<|>액자<|<image/);
 });
 
 test('WOC4 stage has the new subtitle, white pencil design button and color dots without face/place captions',()=>{
@@ -139,7 +142,7 @@ test('WOC4 stage has the new subtitle, white pencil design button and color dots
   const html=render(Stage,{blocks,run,page:assembleStoryboardPreview({storyboard:blocks,catalogs}),catalogs,
     colorOpts:[{id:'base',hex:'#eee'},{id:'blue',hex:'#abc'}],photoOrdinals:new Map(blocks.map((b,i)=>[b.id,i+1])),canDesign:true});
   assert.match(html,/예시 이미지를 클릭해서 변경할 수 있어요/);assert.match(html,/섹션 디자인 변경/);
-  assert.doesNotMatch(html,/>앞면<|>뒷면<|>아이보리<|>기타</);assert.match(html,/<circle[^>]*fill="#eee"/);
+  assert.doesNotMatch(html,/>앞면<|>뒷면<|>기타</);assert.match(html,/>아이보리</);assert.match(html,/<circle[^>]*fill="#eee"/);
   const css=readFileSync('src/features/storyboard/StoryboardLayout.module.css','utf8');
   assert.match(css,/\.designButton \{[^}]*background: var\(--bg-1\)[^}]*color: var\(--fg-1\)/);
   assert.doesNotMatch(css,/notch|노치/);
@@ -152,12 +155,12 @@ test('WOC4 outline text bars are thicker while design previews keep their geomet
   assert.equal(blocks[0].elements[0].h,30);
 });
 
-test('WOC4 theme specimens are ordered, two-line, titled only and use the approved tokens',()=>{
+test('WOC4 current theme specimen is two-line, titled only and uses the approved tokens',()=>{
   const html=render(Themes,{value:'serif'});
-  assert.ok(html.indexOf('title="매거진"')<html.indexOf('title="볼드"')&&html.indexOf('title="볼드"')<html.indexOf('title="다정"'));
-  assert.equal((html.match(/>wearless</g)||[]).length,3);assert.equal((html.match(/>웨어리스</g)||[]).length,3);
+  assert.match(html,/title="매거진"/);assert.doesNotMatch(html,/title="볼드"|title="다정"/);
+  assert.equal((html.match(/>wearless</g)||[]).length,1);assert.equal((html.match(/>웨어리스</g)||[]).length,1);
   assert.doesNotMatch(html,/>매거진<|>볼드<|>다정</);
-  const tokens=readFileSync('src/styles/tokens.css','utf8');assert.doesNotMatch(tokens,/--sb-theme-inactive/);assert.match(tokens,/--sb-theme-width: 96px/);
+  const tokens=readFileSync('src/styles/tokens.css','utf8');assert.doesNotMatch(tokens,/--sb-theme-inactive/);assert.match(tokens,/--sb-style-controls-width:/);
 });
 
 test('WOC4 font saves serialize fast clicks, wait for the latest request and preserve the other style fields',async()=>{

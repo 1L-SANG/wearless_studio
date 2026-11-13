@@ -32,8 +32,10 @@ def _extra(value, kind="first"):
 
 
 def test_hidden_pairs_keep_existing_base_designs_and_catalog_primitives():
-    assert sorted(key for key, design in CATALOG["designs"].items() if design.get("pickerHidden")) == sorted(pair for _, pair in FIRST_PAIRS + FABRIC_PAIRS)
-    assert len(CATALOG["designs"]) == 32
+    # WOC6 also hides retired choices, without removing the WOC5 pairs or bases.
+    for base, pair in FIRST_PAIRS + FABRIC_PAIRS:
+        assert base in CATALOG["designs"]
+        assert CATALOG["designs"][pair]["pickerHidden"] is True
     for base, pair in FIRST_PAIRS[:2] + FABRIC_PAIRS:
         assert CATALOG["designs"][pair]["layout"][:-1] == CATALOG["designs"][base]["layout"]
         assert CATALOG["designs"][pair]["layout"][-1]["type"] == "panel"

@@ -29,7 +29,10 @@ test('only the two shipping templates can be selected while guide designs remain
   assert.deepEqual(catalog.templates.map(t => t.id), ['emo', 'show']);
   assert.equal(getTemplate('guide'), undefined);
   assert.equal(pageStyle.validPageStyle({ ...pageStyle.defaultPageStyle(), templateId: 'guide' }), false);
-  for (const id of ['P01-D11', 'T03-GUIDE-01', 'T05-D07', 'T07-D06', 'CP-GUIDE-01']) assert.ok(catalog.designs[id]);
+  for (const id of ['P01-D11', 'T03-GUIDE-01', 'T05-D07', 'T07-D06', 'CP-GUIDE-01']) {
+    assert.ok(catalog.designs[id]);
+    assert.equal(catalog.designs[id].pickerHidden, true);
+  }
   assert.equal(catalog.kinds.points.name, '디테일 요소');
   assert.deepEqual(Object.values(catalog.kinds).filter(kind => kind.repeatable).map(kind => kind.kind), ['wear']);
 });
@@ -37,6 +40,7 @@ test('only the two shipping templates can be selected while guide designs remain
 test('new show continuous studio keeps its original instance key and physical recipe', () => {
   const definition = getTemplate('show').sections.find(s => s.instanceKey === 'wear_styling');
   assert.equal(definition.usage, 'fit');
+  assert.equal(definition.designId, 'WEAR-FIT-COLUMN-01');
   assert.equal(definition.photoSlots[0].recipe.set, 'sequence');
   assert.equal(definition.photoSlots[0].recipe.cutType, 'horizon');
   assert.equal(catalog.designs['P02-D02'].usage, 'fit');
@@ -60,7 +64,7 @@ test('wear additions use life pairs and studio rotations independently of initia
     assert.equal(life.photoSlots[0].recipe.cutType, 'styling');
     assert.equal(life.photoSlots[0].recipe.set, 'styling');
     const studio = catalogModule.wearAdditionDefinition(template, 'fit');
-    assert.equal(studio.designId, 'P04-D01'); assert.equal(studio.usage, 'fit');
+    assert.equal(studio.designId, 'WEAR-FIT-COLUMN-01'); assert.equal(studio.usage, 'fit');
     assert.deepEqual(studio.photoSlots.map(slot => slot.recipe.direction), ['front', 'side', 'back']);
     assert.ok(studio.photoSlots.every(slot => slot.count === 1 && slot.recipe.set === 'rotation'));
   }
@@ -84,9 +88,14 @@ test('saved wear display names follow physical photos without rewriting the save
 
 test('common wear candidates use effective physical usage and preserve the number of photos', () => {
   const studio = [1, 2, 3].map(i => worn('horizon', i));
-  assert.deepEqual(sectionDesignChoices(runOf(studio), { storyboard: studio }).map(d => d.id), ['P02-D02', 'P04-D01']);
+  assert.deepEqual(sectionDesignChoices(runOf(studio), { storyboard: studio }).map(d => d.id), ['WEAR-FIT-COLUMN-01', 'WEAR-FIT-2COL-01', 'WEAR-FIT-HERO-01']);
   const life = [1, 2].map(i => worn('styling', i, { pageSectionKey: 'show.wear_styling_2', pageDesignId: 'P02-D01' }));
-  assert.deepEqual(sectionDesignChoices(runOf(life), { storyboard: life }).map(d => d.id), ['P02-D01']);
+  assert.deepEqual(sectionDesignChoices(runOf(life), { storyboard: life }).map(d => d.id), [
+    'P02-D01', 'WEAR-STYLING-2COL-01', 'WEAR-STYLING-FRAME-COLUMN-02',
+  ]);
+  for (const blocks of [studio, life])
+    for (const design of sectionDesignChoices(runOf(blocks), { storyboard: blocks }))
+      assert.equal(sectionDesignPhotoCount(runOf(blocks), design.id, blocks), blocks.length);
 });
 
 for (const colorMode of ['mono', 'point']) test(`retained summary design stays visible and uses its permitted surface in emo/${colorMode}`, () => {
@@ -104,39 +113,57 @@ test('color design candidates must display every sale color, including a fourth 
   const blocks = product.colors.map(({ id }, i) => ({ id: `p${i}`, source: 'ai', pageSectionKind: 'color_product',
     pageSectionKey: 'emo.color_product', pageDesignId: 'CP-EMO-01', colorId: id, slotKey: `color_product.front.${id}` }));
   const offered = sectionDesignChoices(runOf(blocks), { storyboard: blocks, product });
-  assert.deepEqual(offered.map(d => d.id), ['CP-EMO-01', 'CP-SHOW-01', 'CP-GUIDE-01']);
+  assert.deepEqual(offered.map(d => d.id), ['CP-COLUMN-01', 'CP-EMO-01']);
   const missingColor = blocks.slice(0, 3);
   assert.deepEqual(sectionDesignChoices(runOf(missingColor), { storyboard: missingColor, product }), []);
   const savedNumberedSlots = blocks.map((block, i) => ({ ...block, slotKey: `color_product.front${i + 1}` }));
   assert.deepEqual(sectionDesignChoices(runOf(savedNumberedSlots), { storyboard: savedNumberedSlots, product }).map(d => d.id),
-    ['CP-EMO-01', 'CP-SHOW-01', 'CP-GUIDE-01']);
+    ['CP-COLUMN-01', 'CP-EMO-01']);
 });
 
 test('a fixed four-position layout that repeats only two colors is excluded without emptying the common pool', () => {
   const product = { colors: ['c1', 'c2', 'c3', 'c4'].map(id => ({ id })) };
   const blocks = product.colors.map(({ id }, i) => ({ id: `color${i}`, source: 'ai', pageSectionKind: 'color_product',
     pageSectionKey: 'emo.color_product', pageDesignId: 'CP-EMO-01', colorId: id, slotKey: `color_product.front${i + 1}` }));
-  const run = runOf(blocks), prior = catalog.designs['CP-SHOW-01'];
+  const run = runOf(blocks), id = 'CP-TEST-FIXED';
   try {
+    catalog.designs[id] = { ...catalog.designs['CP-SHOW-01'], id, pickerHidden: false,
+      layout: [{ type: 'photoGrid', columns: 2, slots: ['front1', 'front2', 'front3', 'front4'], aspect: '1/1' }] };
+    assert.ok(sectionDesignChoices(run, { storyboard: blocks, product }).some(design => design.id === id),
+      'the visible fixed layout is selectable when it covers all four colors');
     // Four real positions pass the photo-count gate, but repeated slots have
     // capacity for only two sale colors. The independent coverage gate must reject it.
-    catalog.designs['CP-SHOW-01'] = { ...prior, layout: [{ type: 'photoGrid', columns: 2,
-      slots: ['front1', 'front2', 'front1', 'front2'], aspect: '1/1' }] };
-    assert.equal(sectionDesignPhotoCount(run, 'CP-SHOW-01', blocks), 4);
-    assert.deepEqual(sectionDesignChoices(run, { storyboard: blocks, product }).map(d => d.id), ['CP-EMO-01', 'CP-GUIDE-01']);
-  } finally { catalog.designs['CP-SHOW-01'] = prior; }
+    catalog.designs[id].layout[0].slots = ['front1', 'front2', 'front1', 'front2'];
+    assert.equal(sectionDesignPhotoCount(run, id, blocks), 4);
+    assert.deepEqual(sectionDesignChoices(run, { storyboard: blocks, product }).map(d => d.id), ['CP-COLUMN-01', 'CP-EMO-01']);
+  } finally { delete catalog.designs[id]; }
 });
 
-test('cropped detail photos exclude the full-page album while genuine detail photos keep it', () => {
-  const source = worn('horizon', 1, { pageSectionKey: 'emo.wear_fit', pageSectionUsage: 'fit' });
-  const lead = { id: 'points', source: 'text', pageSectionKind: 'points', pageSectionKey: 'emo.points', pageDesignId: 'PT-EMO-01',
+test('current point choices support crops and photos while saved natural designs and the album still render', () => {
+  const source = worn('horizon', 1, { taxonomyVersion: 4, pageSectionKey: 'emo.wear_fit', pageSectionUsage: 'fit' });
+  const lead = { id: 'points', taxonomyVersion: 4, source: 'text', pageSectionKind: 'points', pageSectionKey: 'emo.points', pageDesignId: 'PT-EMO-01',
     pointItems: [1, 2, 3].map(i => ({ kind: 'wornCrop', sourceBlockId: source.id, label: `부위 ${i}`,
       bodyPart: `part${i}`, cropRegion: [.1, .1, .7, .7] })) };
   const blocks = [source, lead];
-  assert.equal(sectionDesignChoices(runOf([lead]), { storyboard: blocks }).some(d => d.id === 'T07-D06'), false);
-  const details = [1, 2, 3].map(i => ({ id: `d${i}`, source: 'ai', pageSectionKind: 'points', pageSectionKey: 'emo.points',
+  const expected = ['PT-PHOTO-CARD-01', 'PT-TEXT-PHOTO-01'];
+  assert.deepEqual(sectionDesignChoices(runOf([lead]), { storyboard: blocks }).map(design => design.id), expected);
+  const details = [1, 2, 3].map(i => ({ id: `d${i}`, taxonomyVersion: 4, source: 'ai', pageSectionKind: 'points', pageSectionKey: 'emo.points',
     pageDesignId: 'PT-EMO-01', slotKey: `points.detail${i}`, cutType: 'product', shot: 'detail', colorId: 'base' }));
-  assert.ok(sectionDesignChoices(runOf(details), { storyboard: details }).some(d => d.id === 'T07-D06'));
+  assert.deepEqual(sectionDesignChoices(runOf(details), { storyboard: details }).map(design => design.id), expected);
+  // Construct stored hidden IDs directly: the current picker intentionally cannot select them.
+  for (const id of ['PT-COLUMN-01', 'P06-D01', 'PT-COLUMN-CARD-01', 'PT-BELOW-CARD-01']) {
+    const storyboard = blocks.map(block => block.pageSectionKind === 'points' ? { ...block, pageDesignId: id } : block);
+    const images = assemblePage({ storyboard, product: { colors: [{ id: 'base' }] },
+      cutResults: [{ blockId: source.id, imageUrl: '/native.webp', width: 1000, height: 1600 }] })
+      .filter(block => block.pageSectionKind === 'points').flatMap(block => block.elements).filter(element => element.type === 'image');
+    assert.equal(images.length, 3);
+    assert.ok(images.every(image => image.pointItemKind === 'wornCrop' && image.h === Math.round(image.w * 1.6)),
+      `${id} keeps each ROI's natural proportions`);
+  }
+  const savedAlbum = details.map(block => ({ ...block, pageDesignId: 'T07-D06' }));
+  assert.equal(assemblePage({ storyboard: savedAlbum, product: { colors: [{ id: 'base' }] } })
+    .flatMap(block => block.elements).filter(element => element.type === 'image').length, 3);
+  assert.equal(sectionDesignChoices(runOf(savedAlbum), { storyboard: savedAlbum }).some(design => design.id === 'T07-D06'), false);
 });
 
 test('neutral clothing point mode retains the template mono greys and warm clothing retains its palette', () => {
@@ -175,46 +202,41 @@ test('analysis restoration and template switches retain the chosen color mode', 
 });
 
 test('both runtimes resolve identical palettes and fonts across all modes and swatches', () => {
-  const cases = ['emo', 'show', 'guide'].flatMap(templateId => ['mono', 'point'].flatMap(colorMode =>
-    [...Object.keys(catalog.pointPalette), 'unknown', null].map(swatch => [{ templateId, colorMode }, swatch])));
+  const fontStyles = ['template', 'plainGothic', 'serif', 'boldGothic'];
+  assert.deepEqual(Object.keys(catalog.fontStyles), fontStyles);
+  const cases = ['emo', 'show', 'guide'].flatMap(templateId => fontStyles.flatMap(fontStyle => ['mono', 'point'].flatMap(colorMode =>
+    [...Object.keys(catalog.pointPalette), 'unknown', null].map(swatch => [{ templateId, fontStyle, colorMode }, swatch]))));
   const python = spawnSync('python3', ['-c',
     'import json,sys; from app.agents.page_templates import resolve_page_tokens; print(json.dumps([resolve_page_tokens(style,swatch) for style,swatch in json.load(sys.stdin)]))'],
-  { cwd: new URL('../../server', import.meta.url), input: JSON.stringify(cases), encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  { cwd: new URL('../../server', import.meta.url), input: JSON.stringify(cases), encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
   assert.equal(python.status, 0, python.error?.message || python.stderr);
   assert.deepEqual(JSON.parse(python.stdout), cases.map(([style, swatch]) => resolvePageTokens(style, swatch)));
 });
 
-test('analysis color cards render below the template selector and report their selected mode', async t => {
+test('analysis only exposes template choices after tone selection moves to the storyboard', async t => {
   const h = await outfitHarness(); t.after(() => h.close());
   const picker = await h.load('/src/features/analysis/PageTemplatePicker.jsx');
-  const tree = h.render(picker.PageTemplatePicker, { value: 'emo', colorMode: 'mono', onChange() {}, onColorModeChange() {} });
-  const component = nodes(tree).find(node => node.type === picker.PageColorModePicker);
-  assert.ok(component, 'the template picker includes its color controls');
-  const selected = [];
-  assert.equal(typeof picker.PageColorModePicker, 'function');
-  const colors = h.render(picker.PageColorModePicker, { value: 'mono', templateId: 'emo', onChange: mode => selected.push(mode),
-    product: { colors: [{ id: 'blue', swatchId: 'blue', isBase: true }] } });
-  assert.ok(textOf(colors).includes('모노톤')); assert.ok(textOf(colors).includes('옷 색에 맞춤'));
-  const radios = nodes(colors).filter(node => node.type === 'input' && node.props.type === 'radio');
-  assert.deepEqual(radios.map(node => [node.props.value, node.props.checked]), [['mono', true], ['point', false]]);
-  radios[1].props.onChange(); assert.deepEqual(selected, ['point']);
+  const tree = h.render(picker.PageTemplatePicker, { value: 'emo', onChange() {} });
+  assert.equal(picker.PageColorModePicker, undefined);
+  assert.ok(!textOf(tree).includes('모노톤')); assert.ok(!textOf(tree).includes('옷 색에 맞춤'));
 });
 
-test('analysis color changes use the same serialized persistence queue as template changes', async () => {
+test('analysis template saves retain a previously selected storyboard tone', async () => {
   const source = readFileSync(new URL('../../src/features/analysis/AnalysisForm.jsx', import.meta.url), 'utf8');
   const start = source.indexOf('  const savePageStyle =');
   assert.ok(start >= 0, 'shared style-save action exists');
   const end = source.indexOf('  useEffect(() => {', start);
   const saved = [], errors = [], scope = { ...pageStyle,
-    pageStyleTouchedRef: { current: false }, pageStyleValueRef: { current: pageStyle.defaultPageStyle() },
+    pageStyleTouchedRef: { current: false }, pageStyleValueRef: { current: { ...pageStyle.defaultPageStyle(), colorMode: 'point' } },
     pageStyleSaveRef: { current: Promise.resolve() }, projectId: 'p',
     invalidateStoryboardEntryPrefetch() {}, setPageStyle() {}, setPageStyleError: value => errors.push(value),
     onChange: async patch => { saved.push(patch.pageStyle); },
   };
-  const actions = new Function('scope', `with (scope) { ${source.slice(start, end)}; return { changeTemplate, changeColorMode }; }`)(scope);
-  actions.changeColorMode('point'); actions.changeTemplate('show'); actions.changeColorMode('mono');
+  const actions = new Function('scope', `with (scope) { ${source.slice(start, end)}; return { changeTemplate }; }`)(scope);
+  actions.changeTemplate('show'); actions.changeTemplate('emo');
   await scope.pageStyleSaveRef.current;
-  assert.deepEqual(saved.map(style => [style.templateId, style.colorMode]), [['emo', 'point'], ['show', 'point'], ['show', 'mono']]);
+  assert.deepEqual(saved.map(style => [style.templateId, style.colorMode]), [['show', 'point'], ['emo', 'point']]);
   assert.ok(saved.every(style => pageStyle.validPageStyle(style)));
   assert.equal(errors.some(Boolean), false);
 });

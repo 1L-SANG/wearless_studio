@@ -48,6 +48,21 @@
   font-style: normal;
   font-display: swap;
 }
+/* Gowun Batang — bundled full Korean/Latin faces for magazine titles and editor export. */
+@font-face {
+  font-family: "Gowun Batang";
+  src: url("../fonts/GowunBatang-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Gowun Batang";
+  src: url("../fonts/GowunBatang-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
 /* Cormorant — self-hosted variable serif (Latin only). Editor text-tool option. */
 @font-face {
   font-family: "Cormorant";
@@ -58,6 +73,19 @@
 }
 
 :root {
+  --sb-footer-height: 44px;
+  --sb-job-strip-height: 36px;
+  --sb-continue-height: calc(var(--cta-height) + var(--sp-8) * 2);
+  --sb-page-edge: max(var(--sp-24), calc((100vw - 1030px) / 2));
+  --sb-drawer-width: min(520px, 40vw);
+  --sb-detail-veil-start: .56;
+  --sb-detail-veil-end: .84;
+  --sb-detail-title-size: 15px;
+  --sb-detail-note-size: 12px;
+  --sb-detail-overview-title: 32px;
+  --sb-detail-overview-note: 26px;
+  --sb-design-drawer-width: min(330px, calc(100vw - var(--sp-24)));
+  --sb-outside-tools: 40px;
   /* Generated page content: independent of the surrounding editor theme. */
   --page-overlay-light: #ffffff;
   --page-overlay-dark: #111111;
@@ -66,6 +94,7 @@
   --font-body: "Pretendard Variable", "Inter", "Inter Placeholder", system-ui, sans-serif;
   --font-mono: "Roboto Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --font-serif: "Cormorant", Georgia, "Times New Roman", serif;
+  --font-batang: "Gowun Batang", Georgia, serif;
   --font-soft: "Gowun Dodum", "Pretendard Variable", system-ui, sans-serif;
 
   /* ---- Ink & surface (design.md overrides Cal's #242424) ---- */
@@ -195,6 +224,9 @@
   --sb-toc-title-x: 10px;
   --sb-toc-gap: 14px;
   --sb-theme-width: 96px;
+  --sb-style-controls-width: 256px;
+  --sb-tone-height: 38px;
+  --sb-tone-transition: 280ms;
   --sb-theme-radius: 10px;
   --sb-theme-padding: 6px 10px;
   --sb-theme-serif-ko: "Gowun Batang", serif;
@@ -232,6 +264,12 @@
   --sb-wire-inv: #3a3a38;
   --sb-wire-comp: #c8c8c3;
   --sb-wire-photo: #d6d6d1;
+  --sb-wire-panel: var(--sb-wire-2);
+  --sb-design-silver-photo: #e6e9eb;
+  --sb-design-silver-pale: #f1f3f4;
+  --sb-design-silver-title: #a9b1b7;
+  --sb-design-silver-text: #cfd4d8;
+  --sb-design-silver-outer: #c2c9ce;
   --sb-wire-scrim-end: #777773;
   --sb-wire-title: #474743;
   --sb-wire-on-photo: rgba(255, 255, 255, .82);

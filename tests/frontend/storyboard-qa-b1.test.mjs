@@ -146,7 +146,7 @@ test('N1 collapsed decks use the same card width and 3 by 4 ratio as expanded ca
 test('v5 overlay starts twelve pixels from the viewport top with a 520px width', () => {
   const css = readFileSync(new URL('../../src/features/storyboard/StoryboardPanels.module.css', import.meta.url), 'utf8');
   assert.match(css, /\.drawer[^}]*top: var\(--sp-12\)/);
-  assert.match(css, /width: min\(520px, 40vw\)/);
+  assert.match(css, /width: var\(--sb-drawer-width\)/);
 });
 test('N9 undo text is compact and dismissal fades before DOM removal', () => {
   assert.match(storyboardSource, /const message = `\$\{operationCount\}건 변경`/);

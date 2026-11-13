@@ -21,7 +21,7 @@ const { code } = await transformWithEsbuild(`${layer.replace(/^import .*;\r?\n/g
 // state storage are replaced, so no browser or paid image request is needed.
 function components() {
   const values = []; let cursor = 0;
-  const scope = { React, ...apply, hasImageSource, editorImageCreditCost, canvasAiActionCreditCost, CREDIT_COSTS: { editorImage: 19 },
+  const scope = { React, useEditedTemplateContrast: el => el, useTitlePlatePreview: () => () => null, ...apply, hasImageSource, editorImageCreditCost, canvasAiActionCreditCost, CREDIT_COSTS: { editorImage: 19 },
     useRef: (current) => ({ current }), useCallback: (callback) => callback,
     useEffect() {}, useLayoutEffect() {},
     useState(initial) {

@@ -28,7 +28,7 @@ function setup(t) {
   const replacement = { createProject: async () => ({ id: 'project' }), uploadPhoto: async () => ({ assetId: 'remote', url: '/photo' }),
     saveProduct: async () => saved.push('product'), saveAnalysis: async (_pid, data) => saved.push(data),
     promoteDetailRecommendations: async (_pid, handoff) => saved.push(['detail', handoff]), promoteConfirmedGptEvidence: async () => {},
-    patchProject: async () => {}, getCustomMatchDraft: () => null };
+    getCustomMatchDraft: () => null };
   for (const [key, value] of Object.entries(replacement)) { original[key] = api[key]; api[key] = value; }
   t.after(() => { for (const [key, value] of Object.entries(original)) api[key] = value; sync.resetDraftSyncSingleFlight(); features.setActiveFeatureRun(null); });
   return { run, response, saved, events, details, get analysis() { return analysis; }, deadline() { time = 30000; timer?.(); },
@@ -69,9 +69,9 @@ test('기한 초과 고정 뒤 분석 저장 중 받은 디테일은 저장 성�
 
 test('분석 저장 뒤 단계 실패와 재시도는 고정 사본을 그대로 사용한다', async (t) => {
   const f = setup(t); await begin(f); f.response.resolve(ready()); await drain();
-  const originalPatch = api.patchProject; let failed = false;
-  api.patchProject = async () => { if (!failed) { failed = true; throw new Error('project save failed'); } return originalPatch(); };
-  await assert.rejects(sync.promoteDraftToProject(f.draft()), /project save failed/);
+  const originalPromote = api.promoteConfirmedGptEvidence; let failed = false;
+  api.promoteConfirmedGptEvidence = async () => { if (!failed) { failed = true; throw new Error('evidence promotion failed'); } return originalPromote(); };
+  await assert.rejects(sync.promoteDraftToProject(f.draft()), /evidence promotion failed/);
   sync.retryDraftPromotion('project');
   await sync.promoteDraftToProject(f.draft(), { projectId: 'project' });
   const savedAnalyses = f.saved.filter((value) => value && typeof value === 'object' && !Array.isArray(value));

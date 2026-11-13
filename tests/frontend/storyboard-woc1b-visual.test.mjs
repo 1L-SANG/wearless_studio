@@ -37,7 +37,7 @@ test('WOC1b visual outline, stage heading and metadata use the specified type an
 });
 test('WOC1b visual drawer has an independent 48px header, the specified bounds, and themed body', () => {
   assert.match(resolve(rule(panels, '.drawer')), /top: 12px; right: 12px; bottom: 12px/);
-  assert.match(rule(panels, '.drawer'), /width: min\(520px, 40vw\)/);
+  assert.match(rule(panels, '.drawer'), /width: var\(--sb-drawer-width\)/);
   assert.match(rule(panels, '.drawer'), /var\(--r-6\).*var\(--bg-1\).*var\(--sb-pop-shadow\)/);
   assert.match(rule(panels, '.drawerBar'), /height: 48px/);
   assert.match(resolve(rule(panels, '.drawerBody')), /padding: 4px 20px 24px.*overflow-y: auto/);
@@ -53,7 +53,9 @@ test('WOC1b visual controls, selected photographs and previews use the approved 
   assert.match(rule(panels, '.exampleModes button'), /min-height: 40px.*var\(--r-4\)/);
   assert.match(rule(panels, '.shotPills button'), /min-height: 32px.*var\(--sb-line-control\).*var\(--r-pill\)/);
   assert.match(rule(panels, '.photoPanel :global(.color-dot)'), /width: 34px; height: 34px/);
-  assert.match(rule(panels, '.designPreview'), /max-width: 196px; height: 250px/);
+  const design = read('src/features/storyboard/StoryboardDesignPanel.module.css');
+  assert.match(rule(design, '.thumbnails'), /repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(rule(design, '.thumbnail svg'), /width: 100%; height: auto/);
   assert.match(rule(panels, '.menuPreview'), /width: 64px; height: 84px/);
   assert.match(rule(panels, '.roundPlus'), /width: 32px; height: 32px/);
 });

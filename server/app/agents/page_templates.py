@@ -10,10 +10,11 @@ from pathlib import Path
 CATALOG_PATH = Path(__file__).parents[1] / "data" / "page_templates_v1.json"
 SECTION_KINDS = ("first", "wear", "color_product", "fabric", "intro", "points", "for_you", "review", "faq", "sns")
 FONTS = {"Pretendard", "Cormorant", "Roboto Mono", "Cal Sans", "Gowun Dodum", "Gowun Batang"}
-FACT_PATHS = {"product.name", "product.colors[].name", "product.colors[].swatchId", "analysis.materials", "analysis.fit", "analysis.detailRecommendations.candidates[].label", "analysis.featureCopy", "analysis.mdComment", "profiles.display_name"}
-COLORS = {"ink", "muted", "accentInk", "accentBg", "accentLine", "panel", "invertBg", "invertInk", "canvas", "onPhoto", "summaryBg", "pointBg"}
+FACT_PATHS = {"product.name", "product.colors[].name", "product.colors[].swatchId", "analysis.materials", "analysis.fit", "analysis.detailRecommendations.candidates[].label", "analysis.featureCopy", "analysis.partDescriptionCopy", "analysis.mdComment", "profiles.display_name", "mall_connections.shop_name"}
+COLORS = {"ink", "muted", "accentInk", "accentBg", "accentLine", "panel", "invertBg", "invertInk", "canvas", "onPhoto", "summaryBg", "pointBg", "framePaper", "frameInk"}
 STYLES = {"titleKo", "labelEn", "body", "small", "num"}
-LAYOUT_TYPES = {"text", "photo", "photoStack", "photoGrid", "overlay", "pointRows", "list", "factTable", "panel", "rule"}
+LAYOUT_TYPES = {"text", "photo", "photoStack", "photoGrid", "photoFlow", "photoFrame", "overlay", "pointRows", "list", "factTable", "panel", "rule"}
+CHOICE_LAYOUTS = {"wear": ("column", "twoColumn", "heroPair"), "color_product": ("column", "grid"), "points": ("column", "below")}
 HEX = re.compile(r"#[\da-f]{6}\Z", re.I)
 
 
@@ -25,8 +26,12 @@ def _opacity(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 1
 
 
+def _aspect_ratio(value):
+    return isinstance(value, str) and re.fullmatch(r"\d+(?:\.\d+)?/\d+(?:\.\d+)?", value) and all(float(part) > 0 for part in value.split("/"))
+
+
 def walk_layout(nodes):
-    for node in nodes or []:
+    for node in nodes if isinstance(nodes, list) else []:
         yield node
         for key in ("nodes", "items", "captions"):
             yield from walk_layout(node.get(key))
@@ -86,9 +91,25 @@ def validate_catalog(catalog):
 
     check(catalog.get("schemaVersion") == 1 and catalog.get("canvasWidth") == 1000, "schemaVersion/canvasWidth")
     check(isinstance(catalog.get("canvasColor"), str) and HEX.fullmatch(catalog["canvasColor"]), "canvas color")
+    frame_style = catalog.get("frameStyle") or {}
+    check(all(_positive(frame_style.get(key)) for key in ("bandPadding", "cardWidth", "paddingTop", "paddingX", "paddingBottom", "photoGap", "photoTop", "footerGap", "remainderGap", "textSize", "textLineHeight", "textWeight"))
+          and frame_style["cardWidth"] <= catalog["canvasWidth"] and frame_style["paddingX"] * 2 < frame_style["cardWidth"]
+          and isinstance(frame_style.get("textTrackingEm"), (int, float)) and not isinstance(frame_style["textTrackingEm"], bool) and math.isfinite(frame_style["textTrackingEm"])
+          and isinstance(frame_style.get("blur"), (int, float)) and not isinstance(frame_style["blur"], bool) and math.isfinite(frame_style["blur"]) and 0 <= frame_style["blur"] <= 100
+          and _aspect_ratio(frame_style.get("fallbackAspect"))
+          and all(frame_style.get(key) in COLORS and isinstance(catalog.get("neutralColors", {}).get(frame_style[key]), str) and HEX.fullmatch(catalog["neutralColors"][frame_style[key]]) for key in ("paper", "ink")), "frame style")
     check(all(isinstance((catalog.get("swatchHex") or {}).get(key), str) and HEX.fullmatch(catalog["swatchHex"][key]) for key in catalog.get("swatchLabels") or {}), "swatch colors")
+    plate = catalog.get("firstTitlePlate") or {}
+    def band_valid(value):
+        return isinstance(value, list) and len(value) == 2 and all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in value) and 0 <= value[0] < value[1] <= 1
+    check(bool(HEX.fullmatch(catalog.get("neutralColors", {}).get(plate.get("fillToken"), "")))
+          and all(_positive(plate.get(key)) for key in ("paddingX", "paddingTop", "paddingBottom", "threshold"))
+          and all(isinstance(plate.get(key), (int, float)) and not isinstance(plate[key], bool) and math.isfinite(plate[key]) and 0 <= plate[key] <= 1 for key in ("opacity", "nearBestRatio", "maxGarmentOverlap"))
+          and plate.get("preference") == ["center", "bottom", "top"]
+          and plate.get("platePreference") == ["center", "bottom"] and band_valid(plate.get("fallbackGarmentBand"))
+          and all(band_valid(plate.get("garmentBands", {}).get(kind, {}).get(shot)) for kind in ("top", "outer", "bottom", "dress") for shot in ("full", "medium")), "first title plate")
     defaults, band = catalog.get("defaults") or {}, catalog.get("firstTitleBand") or {}
-    check(defaults.get("templateId") in ("emo", "show") and defaults.get("fontStyle") in ("template", "serif", "boldGothic") and defaults.get("colorMode") in ("mono", "point"), "default page style")
+    check(defaults.get("templateId") in ("emo", "show") and isinstance(defaults.get("fontStyle"), str) and defaults["fontStyle"] in catalog.get("fontStyles", {}) and defaults.get("colorMode") in ("mono", "point"), "default page style")
     check(all(isinstance(band.get(k), (int, float)) and math.isfinite(band[k]) and 0 <= band[k] <= 1 for k in ("left", "right", "top", "bottom")) and band.get("left", 1) < band.get("right", 0) and band.get("top", 1) < band.get("bottom", 0), "first title band")
     kinds = catalog.get("kinds") or {}
     check(len(kinds) == 10 and all(key in kinds for key in SECTION_KINDS), "ten section kinds")
@@ -121,6 +142,29 @@ def validate_catalog(catalog):
         check(design.get("usage") in ("styling", "fit") if design.get("kind") == "wear" else design.get("usage") is None, f"design usage {key}")
         if "pickerHidden" in design:
             check(isinstance(design["pickerHidden"], bool), f"pickerHidden {key}")
+        if "invert" in design:
+            check(isinstance(design["invert"], bool), f"design invert {key}")
+        if "choiceAxes" in design:
+            axes = design["choiceAxes"]
+            layout = axes.get("layout") if isinstance(axes, dict) else None
+            decoration = axes.get("decoration") if isinstance(axes, dict) else None
+            check(isinstance(layout, dict) and isinstance(decoration, dict)
+                  and layout.get("id") in CHOICE_LAYOUTS.get(design.get("kind"), ())
+                  and decoration.get("id") in ("basic", "card", "frame")
+                  and all(isinstance(axis.get("name"), str) and axis["name"].strip() for axis in (layout, decoration)),
+                  f"choice axes {key}")
+        frame_nodes = [node for node in design.get("layout", []) if node.get("type") == "photoFrame"]
+        axes = design.get("choiceAxes") or {}
+        if (axes.get("decoration") or {}).get("id") == "frame" or "framePhotos" in design or frame_nodes:
+            count = design.get("framePhotos")
+            pattern = (axes.get("layout") or {}).get("id")
+            check(design.get("kind") == "wear" and design.get("usage") == "styling" and (axes.get("decoration") or {}).get("id") == "frame"
+                  and _positive(count) and count in (1, 2, 3) and len(frame_nodes) == 1
+                  and frame_nodes[0].get("count") == count and frame_nodes[0].get("pattern") == pattern
+                  and _positive(design.get("minPhotos")) and design["minPhotos"] >= max(count, {"column": 1, "twoColumn": 2, "heroPair": 3}.get(pattern, 4)), f"frame design {key}")
+        for prop in ("minPhotos", "minColors"):
+            if prop in design:
+                check(_positive(design[prop]) and design[prop] % 1 == 0, f"design minimum {key}.{prop}")
         roles, photos, group_ids = set(), set(), set()
         for node in walk_layout(design.get("layout")):
             for group in [*(node.get("groups") or []), *(node.get("overlayGroups") or [])]:
@@ -141,6 +185,28 @@ def validate_catalog(catalog):
                           and math.isfinite(policy["edgeInsetRatio"]) and 0 <= policy["edgeInsetRatio"] < .5,
                           f"overlay position {key}.{group_id}")
             check(node.get("type") in LAYOUT_TYPES, f"layout {key}.{node.get('type')}")
+            if node.get("type") == "photoFrame":
+                count, gap = node.get("count"), node.get("gap")
+                check(node in design.get("layout", []) and design.get("kind") == "wear" and design.get("usage") == "styling"
+                      and (axes.get("decoration") or {}).get("id") == "frame" and design.get("framePhotos") == count
+                      and node.get("slot") == "*" and _positive(count) and count in (1, 2, 3)
+                      and node.get("pattern") in ("column", "twoColumn", "heroPair") and node.get("groupBy") == "spaceGroup" and node.get("aspect") == "4/5"
+                      and isinstance(gap, (int, float)) and not isinstance(gap, bool) and math.isfinite(gap) and gap >= 0
+                      and isinstance(node.get("captions"), list), f"photoFrame {key}")
+            if node.get("type") == "photoFlow":
+                gap = node.get("gap")
+                check(isinstance(node.get("slot"), str) and bool(node["slot"])
+                      and node.get("pattern") in ("twoColumn", "heroPair")
+                      and node.get("groupBy") in ("spaceGroup", "none")
+                      and _aspect_ratio(node.get("aspect"))
+                      and isinstance(gap, (int, float)) and not isinstance(gap, bool) and math.isfinite(gap) and gap >= 0
+                      and isinstance(node.get("captions"), list), f"photoFlow {key}")
+            if "fit" in node:
+                check(node.get("type") == "photo" and node["fit"] in ("contain", "cover"), f"photo fit {key}")
+            if "fallbackAspect" in node:
+                check(node.get("type") == "photo" and node.get("aspect") == "source" and _aspect_ratio(node["fallbackAspect"]), f"fallback aspect {key}")
+            if node.get("fit") == "contain":
+                check("cropTop" not in node, f"contain crop {key}")
             if node.get("scrim") is not None:
                 paint = node["scrim"]
                 check(node.get("type") == "overlay" and isinstance(paint, dict)
@@ -151,7 +217,9 @@ def validate_catalog(catalog):
                 check(node.get("type") in ("panel", "list") and _opacity(node["fillOpacity"]), f"fill opacity {key}")
             if node.get("itemGap") is not None:
                 value = node["itemGap"]
-                check(node.get("type") == "list" and isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0, f"list item gap {key}")
+                check(node.get("type") in ("list", "photoStack") and isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0, f"list item gap {key}")
+            if "includeLoose" in node:
+                check(node.get("type") == "photoStack" and node.get("slot") == "*" and isinstance(node["includeLoose"], bool), f"include loose {key}")
             if node.get("shadow") is not None:
                 shadow = node["shadow"]
                 check(node.get("type") in ("panel", "list") and isinstance(shadow, dict)
@@ -160,6 +228,18 @@ def validate_catalog(catalog):
                       and _opacity(shadow.get("opacity")), f"shape shadow {key}")
             if node.get("singleLine") is not None:
                 check(node.get("type") == "text" and isinstance(node["singleLine"], bool), f"single line {key}")
+            if "weight" in node:
+                check(node.get("type") == "text" and node["weight"] == "light", f"text weight {key}")
+            if "numberPrefix" in node:
+                check(node.get("type") == "text" and isinstance(node["numberPrefix"], bool), f"number prefix {key}")
+            if "trackingEm" in node:
+                value = node["trackingEm"]
+                check(node.get("type") == "text" and isinstance(value, (int, float)) and not isinstance(value, bool)
+                      and math.isfinite(value) and -1 < value <= 1, f"text tracking {key}")
+            if "lineHeight" in node:
+                check(node.get("type") == "text" and _positive(node["lineHeight"]), f"text line height {key}")
+            if "copyPolicy" in node:
+                check(node.get("type") == "text" and node.get("copyRole") == "items.n.desc" and node["copyPolicy"] == "partOnly", f"copy policy {key}")
             if node.get("titleWrap") is not None:
                 policy = node["titleWrap"]
                 sizes = policy.get("sizes") if isinstance(policy, dict) else None
@@ -217,7 +297,7 @@ def validate_catalog(catalog):
                     check(isinstance(value, (int, float)) and math.isfinite(value) and value >= 0, f"geometry {key}.{prop}")
             if node.get("aspect") not in (None, "source"):
                 value = node["aspect"]
-                check(isinstance(value, str) and re.fullmatch(r"\d+(?:\.\d+)?/\d+(?:\.\d+)?", value) and all(float(v) > 0 for v in value.split("/")), f"aspect {key}")
+                check(_aspect_ratio(value), f"aspect {key}")
             if node.get("cropTop") is not None:
                 value = node["cropTop"]
                 check(isinstance(value, (int, float)) and math.isfinite(value) and 0 <= value < 1, f"cropTop {key}")
@@ -264,7 +344,7 @@ def validate_catalog(catalog):
             check(placement.get("after") is None or placement["after"] in keys or placement["after"] in ("lastSameKind", "lastSameUsage"), f"placement target {tid}.{key}")
             _validate_photo_slots(tid, {**placement, "kind": key}, check)
     check(len(ids) == 2, "two templates")
-    check(set(catalog.get("fontStyles", {})) == {"template", "serif", "boldGothic"}, "three font styles")
+    check(bool(catalog.get("fontStyles")), "font styles")
     for refs in catalog.get("fontStyles", {}).values():
         for ref in refs.values():
             if ref:
@@ -362,7 +442,8 @@ def resolve_page_tokens(page_style=None, base_swatch_id=None, catalog=None):
     catalog, page_style = catalog or CATALOG, page_style or {}
     template = get_template(page_style.get("templateId"), catalog) or get_template(catalog["defaults"]["templateId"], catalog)
     font_style = page_style.get("fontStyle") if page_style.get("fontStyle") in catalog["fontStyles"] else catalog["defaults"]["fontStyle"]
-    color_mode = "point" if page_style.get("colorMode") == "point" else "mono"
+    neutral = not isinstance(base_swatch_id, str) or base_swatch_id not in catalog['pointPalette'] or base_swatch_id in ('white', 'gray', 'black', 'null')
+    color_mode = "point" if page_style.get("colorMode") == "point" and not neutral else "mono"
     fonts = deepcopy(template["fonts"])
     for key, override in catalog["fontStyles"][font_style].items():
         if not override:
@@ -370,13 +451,13 @@ def resolve_page_tokens(page_style=None, base_swatch_id=None, catalog=None):
         fonts[key].update(override)
         if font_style == "serif" and key == "labelEn":
             fonts[key].update(italic=template["fonts"][key].get("italic", False), uppercase=bool(template["fonts"][key].get("uppercase")), trackingEm=template["fonts"][key]["trackingEm"])
-    colors = {**template["colors"], "canvas": catalog["canvasColor"]}
-    neutral = base_swatch_id not in catalog['pointPalette'] or base_swatch_id in ('white', 'gray', 'black', 'null')
+    colors = {**template["colors"], "canvas": catalog["canvasColor"],
+              "framePaper": catalog["neutralColors"]["framePaper"], "frameInk": catalog["neutralColors"]["frameInk"]}
     if color_mode == "point" and not neutral:
         point = catalog["pointPalette"].get(base_swatch_id or "null", catalog["pointPalette"]["null"])
         colors.update(accentInk=point["accentInk"], accentLine=point["accentLine"])
-        if template["id"] != "show":
-            colors["accentBg"] = point["accentBg"]
+        colors["accentBg"] = point["accentBg"]
+        colors["panel"] = point["accentBg"]
     colors["accentBg"] = colors.get("accentBg") or colors["panel"]
     colors["invertInk"] = colors.get("invertInk") or catalog["overlayColors"]["light"]
     colors["summaryBg"] = colors['accentBg'] if template['id'] == 'emo' and color_mode == 'point' and not neutral else colors["canvas"]

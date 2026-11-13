@@ -8,6 +8,9 @@ export function baseColorOf(product) {
     );
 }
 
+export const isNeutralPageSwatch = (swatch, catalog = pageTemplatesCatalog) => typeof swatch !== 'string'
+    || !Object.hasOwn(catalog.pointPalette, swatch) || ['white', 'gray', 'black', 'null'].includes(swatch);
+
 export function resolvePageTokens(
     pageStyle = {},
     baseSwatchId = null,
@@ -19,7 +22,8 @@ export function resolvePageTokens(
     const fontStyle = catalog.fontStyles[pageStyle?.fontStyle]
         ? pageStyle.fontStyle
         : catalog.defaults.fontStyle;
-    const colorMode = pageStyle?.colorMode === "point" ? "point" : "mono";
+    const neutral = isNeutralPageSwatch(baseSwatchId, catalog);
+    const colorMode = pageStyle?.colorMode === "point" && !neutral ? "point" : "mono";
     const fonts = Object.fromEntries(
         Object.entries(template.fonts).map(([key, value]) => [
             key,
@@ -37,14 +41,17 @@ export function resolvePageTokens(
             fonts[key].trackingEm = template.fonts.labelEn.trackingEm;
         }
     }
-    const colors = { ...template.colors, canvas: catalog.canvasColor };
-    const neutral = baseSwatchId == null || !Object.hasOwn(catalog.pointPalette, baseSwatchId) || ['white', 'gray', 'black', 'null'].includes(baseSwatchId);
+    const colors = { ...template.colors, canvas: catalog.canvasColor,
+        framePaper: catalog.neutralColors.framePaper, frameInk: catalog.neutralColors.frameInk };
     if (colorMode === "point" && !neutral) {
         const point =
             catalog.pointPalette[baseSwatchId] || catalog.pointPalette.null;
         colors.accentInk = point.accentInk;
         colors.accentLine = point.accentLine;
-        if (template.id !== "show") colors.accentBg = point.accentBg;
+        colors.accentBg = point.accentBg;
+        // Existing layouts name the pale surface `panel`; both role names
+        // must resolve to the same tint. Inverted sections override it below.
+        colors.panel = point.accentBg;
     }
     colors.accentBg ||= colors.panel;
     colors.invertInk ||= catalog.overlayColors.light;

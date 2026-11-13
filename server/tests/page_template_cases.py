@@ -18,12 +18,12 @@ def case_input(name):
 def assemble_input(value):
     return assemble(value["storyboard"], value.get("cutResults", []), value.get("copyResults", []), value.get("product", {}), value.get("copywriting", True),
                     analysis=value.get("analysis"), page_style=value.get("pageStyle"), base_swatch_id=value.get("baseSwatchId"),
-                    failed_cuts=value.get("failedCuts"), license_notice=value.get("licenseNotice"), profile=value.get("profile"))
+                    failed_cuts=value.get("failedCuts"), license_notice=value.get("licenseNotice"), profile=value.get("profile"), shop_name=value.get("shopName"))
 
 
 def collect_input_regions(value):
     return collect_overlay_regions(value["storyboard"], value.get("cutResults", []), value.get("copyResults", []), value.get("product", {}), value.get("copywriting", True),
-                                   analysis=value.get("analysis"), page_style=value.get("pageStyle"), profile=value.get("profile"))
+                                   analysis=value.get("analysis"), page_style=value.get("pageStyle"), profile=value.get("profile"), shop_name=value.get("shopName"))
 
 
 def section(blocks, key):

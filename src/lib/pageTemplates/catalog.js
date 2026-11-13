@@ -28,8 +28,10 @@ const FACT_PATHS = new Set([
     "analysis.fit",
     "analysis.detailRecommendations.candidates[].label",
     "analysis.featureCopy",
+    "analysis.partDescriptionCopy",
     "analysis.mdComment",
     "profiles.display_name",
+    "mall_connections.shop_name",
 ]);
 const COLORS = new Set([
     "ink",
@@ -44,6 +46,8 @@ const COLORS = new Set([
     "onPhoto",
     "summaryBg",
     "pointBg",
+    "framePaper",
+    "frameInk",
 ]);
 const STYLES = new Set(["titleKo", "labelEn", "body", "small", "num"]);
 const LAYOUT_TYPES = new Set([
@@ -51,6 +55,8 @@ const LAYOUT_TYPES = new Set([
     "photo",
     "photoStack",
     "photoGrid",
+    "photoFlow",
+    "photoFrame",
     "overlay",
     "pointRows",
     "list",
@@ -61,9 +67,17 @@ const LAYOUT_TYPES = new Set([
 const HEX = /^#[\da-f]{6}$/i;
 const positive = (value) => Number.isFinite(value) && value > 0;
 const opacity = (value) => Number.isFinite(value) && value >= 0 && value <= 1;
+const aspectRatio = (value) => typeof value === 'string'
+    && /^\d+(?:\.\d+)?\/\d+(?:\.\d+)?$/.test(value)
+    && value.split('/').every(part => Number(part) > 0);
+const CHOICE_LAYOUTS = {
+    wear: ['column', 'twoColumn', 'heroPair'],
+    color_product: ['column', 'grid'],
+    points: ['column', 'below'],
+};
 
 export function walkLayout(nodes, visit) {
-    for (const node of nodes || []) {
+    for (const node of Array.isArray(nodes) ? nodes : []) {
         visit(node);
         for (const key of ["nodes", "items", "captions"])
             walkLayout(node[key], visit);
@@ -96,6 +110,13 @@ export function validateCatalog(catalog) {
         "schemaVersion/canvasWidth",
     );
     check(HEX.test(catalog?.canvasColor), "canvas color");
+    const frameStyle = catalog?.frameStyle || {};
+    check(['bandPadding', 'cardWidth', 'paddingTop', 'paddingX', 'paddingBottom', 'photoGap', 'photoTop', 'footerGap', 'remainderGap', 'textSize', 'textLineHeight', 'textWeight']
+        .every(key => positive(frameStyle[key]))
+        && frameStyle.cardWidth <= catalog.canvasWidth && frameStyle.paddingX * 2 < frameStyle.cardWidth
+        && Number.isFinite(frameStyle.textTrackingEm) && Number.isFinite(frameStyle.blur) && frameStyle.blur >= 0 && frameStyle.blur <= 100
+        && aspectRatio(frameStyle.fallbackAspect)
+        && ['paper', 'ink'].every(key => COLORS.has(frameStyle[key]) && HEX.test(catalog?.neutralColors?.[frameStyle[key]])), 'frame style');
     check(
         Object.keys(catalog?.swatchLabels || {}).every((key) =>
             HEX.test(catalog?.swatchHex?.[key]),
@@ -104,12 +125,21 @@ export function validateCatalog(catalog) {
     );
     check(
         ["emo", "show"].includes(catalog?.defaults?.templateId) &&
-            ["template", "serif", "boldGothic"].includes(
-                catalog?.defaults?.fontStyle,
-            ) &&
+            typeof catalog?.defaults?.fontStyle === 'string' &&
+            Object.hasOwn(catalog?.fontStyles || {}, catalog.defaults.fontStyle) &&
             ["mono", "point"].includes(catalog?.defaults?.colorMode),
         "default page style",
     );
+    const plate = catalog.firstTitlePlate || {};
+    const bandValid = band => Array.isArray(band) && band.length === 2 && band.every(Number.isFinite)
+        && band[0] >= 0 && band[1] <= 1 && band[0] < band[1];
+    check(HEX.test(catalog.neutralColors?.[plate.fillToken] || '') && opacity(plate.opacity)
+        && ['paddingX', 'paddingTop', 'paddingBottom', 'threshold'].every(key => positive(plate[key]))
+        && opacity(plate.nearBestRatio) && opacity(plate.maxGarmentOverlap)
+        && JSON.stringify(plate.preference) === JSON.stringify(['center', 'bottom', 'top'])
+        && JSON.stringify(plate.platePreference) === JSON.stringify(['center', 'bottom'])
+        && bandValid(plate.fallbackGarmentBand)
+        && ['top', 'outer', 'bottom', 'dress'].every(kind => ['full', 'medium'].every(shot => bandValid(plate.garmentBands?.[kind]?.[shot]))), 'first title plate');
     const band = catalog?.firstTitleBand || {};
     check(
         [band.left, band.right, band.top, band.bottom].every(
@@ -195,6 +225,24 @@ export function validateCatalog(catalog) {
         check(design.kind === 'wear' ? ['styling', 'fit'].includes(design.usage) : design.usage == null, `design usage ${id}`);
         if (Object.hasOwn(design, 'pickerHidden'))
             check(typeof design.pickerHidden === 'boolean', `pickerHidden ${id}`);
+        if (Object.hasOwn(design, 'invert'))
+            check(typeof design.invert === 'boolean', `design invert ${id}`);
+        if (Object.hasOwn(design, 'choiceAxes')) {
+            const axes = design.choiceAxes;
+            check(CHOICE_LAYOUTS[design.kind]?.includes(axes?.layout?.id)
+                && ['basic', 'card', 'frame'].includes(axes?.decoration?.id)
+                && [axes?.layout?.name, axes?.decoration?.name].every(name => typeof name === 'string' && name.trim()),
+            `choice axes ${id}`);
+        }
+        const frameNodes = design.layout?.filter(node => node.type === 'photoFrame') || [];
+        if (design.choiceAxes?.decoration?.id === 'frame' || Object.hasOwn(design, 'framePhotos') || frameNodes.length)
+            check(design.kind === 'wear' && design.usage === 'styling' && design.choiceAxes?.decoration?.id === 'frame'
+                && [1, 2, 3].includes(design.framePhotos) && frameNodes.length === 1
+                && frameNodes[0].count === design.framePhotos && frameNodes[0].pattern === design.choiceAxes?.layout?.id
+                && design.minPhotos >= Math.max(design.framePhotos, { column: 1, twoColumn: 2, heroPair: 3 }[design.choiceAxes?.layout?.id]), `frame design ${id}`);
+        for (const key of ['minPhotos', 'minColors'])
+            if (Object.hasOwn(design, key))
+                check(Number.isInteger(design[key]) && design[key] > 0, `design minimum ${id}.${key}`);
         const roles = new Set(),
             photos = new Set(),
             groupIds = new Set();
@@ -245,6 +293,26 @@ export function validateCatalog(catalog) {
                 }
             }
             check(LAYOUT_TYPES.has(node.type), `layout ${id}.${node.type}`);
+            if (node.type === 'photoFrame')
+                check(design.layout.includes(node) && design.kind === 'wear' && design.usage === 'styling'
+                    && design.choiceAxes?.decoration?.id === 'frame' && design.framePhotos === node.count
+                    && node.slot === '*' && [1, 2, 3].includes(node.count)
+                    && ['column', 'twoColumn', 'heroPair'].includes(node.pattern)
+                    && node.groupBy === 'spaceGroup' && node.aspect === '4/5'
+                    && Number.isFinite(node.gap) && node.gap >= 0 && Array.isArray(node.captions), `photoFrame ${id}`);
+            if (node.type === 'photoFlow')
+                check(typeof node.slot === 'string' && node.slot.length > 0
+                    && ['twoColumn', 'heroPair'].includes(node.pattern)
+                    && ['spaceGroup', 'none'].includes(node.groupBy)
+                    && aspectRatio(node.aspect)
+                    && Number.isFinite(node.gap) && node.gap >= 0
+                    && Array.isArray(node.captions), `photoFlow ${id}`);
+            if (Object.hasOwn(node, 'fit'))
+                check(node.type === 'photo' && ['contain', 'cover'].includes(node.fit), `photo fit ${id}`);
+            if (Object.hasOwn(node, 'fallbackAspect'))
+                check(node.type === 'photo' && node.aspect === 'source' && aspectRatio(node.fallbackAspect), `fallback aspect ${id}`);
+            if (node.fit === 'contain')
+                check(!Object.hasOwn(node, 'cropTop'), `contain crop ${id}`);
             if (node.scrim != null) {
                 const paint = node.scrim;
                 check(
@@ -258,7 +326,9 @@ export function validateCatalog(catalog) {
             if (node.fillOpacity != null)
                 check(["panel", "list"].includes(node.type) && opacity(node.fillOpacity), `fill opacity ${id}`);
             if (node.itemGap != null)
-                check(node.type === "list" && Number.isFinite(node.itemGap) && node.itemGap >= 0, `list item gap ${id}`);
+                check(["list", "photoStack"].includes(node.type) && Number.isFinite(node.itemGap) && node.itemGap >= 0, `list item gap ${id}`);
+            if (Object.hasOwn(node, 'includeLoose'))
+                check(node.type === 'photoStack' && node.slot === '*' && typeof node.includeLoose === 'boolean', `include loose ${id}`);
             if (node.shadow != null) {
                 const shadow = node.shadow;
                 check(
@@ -270,6 +340,16 @@ export function validateCatalog(catalog) {
             }
             if (node.singleLine != null)
                 check(node.type === "text" && typeof node.singleLine === "boolean", `single line ${id}`);
+            if (Object.hasOwn(node, 'weight'))
+                check(node.type === 'text' && node.weight === 'light', `text weight ${id}`);
+            if (Object.hasOwn(node, 'numberPrefix'))
+                check(node.type === 'text' && typeof node.numberPrefix === 'boolean', `number prefix ${id}`);
+            if (Object.hasOwn(node, 'trackingEm'))
+                check(node.type === 'text' && Number.isFinite(node.trackingEm) && node.trackingEm > -1 && node.trackingEm <= 1, `text tracking ${id}`);
+            if (Object.hasOwn(node, 'lineHeight'))
+                check(node.type === 'text' && positive(node.lineHeight), `text line height ${id}`);
+            if (Object.hasOwn(node, 'copyPolicy'))
+                check(node.type === 'text' && node.copyRole === 'items.n.desc' && node.copyPolicy === 'partOnly', `copy policy ${id}`);
             if (node.titleWrap != null) {
                 const policy = node.titleWrap;
                 check(
@@ -399,8 +479,7 @@ export function validateCatalog(catalog) {
                     );
             if (node.aspect != null && node.aspect !== "source")
                 check(
-                    /^\d+(?:\.\d+)?\/\d+(?:\.\d+)?$/.test(node.aspect) &&
-                        node.aspect.split("/").every((v) => Number(v) > 0),
+                    aspectRatio(node.aspect),
                     `aspect ${id}`,
                 );
             if (node.cropTop != null)
@@ -521,9 +600,8 @@ export function validateCatalog(catalog) {
     }
     check(ids.size === 2, "two templates");
     check(
-        JSON.stringify(Object.keys(catalog?.fontStyles || {}).sort()) ===
-            '["boldGothic","serif","template"]',
-        "three font styles",
+        Object.keys(catalog?.fontStyles || {}).length > 0,
+        "font styles",
     );
     for (const refs of Object.values(catalog?.fontStyles || {}))
         for (const ref of Object.values(refs))

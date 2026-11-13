@@ -5,6 +5,7 @@ import { sectionRuns } from './sectionRuns.js';
 import { wornCropRegions } from './seed.js';
 import { productSectionState } from './productPresentation.js';
 import { baseDesignId } from './pairedDesigns.js';
+import { wornCropRegion, wornCropSourceAspect, sameWornCropSourceImage } from './wornCropGeometry.js';
 
 const localSlot = block => String(block.slotKey || '').replace(`${String(block.pageSectionKey).split('.').slice(1).join('.')}.`, '');
 const matches = (key, slot) => key === slot || key.startsWith(`${slot}.`) || new RegExp(`^${slot}\\d+$`).test(key);
@@ -84,6 +85,7 @@ export function preferredWornCropSource(blocks) {
 
 export function reconcileSectionDependencies(before, after, product = {}, {
   makeId = () => uid('blk'), cropRegions = wornCropRegions[product.clothingType] || wornCropRegions.top,
+  cutResults = [],
 } = {}) {
   const previousById = new Map(before.map(block => [block.id, block]));
   let next = after.filter(block => !isReuseFallback(previousById.get(block.id) || {})
@@ -154,21 +156,30 @@ export function reconcileSectionDependencies(before, after, product = {}, {
     // existing valid source stable when sections are moved or more are added.
     const retainedSource = derived && block.pointItems.map(item => byId.get(item.sourceBlockId)).find(isWornCropSource);
     const cropSource = retainedSource || preferred;
+    const sourceAspect = wornCropSourceAspect(cropSource, { product, cutResults });
+    const previousItems = previousById.get(block.id)?.pointItems || [];
     const items = block.pointItems.flatMap(item => {
       if (item.kind !== 'wornCrop') {
         const source = byId.get(item.sourceBlockId);
         return source?.source === 'ai' && source.shot === 'detail' && source.pageSectionKey === block.pageSectionKey ? [item] : [];
       }
       if (!cropSource) return [];
-      if (item.sourceBlockId === cropSource.id) return [item];
+      const previousItem = previousItems.find(previous => previous.kind === 'wornCrop' && previous.bodyPart === item.bodyPart);
+      const sourceChanged = previousItem && (previousItem.sourceBlockId !== item.sourceBlockId
+        || !sameWornCropSourceImage(previousById.get(item.sourceBlockId), cropSource));
+      // Explicit saved/caller-supplied geometry is authoritative, including undo
+      // snapshots. A source-only edit still gets a fresh source-aware rectangle.
+      const explicitRegion = previousItem && JSON.stringify(previousItem.cropRegion) !== JSON.stringify(item.cropRegion);
+      if (item.sourceBlockId === cropSource.id && (!sourceChanged || explicitRegion)) return [item];
       const currentRegion = cropRegions.find(([bodyPart]) => bodyPart === item.bodyPart)?.[2];
-      return [{ ...item, sourceBlockId: cropSource.id, ...(currentRegion ? { cropRegion: currentRegion } : {}) }];
+      return [{ ...item, sourceBlockId: cropSource.id, cropRegion: wornCropRegion(currentRegion || item.cropRegion, sourceAspect) }];
     });
     // Structural detail rows never fill a missing detail with a worn crop.
     const wanted = derived ? 3 : items.length;
     for (let i = items.length; cropSource && i < wanted && cropRegions[i]; i++) {
       const [bodyPart, label, cropRegion] = cropRegions[i];
-      items.push({ kind: 'wornCrop', sourceBlockId: cropSource.id, bodyPart, label, cropRegion });
+      items.push({ kind: 'wornCrop', sourceBlockId: cropSource.id, bodyPart, label,
+        cropRegion: wornCropRegion(cropRegion, sourceAspect) });
     }
     return JSON.stringify(items) === JSON.stringify(block.pointItems) ? block : { ...block, pointItems: items };
   });

@@ -51,7 +51,9 @@ import {
 import { api, isMockMode } from '@/lib/api/index.js';
 import { ErrorState, useToast } from '@/components/ui.jsx';
 import { shouldAdoptRouteProject } from '@/lib/projectRoute.js';
+import { resolveStoryboardResume, STORYBOARD_REVIEW_MESSAGE } from '@/lib/pageTemplates/entryNotices.js';
 import { markEditorEntered } from '@/lib/editorEntered.js';
+import { hasStoryboardEntered, markStoryboardEntered, STORYBOARD_INPUT_LOCK_MESSAGE } from '@/lib/storyboardEntered.js';
 import {
   consumeFlowContinuation,
   hasFlowContinuation,
@@ -63,7 +65,7 @@ import {
 import { flowScreenName, notifyFlowKept } from '@/lib/flowAbandon.js';
 import { isMobileDraftWriter } from '@/lib/draftDeviceNoun.js';
 import { MobileDraftStatus } from '@/features/shell/MobileDraftDialog.jsx';
-import { ResumeChoiceModal } from '@/features/shell/shell.jsx';
+import { ResumeChoiceModal, useStoryboardInputGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { DraftEntryDialog } from '@/features/shell/DraftEntryDialog.jsx';
 import { draftSavedTime, isVisibleDraftSlot, getFlowDraftSources, getInputEntryDecision, remoteDraftSource } from '@/lib/draftEntry.js';
 import { checkDraftEntry, canAutoOpenInput } from '@/lib/draftEntryCheck.js';
@@ -108,6 +110,8 @@ function RequireProject() {
   const { session } = useAuth();
   const { push } = useToast();
   const userId = session?.user?.id || null;
+  const resumeRunRef = useRef(0);
+  useEffect(() => () => { resumeRunRef.current += 1; }, [projectId, userId, pathname]);
   const recentFlow = canAutoOpenInput([{ id: 'flow' }], { userId, flow: useAppStore.getState(), slotClient: draftSlot });
   const autoOpened = useRef(Boolean(projectId && projectPersisted && recentFlow
     && !flowRouteSeenThisSession && !isSameTabProjectReload(projectId) && !hasFlowContinuation(projectId)));
@@ -144,10 +148,21 @@ function RequireProject() {
     return () => { cancelled = true; };
   }, [projectId, projectPersisted]);
 
-  const resume = () => {
-    flowRouteSeenThisSession = true;
-    markFlowSession(projectId, pathname);
-    setEntryDecision('continue');
+  const resume = async () => {
+    const run = ++resumeRunRef.current;
+    const state = useAppStore.getState();
+    try {
+      const { path, review } = await resolveStoryboardResume(api, projectId, pathname);
+      const current = useAppStore.getState();
+      if (run !== resumeRunRef.current || current.projectId !== projectId
+        || current.projectGeneration !== state.projectGeneration || current.userId !== state.userId) return;
+      flowRouteSeenThisSession = true;
+      current.setResumePath(path);
+      markFlowSession(projectId, path);
+      if (review) push(STORYBOARD_REVIEW_MESSAGE);
+      setEntryDecision('continue');
+      if (path !== pathname) navigate(path, { replace: true });
+    } catch (error) { if (run === resumeRunRef.current) push(error?.message || '만들던 상품을 열지 못했어요.'); }
   };
   const startNew = async () => {
     const previous = { ...useAppStore.getState() };
@@ -223,6 +238,7 @@ function RequireEditorProject() {
    editor 는 chrome 밖 라우트라 여기(App 레벨 location 감시)서 함께 잡는다. */
 function ResumeTracker() {
   const { pathname } = useLocation();
+  const inputRoute = pathname.startsWith('/create/input') || pathname.startsWith('/create/analysis');
   const { session, loading } = useAuth();
   const setResumePath = useAppStore((s) => s.setResumePath);
   const projectId = useAppStore((s) => s.projectId);
@@ -231,16 +247,45 @@ function ResumeTracker() {
     if (!isMockMode && loading) return;
     if (projectId && projectPersisted && (pathname.startsWith('/create/') || pathname.startsWith('/editor/'))) {
       markFlowSession(projectId, pathname);
-      if (!pathname.startsWith('/create/input')) useAppStore.getState().markFlowUsed(session?.user?.id || null);
+      if (!inputRoute) useAppStore.getState().markFlowUsed(session?.user?.id || null);
     }
     // 재개 대상은 서버 상태가 있는(projectPersisted) 단계만. /create/input 은 분석 전이라 복원할
     // 서버 상태가 없어, 여기로 '이어서' 하면 첫 페이지로 튕기는 것처럼 보인다 → 기록 제외.
     if (pathname.startsWith('/editor/')
-        || (pathname.startsWith('/create/') && !pathname.startsWith('/create/input'))) {
+        || (pathname.startsWith('/create/') && !inputRoute)) {
       setResumePath(pathname);
     }
-  }, [pathname, projectId, projectPersisted, setResumePath, session?.user?.id, loading]);
+  }, [pathname, inputRoute, projectId, projectPersisted, setResumePath, session?.user?.id, loading]);
   return null;
+}
+
+function BeforeStoryboardRoute({ children }) {
+  const navigate = useNavigate();
+  const { key, state } = useLocation();
+  const { session, loading } = useAuth();
+  const { push } = useToast();
+  const phase = useStoryboardInputGuard(!state?.startNewFromResume && (isMockMode || (!loading && Boolean(session))));
+  const redirected = useRef(null);
+  useEffect(() => {
+    if (phase !== 'storyboard') return;
+    const store = useAppStore.getState();
+    const entry = `${store.projectId}:${key}`;
+    if (redirected.current === entry) return;
+    redirected.current = entry;
+    store.setResumePath('/create/storyboard');
+    markFlowSession(store.projectId, '/create/storyboard');
+    push(STORYBOARD_INPUT_LOCK_MESSAGE);
+    navigate('/create/storyboard', { replace: true });
+  }, [phase, key, navigate, push]);
+  if (phase === 'editor') return isMobileDevice() ? <PcOnlyPage /> : <DoneGuardModal />;
+  if (phase !== 'open') return <ProductInputPlaceholder mobile={isMobileDevice()} />;
+  return children;
+}
+
+function StoryboardRoute() {
+  const projectId = useAppStore(s => s.projectId);
+  useLayoutEffect(() => { markStoryboardEntered(projectId); }, [projectId]);
+  return <Storyboard />;
 }
 
 /* '새 제작'(startProject → projectGeneration++)이면 같은 /create/input 라우트라도 ProductInput 을
@@ -251,6 +296,8 @@ function ProductInputRoute() {
   const { session, loading: authLoading, signingOut } = useAuth();
   const mobile = isMobileDevice();
   const userId = session?.user?.id || null;
+  const resumeRunRef = useRef(0);
+  useEffect(() => () => { resumeRunRef.current += 1; }, [userId, locationKey]);
   const [entryUserId, setEntryUserId] = useState(userId);
   const userChanged = entryUserId !== userId;
   const scrollUserId = useRef(userId);
@@ -290,6 +337,7 @@ function ProductInputRoute() {
     draftSlot.resumeEntryWrites();
     flowRouteSeenThisSession = true;
     setEntryDecision('continue');
+    if (locationState?.startNewFromResume) navigate('/create/input', { replace: true, state: null });
   };
   const { actions: entryActions, dialog: entryDialog, busy: entryBusy } = useDraftEntryActions({
     beginProject, mobile,
@@ -300,7 +348,11 @@ function ProductInputRoute() {
       if (autoOpening.current) { autoOpening.current = false; showResumeToast(); }
     },
     onKept: (meta) => { if (mobile && getMobileGuestSave(session)) clearMobileGuestSave(); setMobileEntry({ state: 'pc', meta }); finishEntry(); },
-    onStarted: () => { setMobileEntry(null); finishEntry(); }, onError: pushToast,
+    onStarted: () => { setMobileEntry(null); finishEntry(); },
+    onError: (message, options) => {
+      pushToast(message, options);
+      if (locationState?.startNewFromResume) { setEntryError(new Error(message)); setEntryDecision('error'); }
+    },
   });
 
   useEffect(() => {
@@ -597,20 +649,44 @@ function ProductInputRoute() {
     };
   }, [mobile, slotEnabled, authLoading, signingOut, userChanged, entryDecision]);
 
-  const resume = ({ resumeWrites = true } = {}) => {
+  const resume = async ({ resumeWrites = true } = {}) => {
+    const run = ++resumeRunRef.current;
+    setEntryDecision('resuming');
     if (resumeWrites) draftSlot.resumeEntryWrites();
-    flowRouteSeenThisSession = true;
-    const { projectId, resumePath } = useAppStore.getState();
-    markFlowSession(projectId, resumePath || '/create/input');
-    useAppStore.getState().markFlowUsed(userId);
-    setEntryDecision('continue');
-    if (resumePath && resumePath !== '/create/input') navigate(resumePath, { replace: true });
+    const state = useAppStore.getState();
+    const { projectId, resumePath } = state;
+    try {
+      const { path, review } = await resolveStoryboardResume(api, projectId, resumePath || '/create/input');
+      const current = useAppStore.getState();
+      if (run !== resumeRunRef.current || current.projectId !== projectId
+        || current.projectGeneration !== state.projectGeneration || current.userId !== state.userId) return;
+      flowRouteSeenThisSession = true;
+      current.setResumePath(path);
+      markFlowSession(projectId, path);
+      current.markFlowUsed(userId);
+      if (review) pushToast(STORYBOARD_REVIEW_MESSAGE);
+      setEntryDecision('continue');
+      if (path !== '/create/input') navigate(path, { replace: true });
+    } catch (error) {
+      if (run !== resumeRunRef.current) return;
+      setEntryError(error);
+      setEntryDecision('error');
+    }
   };
   const startNew = () => mobile ? entryActions.nextMobile({ enabled: slotEnabled, entry: true })
     : entryActions.startNew({ enabled: slotEnabled });
   const requestStartNew = () => {
-    setEntryDecision('continue');
+    setEntryDecision('starting-new');
     void startNew();
+  };
+  const cancelStartNew = () => {
+    entryActions.cancel();
+    const { projectId, resumePath } = useAppStore.getState();
+    const path = hasStoryboardEntered(projectId)
+      ? resumePath && !['/create/input', '/create/analysis'].includes(resumePath) ? resumePath : '/create/storyboard'
+      : '/create/input';
+    setEntryDecision('checking');
+    navigate(path, { replace: true, state: null });
   };
   const showResumeToast = () => pushToast('이어서 열었어요', { duration: 8000, action: {
     label: '새로 시작', onClick: () => navigate('/create/input', { state: { startNewFromResume: true } }),
@@ -620,8 +696,7 @@ function ProductInputRoute() {
     const source = sources.find((candidate) => candidate.id === sourceId);
     if (!source) return;
     if (sourceId === 'flow') {
-      resume();
-      return;
+      return resume();
     }
     const { projectId, projectPersisted } = useAppStore.getState();
     if (sourceId === 'remote') {
@@ -664,7 +739,10 @@ function ProductInputRoute() {
     );
   }
   // 판정·자동 열기를 기다리는 동안에도 입력 화면의 제목과 글래스 자리를 유지한다.
-  if (entryDecision === 'checking') return <ProductInputPlaceholder mobile={mobile} />;
+  if (entryDecision === 'checking' || entryDecision === 'resuming') return <ProductInputPlaceholder mobile={mobile} />;
+  if (entryDecision === 'starting-new') return entryDialog
+    ? <DraftEntryDialog dialog={entryDialog} actions={{ ...entryActions, cancel: cancelStartNew }} busy={entryBusy} />
+    : <ProductInputPlaceholder mobile={mobile} />;
   if (entryDecision !== 'continue') return null;
   if (mobile && ['pc', 'gone'].includes(mobileEntry?.state)) return <>
     <MobileDraftStatus meta={mobileEntry.meta} gone={mobileEntry.state === 'gone'} busy={entryBusy}
@@ -921,13 +999,14 @@ export default function App() {
           <Route path="create">
             <Route index element={<Navigate to="/create/input" replace />} />
             {/* 입력·분석은 공개 */}
-            <Route path="input" element={<ProductInputRoute />} />
+            <Route path="input" element={<BeforeStoryboardRoute><ProductInputRoute /></BeforeStoryboardRoute>} />
+            <Route path="analysis" element={<BeforeStoryboardRoute><ProductInputRoute /></BeforeStoryboardRoute>} />
             {/* 마네킹 이후 단계는 로그인 필요 */}
             <Route element={<MobileHandoffGuard />}>
               <Route element={<RequireAuth />}>
                 <Route element={<RequireProject />}>
                   <Route path="mannequin" element={<Mannequin />} />
-                  <Route path="storyboard" element={<Storyboard />} />
+                  <Route path="storyboard" element={<StoryboardRoute />} />
                   <Route path="generating" element={<Generating />} />
                 </Route>
               </Route>

@@ -1,0 +1,18 @@
+/* Desktop storyboard only. All other routes keep their document/footer sizing. */
+@media (min-width: 1024px) {
+  :global(html:has(.app-shell[data-storyboard-layout="true"])),
+  :global(body:has(.app-shell[data-storyboard-layout="true"])) { overflow: hidden; }
+  :global(.app-shell[data-storyboard-layout="true"]) { height: 100dvh; min-height: 0; overflow: hidden; }
+  :global(.app-shell[data-storyboard-layout="true"] > .topnav) { flex: 0 0 60px; }
+  :global(.app-shell[data-storyboard-layout="true"] > .app-main) { display: flex; flex: 1 1 0; min-height: 0; overflow: hidden; }
+  :global(.app-shell[data-storyboard-layout="true"] > .app-main:not(:has(.sb-page))) { overflow-y: auto; }
+  /* Completion removes the ribbon, not its space. A stationary pointer stays
+     on the same control; a second ribbon fits into the page's top padding. */
+  :global(.app-shell[data-storyboard-layout="true"] > .job-ribbon-stack) { position: relative; top: auto; flex: 0 0 var(--sb-job-strip-height); height: var(--sb-job-strip-height); max-height: none; overflow: visible; }
+  :global(.app-shell[data-storyboard-layout="true"] > .job-ribbon-stack .job-ribbon) { height: var(--sb-job-strip-height); min-height: var(--sb-job-strip-height); padding-block: var(--sp-8); }
+  :global(body.sb-v5-theme:has(.app-shell[data-storyboard-layout="true"]) .toast-host) {
+    top: auto; bottom: calc(var(--sb-footer-height) + var(--sp-16) + var(--sb-continue-height) + var(--sp-12));
+    right: var(--sb-page-edge); z-index: 240;
+  }
+  :global(body.sb-v5-theme.storyboard-drawer-open:has(.app-shell[data-storyboard-layout="true"]) .toast-host) { right: calc(var(--sb-drawer-width) + var(--sp-12) + var(--sp-16)); }
+}

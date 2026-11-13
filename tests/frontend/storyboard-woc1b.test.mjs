@@ -86,16 +86,18 @@ test('WOC1b-2 studio sets show their own members first and keep other studio exa
   assert.doesNotMatch(textOf(tree), /이 컷만 다른 사진으로 바꾸기/); h.close();
 });
 
-for (const count of [2, 10]) test(`WOC1b-3 daily-wear design cards use four leading photos with repeats, even with ${count} actual cuts`, () => {
+for (const count of [1, 2, 10]) test(`WOC12 static daily-wear choices leave all ${count} actual photos untouched`, () => {
   const original = seedStoryboard(product, analysis('emo')), run = sectionRuns(original).find(run => run.usage === 'styling');
   const photos = Array.from({ length: count }, (_, index) => ({ ...run.blocks[index % run.blocks.length], id: `actual:${index}`,
     source: 'mine', ownImages: [`photo:${index}`], thumb: `photo:${index}`, slotKey: `wear_styling.g${index + 1}` }));
   const blocks = [...original.slice(0, run.start), ...photos, ...original.slice(run.end)], snapshot = structuredClone(blocks);
-  const selected = sectionRuns(blocks).find(item => item.key === run.key);
   const html = renderToStaticMarkup(React.createElement(Picker, { mode: 'design', runKey: run.key, blocks,
     catalogs: { ...catalogs, detailProduct: product, analysis: analysis('emo') } }));
-  assert.equal((html.match(/previewWirePhoto/g) || []).length, sectionDesignChoices(selected, { storyboard: blocks }).length * 4);
-  assert.ok(!html.includes('href="photo:4"')); assert.deepEqual(blocks, snapshot);
+  assert.equal((html.match(/data-design-thumbnail=/g) || []).length, 2);
+  assert.match(html, /role="group" aria-label="디자인 선택"/);
+  assert.doesNotMatch(html, /완성 모습|<image|photo:|previewWirePhoto|previewFit|href="preview:/);
+  assert.deepEqual([...html.matchAll(/data-design-illustration="([^"]+)"/g)].map(match => match[1]), ['wear-basic', 'wear-frame']);
+  assert.deepEqual(blocks, snapshot, 'rendering static illustrations never rewrites saved photos or their set bindings');
 });
 
 test('WOC1b-4 wear designs declare a matching usage, independently of photo count', () => {

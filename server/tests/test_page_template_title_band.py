@@ -19,22 +19,23 @@ def _card(value, kind):
     return next(card for card in value["storyboard"] if card["pageSectionKind"] == kind and card["source"] == "ai")
 
 
-def _metadata(value, colors):
+def _metadata(value, colors, position='center', plate=False):
     plans = [plan for plan in collect_input_regions(value) if plan['key'] in colors]
-    positions = {plan['key']: 'center' for plan in plans if plan.get('positionCandidates')}
+    positions = {plan['key']: position for plan in plans if plan.get('positionCandidates')}
     return {"overlayTextColors": colors, "overlayTextLines": {
         line["key"]: {"color": colors[plan["key"]], "shade": False}
         for plan in plans for line in plan["lines"]},
-        **({'overlayTextPositions': positions} if positions else {})}
+        **({'overlayTextPositions': positions} if positions else {}),
+        **({'overlayTextPlates': {key: True for key in positions}} if plate else {})}
 
 
-@pytest.mark.parametrize("outside,center,expected", [("white", "black", "#ffffff"), ("black", "white", "#111111")])
-def test_first_page_uses_center_group_instead_of_the_picture_edge(outside, center, expected):
+@pytest.mark.parametrize("outside,center,expected", [("white", "black", "#ffffff"), ("black", "white", "#ffffff")])
+def test_first_page_compares_visible_center_and_edges(outside, center, expected):
     value = case_input("emo-2-point")
     hero = _card(value, "first")
     with Image.new("RGB", (80, 100), outside) as image:
         image.paste(center, (0, 40, 80, 60))
-        expected_meta = _metadata(value, {"emo.first:first.hero:center": expected})
+        expected_meta = _metadata(value, {"emo.first:first.hero:center": expected}, position="center" if center == "black" else "bottom")
         assert _overlay_text_metadata(hero, image, **_options(value)) == expected_meta
         data = BytesIO()
         image.save(data, format="PNG")
@@ -84,14 +85,14 @@ def test_opaque_sns_bubbles_and_fit_caption_panels_do_not_request_measurement():
         assert _overlay_text_metadata(fit, image, **_options(value)) == {}
 
 
-@pytest.mark.parametrize("outside,center,expected", [("white", "black", "#ffffff"), ("black", "white", "#111111")])
+@pytest.mark.parametrize("outside,center,expected", [("white", "black", "#ffffff"), ("black", "white", "#ffffff")])
 def test_center_measurement_accounts_for_visible_cover_crop(outside, center, expected):
     value = case_input("emo-2-point")
     with Image.new("RGB", (100, 400), outside) as image:
         # Cover shows source rows 137.5..262.5. The actual centered text covers
         # rows ~190..210, rather than 40%-60% of the uncropped 400px source.
         image.paste(center, (0, 188, 100, 212))
-        assert _overlay_text_metadata(_card(value, "first"), image, **_options(value)) == _metadata(value, {"emo.first:first.hero:center": expected})
+        assert _overlay_text_metadata(_card(value, "first"), image, **_options(value)) == _metadata(value, {"emo.first:first.hero:center": expected}, position="center" if center == "black" else "bottom")
 
 
 def test_sampling_supports_the_editors_explicit_crop_coordinates():
@@ -112,7 +113,7 @@ def test_measurement_failure_defaults_each_fabric_group_to_white(image):
 def test_invalid_image_bytes_keep_white_group_metadata_and_do_not_block_assembly():
     value = case_input("emo-2-point")
     assert _image_metrics(b"invalid", _card(value, "first"), **_options(value)) == (
-        None, None, _metadata(value, {"emo.first:first.hero:center": "#ffffff"}))
+        None, None, _metadata(value, {"emo.first:first.hero:center": "#ffffff"}, position="center", plate=True))
 
 
 def test_other_versions_and_images_without_bare_overlay_text_are_ignored():

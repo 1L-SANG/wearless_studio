@@ -61,30 +61,32 @@ test('WOC5 section tools stay on the top left and keyboard arrows remain reachab
   assert.doesNotMatch(css, /\.sectionRow:(?:hover|focus-within) \.sectionTools/);
 });
 
-test('WOC5 all three named type specimens are readable and only selection adds the ink border', () => {
+test('WOC5 the current named type specimen stays readable without a selection border', () => {
   const html = render(Themes, { value: 'serif' });
   assert.match(html, />글자 스타일</);
   assert.match(html, /role="group" aria-label="글자 스타일"/);
-  for (const name of ['매거진', '볼드', '다정']) assert.match(html, new RegExp(`title="${name}"`));
-  assert.equal((html.match(/aria-pressed="true"/g) || []).length, 1);
-  const css = read('StoryboardChoices.module.css');
-  assert.doesNotMatch(css.match(/\.themeChoice \{([^}]+)\}/)?.[1] || '', /opacity:/);
-  assert.match(css, /\.themeSelected \{[^}]*1\.5px var\(--fg-1\)/);
+  assert.match(html, /title="매거진"/);
+  assert.equal((html.match(/data-font-style=/g) || []).length, 1);
+  assert.match(html, /aria-label="이전 글자 스타일"/); assert.match(html, /aria-label="다음 글자 스타일"/);
+  const css = read('StoryboardTone.module.css');
+  const sampleRule = css.match(/\.sample \{([^}]+)\}/)?.[1];
+  assert.ok(sampleRule);
+  assert.doesNotMatch(sampleRule, /opacity:|border:|box-shadow:/);
   assert.doesNotMatch(readFileSync('src/styles/tokens.css', 'utf8'), /--sb-theme-inactive/);
   assert.doesNotMatch(read('StoryboardLayout.module.css'), /\.drawerOpen > :global\(\.page-head\) \{[^}]*opacity:/);
 });
 
-test('WOC5 intro copy spans the header grid at the approved readable size', () => {
+test('R2 intro copy stays below the top-aligned title at the approved readable size', () => {
   const css = read('StoryboardLayout.module.css');
   assert.match(css, /\.pageHeadWithTheme \{[^}]*display: grid/);
-  assert.match(css, /\.introCopy \{[^}]*grid-column: 1 \/ -1[^}]*font-size: var\(--sb-fs-intro\)/);
+  assert.match(css, /\.introCopy \{[^}]*font-size: var\(--sb-fs-intro\)/);
   assert.doesNotMatch(css.match(/\.introCopy \{([^}]+)\}/)?.[1] || '', /nowrap|word-break|overflow-wrap/);
   assert.match(readFileSync('src/styles/tokens.css', 'utf8'), /--sb-fs-intro: 16px/);
 });
 
-test('WOC5 the garment color row precedes product modes and uses one labeled button per color', () => {
+test('WOC8 R2 the garment color row follows product examples and retains one labeled button per color', () => {
   const html = render(PhotoPanel, panelProps());
-  assert.ok(html.indexOf('의류 색상 선택') >= 0 && html.indexOf('의류 색상 선택') < html.indexOf('촬영 방식'));
+  assert.ok(html.indexOf('의류 색상 선택') >= 0 && html.indexOf('의류 색상 선택') > html.indexOf('촬영 방식'));
   assert.match(html, /<button[^>]*aria-label="아이보리"[^>]*>[\s\S]*?<svg[\s\S]*?아이보리<\/span><\/button>/);
   assert.match(html, /<button[^>]*aria-label="블루"/);
   assert.match(html, /<button[^>]*disabled=""[^>]*aria-label="블랙"/);

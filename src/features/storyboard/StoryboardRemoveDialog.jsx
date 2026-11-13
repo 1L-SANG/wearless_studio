@@ -25,7 +25,7 @@ export function StoryboardRemoveDialog({ name, consequence, onCancel, onConfirm 
   }, []);
   const dialog = <div className={`sb-v5-theme ${styles.removeOverlay}`} data-storyboard-action onClick={event => { if (event.target === event.currentTarget) onCancel(); }}>
     <div ref={ref} role="dialog" aria-modal="true" aria-labelledby="conti-remove-title" aria-describedby="conti-remove-consequence" className={styles.removeDialog}>
-      <h2 id="conti-remove-title">{name}을 뺄까요?</h2><p id="conti-remove-consequence">{consequence || '이 섹션의 사진이 페이지에서 빠져요'}</p>
+      <h2 id="conti-remove-title">{name} 섹션을 뺄까요?</h2><p id="conti-remove-consequence">{consequence || '이 섹션의 사진이 페이지에서 빠져요'}</p>
       <div className="modal-actions"><button type="button" onClick={onCancel}>그대로 두기</button><button type="button" onClick={onConfirm}>빼기</button></div>
     </div>
   </div>;

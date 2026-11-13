@@ -1,4 +1,4 @@
-.drawer:global(.sb-v5-theme) { position: fixed; z-index: 230; top: var(--sp-12); right: var(--sp-12); bottom: var(--sp-12); display: flex; flex-direction: column; width: min(520px, 40vw); padding: 0; overflow: hidden; border: 1px solid var(--ring); border-radius: var(--r-6); background: var(--bg-1); box-shadow: var(--sb-pop-shadow); color: var(--fg-1); font: 400 var(--sb-fs-body)/1.45 var(--font-body); letter-spacing: -.01em; outline: none; animation: drawerEnter var(--sb-t-base) var(--sb-ease) both; }
+.drawer:global(.sb-v5-theme) { position: fixed; z-index: 230; top: var(--sp-12); right: var(--sp-12); bottom: var(--sp-12); display: flex; flex-direction: column; width: var(--sb-drawer-width); padding: 0; overflow: hidden; border: 1px solid var(--ring); border-radius: var(--r-6); background: var(--bg-1); box-shadow: var(--sb-pop-shadow); color: var(--fg-1); font: 400 var(--sb-fs-body)/1.45 var(--font-body); letter-spacing: -.01em; outline: none; animation: drawerEnter var(--sb-t-base) var(--sb-ease) both; }
 @keyframes drawerEnter { from { opacity: 0; transform: translateX(var(--sp-16)); } }
 :global(.sb-v5-theme) .drawerBar { display: flex; align-items: center; justify-content: space-between; flex: 0 0 48px; height: 48px; padding: 0 var(--sp-12) 0 var(--sp-20); background: var(--bg-1); box-shadow: 0 1px 0 transparent; transition: box-shadow var(--sb-t-fast); }
 :global(.sb-v5-theme) .drawerScrolled { box-shadow: 0 1px 0 var(--ring); }
@@ -14,12 +14,10 @@
 .drawer:global(.sb-v5-theme) input, .drawer:global(.sb-v5-theme) select, .drawer:global(.sb-v5-theme) textarea { font-size: 16px; }
 :global(.sb-v5-theme) .panelHeading { padding-bottom: 14px; border-bottom: 1px solid var(--ring); }
 :global(.sb-v5-theme) .panelHeading p { margin: var(--sp-4) 0 0; color: var(--fg-2); font: 400 var(--sb-fs-note)/1.45 var(--font-body); }
-:global(.sb-v5-theme) .panelHeadingRow { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); }
-:global(.sb-v5-theme) .panelHeadingRow button { flex: none; min-height: 32px; padding-inline: var(--sp-12); }
-:global(.sb-v5-theme) .designName { display: flex; align-items: baseline; gap: var(--sp-6); }
 :global(.sb-v5-theme) .photoPanel:global(.inspector) { position: static; padding: 0; border-radius: 0; box-shadow: none; background: transparent; font-size: var(--sb-fs-body); }
 :global(.sb-v5-theme) .photoPanel :global(.insp-sec) { padding: var(--sp-20) 0; margin: 0; border-bottom: 1px solid var(--ring); }
 :global(.sb-v5-theme) .photoPanel :global(.insp-sec):first-child { padding-top: 0; }
+:global(.sb-v5-theme) .photoPanel .garmentColorField:global(.insp-sec) { margin-top: var(--sp-20); padding-top: var(--sp-20); border-top: 1px solid var(--ring); }
 :global(.sb-v5-theme) .photoPanel :global(.lbl), :global(.sb-v5-theme) .photoPanel :global(.insp-detail-btn) { font: 600 var(--sb-fs-sub)/1.3 var(--font-body); letter-spacing: -.01em; color: var(--fg-1); }
 :global(.sb-v5-theme) .photoPanel :global(.lbl) { margin-bottom: var(--sp-12); }
 :global(.sb-v5-theme) .garmentColorField > :global(.lbl) { display: block; }
@@ -174,14 +172,6 @@
 :global(.sb-v5-theme) .menuPreview { display: block; width: 64px; height: 84px; flex: none; overflow: hidden; border-radius: var(--r-4); background: var(--sb-wire-1); }
 :global(.sb-v5-theme) .roundPlus { display: grid; place-items: center; width: 32px; height: 32px; border-radius: var(--r-pill); background: var(--cta-bg); color: var(--cta-fg); font-size: var(--sb-fs-sub); transition: background-color var(--sb-t-fast); }
 :global(.sb-v5-theme) .sectionOption:hover .roundPlus { background: var(--cta-bg-hover); }
-:global(.sb-v5-theme) .designGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-16) var(--sp-12); margin-top: var(--sp-16); }
-:global(.sb-v5-theme) .designCard { position: relative; min-width: 0; border: 1px solid transparent; border-radius: var(--r-5); padding: var(--sp-12) var(--sp-12) var(--sp-16); background: var(--bg-2); color: var(--fg-1); text-align: left; cursor: pointer; transition: background-color var(--sb-t-fast), border-color var(--sb-t-fast), box-shadow var(--sb-t-fast); }
-:global(.sb-v5-theme) .designCard:hover { background: var(--bg-1); border-color: var(--fg-3); }
-:global(.sb-v5-theme) .designSelected { border-color: var(--ring); }
-:global(.sb-v5-theme) .designCheck { position: absolute; z-index: 1; top: var(--sp-16); right: var(--sp-16); display: grid; place-items: center; width: 20px; height: 20px; border: 1.5px solid var(--cta-fg); border-radius: var(--r-pill); background: var(--fg-1); color: var(--cta-fg); }
-:global(.sb-v5-theme) .designPreview { display: block; width: 100%; max-width: 196px; height: 250px; margin: 0 auto var(--sp-12); overflow: hidden; border-radius: var(--r-4); background: var(--sb-wire-1); }
-:global(.sb-v5-theme) .designCard strong { font: 600 var(--sb-fs-body)/1.35 var(--font-body); }
-:global(.sb-v5-theme) .designCard small { display: inline-block; margin-left: var(--sp-6); padding: 0 var(--sp-6); border-radius: var(--r-pill); background: var(--bg-1); box-shadow: inset 0 0 0 1px var(--ring-strong); color: var(--fg-2); font: 400 var(--sb-fs-meta)/1.4 var(--font-body); }
 :global(.sb-v5-theme) .setList { display: grid; gap: var(--sp-20); margin-top: var(--sp-16); }
 :global(.sb-v5-theme) .setCard { border: 1px solid var(--ring); border-radius: var(--r-5); overflow: hidden; }
 :global(.sb-v5-theme) .setRepresentative { display: flex; align-items: center; gap: var(--sp-16); width: 100%; border: 0; padding: var(--sp-12); background: var(--bg-1); color: var(--fg-1); text-align: left; cursor: pointer; transition: background-color var(--sb-t-fast); }
@@ -222,3 +212,6 @@
 :global(.sb-v5-theme) .mineToggle, :global(.sb-v5-theme) .studioChange { min-height: 36px; border: 1px solid var(--sb-line-control); border-radius: var(--r-pill); padding: 0 14px; background: var(--bg-1); color: var(--fg-1); font: 540 var(--sb-fs-btn)/1.2 var(--font-body); cursor: pointer; transition: border-color var(--sb-t-fast), background-color var(--sb-t-fast); }
 
 :global(.sb-v5-theme) .mineToggle:hover, :global(.sb-v5-theme) .studioChange:hover { border-color: var(--fg-2); }
+
+:global(.sb-v5-theme).designDrawer { --sb-drawer-width: var(--sb-design-drawer-width); }
+:global(.sb-v5-theme).designDrawer .drawerBody { display: flex; flex-direction: column; flex: 1; overflow-y: auto; scrollbar-gutter: stable; }
