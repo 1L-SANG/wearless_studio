@@ -1,34 +1,28 @@
 import React from 'react';
-import { Icon } from '@/components/ui.jsx';
 import { baseColorOf, isNeutralPageSwatch, resolvePageTokens } from '../../lib/pageTemplates/tokens.js';
 import { StoryboardThemePicker } from './StoryboardThemePicker.jsx';
+import { StoryboardStyleCarousel } from './StoryboardStyleCarousel.jsx';
 import styles from './StoryboardTone.module.css';
 
-export function StoryboardStyleControls({ pageStyle, product, disabled, onFontChange, onToneChange, onTonePreview, onTonePreviewEnd }) {
+const TONE_LABELS = { mono: '기본', point: '의류 색감' };
+const TONE_VALUES = Object.keys(TONE_LABELS);
+
+export function StoryboardStyleControls({ pageStyle, product, disabled, onFontChange, onToneChange }) {
   const swatch = baseColorOf(product).swatchId;
   const tokens = resolvePageTokens(pageStyle, swatch);
-  const point = resolvePageTokens({ ...pageStyle, colorMode: 'point' }, swatch).colors;
+  const renderTone = mode => {
+    const colors = resolvePageTokens({ ...pageStyle, colorMode: mode }, swatch).colors;
+    return <span className={styles.sample} role="img" title={TONE_LABELS[mode]} aria-label={TONE_LABELS[mode]} data-color-mode={mode}>
+      <svg className={styles.swatches} viewBox="0 0 60 22" width="60" height="22" aria-hidden="true">
+        {[colors.ink, colors.accentInk, colors.accentBg].map((fill, index) => <circle key={index} cx={10 + index * 20} cy="11" r="7" fill={fill} />)}
+      </svg>
+      <span className={styles.toneName}>{TONE_LABELS[mode]}</span>
+    </span>;
+  };
   return <div className={styles.controls}>
-    <StoryboardThemePicker templateId={tokens.template.id} value={tokens.fontStyle} onChange={onFontChange} disabled={disabled} inline />
-    {!isNeutralPageSwatch(swatch) && <>
-      <span className={`lbl ${styles.label}`}>페이지 색감</span>
-      <div className={`modal-actions ${styles.tones}`} role="group" aria-label="페이지 색감">
-        {[['mono', '기본'], ['point', '의류 색감']].map(([mode, label]) => <button key={mode} type="button"
-          title={label} aria-label={label} aria-pressed={tokens.colorMode === mode} disabled={disabled}
-          className={`${styles.choice}${tokens.colorMode === mode ? ` ${styles.selected}` : ''}`}
-          onPointerEnter={event => { if (!disabled && mode === 'point' && event.pointerType !== 'touch') onTonePreview?.('pointer'); }}
-          onPointerLeave={() => onTonePreviewEnd?.('pointer')}
-          onMouseEnter={() => { if (!disabled && mode === 'point') onTonePreview?.('pointer'); }}
-          onMouseLeave={() => onTonePreviewEnd?.('pointer')}
-          onFocus={() => { if (!disabled && mode === 'point') onTonePreview?.('focus'); }}
-          onBlur={() => onTonePreviewEnd?.('focus')}
-          onClick={() => onToneChange?.(mode)}>
-          <svg className={styles.surface} width="100%" height="100%" aria-hidden="true"><rect width="100%" height="100%" fill={mode === 'point' ? point.accentBg : 'var(--bg-1)'} /></svg>
-          <svg className={styles.copy} width="100%" height="20" aria-hidden="true"><text x="50%" y="50%" dominantBaseline="central" textAnchor="middle"
-            fill={mode === 'point' ? point.accentInk : 'var(--fg-1)'}>{label}</text></svg>
-          {tokens.colorMode === mode && <span className={styles.check} aria-hidden="true"><Icon name="check" size={11} /></span>}
-        </button>)}
-      </div>
-    </>}
+    <StoryboardThemePicker templateId={tokens.template.id} value={tokens.fontStyle} onChange={onFontChange} disabled={disabled} />
+    {!isNeutralPageSwatch(swatch) && <StoryboardStyleCarousel label="페이지 색감" value={tokens.colorMode} values={TONE_VALUES}
+      valueLabel={TONE_LABELS[tokens.colorMode]} renderSample={renderTone} onChange={onToneChange} disabled={disabled}
+      contextKey={`${tokens.template.id}:${swatch}`} dotAttribute="data-color-mode-dot" />}
   </div>;
 }

@@ -61,38 +61,43 @@ test('WOC7 wireframe candidates tint only catalog accent surfaces and retain gra
   assert.match(on, /previewWirePhoto/); assert.doesNotMatch(on, /actual-photo.jpg|fill="#111111"/);
   assert.doesNotMatch(render(Preview, { blocks, wireframe: true }), new RegExp(`fill="${paint.accentBg}"`));
 });
-test('WOC7 stage band changes independently before the outline receives the new page colors', () => {
+test('WOC7 selected stage band and outline use the same page colors immediately', () => {
   const block = { id: 'hero', source: 'ai', pageSectionKey: 'emo.first', pageSectionKind: 'first', pageDesignId: 'P01-D09', slotKey: 'first.hero' };
   const run = { key: 'emo.first', kind: 'first', designId: 'P01-D09', blocks: [block] };
   const page = [{ id: 'p', pageSectionKey: run.key, h: 100, bg: catalog.pointPalette.blue.accentBg, elements: [] }];
   const old = page.map(b => ({ ...b, bg: '#ffffff' }));
   const stage = render(Stage, { run, blocks: [block], page, catalogs: {}, photoOrdinals: new Map([['hero', 1]]), toneColor: catalog.pointPalette.blue.accentBg });
   assert.match(stage, new RegExp(`fill="${catalog.pointPalette.blue.accentBg}"`));
-  const props = { runs: [run], page, previousPage: old, sectionRefs: { current: new Map() } };
-  assert.doesNotMatch(render(PageList, { ...props, toneRevealed: 0 }), new RegExp(`fill="${catalog.pointPalette.blue.accentBg}"`));
-  assert.match(render(PageList, { ...props, toneRevealed: 1 }), new RegExp(`fill="${catalog.pointPalette.blue.accentBg}"`));
+  const props = { runs: [run], sectionRefs: { current: new Map() } };
+  assert.doesNotMatch(render(PageList, { ...props, page: old }), new RegExp(`fill="${catalog.pointPalette.blue.accentBg}"`));
+  assert.match(render(PageList, { ...props, page }), new RegExp(`fill="${catalog.pointPalette.blue.accentBg}"`));
 });
 after(() => vite?.close());
 const product = swatch => ({ colors: [{ id: 'base', isBase: true, swatchId: swatch }] });
 const render = (component, props) => renderToStaticMarkup(React.createElement(component, props));
 
-test('WOC7 two aligned rows keep labels beside controls and equal-width tone cells', () => {
-  const html = render(Controls, { pageStyle: defaultPageStyle(), product: product('blue') });
-  assert.match(html, />글자 스타일</); assert.match(html, />페이지 색감</);
-  assert.match(html, /aria-label="기본" aria-pressed="true"/);
-  assert.match(html, /aria-label="의류 색감" aria-pressed="false"/);
-  assert.match(html, new RegExp(`fill="${catalog.pointPalette.blue.accentBg}"`));
-  assert.match(html, new RegExp(`fill="${catalog.pointPalette.blue.accentInk}"`));
-  assert.doesNotMatch(html, /\sstyle="/);
+test('WOC9 two adjacent controls show one tone specimen with token circles', () => {
+  for (const [colorMode, label] of [['mono', '기본'], ['point', '의류 색감']]) {
+    const html = render(Controls, { pageStyle: { ...defaultPageStyle(), colorMode }, product: product('blue') });
+    assert.match(html, />글자 스타일</); assert.match(html, />페이지 색감</);
+    assert.match(html, new RegExp(`aria-label="${label}" data-color-mode="${colorMode}"`));
+    assert.match(html, /aria-label="이전 페이지 색감"/); assert.match(html, /aria-label="다음 페이지 색감"/);
+    assert.equal((html.match(/<circle /g) || []).length, 3);
+    if (colorMode === 'point') {
+      assert.match(html, new RegExp(`fill="${catalog.pointPalette.blue.accentBg}"`));
+      assert.match(html, new RegExp(`fill="${catalog.pointPalette.blue.accentInk}"`));
+    }
+    assert.doesNotMatch(html, /\sstyle="|aria-pressed/);
+  }
   const css = readFileSync('src/features/storyboard/StoryboardTone.module.css', 'utf8');
-  assert.match(css, /grid-template-columns: auto var\(--sb-style-controls-width\)/);
-  assert.match(css, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
-  assert.doesNotMatch(css, /opacity:\s*\.[0-9]|word-break:/);
+  assert.match(css, /grid-auto-columns: var\(--sb-style-controls-width\)/);
+  assert.doesNotMatch(css, /word-break:/);
 });
 test('WOC7 missing or neutral base hides the entire tone row even for a stored point choice', () => {
   for (const p of [undefined, { colors: [] }, ...[null, 'null', 'white', 'gray', 'black', 'unknown'].map(product)]) {
     const html = render(Controls, { pageStyle: { ...defaultPageStyle(), colorMode: 'point' }, product: p });
     assert.doesNotMatch(html, /페이지 색감|의류 색감/); assert.match(html, /글자 스타일/);
+    assert.equal((html.match(/role="group"/g) || []).length, 1);
   }
   assert.match(render(Controls, { pageStyle: defaultPageStyle(), product: { colors: [{ swatchId: 'blue' }] } }), /페이지 색감/);
 });

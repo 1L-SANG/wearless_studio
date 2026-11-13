@@ -39,6 +39,7 @@ function harness(mobile, pathname, entry = null) {
     draftSlot: { remove() { calls.push(['remove']); }, removeForNewFlow() { calls.push(['remove']); } },
     IS_FACEMARKET: false, isSupabaseConfigured: true, domainRouteRedirect: () => null,
     isMobileDevice: () => mobile,
+    useAppStore: { getState: () => ({ projectId: null }) }, hasStoryboardEntered: () => false, hasEditorEntered: () => false,
     useNavigate: () => (path) => calls.push(['navigate', path]),
     useToast: () => ({ push: (message) => calls.push(['toast', message]) }),
     copyHandoffAddress: async (pushToast) => { pushToast('주소를 복사했어요'); },
@@ -62,6 +63,8 @@ function harness(mobile, pathname, entry = null) {
     'Storyboard', 'Generating', 'LazyEditor', 'PublicVerify', 'PublicVerifyPublication', 'KakaoCallback', 'NotFound']) {
     bindings[name] = () => { calls.push(['mount', name]); return React.createElement('div', null, name); };
   }
+  bindings.BeforeStoryboardRoute = ({ children }) => children;
+  bindings.StoryboardRoute = () => React.createElement(bindings.Storyboard);
   const components = new Function(...Object.keys(bindings), `${code}; return { App, guard: typeof MobileHandoffGuard === 'function' ? MobileHandoffGuard : null };`)(...Object.values(bindings));
   const html = renderToString(React.createElement(StaticRouter, { location: pathname }, React.createElement(components.App)));
   return { calls, html, href, effects, layoutEffects, document, attributes, timers, listeners,

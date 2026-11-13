@@ -99,6 +99,7 @@ test('R3-2 Storyboard uses measured dimensions before loading returns and shares
   const source = readStoryboard('Storyboard.jsx');
   assert.ok(source.indexOf('const detailPreviewDimensions = useDetailPreviewDimensions(') < source.indexOf('if (loadError) return'));
   assert.match(source, /assembleStoryboardPreview\(\{[\s\S]*?catalogs: previewCatalogs/);
-  assert.match(source, /const toneCatalogs = useMemo\(\(\) => previewCatalogs && \(\{ \.\.\.previewCatalogs/);
-  assert.match(source, /<StoryboardSectionPicker[\s\S]*?catalogs=\{toneCatalogs\}/);
+  assert.match(source, /const previewCatalogs = useMemo\(\(\) => catalogs && \(\{ \.\.\.catalogs, detailPreviewDimensions/);
+  assert.match(source, /<StoryboardSectionPicker[\s\S]*?catalogs=\{previewCatalogs\}/);
+  assert.doesNotMatch(source, /toneCatalogs/);
 });

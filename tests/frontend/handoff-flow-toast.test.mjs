@@ -10,7 +10,7 @@ const storageSource = store.slice(store.indexOf("const FLOW_KEY = 'wl_flow'"), s
 test('wl_flow persists current user and last use, while legacy flows remain unknown', () => {
   const values = new Map();
   const localStorage = { getItem: (key) => values.get(key), setItem: (key, value) => values.set(key, value) };
-  const { loadPersistedFlow, persistFlow } = new Function('localStorage', `const mode = 'http'; const normalizeComposeMode = (v) => v; ${storageSource}; return { loadPersistedFlow, persistFlow };`)(localStorage);
+  const { loadPersistedFlow, persistFlow } = new Function('localStorage', `const mode = 'http'; ${storageSource}; return { loadPersistedFlow, persistFlow };`)(localStorage);
   values.set('wl_flow', JSON.stringify({ projectId: 'old', projectPersisted: true }));
   assert.equal(loadPersistedFlow().userId, undefined);
   assert.equal(loadPersistedFlow().lastUsedAt, undefined);

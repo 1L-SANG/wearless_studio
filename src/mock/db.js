@@ -158,11 +158,6 @@ const catalogs = {
     { id: 'navy', label: '네이비', hex: '#1f2a44' },
     { id: 'pink', label: '핑크', hex: '#e3a7b8' },
   ],
-  // 사진 양 — 두 방식은 섹션 순서가 같고 사진 수만 다르다.
-  composeModes: [
-    { value: 'basic', label: '기본형', desc: '대표 컬러 중심으로 필요한 사진만', count: '13', flow: ['후킹', '스타일링', '스튜디오', '의류 확인'] },
-    { value: 'extended', label: '확장형', desc: '같은 순서로 사진을 더 풍부하게', count: '14~30', flow: ['후킹', '스타일링', '스튜디오', '의류 확인'] },
-  ],
   genExamples,
   // 프레임 = 순수 이미지 레이아웃만. 정보성 프리셋(FAQ·상품 정보 카드 등 빈 그리드만
   // 만들던 장식 항목)은 '내용' 탭(PRD §10.14 infoPresets)이 정식 대체해 제거.
@@ -176,7 +171,7 @@ const catalogs = {
     { id: 'hexagon', label: '육각형' }, { id: 'bubble', label: '말풍선' },
   ],
   lines: [{ id: 'arrow-l', label: '←' }, { id: 'line', label: '—' }, { id: 'arrow-r', label: '→' }],
-  fonts: ['Pretendard', 'Gowun Dodum', 'Cal Sans', 'Roboto Mono', 'Cormorant'],
+  fonts: ['Pretendard', 'Gowun Dodum', 'Gowun Batang', 'Cal Sans', 'Roboto Mono', 'Cormorant'],
   downloadOptions: [
     { id: 'long', title: '전체 상세페이지 긴 PNG 1장', desc: '모든 블록을 세로로 이어 붙여 한 장으로 저장' },
     { id: 'zip', title: '블록별 PNG ZIP', desc: '각 블록을 개별 PNG로 저장해 ZIP으로 다운로드' },
@@ -249,7 +244,7 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     ...(name ? { shopName: name } : {}) });
 }
 
-export function buildStoryboard(_mode, colors, context = {}) {
+export function buildStoryboard(colors, context = {}) {
   return seedStoryboard({ ...context, colors }, { ...context, pageStyle: context.pageStyle }, context);
 }
 
@@ -262,7 +257,7 @@ export function buildDraft() {
   /* ---- Project — 플로우 최상위 엔티티 (ADR-0001) ---- */
   const project = {
     id: uid('prj'), status: 'draft', title: '',
-    composeMode: 'basic', copywriting: true,
+    copywriting: true,
     selectedMannequinId: null, adjustCount: 0, fitProfile: null,
     latestJobs: { mannequin: null, detailPage: null },
     createdAt: nowIso(), updatedAt: nowIso(),
@@ -344,9 +339,9 @@ export function buildDraft() {
   if (['emo', 'show'].includes(templateDemo)) analysis.pageStyle = selectTemplateStyle(templateDemo);
   if (mockQuery().get('mockDetail') === 'full') analysis.detailRecommendations = structuredClone(mockFullDetails);
 
-  /* ---- Storyboard blocks — 모드별 기본 콘티는 buildStoryboard() (PRD §8, ADR-0003·0004).
+  /* ---- Storyboard blocks — 기본 콘티는 buildStoryboard() (PRD §8, ADR-0003·0004).
      첫 화면 스타일은 시드가 시그니처 컷 프레임을 이미 포함한다(2026-08-14). ---- */
-  const storyboard = buildStoryboard(project.composeMode, product.colors, {
+  const storyboard = buildStoryboard(product.colors, {
     projectId: project.id,
     clothingType: product.clothingType,
     targetGenders: analysis.targetGenders,

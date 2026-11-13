@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { transformWithEsbuild } from 'vite';
-import { getFontEmbedCSS } from 'html-to-image';
+import { getPageFontEmbedCSS } from '../../src/features/editor/editorExportFonts.js';
 import { assemblePage } from '../../src/lib/pageTemplates/assemble.js';
 import { pageTemplatesCatalog } from '../../src/lib/pageTemplates/catalog.js';
 import { resolvePageTokens } from '../../src/lib/pageTemplates/tokens.js';
@@ -29,7 +29,7 @@ const editorSource = readFileSync(new URL('../../src/features/editor/Editor.jsx'
 const componentSource = editorSource.slice(editorSource.indexOf('function CanvasElement('), editorSource.indexOf('\nconst IMAGE_IMPORT_COPY'));
 const fontMapSource = editorSource.match(/^const FONT_MAP = .*;$/m)[0];
 const compiled = await transformWithEsbuild(`${fontMapSource}\n${componentSource}`, 'CanvasElement.jsx', { jsx: 'transform' });
-const bindings = { React, useRef: current => ({ current }), useState: initial => [initial, () => {}],
+const bindings = { React, useEditedTemplateContrast: el => el, useTitlePlatePreview: () => () => null, useRef: current => ({ current }), useState: initial => [initial, () => {}],
   useCallback: fn => fn, useLayoutEffect() {}, isEmptyTextElement, isSpeechBubbleElement, cssWeight,
   hasTemplateContrastLines: () => false };
 const CanvasElement = new Function(...Object.keys(bindings), `${compiled.code}; return CanvasElement;`)(...Object.values(bindings));
@@ -113,6 +113,7 @@ test('WOC11 download clone carries 300/400 and actual bundled font bytes to the 
   }
   const sheet = { href: cssUrl.href, cssRules: [] };
   const document = {
+    defaultView: { getComputedStyle: () => ({ fontFamily: bodyFamily }) },
     styleSheets: [sheet], body: { appendChild() {} },
     createElement: tag => tag === 'canvas' ? { width: 0, height: 0, getContext: () => ({}) } : new Element(),
     // html-to-image resolves relative CSS URLs through this DOM boundary.
@@ -153,7 +154,7 @@ test('WOC11 download clone carries 300/400 and actual bundled font bytes to the 
   const block = new Element();
   rendered.forEach(node => block.appendChild(new Element(node.props.style, node.props.children)));
   const scope = {
-    document, EXPORT_WIDTH: 1000, PIXEL_RATIO: 2, CHROME_SELECTOR: '.editor-chrome', getFontEmbedCSS,
+    document, EXPORT_WIDTH: 1000, PIXEL_RATIO: 2, CHROME_SELECTOR: '.editor-chrome', getPageFontEmbedCSS,
     replaceGifPosters() {}, preflightImages: async () => ({ softFailed: 0 }), bakeExportBackdrops, collectExportImageProbes,
     toSvg: async (clone, options) => {
       svgBoundary = { clone, options };

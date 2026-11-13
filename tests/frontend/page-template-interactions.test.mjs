@@ -50,7 +50,7 @@ function boardHarness() {
   Object.defineProperty(scope, 'blocks', { get: () => blocks });
   const actions = evaluate(`
     ${slice('  const showUndo =', '  const clearUndoForSnapshot =')}
-    ${slice('  const undoLatest =', '  const patch =')}
+    ${slice('  const undoLatest =', '  const enterUndo =')}
     ${slice('  const commitSectionRemoval =', '  async function retryAtomicSave()')}
     return { addSection, removeSection, undoLatest, showUndo };
   `, scope);
@@ -66,7 +66,7 @@ test('adding styling opens the new section, queues its reveal and announces exac
   assert.equal(added.length, 2);
   assert.equal(h.insertedKey, added[0].pageSectionKey);
   assert.deepEqual(h.opened, [added[0].pageSectionKey]);
-  assert.equal(h.undo.message, '일상 착용컷을 넣었어요');
+  assert.equal(h.undo.message, '일상 착용컷 섹션을 넣었어요');
   assert.equal(h.undo.operationCount, 1);
   assert.equal(h.undo.standalone, true);
   assert.equal(new Set(added.map(b => b.spaceGroupId)).size, 1);
@@ -93,7 +93,7 @@ test('add, add and remove are undone one at a time, preserving an earlier settin
   h.scope.setBlocks(edited); h.showUndo(original, edited, { label: '각도' });
   h.addSection('wear', 'styling'); const first = h.blocks;
   h.addSection('sns'); const second = h.blocks;
-  assert.equal(h.undo.message, 'SNS 화면을 넣었어요');
+  assert.equal(h.undo.message, 'SNS 화면 섹션을 넣었어요');
   assert.equal(h.undo.operationCount, 1);
   const reviewKey = h.blocks.find(b => b.pageSectionKind === 'review').pageSectionKey;
   h.removeSection(reviewKey);
@@ -109,7 +109,7 @@ test('add, add and remove are undone one at a time, preserving an earlier settin
 test('settings after an isolated section change stay in their own group', () => {
   const h = boardHarness(), before = h.blocks;
   h.addSection('wear', 'fit'); const added = h.blocks;
-  assert.equal(h.undo.message, '스튜디오 착용컷을 넣었어요');
+  assert.equal(h.undo.message, '스튜디오 착용컷 섹션을 넣었어요');
   const one = [...added], two = [...one];
   h.scope.setBlocks(one); h.showUndo(added, one, { label: '예시' });
   h.scope.setBlocks(two); h.showUndo(one, two, { label: '색상' });
@@ -131,7 +131,7 @@ test('adding an existing singleton and removing an unknown key create no undo or
 
 for (const reduced of [false, true]) test(`inserted section scroll/highlight waits for flight then lasts one second and cleans up (reduced motion: ${reduced})`, () => {
   const scrolls = [], frames = new Map(), timers = new Map(); let cleanup, insertedKey = 'emo.wear_1';
-  const effect = slice('  useEffect(() => {\n    if (!insertedSectionKey)', '  useLayoutEffect(() => { composeModeSeedRef');
+  const effect = slice('  useEffect(() => {\n    if (!insertedSectionKey)', '  useLayoutEffect(() => { storyboardSeedContextRef');
   evaluate(effect, {
     insertedSectionKey: insertedKey,
     sectionRefs: { current: new Map([[insertedKey, { scrollIntoView: options => scrolls.push(options) }]]) },

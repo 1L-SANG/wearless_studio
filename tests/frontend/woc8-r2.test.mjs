@@ -35,32 +35,29 @@ const catalogs = { ...withStoryboardSpaceSetExamples({ genExamples: examples }),
   shotTypes: [{ value: 'full', label: '전신' }, { value: 'medium', label: '상반신' }], productShotTypes: [{ value: 'ghost', label: '전체컷' }, { value: 'detail', label: '디테일' }] };
 const blocks = seedStoryboard(product, analysis);
 
-test('WOC8 R2 tone labels, accessible names and tooltips share the short copy', () => {
-  const html = render(Controls, { pageStyle: defaultPageStyle(), product: { colors: [{ swatchId: 'blue' }] } });
-  for (const label of ['기본', '의류 색감']) {
+test('WOC9 tone labels, accessible names and tooltips share the short copy', () => {
+  for (const [colorMode, label] of [['mono', '기본'], ['point', '의류 색감']]) {
+    const html = render(Controls, { pageStyle: { ...defaultPageStyle(), colorMode }, product: { colors: [{ swatchId: 'blue' }] } });
     assert.match(html, new RegExp(`aria-label="${label}"`));
     assert.match(html, new RegExp(`title="${label}"`));
     assert.match(html, new RegExp(`>${label}<`));
+    assert.doesNotMatch(html, /의류 색감에 맞추기/);
   }
-  assert.doesNotMatch(html, /의류 색감에 맞추기/);
 });
 
-test('WOC8 R2 equal compact pills share the carousel width and preserve the header edge', () => {
+test('WOC9 equal carousel columns preserve the header edge and put dots beside labels', () => {
   const tokens = read('styles/tokens.css'), tone = read('features/storyboard/StoryboardTone.module.css');
   const width = Number(tokens.match(/--sb-style-controls-width: (\d+)px;/)?.[1]);
-  assert.equal(width, 256); assert.equal((width - 8) / 2, 124);
-  assert.ok((width - 8) / 2 - 12 - 28 >= 4 * 13 + 13 / 3 + 20, 'the short label has20px spare room besides the check padding');
-  assert.match(tone, /grid-template-columns: auto var\(--sb-style-controls-width\)/);
-  assert.match(tone, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
-  assert.match(cssRule(tone, '.choice'), /font: 600 var\(--sb-fs-btn\)/);
+  assert.equal(width, 256);
+  assert.match(tone, /grid-auto-columns: var\(--sb-style-controls-width\)/);
+  assert.match(cssRule(tone, '.pickerHead'), /display: flex[^}]*justify-content: space-between/);
+  assert.match(cssRule(tone, '.toneName'), /font: 600 var\(--sb-fs-sub\)/);
   const layout = read('features/storyboard/StoryboardLayout.module.css');
   assert.match(cssRule(layout, '.styleControlsWrap'), /justify-self: end/);
   assert.match(layout, /\.drawerOpen \.styleControlsWrap \{ justify-self: start/);
   assert.match(cssRule(layout, '.continueBar'), /right: var\(--sb-page-edge\)/);
   assert.match(cssRule(layout, '.page:global(.sb-page) > :global(.page-head)'), /width: 100%; margin-inline: 0/);
-  const themes = read('features/storyboard/StoryboardChoices.module.css');
-  assert.match(cssRule(themes, '.themeSample'), /grid-column: 2/);
-  assert.match(cssRule(themes, '.themeDots'), /grid-column: 2[^}]*justify-content: center/);
+  assert.match(cssRule(tone, '.slide'), /grid-area: 1 \/ 1/);
   assert.equal(44 + 6 + (width - 2 * 44 - 2 * 6) / 2, width / 2);
 });
 

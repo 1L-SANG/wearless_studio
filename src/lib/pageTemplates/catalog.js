@@ -130,6 +130,16 @@ export function validateCatalog(catalog) {
             ["mono", "point"].includes(catalog?.defaults?.colorMode),
         "default page style",
     );
+    const plate = catalog.firstTitlePlate || {};
+    const bandValid = band => Array.isArray(band) && band.length === 2 && band.every(Number.isFinite)
+        && band[0] >= 0 && band[1] <= 1 && band[0] < band[1];
+    check(HEX.test(catalog.neutralColors?.[plate.fillToken] || '') && opacity(plate.opacity)
+        && ['paddingX', 'paddingTop', 'paddingBottom', 'threshold'].every(key => positive(plate[key]))
+        && opacity(plate.nearBestRatio) && opacity(plate.maxGarmentOverlap)
+        && JSON.stringify(plate.preference) === JSON.stringify(['center', 'bottom', 'top'])
+        && JSON.stringify(plate.platePreference) === JSON.stringify(['center', 'bottom'])
+        && bandValid(plate.fallbackGarmentBand)
+        && ['top', 'outer', 'bottom', 'dress'].every(kind => ['full', 'medium'].every(shot => bandValid(plate.garmentBands?.[kind]?.[shot]))), 'first title plate');
     const band = catalog?.firstTitleBand || {};
     check(
         [band.left, band.right, band.top, band.bottom].every(

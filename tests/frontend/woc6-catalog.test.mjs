@@ -16,7 +16,7 @@ const nodesOf = id => {
 
 test('WOC6 layouts remain available alongside current points choices and saved hidden definitions', () => {
   assert.deepEqual(visible('wear', 'styling'), ['P02-D01', 'WEAR-STYLING-2COL-01', 'WEAR-STYLING-HERO-01',
-    ...['COLUMN', '2COL', 'HERO'].flatMap(layout => [1, 2, 3].map(count => `WEAR-STYLING-FRAME-${layout}-0${count}`))].sort());
+    ...['COLUMN', '2COL', 'HERO'].flatMap(layout => [1, 2].map(count => `WEAR-STYLING-FRAME-${layout}-0${count}`))].sort());
   assert.deepEqual(visible('wear', 'fit'), ['WEAR-FIT-2COL-01', 'WEAR-FIT-COLUMN-01', 'WEAR-FIT-HERO-01']);
   assert.deepEqual(visible('color_product'), ['CP-COLUMN-01', 'CP-EMO-01']);
   assert.deepEqual(visible('points'), ['PT-PHOTO-CARD-01', 'PT-TEXT-PHOTO-01']);
@@ -25,7 +25,7 @@ test('WOC6 layouts remain available alongside current points choices and saved h
   assert.deepEqual(visible('review'), ['I09-D06']);
   assert.deepEqual(visible('faq'), ['T08-D07']);
   assert.deepEqual(visible('sns'), []);
-  for (const id of ['P02-D02', 'P04-D01', 'CP-SHOW-01', 'CP-GUIDE-01', 'PT-EMO-01', 'PT-EMO-TEXT', 'T05-D07', 'T07-D06', 'P01-D11', 'P01-D01', 'T03-TEXT-01', 'I09-D14', 'P07-D08', 'P06-D01', 'PT-COLUMN-01', 'PT-COLUMN-CARD-01', 'PT-BELOW-CARD-01']) {
+  for (const id of ['P02-D02', 'P04-D01', 'CP-SHOW-01', 'CP-GUIDE-01', 'PT-EMO-01', 'PT-EMO-TEXT', 'T05-D07', 'T07-D06', 'P01-D11', 'P01-D01', 'T03-TEXT-01', 'I09-D14', 'P07-D08', 'P06-D01', 'PT-COLUMN-01', 'PT-COLUMN-CARD-01', 'PT-BELOW-CARD-01', ...['COLUMN', '2COL', 'HERO'].map(layout => `WEAR-STYLING-FRAME-${layout}-03`)]) {
     assert.ok(catalog.designs[id]?.layout.length, `saved design ${id} must still render`);
     assert.equal(catalog.designs[id].pickerHidden, true);
   }

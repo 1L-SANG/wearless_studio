@@ -13,7 +13,7 @@ import { templateSectionName } from '@/lib/pageTemplates/slots.js';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Moveable from 'react-moveable';
 import QRCode from 'qrcode';
 import { api, isMockMode } from '@/lib/api/index.js';
@@ -21,6 +21,15 @@ import { jobFailure, jobFailureMessage } from '@/lib/api/jobFailure.js';
 import { getJobSettlement } from '@/lib/api/facemarket.js';
 import { SettlementReceiptChain } from '@/features/editor/SettlementReceiptChain.jsx';
 import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
+import { pageTemplatesCatalog } from '@/lib/pageTemplates/catalog.js';
+import { selectFrameShopName } from '@/lib/frameShopName.js';
+import { storyboardShopOwner, storyboardShopQueryOptions } from '@/features/storyboard/storyboardShopName.js';
+import { useTitlePlatePreview } from './editorTitlePlatePreview.js';
+import { fitTitlePlateBlocks } from './editorTitlePlateFit.js';
+import { hasTitlePlate } from '../../lib/pageTemplates/titlePlate.js';
+import { editedTextElement } from './editorTextEdit.js';
+import { useEditedTemplateContrast } from './useEditedTemplateContrast.js';
+import { createEditorContrastStore, EditorContrastContext } from './editorContrastStore.js';
 import { alignSkeletonToServer, canSafelyMergeServerBlocks, clearFailedJobPreviewBlocks, decorateGenBlocks, failedJobPreviewUrls, fillGenBlocks, mergeServerBlocks, patchTemplateElement } from '@/lib/editorWaitSkeleton.js';
 import { incompleteMessage, retryOfIncomplete, retryReuseHint } from '@/lib/detailPageJobFailure.js';
 import {
@@ -101,7 +110,7 @@ import { resolveTextSpacing } from './textSpacing.js';
 import { canvasBlockRuns, defaultStitchedMode, readStitchedPreference, writeStitchedPreference } from './editorViewMode.js';
 import { hasTemplateContrastLines, TemplateContrastText } from './TemplateContrastText.jsx';
 
-const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)', 'Gowun Dodum': 'var(--font-soft)' };
+const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)', 'Gowun Dodum': 'var(--font-soft)', 'Gowun Batang': 'var(--font-batang)' };
 
 /* 스냅 엔진 상시 on — 포인터 이동은 editorSnap, Moveable 리사이즈는 elementGuidelines를 쓴다.
    DEV 게이트 없이 prod 배포에서도 같은 기준으로 동작한다. */
@@ -270,7 +279,7 @@ function ImageDropGuide({ scale, width, height, rotate = 0 }) {
 
 /* render-only element (selection + inline text edit). Position dragging enters the
    shared pointer engine; the single <Moveable> owns only resize/rotate controls. */
-function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onElementDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart, imageWidth = null, canvasAiJob, onCanvasAiCancel, onCanvasAiDismiss }) {
+function CanvasElement({ el, blockId, titlePlate = false, titlePlateElements, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onElementDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart, imageWidth = null, canvasAiJob, onCanvasAiCancel, onCanvasAiDismiss }) {
   /* imageWidth = 이 렌더가 실제로 필요한 이미지 폭(px). 미니 미리보기처럼 작게 그리는
      곳만 넘긴다 — 캔버스 본체와 전체화면 미리보기는 넘기지 않는다(그쪽이 내보내기 캡처
      원본이자 셀러 최종 확인 화면이라 원본 해상도를 지켜야 한다). */
@@ -416,6 +425,8 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   // deps는 높이에 실제로 영향 주는 필드만 — onPatch(매 렌더 재생성)를 넣으면 마퀴·줌마다
   // 전 텍스트가 강제 리플로우를 밟는다.
   const hSyncArmed = useRef(false);
+  const previewTitlePlate = useTitlePlatePreview(el, titlePlateElements, ref, editing);
+  const contrastElement = useEditedTemplateContrast(el, ref, { editing, preview, plated: titlePlate });
   const s0 = el.style || {};
   useLayoutEffect(() => {
     const armed = hSyncArmed.current;
@@ -427,7 +438,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     const h = Math.max(1, Math.ceil(node.offsetHeight));
     if (Math.round(Number(el.h || 0)) !== h) onPatch(blockId, el.id, { h });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [el.text, el.w, el.textSizing, s0.size, s0.weight, s0.lineHeight, s0.tracking, s0.spacingMode, s0.font, s0.list, editing, preview, el.hidden]);
+  }, [el.text, el.w, el.textSizing, s0.size, s0.weight, s0.lineHeight, s0.tracking, s0.spacingMode, s0.font, s0.list, editing, preview, el.hidden, contrastElement.contrastLines]);
   // StrictMode(dev)는 마운트 효과를 setup→cleanup→setup 으로 두 번 돌린다. ref 는 cleanup 으로
   // 되돌아가지 않으므로 두 번째 setup 에서 위 가드가 이미 'armed' 라, 문서를 여는 것만으로
   // 전 텍스트의 h 가 재기록되고 자동저장 PUT 이 나갔다(dev 는 실서버가 기본이라 저장본이
@@ -627,7 +638,12 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
         onClick={finishClick}
         onDoubleClick={(e) => { e.stopPropagation(); pendingTextSize.current = null; onEdit(el.id); }}
         contentEditable={editing} suppressContentEditableWarning
-        onInput={(e) => { if (editing) previewAutoTextSize(e.currentTarget); }}
+        onInput={(e) => { if (editing) {
+          if (el.keepWords) e.currentTarget.classList.toggle('el-keep-words', editableText(e.currentTarget) === el.text);
+          const plateSize = previewTitlePlate(e.currentTarget, editableText(e.currentTarget));
+          if (plateSize) pendingTextSize.current = plateSize;
+          else previewAutoTextSize(e.currentTarget);
+        } }}
         onBlur={(e) => {
           const value = editableText(e.currentTarget);
           const nextSize = pendingTextSize.current || previewAutoTextSize(e.currentTarget);
@@ -637,7 +653,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
           if (onTextCommit) onTextCommit(blockId, el.id, value, nextSize);
           else onPatch(blockId, el.id, { text: value });
         }}>
-        {editing ? el.text : (!emptyText && hasTemplateContrastLines(el) ? <TemplateContrastText element={el} /> : textDisplay)}</div>
+        {editing ? el.text : (!emptyText && hasTemplateContrastLines(contrastElement) ? <TemplateContrastText element={contrastElement} /> : textDisplay)}</div>
     );
   }
   if (el.type === 'license-verify') {
@@ -893,7 +909,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
       <div className="block-clip">
         {block.elements.map((el) => (
           (crop && crop.elId === el.id) ? null : (
-            <CanvasElement key={el.id} el={el} blockId={block.id} scale={scale} preview={false}
+            <CanvasElement key={el.id} el={el} blockId={block.id} titlePlate={hasTitlePlate(el, block.elements)} titlePlateElements={block.elements} scale={scale} preview={false}
               selected={selEls && selEls.includes(el.id)} selectionCount={selEls?.length || 0} editing={editEl === el.id}
               onSelect={(e, additive) => onSelectEl(block.id, e, additive)}
               onSelectBlock={() => onSelectBlock(block.id)} onPickBelowText={pickBelowBlankText}
@@ -1012,7 +1028,7 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
               <div style={{ position: 'absolute', top: 0, left: 0, width: 1000, height: blockH,
                 transform: `scale(${(thumbW || 140) / 1000})`, transformOrigin: 'top left', pointerEvents: 'none' }}>
                 {b.elements.map((el) => (
-                  <CanvasElement key={el.id} el={el} preview imageWidth={MINI_IMAGE_WIDTH} selected={false} onSelect={() => {}} onEdit={() => {}} />
+                  <CanvasElement key={el.id} el={el} titlePlate={hasTitlePlate(el, b.elements)} preview imageWidth={MINI_IMAGE_WIDTH} selected={false} onSelect={() => {}} onEdit={() => {}} />
                 ))}
               </div>
             </div>
@@ -1074,6 +1090,7 @@ const normDeg = (d) => { let n = ((d % 360) + 360) % 360; return n > 180 ? n - 3
 export function Editor() {
   const navigate = useNavigate();
   const { id: projectId } = useParams();             // /editor/:id = projectId (계약 §2 — mock 은 무시)
+  const contrastStore = useMemo(createEditorContrastStore, [projectId]);
   const account = useAppStore((s) => s.account);     // 크레딧 단일 표시 소스 (frontend_state_model §6)
   const syncCredits = useAppStore((s) => s.syncCredits);
   const [blocks, setBlocksState] = useState(null);
@@ -1088,7 +1105,8 @@ export function Editor() {
   const setBlocks = useCallback((u) => setBlocksState((prev) => {
     const source = typeof u === 'function' ? u(prev) : u;
     if (source === prev) { latestBlocks.current = prev; return prev; }
-    const next = normalizeEditorSelectionGroups(expandBlockHeights(upgradeLegacyKiwiTemplateBlocks(source, uid)));
+    const fitted = typeof u === 'function' ? fitTitlePlateBlocks(prev, source) : source;
+    const next = normalizeEditorSelectionGroups(expandBlockHeights(upgradeLegacyKiwiTemplateBlocks(fitted, uid)));
     latestBlocks.current = next;
     return next;
   }), []);
@@ -1174,6 +1192,20 @@ export function Editor() {
     void warmFaceRender(modelId);       // 실패는 무시 — 켜기는 거들 뿐이고 잡이 다시 기다린다
   }, [analysis?.selectedModelId]);
 
+  const waitShopQueryClient = useQueryClient();
+  const loadWaitingShopName = useCallback(async (storyboard) => {
+    const userId = storyboardShopOwner(useAppStore.getState().accountUserId);
+    const hasFrame = (storyboard || []).some(block => block.taxonomyVersion === 4
+      && pageTemplatesCatalog.designs[block.pageDesignId]?.framePhotos);
+    if (!userId || !hasFrame) return null;
+    const options = storyboardShopQueryOptions(userId, hasFrame);
+    try {
+      const connections = await waitShopQueryClient.fetchQuery(options);
+      if (userId !== storyboardShopOwner(useAppStore.getState().accountUserId)
+          || waitShopQueryClient.getQueryState(options.queryKey)?.status === 'error') return null;
+      return selectFrameShopName(connections);
+    } catch { return null; }
+  }, [waitShopQueryClient]);
   const [waitBoardError, setWaitBoardError] = useState('');
   const [waitBoardAttempt, setWaitBoardAttempt] = useState(0);
   // 콘티를 못 받아 대기 화면을 못 만든 경우, 뒤에서 계속 다시 받아 스스로 복구한다.
@@ -1190,6 +1222,8 @@ export function Editor() {
           isCancelled: () => cancelled,
         });
         if (cancelled) return;
+        const shopName = await loadWaitingShopName(sb);
+        if (cancelled) return;
         const cw = useAppStore.getState().copywriting;
         const dj = useAppStore.getState().detailPageJob;
         const exThumb = {};
@@ -1200,14 +1234,14 @@ export function Editor() {
           }
         }
         const skeleton = upgradeLegacyKiwiTemplateBlocks(stripPhotoBlockTextElements(decorateGenBlocks(
-          alignSkeletonToServer(buildEditorBlocksFromStoryboard(sb || [], product, cw, analysis || {}), cw), dj, exThumb)), uid);
+          alignSkeletonToServer(buildEditorBlocksFromStoryboard(sb || [], product, cw, analysis || {}, shopName), cw), dj, exThumb)), uid);
         setBlocks(skeleton);
         setSelBlock(skeleton[0]?.id);
         setWaitBoardError('');
       } catch { /* 재시도까지 실패 — 화면의 [다시 불러오기]·[보관함으로]가 남아 있다 */ }
     })();
     return () => { cancelled = true; };
-  }, [waitBoardError, waitBoardAttempt, blocks, product, analysis, catalogs, projectId]);
+  }, [waitBoardError, waitBoardAttempt, blocks, product, analysis, catalogs, projectId, loadWaitingShopName]);
   // 화면 대기(3분)를 넘긴 생성 잡의 백그라운드 추적 — 훅은 로딩 early-return 위에만 둔다.
   const slowJobs = useRef(new Set());
   const slowJobTimers = useRef(new Set());
@@ -1451,6 +1485,7 @@ export function Editor() {
 
   useEffect(() => {
     setLoadError(null);
+    let cancelled = false;
     const enteringJob = useAppStore.getState().detailPageJob;
     // 내용과 기준 리비전을 지금 한 번에 읽는다 — 서버 응답 뒤에 기준만 다시 읽으면 그새 다른
     // 탭이 공유 키를 지워 짝이 어긋난다(loadEditorWaitDraftEntry 주석).
@@ -1483,7 +1518,8 @@ export function Editor() {
         : api.getStoryboard(projectId)).catch(() => null),
       // AI 탭 '매칭 의류 바꾸기' 목록 — 콘티보드와 동일 소스, 실패해도 에디터는 뜬다
       api.getMatchClothing(projectId).catch(() => [])])
-      .then(([b, w, c, _a, p, fm, an, sb, mc]) => {
+      .then(async ([b, w, c, _a, p, fm, an, sb, mc]) => {
+        if (cancelled) return;
         fetched = true;   // 여기부터 터지면 통신이 아니라 조립 문제다
         const hydratedCatalogs = withStoryboardSpaceSetExamples(c);
         let withH = b.map((blk) => normalizeEditorBlockRole(blk));
@@ -1522,6 +1558,8 @@ export function Editor() {
         if (genMode) {
           // 생성 중 진입 — 저장된 blocks(구 데모 시드·빈 값) 대신 콘티 스켈레톤이 캔버스가 된다.
           // 컷·카피는 store 이벤트가 채우고, 완료 시 mergeServerBlocks 로 같은 화면에서 확정.
+          const shopName = await loadWaitingShopName(sb);
+          if (cancelled) return;
           const cw = useAppStore.getState().copywriting;
           const exThumb = {};
           for (const blk of sb || []) {
@@ -1531,7 +1569,7 @@ export function Editor() {
             }
           }
           const skeleton = decorateGenBlocks(
-            alignSkeletonToServer(buildEditorBlocksFromStoryboard(sb || [], p, cw, an || {}), cw), dj, exThumb);
+            alignSkeletonToServer(buildEditorBlocksFromStoryboard(sb || [], p, cw, an || {}, shopName), cw), dj, exThumb);
           // 생성 중 임시 작업본은 서버 완성본과 분리한다. 재진입 시 문구뿐 아니라 배치·추가 요소도
           // 그대로 복원하고, 이후 재수신되는 생성 이벤트가 새 이미지/카피만 채운다.
           withH = savedDraft || skeleton;
@@ -1603,9 +1641,10 @@ export function Editor() {
       // 필수 데이터를 못 받으면 스피너를 영원히 돌리지 않는다 — 무슨 일인지 말하고 다시 시도.
       // 단 위 조립 본문에서 터진 것은 '못 받은 것'이 아니라 우리 버그다. 같은 응답으로 다시
       // 시도해도 똑같이 터지므로 재시도를 권하지 않게 표식을 붙인다(2026-08-17 리뷰).
-      .catch((error) => setLoadError({ error, ...classifyEditorLoadError(
+      .catch((error) => !cancelled && setLoadError({ error, ...classifyEditorLoadError(
         fetched ? Object.assign(error instanceof Error ? error : new Error(String(error)), { duringRender: true }) : error,
       ) }));
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadAttempt]);
 
@@ -2208,7 +2247,7 @@ export function Editor() {
     const selected = bs.flatMap(b => b.elements).find(e => e.id === selEl);
     if (!selected || Object.entries(patch).every(([key, value]) => JSON.stringify(selected[key]) === JSON.stringify(value))) return bs;
     return bs.map(b => b.elements.some(e => e.id === selEl)
-      ? { ...b, elements: b.elements.map(e => e.id === selEl ? { ...e, ...patch } : e) } : b);
+      ? { ...b, elements: b.elements.map(e => e.id === selEl ? editedTextElement(e, patch) : e) } : b);
   });
   const patchBubbleAppearance = (patch) => setBlocks((bs) => patchSelectedBubbleAppearance(bs, selEls.length ? selEls : [selEl], patch));
   const patchElById = (blockId, elId, patch) => setBlocks((bs) => bs.map((b) => b.id === blockId ? patchTemplateElement(b, elId, patch) : b));
@@ -2222,7 +2261,7 @@ export function Editor() {
     return {
       ...b,
       elements: b.elements.map((element) => element.id === elementId
-        ? { ...element, text: value, ...elementPatch }
+        ? editedTextElement(element, { text: value, ...elementPatch })
         : element),
     };
   }));
@@ -3244,9 +3283,10 @@ export function Editor() {
           if (el.id !== editEl) return el;
           const textSize = el.type === 'text' && el.shape !== 'bubble' && el.textSizing === 'auto'
             ? { w: Math.max(1, Math.round(node.offsetWidth)), h: Math.max(1, Math.round(node.offsetHeight)) }
-            : {};
-          return { ...el, text, ...textSize };
+            : hasTitlePlate(el, b.elements) && text !== el.text ? { h: Math.max(1, Math.round(node.offsetHeight)) } : {};
+          return editedTextElement(el, { text, ...textSize });
         }) }));
+        bs = fitTitlePlateBlocks(latestBlocks.current, bs);
         latestBlocks.current = bs;
       }
     }
@@ -3862,6 +3902,7 @@ export function Editor() {
   const genReuseHint = dpJob.status === 'running' ? retryReuseHint(dpJob) : '';
 
   return (
+    <EditorContrastContext.Provider value={contrastStore}>
     <div className="editor">
       {/* 저장 실패 배너 — 조용히 실패하면 셀러가 한참 작업한 뒤에야 전부 날아간 걸 안다.
           편집분은 이미 이 브라우저에 임시 보관돼 있으므로 그 사실부터 말하고, 원인별로
@@ -4273,7 +4314,7 @@ export function Editor() {
           <div className="preview-sheet">
             {blocks.map((b) => (
               <div key={b.id} style={{ position: 'relative', height: getBlockRenderHeight(b, { forExport: true }), background: colorWithOpacity(b.bg, b.bgOpacity), overflow: 'hidden', boxSizing: 'border-box' }}>
-                {b.elements.map((el) => <CanvasElement key={el.id} el={el} preview selected={false} onSelect={() => {}} onEdit={() => {}} />)}
+                {b.elements.map((el) => <CanvasElement key={el.id} el={el} titlePlate={hasTitlePlate(el, b.elements)} preview selected={false} onSelect={() => {}} onEdit={() => {}} />)}
               </div>
             ))}
           </div>
@@ -4335,6 +4376,7 @@ export function Editor() {
           onDraftCopy={draftFeatureCopy} />
       )}
     </div>
+    </EditorContrastContext.Provider>
   );
 }
 

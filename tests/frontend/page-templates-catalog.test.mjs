@@ -15,7 +15,7 @@ test("catalog keeps saved designs and exposes the current defaults without SNS b
     assert.equal(validateCatalog(catalog), catalog);
     assert.equal(Object.keys(catalog.kinds).length, 10);
     assert.equal(Object.keys(catalog.designs).length, 52);
-    assert.equal(Object.values(catalog.designs).filter(design => design.pickerHidden).length, 24);
+    assert.equal(Object.values(catalog.designs).filter(design => design.pickerHidden).length, 27);
     assert.equal(
         (catalog.firstTitleBand.top + catalog.firstTitleBand.bottom) / 2,
         0.5,
@@ -425,7 +425,7 @@ test("token resolution uses the base swatch, preserves body fonts and does not m
         baseColorOf(product).swatchId,
     );
     assert.equal(tokens.colors.accentInk, catalog.pointPalette.blue.accentInk);
-    assert.equal(tokens.fonts.titleKo.weight, 800);
+    assert.equal(tokens.fonts.titleKo.weight, 700);
     assert.equal(tokens.fonts.labelEn.font, "Cal Sans");
     assert.equal(tokens.fonts.body.font, "Pretendard");
     assert.equal(tokens.fonts.body.weight, 400);

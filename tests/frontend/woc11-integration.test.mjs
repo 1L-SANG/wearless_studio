@@ -45,9 +45,13 @@ for (const templateId of ['emo', 'show']) test(`WOC11 ${templateId} points picke
   const html = renderToStaticMarkup(React.createElement(Picker, { mode: 'design', blocks: value.storyboard, runKey: run.key, catalogs }));
   assert.equal((html.match(/aria-pressed=/g) || []).length, 2);
   assert.equal((html.match(/aria-pressed="true"/g) || []).length, 1);
-  assert.match(html, /사진과 글 칸 카드/); assert.match(html, /제목, 설명, 사진/);
+  assert.match(html, /aria-label="디자인 선택 · 사진과 글 칸 카드" title="사진과 글 칸 카드"/);
+  assert.match(html, /aria-label="디자인 선택 · 제목, 설명, 사진" title="제목, 설명, 사진"/);
   assert.doesNotMatch(html, /aria-label="(?:배치|꾸밈)"|액자 사진/);
-  assert.equal((html.match(/<small>기본<\/small>/g) || []).length, 1);
+  assert.equal((html.match(/<small>기본<\/small>/g) || []).length, 0);
+  assert.match(html, /role="group" aria-label="디자인 선택"/);
+  assert.equal((html.match(/data-design-illustration=/g) || []).length, 2);
+  assert.doesNotMatch(html, /완성 모습|<image|>사진과 글 칸 카드<|>제목, 설명, 사진</);
   const count = uniqueGenerationCutCount(value.storyboard, product), original = structuredClone(value.storyboard);
   const withoutDesign = blocks => blocks.map(({ pageDesignId, ...block }) => block);
   for (const id of expected) {

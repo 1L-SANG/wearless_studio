@@ -26,7 +26,7 @@ const compiled = await transformWithEsbuild(
     { jsx: "transform" },
 );
 const bindings = {
-    React,
+    React, useEditedTemplateContrast: el => el, useTitlePlatePreview: () => () => null,
     useRef: (current) => ({ current }),
     useState: (initial) => [initial, () => {}],
     useCallback: (fn) => fn,

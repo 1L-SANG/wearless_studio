@@ -110,9 +110,14 @@ for (const [templateId, kind, defaultId, selectedId] of [
     const html = renderToStaticMarkup(React.createElement(Picker, { mode: 'design', runKey: run.key, blocks: changed,
       catalogs: { detailProduct: product, analysis: analysis(templateId), genExamples: [] } }));
     const cards = [...html.matchAll(/<button\b([^>]+)>([\s\S]*?)<\/button>/g)].filter(([, attrs]) => attrs.includes('aria-pressed'));
-    assert.match(cards[0][2], new RegExp(`<strong>${catalog.designs[defaultId].displayName}</strong>`));
-    assert.match(cards[0][2], /<small>기본<\/small>/);
-    assert.equal(attrs(cards.find(([, , body]) => body.includes(`<strong>${catalog.designs[selectedId].displayName}</strong>`))[1])['aria-pressed'], 'true');
+    assert.doesNotMatch(html, /<small>기본<\/small>|designCheck/);
+    if (designs.length > 1) {
+      assert.equal(attrs(cards[0][1])['data-design-thumbnail'], defaultId);
+      assert.equal(attrs(cards.find(([, attributes]) => attrs(attributes)['data-design-thumbnail'] === selectedId)[1])['aria-pressed'], 'true');
+    } else {
+      assert.equal(cards.length, 0, 'one-option stage is hidden');
+      assert.doesNotMatch(html, /role="group"|완성 모습|data-design-illustration=/);
+    }
     assert.equal(validateStoryboardV4(changed), changed);
   });
 }

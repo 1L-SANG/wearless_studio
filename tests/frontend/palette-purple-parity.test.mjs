@@ -9,7 +9,7 @@ const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 
 test('퍼플이 팔레트 정본의 7번째 — 7열 그리드 첫 줄 맨 오른쪽', () => {
   const db = read('../../src/mock/db.js');
-  const block = db.slice(db.indexOf('swatchColors: ['), db.indexOf('composeModes:'));
+  const block = db.slice(db.indexOf('swatchColors: ['), db.indexOf('genExamples,', db.indexOf('swatchColors: [')));
   const ids = [...block.matchAll(/id: '(\w+)'/g)].map((m) => m[1]);
   assert.equal(ids.length, 13);
   assert.equal(ids[6], 'purple');

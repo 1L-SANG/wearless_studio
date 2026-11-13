@@ -1,6 +1,6 @@
 # AI 파이프라인 명세 (ai_pipeline_spec.md)
 
-> 상태: 확정 (2026-06-11, 갱신 2026-08-18) · 짝 문서: `documents/ai_agent_modules.md`(에이전트 정의), `documents/common_data_contract.md`(API 계약·크레딧·멱등 규약)
+> 상태: 확정 (2026-06-11, 갱신 2026-11-13) · 짝 문서: `documents/ai_agent_modules.md`(에이전트 정의), `documents/common_data_contract.md`(API 계약·크레딧·멱등 규약)
 > 실행 주체: **FastAPI(AWS ECS Fargate) job orchestration** (`documents/03_기술스택_결정서.md` §7 — Railway에서 이전 완료, 2026-07). 프론트는 `lib/api` 함수만 호출하고, 파이프라인의 존재를 모른다.
 
 ---
@@ -21,9 +21,9 @@
 | ID | 트리거(화면 → API) | 에이전트/모듈 | 크레딧 | 출력 |
 |---|---|---|---|---|
 | PL-1 분석 | 입력 '입력 완료' → `analyzeProduct` | AG-01(라이브) → M-01(라이브) | — | `Analysis` (실측 null) |
-| PL-2 마네킹 생성 | 마네킹 최초 진입 시 **자동** → `generateMannequins` | AG-04 ×1 단일컷 **(라이브)** | `mannequinGenerate` | `MannequinCut[]` |
+| PL-2 마네킹 생성 | 콘티 화면이 콘티를 불러온 뒤 **자동**으로 `generateMannequins`를 시작한다(옛 콘티를 새로 깔아 확인을 기다릴 때는 빼고). 마네킹 화면에 들어가도 다시 요청하며, 진행 중인 작업이 있으면 합류한다 | AG-04 ×1 단일컷 **(라이브)** | `mannequinGenerate` | `MannequinCut[]` |
 | PL-3 마네킹 재생성 | 핏 확인 스텝 후 '수정사항 반영하여 재생성' → `regenerateMannequin(projectId, { fitProfile })` | AG-04(라이브) ×1 — 요청 스냅샷으로 재실행하고 성공 종결 때 analysis와 버전 핏을 함께 확정 | `mannequinGenerate` | `MannequinCut[]` (새 버전 추가·자동 선택) |
-| PL-4 상세페이지 생성 | 콘티 '이대로 생성하기' → `saveStoryboard` 후 `generateDetailPage` | AG-06(라이브) ×N → AG-02(라이브) → AG-03(라이브) → M-02(라이브) | AI 1~4 생성 컷은 최소 5컷 값, 5컷 이상은 실제 생성 컷 × `storyboardPerCut` | 완성 컷과 이유가 남는 빈 칸의 `EditorBlock[]` (ADR-0017) |
+| PL-4 상세페이지 생성 | 콘티를 `saveStoryboard`로 저장하고 마네킹컷을 고른 뒤 생성 화면에서 `generateDetailPage` | 카피 단계 AG-02·AG-03과 부위 설명 카피(`page_part_copy`)가 먼저 돌고, 이어서 AG-06 ×N, 마지막에 M-02 템플릿 조립(모두 라이브) | AI 1~4 생성 컷은 최소 5컷 값, 5컷 이상은 실제 생성 컷 × `storyboardPerCut` | 완성 컷과 이유가 남는 빈 칸의 `EditorBlock[]` (ADR-0017) |
 | PL-5 에디터 새 이미지 | AI 탭 `새 이미지 추가` → `generateImage(mode:'new')` | AG-06(라이브) | `editorImage` | `WardrobeImage` |
 | PL-6 현재 이미지 수정 | AI 탭 `현재 이미지 수정`의 `generateImage(mode:'vary')` | 착용 사진은 AG-07 비슷한 컷, 레시피가 있는 디테일컷은 디테일 전용 경로(라이브) | `editorImage` | `WardrobeImage` |
 
@@ -49,7 +49,7 @@
   앞면과 뒷면의 권한을 나누는 visibleSurfacePlan은 서버 라우팅 정책이며 상품 디자인 서술이 아니다.
 - [P1 훅] AG-P1로 M-01 스왑 가능(동일 출력 shape).
 
-### PL-2 마네킹 생성 — `generateMannequins(projectId)` (페이지 진입 시 자동)
+### PL-2 마네킹 생성 — `generateMannequins(projectId)` (콘티 화면에서 자동 시작)
 
 ```
 prep(기준 색상 이미지·분석 속성·매칭 하의 이미지·fitProfile = effective_fit_profile(analysis))
@@ -74,7 +74,7 @@ prep(기준 색상 이미지·분석 속성·매칭 하의 이미지·fitProfile
 
 ### PL-4 상세페이지 생성 — `generateDetailPage(projectId)` ★핵심
 
-입력은 전부 서버 상태에서 읽는다: 저장된 `storyboard` + `project(copywriting, selectedMannequinId)` + `product`/`analysis`. 클라이언트가 들고 있는 값을 믿지 않는다 (frontend_state_model §5). 워커는 생성 전에 콘티를 공식 네 섹션의 `taxonomyVersion: 3`으로 정규화하며, `contentRole`을 우선하고 예전 `kind`·`cutType`은 빠진 역할을 복원하거나 v2 저장본을 승격할 때만 읽는다. `selectedMannequinId`의 마네킹컷은 기준색으로 만든 자산이므로 기준색 착용컷에만 첨부하고, 다른 색을 고른 블록은 그 색상의 셀러 상품 사진을 색상 정본으로 쓴다. 해당 컷에 톤 에디터 적용본이 있으면 원본 컷 asset이 아니라 최신 `mannequinToneAdjusted` asset을 기준 이미지로 쓴다.
+입력은 전부 서버 상태에서 읽는다: 저장된 `storyboard` + `project(copywriting, selectedMannequinId)` + `product`/`analysis`(페이지 스타일 `pageStyle` 포함). 클라이언트가 들고 있는 값을 믿지 않는다 (frontend_state_model §5). 콘티는 `taxonomyVersion: 4`만 받는다. 시작 라우트가 `validate_storyboard_v4`로 검사해 옛 콘티는 변환하지 않고 `storyboard_outdated`로 거절하며, 분석의 템플릿과 콘티의 템플릿이 다르면 `page_style_mismatch`로 거절한다(`server/app/routes.py`). 생성 입력은 `canonicalize_storyboard`가 사진 칸 정의에 맞춰 `cutType`·`shot`·`contentRole`을 정리한 콘티다. 첫 장의 첫 AI 착용 카드만 `hero`이고 `sectionRole`은 그 값에서 파생한 내부값이다. `selectedMannequinId`의 마네킹컷은 기준색으로 만든 자산이므로 기준색 착용컷에만 첨부하고, 다른 색을 고른 블록은 그 색상의 셀러 상품 사진을 색상 정본으로 쓴다. 해당 컷에 톤 에디터 적용본이 있으면 원본 컷 asset이 아니라 최신 `mannequinToneAdjusted` asset을 기준 이미지로 쓴다.
 
 ```
 info     상품·분석·콘티 데이터 수집/검증 (비AI)
@@ -82,17 +82,26 @@ prep     exact 요청 블록은 선택 resolved 마네킹 → grid_face_directio
          라벨 셀러 근거 그리드 1장 → 선택 매칭 최대 1장 → 서비스 예시 순서로 패킷 준비.
          그 밖의 VIRTUAL 착용컷은 기존 face_front + body_front 쌍을 포함한 generic
          프롬프트·에셋 계약을 준비한다 (비AI).
+copy     컷보다 먼저 돈다. copywriting=true(템플릿 콘티는 늘 켬)면 시그니처를 뺀 AI 사진마다
+         AG-02 소제목(headline)을 만들고 묶음 AG-03으로 검수한다(revise 채택).
+         이어서 page_part_copy 한 번의 호출로 디테일 요소 섹션의 부위 설명(partDescriptionCopy)과
+         강조 특징 설명(featureCopy)을 만들어 analysis에 병합 저장한다.
 cuts     AG-06 cut-generator — source='ai' 블록별 병렬 실행. 일반 블록은 모두 detail_cut GPT로
          Stage 1과 조건부 Stage 2를 만들고, exact 대상만 과거 입력·프롬프트 패킷을 추가한다.
          첫 시그니처 컷은 별도 image_signature 계약을 유지한다.
          MODEL_ROUTING_DETAIL_CUT=gpt-image-2-2026-04-21과 DETAIL_CUT_IMAGE_SIZE=4K를 쓴다.
          세 계열로 컴파일하고 블록별로 병렬 처리한다.
          source='mine' 블록은 ownImages 그대로(에이전트 호출 없음).
-copy     copywriting=true면: 카피 대상 블록별 AG-02 → 묶음 AG-03 검수(revise 채택)
-assemble M-02 page-assembler — 컷+카피+실측 → EditorBlock[] + 자동 블록 3종 (비AI)
+         컷이 나오면 첫 장 제목 자리와 사진 위 글자색을 사진 대비로 재서 컷 메타데이터에 남긴다.
+assemble M-02 템플릿 조립 (비AI). page_assembler.assemble이 page_template_assembler.assemble_v4를
+         부른다. 저장 순서의 섹션 묶음마다 pageDesignId 디자인으로 사진과 글 칸을 배치하고,
+         끝에 자동 블록 넷(size, care, ai-notice, common-notice)을 붙여 EditorBlock[]을 만든다.
 done     project.status='done' · { data: EditorBlock[], credits }
 ```
-- **진행 표시**: HTTP 경로는 현재 `inputs_loaded → cuts → copy → done`의 수치 진행률만 전달한다. mock 체크리스트는 호환용 key(info/prep/styling/horizon/product/copy/assemble)를 유지하지만 화면 라벨은 `후킹 / 스타일링 / 스튜디오 / 의류 확인`의 공식 네 섹션을 따른다. HTTP의 단계 체크리스트 실배선은 TODO다.
+- **진행 표시**: HTTP 경로는 진행 이벤트 `inputs_loaded`(15), `copy`(18), `cut`(20~80), `assemble`(85)의 수치 진행률을 보낸다. mock 체크리스트(`src/mock/db.js`의 `genSteps`)는 호환용 key(info/prep/styling/horizon/product/copy/assemble)와 옛 라벨을 유지하며 템플릿 섹션 이름을 쓰지 않는다. HTTP의 단계 체크리스트 실배선은 TODO다.
+- **카피(AI 글 칸)**: AI가 채우는 글은 디테일 요소 섹션의 부위 설명, 상품 소개 본문, 후기 초안이다. 두 줄 부위 설명(`partDescriptionCopy`)을 쓰고, 일부 디자인은 그 값이 없을 때 강조 특징 설명(`featureCopy`)을 쓴다. AG-02 소제목은 AG-03 검수 뒤 `copy_ready` 이벤트로 나가고 조립기에도 넘어가지만, 템플릿 글 칸에는 `headline` 역할이 없어 페이지에 실리지 않는다(`server/app/workers/detail_page_job.py`의 `_gen_copy`, `page_template_assembler.py`의 `ctx.copy`). 템플릿의 다른 AI 글 칸(첫 장 영문 상품명, 착용컷 제목과 소개, 색상 소개, 원단 제목과 설명, 상품 소개 제목과 요약, 디테일 요소 제목과 핏 설명, 추천 대상, 질문과 답 등)은 지금 빈 글과 안내 문구로 나가고 셀러가 에디터에서 채운다. 카피 체계는 별도 카피라이팅 작업에서 정한다.
+- **MD 코멘트(상품 소개 본문)**: 2026-11-13 오너 결정에 따라 상품 소개 본문(`seller+ai`)에는 셀러가 분석 화면에 쓴 `analysis.mdComment`를 AI가 실제 쇼핑몰 상세페이지의 MD 코멘트처럼 다듬어 넣는다. 감성형과 쇼룸형 모두 넣고, 쇼룸형은 상품 소개 요약 판 맨 위에 영문 라벨 "Comment"와 본문을 둔다. 다듬는 말투와 형식은 카피라이팅 작업이 정한다. 다듬기가 붙기 전에는 원문을 줄바꿈까지 그대로 하나의 글상자에 넣는다(`page_template_assembler.py`의 `_content_for`). 셀러 글이 없으면 AI가 초안을 쓴다.
+- **후기 초안**: 2026-10-26 오너 결정에 따라 후기 섹션은 셀러가 고치기 쉽도록 AI가 초안을 넣어 두고, 셀러가 에디터에서 실제 후기로 고친다. 초안은 매번 조금씩 다르게 쓰고, 이름 칸 기본값은 "김태희", 별점 기본값은 5개다.
 - **크레딧**: 시작 시 AI 생성 컷을 예약한다. 1~4 생성 컷은 최소 5컷 값, 5장 이상은 실제 생성 컷 수 × `storyboardPerCut`으로 예약하고, 성공 시 견적에서 못 만든 유료 컷 값을 뺀다(내 이미지와 복제 컷 제외, ADR-0017, 계약 §6).
 - **완성 정책**: 일부 AI 컷이 미완성이면 완성분으로 페이지를 조립·출고하고 작업과 프로젝트를 완료로 저장한다. 실패한 이미지 칸에는 이유와 다시 만들기 가능 여부가 남는다. 재료가 없거나 조건이 맞지 않으면 셀러에게 묻지 않고 대체 경로로 채우며, 빈 칸 문구는 셀러에게 사진을 요구하지 않는다(ADR-0017 2026-10-11 개정). 정산은 예약 견적에서 못 만든 유료 컷 값을 뺀다. 전부 미완성만 `all_cuts_failed`로 실패시키고 예약 전액을 해제한다(ADR-0017). 배포 전 `incomplete_cuts` 보관본 화면과 오류 종료의 이어 쓰기는 유지한다. 일반 컷의 확인된 미과금 일시 오류는 첫 호출 뒤 최대 2회 재시도하며, 입력 오류·미확정 과금 응답은 재시도하지 않는다. 제품 디테일컷은 명확한 두 번의 QC 실패 뒤 원본 모양을 지키는 마지막 후보를 한 번 더 만든다. 끝내 QC를 통과하지 못해도 저장된 생성 후보 중 상품 사실 오류가 가장 덜 중대한 한 장을 미통과로 표시해 제공하고 정상 차감한다. 원본 픽셀 복사본과 읽을 수 없는 후보는 제외한다.
 - **확정 GPT exact 적용 범위와 입력 게이트**: `styling/direct`, front, full/medium,
@@ -196,5 +205,4 @@ PIPELINE_CUT_CONCURRENCY=3                          # PL-4 그룹 내 병렬 상
 1. **모델 배정은 잠정** — tier별 비용·품질 로그(모듈 정의서 §6-5)를 근거로 재배정. 특히 내부 `product` 레시피와 변형 작업의 Pro 유지 여부.
 2. **환불·재시도 정책 미정** (PRD §12.2) — 차감 후 실패 보상, 품질 불만 재생성 정책.
 3. **이미지 동일성 검수** — AG-06 컷 단위 독립 비전 QC는 `off|shadow|repair`, 상세페이지/공간 세트 단위 QC는 `off|shadow`다. `repair`는 최대 1회 교정하고 개선되지 않으면 1차를 보존하는 fail-open 서비스 모드다. 상품 색·구조·소재·무늬·부자재·텍스트·로고, 모델, 사용자 방향·샷·포즈, 인체·원근·광원·그림자·주름을 판정한다. 강제 HOLD와 페이지 단위 자동복구는 별도 골든셋 보정 뒤 남은 과제다(ADR-0010).
-4. **기본형·확장형 생성 품질 검증** — composeMode별 콘티 시드는 구현됐다. 남은 검증은 상의·하의·아우터·원피스 각 10상품에서 기본형과 확장형이 같은 네 섹션을 유지하면서 필요한 사진 수와 다양성을 만드는지 확인하는 것이다.
-5. **분위기 예시 시드** — 운영자 데이터 입력 예정(에이전트 아님). 시드 스키마는 `MatchingItem` 패턴(구조적 에셋 경로)을 따른다.
+4. **분위기 예시 시드** — 운영자 데이터 입력 예정(에이전트 아님). 시드 스키마는 `MatchingItem` 패턴(구조적 에셋 경로)을 따른다.

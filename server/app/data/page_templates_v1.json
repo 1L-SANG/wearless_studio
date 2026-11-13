@@ -18,7 +18,8 @@
     "invertLine": "#3a3a3a",
     "panelMuted": "#5c5c5c",
     "framePaper": "#fbfaf7",
-    "frameInk": "#6b6b6b"
+    "frameInk": "#6b6b6b",
+    "titlePlate": "#111111"
   },
   "editorFonts": [
     "Pretendard",
@@ -28,9 +29,7 @@
     "Gowun Dodum",
     "Gowun Batang"
   ],
-  "pendingFontBundles": [
-    "Gowun Batang"
-  ],
+  "pendingFontBundles": [],
   "defaults": {
     "templateId": "emo",
     "fontStyle": "template",
@@ -553,7 +552,7 @@
       "emptySellerNote": "AI가 초안을 써요",
       "kind": "intro",
       "storyboardPhotoNote": "",
-      "storyboardTextNote": "MD 코멘트를 AI가 다듬어요"
+      "storyboardTextNote": "MD 코멘트를 넣어요"
     },
     "points": {
       "name": "디테일 요소",
@@ -938,7 +937,7 @@
       },
       "titleKo": {
         "font": "Pretendard",
-        "weight": 800,
+        "weight": 700,
         "italic": false,
         "trackingEm": -0.03
       }
@@ -1240,14 +1239,6 @@
                     "maxLines": 2,
                     "minSizeMaxLines": 3
                   }
-                },
-                {
-                  "type": "text",
-                  "copyRole": "tagline",
-                  "gap": 8,
-                  "size": 25,
-                  "color": "onPhoto",
-                  "align": "center"
                 },
                 {
                   "type": "text",
@@ -2336,7 +2327,7 @@
         "aspect": "source",
         "gap": 40
       },
-      "storyboardTextNote": "MD 코멘트를 AI가 다듬어요"
+      "storyboardTextNote": "MD 코멘트를 넣어요"
     },
     "T06-D01": {
       "id": "T06-D01",
@@ -2376,6 +2367,24 @@
           "padding": 56,
           "fill": "summaryBg",
           "nodes": [
+            {
+              "type": "text",
+              "copyRole": "label",
+              "gap": 12,
+              "size": 32,
+              "x": 56,
+              "w": 776,
+              "whenTemplate": "show"
+            },
+            {
+              "type": "text",
+              "copyRole": "body",
+              "gap": 30,
+              "size": 25,
+              "x": 56,
+              "w": 776,
+              "whenTemplate": "show"
+            },
             {
               "type": "factTable",
               "copyRole": "facts",
@@ -3586,14 +3595,6 @@
                 },
                 {
                   "type": "text",
-                  "copyRole": "tagline",
-                  "gap": 8,
-                  "size": 25,
-                  "color": "onPhoto",
-                  "align": "center"
-                },
-                {
-                  "type": "text",
                   "copyRole": "colors",
                   "gap": 18,
                   "size": 23,
@@ -4604,6 +4605,7 @@
     },
     "WEAR-STYLING-FRAME-COLUMN-03": {
       "id": "WEAR-STYLING-FRAME-COLUMN-03",
+      "pickerHidden": true,
       "displayName": "한 열 액자 3장",
       "kind": "wear",
       "padding": 56,
@@ -4760,6 +4762,7 @@
     },
     "WEAR-STYLING-FRAME-2COL-03": {
       "id": "WEAR-STYLING-FRAME-2COL-03",
+      "pickerHidden": true,
       "displayName": "2열 액자 3장",
       "kind": "wear",
       "padding": 56,
@@ -4916,6 +4919,7 @@
     },
     "WEAR-STYLING-FRAME-HERO-03": {
       "id": "WEAR-STYLING-FRAME-HERO-03",
+      "pickerHidden": true,
       "displayName": "큰 사진 아래 두 칸 액자 3장",
       "kind": "wear",
       "padding": 56,
@@ -6733,5 +6737,70 @@
     "fallbackAspect": "3/4",
     "paper": "framePaper",
     "ink": "frameInk"
+  },
+  "firstTitlePlate": {
+    "fillToken": "titlePlate",
+    "opacity": 0.6,
+    "paddingX": 64,
+    "paddingTop": 44,
+    "paddingBottom": 38,
+    "threshold": 3,
+    "nearBestRatio": 0.9,
+    "maxGarmentOverlap": 0.5,
+    "preference": [
+      "center",
+      "bottom",
+      "top"
+    ],
+    "platePreference": [
+      "center",
+      "bottom"
+    ],
+    "garmentBands": {
+      "top": {
+        "full": [
+          0.2,
+          0.51
+        ],
+        "medium": [
+          0.133,
+          0.65
+        ]
+      },
+      "outer": {
+        "full": [
+          0.2,
+          0.64
+        ],
+        "medium": [
+          0.133,
+          0.867
+        ]
+      },
+      "bottom": {
+        "full": [
+          0.36,
+          0.96
+        ],
+        "medium": [
+          0.086,
+          0.943
+        ]
+      },
+      "dress": {
+        "full": [
+          0.2,
+          0.86
+        ],
+        "medium": [
+          0.133,
+          1
+        ]
+      }
+    },
+    "fallbackGarmentBand": [
+      0.2,
+      0.96
+    ]
   }
 }

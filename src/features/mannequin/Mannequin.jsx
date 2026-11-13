@@ -5,6 +5,8 @@ import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
+import { markFlowSession } from '@/lib/flowSession.js';
+import { resolveStoryboardResume, STORYBOARD_REVIEW_MESSAGE } from '@/lib/pageTemplates/entryNotices.js';
 import {
   detailPageGenerationCreditShortfall,
   mannequinGenerationCreditShortfall,
@@ -787,6 +789,13 @@ export function Mannequin() {
       ]);
       const nextAnalysis = loadedAnalysis;
       if (loadRunRef.current !== runId) return;
+      if (api.storyboardEntryNotice?.(pid) === 'rebuilt') {
+        useAppStore.getState().setResumePath('/create/storyboard');
+        markFlowSession(pid, '/create/storyboard');
+        pushToast(STORYBOARD_REVIEW_MESSAGE);
+        navigate('/create/storyboard', { replace: true });
+        return;
+      }
       setProgress(generationProgressFor(pid));
       setProduct(nextProduct);
       setAnalysis(nextAnalysis);
@@ -820,6 +829,7 @@ export function Mannequin() {
       }
       if (loadRunRef.current !== runId) return;
       if (!list.length || joiningGeneration) {
+        if (!Array.isArray(nextStoryboard)) throw new Error('콘티를 확인하지 못했어요. 다시 시도해 주세요.');
         const resolved = await resolveInitialGenerationCuts({
           projectId: pid,
           initialCuts: joiningGeneration ? [] : list,
@@ -1455,6 +1465,29 @@ export function Mannequin() {
 
   const continueWithSelectedVersion = async (legacyProfile) => {
     if (busy || submittingRef.current) return;
+    submittingRef.current = true;
+    setBusy(true);
+    try {
+      const run = loadRunRef.current;
+      const state = useAppStore.getState();
+      const { path, review } = await resolveStoryboardResume(api, projectId, '/create/generating');
+      const current = useAppStore.getState();
+      if (run !== loadRunRef.current || current.projectId !== projectId
+        || current.projectGeneration !== state.projectGeneration || current.userId !== state.userId) return;
+      if (review) {
+        current.setResumePath(path);
+        markFlowSession(projectId, path);
+        pushToast(STORYBOARD_REVIEW_MESSAGE);
+        navigate(path, { replace: true });
+        return;
+      }
+    } catch {
+      pushToast('콘티를 확인하지 못했어요. 다시 시도해 주세요.', { icon: 'alertTri' });
+      return;
+    } finally {
+      submittingRef.current = false;
+      setBusy(false);
+    }
     const shortfall = detailPageGenerationCreditShortfall(
       useAppStore.getState().account,
       aiCutCount,

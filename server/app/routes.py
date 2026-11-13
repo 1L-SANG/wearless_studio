@@ -1009,7 +1009,7 @@ async def patch_project(
     patch: ProjectPatch,
     user_id: str = Depends(require_user),
 ):
-    """프로젝트의 설정(예: composeMode, copywriting, selectedMannequinId 등)을 업데이트합니다.
+    """프로젝트의 copywriting, selectedMannequinId 설정을 업데이트합니다.
 
     - **Bearer Token**: 필수
     - **제한 사항**:

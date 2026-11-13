@@ -16,6 +16,7 @@ import { sectionDesignPreviewSample } from '../../src/lib/pageTemplates/designPr
 import { templateSectionName } from '../../src/lib/pageTemplates/slots.js';
 import { baseColorOf, resolvePageTokens } from '../../src/lib/pageTemplates/tokens.js';
 import { stageAdditions, addStageAddition } from '../../src/lib/pageTemplates/stageAdditions.js';
+import { assembleStoryboardPreview } from '../../src/features/storyboard/storyboardPreview.js';
 import { hookHarness, loadStoryboardComponent, nodes, textOf } from './helpers/storyboardComponents.mjs';
 
 let vite, Picker, Preview, sectionDesignAxes;
@@ -51,33 +52,38 @@ async function pickerHarness() {
   return { render: props => hooks.render(Component, { mode: 'design', catalogs, ...props }), close: hooks.close };
 }
 
-test('WOC6B daily wear exposes separate layout and decoration groups', () => {
+test('WOC12 daily wear separates layout glyphs and static decoration illustrations', () => {
   const blocks = board(), run = sectionRuns(blocks).find(item => item.usage === 'styling');
   const html = render({ blocks, runKey: run.key });
   assert.match(html, /role="group" aria-label="배치"/);
   assert.match(html, /<h3[^>]*>배치<\/h3>/);
-  assert.match(html, /role="group" aria-label="꾸밈"/);
-  assert.match(html, /<strong>액자<\/strong>/);
-  assert.match(html, /<strong>한 열<\/strong>/);
-  assert.match(html, /<strong>2열<\/strong>/);
-  assert.match(html, /<strong>큰 사진 아래 두 칸<\/strong>/);
-  assert.match(html, /previewWirePhoto/);
-  assert.doesNotMatch(html, /<image|silhouette/i);
-  assert.match(html, /섹션 빼기<\/button>/);
+  assert.match(html, /role="group" aria-label="디자인 선택"/);
+  assert.match(html, /aria-label="디자인 선택 · 액자" title="액자"/);
+  for (const [layout, name] of [['column', '한 열'], ['twoColumn', '2열'], ['heroPair', '큰 사진 아래 두 칸']]) {
+    assert.match(html, new RegExp(`aria-label="배치 · ${name}" title="${name}"`));
+    assert.match(html, new RegExp(`data-layout-glyph="wear:${layout}"`));
+  }
+  const layoutButtons = [...html.matchAll(/<button[^>]*aria-label="배치 · [\s\S]*?<\/button>/g)].map(match => match[0]);
+  assert.equal(layoutButtons.length, 3);
+  assert.ok(layoutButtons.every(button => !/<image|data-design-thumbnail|previewWirePhoto/.test(button)));
+  assert.match(html, /data-design-illustration="wear-basic"/);
+  assert.match(html, /data-design-illustration="wear-frame"/);
+  assert.doesNotMatch(html, /<image|완성 모습|previewWirePhoto|섹션 빼기|<small>기본<\/small>|>한 열<|>2열<|>큰 사진 아래 두 칸<|>기본<|>액자</);
 });
 
-test('WOC11 points present two flat designs with one selected choice and one default badge', () => {
+test('WOC12 points present two flat illustrations with one selected choice', () => {
   const blocks = addTemplateSection(board(), product, analysis, 'points');
   const run = sectionRuns(blocks).find(item => item.kind === 'points');
   assert.ok(run);
   const html = render({ blocks, runKey: run.key });
-  assert.doesNotMatch(html, /role="group"|<h3/);
+  assert.doesNotMatch(html, /aria-label="배치"|aria-label="꾸밈"/);
+  assert.match(html, /role="group" aria-label="디자인 선택"/);
   assert.equal((html.match(/aria-pressed=/g) || []).length, 2);
   assert.equal((html.match(/aria-pressed="true"/g) || []).length, 1);
-  assert.equal((html.match(/<small>기본<\/small>/g) || []).length, 1);
-  assert.match(html, /<strong>사진과 글 칸 카드<\/strong>/);
-  assert.match(html, /<strong>제목, 설명, 사진<\/strong>/);
-  assert.doesNotMatch(html, /<strong>부위별 카드<\/strong>/);
+  assert.match(html, /aria-label="디자인 선택 · 사진과 글 칸 카드" title="사진과 글 칸 카드"/);
+  assert.match(html, /aria-label="디자인 선택 · 제목, 설명, 사진" title="제목, 설명, 사진"/);
+  assert.equal((html.match(/data-design-illustration=/g) || []).length, 2);
+  assert.doesNotMatch(html, /<image|완성 모습|<small>기본<\/small>|부위별 카드|섹션 빼기|>사진과 글 칸 카드<|>제목, 설명, 사진</);
 });
 
 test('WOC6 add menu omits SNS while keeping both repeatable wear usages', () => {
@@ -110,7 +116,10 @@ test('WOC11 flat point selection callbacks preserve saved blocks, photo counts a
     for (const [name, expectedId] of [
       ['제목, 설명, 사진', 'PT-TEXT-PHOTO-01'], ['사진과 글 칸 카드', 'PT-PHOTO-CARD-01'],
     ]) {
-      selectable(tree).find(button => nodes(button).some(node => node.type === 'strong' && textOf(node) === name)).props.onClick();
+      const option = selectable(tree).find(button => button.props['aria-label'] === `디자인 선택 · ${name}`);
+      assert.equal(option.props.title, name);
+      assert.equal(textOf(option), '');
+      option.props.onClick();
       assert.deepEqual(chosen.at(-1), ['points', undefined, expectedId]);
       assert.ok(blocks.filter(block => block.pageSectionKey === runKey).every(block => block.pageDesignId === expectedId));
       assert.deepEqual(eraseDesign(blocks), eraseDesign(original));
@@ -133,12 +142,14 @@ test('WOC6B one eligible layout omits its group while daily decoration remains',
   const blocks = original.filter(block => block.pageSectionKey !== run.key || block.source === 'text' || block.id === photo.id);
   const html = render({ blocks, runKey: run.key });
   assert.doesNotMatch(html, /aria-label="배치"/);
-  assert.match(html, /aria-label="꾸밈"/);
-  assert.match(html, /일상 착용컷 디자인/);
-  assert.match(html, /섹션 빼기<\/button>/);
+  assert.match(html, /aria-label="디자인 선택"/);
+  assert.match(html, /data-design-illustration="wear-frame"/);
+  assert.doesNotMatch(html, /섹션 빼기|완성 모습|<image/);
   const singleProduct = { ...product, colors: [product.colors[0]] }, singleBlocks = board(singleProduct);
   const color = sectionRuns(singleBlocks).find(item => item.kind === 'color_product');
-  assert.doesNotMatch(render({ blocks: singleBlocks, runKey: color.key, catalogs: { ...catalogs, detailProduct: singleProduct } }), /role="group"|aria-pressed=|<h3/);
+  const singleHtml = render({ blocks: singleBlocks, runKey: color.key, catalogs: { ...catalogs, detailProduct: singleProduct } });
+  assert.doesNotMatch(singleHtml, /role="group"|aria-pressed=/);
+  assert.doesNotMatch(singleHtml, /완성 모습|data-design-illustration=|<image/);
 });
 
 test('WOC6 legacy hidden wear remains unselected while new axis choices can replace it', async () => {
@@ -150,14 +161,15 @@ test('WOC6 legacy hidden wear remains unselected while new axis choices can repl
     const choices = selectable(group(tree, '배치'));
     assert.equal(choices.length, 3);
     assert.ok(choices.every(button => !button.props['aria-pressed']));
-    choices.find(button => nodes(button).some(node => node.type === 'strong' && textOf(node) === '한 열')).props.onClick();
+    choices.find(button => button.props['aria-label'] === '배치 · 한 열').props.onClick();
     assert.deepEqual(chosen, [['wear', 'fit', 'WEAR-FIT-COLUMN-01']]);
     assert.deepEqual(blocks, snapshot);
   } finally { h.close(); }
 });
 
-test('WOC11 flat point previews use each target geometry with the current page tone', async () => {
-  const initial = addTemplateSection(board(), product, analysis, 'points');
+test('WOC12 static point choices preserve selection while assembled sections retain photos, geometry and tone', async () => {
+  const initial = addTemplateSection(board(), product, analysis, 'points')
+    .map(block => block.source === 'text' ? block : { ...block, source: 'mine', ownImages: [`actual:${block.id}`], thumb: `actual:${block.id}` });
   const runKey = sectionRuns(initial).find(item => item.kind === 'points').key;
   const blocks = changeTemplateSectionDesign(initial, runKey, 'PT-TEXT-PHOTO-01', { product });
   const pointCatalogs = { ...catalogs, analysis: { ...analysis, pageStyle: { ...analysis.pageStyle, colorMode: 'point' } } };
@@ -165,22 +177,29 @@ test('WOC11 flat point previews use each target geometry with the current page t
   const h = await pickerHarness();
   try {
     const tree = h.render({ blocks, runKey, catalogs: pointCatalogs });
-    const previews = nodes(tree).filter(node => node.type === Preview);
-    assert.equal(previews.length, 2);
-    for (const preview of previews) {
-      assert.equal(preview.props.fit, true);
-      assert.equal(preview.props.wireframe, true);
-      assert.deepEqual(preview.props.toneColors, tone);
-      assert.ok(preview.props.blocks.some(block => block.elements.some(element => element.type === 'image')));
-    }
     const selected = selectable(tree).find(button => button.props['aria-pressed']);
-    assert.ok(nodes(selected).some(node => node.type === 'strong' && textOf(node) === '제목, 설명, 사진'));
-    const plain = nodes(selected).find(node => node.type === Preview).props.blocks;
-    const card = nodes(selectable(tree).find(button => !button.props['aria-pressed'])).find(node => node.type === Preview).props.blocks;
+    assert.equal(selected.props['aria-label'], '디자인 선택 · 제목, 설명, 사진');
+    const tileHtml = button => renderToStaticMarkup(button);
+    for (const button of selectable(tree)) {
+      assert.equal(textOf(button), '');
+      assert.match(tileHtml(button), /data-design-illustration=/);
+      assert.doesNotMatch(tileHtml(button), /<image|actual:|previewWirePhoto/);
+    }
+    const untouched = h.render({ blocks, runKey, catalogs });
+    assert.deepEqual(selectable(tree).map(tileHtml), selectable(untouched).map(tileHtml), 'page tone does not change static choice illustrations');
+    const assembled = designId => assembleStoryboardPreview({
+      storyboard: changeTemplateSectionDesign(blocks, runKey, designId, { product }), catalogs: pointCatalogs,
+    }).filter(page => page.pageSectionKey === runKey);
+    const plain = assembled('PT-TEXT-PHOTO-01'), card = assembled('PT-PHOTO-CARD-01');
+    for (const pages of [plain, card]) {
+      const photos = pages.flatMap(page => page.elements).filter(element => element.type === 'image');
+      assert.equal(photos.length, 3, 'all saved point items remain in the assembled section');
+      assert.ok(photos.every(photo => initial.some(block => block.id === photo.sourceBlockId) && photo.src === `actual:${photo.sourceBlockId}`));
+    }
     assert.notDeepEqual(plain, card, 'flat choices retain distinct photo/text geometry');
     const elements = pages => pages.flatMap(page => page.elements);
-    assert.deepEqual(elements(plain).filter(element => element.type === 'image').map(element => [element.x, element.w, element.h]), [[40, 920, 1150], [40, 920, 1150]]);
-    assert.deepEqual(elements(card).filter(element => element.type === 'image').map(element => [element.x, element.w, element.h]), [[60, 880, 1100], [60, 880, 1100]]);
+    assert.deepEqual(elements(plain).filter(element => element.type === 'image').map(element => [element.x, element.w, element.h]), Array.from({ length: 3 }, () => [40, 920, 1150]));
+    assert.deepEqual(elements(card).filter(element => element.type === 'image').map(element => [element.x, element.w, element.h]), Array.from({ length: 3 }, () => [60, 880, 1100]));
     assert.ok(plain.every(page => page.bg === '#ffffff'));
     assert.ok(card.every(page => page.bg === tone.panel));
     assert.ok(elements(card).some(element => element.type === 'shape' && element.fill === '#ffffff' && element.w === 880));
@@ -210,12 +229,19 @@ test('WOC6 flat first choices retain paired ghost behavior and the first header 
   } finally { h.close(); }
 });
 
-test('WOC6 non-axis sections keep their existing flat selection and removal remains in the heading', () => {
+test('WOC12 non-axis sections keep eligible flat choices and hide single-option groups', () => {
   const blocks = addTemplateSection(board(), product, analysis, 'fabric');
   for (const run of sectionRuns(blocks).filter(item => ['fabric', 'review', 'faq', 'intro', 'for_you'].includes(item.kind))) {
     const html = render({ blocks, runKey: run.key });
-    assert.doesNotMatch(html, /role="group"|<h3/);
-    assert.match(html, /aria-pressed="true"/);
-    assert.match(html, /<h2>[^<]+<\/h2><button[^>]*>섹션 빼기<\/button><\/div>/);
+    const choices = sectionDesignChoices(run, { storyboard: blocks, product });
+    assert.doesNotMatch(html, /aria-label="배치"|aria-label="꾸밈"|섹션 빼기|<small>기본<\/small>/);
+    assert.equal((html.match(/aria-pressed=/g) || []).length, choices.length > 1 ? choices.length : 0, run.kind);
+    assert.equal((html.match(/aria-pressed="true"/g) || []).length, choices.length > 1 ? 1 : 0, run.kind);
+    // Hidden text sections retain their catalog choices but do not expose a design pane.
+    if (!['intro', 'for_you'].includes(run.kind)) {
+      assert.equal((html.match(/data-design-illustration=/g) || []).length, choices.length > 1 ? choices.length : 0, run.kind);
+    }
+    assert.equal((html.match(/role="group" aria-label="디자인 선택"/g) || []).length, choices.length > 1 ? 1 : 0, run.kind);
+    assert.doesNotMatch(html, /완성 모습|<image/);
   }
 });
