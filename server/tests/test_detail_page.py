@@ -12,7 +12,7 @@ from io import BytesIO
 import app.routes as routes
 import pytest
 from app import repo
-from app.agents import identity_scope, identity_source
+from app.agents import feature_copy, identity_scope, identity_source
 from app.workers import detail_page_job as dpj
 from conftest import auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job
 
@@ -2996,27 +2996,35 @@ def test_run_detail_page_job_fails_when_all_ai_blocks_lack_garment_truth(monkeyp
     }
 
 
-def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
-    # copywriting 경로(_gen_copy) 커버 + AG-03 검수 실패 시 원문 유지(except 커버 — NameError 회귀 방지)
+@pytest.mark.parametrize("saved_copywriting", [True, False])
+@pytest.mark.parametrize("saved_name", [None, "새 상품", "셀러가 지은 니트"])
+def test_run_detail_page_job_uses_page_parts_and_preserves_product_name(monkeypatch, saved_copywriting, saved_name):
     captured = {}
 
     async def fake_gp(conn, uid, pid):
-        return {"copywriting": True}
+        return {"copywriting": saved_copywriting}
 
     async def fake_sb(conn, pid):
-        return v4_blocks([{
+        blocks = v4_blocks([{
             "id": "b1", "source": "ai", "sectionRole": "product", "contentRole": "detail",
-            "cutType": "product", "shot": "detail",
+            "cutType": "product", "shot": "detail", "detailTargetId": "neck",
         }])
+        blocks[0].update(sectionId="points", pageSectionKey="emo.points", pageSectionKind="points",
+                         pageDesignId="PT-PHOTO-CARD-01", slotKey="points.detail1")
+        blocks[0].pop("pageSectionUsage", None)
+        return [{"id": "points", "taxonomyVersion": 4, "source": "text", "sectionId": "points",
+                 "pageSectionKey": "emo.points", "pageSectionKind": "points", "pageDesignId": "PT-PHOTO-CARD-01",
+                 "cutType": None, "contentRole": None, "sectionRole": None, "slotKey": None}, *blocks]
 
     async def fake_prod(conn, pid):
-        return {"colors": [{"isBase": True, "images": [
+        return {"name": saved_name, "colors": [{"isBase": True, "images": [
             {"slot": "Front", "id": "a1"}, {"slot": "Detail", "id": "d1"},
         ]}]}
 
     async def fake_analysis(conn, pid):
         return {"sellingPoints": ["촉감"], "materials": [],
-                "suggestedName": "골지 데일리 니트"}
+                "suggestedName": "골지 데일리 니트",
+                "detailRecommendations": {"candidates": [{"id": "neck", "label": "목선"}]}}
 
     async def fake_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": "k/a1"}
@@ -3025,22 +3033,20 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
         captured["cut_spec"] = cut_spec
         return b"IMG", "image/png"
 
-    async def fake_copy(settings, **kw):
-        captured["copy_kwargs"] = kw
-        return [{"blockId": "b1", "texts": [
-            {"role": "headline", "text": "원본 카피"},
-        ]}]
-
-    async def fake_review(settings, items, confirmed):
-        raise RuntimeError("qc down")  # 검수 실패 → 원문 유지 (except 커버)
-
-    async def fake_feature(settings, points, product_row, analysis_row, *, timeout_seconds=None):
+    async def fake_parts(settings, points, parts, product_row, analysis_row, *, timeout_seconds=None):
         captured["feature_points"] = points
+        captured["part_labels"] = parts
         captured["feature_timeout"] = timeout_seconds
-        return []
+        return {"featureCopy": [{"point": "촉감", "desc": "특징 설명"}],
+                "partDescriptionCopy": [{"point": "목선", "desc": "목선 설명"}]}
+
+    async def fake_save_analysis(conn, project_id, patch):
+        captured["copy_patch"] = patch
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
         captured["storyboard"] = storyboard
+        captured["copywriting"] = copywriting
+        captured["assembled_analysis"] = _kw["analysis"]
         captured["copy_results"] = copy_results
         captured["assembled_product_name"] = product.get("name")
         return [{"id": "b0", "elements": []}]
@@ -3063,32 +3069,37 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
 
     monkeypatch.setattr(dpj.detail_shot_runtime, "generate", checked_detail)
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
-    monkeypatch.setattr(dpj.copywriter, "generate", fake_copy)
-    monkeypatch.setattr(dpj.copy_qc, "review", fake_review)
-    monkeypatch.setattr(dpj.feature_copy, "generate", fake_feature)
+    monkeypatch.setattr(dpj.page_part_copy, "generate", fake_parts)
+    monkeypatch.setattr(dpj.repo, "save_analysis", fake_save_analysis)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
-    asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job(reserved=1)))  # ai 블록 1개 × 단가 1
+    asyncio.run(dpj.run_detail_page_job(_app(make_settings(r2_bucket="b")), _job(reserved=1)))  # ai 블록 1개 × 단가 1
     assert captured["charge"] == 1
-    assert [block["id"] for block in captured["copy_kwargs"]["blocks"]] == ["b1"]
-    assert set(captured["copy_kwargs"]) == {"blocks", "product", "analysis"}
-    assert captured["product_name"] == "골지 데일리 니트"
-    assert captured["assembled_product_name"] == "골지 데일리 니트"
+    assert captured["reserved"] == 1
+    expected_name = "셀러가 지은 니트" if saved_name == "셀러가 지은 니트" else "골지 데일리 니트"
+    assert captured["product_name"] == (None if saved_name == "셀러가 지은 니트" else expected_name)
+    assert captured["assembled_product_name"] == expected_name
+    assert captured["copywriting"] is True
     assert captured["cut_spec"]["cutType"] == "product"
     assert captured["cut_spec"]["shot"] == "detail"
     assert captured["feature_points"] == ["촉감"]
     assert captured["feature_timeout"] == 120
-    assert captured["storyboard"][0]["sectionRole"] == "product"
-    assert captured["storyboard"][0]["cutType"] == "product"
-    assert captured["storyboard"][0]["shot"] == "detail"
-    assert captured["copy_results"] == [{"blockId": "b1", "texts": [
-        {"role": "headline", "text": "원본 카피"},
-    ]}]
+    assert captured["part_labels"] == ["목선"]
+    assert captured["copy_patch"] == {
+        "featureCopy": [{"point": "촉감", "desc": "특징 설명"}],
+        "partDescriptionCopy": [{"point": "목선", "desc": "목선 설명"}],
+    }
+    assert all(captured["assembled_analysis"][key] == value
+               for key, value in captured["copy_patch"].items())
+    assert captured["storyboard"][1]["sectionRole"] == "product"
+    assert captured["storyboard"][1]["cutType"] == "product"
+    assert captured["storyboard"][1]["shot"] == "detail"
+    assert captured["copy_results"] == []
 
 
-def test_copywriting_off_uses_analysis_name_without_another_llm_call():
+def test_fallback_uses_analysis_name_without_another_llm_call():
     assert dpj._fallback_product_name(
         {"name": "새 상품", "clothingType": "top"},
         {"suggestedName": "미니멀 코튼 셔츠", "subCategory": "shirt"},
@@ -3218,7 +3229,7 @@ def test_striped_detail_page_never_publishes_uploaded_detail_photo(monkeypatch):
     monkeypatch.setattr(dpj.repo, "get_analysis", analysis)
     monkeypatch.setattr(dpj.repo, "get_asset_for_user", asset)
     monkeypatch.setattr(dpj.detail_shot_runtime, "generate", detail)
-    monkeypatch.setattr(dpj.feature_copy, "generate", feature)
+    monkeypatch.setattr(feature_copy, "generate", feature)
     monkeypatch.setattr(dpj.page_assembler, "assemble", assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", finalize)
     monkeypatch.setattr(dpj, "_emit", emit)
@@ -3238,13 +3249,8 @@ def test_striped_detail_page_never_publishes_uploaded_detail_photo(monkeypatch):
     assert all(payload.get("status") != "cut_passthrough" for _, payload in captured["events"])
 
 
-def test_run_detail_page_job_emits_copy_first_then_cut_events(monkeypatch):
-    """에디터 대기 계약(editor_wait_dev_spec §2-1) — 이벤트 순서와 페이로드.
-
-    ① copy_ready(검수 통과본)는 모든 컷 이벤트보다 앞: 셀러가 컷을 기다리는 동안
-       문구를 다듬는 전제. ② cut_done 은 previewUrl(1h presigned)+width/height 를 싣는다
-       (asset 행은 finalize 전이라 /file 은 404 — DB 무변경 원칙). ③ 컷 1개 종결마다
-       progress(phase=cut, 20→80)가 나간다 — 체크포인트 정지 화면 방지."""
+def test_run_detail_page_job_emits_cut_progress_without_copy_events(monkeypatch):
+    """Copy events are optional; cut previews and progress still reach assembly."""
     events = []
 
     async def fake_gp(conn, uid, pid):
@@ -3272,15 +3278,6 @@ def test_run_detail_page_job_emits_copy_first_then_cut_events(monkeypatch):
     async def fake_gen(settings, gemini, cut_spec, product, images, **_kw):
         return b"IMGDATA", "image/png"
 
-    async def fake_copy(settings, **kw):
-        return [
-            {"blockId": block["id"], "texts": [{"role": "headline", "text": "카피"}]}
-            for block in kw["blocks"]
-        ]
-
-    async def fake_review(settings, items, confirmed):
-        return []  # 전건 pass
-
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
         return [{"id": "b0", "elements": []}]
 
@@ -3300,20 +3297,16 @@ def test_run_detail_page_job_emits_copy_first_then_cut_events(monkeypatch):
 
     monkeypatch.setattr(dpj.detail_shot_runtime, "generate", checked_detail)
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
-    monkeypatch.setattr(dpj.copywriter, "generate", fake_copy)
-    monkeypatch.setattr(dpj.copy_qc, "review", fake_review)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
-    asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job(reserved=2)))
+    asyncio.run(dpj.run_detail_page_job(_app(make_settings(r2_bucket="b")), _job(reserved=2)))
 
     kinds = [(et, p.get("status") or p.get("phase")) for et, p in events]
-    # ① 카피가 컷보다 앞 — copy_ready 전부가 첫 cut_* 이벤트보다 먼저다
-    first_cut = next(i for i, k in enumerate(kinds) if str(k[1]).startswith("cut"))
-    copy_idx = [i for i, k in enumerate(kinds) if k[1] == "copy_ready"]
-    assert copy_idx and max(copy_idx) < first_cut
-    assert ("progress", "copy") in kinds
+    assert not any(kind in {"copy", "copy_ready"} for _, kind in kinds)
+    progress = [p["progress"] for et, p in events if et == "progress"]
+    assert progress == [15, 50, 80, 85]
     # ② cut_done 페이로드 — previewUrl(presigned 미러)+치수
     dones = [p for et, p in events if et == "step" and p.get("status") == "cut_done"]
     assert {d["blockId"] for d in dones} == {"b1", "b2"}

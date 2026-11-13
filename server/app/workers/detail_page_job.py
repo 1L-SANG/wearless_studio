@@ -1,7 +1,7 @@
-"""PL-4 상세페이지 생성 워커. AG-06 컷 → AG-02 카피 → AG-03 검수 → M-02 조립 → EditorBlock[].
+"""PL-4 상세페이지 생성 워커. 특징·부위 설명, AG-06 컷, M-02 조립으로 EditorBlock[]을 만든다.
 
 저장 콘티(projects.storyboard)의 source='ai' 블록별로 AG-06 컷 이미지를 생성하고,
-완성된 컷으로 AG-02/03 카피와 M-02 조립 결과를 출고한다(ADR-0017).
+완성된 컷과 특징·부위 설명으로 M-02 조립 결과를 출고한다(ADR-0017).
 못 만든 컷 값은 견적에서 빼고, 전부 실패하면 예약 전액을 해제한다. lease 펜스.
 """
 
@@ -26,15 +26,12 @@ from ..agents import identity_scope
 from ..agents import (
     asset_recipe,
     content_roles,
-    copy_qc,
-    copywriter,
     confirmed_gpt_runtime,
     cut_generator,
     cut_variator,
     cut_output_qc,
     cut_plan,
     face_identity,
-    feature_copy,
     fit_axes,
     garment_color,
     garment_color_qc,
@@ -61,6 +58,7 @@ from ..services import garment_color_measure, matching, outfit_generation
 from ..services import garment_color as color_storage
 from . import cut_checkpoints as _cut_checkpoints
 from . import detail_shot_runtime
+from .product_name import validate_product_name
 from ..agents.detail_shot_pipeline import DetailShotRejected
 from ..agents.detail_recommendations import DetailRecommendationError
 from ._common import emit_job_event as _emit
@@ -1591,74 +1589,6 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     )
 
 
-async def _gen_copy(app, job, ai_blocks, product, analysis):
-    """페이지 단위 AG-02 생성과 AG-03 검수를 카피 단계 상한 안에서 수행한다."""
-    s = app.state.settings
-
-    async def _within_budget():
-        try:
-            drafts = await copywriter.generate(
-                s, blocks=ai_blocks, product=product, analysis=analysis)
-        except Exception as e:  # 카피는 게이트 아님 — 페이지 카피 전체를 비운다
-            log.warning("AG-02 page copy failed for job %s: %r", job["id"], e)
-            return [], None
-        items = []
-        for draft in drafts or []:
-            bid = str(draft.get("blockId"))
-            for text in draft.get("texts") or []:
-                role = text.get("role") or "headline"
-                items.append({
-                    "textId": f"{bid}:{role}",
-                    "blockId": bid,
-                    "text": text.get("text", ""),
-                })
-        if not items:
-            return [], None
-
-        try:
-            confirmed = {
-                "materials": analysis.get("materials"),
-                "sellingPoints": analysis.get("sellingPoints"),
-                "measurementsKnown": not analysis.get("measurementsUnknown"),
-            }
-            results = await copy_qc.review(s, items, confirmed)
-            revisions = {
-                result["textId"]: result["revisedText"]
-                for result in results
-                if result.get("verdict") == "revise" and result.get("revisedText")
-            }
-        except Exception as e:  # 검수 실패 시 코드 필터를 통과한 원문 유지
-            log.warning("AG-03 copy-qc failed for job %s: %r", job["id"], e)
-            revisions = {}
-
-        final_by_id = {}
-        block_ids = []
-        for draft in drafts:
-            bid = str(draft.get("blockId"))
-            for text in draft.get("texts") or []:
-                role = text.get("role") or "headline"
-                revised = revisions.get(f"{bid}:{role}")
-                final_by_id[bid] = revised if revised is not None else text.get("text")
-                block_ids.append(bid)
-                break
-        valid, _invalid = copywriter.validate_headlines(
-            final_by_id, block_ids, analysis or {})
-        copy_results = [
-            {"blockId": bid, "texts": [{"role": "headline", "text": valid[bid]}]}
-            for bid in block_ids if bid in valid
-        ]
-        return copy_results, None
-
-    try:
-        return await asyncio.wait_for(_within_budget(), timeout=s.page_copy_timeout_seconds)
-    except TimeoutError:
-        log.warning(
-            "page copy exceeded %.1fs for job %s; continuing without copy",
-            s.page_copy_timeout_seconds, job["id"],
-        )
-        return [], None
-
-
 _CATEGORY_NAMES = {
     "tshirt": "데일리 티셔츠", "sweatshirt": "데일리 맨투맨", "shirt": "데일리 셔츠",
     "knit": "데일리 니트", "cotton_pants": "코튼 팬츠", "training_pants": "트레이닝 팬츠",
@@ -1670,8 +1600,8 @@ _CATEGORY_NAMES = {
 
 
 def _fallback_product_name(product: dict, analysis: dict) -> str:
-    """카피 OFF/작명 출력 실패 시 추가 LLM 호출 없이 분석값으로 짓는다."""
-    suggested = copywriter.validate_product_name(analysis.get("suggestedName"))
+    """추가 LLM 호출 없이 검증된 분석 추천명이나 종류별 기본명을 쓴다."""
+    suggested = validate_product_name(analysis.get("suggestedName"))
     if suggested:
         return suggested
     category = analysis.get("subCategory") or product.get("clothing_type") or product.get("clothingType")
@@ -2776,44 +2706,27 @@ async def run_detail_page_job(app, job: dict) -> None:
                 )
             )
 
-        copywriting = bool(project.get("copywriting"))
         # storyboardDigest — "실패한 컷만 다시 만들기" 재시도가 앞선 실패와 같은 콘티로 도는지 화면이
         # 가려 말하는 근거(2026-09-28). 콘티 내용의 해시일 뿐 저장소 키·주소가 아니다.
         await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",
                                                "aiCuts": len(ai_blocks),
                                                "storyboardDigest": loaded_storyboard_digest})
 
-        # 2) 카피(선택) + 검수 — **컷보다 먼저**. 카피는 컷 이미지를 입력으로 쓰지 않아
-        # (copywriter.generate: product·analysis·스토리보드만) 순서를 당길 수 있고, 셀러는 컷을
-        # 기다리는 몇 분 동안 문구를 다듬을 수 있다(editor_wait_dev_spec §2-1).
+        # 새 페이지 카피가 사용할 조립 입력은 유지한다.
         copy_results = []
         generated_name = None
         needs_name = not str(product.get("name") or "").strip() or str(product.get("name")).strip() == "새 상품"
-        if copywriting:
-            await _emit(pool, job_id, "progress", {"progress": 18, "phase": "copy",
-                                                   "blocks": len(ai_blocks)})
-            copy_results, generated_name = await _gen_copy(app, job, ai_blocks, product, analysis)
-            for cr in copy_results:  # 검수(AG-03) 통과본만 내보낸다 — 선emit 후revise 금지
-                await _emit(pool, job_id, "step",
-                             {"blockId": cr.get("blockId"), "status": "copy_ready",
-                             "texts": cr.get("texts")})
         if needs_name:
-            generated_name = generated_name or _fallback_product_name(product, analysis)
+            generated_name = _fallback_product_name(product, analysis)
             product["name"] = generated_name
 
-        # Seller feature descriptions retain their existing toggle-independent path.
-        # Point-card descriptions share that one request only when copywriting is on.
+        # 2) 판매 특징 설명과 부위 설명을 기존 통합 호출로 만든다.
         points = page_part_copy.unique_labels(analysis.get("sellingPoints") or analysis.get("aiSuggestedPoints") or [])
-        part_labels = page_part_copy.part_labels(storyboard, analysis) if copywriting else []
+        part_labels = page_part_copy.part_labels(storyboard, analysis)
         try:
-            if copywriting:
-                groups = await page_part_copy.generate(
-                    s, points, part_labels, product, analysis,
-                    timeout_seconds=s.background_ai_timeout_seconds)
-            else:
-                groups = {"featureCopy": await feature_copy.generate(
-                    s, points, product, analysis,
-                    timeout_seconds=s.background_ai_timeout_seconds)}
+            groups = await page_part_copy.generate(
+                s, points, part_labels, product, analysis,
+                timeout_seconds=s.background_ai_timeout_seconds)
         except Exception as e:  # 카피는 게이트 아님 — 상세페이지 생성을 막지 않는다
             log.warning("feature copy failed for job %s: %r", job_id, e)
             groups = {}
@@ -2871,7 +2784,7 @@ async def run_detail_page_job(app, job: dict) -> None:
         _gen_cuts_kwargs["generation_counts"] = generation_counts
         _gen_cuts_kwargs["template_context"] = {"storyboard": storyboard,
                                                  "copy_results": copy_results,
-                                                 "copywriting": copywriting}
+                                                 "copywriting": True}
         (
             cut_results,
             cut_assets,
@@ -2941,7 +2854,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             ),
         }
         editor_blocks = page_assembler.assemble(
-            storyboard, cut_results, copy_results, assembly_product, copywriting, **assemble_kwargs)
+            storyboard, cut_results, copy_results, assembly_product, True, **assemble_kwargs)
 
         # 5) 성공 종결 (원자·lease 펜스). 예약 시점 단가와 최소 컷 수 스냅샷으로 정산.
         # (job.metadata.perCutCost — routes.py가 예약과 같은 tx에서 기록). 실행 시점 설정을 쓰면

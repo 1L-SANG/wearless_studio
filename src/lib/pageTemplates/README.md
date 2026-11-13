@@ -864,9 +864,9 @@ browser, paid model or network call is needed for these tests.
 
 Copy is always on. AI text fills the two-line part description
 (`analysis.partDescriptionCopy`) in point items, the intro body and the review
-draft (name defaults to 김태희, five stars). The page job's copy step produces
-only `headline` texts (`server/app/workers/detail_page_job.py` `_gen_copy`), and
-no catalog text slot uses that role, so the other `ai` and `aiDraft` slots are
+draft (name defaults to 김태희, five stars). The old page job copy step wrote
+only per-photo `headline` texts, which no catalog text slot uses, and it was
+removed with its review on 2026-11-13, so the other `ai` and `aiDraft` slots are
 assembled empty with their placeholders. The intro body (`seller+ai`) takes the
 seller's MD comment (`analysis.mdComment`) in both templates; AI rewrites it in
 the voice and format set by the copywriting work, and until that rewrite is

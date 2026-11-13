@@ -58,7 +58,7 @@ def run_job(monkeypatch, rows=(), *, frame=True, error_on=None, cafe24_ready=Tru
     monkeypatch.setattr(repo, "get_analysis", AsyncMock(return_value={}))
     account_lookup = AsyncMock(return_value={"name": "계정 개인 실명", "email": "private@example.test"})
     monkeypatch.setattr(repo, "get_account", account_lookup)
-    monkeypatch.setattr(dpj.feature_copy, "generate", AsyncMock(return_value=[]))
+    monkeypatch.setattr(dpj.page_part_copy, "generate", AsyncMock(return_value={}))
     monkeypatch.setattr(dpj, "_emit", AsyncMock())
     monkeypatch.setattr(dpj, "_gen_cuts", AsyncMock(return_value=([], [], 0, [], None, [])))
     finalize = AsyncMock(return_value={"editor_blocks": [], "available": 1})
