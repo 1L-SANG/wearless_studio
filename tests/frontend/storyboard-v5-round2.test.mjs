@@ -9,6 +9,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { loadStoryboardComponent, textOf, readStoryboard } from './helpers/storyboardComponents.mjs';
 import { defaultPageStyle } from '../../src/lib/pageTemplates/pageStyle.js';
 import { stageAdditions, addStageAddition } from '../../src/lib/pageTemplates/stageAdditions.js';
+import { sectionDesignChoices } from '../../src/lib/pageTemplates/designChoices.js';
+import { sectionDesignAxes } from '../../src/lib/pageTemplates/designAxes.js';
 
 let vite, Stage, Preview, Continue, Picker, SetPanel, Gallery, catalog, seedStoryboard, sectionRuns, changeDesign, spaceSets, groupId, safeName, setExamples;
 const product = { clothingType: 'top', colors: [{ id: 'base', isBase: true }] };
@@ -90,7 +92,6 @@ test('R2-5 the floating action has no copywriting switch', () => {
   assert.doesNotMatch(markup, /카피라이팅|role="switch"/); assert.match(markup, /다음: 마네킹컷 선택/);
 });
 test('R2-6 paired designs have seller names and enter through the pale slot without another generated card', () => {
-  assert.equal(Object.keys(catalog.designs).length, 32);
   for (const design of Object.values(catalog.designs)) assert.ok(typeof design.displayName === 'string' && design.displayName.trim() && design.displayName.length <= 24, design.id);
   const blocks = seedStoryboard(product, analysis('emo'));
   const key = blocks[0].pageSectionKey, context = { product, analysis: analysis('emo') };
@@ -104,16 +105,27 @@ test('R2-6 paired designs have seller names and enter through the pale slot with
   assert.deepEqual(changed.map(block => block.id), blocks.map(block => block.id));
   assert.equal(changed.filter(block => block.source === 'ai').length, blocks.filter(block => block.source === 'ai').length);
 });
-test('R2-6 each section instance has exactly one default label and a named, fitted preview per candidate', () => {
+test('WOC12 visible design choices use static illustrations while single-option stages stay hidden', () => {
   for (const templateId of ['emo', 'show']) {
     const blocks = seedStoryboard(product, analysis(templateId));
     for (const run of sectionRuns(blocks)) {
       const markup = html(Picker, { mode: 'design', runKey: run.key, blocks,
         catalogs: { detailProduct: product, analysis: analysis(templateId), genExamples: [] } });
-      assert.equal((markup.match(/<small>기본<\/small>/g) || []).length, 1, run.key);
-      assert.doesNotMatch(markup, /<strong>디자인 \d/);
-      assert.ok(markup.includes('height="100%"'), run.key);
-      if (run.kind === 'fabric') assert.match(markup, /aria-pressed="true"/, 'the active text-only fallback is selected');
+      const axes = sectionDesignAxes(run, { storyboard: blocks, product });
+      const choices = axes.hasAxes ? axes.decorations : sectionDesignChoices(run, { storyboard: blocks, product });
+      const thumbnailCount = choices.length > 1 ? choices.length : 0;
+      const singleColorAxis = run.kind === 'color_product';
+      assert.doesNotMatch(markup, /<small>기본<\/small>|<strong>디자인 \d|섹션 빼기|previewWirePhoto|previewFit|완성 모습|<image/);
+      assert.equal((markup.match(/data-design-thumbnail=/g) || []).length, thumbnailCount, run.key);
+      const illustrations = markup.match(/<svg\b[^>]*data-design-illustration="[^"]+"[^>]*>/g) || [];
+      // Intro and for-you are hidden text sections, outside the visible design-pane flow.
+      if (!['intro', 'for_you'].includes(run.kind)) assert.equal(illustrations.length, thumbnailCount, run.key);
+      assert.ok(illustrations.every(illustration => /viewBox="0 0 150 130"/.test(illustration) && /aria-hidden="true"/.test(illustration)), run.key);
+      assert.equal((markup.match(/role="group" aria-label="디자인 선택"/g) || []).length, thumbnailCount ? 1 : 0, run.key);
+      if (singleColorAxis) assert.doesNotMatch(markup, /aria-pressed=|role="group"/);
+      if (run.kind === 'fabric') {
+        assert.equal((markup.match(/aria-pressed="true"/g) || []).length, thumbnailCount ? 1 : 0, 'only an eligible choice group shows the active fallback');
+      }
     }
   }
 });

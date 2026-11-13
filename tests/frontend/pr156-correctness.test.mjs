@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createServer } from 'vite';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -30,13 +31,15 @@ test('F1 Storyboard 첫 렌더는 업로드 훅을 실행해도 ReferenceError �
   const { Storyboard } = await vite.ssrLoadModule('/src/features/storyboard/Storyboard.jsx');
   const { useAppStore } = await vite.ssrLoadModule('/src/store/useAppStore.js');
   useAppStore.setState({ projectId: 'project-f1' });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  t.after(() => queryClient.clear());
 
   const html = renderToString(
-    React.createElement(
+    React.createElement(QueryClientProvider, { client: queryClient }, React.createElement(
       MemoryRouter,
       { initialEntries: ['/create/storyboard'] },
       React.createElement(Storyboard, { toastOverride: { push() {} } }),
-    ),
+    )),
   );
 
   assert.match(html, /role="status"/);

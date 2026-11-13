@@ -4,6 +4,9 @@ import { validateStoryboardV4 } from '@/lib/pageTemplates/validateStoryboard.js'
 import { uploadWardrobeGif, mergeWardrobeGifs } from '../lib/api/gifWardrobe.js';
 import { inheritSimilarCutRecipes } from '@/lib/storyboardSimilarCuts.js';
 import { acceptMockClientEvent } from './clientEvents.js';
+import { withMockPartDescriptions } from './partDescriptionCopy.js';
+import { selectFrameShopName } from '../lib/frameShopName.js';
+import { validateEditorImageBlur } from '../features/editor/editorImageBlur.js';
 /* =============================================================
    mock/api.js — the ONLY data access screens are allowed to use.
    Signatures/shapes follow documents/common_data_contract.md §6.
@@ -19,7 +22,7 @@ import { acceptMockClientEvent } from './clientEvents.js';
    반영한다. 차감은 여기(서버 역할)가 책임지고, 프론트 선차감 금지.
    ============================================================= */
 import { expectedMannequinQuote } from '@/features/mannequin/quoteConfirmation.js';
-import { DB, reseedDraft, buildDraft, buildEditorBlocksFromStoryboard, buildStoryboard } from '@/mock/db.js';
+import { DB, reseedDraft, buildDraft, buildEditorBlocksFromStoryboard } from '@/mock/db.js';
 import {
   rememberCustomMatchDraft,
   clearCustomMatchDraft as forgetCustomMatchDraft,
@@ -199,7 +202,7 @@ for (const [index, step] of ['storyboard', 'mannequin', 'generating', 'failed'].
   const draft = buildDraft();
   const id = `in-progress-${step}`;
   draft.project = { ...draft.project, id, title: ['골지 니트 구성', '셔츠 마네킹 확인', '코트 상세페이지', '원피스 다시 만들기'][index],
-    composeMode: index % 2 ? 'extended' : 'basic', copywriting: index !== 1,
+    copywriting: index !== 1,
     updatedAt: new Date(Date.now() - (index + 1) * 3600000).toISOString() };
   draft.editorBlocks = [];
   if (step !== 'storyboard') {
@@ -702,12 +705,14 @@ export const api = {
   },
   async patchProject(_projectId, patch) {
     await wait(60);
-    if ('composeMode' in patch && !['basic', 'extended'].includes(patch.composeMode)) {
-      throw new Error("composeMode는 basic 또는 extended여야 합니다.");
+    if ('copywriting' in patch && patch.copywriting === null) {
+      throw Object.assign(new Error('copywriting는 null일 수 없습니다.'), { status: 422 });
     }
-    Object.assign(DB.project, patch); touch();
-    if ('selectedMannequinId' in patch) syncSelectedCut(patch.selectedMannequinId);
-    if ('fitProfile' in patch) DB.analysis.fitProfile = clone(patch.fitProfile);
+    const fields = Object.fromEntries(Object.entries(patch)
+      .filter(([key]) => ['copywriting', 'selectedMannequinId'].includes(key)));
+    if (!Object.keys(fields).length) return clone(DB.project);
+    Object.assign(DB.project, fields); touch();
+    if ('selectedMannequinId' in fields) syncSelectedCut(fields.selectedMannequinId);
     return clone(DB.project);
   },
 
@@ -1128,7 +1133,7 @@ export const api = {
     const changed = Object.fromEntries(Object.entries(patch).map(([key, value]) => [key, value === null ? null : normalized[key]]));
     if (_projectId) {
       for (const key of ['locked', 'confirmedGptProductEvidence', 'detailRecommendations', 'garmentColorEvidence']) delete changed[key];
-      for (const key of ['sourceMirrored', 'inputConsistency', 'featureCopy']) {
+      for (const key of ['sourceMirrored', 'inputConsistency', 'featureCopy', 'partDescriptionCopy']) {
         if (changed[key] === null) delete changed[key];
       }
     }
@@ -1444,7 +1449,7 @@ export const api = {
       identityKind: identityKindOf(isRealModelSelection(DB.analysis.selectedModelId)),
     });
     setStoryboardEntryNotice(DB.project.id, resolved.notice);
-    if (resolved.notice !== 'legacyGenerated') DB.storyboard = resolved.blocks;
+    if (resolved.notice !== 'legacyGenerated' && resolved.notice !== 'rebuilt') DB.storyboard = resolved.blocks;
     return clone(resolved.notice === 'legacyGenerated' ? [] : resolved.blocks);
   },
   storyboardEntryNotice,
@@ -1487,7 +1492,10 @@ export const api = {
       if (type === 'progress') job.progress = payload.progress;
     };
     (async () => {
-      const blocks = buildEditorBlocksFromStoryboard(draft.storyboard, draft.product, draft.project.copywriting, draft.analysis);
+      draft.analysis = withMockPartDescriptions(draft.storyboard, draft.analysis, draft.project.copywriting);
+      if (DB.project.id === job.projectId) DB.analysis = draft.analysis;
+      const blocks = buildEditorBlocksFromStoryboard(draft.storyboard, draft.product, draft.project.copywriting, draft.analysis,
+        selectFrameShopName(Object.values(DB.mallConnections || {})));
       const imgs = []; const copies = new Map();
       for (const b of blocks) {
         for (const el of (b.elements || [])) {
@@ -1585,7 +1593,9 @@ export const api = {
       }
       emitProgress(100);
       if (DB.project.id !== ownerId) return { data: [], credits: DB.account.credits };
-      DB.editorBlocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting, DB.analysis);
+      DB.analysis = withMockPartDescriptions(DB.storyboard, DB.analysis, DB.project.copywriting);
+      DB.editorBlocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting, DB.analysis,
+        selectFrameShopName(Object.values(DB.mallConnections || {})));
       DB.project.status = 'done'; touch();
       // 실서버와 동일: 동일 설정 복제 컷은 1장만 생성 — 청구도 실제 생성 수 기준(ADR-0011).
       const aiCuts = uniqueGenerationCutCount(DB.storyboard, {
@@ -1608,6 +1618,7 @@ export const api = {
   // 에디터 상태 영속화 (계약 §6) — 저장 버튼·자동 저장이 호출. 세션 내 재진입 시 편집 유지.
   async saveEditorBlocks(projectId, blocks) {
     await wait(200);
+    validateEditorImageBlur(blocks);
     if (!sameEditorJson(DB.editorBlocks, blocks)) {
       DB.editorBlocks = clone(blocks); DB.project.editorRevision = (DB.project.editorRevision || 0) + 1; touch();
     }

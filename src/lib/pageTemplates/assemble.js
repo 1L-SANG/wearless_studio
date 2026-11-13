@@ -1,3 +1,4 @@
+import { titlePlateBounds, titlePlateGroup } from './titlePlate.js';
 import {
     getTemplate,
     pageTemplatesCatalog,
@@ -379,6 +380,11 @@ function factText(role, ctx) {
     return "";
 }
 
+const sellerComment = (ctx) => {
+    const text = string(ctx.analysis.mdComment);
+    return text.trim() ? text : "";
+};
+
 function contentFor(node, ctx) {
     if (node.literal != null)
         return {
@@ -405,18 +411,23 @@ function contentFor(node, ctx) {
                 ? "Fit"
                 : slot.default);
     else if (slot.source === "fact") text = factText(role, ctx);
-    else if (!ctx.copywriting && slot.source === "seller+ai")
-        text = string(ctx.analysis.mdComment);
+    else if (slot.source === "seller+ai" && sellerComment(ctx))
+        text = sellerComment(ctx);
     else if (ctx.copywriting) {
         text = ctx.copy[role] || "";
-        if (
-            /^items\.\d+\.desc$/.test(role) &&
-            ctx.card?.pointItem?.kind !== "wornCrop"
-        ) {
+        if (/^items\.\d+\.desc$/.test(role)) {
             const name = factText(role.replace(/\.desc$/, ".name"), ctx);
-            text =
-                ctx.analysis.featureCopy?.find?.((item) => item.point === name)
-                    ?.desc || text;
+            const part = ctx.analysis.partDescriptionCopy?.find?.((item) => item.point === name)?.desc;
+            if (node.copyPolicy === 'partOnly') {
+                const lines = string(part).replace(/\r\n?/g, '\n').split('\n');
+                // Old one-line copy remains stored and remains usable by saved layouts.
+                text = lines.length === 2 && lines.every(line => line.trim()) ? lines.join('\n') : '';
+            } else {
+                text = part
+                    || (ctx.card?.pointItem?.kind !== 'wornCrop'
+                        && ctx.analysis.featureCopy?.find?.((item) => item.point === name)?.desc)
+                    || text;
+            }
         }
     }
     if (ctx.paragraphRole === role) text = ctx.paragraphText;
@@ -438,12 +449,15 @@ function renderText(node, x, y, width, ctx) {
         : token === "num"
           ? "labelEn"
           : token;
-    const font = ctx.tokens.fonts[fontKey];
+    const font = { ...ctx.tokens.fonts[fontKey],
+        ...(node.weight === 'light' ? { weight: 300 } : {}),
+        ...(node.trackingEm != null ? { trackingEm: node.trackingEm } : {}) };
     const metrics = ctx.catalog.textMetrics;
     const uppercase =
         content.slot?.uppercase ||
         (font.uppercase && content.slot?.kind !== "fact");
     let text = uppercase ? content.text.toUpperCase() : content.text;
+    if (node.numberPrefix && text) text = `${(ctx.index || 0) + 1}. ${text}`;
     if (node.singleLine) text = text.replace(/\s+/gu, " ").trim();
     let layoutWidth = Math.max(1, width - (node.swatchDot ? 18 : 0));
     let size = node.size || 25;
@@ -510,7 +524,7 @@ function renderText(node, x, y, width, ctx) {
             : fontKey === "labelEn"
               ? metrics.labelLineHeight
               : metrics.lineHeight;
-    const lineHeight = Math.ceil((size * factor) / metrics.unitsPerEm);
+    const lineHeight = Math.ceil(node.lineHeight != null ? size * node.lineHeight : (size * factor) / metrics.unitsPerEm);
     let color = node.color || content.slot?.color || "ink";
     if (!node.color && fontKey === "titleKo")
         color =
@@ -572,7 +586,7 @@ function renderText(node, x, y, width, ctx) {
                 "내용을 입력해 주세요";
         if (
             content.slot.source === "aiDraft" ||
-            (content.slot.source === "seller+ai" && !ctx.analysis.mdComment)
+            (content.slot.source === "seller+ai" && !sellerComment(ctx))
         )
             element.aiDraft = true;
     }
@@ -632,6 +646,10 @@ function renderText(node, x, y, width, ctx) {
 function selectCards(node, ctx) {
     if (node.slot === "$current") return [ctx.card || null];
     if (node.slots) return node.slots.map((slot) => resolvePhoto(slot, ctx));
+    // Loose/similar photos lack slot keys. Curated wildcards include them in
+    // place; saved legacy layouts retain their existing overflow behavior.
+    if (node.slot === "*" && (node.type === "photoFlow" || node.includeLoose || ctx.catalog.designs[ctx.designId]?.choiceAxes))
+        return ctx.photos;
     return ctx.photos.filter((card) =>
         matches(localSlot(card, ctx.section), node.slot || "*"),
     );
@@ -649,8 +667,32 @@ function resolvePhoto(slotKey, ctx) {
     return reuseSourceForSlot(ctx.storyboard, slot, ctx.product);
 }
 
+const naturalPhoto = (node) => node.fit === "contain" && node.aspect === "source";
+const knownImageSize = (meta) => number(meta.width) > 0 && number(meta.height) > 0
+    && meta.dimensionsKnown !== false;
+const naturalImageSize = (node, meta, catalog) => knownImageSize(meta)
+    ? [number(meta.width), number(meta.height)]
+    : (node.fallbackAspect || catalog.textMetrics.fallbackAspect).split("/").map(Number);
+
+function coverImageSize(card, meta, product) {
+    const known = value => value && Number.isFinite(value.width) && value.width > 0
+        && Number.isFinite(value.height) && value.height > 0 && value.dimensionsKnown !== false;
+    if (known(meta) && (card?.source !== 'mine' || meta.imageUrl === card.ownImages?.[0]))
+        return [meta.width, meta.height];
+    const image = card?.source === 'mine' && (product.colors || []).flatMap(color => color.images || [])
+        .find(image => image.src === card.ownImages?.[0] && known(image));
+    return image ? [image.width, image.height] : null;
+}
+
 function imageHeight(node, width, card, ctx) {
     const meta = ctx.cuts[card?.id] || {};
+    if (naturalPhoto(node)) {
+        const [sw, sh] = naturalImageSize(node, meta, ctx.catalog);
+        const region = card?.pointItem?.kind === "wornCrop" ? card.pointItem.cropRegion : null;
+        // The selected region is the derived photo; sizing it as the full
+        // original would crop the same source a second time.
+        return Math.max(1, round(width * sh * (region?.[3] || 1) / (sw * (region?.[2] || 1))));
+    }
     let ratio = node.aspect;
     if (!ratio || ratio === "source")
         ratio =
@@ -690,6 +732,7 @@ function renderPhoto(node, x, y, width, ctx) {
         h,
         src,
         radius: node.radius || 0,
+        ...(node.fit ? { fit: node.fit } : {}),
         slotKey: ctx.targetSlot
             ? `${ctx.section.instanceKey}.${ctx.targetSlot}`
             : card && card.pageSectionKey === ctx.key && card.slotKey
@@ -705,7 +748,7 @@ function renderPhoto(node, x, y, width, ctx) {
         if (card.cutType) element.cutType = card.cutType;
         if (card.pageSectionKey === ctx.key) ctx.used.add(card.id);
     }
-    if (node.cropTop) {
+    if (node.cropTop && node.fit !== "contain") {
         const sw = number(meta.width) > 0 ? number(meta.width) : 2,
             sh = number(meta.height) > 0 ? number(meta.height) : 3;
         const scale = Math.max(width / sw, h / (sh * (1 - node.cropTop)));
@@ -718,12 +761,31 @@ function renderPhoto(node, x, y, width, ctx) {
             oy: Math.min(ih - h, round(sh * scale * node.cropTop)),
         };
     }
-    if (card?.pointItem?.kind === "wornCrop") {
+    const coverSize = node.fit === 'cover' ? coverImageSize(card, meta, ctx.product) : null;
+    if (node.fit === 'cover' && (coverSize || card?.pointItem?.kind === 'wornCrop')) {
+        const worn = card?.pointItem?.kind === 'wornCrop';
+        // Unknown ordinary photos use native object-fit cover, without guessing
+        // their source ratio. Worn ROIs retain the generated-wear 3:4 fallback.
+        const [sw, sh] = coverSize || [3, 4];
+        const [rx, ry, rw, rh] = worn ? card.pointItem.cropRegion : [0, 0, 1, 1];
+        // A fixed viewport covers the selected region, including saved legacy ROIs.
+        // Unlike natural legacy layouts, cover intentionally permits upscaling.
+        const scale = Math.max(width / (sw * rw), h / (sh * rh));
+        const iw = Math.max(width, round(sw * scale)), ih = Math.max(h, round(sh * scale));
+        element.crop = { iw, ih,
+            ox: Math.max(0, Math.min(iw - width, round((rx + rw / 2) * iw - width / 2))),
+            oy: Math.max(0, Math.min(ih - h, round((ry + rh / 2) * ih - h / 2))) };
+        if (worn) {
+            element.pointItemKind = 'wornCrop';
+            element.bodyPart = card.pointItem.bodyPart;
+        }
+    } else if (card?.pointItem?.kind === "wornCrop") {
         const [rx, ry, rw, rh] = card.pointItem.cropRegion;
-        const sw = number(meta.width) > 0 ? number(meta.width) : 2;
-        const sh = number(meta.height) > 0 ? number(meta.height) : 3;
-        const dimensionsKnown = number(meta.width) > 0 && number(meta.height) > 0
-            && meta.dimensionsKnown !== false;
+        const [sw, sh] = naturalPhoto(node)
+            ? naturalImageSize(node, meta, ctx.catalog)
+            : [number(meta.width) > 0 ? number(meta.width) : 2,
+                number(meta.height) > 0 ? number(meta.height) : 3];
+        const dimensionsKnown = knownImageSize(meta);
         const scale = Math.min(
             Math.max(width / (sw * rw), h / (sh * rh)),
             width / (sw * 0.3),
@@ -831,147 +893,72 @@ function regionPlan(boxes) {
 function renderGroups(groups, x, y, width, height, ctx, photo) {
     return (groups || []).flatMap((group) => {
         const groupKey = `${ctx.key}:${photo.slotKey}:${group.id}`;
-        const measured =
-            ctx.cuts[photo.sourceBlockId]?.overlayTextColors?.[groupKey];
+        const meta = ctx.cuts[photo.sourceBlockId] || {};
+        const policy = ["P01-D09", "P01-D09-G"].includes(ctx.designId) ? group.positionFallback : null;
+        const plateStyle = ctx.catalog.firstTitlePlate;
+        const plated = Boolean(policy && meta.overlayTextPlates?.[groupKey] === true);
+        const measured = meta.overlayTextColors?.[groupKey];
         const fixedColor = ctx.tokens.colors[group.textColor] || group.textColor;
-        const onPhoto = fixedColor || (Object.values(ctx.catalog.overlayColors).includes(
-            measured,
-        )
-            ? measured
-            : ctx.catalog.overlayColors.light);
-        const result = renderNodes(
-            group.nodes,
-            x + (group.x || 0),
-            0,
-            Math.min(group.w || width, width - (group.x || 0)),
-            {
-                ...ctx,
-                onPhoto,
-                overlayGroupKey: groupKey,
-                fixedOverlayColor: fixedColor,
-                opaqueBackground: false,
-                surfaceColor: null,
-                photoWidth: width,
-            },
-        );
-        const top = Math.min(0, ...result.elements.map((element) => element.y));
-        const bottom = Math.max(
-            0,
-            ...result.elements.map((element) => element.y + element.h),
-        );
-        const band = group.band ? ctx.catalog[group.band] : null;
-        let gy =
-            y +
-            (group.anchor === "center"
-                ? height * (band ? (band.top + band.bottom) / 2 : 0.5) -
-                  (top + bottom) / 2
-                : group.anchor === "bottom"
-                  ? Math.max(0, height - (group.y || 0) - result.h)
-                  : group.y || 0);
-        const policy =
-            ["P01-D09", "P01-D09-G"].includes(ctx.designId) ? group.positionFallback : null;
-        let offsets;
-        if (policy) {
-            const inset = Math.max(
-                0,
-                Math.min(
-                    height * policy.edgeInsetRatio,
-                    (height - (bottom - top)) / 2,
-                ),
-            );
-            offsets = {
-                center: gy,
-                top: y + inset - top,
-                bottom: y + height - inset - bottom,
-            };
-            const position =
-                ctx.cuts[photo.sourceBlockId]?.overlayTextPositions?.[groupKey];
-            if (policy.anchors.includes(position)) gy = offsets[position];
-        }
-        const placed = result.elements.map((element) => ({
-            ...element,
-            y: element.y + gy,
-        }));
-        const bare = placed.filter(
-            (element) => element._overlayGroupKey === groupKey,
-        );
-        const boxes = bare.length
-            ? overlayBoxes(
-                  bare,
-                  groupKey,
-                  x,
-                  y,
-                  width,
-                  height,
-                  ctx.catalog.textMetrics,
-                  Boolean(policy),
-              )
-            : null;
+        const onPhoto = plated ? ctx.catalog.overlayColors.light : fixedColor
+            || (Object.values(ctx.catalog.overlayColors).includes(measured) ? measured : ctx.catalog.overlayColors.light);
+        const groupWidth = Math.min(group.w || width, width - (group.x || 0));
+        const make = withPlate => {
+            const innerWidth = withPlate ? Math.max(1, groupWidth - plateStyle.paddingX * 2) : groupWidth;
+            const result = renderNodes(withPlate ? group.nodes.filter(node => node.type !== 'rule') : group.nodes,
+                x + (group.x || 0) + (groupWidth - innerWidth) / 2, 0, innerWidth,
+                { ...ctx, onPhoto: withPlate ? ctx.catalog.overlayColors.light : onPhoto,
+                    overlayGroupKey: groupKey, fixedOverlayColor: withPlate ? null : fixedColor,
+                    opaqueBackground: false, surfaceColor: null, photoWidth: width });
+            const texts = result.elements.filter(el => el._overlayGroupKey === groupKey);
+            const plate = withPlate && texts.length ? titlePlateBounds(texts, plateStyle,
+                el => measureTextWidth(el.text || el.placeholder, el.w, el.style.size, ctx.catalog.textMetrics, el.style.tracking),
+                groupWidth, x + (group.x || 0) + groupWidth / 2) : null;
+            const top = plate ? plate.y : Math.min(0, ...result.elements.map(el => el.y));
+            const bottom = plate ? plate.y + plate.h : Math.max(0, ...result.elements.map(el => el.y + el.h));
+            const band = group.band ? ctx.catalog[group.band] : null;
+            const center = y + height * (band ? (band.top + band.bottom) / 2 : .5) - (top + bottom) / 2;
+            const inset = policy ? Math.max(0, Math.min(height * policy.edgeInsetRatio, (height - (bottom - top)) / 2)) : 0;
+            const offsets = { center, top: y + inset - top, bottom: y + height - inset - bottom };
+            return { ...result, texts, plate, offsets };
+        };
+        const normal = make(false), plateVersion = policy && (plated || ctx.overlayRegions) ? make(true) : null;
+        const result = plated ? plateVersion : normal;
+        let gy = group.anchor === 'center' ? result.offsets.center : group.anchor === 'bottom'
+            ? y + Math.max(0, height - (group.y || 0) - result.h) : y + (group.y || 0);
+        if (policy && (plated ? plateStyle.platePreference : policy.anchors).includes(meta.overlayTextPositions?.[groupKey])) gy = result.offsets[meta.overlayTextPositions[groupKey]];
+        const placed = result.elements.map(element => ({ ...element, y: element.y + gy,
+            ...(plated ? { groupId: titlePlateGroup(groupKey) } : {}) }));
+        const bare = placed.filter(element => element._overlayGroupKey === groupKey);
+        const boxes = bare.length ? overlayBoxes(bare, groupKey, x, y, width, height, ctx.catalog.textMetrics, Boolean(policy)) : null;
         const lineBoxes = boxes?.lines || [];
         if (bare.length && photo.sourceBlockId && ctx.overlayRegions) {
-            const plan = {
-                sourceBlockId: photo.sourceBlockId,
-                key: groupKey,
-                frame: {
-                    w: photo.w,
-                    h: photo.h,
-                    ...(photo.crop ? { crop: photo.crop } : {}),
-                },
-                ...regionPlan(boxes),
-            };
+            const plan = { sourceBlockId: photo.sourceBlockId, key: groupKey,
+                frame: { w: photo.w, h: photo.h, ...(photo.crop ? { crop: photo.crop } : {}) }, ...regionPlan(boxes) };
             if (policy) {
-                const rawBare = result.elements.filter(
-                    (el) => el._overlayGroupKey === groupKey,
-                );
-                plan.positionCandidates = policy.anchors.map((position) => ({
-                    position,
-                    ...regionPlan(
-                        overlayBoxes(
-                            rawBare.map((el) => ({
-                                ...el,
-                                y: el.y + offsets[position],
-                            })),
-                            groupKey,
-                            x,
-                            y,
-                            width,
-                            height,
-                            ctx.catalog.textMetrics,
-                            true,
-                        ),
-                    ),
-                }));
+                plan.positionCandidates = policy.anchors.map(position => ({ position,
+                    ...regionPlan(overlayBoxes(normal.texts.map(el => ({ ...el, y: el.y + normal.offsets[position] })),
+                        groupKey, x, y, width, height, ctx.catalog.textMetrics, true)) }));
+                plan.plateCandidates = plateStyle.platePreference.map(position => ({ position, region: {
+                    left: (plateVersion.plate.x - x) / width, right: (plateVersion.plate.x + plateVersion.plate.w - x) / width,
+                    top: (plateVersion.plate.y + plateVersion.offsets[position] - y) / height,
+                    bottom: (plateVersion.plate.y + plateVersion.offsets[position] + plateVersion.plate.h - y) / height } }));
+                const card = ctx.storyboard.find(item => item.id === photo.sourceBlockId);
+                plan.garmentBand = plateStyle.garmentBands[ctx.product.clothingType || ctx.product.clothing_type]?.[card?.shot === 'medium' ? 'medium' : 'full'] || plateStyle.fallbackGarmentBand;
             }
             ctx.overlayRegions.push(plan);
         }
-        const measuredLines =
-            ctx.cuts[photo.sourceBlockId]?.overlayTextLines || {};
+        const measuredLines = meta.overlayTextLines || {};
         bare.forEach((el, elementIndex) => {
-            const lines = lineBoxes.filter((line) =>
-                line.key.startsWith(`${groupKey}:${elementIndex}:`),
-            );
-            if (
-                !lines.length ||
-                !lines.every((line) =>
-                    Object.values(ctx.catalog.overlayColors).includes(
-                        measuredLines[line.key]?.color,
-                    ),
-                )
-            )
-                return;
-            el.contrastLines = lines.map((line) => ({
-                text: line.text,
+            const lines = lineBoxes.filter(line => line.key.startsWith(`${groupKey}:${elementIndex}:`));
+            if (!lines.length || !plated && !lines.every(line => Object.values(ctx.catalog.overlayColors).includes(measuredLines[line.key]?.color))) return;
+            el.contrastLines = lines.map(line => ({ text: line.text,
                 color: policy ? onPhoto : measuredLines[line.key].color,
-                shade: measuredLines[line.key].shade === true,
-            }));
-            el.contrastFor = {
-                text: el.text,
-                x: el.x,
-                y: el.y,
-                w: el.w,
-                style: { ...el.style },
-            };
+                shade: !plated && measuredLines[line.key]?.shade === true }));
+            el.contrastFor = { text: el.text, x: el.x, y: el.y, w: el.w, style: { ...el.style } };
         });
+        if (plated) placed.unshift({ type: 'shape', shape: 'rect', ...result.plate,
+            y: result.plate.y + gy, fill: ctx.catalog.neutralColors[plateStyle.fillToken], opacity: plateStyle.opacity,
+            groupId: titlePlateGroup(groupKey) });
         return placed.map(({ _overlayGroupKey, ...element }) => element);
     });
 }
@@ -1310,8 +1297,11 @@ function contentWidth(elements, x) {
 function renderParagraphs(node, x, y, width, ctx) {
     const role = node.splitParagraphs;
     const source = node.nodes.find((child) => child.copyRole === role);
-    const paragraphs = contentFor(source, ctx)
-        .text.split(/\n+/)
+    const content = contentFor(source, ctx);
+    // Seller copy stays in one bubble so whitespace and explicit newlines survive.
+    const paragraphs = content.slot.source === "seller+ai" && sellerComment(ctx)
+        ? [content.text]
+        : content.text.split(/\n+/)
         .map((text) => text.trim())
         .filter(Boolean);
     // Keep all copy: excess paragraphs share the third bubble.
@@ -1421,9 +1411,95 @@ function renderFactTable(node, x, y, width, ctx) {
     return { elements, h: cursor - y };
 }
 
+const photoGroupKey = (card) => card?.spaceGroupId ? `space:${card.spaceGroupId}` : `color:${card?.colorId ?? ""}`;
+
+function contiguousPhotoGroups(cards) {
+    const groups = [];
+    for (const card of cards) {
+        const last = groups.at(-1);
+        if (last && photoGroupKey(last[0]) === photoGroupKey(card)) last.push(card);
+        else groups.push([card]);
+    }
+    return groups;
+}
+
+/** Existing photos only. Preserve contiguous runs even after an entire run is framed. */
+export function selectFramePhotos(cards, count) {
+    const groups = contiguousPhotoGroups(cards);
+    const medium = (group) => group.filter(card => card.shot === 'medium');
+    const winner = groups.find(group => medium(group).length >= count)
+        || groups.reduce((best, group) => medium(group).length > medium(best).length ? group : best, groups[0] || []);
+    const seen = new Set(), frame = [];
+    for (const card of [...medium(winner), ...winner.filter(card => card.shot === 'full'), ...cards]) {
+        if (frame.length >= count) break;
+        if (seen.has(card.id)) continue;
+        seen.add(card.id); frame.push(card);
+    }
+    const unused = winner.filter(card => !seen.has(card.id));
+    const remainingGroups = groups.map(group => group.filter(card => !seen.has(card.id))).filter(group => group.length);
+    return { frame, remaining: remainingGroups.flat(), remainingGroups,
+        background: unused.find(card => card.shot === 'full') || unused[0] || frame[0] || null };
+}
+
+function renderFrameFact(text, role, x, y, width, ctx) {
+    if (!text) return { elements: [], h: 0 };
+    const frame = ctx.catalog.frameStyle;
+    const style = { font: ctx.tokens.fonts.body.font, size: frame.textSize, weight: frame.textWeight, italic: false,
+        tracking: round(frame.textTrackingEm * frame.textSize * 100) / 100, lineHeight: frame.textLineHeight,
+        align: 'center', color: ctx.tokens.colors[frame.ink] };
+    const h = estimateTextHeight(text, width, style.size, style.lineHeight, ctx.catalog.textMetrics, style.tracking);
+    return { elements: [{ type: 'text', x, y, w: width, h, text, style,
+        sourceBlockId: ctx.sourceId, copyRole: role, textSlotVersion: 1 }], h };
+}
+
+function renderFrameBand(selection, y, ctx) {
+    if (!selection.frame.length) return { elements: [], h: 0 };
+    const frame = ctx.catalog.frameStyle, cardX = (ctx.catalog.canvasWidth - frame.cardWidth) / 2,
+        cardY = y + frame.bandPadding, photoX = cardX + frame.paddingX, photoWidth = frame.cardWidth - frame.paddingX * 2;
+    let cursor = cardY + frame.paddingTop;
+    const head = renderFrameFact(string(ctx.product.name), 'name', photoX, cursor, photoWidth, ctx);
+    const content = [...head.elements];
+    cursor += head.h + (head.h ? frame.photoTop : 0);
+    selection.frame.forEach((card, i) => {
+        const result = renderPhoto({ type: 'photo', slot: '$current', fit: 'contain', aspect: 'source', fallbackAspect: frame.fallbackAspect },
+            photoX, cursor, photoWidth, { ...ctx, card, index: ctx.photos.indexOf(card) });
+        content.push(...result.elements); cursor += result.h + (i + 1 < selection.frame.length ? frame.photoGap : 0);
+    });
+    const shopName = ctx.shopName;
+    if (shopName) {
+        cursor += frame.footerGap;
+        const foot = renderFrameFact(shopName, 'who', photoX, cursor, photoWidth, ctx);
+        content.push(...foot.elements); cursor += foot.h;
+    }
+    const cardHeight = cursor + frame.paddingBottom - cardY, height = cardHeight + frame.bandPadding * 2;
+    // A background reuse must not consume a remaining original photo.
+    const backdrop = renderPhoto({ type: 'photo', slot: '$current', aspect: '4/5' }, 0, y, ctx.catalog.canvasWidth,
+        { ...ctx, card: selection.background, index: ctx.photos.indexOf(selection.background), used: new Set() }).elements[0];
+    return { elements: [{ ...backdrop, h: height, blur: frame.blur },
+        { type: 'shape', shape: 'rect', x: cardX, y: cardY, w: frame.cardWidth, h: cardHeight, fill: ctx.tokens.colors[frame.paper], radius: 0 },
+        ...content], h: height };
+}
+
+function photoFlowRows(node, cards) {
+    const groupKey = (card) => node.groupBy === "none" ? "all" : photoGroupKey(card);
+    const rows = [];
+    for (let start = 0; start < cards.length;) {
+        let end = start + 1;
+        while (end < cards.length && groupKey(cards[end]) === groupKey(cards[start])) end += 1;
+        for (let index = start, row = 0; index < end; row += 1) {
+            const remaining = end - index;
+            const count = Math.min(remaining, node.pattern === "twoColumn" || remaining <= 2 ? 2 : row % 2 ? 2 : 1);
+            rows.push({ index, cards: cards.slice(index, index + count) });
+            index += count;
+        }
+        start = end;
+    }
+    return rows;
+}
+
 function renderRepeated(node, cards, ctx, x, y, width) {
-    if (node.type === "photoGrid") {
-        const columns = Math.min(node.columns, ctx.gridCardCount);
+    if (node.type === "photoGrid" || node.type === "photoFlow") {
+        const columns = node.type === "photoFlow" ? cards.length : Math.min(node.columns, ctx.gridCardCount);
         const gap = node.gap || 0,
             cellW = Math.floor((width - gap * (columns - 1)) / columns);
         const startX =
@@ -1440,9 +1516,9 @@ function renderRepeated(node, cards, ctx, x, y, width) {
                 ...ctx,
                 card,
                 index:
-                    ctx.kind.kind === "color_product" && colorIndex >= 0
+                    node.type === "photoGrid" && ctx.kind.kind === "color_product" && colorIndex >= 0
                         ? colorIndex
-                        : ctx.index + i,
+                        : ctx.photoIndexes?.get(card?.id) ?? ctx.index + i,
                 targetSlot: node.slots?.[ctx.index + i],
             };
             const photo = renderPhoto(
@@ -1482,8 +1558,14 @@ function renderRepeated(node, cards, ctx, x, y, width) {
         };
     }
     const card = cards[0];
-    if (node.type === "photoStack")
-        return renderNodes(node.items, x, y, width, { ...ctx, card });
+    if (node.type === "photoStack") {
+        const item = { ...ctx, card, index: ctx.photoIndexes?.get(card?.id) ?? ctx.index };
+        if (ctx.kind.kind === "color_product" && ctx.catalog.designs[ctx.designId]?.choiceAxes) {
+            const colorIndex = (ctx.product.colors || []).findIndex((color) => string(color.id) === string(card?.colorId));
+            if (colorIndex >= 0) item.index = colorIndex;
+        }
+        return renderNodes(node.items, x, y, width, item);
+    }
     const pad = node.padding || 0,
         photoW = Math.min(node.photoWidth, width - 2 * pad),
         gap = node.gap || 0;
@@ -1580,6 +1662,7 @@ export function assemblePage({
     failedCuts = {},
     licenseNotice = null,
     profile = {},
+    shopName,
     overlayRegions,
 } = {}) {
     const catalog = pageTemplatesCatalog;
@@ -1650,13 +1733,16 @@ export function assemblePage({
             )
         )
             throw new Error("Invalid page section design");
-        const sectionStyle = sectionTokens(tokens, section);
+        const renderSection = design.invert == null ? section
+            : { ...section, block: { ...section.block, invert: design.invert } };
+        const sectionStyle = sectionTokens(tokens, renderSection);
         const ctx = {
             catalog,
             storyboard,
             product,
             analysis,
             profile,
+            shopName: typeof shopName === "string" ? shopName.trim() : "",
             copywriting,
             key,
             section,
@@ -1674,7 +1760,7 @@ export function assemblePage({
             index: 0,
             overlayRegions,
             designId,
-            surfaceColor: section.block?.invert
+            surfaceColor: renderSection.block?.invert
                 ? tokens.colors.invertBg
                 : sectionStyle.colors[design.surface || "canvas"],
         };
@@ -1684,7 +1770,7 @@ export function assemblePage({
             elements = [],
             part = 0,
             lastTextWidth;
-        const flush = () => {
+        const flush = (bottom = design.bottom || 0) => {
             if (!elements.length) return;
             const id = `b${blocks.length}`;
             const gap = photos.length
@@ -1692,7 +1778,7 @@ export function assemblePage({
                 : tokens.template.spacing.textSectionGap;
             const h =
                 Math.max(y, ...elements.map((el) => el.y + el.h)) +
-                (design.bottom || 0);
+                bottom;
             blocks.push({
                 id,
                 name: templateSectionName(first),
@@ -1700,7 +1786,7 @@ export function assemblePage({
                 pageSectionKey: key,
                 pageSectionKind: first.pageSectionKind,
                 pageDesignId: designId,
-                bg: section.block?.invert
+                bg: renderSection.block?.invert
                     ? tokens.colors.invertBg
                     : sectionStyle.colors[design.surface || "canvas"],
                 h,
@@ -1718,12 +1804,42 @@ export function assemblePage({
         for (const node of design.layout) {
             if (node.whenTemplate && node.whenTemplate !== tokens.template.id)
                 continue;
-            if (["photoStack", "pointRows", "photoGrid"].includes(node.type)) {
+            if (node.type === "photoFrame") {
+                const selection = selectFramePhotos(selectCards(node, ctx), node.count);
+                if (elements.some(el => el.type === 'image')) flush();
+                const frame = renderFrameBand(selection, y, ctx);
+                elements.push(...frame.elements); y += frame.h;
+                const rows = selection.remainingGroups.flatMap(group => node.pattern === 'column'
+                    ? group.map(card => ({ cards: [card] })) : photoFlowRows({ ...node, groupBy: 'none' }, group));
+                const remainderNode = node.pattern === 'column'
+                    ? { type: 'photoStack', items: [{ type: 'photo', slot: '$current', aspect: node.aspect, radius: 16 }, ...node.captions] }
+                    : { ...node, type: 'photoFlow' };
+                const photoIndexes = new Map(ctx.photos.map((card, index) => [card.id, index]));
+                if (rows.length) { y += catalog.frameStyle.remainderGap; flush(); }
+                rows.forEach((row, index) => {
+                    if (index) flush();
+                    const result = renderRepeated(remainderNode, row.cards, { ...ctx, photoIndexes, index: photoIndexes.get(row.cards[0].id) }, pad, y, width);
+                    elements.push(...result.elements); y += result.h;
+                    if (index + 1 < rows.length) y += tokens.template.spacing.photoGap;
+                });
+                if (rows.length && node.pattern !== 'column') y += node.gap || 0;
+            } else if (node.type === "photoFlow") {
+                const rows = photoFlowRows(node, selectCards(node, ctx));
+                if (elements.some((el) => el.type === "image")) flush();
+                rows.forEach((row, index) => {
+                    if (index) flush();
+                    const result = renderRepeated(node, row.cards, { ...ctx, index: row.index }, pad, y, width);
+                    elements.push(...result.elements);
+                    y += result.h;
+                    if (index + 1 < rows.length) y += tokens.template.spacing.photoGap;
+                });
+                if (rows.length) y += node.gap || 0;
+            } else if (["photoStack", "pointRows", "photoGrid"].includes(node.type)) {
                 const selected = selectCards(node, ctx);
                 const step = node.type === "photoGrid" ? node.columns : 1;
                 if (elements.some((el) => el.type === "image")) flush();
                 for (let i = 0; i < selected.length; i += step) {
-                    if (i) flush();
+                    if (i) flush(node.itemGap != null ? 0 : undefined);
                     const result = renderRepeated(
                         node,
                         selected.slice(i, i + step),
@@ -1735,7 +1851,7 @@ export function assemblePage({
                     elements.push(...result.elements);
                     y += result.h;
                     if (i + step < selected.length)
-                        y += tokens.template.spacing.photoGap;
+                        y += node.itemGap ?? tokens.template.spacing.photoGap;
                 }
                 if (selected.length) y += node.gap || 0;
             } else {

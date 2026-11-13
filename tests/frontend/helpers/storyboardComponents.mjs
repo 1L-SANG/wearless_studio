@@ -9,14 +9,17 @@ import { isTextOnlySection, visibleSectionRuns } from '../../../src/lib/pageTemp
 import * as signature from '../../../src/lib/signatureCutPool.js';
 import * as photoChoices from '../../../src/lib/pageTemplates/storyboardPhotoChoices.js';
 import * as gallery from '../../../src/lib/pageTemplates/storyboardGallery.js';
-import { assembleStoryboardPreview } from '../../../src/features/storyboard/storyboardPreview.js';
+import { assembleStoryboardPreview, detailStageGeometry, detailNoticeLines } from '../../../src/features/storyboard/storyboardPreview.js';
 import { stageAdditions } from '../../../src/lib/pageTemplates/stageAdditions.js';
-import { pairedPhotoSlot } from '../../../src/lib/pageTemplates/pairedDesigns.js';
+import { pairedPhotoSlot, baseDesignId } from '../../../src/lib/pageTemplates/pairedDesigns.js';
 import { reconcileSectionDependencies } from '../../../src/lib/pageTemplates/sectionDependencies.js';
 import { baseColorOf, resolvePageTokens } from '../../../src/lib/pageTemplates/tokens.js';
+import { hasBackdropBlur, backdropEdgeTiles } from '../../../src/features/editor/editorImageBlur.js';
+import { sectionDesignAxes } from '../../../src/lib/pageTemplates/designAxes.js';
 const extraBindings = { storyboardPositions, storyboardPositionId, isHiddenStoryboardKind, positionSwapReason, storyboardPositionSwapReason,
   wearUsageForBlock, automaticSectionInsertionKey, colorDisplayName, isTextOnlySection, visibleSectionRuns,
-  ...signature, ...gallery, ...photoChoices, assembleStoryboardPreview, stageAdditions, pairedPhotoSlot, reconcileSectionDependencies, baseColorOf, resolvePageTokens,
+  ...signature, ...gallery, ...photoChoices, assembleStoryboardPreview, detailStageGeometry, detailNoticeLines, stageAdditions, pairedPhotoSlot, reconcileSectionDependencies, baseColorOf, resolvePageTokens, sectionDesignAxes,
+  hasBackdropBlur,
   StoryboardPaleSlot: 'pale-slot', StoryboardStackPopup: 'stack-popup',
   ProductPresentationPicker: 'product-presentations', PhotoChoiceFilters: 'photo-filters', PhotoFraming: 'photo-framing', PhotoChoicePager: 'photo-pages', ExampleThumb: 'example-thumb' };
 
@@ -33,7 +36,18 @@ export const readStoryboardSources = () => ['Storyboard.jsx', 'StoryboardPhotoPa
 // Execute the actual JSX and callbacks with hook storage supplied by the test.
 // This never starts a browser, server, fetch, or image request.
 export async function loadStoryboardComponent(file, name, bindings = {}) {
-  bindings = { ...extraBindings, ...bindings };
+  bindings = { designStyles: componentStyles, ...extraBindings, ...bindings };
+  if (file === 'StoryboardSectionPicker.jsx' && !bindings.StoryboardDesignIllustration) {
+    const raw = readStoryboard('StoryboardDesignIllustration.jsx').replace(/^import[\s\S]*?from ['"][^'"]+['"];\s*/gm, '').replace(/\bexport (?=(function|const))/g, '');
+    const { code } = await transformWithEsbuild(raw, 'StoryboardDesignIllustration.jsx', { jsx: 'transform' });
+    bindings.StoryboardDesignIllustration = new Function('React', 'baseDesignId', `${code}; return StoryboardDesignIllustration;`)(React, baseDesignId);
+  }
+  if (file === 'StoryboardPreview.jsx' && !bindings.BackdropSvg) {
+    const raw = readFileSync(new URL('../../../src/features/editor/EditorBackdropImage.jsx', import.meta.url), 'utf8')
+      .replace(/^import[\s\S]*?from ['"][^'"]+['"];\s*/gm, '').replace(/\bexport (?=(function|const))/g, '');
+    const { code } = await transformWithEsbuild(raw, 'EditorBackdropImage.jsx', { jsx: 'transform' });
+    bindings.BackdropSvg = new Function('React', 'styles', 'backdropEdgeTiles', `${code}; return BackdropSvg;`)(React, componentStyles, backdropEdgeTiles);
+  }
   const source = readStoryboard(file).replace(/^import[\s\S]*?from ['"][^'"]+['"];\s*/gm, '')
     .replace(/^export default [^;]+;\s*/gm, '')
     .replace(/^export \{[^}]+\} from [^;]+;\s*/gm, '').replace(/\bexport (?=(function|const))/g, '');

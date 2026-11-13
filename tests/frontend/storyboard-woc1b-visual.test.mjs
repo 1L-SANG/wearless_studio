@@ -53,7 +53,9 @@ test('WOC1b visual controls, selected photographs and previews use the approved 
   assert.match(rule(panels, '.exampleModes button'), /min-height: 40px.*var\(--r-4\)/);
   assert.match(rule(panels, '.shotPills button'), /min-height: 32px.*var\(--sb-line-control\).*var\(--r-pill\)/);
   assert.match(rule(panels, '.photoPanel :global(.color-dot)'), /width: 34px; height: 34px/);
-  assert.match(rule(panels, '.designPreview'), /max-width: 196px; height: 250px/);
+  const design = read('src/features/storyboard/StoryboardDesignPanel.module.css');
+  assert.match(rule(design, '.thumbnails'), /repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(rule(design, '.thumbnail svg'), /width: 100%; height: auto/);
   assert.match(rule(panels, '.menuPreview'), /width: 64px; height: 84px/);
   assert.match(rule(panels, '.roundPlus'), /width: 32px; height: 32px/);
 });

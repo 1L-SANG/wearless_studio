@@ -33,7 +33,7 @@ function board(initial, overrides = {}) {
     directSaveSnapshots: { current: new WeakSet() }, atomicRetryRef: { current: null }, setDrawer() {},
     setSetPicker() {}, setSetPickerError() {}, selectedId: null, closeInspector() {},
     showUndo: (before, after) => undo.push({ before, after }), clearUndoForSnapshot() {},
-    toast: { push: message => messages.push(message) }, sbSaveNow: async () => {}, sbPending: new Map(), projectId: 'test', clothingType: 'top',
+    toast: { push: message => messages.push(message) }, sbSaveNow: async () => {}, sbPending: new Map(), api: {}, projectId: 'test', clothingType: 'top',
     undoLabelForPatch: () => '설정', ...overrides,
     setBlocks: update => { blocks = similar.reconcileSimilarCutMutation(blocks, typeof update === 'function' ? update(blocks) : update); },
   };

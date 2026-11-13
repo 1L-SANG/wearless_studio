@@ -80,31 +80,44 @@ def sample_overlay_color(image, plan):
     return sample_overlay_style(image, plan)['color']
 
 
+def _plate_position(plan):
+    policy = CATALOG['firstTitlePlate']
+    start, end = plan.get('garmentBand') or policy['fallbackGarmentBand']
+    candidates = {item['position']: item['region'] for item in plan.get('plateCandidates', [])}
+    overlaps = {}
+    for position in policy['platePreference']:
+        region = candidates.get(position)
+        if not region:
+            continue
+        overlap = max(0, min(end, region['bottom']) - max(start, region['top']))
+        overlaps[position] = round(overlap / max(1e-9, region['bottom'] - region['top']), 12)
+        if overlaps[position] < policy['maxGarmentOverlap'] - 1e-9:
+            return position
+    return min(overlaps, key=overlaps.get) if overlaps else 'center'
+
+
 def _first_title_metadata(image, plan):
-    """Prefer center/top/bottom; one ink must clear 3:1 on every actual line."""
+    """Score every position; near-best ties prefer center/bottom/top, else plate."""
     light, dark = CATALOG['overlayColors']['light'], CATALOG['overlayColors']['dark']
-    fallback = ('center', light, {line['key']: {'color': light, 'shade': False} for line in plan['lines']})
-    best = None
+    policy = CATALOG['firstTitlePlate']
+    candidates = []
     for candidate in plan['positionCandidates']:
-        # A blank wrapped line has no ink footprint, but still needs an unshaded
-        # metadata entry so the saved text's line indexing remains unchanged.
         lines = [(line['key'], _contrast_scores(image, {'frame': plan['frame'], 'region': line['region']})
-                  if line['region']['right'] > line['region']['left'] else {})
-                 for line in candidate['lines']]
-        if not lines or any(scores is None for _, scores in lines):
-            return fallback
+                  if line['region']['right'] > line['region']['left'] else {}) for line in candidate['lines']]
         visible = [scores for _, scores in lines if scores]
-        if not visible:
-            return fallback
+        if not visible or any(scores is None for _, scores in lines):
+            continue
         scores = {color: min(line_scores[color] for line_scores in visible) for color in (light, dark)}
         chosen = dark if scores[dark] >= scores[light] else light
-        score = scores[chosen]
-        if best is None or score > best[0]:
-            best = (score, candidate['position'], chosen,
-                    {key: {'color': chosen, 'shade': bool(line_scores) and line_scores[chosen] < 3} for key, line_scores in lines})
-        if score >= 3:
-            break
-    return best[1:] if best else fallback
+        candidates.append((scores[chosen], candidate['position'], chosen, lines))
+    passing = [candidate for candidate in candidates if candidate[0] >= policy['threshold']]
+    if passing:
+        highest = max(candidate[0] for candidate in passing)
+        near = [candidate for candidate in passing if candidate[0] >= highest * policy['nearBestRatio']]
+        score, position, chosen, lines = min(near, key=lambda candidate: policy['preference'].index(candidate[1]))
+        return position, chosen, {key: {'color': chosen, 'shade': False} for key, _ in lines}, False
+    # Missing pixels are also unreadable, so use the same conservative plate.
+    return _plate_position(plan), light, {line['key']: {'color': light, 'shade': False} for line in plan['lines']}, True
 
 
 def overlay_text_metadata(block, image, *, product=None, analysis=None, storyboard=None,
@@ -132,10 +145,12 @@ def overlay_text_metadata(block, image, *, product=None, analysis=None, storyboa
         plans = [plan for plan in plans if plan['sourceBlockId'] in sources]
         if not plans:
             return {}
-        colors, lines, positions = {}, {}, {}
+        colors, lines, positions, plates = {}, {}, {}, {}
         for plan in plans:
             if plan.get('positionCandidates'):
-                position, color, measured_lines = _first_title_metadata(rgb, plan)
+                position, color, measured_lines, plate = _first_title_metadata(rgb, plan)
+                if plate:
+                    plates[plan["key"]] = True
                 positions[plan['key']] = position
                 colors[plan['key']] = color
                 lines.update(measured_lines)
@@ -144,7 +159,8 @@ def overlay_text_metadata(block, image, *, product=None, analysis=None, storyboa
                 lines.update({line['key']: sample_overlay_style(rgb, {'frame': plan['frame'], 'region': line['region']})
                               for line in plan['lines']})
         return {'overlayTextColors': colors, 'overlayTextLines': lines,
-                **({'overlayTextPositions': positions} if positions else {})}
+                **({'overlayTextPositions': positions} if positions else {}),
+                **({'overlayTextPlates': plates} if plates else {})}
     except Exception:
         return {}
     finally:

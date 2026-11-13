@@ -1,6 +1,9 @@
 import React from 'react';
 import { storyboardPositionId } from '../../lib/pageTemplates/storyboardPositions.js';
+import { BackdropSvg } from '../editor/EditorBackdropImage.jsx';
+import { hasBackdropBlur } from '../editor/editorImageBlur.js';
 import styles from './StoryboardLayout.module.css';
+import { detailNoticeLines } from './storyboardPreview.js';
 
 const rgbaPaint = value => {
   const match = value?.match(/^rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)$/);
@@ -19,22 +22,41 @@ const shadowPaint = shadow => {
 
 const tonePaint = (paint, colors) => colors && [colors.accentBg, colors.accentLine, colors.accentInk].includes(paint) ? paint : undefined;
 
-function PreviewElement({ element: el, wireframe, onScrim, emphasizeText, toneColors }) {
+function PreviewElement({ element: el, wireframe, onScrim, photoPanel, emphasizeText, toneColors, detailLabels }) {
   const clipId = React.useId();
   if (el.hidden) return null;
+  if (hasBackdropBlur(el)) return wireframe
+    ? <rect x={el.x} y={el.y} width={el.w} height={el.h} className={styles.previewWireBackdrop} />
+    : <BackdropSvg element={el} x={el.x} y={el.y} width={el.w} height={el.h} />;
   if (el.type === 'image') return <svg x={el.x} y={el.y} width={el.w} height={el.h} viewBox={`0 0 ${el.w} ${el.h}`}>
     <defs><clipPath id={clipId}><rect width={el.w} height={el.h} rx={el.radius || 0} /></clipPath></defs>
     <rect width={el.w} height={el.h} className={wireframe ? styles.previewWirePhoto : styles.previewEmpty} rx={el.radius || 0} />
-    {!wireframe && el.src && <image href={el.src} width={el.crop?.iw || el.w} height={el.crop?.ih || el.h}
+    {!wireframe && el.src && el.previewDetailLabel && el.crop && (el.crop.iw < el.w || el.crop.ih < el.h) &&
+      <image className={styles.detailSource} href={el.src} width={el.w} height={el.h} preserveAspectRatio="xMidYMid slice" clipPath={`url(#${clipId})`} />}
+    {!wireframe && el.src && <image className={el.previewDetailLabel ? styles.detailSource : undefined} href={el.src} width={el.crop?.iw || el.w} height={el.crop?.ih || el.h}
       x={-(el.crop?.ox || 0)} y={-(el.crop?.oy || 0)} preserveAspectRatio="xMidYMid slice" clipPath={`url(#${clipId})`} />}
+    {!wireframe && el.previewDetailLabel && <>
+      <defs><linearGradient id={`${clipId}-detail`} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor="var(--bg-1)" className={styles.detailFadeStart} />
+        <stop offset="52%" stopColor="var(--bg-1)" className={styles.detailFadeStart} />
+        <stop offset="100%" stopColor="var(--bg-1)" className={styles.detailFadeEnd} />
+      </linearGradient></defs>
+      <rect width={el.w} height={el.h} rx={el.radius || 0} fill={`url(#${clipId}-detail)`} data-detail-veil />
+      {detailLabels && <g className={styles.previewDetailNotice} data-detail-notice>
+        {detailNoticeLines(el.w, el.h, el.previewDetailLabel).map((line, index) =>
+          <text key={index} x={line.x} y={line.y} className={line.title ? styles.previewDetailTitle : styles.previewDetailNote}>{line.text}</text>)}
+      </g>}
+    </>}
   </svg>;
   if (el.type === 'shape') {
     const gradient = gradientPaint(el.fill), shadow = shadowPaint(el.boxShadow);
     const gradientId = `${clipId}-gradient`, shadowId = `${clipId}-shadow`;
     const tinted = wireframe && tonePaint(el.fill, toneColors);
+    const panelPaint = wireframe && photoPanel && !gradient
+      ? tinted ? `color-mix(in srgb, var(--sb-wire-panel) 70%, ${tinted})` : 'var(--sb-wire-panel)' : undefined;
     const paint = {
-      className: wireframe && !gradient && !tinted ? styles.previewWireShape : undefined,
-      fill: gradient ? `url(#${gradientId})` : wireframe ? tinted : el.fill,
+      className: wireframe && !gradient && !tinted && !panelPaint ? styles.previewWireShape : undefined,
+      fill: gradient ? `url(#${gradientId})` : panelPaint || (wireframe ? tinted : el.fill),
       stroke: wireframe ? undefined : el.stroke, strokeWidth: el.strokeWidth || 0,
       filter: shadow ? `url(#${shadowId})` : undefined,
     };
@@ -71,7 +93,7 @@ function PreviewElement({ element: el, wireframe, onScrim, emphasizeText, toneCo
 
 // Preview geometry is assembled once. Copy stays as faint lines until generation.
 export function StoryboardPreview({ blocks = [], label = '페이지 미리보기', fit = false, wireframe = false,
-  highlightedPosition, selectedSourceId, selectedPositionId, onPositionClick, emphasizeText = false, toneColors }) {
+  highlightedPosition, selectedSourceId, selectedPositionId, onPositionClick, emphasizeText = false, toneColors, detailLabels = false }) {
   const visible = (Array.isArray(blocks) ? blocks : []).filter(block => block && Number.isFinite(block.h) && block.h > 0);
   const height = visible.reduce((sum, block) => sum + block.h, 0) || 1;
   let y = 0;
@@ -84,6 +106,12 @@ export function StoryboardPreview({ blocks = [], label = '페이지 미리보기
           fill={wireframe ? tonePaint(block.bg, toneColors) : block.bg} />
         {(block.elements || []).filter(element => element && ['x', 'y', 'w', 'h'].every(key => Number.isFinite(element[key])))
           .map(element => {
+            // A panel precedes and encloses its photo. Overlay bubbles and
+            // section-gap paint are not photo panels and retain their old ink.
+            const photoPanel = element.type === 'shape' && element.shape === 'rect'
+              && block.elements.slice(block.elements.indexOf(element) + 1).some(photo => photo?.type === 'image'
+              && photo.x >= element.x && photo.y >= element.y
+              && photo.x + photo.w <= element.x + element.w && photo.y + photo.h <= element.y + element.h);
             const onScrim = wireframe && element.type === 'text'
               && block.elements.slice(0, block.elements.indexOf(element)).some(paint => paint?.type === 'shape'
               && gradientPaint(paint.fill) && element.x < paint.x + paint.w && element.x + element.w > paint.x
@@ -91,8 +119,8 @@ export function StoryboardPreview({ blocks = [], label = '페이지 미리보기
             const viewId = storyboardPositionId(block, element);
             const highlighted = highlightedPosition === viewId || (!highlightedPosition && (selectedPositionId
               ? viewId === selectedPositionId : selectedSourceId && element.sourceBlockId === selectedSourceId));
-            return <React.Fragment key={element.id}><PreviewElement element={element} wireframe={wireframe} onScrim={onScrim} emphasizeText={emphasizeText} toneColors={toneColors} />
-              {element.type === 'image' && (onPositionClick || highlighted) && <rect x={element.x} y={element.y} width={element.w} height={element.h}
+            return <React.Fragment key={element.id}><PreviewElement element={element} wireframe={wireframe} onScrim={onScrim} photoPanel={photoPanel} emphasizeText={emphasizeText} toneColors={toneColors} detailLabels={detailLabels} />
+              {element.type === 'image' && !hasBackdropBlur(element) && (onPositionClick || highlighted) && <rect x={element.x} y={element.y} width={element.w} height={element.h}
                 data-preview-position={viewId} className={`${styles.positionHit}${highlighted ? ` ${styles.positionHighlight}` : ''}`}
                 vectorEffect="non-scaling-stroke" onClick={onPositionClick ? event => { event.stopPropagation(); onPositionClick({ viewId, sourceBlockId: element.sourceBlockId, slotKey: element.slotKey }); } : undefined} />}
             </React.Fragment>;

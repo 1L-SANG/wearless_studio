@@ -1,3 +1,92 @@
+import { blurPixels, scaledBlurRadius } from './editorImageBlur.js';
+
+const MAX_BLUR_WORK_PIXELS = 1_048_576;
+const MAX_BLUR_WORK_DIM = 4096;
+
+// Blur removes high-frequency detail, so a bounded intermediate is sufficient.
+// The PNG fills the original element box and sigma uses the SAME work scale.
+export function backdropRasterPlan(element, ratio) {
+  const { w, h } = element;
+  if (![w, h, ratio].every(value => Number.isFinite(value) && value > 0)) {
+    throw new Error('배경 이미지 크기를 확인하지 못했어요. 다시 시도해 주세요.');
+  }
+  const scale = element.blur > 0
+    ? Math.min(ratio, Math.sqrt(MAX_BLUR_WORK_PIXELS / w / h), MAX_BLUR_WORK_DIM / w, MAX_BLUR_WORK_DIM / h)
+    : ratio;
+  const width = Math.max(1, Math.floor(w * scale)), height = Math.max(1, Math.floor(h * scale));
+  // Zero-blur page exports reuse source bytes. An exceptionally large selected
+  // photo can still exceed browser canvas limits: fail before allocating it.
+  if (element.blur === 0 && (width * height > 16_777_216 || width > 16384 || height > 16384)) {
+    throw new Error('배경 이미지가 너무 커요. 전체 페이지에서 나눠서 받아 주세요.');
+  }
+  return { width, height, scale, blur: scaledBlurRadius(element.blur, scale) };
+}
+
+// Draw the exact existing crop/fit before blurring. Edge clamping happens in
+// pixels, so no CSS filter, Canvas filter or overscan zoom changes the export.
+export function rasterizeBackdropImage(image, element, ratio, deps = {}) {
+  const { width, height, blur } = backdropRasterPlan(element, ratio);
+  const ratioX = width / element.w, ratioY = height / element.h;
+  const canvas = (deps.createCanvas || createRasterCanvas)(width, height);
+  try {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) throw new Error('배경 흐림을 적용하지 못했어요. 다시 시도해 주세요.');
+    if (element.crop) {
+      const { ox, oy, iw, ih } = element.crop;
+      ctx.drawImage(image, -ox * ratioX, -oy * ratioY, iw * ratioX, ih * ratioY);
+    } else {
+      const iw = image.naturalWidth, ih = image.naturalHeight;
+      const contain = Math.min(element.w / iw, element.h / ih), cover = Math.max(element.w / iw, element.h / ih);
+      const fit = element.fit || 'cover';
+      const scale = fit === 'contain' ? contain : fit === 'none' ? 1 : fit === 'scale-down' ? Math.min(1, contain) : cover;
+      const dw = fit === 'fill' ? width : iw * scale * ratioX, dh = fit === 'fill' ? height : ih * scale * ratioY;
+      ctx.drawImage(image, (width - dw) / 2, (height - dh) / 2, dw, dh);
+    }
+    if (blur > 0) {
+      const imageData = ctx.getImageData(0, 0, width, height);
+      imageData.data.set(blurPixels(imageData.data, width, height, blur));
+      ctx.putImageData(imageData, 0, 0);
+    }
+    return canvas;
+  } catch (error) {
+    canvas.width = 0; canvas.height = 0;
+    throw error;
+  }
+}
+
+// Called only on the detached export clone, after CORS-safe preflight replaced
+// each source with data bytes. Decode the new PNG before probes or SVG capture.
+export async function bakeExportBackdrops(root, ratio, deps = {}) {
+  for (const wrapper of root.querySelectorAll('[data-editor-blur]')) {
+    const image = wrapper.querySelector('img');
+    if (!image) throw new Error('배경 사진을 읽지 못했어요. 다시 시도해 주세요.');
+    await image.decode();
+    const element = { w: Number(wrapper.dataset.blurWidth), h: Number(wrapper.dataset.blurHeight),
+      blur: Number(wrapper.dataset.editorBlur), fit: wrapper.dataset.blurFit,
+      crop: wrapper.dataset.blurCrop ? JSON.parse(wrapper.dataset.blurCrop) : null };
+    image.removeAttribute('class');
+    image.removeAttribute('style');
+    image.removeAttribute('srcset');
+    if (element.blur === 0) {
+      // Preserve the original resolution and crop with no full-height buffer.
+      Object.assign(image.style, element.crop ? {
+        position: 'absolute', left: `${-element.crop.ox}px`, top: `${-element.crop.oy}px`,
+        width: `${element.crop.iw}px`, height: `${element.crop.ih}px`, objectFit: 'fill',
+      } : { objectFit: element.fit || 'cover' });
+      wrapper.replaceChildren(image);
+      wrapper.dataset.blurBaked = 'true';
+      continue;
+    }
+    const canvas = rasterizeBackdropImage(image, element, ratio, deps);
+    try {
+      image.setAttribute('src', canvas.toDataURL('image/png'));
+      wrapper.replaceChildren(image);
+      wrapper.dataset.blurBaked = 'true';
+      await image.decode();
+    } finally { canvas.width = 0; canvas.height = 0; }
+  }
+}
+
 // 눈에 보이는 사진 내용이 있는데 결과 영역에 균일한 배경만 남았는지 확인한다.
 // 원래 빈 블록, 흰 이미지, 투명 여백은 사진 누락으로 판정하지 않는다.
 export function isBlankImageRegion(expected, actual) {

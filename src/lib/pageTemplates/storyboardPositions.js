@@ -15,7 +15,7 @@ export function storyboardPositions(page = [], sectionKey) {
   for (const block of page) {
     if (block.pageSectionKey !== sectionKey || !Number.isFinite(block.h) || block.h <= 0) continue;
     for (const element of block.elements || []) {
-      if (element.type !== 'image' || element.hidden || !['x', 'y', 'w', 'h'].every(key => Number.isFinite(element[key])) || element.w <= 0 || element.h <= 0) continue;
+      if (element.type !== 'image' || Number.isFinite(element.blur) || element.hidden || !['x', 'y', 'w', 'h'].every(key => Number.isFinite(element[key])) || element.w <= 0 || element.h <= 0) continue;
       positions.push({ viewId: storyboardPositionId(block, element), sourceBlockId: element.sourceBlockId,
         slotKey: element.slotKey, element, top: top + element.y, area: element.w * element.h });
     }

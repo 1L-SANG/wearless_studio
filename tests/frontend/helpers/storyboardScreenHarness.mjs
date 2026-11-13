@@ -3,10 +3,12 @@ import { createServer } from 'vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath } from 'node:url';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Real modules and callbacks, including api -> mockAdapter -> mock.saveAnalysis.
 // Only the React host/DOM boundary is inert; no browser or network image loads.
-export async function storyboardScreenHarness({ pairedFirst = false, lockSource = 'cut', savedStyle = {}, pauseLoad = false, withToast = false, viewportWidth = 1440 } = {}) {
+export async function storyboardScreenHarness({ pairedFirst = false, lockSource = 'cut', savedStyle = {}, pauseLoad = false, withToast = false, viewportWidth = 1440, hasFrame = false, mallConnections = {} } = {}) {
+  const scrollCalls = [];
   const descriptors = new Map(['window', 'document', 'requestAnimationFrame', 'cancelAnimationFrame'].map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
   const host = () => ({ nodeType: 1, classList: { add() {}, remove() {}, contains: () => false },
     focus() {}, contains: () => true, querySelector: () => null, querySelectorAll: () => [],
@@ -32,10 +34,14 @@ export async function storyboardScreenHarness({ pairedFirst = false, lockSource 
   const { seedStoryboard } = await vite.ssrLoadModule('/src/lib/pageTemplates/seed.js');
   DB.analysis.pageStyle = { ...defaultPageStyle(), ...savedStyle }; DB.product.colors[0].swatchId = 'blue';
   DB.storyboard = seedStoryboard(DB.product, DB.analysis);
+  DB.mallConnections = mallConnections;
+  DB.account.name = '공개하면 안 되는 회원 실명';
+  if (hasFrame) DB.storyboard = DB.storyboard.map(block => block.pageSectionKind === 'wear' && block.pageSectionUsage === 'styling' ? { ...block, pageDesignId: 'WEAR-STYLING-FRAME-COLUMN-02' } : block);
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   if (pairedFirst) DB.storyboard = DB.storyboard.map(block => block.pageSectionKind === 'first' ? { ...block, pageDesignId: 'P01-D09-G' } : block);
   DB.mannequins = lockSource === 'cut' ? [{ id: 'existing-mannequin', previewOnly: false }] : [];
   DB.project.latestJobs = lockSource === 'job' ? { mannequin: { id: 'existing-job', status: 'running' } } : {};
-  useAppStore.setState({ projectId: DB.project.id, projectPersisted: true });
+  useAppStore.setState({ projectId: DB.project.id, projectPersisted: true, accountUserId: 'mock-owner', account: DB.account });
   invalidateStoryboardEntryPrefetch(DB.project.id); await prefetchStoryboardEntry(DB.project.id);
   const originalLoad = useAppStore.getState().loadProject, waitingLoads = [];
   if (pauseLoad) useAppStore.setState({ loadProject: () => new Promise(resolve => waitingLoads.push(resolve)) });
@@ -67,7 +73,10 @@ export async function storyboardScreenHarness({ pairedFirst = false, lockSource 
     useEffect(fn, deps) { effect(fn, deps, effects); }, useLayoutEffect(fn, deps) { effect(fn, deps, layout); },
     useInsertionEffect(fn, deps) { effect(fn, deps, layout); },
     useContext: context => contexts.has(context) ? contexts.get(context) : context._currentValue,
-    useSyncExternalStore(_subscribe, get) { cursor++; return get(); }, useDebugValue() {},
+    useSyncExternalStore(subscribe, get) {
+      effect(() => subscribe(() => { if (!closed) dirty = true; }), [subscribe], effects);
+      return get();
+    }, useDebugValue() {},
     useId() { const i = cursor++; return active.slots[i] ||= `screen-${instances.size}-${i}`; },
     useImperativeHandle(ref, fn, deps) { effect(() => { if (ref) ref.current = fn(); }, deps, layout); },
   };
@@ -92,7 +101,7 @@ export async function storyboardScreenHarness({ pairedFirst = false, lockSource 
       finally { currentDispatcher.current = previous; }
       return expand(child, `${path}.render`);
     }
-    if (node.ref) { const element = host(); if (typeof node.ref === 'function') node.ref(element); else node.ref.current = element; }
+    if (node.ref) { const element = host(); element.scrollIntoView = options => scrollCalls.push({ sectionKey: node.props?.['data-section-key'], options }); if (typeof node.ref === 'function') node.ref(element); else node.ref.current = element; }
     return { type, props: { ...node.props, children: expand(node.props?.children, `${path}.children`) } };
   };
   const render = () => {
@@ -100,21 +109,22 @@ export async function storyboardScreenHarness({ pairedFirst = false, lockSource 
     do {
       dirty = false; layout = []; effects = [];
       const screen = React.createElement(Storyboard, withToast ? {} : { toastOverride: toast });
-      tree = expand(React.createElement(MemoryRouter, { initialEntries: ['/create/storyboard'] }, withToast
-        ? React.createElement(ToastProvider, null, React.createElement(CaptureNotifications), screen) : screen));
+      tree = expand(React.createElement(QueryClientProvider, { client: queryClient },
+        React.createElement(MemoryRouter, { initialEntries: ['/create/storyboard'] }, withToast
+        ? React.createElement(ToastProvider, null, React.createElement(CaptureNotifications), screen) : screen)));
       layout.splice(0).forEach(fn => fn()); effects.splice(0).forEach(fn => fn());
       if (++loops > 30) throw new Error('screen render did not settle');
     } while (dirty);
     return tree;
   };
   const flush = async () => { for (let i = 0; i < 20; i++) { await new Promise(setImmediate); if (dirty) render(); } return tree; };
-  return { DB, api, render, flush, get tree() { return tree; }, waitForStyle: () => waitForAnalysisEditSave(DB.project.id),
+  return { DB, api, queryClient, store: useAppStore, scrollCalls, render, flush, get tree() { return tree; }, waitForStyle: () => waitForAnalysisEditSave(DB.project.id),
     notify(message = '마네킹컷이 만들어졌어요') { return notifications.push(message, { variant: 'mannequinCompletion', sticky: true }); },
     dismissNotification(id) { notifications.dismiss(id, 'mannequinCompletion'); },
     async releaseLoad() { await originalLoad(); waitingLoads.splice(0).forEach(resolve => resolve()); },
     load: path => vite.ssrLoadModule(path),
     async close() {
-      closed = true; instances.forEach(owner => owner.cleanups.forEach(fn => fn?.()));
+      closed = true; instances.forEach(owner => owner.cleanups.forEach(fn => fn?.())); queryClient.clear();
       if (pauseLoad) useAppStore.setState({ loadProject: originalLoad });
       await vite.close();
       for (const [key, value] of descriptors) { if (value) Object.defineProperty(globalThis, key, value); else delete globalThis[key]; }

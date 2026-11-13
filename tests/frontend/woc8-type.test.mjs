@@ -3,12 +3,19 @@ import assert from 'node:assert/strict';
 import { pageTemplatesCatalog as catalog, getTemplate, validateCatalog } from '../../src/lib/pageTemplates/catalog.js';
 import { resolvePageTokens } from '../../src/lib/pageTemplates/tokens.js';
 import { defaultPageStyle, selectFontStyle, validPageStyle, analysisPageStyle, selectTemplateStyle } from '../../src/lib/pageTemplates/pageStyle.js';
-import { loadStoryboardComponent, nodes, textOf } from './helpers/storyboardComponents.mjs';
+import { loadStoryboardComponent, nodes, textOf, hookHarness } from './helpers/storyboardComponents.mjs';
 
-const loadPicker = (source = catalog) => loadStoryboardComponent('StoryboardThemePicker.jsx', 'StoryboardThemePicker', {
-  pageTemplatesCatalog: source, getTemplate: id => getTemplate(id, source),
-  resolvePageTokens: style => resolvePageTokens(style, null, source), Icon: 'icon',
-});
+const loadPicker = async (source = catalog) => {
+  const h = hookHarness();
+  const Carousel = await loadStoryboardComponent('StoryboardStyleCarousel.jsx', 'StoryboardStyleCarousel', {
+    ...h.hooks, useLayoutEffect: h.hooks.useEffect, Icon: 'icon',
+  });
+  const Picker = await loadStoryboardComponent('StoryboardThemePicker.jsx', 'StoryboardThemePicker', {
+    pageTemplatesCatalog: source, getTemplate: id => getTemplate(id, source),
+    resolvePageTokens: style => resolvePageTokens(style, null, source), StoryboardStyleCarousel: Carousel,
+  });
+  return props => h.render(Carousel, Picker(props).props);
+};
 const find = (tree, name) => {
   const node = nodes(tree).find(candidate => candidate.props?.['aria-label'] === name);
   assert.ok(node, `${name} is rendered`);
@@ -54,7 +61,8 @@ test('WOC8 one current two-line specimen has catalog role typography for every t
     assert.ok(sample, 'the current value is exposed on its specimen');
     assert.equal(nodes(tree).filter(node => node.props?.['data-font-style']).length, 1);
     assert.equal(sample.props['data-font-style'], value);
-    const label = value === 'template' ? templateId === 'show' ? '기본' : '다정' : value === 'serif' ? '매거진' : '볼드';
+    const label = value === 'template' ? templateId === 'show' ? '기본' : '다정'
+      : value === 'plainGothic' ? catalog.fontStyleLabels.plainGothic : value === 'serif' ? '매거진' : '볼드';
     assert.equal(sample.props.title, label);
     assert.equal(sample.props['aria-label'], label);
     const lines = nodes(sample).filter(node => node.type === 'text');
@@ -80,8 +88,8 @@ test('WOC8 actual arrows wrap the catalog order and each click changes the contr
   const render = () => Picker({ value, onChange: next => { chosen.push(next); value = next; } });
   for (let i = 0; i < 4; i++) find(render(), '다음 글자 스타일').props.onClick();
   for (let i = 0; i < 2; i++) find(render(), '이전 글자 스타일').props.onClick();
-  assert.deepEqual(chosen, ['serif', 'boldGothic', 'template', 'serif', 'template', 'boldGothic']);
-  assert.equal(specimen(render()).props['data-font-style'], 'boldGothic');
+  assert.deepEqual(chosen, ['plainGothic', 'serif', 'boldGothic', 'template', 'boldGothic', 'serif']);
+  assert.equal(specimen(render()).props['data-font-style'], 'serif');
 });
 
 test('WOC8 arrow keys change style only inside the focused group and disabled controls stay inert', async () => {
@@ -94,7 +102,7 @@ test('WOC8 arrow keys change style only inside the focused group and disabled co
     group.props.onKeyDown(event);
     assert.equal(event.prevented, expected);
   }
-  assert.deepEqual(chosen, ['boldGothic', 'serif']);
+  assert.deepEqual(chosen, ['boldGothic', 'template']);
   const disabledTree = Picker({ value: 'template', disabled: true, onChange: value => chosen.push(value) });
   for (const button of nodes(disabledTree).filter(node => node.type === 'button')) {
     assert.equal(button.props.disabled, true);
@@ -103,7 +111,7 @@ test('WOC8 arrow keys change style only inside the focused group and disabled co
   const disabledEvent = keyEvent('ArrowRight');
   find(disabledTree, '글자 스타일').props.onKeyDown(disabledEvent);
   assert.equal(disabledEvent.prevented, false);
-  assert.deepEqual(chosen, ['boldGothic', 'serif']);
+  assert.deepEqual(chosen, ['boldGothic', 'template']);
 });
 
 test('WOC8 catalog additions, removal and ordering drive arrow choices, display-only dots and fallback labels', async () => {

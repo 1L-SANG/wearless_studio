@@ -39,24 +39,9 @@
 .presentationImage > img { object-fit: contain; }
 .presentationCard strong { font-weight: 600; }
 .presentationCard small { color: var(--fg-2); font-size: var(--sb-fs-meta); text-wrap: balance; }
-.themePicker { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--sp-12); min-width: 0; }
-.inlineThemes { display: contents; }
-.themeLabel:global(.lbl) { margin: 0; color: var(--fg-1); font: 600 var(--sb-fs-sub)/1.3 var(--font-body); letter-spacing: -.01em; }
-.themes { display: grid; grid-template-columns: var(--cta-height) minmax(0, 1fr) var(--cta-height); align-items: center; column-gap: var(--sp-6); row-gap: var(--sp-6); min-width: 0; }
-.themeArrow { display: grid; place-items: center; grid-row: 1 / 3; width: var(--cta-height); min-height: var(--cta-height); padding: 0; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--fg-1); cursor: pointer; }
-.themeArrow:first-child { grid-column: 1; }
-.themeArrow:last-child { grid-column: 3; }
-.themeArrow:hover:not(:disabled) { background: var(--bg-2); }
-.themeArrow:disabled { cursor: default; color: var(--fg-2); }
-.themeSample { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); min-width: 0; color: var(--fg-1); }
-.themeEnglish { font-size: var(--sb-fs-head); overflow: visible; }
-.themeKorean { font-size: var(--sb-fs-intro); overflow: visible; }
-.themeDots { grid-column: 2; grid-row: 2; display: flex; justify-content: center; align-items: center; gap: var(--sp-6); }
-.themeDot { width: var(--sp-4); height: var(--sp-4); border-radius: var(--r-pill); background: var(--fg-3); }
-.themeDot[data-active="true"] { background: var(--fg-1); }
 .setPanelHeader { margin-bottom: var(--sp-16); }
 .setPanelHeader h2 { margin-bottom: var(--sp-12); }
 .cutDelta { position: absolute; left: var(--sp-6); bottom: var(--sp-6); border-radius: var(--r-pill); background: var(--bg-1); color: var(--fg-1); padding: var(--sp-2) var(--sp-6); font: 600 var(--sb-fs-meta)/1.3 var(--font-body); }
 .photoChoice:disabled, .presentationCard:disabled { cursor: default; opacity: .42; }
-.photoChoice:focus-visible, .presentationCard:focus-visible, .themeArrow:focus-visible, .lightButton:focus-visible, .places button:focus-visible { outline: none; box-shadow: var(--cta-focus-ring); }
+.photoChoice:focus-visible, .presentationCard:focus-visible, .lightButton:focus-visible, .places button:focus-visible { outline: none; box-shadow: var(--cta-focus-ring); }
 @media (prefers-reduced-motion: reduce) { .photoChoice { transition: none; } }

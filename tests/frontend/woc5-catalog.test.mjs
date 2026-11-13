@@ -5,6 +5,8 @@ import { spawnSync } from 'node:child_process';
 import { assemblePage } from '../../src/lib/pageTemplates/assemble.js';
 import { getTemplate, pageTemplatesCatalog as catalog, sectionDefinition, validateCatalog } from '../../src/lib/pageTemplates/catalog.js';
 import { validateStoryboardV4 } from '../../src/lib/pageTemplates/validateStoryboard.js';
+import { sectionDesignChoices } from '../../src/lib/pageTemplates/designChoices.js';
+import { sectionRuns } from '../../src/lib/pageTemplates/sectionRuns.js';
 
 const fixtures = JSON.parse(readFileSync(new URL('../fixtures/page_templates_cases.json', import.meta.url))).cases;
 const firstPairs = [['P01-D09', 'P01-D09-G'], ['P01-SHOW-01', 'P01-SHOW-01-G'], ['P01-D11', 'P01-D01']];
@@ -34,15 +36,20 @@ const ownGhost = input => {
   return card;
 };
 
-test('WOC5 adds only four hidden paired designs and preserves base layouts', () => {
-  const expected = [...firstPairs, ...fabricPairs].map(([, pair]) => pair).sort();
+test('WOC5 paired layouts survive the current picker hiding policy', () => {
+  const expected = [...[...firstPairs, ...fabricPairs].map(([, pair]) => pair),
+    'P01-D11', 'P02-D02', 'P04-D01', 'CP-SHOW-01', 'CP-GUIDE-01', 'T03-GUIDE-01', 'T03-TEXT-01',
+    'PT-EMO-01', 'PT-EMO-TEXT', 'T05-D07', 'T07-D06', 'I09-D14', 'P07-D08', 'I09-SCRIM-01', 'T08-SCRIM-01',
+    'PT-COLUMN-01', 'P06-D01', 'PT-COLUMN-CARD-01', 'PT-BELOW-CARD-01',
+    'WEAR-STYLING-FRAME-COLUMN-03', 'WEAR-STYLING-FRAME-2COL-03', 'WEAR-STYLING-FRAME-HERO-03'].sort();
   assert.deepEqual(Object.values(catalog.designs).filter(design => design.pickerHidden).map(design => design.id).sort(), expected);
   for (const [base, pair] of [...firstPairs.slice(0, 2), ...fabricPairs]) {
     assert.deepEqual(catalog.designs[pair].layout.slice(0, -1), catalog.designs[base].layout);
     assert.equal(catalog.designs[pair].layout.at(-1).type, 'panel');
     assert.equal(catalog.designs[pair].layout.at(-1).nodes[0].slot, pair.endsWith('-P') ? 'product' : 'ghost');
   }
-  assert.equal(Object.keys(catalog.designs).length, 32);
+  assert.equal(expected.length, 27);
+  assert.equal(Object.keys(catalog.designs).length, 52);
   assert.equal(validateCatalog(catalog), catalog);
 });
 
@@ -68,6 +75,9 @@ for (const templateId of ['emo', 'show']) {
       assert.equal(slot?.fill, 'reuse');
       assert.deepEqual(slot.reuseFrom, { kind: 'color_product', slot: 'front', color: 'base' });
       assert.equal(validateStoryboardV4(input.storyboard), input.storyboard);
+      const run = sectionRuns(input.storyboard).find(run => run.kind === kind);
+      assert.ok(sectionDesignChoices(run, { storyboard: input.storyboard, product: input.product })
+        .every(design => !catalog.designs[design.id].pickerHidden), 'saved paired IDs do not become selectable layouts');
       assert.equal(extraPhoto(input, kind)?.sourceBlockId, originalFront(input).id);
       assert.deepEqual(input.storyboard, before);
       if (base !== 'P01-D11') {

@@ -5,7 +5,7 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { storyboardSpaceSetsFor } from '../../lib/storyboardSpaceSetCatalog.js';
 import { filterSpaceSetsForModel } from '../../lib/identityScope.js';
 import { generationExampleImageSources } from '../../lib/generationExamples.js';
-import { initialPhotoPlace, initialPhotoFraming, isSinglePhotoSection, photoGalleryChoices, photoChoicePages } from '../../lib/pageTemplates/storyboardPhotoChoices.js';
+import { initialPhotoPlace, initialPhotoFraming, isSinglePhotoSection, photoGalleryChoices, photoChoicePages, photoChoicePageForExample } from '../../lib/pageTemplates/storyboardPhotoChoices.js';
 import { ExampleThumb, MineImageTab } from './StoryboardControls.jsx';
 import { PhotoChoiceFilters, PhotoFraming, PhotoChoicePager } from './StoryboardChoiceControls.jsx';
 import { MoodGuide as EditorMoodGuide } from './StoryboardExampleGallery.jsx';
@@ -18,14 +18,14 @@ export function StoryboardPhotoGallery({ block, catalogs, cut, shot, shotOptions
   const single = isSinglePhotoSection(block), studio = !single && cut === 'horizon';
   const [place, setPlace] = useState(() => initialPhotoPlace(selected));
   const [light, setLight] = useState('all'), [framing, setFraming] = useState(() => initialPhotoFraming(block, selected));
-  const [page, setPage] = useState(0), [expanded, setExpanded] = useState(null), [mine, setMine] = useState(false);
+  const [expanded, setExpanded] = useState(null), [mine, setMine] = useState(false);
   const ownSet = spaceContext?.set;
   const ownsSelected = ownSet?.members.some(member => member.exampleId === exampleId);
   const [otherOpen, setOtherOpen] = useState(() => !ownSet || spaceContext?.siblings?.length === 1 || !ownsSelected);
   const triggers = useRef(new Map());
   const galleryRegion = useRef(null);
   useEffect(() => {
-    setPlace(initialPhotoPlace(selected)); setLight('all'); setFraming(initialPhotoFraming(block, selected)); setPage(0); setExpanded(null);
+    setPlace(initialPhotoPlace(selected)); setLight('all'); setFraming(initialPhotoFraming(block, selected)); setExpanded(null);
   }, [block?.id]);
   useEffect(() => { setOtherOpen(!ownSet || spaceContext?.siblings?.length === 1 || !ownsSelected); }, [ownSet?.id, spaceContext?.siblings?.length, ownsSelected]);
   const sets = useMemo(() => filterSpaceSetsForModel(storyboardSpaceSetsFor({ gender, clothingType }), identityKind), [gender, clothingType, identityKind]);
@@ -36,7 +36,9 @@ export function StoryboardPhotoGallery({ block, catalogs, cut, shot, shotOptions
   // Remember the fallback, so relaxing a filter does not jump back to a tab
   // that was already left. Render the resolved tab immediately, before effects.
   useEffect(() => { if (!studio && place !== choices.place) setPlace(choices.place); }, [studio, place, choices.place]);
-  const pages = photoChoicePages(choices.entries, signature), currentPage = Math.min(page, pages.length - 1), entries = pages[currentPage];
+  const pages = photoChoicePages(choices.entries, signature);
+  const [page, setPage] = useState(() => photoChoicePageForExample(pages, exampleId));
+  const currentPage = Math.min(page, pages.length - 1), entries = pages[currentPage];
   const changePage = requested => {
     const next = Math.max(0, Math.min(pages.length - 1, requested));
     if (next === currentPage) return;
@@ -44,7 +46,7 @@ export function StoryboardPhotoGallery({ block, catalogs, cut, shot, shotOptions
     if (region?.contains(region.ownerDocument?.activeElement)) region.focus({ preventScroll: true });
     setPage(next); setExpanded(null);
   };
-  useEffect(() => { setPage(0); setExpanded(null); }, [choices.place, light, framing, block?.id]);
+  useEffect(() => { setPage(photoChoicePageForExample(pages, exampleId)); setExpanded(null); }, [choices.place, light, framing, block?.id, exampleId]);
   const choose = (example, returnTo) => {
     const result = onExampleChange?.(example.id, example.cutType === 'horizon' || example.signature ? 'all' : 'pose');
     Promise.resolve(result).then(() => { setExpanded(null); triggers.current.get(returnTo)?.focus?.({ preventScroll: true }); }).catch(() => {});

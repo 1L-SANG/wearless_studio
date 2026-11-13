@@ -1009,7 +1009,7 @@ async def patch_project(
     patch: ProjectPatch,
     user_id: str = Depends(require_user),
 ):
-    """프로젝트의 설정(예: composeMode, copywriting, selectedMannequinId 등)을 업데이트합니다.
+    """프로젝트의 copywriting, selectedMannequinId 설정을 업데이트합니다.
 
     - **Bearer Token**: 필수
     - **제한 사항**:
@@ -3672,6 +3672,11 @@ async def save_editor_blocks(request: Request, project_id: str, blocks: list = B
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
+        from .editor_elements import validate_editor_image_blur
+        try:
+            validate_editor_image_blur(blocks)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"code": "editor_blur_invalid", "message": str(exc)}) from exc
         revision = await repo.save_editor_blocks(conn, user_id, project_id, blocks,
                                                  base_revision=base_revision)
         if revision is None:

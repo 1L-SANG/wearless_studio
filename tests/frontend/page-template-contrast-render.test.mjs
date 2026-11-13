@@ -71,7 +71,7 @@ test("C6 editor and export use the same per-line DOM; shade is limited to failin
         new URL("../../src/styles/features.css", import.meta.url),
         "utf8",
     );
-    assert.match(editor, /<TemplateContrastText element=\{el\} \/>/);
+    assert.match(editor, /<TemplateContrastText element=\{contrastElement\} \/>/);
     assert.match(exporter, /const clone = blockNode\.cloneNode\(true\)/);
     assert.match(exporter, /toSvg\(clone,/);
     assert.match(

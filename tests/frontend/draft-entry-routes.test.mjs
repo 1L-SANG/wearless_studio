@@ -9,6 +9,9 @@ import * as mobileGuestSave from '../../src/lib/mobileGuestSave.js';
 import { readCafe24Launch } from '../../src/lib/cafe24Launch.js';
 import { checkDraftEntry, canAutoOpenInput } from '../../src/lib/draftEntryCheck.js';
 import * as flow from '../../src/lib/flowSession.js';
+import { resolveStoryboardResume, STORYBOARD_REVIEW_MESSAGE } from '../../src/lib/pageTemplates/entryNotices.js';
+import { hasStoryboardEntered, markStoryboardEntered, STORYBOARD_INPUT_LOCK_MESSAGE } from '../../src/lib/storyboardEntered.js';
+import { hasEditorEntered } from '../../src/lib/editorEntered.js';
 import { loadDraft as readStoredDraft, clearDraft as clearStoredDraft, hasPendingDraft as hasStoredPendingDraft, saveProductDraft, queueProductDraftSave, flushProductDraftSave } from '../../src/lib/draftStore.js';
 import { draftStoreFixture } from './helpers/draft-store-fixture.mjs';
 import { createDraftSlotSync, formatDraftRelativeTime, localDraftMeta, draftSlot as storedDraftSlot } from '../../src/lib/draftSlot.js';
@@ -37,9 +40,10 @@ const authSource = authFile.slice(authFile.indexOf('export function AuthProvider
   .replace('(async () => {', 'trackPromise((async () => {').replace('    })();', '    })());');
 const authGuardSource = read('src/apps/guards.jsx').slice(read('src/apps/guards.jsx').indexOf('export function RequireAuth()')).replace(/^export /gm, '');
 const trackerSource = app.slice(app.indexOf('function ResumeTracker()'), app.indexOf("/* '새 제작'"));
+const storyboardGuardSource = shell.slice(shell.indexOf('export function useStoryboardInputGuard('), shell.indexOf('export function DoneGuardModal(')).replace(/^export /gm, '');
 const productSource = read('src/features/product-input/ProductInput.jsx');
 const productLoad = productSource.slice(productSource.indexOf('  useEffect(() => {\n    let alive = true;\n    (async () => {\n      setLoadError'), productSource.indexOf('  const nextMobile ='));
-const { code } = await transformWithEsbuild(`${authSource}\n${authGuardSource}\n${trackerSource}\n${statusSource}\n${mobileDialogSource}\n${guardSource}\n${hook}\n${inputSource}\n${navSource}\n${dialogSource}\n${rootSource}\n${profileSource}\n${tagSource}\nfunction ProductLoad() { ${productLoad} }`, 'DraftEntryRoutes.jsx', {
+const { code } = await transformWithEsbuild(`${authSource}\n${authGuardSource}\n${storyboardGuardSource}\n${trackerSource}\n${statusSource}\n${mobileDialogSource}\n${guardSource}\n${hook}\n${inputSource}\n${navSource}\n${dialogSource}\n${rootSource}\n${profileSource}\n${tagSource}\nfunction ProductLoad() { ${productLoad} }`, 'DraftEntryRoutes.jsx', {
   jsx: 'transform', define: { 'import.meta.env.DEV': 'false', 'import.meta.env.VITE_API_MODE': "'http'" },
 });
 const slot = (meta = {}) => ({ meta: { hasContent: true, deviceLabel: 'Android Chrome', photoCount: 2, updatedAt: 'v1', ...meta }, payload: { product: { name: 'remote' } } });
@@ -122,7 +126,10 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
   state.setResumePath = (path) => { state.resumePath = path; };
   state.adoptProject = (id) => { calls.push(`adopt:${id}`); };
   state.confirmProductInfo = () => { calls.push('confirm'); };
+  state.loadProject = async () => state.projectId;
   const bindings = {
+    resolveStoryboardResume, STORYBOARD_REVIEW_MESSAGE, hasStoryboardEntered, markStoryboardEntered, STORYBOARD_INPUT_LOCK_MESSAGE, hasEditorEntered,
+    Storyboard: 'Storyboard', DoneGuardModal: 'DoneGuardModal', PcOnlyPage: 'PcOnlyPage',
     readCafe24Launch,
     useClientErrorCapture() {}, getMobileGuestDraft: () => null, getMobileGuestSave: (session) => typeof guestSave === 'function' ? guestSave(session) : guestSave, clearMobileGuestSave() { guestSave = null; calls.push('clearGuest'); },
     ...entry, ...flow, canAutoOpenInput, checkDraftEntry: (client, options) => checkDraftEntry(client, { ...options, setTimer: (fn, ms) => ms === 8000 ? setTimeout(fn, ms) : setImmediate(fn), clearTimer: clearTimeout }), getDraftDeviceNoun, isMobileDraftWriter, flowScreenName, shouldWarnFlowAbandon, notifyFlowKept, draftSlot, useAppStore, formatDraftRelativeTime, localDraftMeta,
@@ -202,6 +209,8 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
     s: new Proxy({}, { get: (_, key) => key }),
     window: windowEvents, document: documentEvents, Link: 'Link', STEPPER_STEPS: [],
     api: {
+      async getProject(id) { return { id, status: 'draft' }; },
+      async getStoryboard() { return [{ taxonomyVersion: 4 }]; },
       async getProduct(id) { calls.push(`product:${id}`); if (id && !auth.session) throw new Error('로그인이 필요해요'); return { colors: [{}] }; },
       async getCatalogs() { return {}; }, async getAnalysis(id) { calls.push(`analysis:${id}`); return { projectId: id }; },
     },
@@ -213,8 +222,8 @@ function harness({ remote = slot(), confirmed = true, local = null, localReader 
   windowEvents.scrollTo = () => {};
   documentEvents.querySelector = () => null;
   const queryClient = { clear() {} };
-  function navigate(path, options) { calls.push(`navigate:${path}`); if (options?.state) { location.state = options.state; location.key = `nav-${calls.length}`; } }
-  const components = new Function(...Object.keys(bindings), `${code}; return { AuthProvider, RequireAuth, ResumeTracker, ProductLoad, HandoffStatusPage, RequireProject, MobileDraftDialog, MobileDraftStatus, DraftProductRow, ProductInputRoute, TopNav, ResumeChoiceModal, DraftEntryDialog, RootRedirect, ProfileMenu, HangTag };`)(...Object.values(bindings));
+  function navigate(path, options) { calls.push(`navigate:${path}`); if (options && 'state' in options) { location.state = options.state; location.key = `nav-${calls.length}`; } }
+  const components = new Function(...Object.keys(bindings), `${code}; return { AuthProvider, RequireAuth, ResumeTracker, BeforeStoryboardRoute, StoryboardRoute, ProductLoad, HandoffStatusPage, RequireProject, MobileDraftDialog, MobileDraftStatus, DraftProductRow, ProductInputRoute, TopNav, ResumeChoiceModal, DraftEntryDialog, RootRedirect, ProfileMenu, HangTag };`)(...Object.values(bindings));
   function render(name, props) {
     if (!frames.has(name)) frames.set(name, []);
     active = frames.get(name);
@@ -1081,8 +1090,8 @@ test('own single remote auto-opens and its toast action runs fresh startNew', as
   await h.settle('ProductInputRoute');
   assert.ok(h.calls.includes('remove'));
   assert.ok(h.calls.includes('begin'));
-  assert.equal(h.calls.at(-2), 'remove');
-  assert.equal(h.calls.at(-1), 'begin');
+  assert.deepEqual(h.calls.slice(-3), ['remove', 'begin', 'navigate:/create/input']);
+  assert.equal(h.location.state, null);
 });
 
 test('auto-open toast new start still asks C4 for a new other-device write', async () => {
@@ -1156,6 +1165,41 @@ test('M12 recent confirmed flow new start only asks C4 for the other-device draf
   const tree = await h.settle('ProductInputRoute');
   assert.equal(dialog(h, tree).props.dialog.kind, 'confirm');
   assert.equal(h.calls.includes('remove'), false);
+});
+
+for (const outcome of ['start', 'cancel']) test(`WOC16 actual new-start ${outcome} cannot leave an old analysis entry unlocked`, async t => {
+  const previousStorage = globalThis.localStorage;
+  const localValues = new Map();
+  globalThis.localStorage = { getItem: key => localValues.get(key), setItem: (key, value) => localValues.set(key, value) };
+  t.after(() => { globalThis.localStorage = previousStorage; });
+  markStoryboardEntered('project');
+  const h = harness({ remote: outcome === 'start' ? null : slot({ updatedAt: 'other-device' }),
+    savedFlow: { resumePath: '/create/mannequin' } });
+  h.location.pathname = '/create/input';
+  h.location.state = { startNewFromResume: true };
+  const tree = await h.settle('ProductInputRoute');
+  if (outcome === 'cancel') {
+    assert.equal(dialog(h, tree).props.dialog.kind, 'confirm');
+    dialog(h, tree).props.actions.cancel();
+    assert.ok(h.calls.includes('navigate:/create/mannequin'));
+    assert.equal(h.calls.includes('begin'), false);
+    assert.equal(h.state.projectId, 'project');
+  } else {
+    assert.ok(h.calls.includes('begin'));
+    assert.equal(h.state.projectId, null);
+    assert.equal((await h.settle('ProductInputRoute')).type, 'ProductInput');
+  }
+  assert.equal(h.location.state, null, 'history must not retain the one-time bypass');
+  assert.equal(hasStoryboardEntered('project'), true);
+  if (outcome === 'start') {
+    Object.assign(h.state, { projectId: 'new-project', projectPersisted: true });
+    await h.settle('StoryboardRoute');
+    assert.equal(hasStoryboardEntered('new-project'), true);
+    const reopened = await h.settle('BeforeStoryboardRoute', { children: 'old-analysis' });
+    assert.notEqual(reopened, 'old-analysis');
+    assert.equal(h.toasts.at(-1), '콘티를 만든 뒤에는 분석으로 돌아갈 수 없어요');
+    assert.equal(h.calls.at(-1), 'navigate:/create/storyboard');
+  }
 });
 
 test('own merged newer local auto-opens after the same-product merge', async () => {

@@ -32,7 +32,6 @@ import {
 } from '@/features/mannequin/generationRelevantEditsSession.js';
 
 const mode = import.meta.env.VITE_API_MODE ?? 'mock';
-const normalizeComposeMode = (value) => value === 'extended' ? 'extended' : 'basic';
 
 // http 모드에서만 flow(projectId·resumePath·선택값)를 localStorage 에 영속한다.
 // 목적: 상세페이지 제작 중 다른 페이지로 이탈했다 돌아오거나 cold reload 해도 진행 중 프로젝트를
@@ -46,7 +45,6 @@ function loadPersistedFlow() {
     const raw = typeof sessionStorage !== 'undefined' && sessionStorage.getItem(TAB_FLOW_KEY);
     if (raw) {
       const saved = JSON.parse(raw);
-      if ('composeMode' in saved) saved.composeMode = normalizeComposeMode(saved.composeMode);
       return saved;
     }
   } catch { /* 탭 저장소 불가 시 기존 복원 */ }
@@ -64,7 +62,6 @@ function loadPersistedFlow() {
     const raw = localStorage.getItem(FLOW_KEY);
     if (!raw) return {};
     const saved = JSON.parse(raw);
-    if ('composeMode' in saved) saved.composeMode = normalizeComposeMode(saved.composeMode);
     return saved;
   } catch { return {}; }
 }
@@ -74,7 +71,6 @@ function persistFlow(s) {
     projectPersisted: s.projectPersisted,
     resumePath: s.resumePath,
     selectedMannequinId: s.selectedMannequinId,
-    composeMode: s.composeMode,
     copywriting: s.copywriting,
     adjustCount: s.adjustCount,
     productInfoConfirmed: s.productInfoConfirmed,
@@ -98,7 +94,6 @@ const initialFlow = {
   // 의류정보 확정 승격이 끝난 뒤에만 true가 된다.
   projectPersisted: false,
   selectedMannequinId: null,
-  composeMode: 'basic',
   copywriting: true,
   adjustCount: 0,
   // 진행 중 상세페이지 제작에서 마지막으로 머문 create/editor 경로 — '이어서 작업' 재개 목표.
@@ -181,9 +176,6 @@ let ensureProjectInflight = null;
 // 화면 진입마다 현재 프로젝트와 최신 잡을 확인한다.
 // StrictMode·여러 화면 가드의 동시 호출은 같은 Promise 에 합류시켜 검증 중인 id를 정상으로 오인하지 않는다.
 let flowValidationInflight = null;
-// 사진 양 선택 PATCH를 직렬화한다. 사용자가 빠르게 바꾸고 다음으로 가도
-// 오래 걸린 이전 요청이 나중에 도착해 최신 선택을 덮지 않게 한다.
-let composeModePatchChain = Promise.resolve();
 let copywritingPatchChain = Promise.resolve();
 let mannequinSelectionPatchChain = Promise.resolve();
 let accountGeneration = 0;
@@ -361,7 +353,6 @@ export const useAppStore = create((set, get) => ({
       projectId: p.id,
       projectPersisted: true,   // 기존 project 복원 — 이미 보관함에 존재
       selectedMannequinId: p.selectedMannequinId,
-      composeMode: normalizeComposeMode(p.composeMode),
       copywriting: p.copywriting,
       adjustCount: p.adjustCount,
       generationRelevantEditsDirty: readGenerationRelevantEdits(p.id),
@@ -401,7 +392,6 @@ export const useAppStore = create((set, get) => ({
     const current = get();
     const serverValues = serverSnapshot ? {
       selectedMannequinId: serverSnapshot.selectedMannequinId ?? null,
-      composeMode: normalizeComposeMode(serverSnapshot.composeMode),
       copywriting: serverSnapshot.copywriting !== false,
       adjustCount: serverSnapshot.adjustCount ?? 0,
     } : {};
@@ -422,9 +412,6 @@ export const useAppStore = create((set, get) => ({
       mannequinJob: initialMannequinJob(),
       detailPageJob: initialDetailPageJob(),
       generationRelevantEditsDirty,
-      // 같은 작업이 서버 신원을 얻는 경로면 비로그인 때 고른 사진 양도 이어간다 —
-      // initialFlow 스프레드가 basic 으로 되돌리면 게스트의 선택이 로그인 순간 조용히 사라진다.
-      composeMode: sameWorkContinuation ? current.composeMode : initialFlow.composeMode,
       ...serverValues,
     });
     if (serverSnapshot) get().seedDetailPageJob(serverSnapshot);
@@ -469,24 +456,6 @@ export const useAppStore = create((set, get) => ({
       .catch(() => {})
       .then(() => api.patchProject(projectId, { selectedMannequinId: id }));
     return mannequinSelectionPatchChain;
-  },
-  setComposeMode(composeMode) {
-    composeMode = normalizeComposeMode(composeMode);
-    set({ composeMode });
-    persistFlow(get());
-    const projectId = get().projectId;
-    // 비로그인 분석(projectId 없음)에서도 사진 양 칩이 눌린다(분석 페이지는 공개) — 이때
-    // PATCH 를 쏘면 /v1/projects/null 로 나가 에러가 된다. 로컬 선택만 저장하고, 서버 반영은
-    // 로그인 후 adoptProject 가 같은 작업을 채택할 때 이어서 한다.
-    if (!projectId || !get().productInfoConfirmed) return composeModePatchChain;
-    composeModePatchChain = composeModePatchChain
-      .catch(() => {})
-      .then(() => api.patchProject(projectId, { composeMode }));
-    return composeModePatchChain;
-  },
-  restoreComposeMode(composeMode) {
-    set({ composeMode: normalizeComposeMode(composeMode) });
-    persistFlow(get());
   },
   setCopywriting(copywriting) {
     set({ copywriting });

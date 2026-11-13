@@ -9,7 +9,7 @@ import { spaceSetDisplayName } from '../../lib/spaceSetDisplayNames.js';
 import { canPlanSimilarCut } from '../../lib/storyboardSimilarCuts.js';
 import { rejectionOfBlock } from '../../lib/identityScope.js';
 import { colorDisplayName } from '../../lib/colorwayMatching.js';
-import { storyboardPreviewSource } from './storyboardPreview.js';
+import { storyboardPreviewSource, detailStageGeometry } from './storyboardPreview.js';
 import { storyboardPositions, positionSwapReason, storyboardPositionSwapReason } from '../../lib/pageTemplates/storyboardPositions.js';
 import { StoryboardPreview } from './StoryboardPreview.jsx';
 import { StoryboardPaleSlot } from './StoryboardPaleSlot.jsx';
@@ -27,7 +27,7 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, tone
     <div className={styles.overviewHead}><h2>페이지 전체 보기</h2><button type="button" className={styles.back} onClick={onLeaveOverview} autoFocus>편집으로 돌아가기</button></div>
     {[...new Set(page.filter(block => !block.pageSectionKey || visibleKeys.includes(block.pageSectionKey)).map(block => block.pageSectionKey))].map((key, index) => key
       ? <button type="button" key={key} onClick={() => onSelectSection(key)} className={styles.overviewSection} aria-label={`${templateSectionName(page.find(block => block.pageSectionKey === key))} 편집`}>
-        <StoryboardPreview blocks={page.filter(block => block.pageSectionKey === key)} />
+        <StoryboardPreview blocks={page.filter(block => block.pageSectionKey === key)} detailLabels />
       </button> : <StoryboardPreview key={`auto:${index}`} blocks={page.filter(block => !block.pageSectionKey)} label="사이즈와 관리 안내" />)}
   </section>;
   if (!run) return null;
@@ -102,12 +102,14 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, tone
               const ordinal = photoOrdinals.get(sourceId);
               const selected = selectedGroupId ? block.spaceGroupId === selectedGroupId : selectedViewId ? block.position?.viewId === selectedViewId : selectedId === sourceId;
               const swapReason = positionSwapReason(block);
-              const geometry = block.position?.element;
+              const geometry = detailStageGeometry(block.position?.element);
+              const detailLabel = geometry?.previewDetailLabel;
+              const photoSrc = geometry?.src || storyboardPreviewSource(source, catalogs);
               const crop = (block.borrowed || geometry?.previewDetailCrop) && geometry?.crop;
               const matching = block.source === 'ai' && block.cutType !== 'product' && block.matchIdsOrigin === 'user'
                 ? matchClothing.find(item => item.id === block.matchIds?.[0]) : null;
               const rejection = rejectionOfBlock(block, identityKind);
-              return <article className={`${styles.photoCard}${dimOthers && !selected ? ` ${styles.dimPhoto}` : ''}`} key={block.id} onMouseEnter={() => onHoverPosition?.(block.position?.viewId || null)} onMouseLeave={() => onHoverPosition?.(null)}>
+              return <article className={`${styles.photoCard}${dimOthers && !selected ? ` ${styles.dimPhoto}` : ''}`} key={block.id} data-planned-detail={detailLabel ? true : undefined} onMouseEnter={() => onHoverPosition?.(block.position?.viewId || null)} onMouseLeave={() => onHoverPosition?.(null)}>
                 <div className={styles.photoFrame}>
                   <button type="button" data-storyboard-photo={sourceId} className={`${styles.photo}${selected ? ` ${styles.selectedPhoto}` : ''}`}
                     disabled={busy} onClick={() => onSelectPhoto(sourceId, block.position?.viewId, block.borrowed ? run.key : undefined)}
@@ -122,13 +124,16 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, tone
                       if (!from) return;
                       const reason = swapReason || storyboardPositionSwapReason(blocks, from, sourceId);
                       if (reason) onSwapBlocked?.(reason); else onSwapPosition?.(from, sourceId);
-                    }} aria-pressed={selected} aria-label={`${ordinal}번째 컷 사진 바꾸기`}>
+                    }} aria-pressed={selected} aria-label={`${detailLabel ? `${detailLabel} 확대컷, AI가 이 부분을 새로 만들어요, ` : ''}${ordinal}번째 컷 사진 바꾸기`}>
                     {block.position?.label && <span className={styles.positionBadge}>{block.position.label}</span>}
-                    {crop ? <svg className={styles.cropPreview} viewBox={`0 0 ${geometry.w} ${geometry.h}`} width="100%" height="100%" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+                    {crop ? <svg className={`${styles.cropPreview}${detailLabel ? ` ${styles.detailSource}` : ''}`} viewBox={`0 0 ${geometry.w} ${geometry.h}`} width="100%" height="100%" preserveAspectRatio={detailLabel ? "xMidYMid slice" : "xMidYMid meet"} aria-hidden="true">
                       <svg width={geometry.w} height={geometry.h} viewBox={`0 0 ${geometry.w} ${geometry.h}`} overflow="hidden">
+                        {detailLabel && (crop.iw < geometry.w || crop.ih < geometry.h) && <image href={geometry.src} width={geometry.w} height={geometry.h} preserveAspectRatio="xMidYMid slice" />}
                         <image href={geometry.src} width={crop.iw || geometry.w} height={crop.ih || geometry.h} x={-(crop.ox || 0)} y={-(crop.oy || 0)} preserveAspectRatio="xMidYMid slice" />
                       </svg>
-                    </svg> : storyboardPreviewSource(source, catalogs) ? <img src={storyboardPreviewSource(source, catalogs)} alt="" loading="lazy" decoding="async" /> : <span className={styles.photoMissing}>사진 설정을 확인해주세요</span>}
+                    </svg> : photoSrc ? <img className={detailLabel ? styles.detailSource : undefined} src={photoSrc} alt="" loading="lazy" decoding="async" /> : <span className={styles.photoMissing}>사진 설정을 확인해주세요</span>}
+                    {detailLabel && <><span className={styles.detailVeil} aria-hidden="true" /><span className={styles.detailNotice} data-detail-notice>
+                      <b>{detailLabel} 확대컷</b><small>AI가 이 부분을 새로 만들어요</small></span></>}
                     {block.similarSourceBlockId && <span className={styles.similarVeil}>{String(photoOrdinals.get(block.similarSourceBlockId)).padStart(2, '0')}번째 컷과 비슷하게</span>}
                   </button>
                   {removable && <button type="button" className={styles.removePhoto} disabled={busy} onClick={() => optionalPhoto ? onRemovePairedPhoto(run.key) : onRemovePhoto(block.id)} aria-label={optionalPhoto ? `${run.kind === 'first' ? '고스트컷' : '제품컷'} 빼기` : `${ordinal}번째 컷 빼기`}><Icon name="x" size={14} /></button>}

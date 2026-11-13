@@ -17,7 +17,7 @@ export function canReplaceStoryboardSet(blocks, groupId, set) {
   return outside + set.members.length + followers <= 12;
 }
 
-export function patchStoryboardPhoto(blocks, id, changes, product = {}) {
+export function patchStoryboardPhoto(blocks, id, changes, product = {}, { cutResults = [] } = {}) {
   const target = blocks.find(block => block.id === id);
   let source = blocks;
   if (isProductSectionPhoto(target)) {
@@ -28,7 +28,7 @@ export function patchStoryboardPhoto(blocks, id, changes, product = {}) {
     ? changes.source === 'mine' ? detachSpaceMembership({ ...block, ...changes }) : { ...block, ...changes } : block);
   const next = inheritProductSectionPresentation(blocks, patched);
   return reconcileSectionDependencies(blocks, reconcileSimilarCutMutation(blocks, next), product,
-    { cropRegions: wornCropRegions[product.clothingType] || wornCropRegions.top });
+    { cropRegions: wornCropRegions[product.clothingType] || wornCropRegions.top, cutResults });
 }
 
 export function addStoryboardPhoto(blocks, key, { catalog, product = {}, analysis, gender, identityKind } = {}) {
@@ -53,11 +53,12 @@ export function addStoryboardPhoto(blocks, key, { catalog, product = {}, analysi
   return assignGenerationExamples(next, { catalog, product, analysis, gender, identityKind, onlyBlockIds: [added.id] }).blocks;
 }
 
-export function removeStoryboardPhoto(blocks, id, product = {}) {
+export function removeStoryboardPhoto(blocks, id, product = {}, { cutResults = [] } = {}) {
   const block = blocks.find(item => item.id === id);
   if (!block || block.source === 'text' || block.pageSectionKind === 'first' && block.slotKey && !block.similarSourceBlockId) return blocks;
   const run = sectionRuns(blocks).find(item => item.key === block.pageSectionKey);
   if (run.blocks.length <= 1) return blocks;
   const removed = reconcileSimilarCutMutation(blocks, blocks.filter(item => item.id !== id));
-  return reconcileSectionDependencies(blocks, removed, product, { cropRegions: wornCropRegions[product.clothingType] || wornCropRegions.top });
+  return reconcileSectionDependencies(blocks, removed, product,
+    { cropRegions: wornCropRegions[product.clothingType] || wornCropRegions.top, cutResults });
 }

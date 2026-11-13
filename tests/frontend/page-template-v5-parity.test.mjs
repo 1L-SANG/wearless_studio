@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { seedStoryboard } from '../../src/lib/pageTemplates/seed.js';
 import { defaultPageStyle } from '../../src/lib/pageTemplates/pageStyle.js';
 import { sectionRuns, changeTemplateSectionDesign as savedRunDesign } from '../../src/lib/pageTemplates/sectionRuns.js';
-import { addTemplateSection, removeTemplateSection, changeTemplateSectionDesign } from '../../src/lib/pageTemplates/sectionActions.js';
+import { addTemplateSection, removeTemplateSection } from '../../src/lib/pageTemplates/sectionActions.js';
 import { addStageAddition, stageAdditions } from '../../src/lib/pageTemplates/stageAdditions.js';
 import { patchStoryboardPhoto } from '../../src/lib/pageTemplates/photoActions.js';
 import { assemblePage } from '../../src/lib/pageTemplates/assemble.js';
@@ -20,7 +20,8 @@ for (const templateId of ['emo', 'show']) {
   // one-photo section may no longer switch to a different photo count.
   original = savedRunDesign(original, original.find(block => block.pageSectionKind === 'sns').pageSectionKey, 'P07-D08');
   original = addTemplateSection(original, product, analysis, 'wear', 'styling');
-  original = changeTemplateSectionDesign(original, original[0].pageSectionKey, 'P01-D11', { product });
+  // Reconstruct a saved hidden opening; current UI choices intentionally exclude it.
+  original = savedRunDesign(original, original[0].pageSectionKey, 'P01-D11');
   const tile = stageAdditions(original, original[0].pageSectionKey, { product, analysis }).find(item => item.id === 'firstGhost');
   original = addStageAddition(original, original[0].pageSectionKey, tile, { product, analysis });
   assert.equal(original[0].pageDesignId, 'P01-D01');

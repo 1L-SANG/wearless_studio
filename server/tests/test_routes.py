@@ -223,13 +223,20 @@ def test_editor_source_capability_parser_accepts_api_urls_and_rejects_malformed_
     assert routes._asset_id_from_file_capability("http://[") is None
 
 
-def test_patch_explicit_null_compose_mode_is_422_not_500(client, make_token):
-    res = client.patch(
-        "/v1/projects/any-id", headers=_auth(make_token), json={"composeMode": None}
-    )
-    assert res.status_code == 422
-    body = res.json()
-    assert body["error"]["code"] == "validation_error"
+@pytest.mark.parametrize("field", ["composeMode", "compose_mode"])
+@pytest.mark.parametrize("value", ["basic", "extended", "simple", None])
+def test_patch_ignores_retired_compose_mode(client, make_token, monkeypatch, field, value):
+    project = {"id": "p1", "status": "draft", "title": "", "copywriting": False,
+               "selected_mannequin_id": None, "adjust_count": 0, "compose_mode": "basic",
+               "created_at": "2026-10-01T00:00:00Z", "updated_at": "2026-10-01T00:00:00Z"}
+    patch_route_db(monkeypatch, routes)
+    patch = AsyncMock(return_value=project)
+    monkeypatch.setattr(routes.repo, "patch_project", patch)
+    res = client.patch("/v1/projects/p1", headers=_auth(make_token), json={field: value, "copywriting": False})
+    assert res.status_code == 200, res.text
+    assert patch.call_args.args[3] == {"copywriting": False}
+    assert res.json()["copywriting"] is False
+    assert "composeMode" not in res.json() and "compose_mode" not in res.json()
 
 
 def test_patch_explicit_null_copywriting_is_422(client, make_token):
@@ -239,21 +246,11 @@ def test_patch_explicit_null_copywriting_is_422(client, make_token):
     assert res.status_code == 422
 
 
-def test_patch_retired_simple_mode_is_422(client, make_token):
-    res = client.patch(
-        "/v1/projects/any-id", headers=_auth(make_token), json={"composeMode": "simple"}
-    )
-    assert res.status_code == 422
-    assert res.json()["error"]["code"] == "validation_error"
-
-
-def test_openapi_only_advertises_current_compose_modes(client):
+def test_openapi_does_not_advertise_retired_compose_mode(client):
     schemas = client.app.openapi()["components"]["schemas"]
-    assert schemas["Project"]["properties"]["composeMode"]["enum"] == ["basic", "extended"]
-    assert schemas["ProjectPatch"]["properties"]["composeMode"]["anyOf"][0]["enum"] == [
-        "basic",
-        "extended",
-    ]
+    for model in ["Project", "ProjectDetail", "ProjectPatch"]:
+        assert "composeMode" not in schemas[model]["properties"]
+        assert "compose_mode" not in schemas[model]["properties"]
 
 
 def test_save_analysis_forces_dress_to_women(client, make_token, monkeypatch):

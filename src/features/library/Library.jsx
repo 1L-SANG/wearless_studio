@@ -15,6 +15,7 @@ import tagStyles from '@/components/NotFound.module.css';
 import { isMobileDevice } from '@/lib/deviceClass.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { authorizeFlowContinuation } from '@/lib/flowSession.js';
+import { resolveStoryboardResume, STORYBOARD_REVIEW_MESSAGE } from '@/lib/pageTemplates/entryNotices.js';
 import { PublicationsPanel } from './PublicationsPanel.jsx';
 import publicationStyles from './PublicationsPanel.module.css';
 
@@ -41,7 +42,7 @@ export function Library() {
   // (과거엔 진행 중 마네킹 job 이 있으면 강제로 그 화면으로 보냈다 — 콘티가 마네킹보다 먼저
   // 오는 지금은 생성이 도는 동안 사용자가 있어야 할 곳도 콘티라, '새로 만들기' 를 다른 작업의
   // 진행 중 job 이 가로챌 이유가 없다.)
-  const onNew = () => { entryToken.current += 1; navigate('/create/input'); };
+  const onNew = () => { entryToken.current += 1; navigate('/create/input', { state: { startNewFromResume: true } }); };
   const onOpen = (it) => {
     if (isMobileDevice()) {
       push('완성본은 PC에서 열어 주세요');
@@ -66,13 +67,15 @@ export function Library() {
       const project = await api.getProject(item.id);
       if (!isCurrent()) return;
       if (project?.id !== item.id) throw new Error('만들던 상품을 찾지 못했어요.');
-      const path = resumePath(project);
+      const { path, review } = await resolveStoryboardResume(api, item.id, resumePath(project));
+      if (!isCurrent()) return;
       adoptProject(item.id, { serverSnapshot: project });
       const store = useAppStore.getState();
       store.confirmProductInfo(item.id);
       authorizeFlowContinuation(item.id, path);
       store.markFlowUsed(userId);
       store.setResumePath(path);
+      if (review) push(STORYBOARD_REVIEW_MESSAGE);
       navigate(path);
     } catch (error) {
       if (isCurrent()) push(error?.message || '만들던 상품을 열지 못했어요.');

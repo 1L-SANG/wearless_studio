@@ -51,7 +51,7 @@ test('draft promotion sends the whole analysis including pageStyle before the ne
   for (const [name, value] of Object.entries(mocks)) { original[name] = client[name]; client[name] = value; }
   try {
     await sync.promoteDraftToProject({ product: { name: '니트', clothingType: 'top', colors: [] },
-      photos: [], analysis: { pageStyle }, composeMode: 'basic' });
+      photos: [], analysis: { pageStyle } });
     assert.deepEqual(sent[0].pageStyle, pageStyle);
   } finally { for (const [name, value] of Object.entries(original)) client[name] = value; }
 });

@@ -45,8 +45,7 @@ test('the mannequin wires edit refreshes through the guarded behavior runner', (
 test('adoptProject preserves the dirty flag only when acquiring identity for the same in-progress work', () => {
   // store: null projectId 에서 채택할 때만, 그리고 호출자가 명시적으로 요청했을 때만 보존한다.
   assert.match(storeSource, /preserveGenerationDirty = false/);
-  // sameWorkContinuation = "같은 작업이 신원을 얻는 경로" 판정 — dirty 보존과 composeMode 보존이
-  // 같은 판정을 공유한다(둘 다 게스트 구간의 상태를 로그인 너머로 잇는 일이라서).
+  // 같은 작업이 서버 신원을 얻는 경로에서 게스트 편집 신호를 로그인 뒤에도 보존한다.
   assert.match(storeSource, /const sameWorkContinuation = preserveGenerationDirty && current\.projectId === null/);
   assert.match(storeSource, /const preserveDirty = sameWorkContinuation && current\.generationRelevantEditsDirty/);
   assert.match(storeSource, /adoptGenerationRelevantEdits\(projectId, \{ preserveDirty \}\)/);
@@ -106,7 +105,7 @@ test('all color mutations share the debounced existing analysis-save queue', () 
   assert.match(productInputSource, /registerAnalysisEditSave\(analysisProjectId, analysisSaveChainRef\.current\)/);
   const storyboardLoad = storyboardSource.slice(
     storyboardSource.indexOf('await useAppStore.getState().loadProject()'),
-    storyboardSource.indexOf('await sbSaveIdle()'),
+    storyboardSource.indexOf('// 직전 이탈 저장 실패분 복원'),
   );
   assert.match(storyboardLoad, /await waitForAnalysisEditSave\(pid\)/);
   assert.ok(
@@ -128,7 +127,7 @@ test('the storyboard hands off to the mannequin without reopening confirmed inpu
   // 죽는 문제가 생겼다). 성공 시에만 saveNow 뒤에 마네킹으로 이동한다.
   assert.match(
     storyboardSource,
-    /await continueAfterStoryboardFlush\(\{[\s\S]*?flush: async \(\) => \{ await styleSaves\.wait\(\); await ensureV4StoryboardCopywriting\(projectId, useAppStore.getState\); return saveNow\(projectId\); \},[\s\S]*?navigate: \(\) => navigate\('\/create\/mannequin'\),[\s\S]*?onFailure: \(message, error\) => toast\.push\(message, \{ variant: \'error\', error/,
+    /await continueAfterStoryboardFlush\(\{[\s\S]*?flush: async \(\) => \{ await styleSaves\.flush\(\(\) => styleValueRef.current\); await ensureV4StoryboardCopywriting\(projectId, useAppStore.getState\); return saveNow\(projectId\); \},[\s\S]*?navigate: \(\) => navigate\('\/create\/mannequin'\),[\s\S]*?onFailure: \(message, error\) => toast\.push\(message, \{ variant: \'error\', error/,
   );
   assert.doesNotMatch(storyboardSource, /이전<\/button>/);
   assert.doesNotMatch(storyboardSource, /navigate\('\/create\/input'\)/);

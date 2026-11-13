@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 test('both loaded storyboard screens and the old-page notice render without a browser', async t => {
   const logError = console.error;
@@ -16,7 +17,7 @@ test('both loaded storyboard screens and the old-page notice render without a br
   const vite = await createServer({ configFile: false, plugins: [react()],
     optimizeDeps: { noDiscovery: true, include: [] },
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
-    server: { middlewareMode: true, watch: null }, appType: 'custom', logLevel: 'silent' });
+    server: { middlewareMode: true, watch: null, hmr: false, ws: false }, appType: 'custom', logLevel: 'silent' });
   t.after(() => vite.close());
   const { DB } = await vite.ssrLoadModule('/src/mock/db.js');
   const { useAppStore } = await vite.ssrLoadModule('/src/store/useAppStore.js');
@@ -31,8 +32,11 @@ test('both loaded storyboard screens and the old-page notice render without a br
   assert.match(picker, /견본 사진이에요/);
   useAppStore.setState({ projectId: DB.project.id, projectPersisted: true });
   useAppStore.getInitialState = useAppStore.getState;
-  const render = () => renderToStaticMarkup(React.createElement(MemoryRouter,
-    { initialEntries: ['/create/storyboard'] }, React.createElement(Storyboard, { toastOverride: { push() {} } })));
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  t.after(() => queryClient.clear());
+  const render = () => renderToStaticMarkup(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(MemoryRouter, { initialEntries: ['/create/storyboard'] },
+      React.createElement(Storyboard, { toastOverride: { push() {} } }))));
   for (const templateId of ['emo', 'show']) {
     DB.analysis.pageStyle = selectTemplateStyle(templateId);
     DB.storyboard = seedStoryboard(DB.product, DB.analysis);
@@ -54,7 +58,7 @@ test('both loaded storyboard screens and the old-page notice render without a br
   DB.storyboard = DB.storyboard.map(b => ({ ...b, taxonomyVersion: 3 }));
   invalidateStoryboardEntryPrefetch(DB.project.id);
   await prefetchStoryboardEntry(DB.project.id);
-  assert.match(render(), /새 템플릿 구성으로 다시 만들었어요/);
+  assert.match(render(), /콘티가 새 방식으로 바뀌었어요\. 확인하고 다음을 눌러 주세요/);
   DB.storyboard = DB.storyboard.map(b => ({ ...b, taxonomyVersion: 3 }));
   DB.project.status = 'done';
   invalidateStoryboardEntryPrefetch(DB.project.id);

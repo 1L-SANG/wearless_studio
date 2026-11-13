@@ -475,10 +475,10 @@ def _check_editor_request(existing: dict, project_id: str, payload: dict) -> Non
 
 # patchProject가 DB에 반영할 수 있는 컬럼 (계약 §6 화이트리스트). 모델이 1차,
 # 이 집합이 2차 가드 — 둘 중 하나라도 빠지면 임의 컬럼 갱신을 막는다.
-PATCHABLE_COLUMNS = ("compose_mode", "copywriting", "selected_mannequin_id")
+PATCHABLE_COLUMNS = ("copywriting", "selected_mannequin_id")
 
 _PROJECT_COLS = (
-    "id::text as id, status, title, compose_mode, copywriting, "
+    "id::text as id, status, title, copywriting, "
     "selected_mannequin_id, adjust_count, created_at, updated_at, "
     # FaceMarket verify-before-use 포인터(FM-30). 워커 정산 훅이 이 값을 읽어
     # 70/20/10 온체인 정산을 기록한다. 비-FaceMarket 프로젝트는 NULL.
@@ -487,7 +487,7 @@ _PROJECT_COLS = (
 
 # JOIN 쿼리용 — products 와 겹치는 id/created_at/updated_at 모호성 방지로 pr. 한정.
 _PROJECT_COLS_PR = (
-    "pr.id::text as id, pr.status, pr.title, pr.compose_mode, pr.copywriting, "
+    "pr.id::text as id, pr.status, pr.title, pr.copywriting, "
     "pr.selected_mannequin_id, pr.adjust_count, pr.created_at, pr.updated_at"
 )
 
@@ -1790,12 +1790,13 @@ def garment_color_input_identity(product: dict) -> tuple:
 
 
 # AG-01이 파생하는 서버 소유 필드. 부분 병합은 클라이언트가 모르는 키도 보존한다.
-# sourceMirrored·inputConsistency·featureCopy의 명시적 수정은 기존 계약대로 허용한다.
+# sourceMirrored·inputConsistency·featureCopy·partDescriptionCopy의 명시적 수정은 허용한다.
 # 재분석 때는 finalize가 전문을 교체하므로 낡은 판정이 남지 않는다.
 _SERVER_OWNED_ANALYSIS_KEYS = (
     "sourceMirrored",
     "inputConsistency",
     "featureCopy",
+    "partDescriptionCopy",
     "confirmedGptProductEvidence",
     "detailRecommendations",
     "garmentColorEvidence",
