@@ -199,7 +199,7 @@ MatchClothing {
 - 저장 시점: 분석 확인 화면에서 템플릿(감성형, 쇼룸형)을 누를 때마다 `saveAnalysis`의 병합 PATCH로 저장하고, 분석 확정 직전에 마지막 값을 한 번 더 맞춘다. 콘티보드의 글자 스타일과 페이지 색감 넘기기도 같은 직렬 저장 경로로 `fontStyle`, `colorMode`, `updatedAt`을 바꾼다. 템플릿을 새로 고르면 `fontStyle`은 카탈로그 기본값(`template`)으로 돌아가고 `colorMode`는 유지한다.
 - 처음 값: 프로젝트에 유효한 `pageStyle`이 없으면 화면은 `getLastPageStyle()`(로그인 사용자가 가장 최근에 저장한 스타일. 그 값이 검증을 통과하지 못하면 카탈로그 기본값)을 처음 값으로 보여 준다. 로그인하지 않았거나 조회가 실패하면 카탈로그 기본값을 쓴다.
 - 서버 검증: `version`은 정수 1, `templateId`는 `emo`나 `show`, `fontStyle`은 카탈로그 `fontStyles`의 키, `colorMode`는 `mono`나 `point`, `catalogVersion`은 현재 카탈로그 값과 같아야 하며 `updatedAt`은 시간대가 붙은 ISO 문자열이어야 한다. 하나라도 어긋나거나 모르는 키가 있으면 400 `invalid_page_style` "페이지 스타일을 다시 골라 주세요."다. `null`로 지우는 PATCH도 같은 오류다.
-- 템플릿 잠금: 그 프로젝트에 마네킹컷이 있거나 마네킹 작업(`mannequin`, `mannequin_adjust`)이 한 번이라도 만들어졌으면 `templateId`를 바꾸는 저장은 409 `page_style_locked` "마네킹컷을 만든 뒤에는 템플릿을 바꿀 수 없어요."다. 이전 값이 없으면 기본 템플릿(`emo`)과 비교한다. `fontStyle`, `colorMode`, `updatedAt`만 바꾸는 저장은 잠금 뒤에도 받는다.
+- 템플릿 잠금: 그 프로젝트에 마네킹컷이 있거나 마네킹 작업(`mannequin`, `mannequin_adjust`)이 한 번이라도 만들어졌으면 `templateId`를 바꾸는 저장은 409 `page_style_locked` "마네킹컷을 만든 뒤에는 템플릿을 바꿀 수 없어요."다. 마네킹 단계를 거치지 않은 프로젝트는 상세페이지 작업(`detail_page`)이 상태와 상관없이 하나라도 만들어졌으면(실패한 작업 포함) 같은 코드로 막고, 문구는 "상세페이지를 만들기 시작한 뒤에는 템플릿을 바꿀 수 없어요."다(2026-11-13 오너 결정: 콘티에서 생성으로 넘어가면 잠근다). 두 조건이 다 맞으면 마네킹 쪽 문구를 쓴다. 이전 값이 없으면 기본 템플릿(`emo`)과 비교한다. 다만 상세페이지 작업 때문에 잠긴 경우에는, 이전 값이 없고 저장 콘티가 모두 taxonomyVersion 4이면 콘티의 템플릿과 비교한다(아래 읽기 보정과 같은 추론이다. 스타일이 저장되지 않은 쇼룸형 콘티에서 글자 스타일과 색감 저장이 막히지 않게 한다). `fontStyle`, `colorMode`, `updatedAt`만 바꾸는 저장은 잠금 뒤에도 받는다. 상세페이지 생성 시작은 작업을 만들기 직전에 프로젝트 잠금을 잡고 템플릿과 콘티가 같은지 다시 확인하므로, 작업이 만들어진 순간의 `templateId`는 저장된 콘티의 템플릿과 같다.
 - 읽기 보정(화면만): 저장값이 없고 저장 콘티가 모두 taxonomyVersion 4면 콘티의 템플릿을 쓴다. 카탈로그에서 빠진 `fontStyle`만 기본 글자 스타일로 바꿔 읽고 템플릿과 색감은 유지한다. 그 밖의 무효 값은 기본값으로 읽는다. 읽을 때 저장값을 고쳐 쓰지 않는다.
 - 적용: 조립기는 `templateId`의 템플릿 글꼴과 색에 `fontStyle`의 글꼴 덮어쓰기를 얹는다. `colorMode='point'`는 기준 색상 스와치가 `white`, `gray`, `black`, 미지정이거나 팔레트에 없으면 실제로는 `mono`로 조립한다. 이때도 저장값은 바꾸지 않는다.
 - 콘티와의 관계: 저장 콘티의 템플릿(`pageSectionKey` 앞부분)은 `pageStyle.templateId`와 같아야 한다. 다르면 콘티 저장과 상세페이지 생성이 400 `page_style_mismatch`다(§6).
@@ -633,6 +633,14 @@ GenerationExample {
 
 `creditCosts`의 에디터 키는 `{ editorImage: 19, editorEdit: 5, editorSimilar: 8 }`이다. 같은 세 키를 인증·프로젝트 소유 확인을 거친 `GET /v1/projects/{id}/credit-quote`에서 반환한다(환경변수 설정값 반영). `editorEdit`는 착용컷·업로드의 색상과 열림 정도, `editorSimilar`는 비슷한 컷, `editorImage`는 새 이미지·고스트·디테일·빈 칸 등 나머지 행동의 표시 단가다. HTTP 화면은 로컬 새 키를 합치지 않고 서버 견적에서 새 키가 빠지면 `editorImage`로 대체한다. 서버는 검증·복원한 요청으로 예약액을 결정하며 성공 확정·실패 해제는 그 예약액을 그대로 쓴다. 원장 `action_key=editorImage`와 같은 키 재요청·409 키 재사용 거절 계약은 유지한다.
 
+같은 견적 응답은 `detailPageGenerate: { extensionModelFee, selectedModelId }`도 반환한다(2026-11-13 오너 결정: 확장 가상모델 요금은 콘티에서 생성으로 넘어갈 때 함께 차감, 상품당 한 번). `extensionModelFee`는 "이 프로젝트가 지금 상세페이지 생성을 요청하면 컷 값에 더 얹힐 확장 가상모델 요금"이다. 규칙은 다음과 같다.
+
+- 그 프로젝트에 마네킹컷이나 마네킹 작업이 하나라도 있으면 0이다(마네킹 단계에서 이미 다뤘다. 마네킹 단계를 거친 프로젝트의 예약액과 정산액은 이전과 같다).
+- 끝난 상세페이지 작업이 이 요금을 이미 차감한 프로젝트는 0이다.
+- 그 밖에는 기존 요금표 그대로다(요금제와 고른 모델에 따라 19, Seller 10, Pro와 기본 모델과 실제 모델은 0).
+- 견적 라우트와 상세페이지 생성 시작 라우트는 같은 함수와 같은 재료로 이 값을 계산한다. `selectedModelId` 쿼리로 모델을 덮어쓰는 동작은 이 값에도 적용한다. 기존 키(`plan`, `mannequinGenerate`, `mannequinRegenerate`, `storyboardPerCut`, 에디터 세 키)는 그대로다.
+- 상세페이지 생성 시작은 AI 컷 값이 0보다 클 때만 이 요금을 컷 값에 더해 예약하고, 작업 `metadata`에 `extensionModelFee`, `plan`, `selectedModelId`를 남긴다(요금이 0이면 `metadata`는 이전과 같다). 정산은 예약 때 적어 둔 값만 믿는다. 컷 값 정산액이 0보다 크면 요금 전액을 함께 차감하고 성공 `metadata.extensionModelFeeCharged`에 실제 차감액을 남긴다. 전부 실패하면 예약 전체가 풀린다. 크레딧 내역은 `detailPageGenerate` 한 줄이다.
+
 - **폐기 예정**: `backgrounds`(콘티 배경 제거), `extendedColorPriority`(미사용), `cutSources`
 - **폐기됨(2026-10-10)**: `directions`(방향 칩, ADR-0015), `productDirections`(`productSourcePhotos`로 대체), `varyOptions`(현재 이미지 수정의 배경, 포즈, 표정 카드, ADR-0016 개정)
 - **폐기됨(2026-11)**: `composeModes`(사진 양 기본형, 확장형. 템플릿 선택으로 대체)
@@ -787,7 +795,8 @@ VaryRequest {                      // 캔버스에서 고른 사진으로 새 �
 | `invalid_similar_cut_relationship` | 400 | 비슷한 컷 후속의 원본이 같은 콘티의 일반 AI 착용 카드가 아니다. 문구 "비슷한 컷의 원본 사진 카드를 확인해 주세요." |
 | `page_style_mismatch` | 400 | 분석의 `pageStyle.templateId`가 있고 콘티 템플릿과 다르다. 문구 "고른 템플릿으로 콘티를 다시 열어 주세요." |
 | `invalid_page_style` | 400 | 분석 저장(`PATCH /v1/projects/{id}/analysis`)의 `pageStyle`이 §3.2 검증을 통과하지 못했다. 문구 "페이지 스타일을 다시 골라 주세요." |
-| `page_style_locked` | 409 | 마네킹컷이나 마네킹 작업이 있는 프로젝트에서 `templateId`를 바꾸려 했다. 문구 "마네킹컷을 만든 뒤에는 템플릿을 바꿀 수 없어요." |
+| `page_style_locked` | 409 | 마네킹컷이나 마네킹 작업이 있는 프로젝트에서 `templateId`를 바꾸려 했다. 문구 "마네킹컷을 만든 뒤에는 템플릿을 바꿀 수 없어요." 마네킹 단계 없이 상세페이지 작업이 만들어진 프로젝트는 문구 "상세페이지를 만들기 시작한 뒤에는 템플릿을 바꿀 수 없어요." |
+| `missing_front_photo` | 400 | 상세페이지 생성 시작이 새 작업을 만들려는데 기준 색상 정면 사진이 없다. 문구 "기준 색상 정면 사진을 먼저 올려주세요." 이미 도는 작업에 합류하거나 완성본을 돌려받는 요청은 막지 않는다. 작업과 예약은 남지 않는다. |
 
 기존 생성예시와 촬영 세트 검증 오류(`unknown_example_id`, `example_not_applicable`, `example_cut_mismatch`, `example_gender_mismatch` 등)는 그대로다. 상세페이지 생성 작업도 시작할 때 저장 콘티를 같은 규칙으로 다시 정규화한다.
 

@@ -58,6 +58,8 @@ def _wire(monkeypatch, *, plan='starter', model='mF', done_count=0, balance=100,
     monkeypatch.setattr(routes, 'get_conn', connection)
     monkeypatch.setattr(repo, 'get_project', AsyncMock(return_value={'id': 'p1'} if owned else None))
     monkeypatch.setattr(repo, 'get_mannequin_pricing_state', AsyncMock(return_value=state), raising=False)
+    monkeypatch.setattr(repo, 'get_detail_page_pricing_state', AsyncMock(return_value={
+        'plan': plan, 'mannequin_stage_used': bool(done_count or cuts or not created), 'already_charged': False}))
     monkeypatch.setattr(repo, 'get_analysis', AsyncMock(return_value={'selectedModelId': model}))
     monkeypatch.setattr(repo, 'list_mannequin_cuts', AsyncMock(return_value=cuts or []))
     monkeypatch.setattr(repo, 'get_account', AsyncMock(return_value={'credits': balance, 'plan': plan}))
@@ -215,6 +217,7 @@ def test_credit_quote_shape(client, make_token, monkeypatch, plan, fee, free_adj
         'mannequinRegenerate': {'freeAdjusts': free_adjusts, 'usedAdjusts': max(done_count - 1, 0),
                                 'nextCost': next_cost},
         'storyboardPerCut': 19, 'editorImage': 19, 'editorEdit': 5, 'editorSimilar': 8,
+        'detailPageGenerate': {'extensionModelFee': fee if done_count == 0 else 0, 'selectedModelId': 'mF'},
     }
 
 

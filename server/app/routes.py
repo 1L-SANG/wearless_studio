@@ -1288,10 +1288,22 @@ async def save_analysis(
             await repo.lock_page_style_project(conn, project_id)
             previous_style = (await repo.get_analysis(conn, project_id) or {}).get("pageStyle")
             previous_template = previous_style.get("templateId") if isinstance(previous_style, dict) else None
+            if (not previous_template and await repo.has_detail_page_job(conn, project_id)
+                    and not await repo.page_style_locked(conn, project_id)):
+                storyboard = await repo.get_storyboard(conn, project_id)
+                if storyboard and all(isinstance(block, dict) and block.get("taxonomyVersion") == 4 for block in storyboard):
+                    section_key = storyboard[0].get("pageSectionKey")
+                    inferred_template = section_key.split(".")[0] if isinstance(section_key, str) else None
+                    if inferred_template in ("emo", "show"):
+                        previous_template = inferred_template
             previous_template = previous_template or page_style.default_page_style()["templateId"]
-            if analysis["pageStyle"]["templateId"] != previous_template and await repo.page_style_locked(conn, project_id):
-                raise HTTPException(status_code=409, detail={"code": "page_style_locked",
-                    "message": "마네킹컷을 만든 뒤에는 템플릿을 바꿀 수 없어요."})
+            if analysis["pageStyle"]["templateId"] != previous_template:
+                if await repo.page_style_locked(conn, project_id):
+                    raise HTTPException(status_code=409, detail={"code": "page_style_locked",
+                        "message": "마네킹컷을 만든 뒤에는 템플릿을 바꿀 수 없어요."})
+                if await repo.has_detail_page_job(conn, project_id):
+                    raise HTTPException(status_code=409, detail={"code": "page_style_locked",
+                        "message": "상세페이지를 만들기 시작한 뒤에는 템플릿을 바꿀 수 없어요."})
         product = await repo.get_product(conn, project_id) or {}
         if (
             product.get("clothingType") or product.get("clothing_type")
@@ -2797,6 +2809,12 @@ async def get_credit_quote(
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         state = await repo.get_mannequin_pricing_state(conn, user_id, project_id)
+        detail_pricing = await repo.get_detail_page_pricing_state(conn, user_id, project_id)
+        detail_model_id = selected_model_id if selected_model_id is not None else state["selected_model_id"]
+        if selected_model_id is None and not detail_model_id:
+            # 생성이 지원하는 옛 분석 키도 새 견적에 반영한다. 마네킹 견적의 기존 값은 유지한다.
+            analysis = await repo.get_analysis(conn, project_id) or {}
+            detail_model_id = analysis.get("selectedModelId") or analysis.get("selected_model_id")
     plan = plan_pricing.plan_of(state["plan"])
     model_id = selected_model_id if selected_model_id is not None else state["selected_model_id"]
     fee = plan_pricing.extension_model_fee(plan, model_id)
@@ -2816,6 +2834,13 @@ async def get_credit_quote(
             "nextCost": plan_pricing.mannequin_regenerate_cost(plan, done_count, base),
         },
         "storyboardPerCut": settings.credit_cost_storyboard_per_cut,
+        "detailPageGenerate": {
+            "extensionModelFee": plan_pricing.detail_page_model_fee(
+                detail_pricing["plan"], detail_model_id,
+                mannequin_stage_used=detail_pricing["mannequin_stage_used"],
+                already_charged=detail_pricing["already_charged"]),
+            "selectedModelId": detail_model_id,
+        },
         "editorImage": settings.credit_cost_editor_image,
         "editorEdit": settings.credit_cost_editor_edit,
         "editorSimilar": settings.credit_cost_editor_similar,
@@ -4383,8 +4408,12 @@ async def generate_detail_page(
         if license_row is not None:
             await _reject_facemarket_cutover_closed(conn)
             await facemarket.set_project_license(conn, project_id, license_row["id"])
-        if storyboard is None:
-            storyboard = await repo.get_storyboard(conn, project_id)
+        # FaceMarket 수요 기록은 중간 커밋을 하므로, 그 뒤에 마네킹·분석 저장과 같은 잠금을 잡는다.
+        await repo.lock_page_style_project(conn, project_id)
+        locked_analysis = await repo.get_analysis(conn, project_id) or {}
+        # 모델·라이선스를 판정한 콘티는 유지한다. 그 사이 편집됐으면 워커의 digest 검사가 해제한다.
+        if storyboard and locked_analysis.get("pageStyle", {}).get("templateId") not in (None, storyboard[0]["pageSectionKey"].split(".")[0]):
+            raise _bad_request("page_style_mismatch", "고른 템플릿으로 콘티를 다시 열어 주세요.")
         # 크레딧 견적은 실제 생성 수 기준 — 생성 계약이 완전히 같은 복제 컷은 1장만
         # 생성해 복사하므로(ADR-0011, _duplicate_source_indexes) 예약에서도 접는다.
         # 그대로 두면 복제가 많은 보드가 사전검사(402)에서 과도하게 거절된다(Codex 2차 #3).
@@ -4419,20 +4448,37 @@ async def generate_detail_page(
         min_cuts = s.credit_min_storyboard_cuts
         billable = max(ai_count, min_cuts) if ai_count > 0 else 0
         cost = billable * s.credit_cost_storyboard_per_cut
-        job, created = await repo.create_job(
-            conn, user_id=user_id, project_id=project_id, kind="detail_page",
-            payload=payload, idempotency_key=scoped_key, credits_reserved=cost,
+        job = await repo.find_detail_page_request_job(conn, user_id, project_id, scoped_key)
+        created = False
+        if job is None:
+            fee = 0
+            pricing = None
+            if cost > 0:
+                pricing = await repo.get_detail_page_pricing_state(conn, user_id, project_id)
+                fee = plan_pricing.detail_page_model_fee(
+                    pricing["plan"], selected_model_id,
+                    mannequin_stage_used=pricing["mannequin_stage_used"],
+                    already_charged=pricing["already_charged"])
+            cost += fee
             # perCutCost = 예약 시점 컷당 단가 스냅샷 — 워커 정산의 단일 기준(실행 시점 설정
             # 변경·콘티 재저장으로 인한 블록 수 변동과 무관하게 견적 가격을 고정).
-            metadata={"creditCostVersion": s.credit_cost_version,
-                      "perCutCost": s.credit_cost_storyboard_per_cut, "aiCount": ai_count,
-                      "minCuts": min_cuts, "storyboardDigest": _storyboard_digest(storyboard)})
+            metadata = {"creditCostVersion": s.credit_cost_version,
+                        "perCutCost": s.credit_cost_storyboard_per_cut, "aiCount": ai_count,
+                        "minCuts": min_cuts, "storyboardDigest": _storyboard_digest(storyboard)}
+            if fee > 0:
+                metadata.update(extensionModelFee=fee, plan=plan_pricing.plan_of(pricing["plan"]),
+                                selectedModelId=selected_model_id)
+            job, created = await repo.create_job(
+                conn, user_id=user_id, project_id=project_id, kind="detail_page",
+                payload=payload, idempotency_key=scoped_key, credits_reserved=cost, metadata=metadata)
         if (not created and job.get("status") in ("pending", "running")
                 and ((job.get("payload") or {}).get("outfitSelectionsSnapshot") or {"version": 1, "slots": {}}) != (payload.get("outfitSelectionsSnapshot") or {"version": 1, "slots": {}})):
             raise _generation_in_progress()
         if created:
             if not storyboard:
                 raise _bad_request("empty_storyboard", "콘티가 비어 있어요. 먼저 콘티를 저장해 주세요.")
+            if not mannequin.has_base_front(product_row or {}):
+                raise _bad_request("missing_front_photo", "기준 색상 정면 사진을 먼저 올려주세요.")
             if cost > 0 and await repo.reserve_credits(conn, user_id, cost) is None:
                 raise HTTPException(
                     status_code=402,

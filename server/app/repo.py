@@ -588,6 +588,23 @@ async def get_mannequin_pricing_state(
         return await cur.fetchone()
 
 
+async def get_detail_page_pricing_state(
+    conn: AsyncConnection, user_id: str, project_id: str,
+) -> dict:
+    """소유 확인 뒤 호출. 생성은 프로젝트 잠금 안에서 예약 직전에 읽는다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select (select plan from profiles where user_id = %s) as plan, "
+            "exists(select 1 from jobs where user_id = %s and project_id = %s "
+            "and kind = 'detail_page' and status = 'done' "
+            "and coalesce(cast(metadata->>'extensionModelFeeCharged' as integer), 0) > 0) "
+            "as already_charged",
+            (user_id, user_id, project_id),
+        )
+        row = await cur.fetchone()
+    return {**row, "mannequin_stage_used": await page_style_locked(conn, project_id)}
+
+
 # 첫 값 보존 + 다른 앱이 오면 'both' 로 승격. 한 문장으로 쓰는 이유는 경합이다 —
 # select 로 읽고 파이썬에서 합쳐 update 하면, 두 탭(셀러·FaceMarket)이 같은 순간에
 # 스탬프를 보낼 때 늦은 쪽이 이른 쪽을 덮어 'both' 가 한쪽 값으로 되돌아간다.
@@ -1826,6 +1843,14 @@ async def page_style_locked(conn: AsyncConnection, project_id: str) -> bool:
         return bool(row and row["locked"])
 
 
+async def has_detail_page_job(conn: AsyncConnection, project_id: str) -> bool:
+    async with conn.cursor() as cur:
+        await cur.execute("select exists(select 1 from jobs where project_id = %s "
+                          "and kind = 'detail_page') as locked", (project_id,))
+        row = await cur.fetchone()
+        return bool(row and row["locked"])
+
+
 async def last_page_style(conn: AsyncConnection, user_id: str) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute("select a.payload->'pageStyle' as page_style from analyses a "
@@ -2764,6 +2789,20 @@ async def get_job_by_request_key(conn: AsyncConnection, *, user_id: str, kind: s
         await cur.execute(
             f"select {_JOB_COLS} from jobs where idempotency_key = %s and user_id = %s and kind = %s",
             (idempotency_key, user_id, kind),
+        )
+        return await cur.fetchone()
+
+
+async def find_detail_page_request_job(
+    conn: AsyncConnection, user_id: str, project_id: str, idempotency_key: str | None,
+) -> dict | None:
+    """프로젝트 잠금 뒤, create_job과 같은 키 우선순위로 요금 없는 합류를 찾는다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
+            "and kind = 'detail_page' and (idempotency_key = %s or status in ('pending', 'running')) "
+            "order by case when idempotency_key = %s then 0 else 1 end limit 1",
+            (user_id, project_id, idempotency_key, idempotency_key),
         )
         return await cur.fetchone()
 

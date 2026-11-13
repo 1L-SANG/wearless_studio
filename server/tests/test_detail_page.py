@@ -457,7 +457,7 @@ def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
 
     async def fake_product(conn, pid):
         # 크레딧 견적의 복제 접기(_duplicate_source_indexes)가 clothing_type을 읽는다.
-        return {"clothing_type": "top"}
+        return {"clothing_type": "top", "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
 
     async def fake_analysis(conn, pid):
         return {}
@@ -510,7 +510,7 @@ def test_detail_reservation_uses_minimum_only_for_positive_ai_count(
                 for i in range(ai_count)] + [{"id": "mine", "source": "mine"}])
 
     async def fake_product(conn, project_id):
-        return {"clothing_type": "top"}
+        return {"clothing_type": "top", "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
 
     async def fake_create(conn, **kwargs):
         seen.update(kwargs)
@@ -577,6 +577,7 @@ class _RouteConn:
 
 
 def _patch_counted_route_conn(monkeypatch, events):
+    patch_route_db(monkeypatch, routes)
     @contextlib.asynccontextmanager
     async def fake_conn(_request):
         yield _RouteConn(events)
@@ -620,7 +621,7 @@ def test_detail_product_only_storyboard_strips_real_model_before_facemarket_gate
         return []
 
     async def fake_product(conn, project_id):
-        return {"clothing_type": "top"}
+        return {"clothing_type": "top", "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
 
     async def fake_create(conn, **kwargs):
         seen.update(kwargs)
@@ -689,7 +690,7 @@ def _post_real_detail_generate(client, make_token, monkeypatch, storyboard):
         return []
 
     async def fake_product(conn, project_id):
-        return {"clothing_type": "top"}
+        return {"clothing_type": "top", "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
 
     async def fake_create(conn, **kwargs):
         seen.update(kwargs)
@@ -835,7 +836,7 @@ def test_detail_mixed_real_selection_queues_one_model_for_every_cut(
         return None
 
     async def fake_product(conn, project_id):
-        return {"clothing_type": "top"}
+        return {"clothing_type": "top", "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
 
     async def fake_create(conn, **kwargs):
         seen.update(kwargs)
@@ -908,7 +909,7 @@ def test_detail_current_selection_updates_lock_and_queues_snapshot_atomically(
         return v4_blocks([{"id": "b1", "source": "ai", "cutType": "horizon"}])
 
     async def fake_product(conn, project_id):
-        return {"clothing_type": "top"}
+        return {"clothing_type": "top", "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
 
     async def fake_create(conn, **kwargs):
         seen.update(kwargs)
@@ -1043,7 +1044,7 @@ def test_detail_reservation_failure_does_not_commit_new_lock(
         return v4_blocks([{"id": "b1", "source": "ai", "cutType": "horizon"}])
 
     async def fake_product(conn, project_id):
-        return {"clothing_type": "top"}
+        return {"clothing_type": "top", "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
 
     async def fake_create(conn, **kwargs):
         return {"id": "job-1"}, True

@@ -47,7 +47,7 @@ def generation_boundary(client, monkeypatch):
         return state["cached"]
 
     async def product(conn, pid):
-        return {"clothingType": "top"}
+        return {"clothingType": "top", "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
 
     async def job(conn, **kwargs):
         seen["jobs"].append(kwargs)
