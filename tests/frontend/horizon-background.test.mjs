@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { horizonBackgroundMode, needsGarmentColorMeasurement, restoreHorizonGroupBackground, updateHorizonGroupBackground } from '../../src/lib/horizonBackground.js';
 import { createSpaceSetMembers, detachSpaceMembership, nextSpaceSetMemberReservation } from '../../src/lib/storyboardSpaceSets.js';
-import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
+import { seedTemplateFixture as defaultStoryboard, isDefaultTemplateFixture as isDefaultStoryboardForMode } from './helpers/templateStoryboard.mjs';
 import { buildFailedCutRetry } from '../../src/features/editor/failedCutRetry.js';
 
 const horizon = (id, group = 'set:instance-a', extra = {}) => ({

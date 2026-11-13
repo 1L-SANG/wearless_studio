@@ -54,7 +54,8 @@ FORMAT_VERSION = 1
 FINAL_RECIPE_VERSION = "cut-final-v1"
 STAGE_BASE = "base"
 STAGE_FINAL = "final"
-_STAGES = (STAGE_BASE, STAGE_FINAL)
+STAGE_COLOR_MASTER = "color_master"
+_STAGES = (STAGE_BASE, STAGE_FINAL, STAGE_COLOR_MASTER)
 _MAGIC = b"WLCKPT1\n"
 _MAX_HEADER_BYTES = 1 << 20
 _IMAGE_MIMES = frozenset({"image/png", "image/jpeg", "image/webp"})
@@ -232,6 +233,11 @@ def _valid_final_meta(meta) -> bool:
     )
 
 
+def _color_request(value: dict) -> dict:
+    return {key: item for key, item in value.items()
+            if key not in {"colorCheck", "masterAssetId", "masterSha256", "masterSource"}}
+
+
 def _verified_pass(meta, fingerprint: str) -> bool:
     """상세컷 전용 정책의 채택본이 다음 잡에서 이어 쓸 수 있는 PASS 인가(for_verified_detail 과 같은 조건)."""
     qc = meta.get("cutQc") if isinstance(meta, dict) else None
@@ -282,6 +288,7 @@ class CutCheckpoint:
         self.final_digest = final_digest
         self.block_id = block_id
         self.final: Loaded | None = None
+        self.master: Loaded | None = None
         self.base = PersistedBase(self)
         #: 이 컷의 베이스를 앞선 잡에서 이어 받았는가(로그·이벤트용).
         self.base_reused = False
@@ -300,7 +307,18 @@ class CutCheckpoint:
                  exc, self.store.job_id, self.block_id)
         await self.base.discard()
 
+    async def save_master(self, image: bytes, mime: str) -> bool:
+        key = await self.store.save(self.final_digest, STAGE_COLOR_MASTER, image, mime, {},
+                                    block_id=self.block_id)
+        if key is not None:
+            self.master = Loaded(image, mime, {}, key)
+        return key is not None
+
     async def save_final(self, image: bytes, mime: str, meta: dict) -> bool:
+        if (meta.get("colorExecution") or {}).get("mode") == "base_then_color":
+            if self.master is None:
+                return False
+            meta = {**meta, "colorMasterSha256": hashlib.sha256(self.master.image).hexdigest()}
         key = await self.store.save(self.final_digest, STAGE_FINAL, image, mime, meta,
                                     block_id=self.block_id)
         if key is None:
@@ -391,7 +409,7 @@ class CutCheckpointStore:
         return cls(app, job, identity=identity, index=index, auto_named=auto_named)
 
     async def for_cut(self, block: dict, settings, product: dict, images, generate_kwargs: dict,
-                      *, real_identity_attached: bool) -> CutCheckpoint | None:
+                      *, real_identity_attached: bool, color_execution: dict | None = None) -> CutCheckpoint | None:
         """컷 하나의 digest 를 정하고, 남아 있는 완성 컷·베이스를 찾아 둔다."""
         # 잡이 지은 상품명은 지문에서 뺀다(auto_named 주석). 셀러가 붙인 이름은 그대로 들어간다.
         fingerprint_product = {**product, "name": ""} if self.auto_named else product
@@ -412,9 +430,22 @@ class CutCheckpointStore:
             "userId": self.user_id,
             "projectId": self.project_id,
         })
-        final_digest = _digest({"base": base_digest, "recipe": _final_recipe(settings)})
+        final_material = {"base": base_digest, "recipe": _final_recipe(settings)}
+        if color_execution:
+            # Color authority belongs to a different photograph from the base render.
+            # Changing its pixels, target, or edit prompt invalidates only the final.
+            from ..agents import garment_color_qc
+            final_material["colorExecution"] = _color_request(color_execution)
+            final_material["colorCheckPolicy"] = garment_color_qc.POLICY_VERSION
+        final_digest = _digest(final_material)
         cut = CutCheckpoint(self, base_digest, final_digest, block.get("id"))
         cut.final = await self._load(final_digest, STAGE_FINAL)
+        if cut.final is not None and color_execution and color_execution.get("mode") == "base_then_color":
+            cut.master = await self._load(final_digest, STAGE_COLOR_MASTER)
+            if (cut.master is None
+                    or _color_request(cut.final.meta.get("colorExecution") or {}) != _color_request(color_execution)
+                    or cut.final.meta.get("colorMasterSha256") != hashlib.sha256(cut.master.image).hexdigest()):
+                cut.final = None
         if cut.final is not None and cut_generator.product_button_qc.eligible(block):
             # A historical final is only a candidate under the active button policy.
             # Never list it as retained/publishable until fresh source + result QC pass.
@@ -448,10 +479,17 @@ class CutCheckpointStore:
             self.note_final(block_id, saved.key)
         return cut
 
-    async def for_similar_cut(self, fingerprint: str, block_id: str, plan: dict) -> CutCheckpoint:
+    async def for_similar_cut(self, fingerprint: str, block_id: str, plan: dict,
+                              *, color_execution: dict | None = None) -> CutCheckpoint:
         """A generated follow-up is reusable only with its mandatory saved action."""
         cut = CutCheckpoint(self, fingerprint, fingerprint, block_id)
         saved = await self._load(fingerprint, STAGE_FINAL)
+        if saved is not None and color_execution:
+            cut.master = await self._load(fingerprint, STAGE_COLOR_MASTER)
+            if (cut.master is None
+                    or _color_request(saved.meta.get("colorExecution") or {}) != _color_request(color_execution)
+                    or saved.meta.get("colorMasterSha256") != hashlib.sha256(cut.master.image).hexdigest()):
+                saved = None
         if saved is not None and saved.meta.get("similarPlan") == plan:
             cut.final = saved
             self.note_final(block_id, saved.key)

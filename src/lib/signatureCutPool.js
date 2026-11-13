@@ -39,13 +39,41 @@ export const SIGNATURE_CUTS = Object.freeze([
   entry('sig_women_04', 'women', UPPER_CLOTHING_TYPES),
   entry('sig_women_bottom_pants_01', 'women', BOTTOM_CLOTHING_TYPES, 'pants'),
   entry('sig_women_bottom_pants_02', 'women', BOTTOM_CLOTHING_TYPES, 'pants'),
-  entry('sig_women_bottom_skirt_01', 'women', BOTTOM_CLOTHING_TYPES, 'skirt'),
   entry('sig_women_bottom_skirt_02', 'women', BOTTOM_CLOTHING_TYPES, 'skirt'),
   entry('sig_women_dress_01', 'women', DRESS_CLOTHING_TYPES, 'dress'),
   entry('sig_women_dress_02', 'women', DRESS_CLOTHING_TYPES, 'dress'),
   entry('sig_men_bottom_pants_01', 'men', BOTTOM_CLOTHING_TYPES, 'pants'),
-  entry('sig_men_bottom_pants_02', 'men', BOTTOM_CLOTHING_TYPES, 'pants'),
+  entry('sig_women_bottom_pants_03', 'women', BOTTOM_CLOTHING_TYPES, 'pants'),
+  entry('sig_women_bottom_pants_04', 'women', BOTTOM_CLOTHING_TYPES, 'pants'),
+  entry('sig_women_bottom_pants_05', 'women', BOTTOM_CLOTHING_TYPES, 'pants'),
+  entry('sig_women_bottom_pants_06', 'women', BOTTOM_CLOTHING_TYPES, 'pants'),
+  entry('sig_women_bottom_pants_07', 'women', BOTTOM_CLOTHING_TYPES, 'pants'),
+  entry('sig_women_bottom_pants_08', 'women', BOTTOM_CLOTHING_TYPES, 'pants'),
+  entry('sig_women_bottom_pants_09', 'women', BOTTOM_CLOTHING_TYPES, 'pants'),
+  entry('sig_women_bottom_skirt_03', 'women', BOTTOM_CLOTHING_TYPES, 'skirt'),
+  entry('sig_women_bottom_skirt_04', 'women', BOTTOM_CLOTHING_TYPES, 'skirt'),
+  entry('sig_women_bottom_skirt_05', 'women', BOTTOM_CLOTHING_TYPES, 'skirt'),
+  entry('sig_women_bottom_skirt_06', 'women', BOTTOM_CLOTHING_TYPES, 'skirt'),
+  entry('sig_women_bottom_skirt_07', 'women', BOTTOM_CLOTHING_TYPES, 'skirt'),
+  entry('sig_women_bottom_skirt_08', 'women', BOTTOM_CLOTHING_TYPES, 'skirt'),
+  entry('sig_women_bottom_skirt_09', 'women', BOTTOM_CLOTHING_TYPES, 'skirt'),
+  entry('sig_women_dress_03', 'women', DRESS_CLOTHING_TYPES, 'dress'),
+  entry('sig_women_dress_04', 'women', DRESS_CLOTHING_TYPES, 'dress'),
+  entry('sig_women_dress_05', 'women', DRESS_CLOTHING_TYPES, 'dress'),
+  entry('sig_women_dress_06', 'women', DRESS_CLOTHING_TYPES, 'dress'),
+  entry('sig_men_bottom_pants_03', 'men', BOTTOM_CLOTHING_TYPES, 'pants'),
+  entry('sig_men_bottom_pants_04', 'men', BOTTOM_CLOTHING_TYPES, 'pants'),
+  entry('sig_men_bottom_pants_05', 'men', BOTTOM_CLOTHING_TYPES, 'pants'),
+  entry('sig_men_bottom_pants_06', 'men', BOTTOM_CLOTHING_TYPES, 'pants'),
+  entry('sig_men_bottom_pants_07', 'men', BOTTOM_CLOTHING_TYPES, 'pants'),
+  entry('sig_men_bottom_pants_08', 'men', BOTTOM_CLOTHING_TYPES, 'pants'),
 ]);
+
+// Read compatibility only; these two IDs are never offered or auto-picked.
+const RETIRED_SIGNATURE_CUTS = [
+  entry('sig_women_bottom_skirt_01', 'women', BOTTOM_CLOTHING_TYPES, 'skirt'),
+  entry('sig_men_bottom_pants_02', 'men', BOTTOM_CLOTHING_TYPES, 'pants'),
+];
 
 export const SIGNATURE_ID_PREFIX = 'sig_';
 
@@ -55,7 +83,13 @@ export const isSignatureExampleId = (id) => (
 );
 
 function signatureContext(context) {
-  return typeof context === 'string' ? { gender: context } : (context || {});
+  const normalized = typeof context === 'string' ? { gender: context } : (context || {});
+  // Analysis owns classification. Omitted Analysis retains legacy flat callers,
+  // while an explicit empty classification must clear stale Product-era fields.
+  return normalized.analysis ? { ...normalized,
+    subCategory: normalized.analysis.subCategory ?? null,
+    customCategory: normalized.analysis.customCategory ?? null,
+  } : normalized;
 }
 
 function isSkirtCategory({ subCategory, customCategory }) {
@@ -89,7 +123,7 @@ export const signatureCutsFor = (context = {}) => {
   ));
 };
 
-export const signatureCutById = (id) => SIGNATURE_CUTS.find((cut) => cut.id === id) || null;
+export const signatureCutById = (id) => [...SIGNATURE_CUTS, ...RETIRED_SIGNATURE_CUTS].find((cut) => cut.id === id) || null;
 
 export const signatureCutMatches = (id, context = {}) => (
   signatureCutsFor(context).some((cut) => cut.id === id)
@@ -125,4 +159,37 @@ export function repairSignatureCutSelections(blocks, context = {}) {
     changed: repairedIds.length > 0,
     repairedIds,
   };
+}
+
+/** D264: both templates may choose a signature for their opening hero. */
+export const isSignatureBlock = block => block?.source === 'ai'
+  && block.taxonomyVersion === 4 && block.pageSectionKind === 'first'
+  && block.slotKey === 'first.hero' && ['styling', 'horizon'].includes(block.cutType)
+  && !block.similarSourceBlockId;
+
+// Eligibility does not change the emotional template's default, or overwrite a
+// showroom seller's ordinary place selection on re-entry.
+export const usesSignaturePool = block => isSignatureBlock(block)
+  && (isSignatureExampleId(block.exampleId) || (!block.exampleId && !block.spaceGroupId
+    && String(block.pageSectionKey).startsWith('show.') && block.exampleChoice !== 'manual'));
+
+export function signatureCardForBlock(block, context = {}) {
+  if (!isSignatureBlock(block)) return null;
+  const picked = pickSignatureCut({ ...context.product, analysis: context.analysis, gender: context.gender,
+    projectId: context.projectId, slotKey: block.slotKey });
+  // A saved, still-approved choice remains the card's picture as well as the
+  // stage's picture when the active pool grows. New choices use the stable pick.
+  const cut = signatureCutsFor({ ...context.product, analysis: context.analysis, gender: context.gender })
+    .find(item => item.id === block.exampleId) || picked;
+  return cut ? { ...cut, cutType: 'horizon', shot: 'medium', direction: 'front', sideStyle: null,
+    variants: ['all'], signature: true } : null;
+}
+
+/** null means that the ordinary gallery applies; an array is the complete opening pool. */
+export function signatureExamplesForBlock(block, { product = {}, analysis, gender } = {}) {
+  if (!isSignatureBlock(block)) return null;
+  return signatureCutsFor({ ...product, analysis, gender }).map(cut => ({ ...cut,
+    cutType: 'horizon', shot: 'medium', direction: 'front', sideStyle: null,
+    variants: ['all'], rank: 1,
+  }));
 }

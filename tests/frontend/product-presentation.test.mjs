@@ -2,9 +2,9 @@ import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createServer, transformWithEsbuild } from 'vite';
+import react from '@vitejs/plugin-react';
 import ReactRuntime from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { filterExamplesForModel } from '../../src/lib/identityScope.js';
 import * as taxonomy from '../../src/lib/storyboardTaxonomy.js';
 import * as examples from '../../src/lib/generationExamples.js';
 import * as selection from '../../src/lib/storyboardExampleSelection.js';
@@ -13,7 +13,9 @@ import * as photos from '../../src/lib/productSourcePhotos.js';
 import * as closure from '../../src/lib/outerClosure.js';
 import { ensureSections, normalizeBoard } from '../../src/lib/sections.js';
 import { uniqueGenerationCutCount } from '../../src/lib/generationCutCount.js';
-import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
+import { seedTemplateFixture as defaultStoryboard, isDefaultTemplateFixture as isDefaultStoryboardForMode, v4Fixture } from './helpers/templateStoryboard.mjs';
+import { storyboardPhotoPanelHarness } from './helpers/storyboardPhotoPanelHarness.mjs';
+import * as garmentColors from '../../src/lib/garmentColors.js';
 import { buildFailedCutRetry } from '../../src/features/editor/failedCutRetry.js';
 import { buildCanvasAiRequest } from '../../src/features/editor/canvasAiActions.js';
 
@@ -21,8 +23,8 @@ const modes = ['ghost', 'flat', 'natural_light'];
 const product = { clothingType: 'top', colors: [{ id: 'base', isBase: true, images: [
   { slot: 'Front', src: '/front.jpg' }, { slot: 'Back', src: '/back.jpg' },
 ] }] };
-const card = (extra = {}) => ({ id: 'product', taxonomyVersion: 3, source: 'ai', sectionRole: 'product', contentRole: 'productOverview',
-  title: '제품 전체', cutType: 'product', shot: 'ghost', direction: 'back', colorId: 'base', ...extra });
+const card = (extra = {}) => v4Fixture([{ id: 'product', taxonomyVersion: 3, source: 'ai', sectionRole: 'product', contentRole: 'productOverview',
+  title: '제품 전체', cutType: 'product', shot: 'ghost', direction: 'back', colorId: 'base', ...extra }])[0];
 const catalogs = { productShotTypes: [{ value: 'ghost', label: '고스트샷' }, { value: 'detail', label: '디테일샷' }],
   shotTypes: [{ value: 'full', label: '풀샷' }], models: [{ id: 'mA', gender: 'women' }],
   genExamples: [{ id: 'product-example', cutType: 'product', shot: 'ghost', variants: ['all'], applicableClothingTypes: ['top'], gender: null }],
@@ -76,19 +78,17 @@ const React = { createElement: (type, props, ...children) => ({ type, props: { .
 const nodes = (tree, predicate) => Array.isArray(tree) ? tree.flatMap(child => nodes(child, predicate))
   : tree && typeof tree === 'object' ? [...(predicate(tree) ? [tree] : []), ...nodes(tree.props?.children, predicate)] : [];
 const evaluate = (code, scope) => new Function('scope', `with (scope) { ${code} }`)(scope);
-const boardSource = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
 async function panelHarness(kind, clothingType = 'top', sourceProduct = product) {
   const editor = kind === 'editor';
-  const source = editor ? readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8') : boardSource;
-  const body = editor
-    ? source.slice(source.indexOf('const NEW_CUT_DEFAULT_SHOT'), source.indexOf('\n/*', source.indexOf('export function AIPanel('))).replace('export function', 'function')
-    : source.slice(source.indexOf('function Inspector('), source.indexOf('\n/* 업로드 진행률'));
+  assert.equal(editor, true, 'the removed Inspector is covered through the v5 photo-panel harness');
+  const source = readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8');
+  const body = source.slice(source.indexOf('const NEW_CUT_DEFAULT_SHOT'), source.indexOf('\n/*', source.indexOf('export function AIPanel('))).replace('export function', 'function');
   const { code } = await transformWithEsbuild(`${body}\nreturn ${editor ? 'AIPanel' : 'Inspector'};`, 'presentation.jsx', { loader: 'jsx' });
   const slots = []; let cursor = 0, request, block = card();
   const garmentProduct = { ...sourceProduct, clothingType };
   const garmentCatalogs = { ...catalogs, detailProduct: garmentProduct, frontClosure: { version: 1, kind: 'none', range: null },
     genExamples: clothingType === 'top' ? catalogs.genExamples : [] };
-  const scope = { React, ...taxonomy, ...examples, ...selection, ...details, ...photos, ...closure,
+  const scope = { React, ...taxonomy, ...examples, ...selection, ...details, ...photos, ...closure, ...garmentColors,
     useState: initial => { const index = cursor++; if (!(index in slots)) slots[index] = initial; return [slots[index], value => { slots[index] = typeof value === 'function' ? value(slots[index]) : value; }]; },
     useRef: initial => { const index = cursor++; return slots[index] ||= { current: initial }; }, useEffect() {},
     isRealModelSelection: () => false, BRAND_USE_CATEGORIES: [], WORN_CUT_TYPES: new Set(['styling', 'horizon', 'mirror']),
@@ -97,7 +97,7 @@ async function panelHarness(kind, clothingType = 'top', sourceProduct = product)
     referenceFeedbackPatch: (_block, changes) => changes,
   };
   for (const name of ['UnderlineTabs', 'ColorDots', 'MoodGuide', 'ProductSourcePicker', 'DetailTargetPicker', 'PanelHead', 'Chips',
-    'Button', 'Icon', 'OuterClosureField', 'MineImageTab', 'EmptyState', 'ShotSegment']) scope[name] = name;
+    'Button', 'Icon', 'OuterClosureField', 'MineImageTab', 'EmptyState', 'ShotSegment', 'GarmentColorField']) scope[name] = name;
   const Component = evaluate(code, scope);
   const render = () => { cursor = 0; return Component({ block, catalogs: garmentCatalogs, product: garmentProduct, clothingType, colorOpts: [{ id: 'base' }], detailColorOpts: [{ id: 'base' }],
     onChange: changes => { block = { ...block, ...(typeof changes === 'function' ? changes(block) : changes) }; },
@@ -132,29 +132,17 @@ test('editor product choices send each selected presentation, preserve the back 
   assert.equal(Object.hasOwn(h.request(), 'productPresentation'), false);
 });
 
-test('storyboard inspector exposes labeled presentation choices for whole product only and records the choice', async () => {
-  const h = await panelHarness('storyboard');
+test('WOC4 product panel forwards saved modes and fixed face to its section picker without source-face controls', async () => {
   for (const productPresentation of modes) {
-    const picker = nodes(h.render(), node => node.props?.['aria-label'] === '촬영 방식')[0];
-    assert.ok(picker, 'whole-product inspector must show presentation choices');
-    const buttons = nodes(picker, node => node.type === 'button');
-    assert.deepEqual(buttons.slice(1).map(node => node.props.children.join('')), ['고스트컷', '평면컷', '자연광컷']);
-    buttons[modes.indexOf(productPresentation) + 1].props.onClick();
-    assert.equal(h.block().productPresentation, productPresentation);
-    assert.equal(h.block().direction, 'back');
-  }
-  h.setBlock(card({ shot: 'detail', contentRole: 'detail' }));
-  assert.equal(nodes(h.render(), node => node.props?.['aria-label'] === '촬영 방식').length, 0);
-  h.setBlock(card({ cutType: 'styling', shot: 'full', contentRole: 'coordination', sectionRole: 'styling' }));
-  assert.equal(nodes(h.render(), node => node.props?.['aria-label'] === '촬영 방식').length, 0);
-});
-
-test('product card summary names explicit presentation and preserves legacy labels', () => {
-  const body = boardSource.slice(boardSource.indexOf('function cardLabels('), boardSource.indexOf('\n/* 캡션'));
-  const labels = evaluate(`${body}; return cardLabels;`, {});
-  assert.equal(labels(card(), catalogs).shot, '고스트샷 · 뒷면 사진');
-  for (const [index, label] of ['고스트컷', '평면컷', '자연광컷'].entries()) {
-    assert.equal(labels(card({ productPresentation: modes[index] }), catalogs).shot, `${label} · 뒷면 사진`);
+    const h = await storyboardPhotoPanelHarness({ block: card({ productPresentation }), catalogs, clothingType: 'top' });
+    try {
+      const tree = h.render(), picker = nodes(tree, node => node.type === 'product-presentations')[0];
+      assert.ok(picker); assert.equal(picker.props.block.productPresentation, productPresentation);
+      assert.equal(picker.props.block.direction, 'back');
+      assert.equal(nodes(tree, node => node.type === 'product-source' || node.type === 'mood-guide').length, 0);
+      await picker.props.onChange({ productPresentation: 'flat' });
+      assert.equal(h.block.productPresentation, 'flat'); assert.equal(h.block.direction, 'back');
+    } finally { h.close(); }
   }
 });
 
@@ -164,7 +152,7 @@ before(async () => {
     resolve: { alias: { '@': new URL('../../src', import.meta.url).pathname } },
     server: { middlewareMode: true, watch: null, hmr: false, ws: false }, appType: 'custom', optimizeDeps: { noDiscovery: true, include: [] },
     define: { 'import.meta.env.VITE_API_BASE_URL': '"https://api.test"' },
-    plugins: [{ name: 'presentation-session', enforce: 'pre',
+    plugins: [react(), { name: 'presentation-session', enforce: 'pre',
       resolveId(id) { if (id === '@/lib/supabase.js' || id.endsWith('/src/lib/supabase.js')) return '\0presentation-session'; },
       load(id) { if (id === '\0presentation-session') return 'export const supabase = { auth: { getSession: async () => ({ data: { session: { access_token: "test-token", user: { id: "test-user" } } } }) } };'; },
     }],
@@ -202,35 +190,29 @@ test('editor opens whole product for every garment and submits all presentations
 });
 
 
-test('storyboard switches detail to an explicit whole product without an example for all garments and keeps only an available source face', async () => {
+test('v5 pending product recipe applies the ghost default without an example and preserves an available source face', async () => {
   for (const clothingType of ['top', 'bottom', 'outer', 'dress']) {
     for (const hasBack of [true, false]) {
       const sourceProduct = hasBack ? product : { ...product, colors: [{ ...product.colors[0], images: product.colors[0].images.slice(0, 1) }] };
-      const h = await panelHarness('storyboard', clothingType, sourceProduct);
-      h.setBlock(card({ shot: 'detail', contentRole: 'detail' }));
-      h.component('MoodGuide').props.onShotChange('ghost');
-      const picker = nodes(h.render(), node => node.props?.['aria-label'] === '촬영 방식')[0];
-      const buttons = nodes(picker, node => node.type === 'button');
-      buttons[2].props.onClick();
-      await h.component('Button').props.onClick();
-      assert.equal(h.block().productPresentation, 'natural_light');
-      assert.equal(h.block().shot, 'ghost');
-      assert.equal(h.block().exampleId, null);
-      assert.equal(h.block().direction, hasBack ? 'back' : 'front');
+      const h = await storyboardPhotoPanelHarness({ block: card({ shot: 'detail', contentRole: 'detail' }), clothingType,
+        catalogs: { ...catalogs, detailProduct: sourceProduct, genExamples: [] }, colorOpts: [{ id: 'base' }], detailColorOpts: [{ id: 'base' }] });
+      try {
+        nodes(h.render(), node => node.type === 'mood-guide')[0].props.onShotChange('ghost');
+        const apply = nodes(h.render(), node => node.type === 'button' && node.props.children === '제품컷 적용')[0];
+        assert.ok(apply, 'an explicit pending recipe can apply without an example');
+        await apply.props.onClick();
+        assert.equal(h.block.productPresentation, 'ghost');
+        assert.equal(h.block.shot, 'ghost');
+        assert.equal(h.block.exampleId, null);
+        assert.equal(h.block.direction, hasBack ? 'back' : 'front');
+      } finally { h.close(); }
     }
   }
 });
 
 
 test('explicit product modes keep whole/detail controls and hide examples; legacy mode restores the gallery', async () => {
-  const segment = boardSource.slice(boardSource.indexOf('function ShotSegment('), boardSource.indexOf('const MINE_SHOT_OPTION'));
-  const guide = boardSource.slice(boardSource.indexOf('export function MoodGuide('), boardSource.indexOf('function Inspector(')).replace('export function', 'function');
-  const { code } = await transformWithEsbuild(`${segment}\n${guide}\nreturn MoodGuide;`, 'presentation-guide.jsx', { loader: 'jsx' });
-  const Guide = evaluate(code, { ...taxonomy, ...examples, ...details, React: ReactRuntime,
-    useState: ReactRuntime.useState, useRef: ReactRuntime.useRef, useEffect: ReactRuntime.useEffect,
-    filterExamplesForModel, MINE_SHOT_OPTION: { value: 'mine', label: '내 이미지' },
-    Icon: () => null, ExampleThumb: () => ReactRuntime.createElement('img', { src: '/example.jpg', alt: '' }),
-  });
+  const { MoodGuide: Guide } = await vite.ssrLoadModule('/src/features/storyboard/StoryboardExampleGallery.jsx');
   const render = productPresentation => renderToStaticMarkup(ReactRuntime.createElement(Guide, {
     catalogs, cut: 'product', shot: 'ghost', clothingType: 'top', direction: 'front', productPresentation,
     exampleId: 'product-example', onShotChange() {}, onExampleChange() {}, onRefsChange() {},

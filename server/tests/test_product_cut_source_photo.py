@@ -1,3 +1,4 @@
+from storyboard_v4_cases import v4_blocks
 import asyncio
 
 import pytest
@@ -25,8 +26,8 @@ def _product_block(direction="front", shot="ghost", **extra):
 @pytest.mark.parametrize("shot", ["ghost", "detail"])
 @pytest.mark.parametrize("direction, expected", [("back", "back"), ("side", "front"), (None, "front")])
 def test_product_source_direction_survives_storage_and_generation(product_example, shot, direction, expected):
-    stored = content_roles.canonicalize_storyboard([
-        _product_block(direction, shot, sideStyle="threeQuarter")], for_storage=True)[0]
+    stored = content_roles.canonicalize_storyboard(v4_blocks([
+        _product_block(direction, shot, sideStyle="threeQuarter")]), for_storage=True)[0]
     assert stored["direction"] == expected
     assert stored["sideStyle"] is None
     spec = cut_generator.normalize_spec(stored, clothing_type="top")
@@ -35,10 +36,10 @@ def test_product_source_direction_survives_storage_and_generation(product_exampl
 
 
 def test_worn_example_direction_is_preserved(product_example):
-    blocks = content_roles.canonicalize_storyboard([
+    blocks = content_roles.canonicalize_storyboard(v4_blocks([
         {"source": "ai", "sectionRole": "studio", "cutType": "horizon",
          "direction": "front", "exampleId": "worn-example"},
-    ], for_storage=True)
+    ]), for_storage=True)
     assert next(b for b in blocks if b["cutType"] == "horizon")["direction"] == "back"
 
 
@@ -56,16 +57,16 @@ def test_identical_ghost_cards_still_share_one_generation(product_example):
 
 def test_extended_top_front_and_back_ghosts_are_generated_separately(product_example, monkeypatch):
     calls, captured = [], {}
-    stored = content_roles.canonicalize_storyboard([
+    stored = content_roles.canonicalize_storyboard(v4_blocks([
         _product_block("front", id="front-ghost"),
         _product_block("back", id="back-ghost"),
-    ], for_storage=True)
+    ]), for_storage=True)
 
     async def project(*args):
         return {"copywriting": False}
 
     async def storyboard(*args):
-        return stored
+        return v4_blocks(stored)
 
     async def product(*args):
         return {"clothingType": "top", "colors": [{"id": "base", "isBase": True, "images": [
@@ -98,7 +99,7 @@ def test_extended_top_front_and_back_ghosts_are_generated_separately(product_exa
     async def emit(*args, **kwargs):
         pass
 
-    for name, fake in [("get_project", project), ("get_storyboard", storyboard),
+    for name, fake in [("get_project", project), ("get_storyboard", v4_blocks(storyboard)),
                        ("get_product", product), ("get_analysis", analysis),
                        ("get_asset_for_user", asset), ("finalize_detail_page_success", finalize),
                        ("finalize_detail_page_failure", fail)]:
@@ -123,6 +124,6 @@ def test_extended_top_front_and_back_ghosts_are_generated_separately(product_exa
 
 def test_retired_cut_rejects_without_overriding_saved_example_direction(product_example):
     with pytest.raises(ValueError, match="unknown_cut_type"):
-        content_roles.canonicalize_storyboard([
+        content_roles.canonicalize_storyboard(v4_blocks([
             {"source": "ai", "sectionRole": "styling", "cutType": "mirror", "direction": "back"},
-        ], for_storage=True)
+        ]), for_storage=True)

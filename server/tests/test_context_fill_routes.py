@@ -1,3 +1,4 @@
+from storyboard_v4_cases import v4_blocks
 import asyncio
 import contextlib
 import copy
@@ -44,7 +45,7 @@ def setup_fill(monkeypatch, *, blocks=None, storyboard=None, product=None, activ
     async def reserve(conn, user, amount):
         seen["reserved"].append(amount)
         return 100
-    for name, fn in (("get_project", project), ("get_editor_blocks", editor), ("get_storyboard", board),
+    for name, fn in (("get_project", project), ("get_editor_blocks", editor), ("get_storyboard", v4_blocks(board)),
                      ("get_product", garment), ("get_analysis", analysis), ("has_active_detail_page_job", page_active),
                      ("list_completed_context_fill_jobs", completed), ("find_context_fill_job", find),
                      ("get_project_asset_for_user", asset), ("get_asset_facemarket_provenance", provenance),

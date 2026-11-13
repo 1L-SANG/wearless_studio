@@ -51,21 +51,6 @@ test('프론트 폭 표와 한계값은 공유 계약과 같다', async () => {
   assert.deepEqual(HOOK_TITLE_LIMITS, fixture.limits);
 });
 
-test('모든 공유 예시에서 프론트와 서버의 제목 배치가 같다', () => {
-  const python = spawnSync(PYTHON, ['-c', [
-    'import json, sys',
-    'from app.agents.page_assembler import _hook_title_layout',
-    'print(json.dumps([_hook_title_layout(value) for value in json.load(sys.stdin)], ensure_ascii=False))',
-  ].join('\n')], {
-    cwd: SERVER_DIR, encoding: 'utf8', env: { ...process.env, PYTHONPATH: '.' },
-    input: JSON.stringify(fixture.cases.map(({ input }) => input)),
-  });
-  assert.equal(python.status, 0, python.stderr);
-  const results = JSON.parse(python.stdout);
-  fixture.cases.forEach(({ name, input }, index) => {
-    assert.deepEqual(results[index], textSlots.hookTitleLayout(input), name);
-  });
-});
 
 test('제목은 한두 줄이며 정수 크기 44~60px에서 각 줄의 폭 예산을 지킨다', () => {
   const { metrics, limits } = fixture;

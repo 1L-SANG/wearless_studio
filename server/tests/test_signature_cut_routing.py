@@ -483,41 +483,26 @@ def test_non_signature_prompt_changes_only_retired_authority_sentence():
 def test_server_signature_pool_matches_clothing_gender_and_skirt_category():
     assert cut_generator.signature_cut_ids_for(
         gender="women", clothing_type="bottom", sub_category="slacks",
-    ) == (
-        "sig_women_bottom_pants_01",
-        "sig_women_bottom_pants_02",
-    )
+    ) == tuple(f"sig_women_bottom_pants_{i:02d}" for i in range(1, 10))
     assert cut_generator.signature_cut_ids_for(
         gender="women", clothing_type="bottom", sub_category="midi_skirt",
-    ) == (
-        "sig_women_bottom_skirt_01",
-        "sig_women_bottom_skirt_02",
-    )
+    ) == tuple(f"sig_women_bottom_skirt_{i:02d}" for i in range(2, 10))
     assert cut_generator.signature_cut_ids_for(
         gender="women", clothing_type="bottom", custom_category="플리츠 치마",
-    ) == (
-        "sig_women_bottom_skirt_01",
-        "sig_women_bottom_skirt_02",
-    )
+    ) == tuple(f"sig_women_bottom_skirt_{i:02d}" for i in range(2, 10))
     assert cut_generator.signature_cut_ids_for(
         gender="women", clothing_type="bottom", sub_category="slacks",
         custom_category="플리츠 치마",
-    ) == (
-        "sig_women_bottom_skirt_01",
-        "sig_women_bottom_skirt_02",
-    )
+    ) == tuple(f"sig_women_bottom_skirt_{i:02d}" for i in range(2, 10))
     assert cut_generator.signature_cut_ids_for(
         gender="men", clothing_type="bottom", sub_category="mini_skirt",
-    ) == (
-        "sig_men_bottom_pants_01",
-        "sig_men_bottom_pants_02",
-    )
+    ) == tuple(f"sig_men_bottom_pants_{i:02d}" for i in [1, 3, 4, 5, 6, 7, 8])
     assert cut_generator.signature_cut_ids_for(
         gender="women", clothing_type="top",
     ) == ("sig_women_01", "sig_women_02", "sig_women_03", "sig_women_04")
     assert cut_generator.signature_cut_ids_for(
         gender="women", clothing_type="dress",
-    ) == ("sig_women_dress_01", "sig_women_dress_02")
+    ) == tuple(f"sig_women_dress_{i:02d}" for i in range(1, 7))
     assert cut_generator.signature_cut_ids_for(
         gender="men", clothing_type="dress",
     ) == (
@@ -541,7 +526,7 @@ def test_server_remaps_only_mismatched_signature_ids_deterministically():
         {
             "id": "right",
             "source": "ai",
-            "exampleId": "sig_women_bottom_skirt_01",
+            "exampleId": "sig_women_bottom_skirt_02",
         },
         {"id": "ordinary", "source": "ai", "exampleId": "ex_regular"},
     ]
@@ -554,7 +539,7 @@ def test_server_remaps_only_mismatched_signature_ids_deterministically():
     repaired, remaps = cut_generator.repair_signature_cut_selections(blocks, **kwargs)
     repaired_again, remaps_again = cut_generator.repair_signature_cut_selections(blocks, **kwargs)
 
-    assert repaired[0]["exampleId"] == "sig_women_bottom_skirt_01"
+    assert repaired[0]["exampleId"] == "sig_women_bottom_skirt_04"
     assert repaired[0]["exampleId"] == repaired_again[0]["exampleId"]
     assert repaired[0]["exampleSelectionOrigin"] == "user"
     assert repaired[0]["colorId"] == "seller-color"
@@ -586,7 +571,7 @@ def test_server_remaps_only_mismatched_signature_ids_deterministically():
         gender="women",
         clothing_type="dress",
     )
-    assert dress[0]["exampleId"] in {"sig_women_dress_01", "sig_women_dress_02"}
+    assert dress[0]["exampleId"] in {f"sig_women_dress_{i:02d}" for i in range(1, 7)}
     assert dress_remaps[0]["fromExampleId"] == "sig_women_02"
 
     stale_slot, stale_slot_remaps = cut_generator.repair_signature_cut_selections(
@@ -600,7 +585,7 @@ def test_server_remaps_only_mismatched_signature_ids_deterministically():
         gender="women",
         clothing_type="dress",
     )
-    assert stale_slot[0]["exampleId"] in {"sig_women_dress_01", "sig_women_dress_02"}
+    assert stale_slot[0]["exampleId"] in {f"sig_women_dress_{i:02d}" for i in range(1, 7)}
     assert stale_slot_remaps[0]["fromExampleId"] == "ex_horizon_women_dress_medium_profile_01"
 
 
@@ -732,66 +717,18 @@ def test_headless_signature_never_enters_angle_swap_or_missing_photo_preflight(
     ) is None
 
 
-def test_detail_page_worker_safety_net_remaps_and_logs(caplog):
-    storyboard = [{
-        "id": "opening",
-        "source": "ai",
-        "cutType": "horizon",
-        "shot": "medium",
-        "exampleId": "sig_women_01",
-        "exampleSelectionOrigin": "user",
-    }]
-    with caplog.at_level("WARNING", logger="wearless.detail_page_job"):
-        repaired = detail_page_job._repair_signature_storyboard(
-            storyboard,
-            product={"clothingType": "bottom"},
-            analysis={"targetGenders": ["women"], "subCategory": "mini_skirt"},
-            project_id="server-safety-project",
-        )
 
-    assert repaired[0]["exampleId"].startswith("sig_women_bottom_skirt_")
-    assert repaired[0]["exampleSelectionOrigin"] == "user"
-    assert "signature example remapped" in caplog.text
-    assert "sig_women_01" in caplog.text
-    assert repaired[0]["exampleId"] in caplog.text
-
-
-def test_detail_page_worker_safety_net_remaps_dress_to_dress_pool(caplog):
-    storyboard = [{
-        "id": "opening-dress",
-        "source": "ai",
-        "cutType": "horizon",
-        "shot": "medium",
-        "exampleId": "sig_women_01",
-        "exampleSelectionOrigin": "user",
-    }]
-    with caplog.at_level("WARNING", logger="wearless.detail_page_job"):
-        repaired = detail_page_job._repair_signature_storyboard(
-            storyboard,
-            product={"clothingType": "dress"},
-            analysis={"targetGenders": ["women"]},
-            project_id="server-dress-project",
-        )
-
-    assert repaired[0]["exampleId"] in {"sig_women_dress_01", "sig_women_dress_02"}
-    assert repaired[0]["exampleSelectionOrigin"] == "user"
-    assert "signature example remapped" in caplog.text
-
-
-def test_signature_registry_has_the_exact_frontend_pools_and_metadata():
+def test_signature_registry_has_active_and_retired_pools_with_unchanged_metadata_contract():
     registry_path = Path(__file__).parents[1] / "app" / "data" / "example_assets.json"
     assets = json.loads(registry_path.read_text(encoding="utf-8"))["assets"]
     upper = {
         "sig_men_01", "sig_men_02", "sig_men_03", "sig_men_04", "sig_men_05",
         "sig_women_01", "sig_women_02", "sig_women_03", "sig_women_04",
     }
-    bottom = {
-        "sig_women_bottom_pants_01", "sig_women_bottom_pants_02",
-        "sig_women_bottom_skirt_01",
-        "sig_women_bottom_skirt_02", "sig_men_bottom_pants_01",
-        "sig_men_bottom_pants_02",
-    }
-    dress = {"sig_women_dress_01", "sig_women_dress_02"}
+    bottom = ({f"sig_women_bottom_pants_{i:02d}" for i in range(1, 10)}
+              | {f"sig_women_bottom_skirt_{i:02d}" for i in range(1, 10)}
+              | {f"sig_men_bottom_pants_{i:02d}" for i in range(1, 9)})
+    dress = {f"sig_women_dress_{i:02d}" for i in range(1, 7)}
     signature_ids = {example_id for example_id in assets if example_id.startswith("sig_")}
     assert signature_ids == upper | bottom | dress
     for example_id in upper | bottom | dress:

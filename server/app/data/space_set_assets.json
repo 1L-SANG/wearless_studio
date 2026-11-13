@@ -3452,7 +3452,7 @@
         }
       ],
       "name": "13 · Nearwear 12582 · 비 젖은 코인세탁소 안뜰 독립 검수 PASS",
-      "placeType": "industrial-yard",
+      "placeType": "urban-building-exterior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1200,
@@ -3538,7 +3538,7 @@
         }
       ],
       "name": "14 · Beidelli 3920 · 지하 주차장 로딩존 독립 검수 PASS",
-      "placeType": "industrial-yard",
+      "placeType": "building-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1402,
@@ -4656,7 +4656,7 @@
         }
       ],
       "name": "06 · 조용한 보도·골목",
-      "placeType": "urban-alley",
+      "placeType": "urban-building-exterior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1448,

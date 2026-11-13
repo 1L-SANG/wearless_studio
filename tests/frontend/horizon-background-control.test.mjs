@@ -19,7 +19,7 @@ test('unavailable saved tone selects the actual reference background while leavi
   assert.match(html, /value="garment-tone"/);
   assert.match(html, /data-selected="true"[^>]*>\s*<input[^>]*value="reference"[^>]*checked|data-selected="true"[^>]*>\s*<input[^>]*checked[^>]*value="reference"/);
   assert.match(html, /value="garment-tone"[^>]*disabled|disabled[^>]*value="garment-tone"/);
-  assert.match(html, /기존 배경/); assert.match(html, /옷 색에 맞춤/); assert.match(html, /4컷/); assert.match(html, /세트 전체 · 4장/);
+  assert.match(html, /기존 배경/); assert.match(html, /옷 색에 맞춤/); assert.match(html, /4컷/); assert.match(html, /세트 전체 · 4컷/);
   assert.doesNotMatch(html, /색상 근거를 확인한 뒤 사용할 수 있어요/);
   const available = renderToStaticMarkup(React.createElement(Control, { block, availability: { state: 'ready', available: true, reason: null }, onChange() {} }));
   assert.doesNotMatch(available, /disabled/);
@@ -47,29 +47,10 @@ test('a measured color that cannot be matched disables garment tone with the rea
   assert.ok(!html.includes(pendingHint));
   assert.match(html, /data-selected="true"[^>]*>\s*<input[^>]*value="reference"[^>]*checked|data-selected="true"[^>]*>\s*<input[^>]*checked[^>]*value="reference"/);
 });
-const storyboard = read('../../src/features/storyboard/Storyboard.jsx');
-const headerSource = storyboard.slice(storyboard.indexOf('function SpaceSetInspectorHeader('), storyboard.indexOf('function SpaceSetGallery('));
-const headerTransform = await transformWithEsbuild(headerSource, 'header.jsx', { jsx: 'transform' });
-const Header = new Function('React', 'horizonBackgroundMode', 'effectiveHorizonBackgroundMode', ...Object.keys(labels), `${headerTransform.code};return SpaceSetInspectorHeader;`)(React, horizonBackgroundMode, effectiveHorizonBackgroundMode, ...Object.values(labels));
-test('compact affiliation shows actual set membership without duplicating the sticky thumbnail', () => {
-  const selected = { ...block, thumb: '/selected-cut.png', spaceSetMemberOrder: 5 };
-  const set = { id: 'horizon-sequence-figma-s05-v2', members: [{ thumb: '/cover.png' }] };
-  const html = renderToStaticMarkup(React.createElement(Header, { set, siblings: [{ id: 'a' }, selected], block: selected, onChangeSet() {} }));
-  assert.doesNotMatch(html, /<img/);
-  assert.match(html, /현재 2장/); assert.doesNotMatch(html, /src="\/cover.png"|sb-set-card/);
-  assert.match(html, /2\/2/); assert.match(html, /세트 설정/); assert.match(html, /세트 공통/);
-});
-
-test('individual cut header labels the effective background when a saved request is stale', () => {
-  const set = { id: 'horizon-sequence-figma-s05-v2', members: [] };
-  const stale = renderToStaticMarkup(React.createElement(Header, { set, siblings: [block], block,
-    backgroundAvailability: { state: 'unavailable', available: false }, onChangeSet() {} }));
-  const pending = renderToStaticMarkup(React.createElement(Header, { set, siblings: [block], block,
-    backgroundAvailability: { state: 'pending', available: true }, onChangeSet() {} }));
-  const ready = renderToStaticMarkup(React.createElement(Header, { set, siblings: [block], block,
-    backgroundAvailability: { state: 'ready', available: true }, onChangeSet() {} }));
-  assert.match(stale, /배경: 기존 배경/);
-  assert.doesNotMatch(stale, /배경: 옷 색에 맞춤/);
-  assert.match(pending, /배경: 옷 색에 맞춤/);
-  assert.match(ready, /배경: 옷 색에 맞춤/);
+test('studio photo panel keeps the background control scoped to all current siblings', async () => {
+  const { storyboardPhotoPanelHarness } = await import('./helpers/storyboardPhotoPanelHarness.mjs');
+  const { nodes } = await import('./helpers/storyboardComponents.mjs');
+  const h = await storyboardPhotoPanelHarness({ block: { ...block, source: 'ai', shot: 'full', contentRole: 'fit' }, spaceContext: { siblings: [block, { ...block, id: 'other' }] } });
+  const control = nodes(h.render()).find(node => node.type === 'horizon-background');
+  assert.ok(control); assert.equal(control.props.memberCount, 2); h.close();
 });

@@ -1,4 +1,5 @@
 """콘티는 에디터/생성 완료와 같은 리비전으로 저장 경합을 막는다. 실제 DB는 사용하지 않는다."""
+from storyboard_v4_cases import v4_blocks
 import asyncio
 import inspect
 from unittest.mock import AsyncMock
@@ -14,7 +15,7 @@ def _wire(monkeypatch, result=4):
     monkeypatch.setattr(repo, "get_project", AsyncMock(return_value={"id": "p1"}))
     save = AsyncMock(return_value=result)
     monkeypatch.setattr(repo, "save_storyboard", save)
-    monkeypatch.setattr(repo, "get_storyboard", AsyncMock(return_value=[{"id": "latest"}]))
+    monkeypatch.setattr(repo, "get_storyboard", AsyncMock(return_value=v4_blocks([{"id": "latest"}])))
     monkeypatch.setattr(repo, "get_storyboard_state", AsyncMock(return_value=([{"id": "latest"}], 5)))
     return save
 
@@ -24,7 +25,7 @@ def test_get_default_keeps_the_plain_array(client, make_token, monkeypatch, quer
     _wire(monkeypatch)
     response = client.get(f"/v1/projects/p1/storyboard{query}", headers=auth_headers(make_token))
     assert response.status_code == 200
-    assert response.json() == [{"id": "latest"}]
+    assert response.json() == v4_blocks([{"id": "latest"}])
     repo.get_storyboard_state.assert_not_awaited()
 
 
@@ -40,7 +41,7 @@ def test_get_opt_in_returns_storyboard_and_revision_from_one_snapshot(client, ma
 def test_put_matching_or_absent_revision(client, make_token, monkeypatch, base, expected):
     save = _wire(monkeypatch)
     query = "" if base is None else f"?baseRevision={base}"
-    response = client.put(f"/v1/projects/p1/storyboard{query}", json=[], headers=auth_headers(make_token))
+    response = client.put(f"/v1/projects/p1/storyboard{query}", json=v4_blocks([]), headers=auth_headers(make_token))
     assert response.status_code == 200, response.text
     assert response.json() == expected
     assert save.call_args.kwargs == {"base_revision": base}
@@ -48,7 +49,7 @@ def test_put_matching_or_absent_revision(client, make_token, monkeypatch, base, 
 
 def test_put_stale_revision_returns_latest_storyboard_in_meta(client, make_token, monkeypatch):
     _wire(monkeypatch, result=None)
-    response = client.put("/v1/projects/p1/storyboard?baseRevision=3", json=[], headers=auth_headers(make_token))
+    response = client.put("/v1/projects/p1/storyboard?baseRevision=3", json=v4_blocks([]), headers=auth_headers(make_token))
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "revision_conflict"
     assert response.json()["error"]["meta"] == {"storyboard": [{"id": "latest"}], "revision": 5}
@@ -56,7 +57,7 @@ def test_put_stale_revision_returns_latest_storyboard_in_meta(client, make_token
 
 def test_negative_revision_is_rejected_before_save(client, make_token, monkeypatch):
     save = _wire(monkeypatch)
-    response = client.put("/v1/projects/p1/storyboard?baseRevision=-1", json=[], headers=auth_headers(make_token))
+    response = client.put("/v1/projects/p1/storyboard?baseRevision=-1", json=v4_blocks([]), headers=auth_headers(make_token))
     assert response.status_code == 422
     save.assert_not_awaited()
 

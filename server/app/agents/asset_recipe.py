@@ -269,3 +269,22 @@ async def resolve_edit_origin_asset(conn, user_id, project_id, asset_id) -> dict
         visited.add(source_id)
         current_id = source_id
     return reference
+
+
+async def resolve_color_master_asset(conn, user_id, project_id, selected: dict) -> dict:
+    """Only a server-recorded master in this user's project may replace the input.
+
+    Older images have no master record. Their selected original becomes the
+    stable anchor for subsequent edits; the new result never anchors itself.
+    """
+    execution = (selected.get("metadata") or {}).get("colorExecution")
+    if not isinstance(execution, dict) or execution.get("version") != 1:
+        return selected
+    try:
+        master_id = str(uuid.UUID(str(execution.get("masterAssetId"))))
+    except (TypeError, ValueError):
+        return selected
+    if master_id == str(selected.get("id")):
+        return selected
+    master = await repo.get_project_asset_for_user(conn, user_id, project_id, master_id)
+    return master or selected

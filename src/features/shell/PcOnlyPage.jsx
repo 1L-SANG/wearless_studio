@@ -1,5 +1,8 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAppStore } from '@/store/useAppStore.js';
+import { hasStoryboardEntered } from '@/lib/storyboardEntered.js';
+import { hasEditorEntered } from '@/lib/editorEntered.js';
 import { HangTag } from './HangTag.jsx';
 import { AddressCopyChip } from './AddressCopyChip.jsx';
 // PC 전용 안내는 404 페이지의 시각 체계를 함께 쓴다.
@@ -8,6 +11,12 @@ import p from './PcOnlyPage.module.css';
 
 export function PcOnlyPage() {
   const navigate = useNavigate();
+  const openInput = () => {
+    const { projectId } = useAppStore.getState();
+    if (hasStoryboardEntered(projectId) || hasEditorEntered(projectId)) {
+      navigate('/create/input', { state: { startNewFromResume: true } });
+    } else navigate('/create/input');
+  };
   useEffect(() => {
     const previous = document.title;
     document.title = 'PC에서 이어서 만들어요';
@@ -28,7 +37,7 @@ export function PcOnlyPage() {
       <p className={`${s.desc} ${p.description}`}>PC에서 같은 계정으로 로그인하면 바로 이어져요.</p>
       <div className={p.addressRow}><AddressCopyChip /></div>
       <div className={s.actions}>
-        <button type="button" className="btn btn-primary btn-block" onClick={() => navigate('/create/input')}>사진 업로드 화면으로</button>
+        <button type="button" className="btn btn-primary btn-block" onClick={openInput}>사진 업로드 화면으로</button>
       </div>
     </section>
   );

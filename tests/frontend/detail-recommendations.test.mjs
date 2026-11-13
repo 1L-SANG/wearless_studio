@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
+import { seedTemplateFixture as defaultStoryboard, isDefaultTemplateFixture as isDefaultStoryboardForMode } from './helpers/templateStoryboard.mjs';
 import { generationExampleSelectionPatch } from '../../src/lib/storyboardExampleSelection.js';
 import { uniqueGenerationCutCount } from '../../src/lib/generationCutCount.js';
 import { detailTargetPresentation, detailTargetPatch, preserveDetailTargetBinding, recommendedDetailTargets } from '../../src/lib/detailRecommendations.js';
@@ -8,16 +8,16 @@ import { assignGenerationExamples } from '../../src/lib/generationExamples.js';
 import { buildFailedCutRetry } from '../../src/features/editor/failedCutRetry.js';
 
 const colors = [{ id: 'base', isBase: true, images: [{ slot: 'Front', src: '/my-front.jpg' }, { slot: 'Back', src: '/my-back.jpg' }] }];
-const candidate = (id, extra = {}) => ({ id, kind: 'construction', direction: 'front', sourceSlot: 'Front', sourceIndex: 0, sourceSha256: 'a'.repeat(64), region: { x: 0.1, y: 0.1, w: 0.6, h: 0.6 }, photoUse: 'standalone', visibility: 'clear', rank: 1, label: id, reason: '상품의 구조를 보여줘요', informationGroup: id, featurePoints: [], ...extra });
+const candidate = (id, extra = {}) => ({ id, kind: 'structure', direction: 'front', sourceSlot: 'Front', sourceIndex: 0, sourceSha256: 'a'.repeat(64), region: { x: 0.1, y: 0.1, w: 0.6, h: 0.6 }, photoUse: 'standalone', visibility: 'clear', rank: 1, label: id, reason: '상품의 구조를 보여줘요', informationGroup: id, featurePoints: [], ...extra });
 const context = (candidates, extra = {}) => ({ projectId: 'detail-test', clothingType: 'top', detailRecommendations: { version: 1, status: 'ready', candidates }, ...extra });
 const details = (board) => board.filter((b) => b.shot === 'detail');
 
-test('automatic details never fill a quota and cap basic at 2 / extended at 3', () => {
+test('automatic details omit a single clear point and keep at most three structural photos across retired modes', () => {
   for (let n = 0; n <= 5; n++) {
     const ctx = context(Array.from({ length: n }, (_, i) => candidate(`t${i}`, { rank: i + 1 })));
     for (const mode of ['basic', 'extended']) {
       const blocks = details(defaultStoryboard(colors, mode, ctx));
-      assert.equal(blocks.length, Math.min(n, mode === 'basic' ? 2 : 3));
+      assert.equal(blocks.length, n < 2 ? 0 : Math.min(n, 3));
       assert.ok(blocks.every((b) => b.detailTargetId && b.detailTargetOrigin === 'auto'));
     }
   }
@@ -32,8 +32,8 @@ test('only clear standalone distinct information is seeded; seller highlights ra
     candidate('fabric', { rank: 9, kind: 'fabric', featurePoints: ['골지 짜임'] }),
     candidate('back', { rank: 3, direction: 'back', sourceSlot: 'Back', sourceIndex: 1 }),
   ], { sellingPoints: ['고급스러운 골지 짜임', '부드러움', '데일리', '편안함', '예쁜 색상'] });
-  assert.deepEqual(details(defaultStoryboard(colors, 'basic', ctx)).map((b) => b.detailTargetId), ['fabric', 'neck']);
-  assert.equal(details(defaultStoryboard(colors, 'extended', ctx))[2].direction, 'back');
+  assert.deepEqual(details(defaultStoryboard(colors, 'basic', ctx)).map((b) => b.detailTargetId), ['neck', 'back', 'fabric']);
+  assert.equal(details(defaultStoryboard(colors, 'extended', ctx)).find(b => b.detailTargetId === 'back').direction, 'back');
 });
 
 test('five reworded highlights rank existing garment facts without padding or creating regions', () => {

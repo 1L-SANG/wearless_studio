@@ -1,3 +1,4 @@
+import { readStoryboardSources } from './helpers/storyboardComponents.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -9,11 +10,13 @@ import {
   generationExampleSelectionPatch,
 } from '../../src/lib/storyboardExampleSelection.js';
 
-const storyboardSource = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
+const storyboardSource = readStoryboardSources();
 const featureStyles = readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8');
 
-test('카피라이팅 토글은 사진별 소제목을 만드는 실제 동작을 설명한다', () => {
-  assert.match(storyboardSource, /AI가 사진마다 소제목을 써 넣어요/);
+test('v4 콘티는 카피라이팅을 켜짐으로 저장하고 아래 바에 스위치를 두지 않는다', () => {
+  assert.match(storyboardSource, /ensureV4StoryboardCopywriting\(projectId, useAppStore.getState, \{ force: true \}\)/);
+  const action = readFileSync(new URL('../../src/features/storyboard/StoryboardContinue.jsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(action, /Toggle|copyOn|onCopyChange/);
   assert.doesNotMatch(storyboardSource, /AI가 카피를 자동으로 넣어요/);
 });
 
@@ -47,7 +50,7 @@ test('replacing a generation example resets per-cut settings but preserves its s
   });
 });
 
-test('the mock API runtime migrates an HMR-stale three-member styling seed on read', async (t) => {
+test('v4 mock runtime preserves manually added published set members without v3 migration', async (t) => {
   const vite = await createServer({
     optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
@@ -74,46 +77,40 @@ test('the mock API runtime migrates an HMR-stale three-member styling seed on re
 
   const loaded = await api.getStoryboard(DB.project.id);
   const migrated = loaded.filter((block) => block.spaceGroupId === initialGroupId);
-  assert.equal(migrated.length, 2);
+  assert.equal(migrated.length, 3);
   assert.deepEqual(new Set(migrated.map((block) => block.shot)), new Set(['full', 'medium']));
   reseedDraft();
 });
 
-test('example clicks apply id and scope together instead of overwriting from a stale board snapshot', () => {
-  const pickHandler = storyboardSource.slice(
-    storyboardSource.indexOf('const pick = (scope)'),
-    storyboardSource.indexOf('const defaultScope'),
-  );
-  assert.match(pickHandler, /onExampleChange\(example\.id, scope\)/);
-  const activeGuide = storyboardSource.slice(
-    storyboardSource.indexOf('<MoodGuide onUseMine='),
-    storyboardSource.indexOf('{\/\* 방향'),
-  );
-  assert.doesNotMatch(activeGuide, /onRefScopeChange=/);
+test('example clicks apply id and scope together instead of overwriting from a stale board snapshot', async () => {
+  const { storyboardPhotoPanelHarness } = await import('./helpers/storyboardPhotoPanelHarness.mjs');
+  const { nodes } = await import('./helpers/storyboardComponents.mjs');
+  const h = await storyboardPhotoPanelHarness({ block: { id: 'a', source: 'ai', cutType: 'styling', shot: 'full', exampleId: 'old' },
+    catalogs: { genExamples: [{ id: 'new', cutType: 'styling', shot: 'medium', direction: 'front' }], shotTypes: [{ value: 'full' }, { value: 'medium' }], productShotTypes: [] } });
+  nodes(h.render()).find(node => node.type === 'mood-guide').props.onExampleChange('new', 'all');
+  assert.equal(h.block.exampleId, 'new'); assert.equal(h.block.refScope, 'all'); assert.equal(h.block.shot, 'medium'); h.close();
 });
-
-test('the storyboard undo window groups every active change, pauses on hover, and exposes its count', () => {
+test('the storyboard undo window groups settings, isolates section actions, pauses on hover, and exposes its count', () => {
   assert.match(storyboardSource, /UNDO_WINDOW_MS = 10_000/);
   assert.match(storyboardSource, /const before = active \? active\.before : \[\.\.\.previous\]/);
   assert.match(storyboardSource, /operationCount = \(active\?\.operationCount \|\| 0\) \+ 1/);
+  assert.match(storyboardSource, /const active = !standalone && !current\?\.standalone \? current : null/);
+  assert.match(storyboardSource, /previousEntry: active \? active\.previousEntry : current/);
   assert.match(storyboardSource, /onMouseEnter=/);
-  assert.match(storyboardSource, /\{undoEntry\.operationCount\}건 되돌리기/);
+  assert.match(storyboardSource, /\{undoEntry\.operationCount\}가지 바꿨어요/);
 });
 
 test('owner cleanup removes place dissolve and obsolete inspector copy and stack counts', () => {
-  assert.doesNotMatch(storyboardSource, /장소 세트 묶음 풀기|dissolveSpaceGroup/);
-  assert.doesNotMatch(storyboardSource, /새 컷의 예시를 먼저 골라주세요/);
-  assert.doesNotMatch(storyboardSource, /sb-stack-count/);
-  assert.match(storyboardSource, /cutRangeLabel\(group\.items\)/);
+  assert.doesNotMatch(storyboardSource, /장소 세트 묶음 풀기|dissolveSpaceGroup|sb-stack-count/);
+  assert.doesNotMatch(storyboardSource, /아래 설정은 이 사진에만 적용/);
 });
-
-test('shooting place picker uses one inspector-anchored preview and no tray place label', () => {
-  assert.match(storyboardSource, /<SpaceSetHoverPreview/);
-  assert.doesNotMatch(storyboardSource, /itemIndex % 2 === 0 \? leftSide : rightSide/);
-  assert.doesNotMatch(storyboardSource, /<strong>\{label\}<\/strong>|traySeqLabels|normalizePlaceType/);
-  assert.match(storyboardSource, /className="sb-tray-swap"[^]*장소 세트 변경/);
+test('location groups remain whole and additions stay at the end of the stage', async () => {
+  const { packStageRows } = await import('../../src/lib/pageTemplates/storyboardStage.js');
+  const blocks = [{ id: 'a', source: 'ai', spaceGroupId: 'set' }, { id: 'b', source: 'ai', spaceGroupId: 'set' }];
+  const rows = packStageRows(blocks);
+  assert.deepEqual(rows[0][0].blocks, blocks);
+  assert.equal(rows[0].at(-1).kind, 'add');
 });
-
 test('gallery controls sit below a full-width grid and hover uses compositor properties', () => {
   assert.match(featureStyles, /\.sb-exgallery \{[^}]*padding-inline: 0/);
   assert.match(featureStyles, /\.sb-excontrols \{[^}]*justify-content: center/);
@@ -125,16 +122,14 @@ test('gallery controls sit below a full-width grid and hover uses compositor pro
   assert.match(featureStyles, /prefers-reduced-motion: reduce[^]*\.sb-selection-ring i \{ animation: none/);
 });
 
-test('my images live only in the shot tab flow', () => {
-  assert.match(storyboardSource, /MINE_SHOT_OPTION[^]*value: 'mine'[^]*label: '내 이미지'/);
-  assert.equal((storyboardSource.match(/내 이미지 업로드/g) || []).length, 1);
-  assert.doesNotMatch(storyboardSource, /내 이미지 추가|mine-add-solo|onImgDrag|dragMine|insertMineAt/);
-  assert.doesNotMatch(storyboardSource, /MINE_SHOT_OPTION, disabled: inSpace/);
-  assert.doesNotMatch(storyboardSource, /if \(isMine\) \{\s*return/);
-  assert.match(storyboardSource, /applied\.source === 'mine'[^]*detachSpaceMembership\(withoutLayoutRow\(updated\)\)/);
-  assert.match(storyboardSource, /next = ensureContiguousSpaceRuns\(next\)/);
+test('seller photo replacement remains available in the photo panel', async () => {
+  const { storyboardPhotoPanelHarness } = await import('./helpers/storyboardPhotoPanelHarness.mjs');
+  const { nodes } = await import('./helpers/storyboardComponents.mjs');
+  const h = await storyboardPhotoPanelHarness({ block: { id: 'a', source: 'ai', cutType: 'styling', shot: 'full' } });
+  const guide = nodes(h.render()).find(node => node.type === 'mood-guide');
+  guide.props.onUseMine({ url: '/seller.webp' });
+  assert.equal(h.block.source, 'mine'); assert.deepEqual(h.block.ownImages, ['/seller.webp']); h.close();
 });
-
 test('uploading from the my-image tab commits the chosen image instead of saving an AI reference first', () => {
   const mineTab = storyboardSource.slice(
     storyboardSource.indexOf('function MineImageTab'),
@@ -143,21 +138,20 @@ test('uploading from the my-image tab commits the chosen image instead of saving
   assert.match(mineTab, /if \(onChoose\)[^]*onChoose\(picked\);[^]*return;[^]*onImagesChange/);
 });
 
-test('a place-set member can cross official sections and detaches through the shared move path', () => {
-  const moveHandler = storyboardSource.slice(
-    storyboardSource.indexOf('const applySingleMove'),
-    storyboardSource.indexOf('const nudgeBlock'),
-  );
-  assert.doesNotMatch(moveHandler, /장소 세트 묶음을 푼 뒤/);
-  assert.match(moveHandler, /moveBlockWithSpaceMembership\(current, id, targetSectionEnd/);
+test('v5 section movement carries complete location groups without changing their membership', async () => {
+  const { seedStoryboard } = await import('../../src/lib/pageTemplates/seed.js');
+  const { moveTemplateSection } = await import('../../src/lib/pageTemplates/sectionActions.js');
+  const board = seedStoryboard({ clothingType: 'top', colors: [{ id: 'base', isBase: true }] }, { targetGenders: ['women'] });
+  const source = board.find(block => block.spaceGroupId);
+  const moved = moveTemplateSection(board, source.pageSectionKey, null);
+  assert.deepEqual(moved.filter(block => block.pageSectionKey === source.pageSectionKey), board.filter(block => block.pageSectionKey === source.pageSectionKey));
 });
-
-test('between-cut controls are centered only in a measured same-row gap', () => {
-  assert.match(storyboardSource, /Math\.abs\(next\.offsetTop - unit\.offsetTop\) < 2 \? 'row' : 'end'/);
-  assert.match(featureStyles, /\.sb-addzone \{[^}]*right: -18px;[^}]*width: 18px/);
-  assert.match(featureStyles, /\.sb-addzone\.end \{[^}]*display: grid;[^}]*right: -24px;[^}]*width: 24px/);
+test('v5 stage uses one terminal add tile without between-photo controls', async () => {
+  const { packStageRows } = await import('../../src/lib/pageTemplates/storyboardStage.js');
+  const rows = packStageRows([{ id: 'a', source: 'ai' }, { id: 'b', source: 'ai' }]);
+  assert.equal(rows.flat().filter(group => group.kind === 'add').length, 1);
+  assert.equal(rows.at(-1).at(-1).kind, 'add');
 });
-
 test('card captions are one-line right aligned without reference popovers', () => {
   assert.doesNotMatch(storyboardSource, /REF_SCOPE_META|sb-ref-chip|sb-ref-pop|전체 참조|포즈 변경됨/);
   assert.match(featureStyles, /\.sb-canvas-caption \{[^}]*justify-content: flex-end/);

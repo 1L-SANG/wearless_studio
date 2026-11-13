@@ -1,4 +1,5 @@
 """ADR-0020 서버 계약. 이미지 공급자와 DB만 대역으로 둔다."""
+from storyboard_v4_cases import v4_blocks
 import asyncio
 import uuid
 from copy import deepcopy
@@ -428,7 +429,7 @@ def test_empty_slot_similar_keeps_image_price(client, make_token, edit_route, mo
         request = {"mode": "fill", "slot": {"blockId": "b", "elementId": "e"}}
     else:
         from app.agents import horizon_background
-        monkeypatch.setattr(repo, "get_storyboard", AsyncMock(return_value=[]))
+        monkeypatch.setattr(repo, "get_storyboard", AsyncMock(return_value=v4_blocks([])))
         monkeypatch.setattr(repo, "get_editor_blocks", AsyncMock(return_value=[]))
         monkeypatch.setattr(horizon_background, "restore_failed_retry", lambda body, *_: body)
         request = {**payload, "retryBlockId": "blank"}
@@ -1083,3 +1084,20 @@ def test_queued_similar_rejects_legacy_mirror_recipe_and_releases_reservation(re
     assert state["failure"]["metadata"]["error"] == "unknown_cut_type"
     planner.assert_not_awaited()
     generate.assert_not_awaited()
+
+
+def test_color_request_discards_client_execution_and_master_authority(client, make_token, edit_route):
+    response = post_edit(client, make_token, colorExecution={"masterAssetId": B, "mode": "direct"},
+                         masterAssetId=B, renderColorId="blue", targetEvidence=[B],
+                         _garmentEdit={"targetAssetId": B, "masterAssetId": B})
+    assert response.status_code == 202
+    payload = edit_route["job"]["payload"]
+    assert not any(field in payload for field in ("colorExecution", "masterAssetId", "renderColorId", "targetEvidence"))
+    assert payload["_garmentEdit"] == {"targetAssetId": C}
+
+
+def test_internal_master_cannot_be_requested_as_a_user_edit_source(client, make_token, edit_route):
+    edit_route["asset"]["metadata"]["internalGarmentMaster"] = True
+    response = post_edit(client, make_token)
+    assert response.status_code == 400 and response.json()["error"]["code"] == "edit_source_unsupported"
+    assert "reserved" not in edit_route

@@ -8,15 +8,62 @@ import {
   CAPTION_STYLE,
   captionHeight,
 } from './editorTextSlots.js';
+import { editedTextElement } from '../features/editor/editorTextEdit.js';
+import { getBlockRenderHeight } from '../features/editor/editorGeometry.js';
 
 const autoBlockHeight = (elements) => Math.max(
   0,
   ...(elements || []).map((element) => (element.y || 0) + (element.h || 0)),
 ) + 50;
 
-const copyTextPatch = (element, text) => element.copyRole === 'headline'
-  ? { text, textSlotVersion: 1, h: captionHeight(text), style: { ...(element.style || {}), ...CAPTION_STYLE } }
-  : { text };
+const copyTextPatch = (element, text) => {
+  if (element.paragraphIndex != null) {
+    const parts = String(text).split(/\n+/).map(part => part.trim()).filter(Boolean);
+    text = element.paragraphIndex === 2 ? parts.slice(2).join('\n') : parts[element.paragraphIndex] || '';
+  }
+  return element.copyRole === 'headline'
+    ? { text, textSlotVersion: 1, h: captionHeight(text), style: { ...(element.style || {}), ...CAPTION_STYLE } }
+    : { text };
+};
+
+const isSellerIntroBody = (block, element) => block.pageSectionKind === 'intro'
+  && element.copyRole === 'body' && !element.aiDraft
+  && typeof element.text === 'string' && Boolean(element.text.trim());
+
+const copyIdentity = element => `${element.copyRole}:${element.paragraphIndex ?? ''}:${element.factLabel || ''}:${element.factPart || ''}`;
+const templateSnapshot = element => structuredClone(Object.fromEntries(Object.entries(element).filter(([key]) => !key.startsWith('gen'))));
+const templateBlockSnapshot = block => Object.fromEntries(Object.entries(block).filter(([key]) => !key.startsWith('gen') && !['elements', 'h'].includes(key)));
+const sameValue = (a, b) => {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  return Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(key => sameValue(a[key], b[key]));
+};
+
+function untouchedTemplateBlock(block) {
+  const baseline = block.genTemplateBaseline;
+  if (!baseline || !sameValue(templateBlockSnapshot(block), baseline.block) || block.h !== baseline.h || block.elements.length !== baseline.elements.length) return false;
+  return block.elements.every((element, index) => {
+    const expected = { ...baseline.elements[index] };
+    if ('genAutoText' in element) Object.assign(expected, { text: element.genAutoText, style: element.genAutoStyle, ...element.genAutoGeometry });
+    if ('genAutoSrc' in element) expected.src = element.genAutoSrc;
+    return sameValue(templateSnapshot(element), expected);
+  });
+}
+
+/** DOM-derived text height is automatic only while the generated copy/style/box is untouched. */
+export function patchTemplateElement(block, elementId, patch) {
+  const element = block.elements.find(item => item.id === elementId);
+  const autoHeight = block.genTemplateBaseline && element && Object.keys(patch).length === 1
+    && Number.isFinite(patch.h) && element.text === element.genAutoText
+    && sameValue(element.style, element.genAutoStyle)
+    && sameValue(copyGeometry(element), element.genAutoGeometry);
+  const elements = block.elements.map(item => item.id === elementId
+    ? { ...editedTextElement(item, patch), ...(autoHeight ? { genAutoGeometry: { ...item.genAutoGeometry, h: patch.h } } : {}) } : item);
+  const next = { ...block, elements };
+  if (autoHeight && block.h === block.genTemplateBaseline.h)
+    next.genTemplateBaseline = { ...block.genTemplateBaseline, h: getBlockRenderHeight(next) };
+  return next;
+}
 
 const copyGeometry = ({ x, y, w, h }) => ({ x, y, w, h });
 const markAutoCopy = (element) => ({ ...element, genAutoText: element.text,
@@ -52,6 +99,7 @@ export function alignSkeletonToServer(blocks, copywriting) {
   const IMG_H = 1320, MARGIN = 50;
   const PLACEHOLDER = '사진을 설명하는 소제목 (17자 내외)';
   return (blocks || []).map((b) => {
+    if (b.pageSectionKey) return b;
     const els = b.elements || [];
     const imgs = els.filter((e) => e.type === 'image');
     const img = imgs.length === 1 && imgs[0].sourceBlockId ? imgs[0] : null;
@@ -102,7 +150,7 @@ export function decorateGenBlocks(blocks, job, exThumbById) {
   return (blocks || []).map((b) => {
     let copyChanged = false;
     const elements = (b.elements || []).map((el) => {
-      if (el.type === 'image' && el.sourceBlockId) {
+      if (el.type === 'image' && el.sourceBlockId && el.roleHint !== 'custom') {
         const cut = job.cuts[el.sourceBlockId];
         if (cut?.url) {
           const { genPending, genExample, genFailed, genFailReason, genFailRetryable, genFailSourceBlockId, ...rest } = el;
@@ -121,6 +169,7 @@ export function decorateGenBlocks(blocks, job, exThumbById) {
           } : {}) };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId) {
+        if (isSellerIntroBody(b, el)) return markAutoCopy(el);
         const t = (job.copy[el.sourceBlockId] || []).find((x) => x.role === el.copyRole)?.text;
         if (t) {
           copyChanged = true;
@@ -130,11 +179,13 @@ export function decorateGenBlocks(blocks, job, exThumbById) {
       }
       return el;
     });
-    return {
+    const next = {
       ...b,
       elements,
       ...(copyChanged ? { h: Math.max(Number(b.h) || 0, autoBlockHeight(elements)) } : {}),
     };
+    if (b.pageDesignId) next.genTemplateBaseline = { block: templateBlockSnapshot(next), h: next.h, elements: elements.map(templateSnapshot) };
+    return next;
   });
 }
 
@@ -162,6 +213,7 @@ export function fillGenBlocks(blocks, job) {
             ...(info.sourceBlockId !== undefined ? { genFailSourceBlockId: info.sourceBlockId } : {}) } : {}) };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId && 'genAutoText' in el) {
+        if (isSellerIntroBody(b, el)) return el;
         const t = (job.copy[el.sourceBlockId] || []).find((x) => x.role === el.copyRole)?.text;
         if (t && t !== el.text && el.text === el.genAutoText) {
           copyChanged = true;
@@ -171,11 +223,14 @@ export function fillGenBlocks(blocks, job) {
       }
       return el;
     });
-    return {
+    const next = {
       ...b,
       elements,
       ...(copyChanged ? { h: Math.max(Number(b.h) || 0, autoBlockHeight(elements)) } : {}),
     };
+    if (b.genTemplateBaseline && b.h === b.genTemplateBaseline.h)
+      next.genTemplateBaseline = { ...b.genTemplateBaseline, h: next.h };
+    return next;
   });
 }
 
@@ -276,16 +331,24 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
     for (const el of (b.elements || [])) {
       if (el.type === 'image' && el.sourceBlockId && el.src) srcById[el.sourceBlockId] = el.src;
       if (el.type === 'text' && el.sourceBlockId && el.copyRole) {
-        (copyById[el.sourceBlockId] ||= {})[el.copyRole] = {
-          text: el.text,
-          w: el.w,
-          h: el.h,
-          style: el.style,
-        };
+        (copyById[el.sourceBlockId] ||= {})[copyIdentity(el)] = el;
       }
     }
   }
-  const out = (blocks || []).map((b) => {
+  const templateRuns = new Map();
+  for (const block of blocks || []) if (block.pageSectionKey && block.pageDesignId) {
+    const run = templateRuns.get(block.pageSectionKey) || [];
+    run.push(block); templateRuns.set(block.pageSectionKey, run);
+  }
+  const untouched = new Set([...templateRuns].filter(([key, run]) => run.every(untouchedTemplateBlock)
+    && (serverBlocks || []).some(block => block.pageSectionKey === key)).map(([key]) => key));
+  const emitted = new Set();
+  const out = (blocks || []).flatMap((b) => {
+    if (untouched.has(b.pageSectionKey)) {
+      if (emitted.has(b.pageSectionKey)) return [];
+      emitted.add(b.pageSectionKey);
+      return serverBlocks.filter(block => block.pageSectionKey === b.pageSectionKey);
+    }
     let copyChanged = false;
     const elements = (b.elements || []).map((el) => {
       if (el.type === 'image' && el.sourceBlockId) {
@@ -310,24 +373,24 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId) {
         const { genAutoText, genAutoStyle, genAutoGeometry, ...rest } = el;
-        const serverCopy = copyById[el.sourceBlockId]?.[el.copyRole];
+        const serverCopy = copyById[el.sourceBlockId]?.[copyIdentity(el)];
         if (serverCopy && el.text === genAutoText) {
           copyChanged = true;
           const merged = mergeAutoCopy(el, {
-            ...copyTextPatch(rest, serverCopy.text),
+            text: serverCopy.text,
             ...(serverCopy.w != null ? { w: serverCopy.w } : {}),
             ...(serverCopy.h != null ? { h: serverCopy.h } : {}),
             ...(serverCopy.style ? { style: serverCopy.style } : {}),
           });
           const { genAutoText: _text, genAutoStyle: _style, genAutoGeometry: _geometry, ...result } = merged;
-          return result;
+          return { ...result, ...(serverCopy.contrastLines ? { contrastLines: serverCopy.contrastLines, contrastFor: serverCopy.contrastFor } : {}) };
         }
         return rest;
       }
       return el;
     });
     return {
-      ...b,
+      ...Object.fromEntries(Object.entries(b).filter(([key]) => key !== 'genTemplateBaseline')),
       elements,
       ...(copyChanged ? { h: Math.max(Number(b.h) || 0, autoBlockHeight(elements)) } : {}),
     };

@@ -10,6 +10,7 @@ import { useSmoothProgress } from '@/components/SmoothProgress.jsx';
 import { EXPECTED_MS } from '@/lib/smoothProgress.js';
 import { TopNav } from '@/features/shell/shell.jsx';
 import { SiteFooter } from '@/features/shell/SiteFooter.jsx';
+import { StoryboardFooter } from '@/features/shell/StoryboardFooter.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { api } from '@/lib/api/index.js';
@@ -20,6 +21,7 @@ import {
 } from '@/features/mannequin/completionToastCore.js';
 import { onProductPhotoPromotionFailure } from '@/lib/productPhotoPromotion.js';
 import { removeSellerBootBackground, syncSellerGlowPhase } from './sellerGlow.js';
+import './StoryboardViewport.module.css';
 
 const mannequinCuts = (envelope) => {
   if (Array.isArray(envelope)) return envelope;
@@ -254,7 +256,7 @@ export function ChromeLayout({ initialEntry = false }) {
   // The wizard stepper now lives centered inside TopNav (see shell.jsx),
   // so the hero content starts directly under the nav.
   return (
-    <div className="app-shell fx-sheen fx-lift fx-pagefade">
+    <div className="app-shell fx-sheen fx-lift fx-pagefade" data-storyboard-layout={pathname === '/create/storyboard' ? 'true' : undefined}>
       <div className="app-bg" ref={backgroundRef} data-glow={listGlow ? 'list' : 'default'} aria-hidden="true">
         <div className="wl-aurora" data-aurora-root>
           <div className="wl-aurora__side wl-aurora__side--left">
@@ -292,7 +294,7 @@ export function ChromeLayout({ initialEntry = false }) {
       <div className={`app-main${storyboardOwnsEntrance ? '' : initialEntry ? initialEntryClass : ' page-enter'}`} key={pathname}>
         <Outlet />
       </div>
-      <SiteFooter />
+      {pathname === '/create/storyboard' ? <StoryboardFooter /> : <SiteFooter />}
     </div>
   );
 }

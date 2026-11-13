@@ -48,7 +48,19 @@ test('Editor AI panel remediates a missing persisted category in place', () => {
   assert.match(aiPanel, /const brandUseCategoryBlocked = categoryRequired[\s\S]*?!brandUseCategory \|\| brandUseCategorySaving/);
   assert.match(aiPanel, /const brandUseCategoryControl = categoryRequired && \([\s\S]*?<Chips[\s\S]*?options=\{BRAND_USE_CATEGORIES\}[\s\S]*?value=\{brandUseCategory\}/);
   assert.equal(aiPanel.match(/\{brandUseCategoryControl\}/g)?.length, 1);
-  assert.match(aiPanel, /disabled=\{brandUseCategoryBlocked \|\| generateSubmitting\} onClick=\{\(\) => onGenerate/);
+  const generateButton = aiPanel.slice(aiPanel.indexOf('className="btn-glowring"'));
+  const disabledExpression = generateButton.match(/disabled=\{([^}]+)\}/)?.[1];
+  assert.ok(disabledExpression, '새 이미지 생성 버튼에 접수 전 가드가 있어야 한다');
+  const isDisabled = new Function('brandUseCategoryBlocked', 'colorUnavailable', 'generateSubmitting', `return (${disabledExpression});`);
+  for (const brandBlocked of [false, true]) {
+    for (const colorMissing of [false, true]) {
+      for (const submitting of [false, true]) {
+        assert.equal(isDisabled(brandBlocked, colorMissing, submitting), brandBlocked || colorMissing || submitting,
+          `브랜드 차단 ${brandBlocked}, 원본 누락 ${colorMissing}, 접수 중 ${submitting}`);
+      }
+    }
+  }
+  assert.match(generateButton, /onClick=\{\(\) => onGenerate/);
 });
 
 test('Editor persists category selection and keeps persisted analysis request-authoritative', () => {

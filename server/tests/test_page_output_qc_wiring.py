@@ -1,3 +1,4 @@
+from storyboard_v4_cases import v4_blocks
 import asyncio
 
 from app.agents.gemini_image import InlineImage
@@ -326,7 +327,7 @@ def test_detail_job_persists_page_qc_in_success_metadata(monkeypatch):
         return {"copywriting": False}
 
     async def fake_storyboard(conn, pid):
-        return [{"id": "b1", "source": "ai", "cutType": "product", "shot": "ghost"}]
+        return v4_blocks([{"id": "b1", "source": "ai", "cutType": "product", "shot": "ghost"}])
 
     async def fake_product(conn, pid):
         return {

@@ -1,3 +1,4 @@
+import { readStoryboardSources } from './helpers/storyboardComponents.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -82,8 +83,8 @@ test('같은 방향이 0장이어도 갤러리는 비지 않는다', () => {
 test('분위기 예시 칸은 잠기지 않는다 — 회색 비활성·not-allowed 가 없다', () => {
   // 2026-09-22 오너: 포즈 자산이 없거나 방향이 달라도 셀러가 고를 수 있어야 한다.
   // 회색으로 덮으면 왜 못 고르는지 알 수 없었고, 실제로는 눌리는 칸도 있어 더 헷갈렸다.
-  const board = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
-  const moodGuide = board.slice(board.indexOf('function MoodGuide'), board.indexOf('function Inspector'));
+  const board = readStoryboardSources();
+  const moodGuide = board.slice(board.indexOf('export function MoodGuide'));
   assert.doesNotMatch(moodGuide, /disabled=\{poseUnavailable\}/);
   assert.doesNotMatch(moodGuide, /sb-excell\$\{[^}]*unavailable/);
   assert.doesNotMatch(moodGuide, /moodonly/, '정면이 아닌 방향이라고 갤러리를 흐리게 덮지 않는다');
@@ -129,8 +130,8 @@ test('스냅(스타일링)은 장소가 다 다르므로 세트 멤버를 빼지
 
 test('갤러리는 방향 분류 없이 예시 사진 목록을 보여준다', () => {
   // 2026-10-10 오너 결정: 방향 분류 없이 3×2 넘기기를 복원한다.
-  const board = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
-  const moodGuide = board.slice(board.indexOf('function MoodGuide'), board.indexOf('function Inspector'));
+  const board = readStoryboardSources();
+  const moodGuide = board.slice(board.indexOf('export function MoodGuide'));
   assert.match(moodGuide, /galleryPage/);
   assert.match(moodGuide, /sb-expage-hit/);
   assert.match(moodGuide, /paginateGenerationGalleryItems/);

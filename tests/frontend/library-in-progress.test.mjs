@@ -9,6 +9,7 @@ import { createInitialGenerationAttempts, runInitialGenerationAttempt } from '..
 import { createMannequinGenerationRunner } from '../../src/features/mannequin/generationRunnerCore.js';
 import { decorateGenBlocks } from '../../src/lib/editorWaitSkeleton.js';
 import * as flowSession from '../../src/lib/flowSession.js';
+import { resolveStoryboardResume, STORYBOARD_REVIEW_MESSAGE } from '../../src/lib/pageTemplates/entryNotices.js';
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 const memoryStorage = () => {
@@ -16,7 +17,7 @@ const memoryStorage = () => {
   return { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: (key) => values.delete(key) };
 };
 const snapshot = (id, mannequin = null, detailPage = null) => ({ id, status: 'draft',
-  selectedMannequinId: 'saved-cut', composeMode: 'extended', copywriting: false,
+  selectedMannequinId: 'saved-cut', copywriting: false,
   adjustCount: 2, latestJobs: { mannequin, detailPage } });
 const steps = ['storyboard', 'mannequin', 'generating', 'failed'];
 const labels = ['콘티 단계', '마네킹 단계', '에디터 단계'];
@@ -44,7 +45,7 @@ function libraryHarness({ progress = rows, done = [{ id: 'done', title: '완성 
     setResumePath: (path) => calls.push(['resumePath', path]) };
   const useAppStore = (selector) => selector(state);
   useAppStore.getState = () => state;
-  const bindings = { React, publicationStyles: {}, PublicationsPanel: 'aside', useAppStore, useRef: (value) => { const index = refIndex++; refs[index] ||= { current: value }; return refs[index]; }, useState: (value) => {
+  const bindings = { React, resolveStoryboardResume, STORYBOARD_REVIEW_MESSAGE, publicationStyles: {}, PublicationsPanel: 'aside', useAppStore, useRef: (value) => { const index = refIndex++; refs[index] ||= { current: value }; return refs[index]; }, useState: (value) => {
       const index = stateIndex++;
       if (!(index in states)) states[index] = typeof value === 'function' ? value() : value;
       return [states[index], (next) => { states[index] = typeof next === 'function' ? next(states[index]) : next; }];
@@ -53,7 +54,7 @@ function libraryHarness({ progress = rows, done = [{ id: 'done', title: '완성 
     useNavigate: () => (path) => calls.push(['navigate', path]), useToast: () => ({ push: (msg) => calls.push(['toast', msg]) }),
     useAuth: () => ({ session: { user: { id: 'seller' } } }), isMobileDevice: () => mobile,
     authorizeFlowContinuation: (id, path) => calls.push(['authorize', id, path]),
-    api: { async getProject(id) { calls.push(['get', id]); return getProject(id); }, getInProgressLibrary() {}, getLibrary() {} },
+    api: { async getProject(id) { calls.push(['get', id]); return getProject(id); }, getStoryboard: async () => [{ taxonomyVersion: 4 }], getInProgressLibrary() {}, getLibrary() {} },
     useQuery: (query) => {
       queries.push(query);
       return query.queryKey.length === 1 ? { data: done }
@@ -236,10 +237,10 @@ test('two tabs restore their own project and choices before the shared wl_flow',
   const shared = memoryStorage();
   const source = storeSource.slice(storeSource.indexOf("const FLOW_KEY = 'wl_flow'"), storeSource.indexOf('const initialFlow ='));
   const tab = () => new Function('sessionStorage', 'localStorage',
-    `const mode='http'; const normalizeComposeMode = (v) => v === 'extended' ? v : 'basic'; ${source}; return {loadPersistedFlow,persistFlow};`)(memoryStorage(), shared);
+    `const mode='http'; ${source}; return {loadPersistedFlow,persistFlow};`)(memoryStorage(), shared);
   const a = tab(), b = tab();
-  const first = { projectId: 'a', projectPersisted: true, composeMode: 'extended', copywriting: false, productInfoConfirmed: true };
-  const second = { projectId: 'b', projectPersisted: true, composeMode: 'basic' };
+  const first = { projectId: 'a', projectPersisted: true, copywriting: false, productInfoConfirmed: true };
+  const second = { projectId: 'b', projectPersisted: true };
   a.persistFlow(first); b.persistFlow(second);
   assert.deepEqual(a.loadPersistedFlow(), first);
   assert.deepEqual(b.loadPersistedFlow(), second);
@@ -352,6 +353,19 @@ test('real store, shared runner, editor entry and mock rows honor server resume 
   const runner = await vite.ssrLoadModule('/src/features/mannequin/generationRunner.js');
   t.after(async () => { store.getState().resetDetailPageJob(); await vite.close(); delete globalThis.__libraryU2Api; globalThis.sessionStorage = previousStorage; });
 
+  await t.test('WOC16 new project creation persists its identity without photo-volume state', async () => {
+    let creations = 0;
+    globalThis.__libraryU2Api.createProject = async () => { creations++; return { id: 'new-project' }; };
+    await store.getState().beginProject();
+    assert.equal(Object.hasOwn(store.getState(), 'composeMode'), false);
+    assert.equal(await store.getState().ensureProject(), 'new-project');
+    assert.equal(await store.getState().ensureProject(), 'new-project');
+    assert.equal(creations, 1);
+    const persisted = JSON.parse(sessionStorage.getItem('wl_tab_flow:mock'));
+    assert.equal(persisted.projectId, 'new-project');
+    assert.equal(Object.hasOwn(persisted, 'composeMode'), false);
+  });
+
   await t.test('adopt snapshot restores server values for different and same project without PATCH', () => {
     let patches = 0;
     globalThis.__libraryU2Api.patchProject = () => { patches++; };
@@ -360,20 +374,18 @@ test('real store, shared runner, editor entry and mock rows honor server resume 
     flowSession.authorizeFlowContinuation('resume', '/create/mannequin');
     store.getState().markFlowUsed('seller', 1000);
     assert.equal(store.getState().selectedMannequinId, 'saved-cut');
-    assert.equal(store.getState().composeMode, 'extended');
+    assert.equal(Object.hasOwn(store.getState(), 'composeMode'), false);
     assert.equal(store.getState().copywriting, false);
     assert.equal(store.getState().productInfoConfirmed, true);
     assert.equal(store.getState().userId, 'seller');
     assert.equal(flowSession.hasFlowContinuation('resume'), true);
-    store.setState({ selectedMannequinId: 'stale', composeMode: 'basic', copywriting: true });
+    store.setState({ selectedMannequinId: 'stale', copywriting: true });
     store.getState().adoptProject('resume', { serverSnapshot: snapshot('resume') });
     assert.equal(store.getState().selectedMannequinId, 'saved-cut');
-    assert.equal(store.getState().composeMode, 'extended');
     assert.equal(store.getState().copywriting, false);
     assert.equal(patches, 0);
     store.getState().adoptProject('legacy');
     assert.equal(store.getState().selectedMannequinId, null);
-    assert.equal(store.getState().composeMode, 'basic');
     assert.equal(store.getState().copywriting, true);
   });
   await t.test('loadProject refreshes latestJobs and choices on every project entry', async () => {
@@ -383,7 +395,6 @@ test('real store, shared runner, editor entry and mock rows honor server resume 
     store.getState().adoptProject('reload');
     await store.getState().loadProject(); await store.getState().loadProject();
     assert.equal(reads, 2);
-    assert.equal(store.getState().composeMode, 'extended');
     assert.equal(attempts.read('reload').jobId, 'active');
   });
   for (const [name, job] of [['running', { id: 'm-running', status: 'running' }], ['error', { id: 'm-error', status: 'error' }],
@@ -436,7 +447,7 @@ test('real store, shared runner, editor entry and mock rows honor server resume 
         wardrobeContext: { current: {} }, isMockMode: true, api: globalThis.__libraryU2Api, retryRead: (get) => get(),
         withStoryboardSpaceSetExamples: identity, normalizeEditorBlockRole: identity, buildColorOpts: () => [], visibleColorOpts: identity,
         hexForCol: () => '', buildEditorBlocksFromStoryboard: () => [{ id: 'waiting', elements: [] }], alignSkeletonToServer: identity,
-        decorateGenBlocks, buildInfoCtx: () => ({}), needsDefaultTemplate: () => false, editorWaitDraftDecision: () => 'none',
+        decorateGenBlocks, loadWaitingShopName: async () => null, buildInfoCtx: () => ({}), needsDefaultTemplate: () => false, editorWaitDraftDecision: () => 'none',
         clearEditorWaitDraft() {}, mergeServerBlocks: identity, ensureShippingReturnsBlock: identity,
         upgradeLegacyKiwiTemplateBlocks: identity, stripPhotoBlockTextElements: identity, uid: () => 'id',
         mergeEditorImagesIntoWardrobe: ({ wardrobe }) => wardrobe, classifyEditorLoadError: identity, toast: { push() {} },

@@ -1,3 +1,4 @@
+import { v4Fixture } from './helpers/templateStoryboard.mjs';
 import test, { before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -15,13 +16,8 @@ const oldCut = { id: 'removed', source: 'ai', cutType: 'mirror', shot: 'full',
 const supported = { id: 'current', source: 'ai', cutType: 'styling', shot: 'full', direction: 'front',
   sectionRole: 'styling', contentRole: 'coordination', exampleId: 'current-example', taxonomyVersion: 3 };
 
-test('old saved cuts and their dependent cards are ignored before recipe normalization', () => {
-  const input = [oldCut, { ...supported, id: 'dependent', similarSourceBlockId: 'removed' }, supported,
-    { id: 'mine', source: 'mine', cutType: null, contentRole: 'custom', sectionRole: 'styling', taxonomyVersion: 3 }];
-  for (const normalize of [ensureSections, normalizeBoard]) {
-    assert.deepEqual(normalize(input).map(block => block.id), ['current', 'mine']);
-  }
-  assert.equal(input[0].cutType, 'mirror', 'reading does not mutate the saved input');
+test('old saved cuts require a new template board instead of a migration', () => {
+  assert.throws(() => ensureSections([oldCut, supported]), /storyboard_outdated/);
 });
 
 test('credit estimates and failed-cut retry do not schedule removed cut types', () => {
@@ -97,7 +93,7 @@ test('mock rejects old new-image and similar-image requests before jobs, assets 
 test('mock detail-page entry points reject an old saved cut before starting generation', async () => {
   DB.storyboard = [oldCut];
   for (const method of ['startDetailPage', 'generateDetailPage']) {
-    await assert.rejects(base[method]('p'), { code: 'unknown_cut_type', status: 400 });
+    await assert.rejects(base[method]('p'), { code: 'storyboard_outdated', status: 400 });
     assert.equal(DB.project.status, 'draft');
     assert.equal(DB.account.credits, 200);
     assert.deepEqual(DB.editorBlocks, []);
