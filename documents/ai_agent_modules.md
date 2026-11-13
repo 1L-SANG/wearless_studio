@@ -68,10 +68,11 @@ OPENAI_API_KEY=   # detail_cut GPT Image 2 + OpenAI text 폴백
 | | |
 |---|---|
 | tier | `text` |
-| 호출 시점 | PL-4 copy 단계: `project.copywriting=true`일 때 카피 대상 블록별. (세탁 안내는 AG-02 대상 아님 — 에디터 자동 블록을 M-02가 규칙 기반으로 생성, §4) |
-| 입력 | `{ contentRole, sectionRole, cutType, product: { name, clothingType, measurementsKnown }, analysis: { fit, materials, sellingPoints, targetGenders, matchSelections }, colorLabel }`. `blockKind`는 예전 콘티를 읽는 동안의 폴백일 뿐 새 입력의 기준이 아니다. |
-| 출력 | `{ texts: { role: 'headline'\|'body', text }[] }` — 블록당 1~3개 |
-| 카피 방향 | PRD §11.3의 `contentRole`별 방향을 시스템 프롬프트로 고정한다. 첫 장면은 짧은 헤드라인, 나머지는 핵심 장점·코디·핏·제품 전체·확인된 디테일에 맞는 본문을 만든다. |
+| 호출 시점 | PL-4 copy 단계, 컷 생성보다 먼저. `project.copywriting=true`일 때 돌며 템플릿 콘티는 카피를 늘 켠다. 대상은 시그니처 사진을 뺀 `source='ai'` 블록이다. (세탁 안내는 AG-02 대상 아님 — 에디터 자동 블록을 M-02가 규칙 기반으로 생성, §4) |
+| 입력 | 페이지 전체를 한 번에 보는 호출. 첫 호출이 실패하면 한 번 다시 부르고, 규칙을 어긴 항목만 한 번 더 만들므로 한 페이지에 최대 3번 부른다(`server/app/agents/copywriter.py`의 `generate`). 블록마다 역할(`contentRole`), 사진 종류(`cutType`), 구도(샷·방향), 색상, 함께 입는 옷, 보이는 부위를 넣고 상품·분석의 확인 정보(강조 특징, 확인 소재 등)를 함께 넣는다(`server/app/agents/copywriter.py`). |
+| 출력 | 블록마다 `{ blockId, texts: [{ role: 'headline', text }] }` 하나. 20자 이내 등 코드 규칙을 어기거나 빠진 항목만 한 번 더 만들고, 그래도 맞지 않으면 그 항목은 비운다. |
+| 실제 쓰임 | AG-03 검수를 거친 소제목은 `copy_ready` 이벤트로 나가고 조립기에 `copy_results`로 넘어간다. 템플릿 글 칸에는 `headline` 역할이 없어 지금은 페이지에 실리지 않는다. 템플릿 글 칸을 채우는 카피 체계는 별도 카피라이팅 작업에서 정한다. |
+| 카피 방향 | PRD §11.3의 `contentRole`별 방향을 프롬프트로 고정한 짧은 소제목이다. |
 | 프롬프트 핵심 제약 | 사용자 확인 정보 우선 · 미확인 소재/세탁법/기능성 단정 금지 · 과장 효능 금지 (PRD §11.2) |
 | 실패 | 해당 블록 카피 생략하고 진행(생성 전체를 실패시키지 않음) — 사용자가 에디터에서 직접 입력 가능 |
 
@@ -86,6 +87,17 @@ OPENAI_API_KEY=   # detail_cut GPT Image 2 + OpenAI text 폴백
 | 검출 대상 | 과장 효능 · 미확인 사실 단정(소재·기능성·세탁) · 확인 정보와 모순 |
 | 실패 | 검수 실패 시 원문 채택 + 로그(검수는 게이트가 아니라 보정) |
 
+### page_part_copy (부위 설명과 강조 특징 설명)
+
+| | |
+|---|---|
+| tier | `text` |
+| 호출 시점 | PL-4 copy 단계에서 AG-02·AG-03 다음, 컷 생성 전 1콜(`server/app/agents/page_part_copy.py`). 카피가 켜져 있으면 디테일 요소(`points`) 섹션의 부위 이름을 모은다. 모을 부위가 없으면 강조 특징 설명만 기존 `feature_copy` 경로로 만든다. |
+| 입력 | 사전에 없는 강조 특징, 페이지 부위 이름(디테일 추천 후보의 이름 또는 착용 사진에서 따온 항목의 이름), 상품·분석의 확인 정보. 프롬프트는 `server/prompts/page_part_copy_v1.txt`다. |
+| 출력 | `{ featureCopy: [{ point, desc }], partDescriptionCopy: [{ point, desc }] }`. 부위 설명은 두 줄이고 줄마다 22자 이내다. 첫 줄은 '로'나 '라'로, 둘째 줄은 해요체로 끝난다. 촉감, 기능, 과장 금지어가 들어간 항목은 버리고 문장을 잘라 고치지 않는다. |
+| 저장과 쓰임 | 만든 키만 analysis에 병합 저장한다(`partition_copy`). 조립기는 디테일 요소 섹션의 부위 설명 칸(`items.n.desc`)에 `partDescriptionCopy`를 넣고, 일부 디자인은 그 값이 없을 때 `featureCopy`를 쓴다. 지금 템플릿 페이지에 실제로 들어가는 AI 글은 이 부위 설명뿐이다. |
+| 실패 | 로그만 남기고 진행한다. 보정 재호출과 대체 문장은 없다. |
+
 ### AG-04 mannequin-generator — 마네킹컷 생성
 
 > **핏 반영(fidelity) P0 (2026-07-13)**: 입력 fitProfile은 **잡 생성 시점 payload 스냅샷**이 정본(워커의 analysis 재독 금지 — 경합·무음 유실 차단, legacy 잡만 폴백). 프롬프트는 정체성(색·패턴·소재·디테일)과 조형(핏·기장·실루엣)을 분리 — 선언 축은 "사진과 충돌할 때만" 우선하고, top/outer 기장 선언 시 untucked·밑단 완전 노출을 강제(매칭 하의 tuck 가림 방지). 셀러 조정 축은 CHANGES 섹션으로 재강조. 관측 = 호출 직전 `prompt_rendered` 이벤트(profile/prompt SHA-256, 원문 미포함). 정본: documents/mannequin_fit_fidelity_plan.md (P1=축 인지 QC는 부록 스키마).
@@ -93,7 +105,7 @@ OPENAI_API_KEY=   # detail_cut GPT Image 2 + OpenAI text 폴백
 | | |
 |---|---|
 | tier | `image_high` (Gemini 3 Pro 단일 티어 — Flash 프로모션 없음) |
-| 호출 시점 | 마네킹 페이지 최초 진입 시 **자동** `generateMannequins` / 핏 확인 후 `regenerateMannequin(projectId, { fitProfile })` (PL-2/3) |
+| 호출 시점 | 콘티 화면이 콘티를 불러온 뒤 **자동** `generateMannequins`(마네킹 화면 진입 때도 요청하고 진행 중이면 합류) / 핏 확인 후 `regenerateMannequin(projectId, { fitProfile })` (PL-2/3) |
 | 생성 방식 | **성별 베이스 + 의류 스왑** (스파이크 결정 2026-06-12). 맨바닥 독립 생성이 아니라, **분석에서 고른 성별(`targetGenders`)이 베이스 마네킹(남/여 각 고정 1장, 운영자 시드)을 결정**하고 그 위에 의류만 교체. **단일컷 생성**(저장 ID 호환을 위해 `candidate='A'` 유지). 핏은 `fitProfile`(축 선언 + `matchCut`)이 프롬프트 블록으로 주입되고, 선택된 매칭 하의 이미지가 있으면 함께 착장. |
 | 입력 | `{ baseMannequinUrl: 성별 베이스 URL, productImages: 기준 색상 전 각도 URL[], matchImage?: 매칭 하의 URL, fitProfile }` — 매칭 하의 이미지가 없는 잡에선 `effective_fit_profile`이 `matchCut`을 제거(없는 옷 지시 방지, `server/app/agents/mannequin.py`) |
 | 출력 | `{ imageUrl }` → 서버가 `MannequinCut { id, candidate:'A'(legacy), version, src }`로 포장 — 재생성 시 새 버전으로 스트립에 추가·자동 선택 |
@@ -103,13 +115,13 @@ OPENAI_API_KEY=   # detail_cut GPT Image 2 + OpenAI text 폴백
 
 ### AG-06 cut-generator — 이미지 생성 (상위 계열: styling·horizon·product)
 
-`cutType`은 페이지를 나누는 콘티 분류가 아니라 이미지 생성 레시피 입력이다. 실행 전 `styling|horizon|product` 세 계열로 컴파일한다. 콘티 카드 인스펙터에서 사용자가 섹션별 허용 컷 종류를 직접 고르면, 앞 단계가 그 값을 저장하고 내부 `contentRole`을 자동으로 맞춘다. AG-06은 선택된 계열을 렌더링하며, 생성예시는 별도 `all|pose|bg` 범위 안에서 가능한 구도와 분위기를 보탠다(ADR-0005·0010).
+`cutType`은 페이지를 나누는 콘티 분류가 아니라 이미지 생성 레시피 입력이다. 실행 전 `styling|horizon|product` 세 계열로 컴파일한다. 콘티 사진 판에서 사용자가 사진 칸이 허용하는 컷 종류와 샷 안에서 고르면, 서버 정규화가 그 값을 지키고 내부 `contentRole`을 사진 칸 정의로 맞춘다. AG-06은 선택된 계열을 렌더링하며, 생성예시는 별도 `all|pose|bg` 범위 안에서 가능한 구도와 분위기를 보탠다(ADR-0026·0010).
 
 | | |
 |---|---|
 | tier | PL-4 일반 컷은 `detail_cut` GPT를 쓰고, 첫 시그니처 컷은 별도 `image_signature` 계약을 쓴다. PL-5 에디터만 기존 `image_high` 계약을 유지한다. exact 여부는 모델 선택이 아니라 과거 입력·프롬프트 패킷 적용 여부를 구분한다. |
 | 호출 시점 | ① PL-4: 저장된 콘티의 `source='ai'` 블록별 1콜 ② 에디터 `새 이미지 추가` → `generateImage(mode:'new')` (PL-5) |
-| 입력 | `{ contentRole, sectionRole?, cutType, direction, shot, outerClosureState?, colorGroup: { swatchId, images: URL[] }, baseMannequinUrl?, modelId?, pose?, matchItems?: MatchingItem[], faceExposure, angle, refImages?: URL[] }`. `baseMannequinUrl`(project.selectedMannequinId의 컷)은 **기준색 착용컷에만** 넣고 다른 색상에서는 빼서 현재 `colorGroup`의 셀러 상품 사진이 색상 정본이 되게 한다. `cutType`과 현재 색상·방향·샷 등 콘티 값은 사용자 선택의 정본이며, 생성예시보다 우선한다. 서버는 섹션별 허용 컷과 세부 옵션을 검증한다. `contentRole`은 후킹의 순서, 스타일링·스튜디오의 섹션과 `cutType`, 의류 확인의 `shot`에서 파생한 내부값으로 일치시킨다. 유효한 사용자 컷 선택을 예전 역할 기본값으로 덮어쓰지 않는다. 유효한 `cutType`을 해석할 수 없을 때만 **에러**(`unknown_cut_type`)다. `product+detail`은 상품 전체 중 실제 `Detail` 입력 이미지가 생성 입력에 포함돼야 한다. 목표 색상에 없으면 기준색, 그다음 Detail 보유 첫 색상의 구조·재질을 근거로 쓰고 색만 목표 색상군으로 전환하며, 전 색상에 없으면 `detail_reference_required`로 해당 사진을 실패시킨다. |
+| 입력 | `{ contentRole, sectionRole?, cutType, direction, shot, outerClosureState?, colorGroup: { swatchId, images: URL[] }, baseMannequinUrl?, modelId?, pose?, matchItems?: MatchingItem[], faceExposure, angle, refImages?: URL[] }`. `baseMannequinUrl`(project.selectedMannequinId의 컷)은 **기준색 착용컷에만** 넣고 다른 색상에서는 빼서 현재 `colorGroup`의 셀러 상품 사진이 색상 정본이 되게 한다. `cutType`과 현재 색상·방향·샷 등 콘티 값은 사용자 선택의 정본이며, 생성예시보다 우선한다. 서버는 사진 칸이 허용하는 컷 종류와 샷을 검증하고, 벗어난 값은 사진 칸 기본값으로 되돌린다. `contentRole`은 사진 칸이 정하는 내부값이고, 첫 장의 첫 AI 착용 카드만 `hero`다. 유효한 사용자 컷 선택을 예전 역할 기본값으로 덮어쓰지 않는다. 유효한 `cutType`을 해석할 수 없을 때만 **에러**(`unknown_cut_type`)다. `product+detail`은 상품 전체 중 실제 `Detail` 입력 이미지가 생성 입력에 포함돼야 한다. 목표 색상에 없으면 기준색, 그다음 Detail 보유 첫 색상의 구조·재질을 근거로 쓰고 색만 목표 색상군으로 전환하며, 전 색상에 없으면 `detail_reference_required`로 해당 사진을 실패시킨다. |
 | 출력 | `{ imageUrl, cutType }` → PL-4에선 블록 이미지, PL-5에선 `WardrobeImage { ai:true, cutType }` |
 | 색상 변형 | 별도 에이전트 아님 — `colorGroup`이 추가 색상이면 같은 의류를 해당 스와치로 재현 (PRD §17 '색상별 동일 의류 재현' R&D 인지) |
 | 확정 GPT exact 적용 조건 | `styling/direct` + front + full/medium + `refScope='all'` + `pose='auto'` + `spaceGroupId` 없음 + 예시 방향 호환 + 서비스 예시 선택은 exact 프로필 요청 조건이다. 실행하려면 기준 색상 + 선택 resolved 마네킹 + 대체되지 않은 선택 가상모델 + 큐레이션된 서비스 예시가 모두 있어야 한다. 요청 뒤 조건이나 카탈로그가 빠진 경우 generic으로 바꾸지 않고 실패시킨다. 처음부터 구조적 요청 범위 밖인 컷만 기존 generic 경로다. |
@@ -160,11 +172,13 @@ OPENAI_API_KEY=   # detail_cut GPT Image 2 + OpenAI text 폴백
 
 ### M-02 page-assembler — 상세페이지 조립 (결정적 템플릿 엔진, 사용자 결정)
 
-- **구현 기준**: 실서버 `server/app/agents/page_assembler.py`가 기준 구현이며, mock의 `buildEditorBlocksFromStoryboard`(`src/mock/db.js`)가 같은 결과 구조를 흉내 낸다.
-- **입력**: `{ storyboard: StoryboardBlock[], cutResults: { blockId, imageUrl }[], copyResults: { blockId, texts }[], product(실측 포함), copywriting }`.
-- **로직**: `sectionRole` 순서와 `contentRole`별 레이아웃·카피 위치로 `EditorBlock[]`을 배치한다(기준 폭 1000). 구 `blockKind`는 오래된 데이터의 폴백으로만 읽는다. AI 호출 없음.
-  - **사진 섹션** = 후킹(`hooking`) → 스타일링(`styling`) → 스튜디오(`studio`) → 의류 확인(`product`). 같은 장소는 별도 섹션을 만들지 않는다.
-  - **구매 정보** = 콘티 밖에서 에디터 블록으로 구성한다(PRD §10.14). 현재 라이브 조립기는 사이즈·세탁·AI 안내 자동 블록 3종까지 만든다. 소재·옵션·배송·교환·필수 고지 등을 `kind='info'`와 `infoType` 일반 블록으로 만들고, 빈 필수값을 `정보 입력 필요`로 보여주는 부분은 `TODOS.md`의 에디터 구매 정보 항목에서 추적한다.
+- **구현 기준**: 실서버 진입점은 `server/app/agents/page_assembler.py`의 `assemble`이고, 실제 조립은 `server/app/agents/page_template_assembler.py`의 `assemble_v4`가 한다. 프론트 `src/lib/pageTemplates/assemble.js`(`assemblePage`)가 같은 카탈로그(`server/app/data/page_templates_v1.json`)를 읽는 두 번째 엔진이며, 두 엔진은 같은 사례 파일(`tests/fixtures/page_templates_cases.json`)로 결과 일치를 검사한다. mock 생성기 `buildEditorBlocksFromStoryboard`(`src/mock/db.js`)와 생성 대기 화면의 뼈대가 프론트 엔진을 쓴다.
+- **입력**: `{ storyboard: StoryboardBlock[](taxonomyVersion 4), cutResults: { blockId, imageUrl, width, height, 사진 위 글자 대비 측정값 }[], copyResults: { blockId, texts }[], product(실측 포함), copywriting, analysis(pageStyle, 부위 설명 등), failedCuts, licenseNotice, profile, shopName }`. 페이지 스타일은 `analysis.pageStyle`을 쓰고, 없으면 카탈로그 기본값에 콘티의 템플릿을 넣는다.
+- **로직**: 저장 순서대로 같은 `pageSectionKey`가 이어진 카드 묶음을 한 섹션으로 보고, 섹션마다 카탈로그의 `pageDesignId` 디자인 배치로 사진과 글 칸을 놓는다(기준 폭 1000). 템플릿이 섞였거나 같은 섹션이 떨어져 있으면 오류로 멈춘다. 글 칸은 고정 문구, 상품·분석 사실, AI 글 중 칸이 정한 출처로 채우고, 빈 AI 글 칸은 `text=''`와 안내 문구(`placeholder`)로 둔다. 에디터 블록의 `kind`는 첫 카드의 내부 `sectionRole`이거나 `info`이고, 블록에 `pageSectionKey`·`pageSectionKind`·`pageDesignId`를 함께 싣는다. AI 호출 없음.
+  - **섹션** = 템플릿(감성형 `emo`, 쇼룸형 `show`)이 정한 섹션 종류 10개(첫 장, 착용컷(일상, 스튜디오), 색상과 제품, 원단 설명, 상품 소개, 디테일 요소, 추천 대상, 후기, 궁금한 점, SNS 화면) 중 콘티에 들어 있는 것이다. 같은 장소는 별도 섹션을 만들지 않는다.
+  - **첫 장 제목** = 사진 위에 제목을 얹는 첫 장 디자인(`P01-D09`, `P01-D09-G`)은 컷 생성 뒤 잰 사진 대비로 가운데, 위, 아래 중 잘 보이는 자리에 상품명을 둔다. 세 자리 모두 3:1에 못 미치면 60% 검정 받침과 흰 글자를 쓴다. 받침은 가운데가 먼저이고, 가운데 받침 자리의 절반 이상이 옷과 겹치면 아래로 간다. 아래도 절반 이상 겹치면 덜 겹치는 쪽, 같으면 가운데다(카탈로그 `firstTitlePlate`, `server/app/agents/page_template_contrast.py`).
+  - **AI 글** = AI가 채우는 글은 디테일 요소 섹션의 부위 설명(page_part_copy), 상품 소개 본문, 후기 초안이다. 상품 소개 본문은 셀러 MD 코멘트를 AI가 실제 쇼핑몰 상세페이지의 MD 코멘트처럼 다듬어 넣고, 다듬기가 붙기 전에는 원문을 그대로 넣으며, 셀러 글이 없으면 AI 초안을 넣는다(2026-11-13 오너 결정, 감성형과 쇼룸형 모두). 후기 섹션은 AI 초안을 셀러가 실제 후기로 고치는 방식이며 이름 칸 기본값은 "김태희", 별점 기본값은 5개다(2026-10-26 오너 결정). AG-02 소제목은 템플릿 글 칸에 `headline` 역할이 없어 들어가지 않는다. 카피 체계는 별도 카피라이팅 작업에서 정한다.
+  - **구매 정보** = 콘티 밖에서 에디터 블록으로 구성한다(PRD §10.14). 템플릿 조립기는 섹션 뒤에 자동 블록 넷(사이즈 `size`, 세탁 `care`, AI 생성 안내 `ai-notice`, 공통 주의 `common-notice`)을 붙인다. 공통 주의는 카탈로그의 한 줄 문구("모니터와 기기 설정에 따라 실제 색상과 다르게 보일 수 있어요.")다. 소재·옵션·배송·교환·필수 고지 등을 `kind='info'`와 `infoType` 일반 블록으로 만들고, 빈 필수값을 `정보 입력 필요`로 보여주는 부분은 `TODOS.md`의 에디터 구매 정보 항목에서 추적한다.
   - **사이즈 안내** = `product.measurements`.
   - **세탁 안내** = **규칙 기반 프리셋**(AI 아님): `clothingType`별 대표 소재(가장 많이 팔리는 소재)에 맞춘 세탁 문구를 미리 정해두고 선택, 소재가 애매하면 **기본 세탁방침**으로 폴백. 실제 케어라벨 확인 권장 문구 포함. (A1 결정 2026-06-14)
     - 2026-10-21: 옷 종류 신호(`subCategory`, 상품명, `customCategory`)를 소재보다 먼저 본다. 스웨이드, 레더(이름 신호 또는 폴리우레탄 50% 이상), 패딩, 플리스, 바람막이, 트랙탑, 데님, 니트·가디건 순서로 고르고, 없으면 기존 소재 묶음으로 간다. 울 계열 아우터(코트 등)는 니트 문구 대신 기본 세탁방침을 쓴다. 정본은 `src/features/editor/presets/infoPresets.js`의 `careFamilyFor`, `CARE_COPY_LIBRARY`.

@@ -2,7 +2,7 @@
 
 > 2026-07-21. 오너 7단계 기준 → Claude·Codex 독립 설계 → 상호 반박 → 통합.
 > 상태: **확정** — 오너 결정 4건 반영(2026-07-21), 구현 착수.
-> 정본 관계: ADR-0005~0009, documents/genexamples_release_contract.md, 저장 계약 §3.4.
+> 정본 관계: ADR-0006~0009, ADR-0026(ADR-0005 대체), documents/genexamples_release_contract.md, 저장 계약 §3.4.
 
 ## 1. 화면 동작 (비개발자용)
 
@@ -20,9 +20,9 @@
   - 자동 배정 시 'auto'. 다음 4가지 행위 시 'user': 직접 선택 / 다른 예시 보기 / 참고 범위 변경 / 샷·컷(제품 고스트↔디테일 포함) 변경 확정.
   - 소급: exampleId가 있는데 origin이 없는 저장분은 **'user'로 간주**(절대 안 덮어쓰는 방향으로 오판).
   - 서버 canonicalize: enum 검증, exampleId 없으면 null 강제. **exampleId를 지우는 모든 기존 경로(레시피 정규화·섹션 이동 등)에서 origin·thumb도 동반 정리**(고아 값 금지).
-- **기본 콘티 지문(fingerprint) 규칙**: `origin='auto'`인 exampleId는 기본값으로 간주(지문 제외), `'user'`만 사용자 수정으로 취급 — 자동 배정만으로 "수정된 콘티"로 오판돼 사진 양 전환 재시드가 막히는 것 방지. mock의 storyboardDirty도 동일 규칙(자동 배정 저장은 dirty 아님).
+- **콘티 지문(fingerprint) 규칙**: 콘티 지문(`storyboardFingerprint`, `src/lib/pageTemplates/seed.js`)은 `origin='auto'`인 exampleId를 기본값으로 보고 빼며, `'user'`만 사용자 수정으로 친다. 그래서 자동 배정만 있는 콘티는 손대지 않은 콘티로 남고, 상품 조건(옷 종류, 하위 분류와 직접 입력한 의류 이름, 색과 뒷면 사진, 성별, 디테일 추천, 강조 특징, 템플릿)이 바뀌면 새로 깔린다(`seedProductKey`). mock의 storyboardDirty도 자동 배정 저장은 dirty로 치지 않는다.
 - 선택창의 임시 상태(pendingCutType·후보 목록·저장 중·오류)는 화면 로컬 — 블록·스토어에 저장하지 않음.
-- 구조 필드(sectionId·sectionLayout·layoutRowId·배열 순서)는 자동 배정이 절대
+- 구조 필드(pageSectionKey·sectionId·배열 순서)는 자동 배정이 절대
   변경하지 않는다. `spaceGroupId`는 발행된 정식 촬영 세트를 선택하거나 기본
   콘티가 정식 세트를 시드할 때만 별도 세트 로직이 만든다.
 
@@ -81,7 +81,7 @@ eligible(block, product, gender):
 - 순환: 동일 조건 6카드 1,2,3,1,2,3 / 기존 auto 배정 사용량 포함 집계 / 조건키 독립 / 1~2장 조건은 N장 순환 / 스타일링 무드 분산(조건키 무드 제외 확인)
 - 고정성: 재진입·재렌더·순서변경·삭제 후 ID 불변 / 삭제 취소 복원 / 배정 결정성(같은 입력=같은 결과)
 - 사용자 보호: 4가지 행위 각각 origin='user' / 재클릭 해제 경로 부재 / 이후 자동 배정 제외
-- 지문: auto 배정만 있는 콘티 = 기본 콘티 판정(사진 양 전환 재시드 정상) / user 선택 있으면 수정 판정 / mock storyboardDirty 동등 규칙
+- 지문: auto 배정만 있는 콘티는 손대지 않은 콘티로 판정(상품 조건이 바뀌면 새로 깔림), user 선택이 있으면 수정 판정, mock storyboardDirty는 자동 배정 저장을 dirty로 치지 않음
 - 샷·컷 전환: 샷 변경 예시 유지(기존 null 경로 2곳 제거 회귀 테스트) / 컷 전환 원자성·중간 상태 부재 / 저장 실패 시 원상 유지
 - 정식 촬영 세트: pose+방향 호환 후보만 배정 / 0이면 미배정+명시 표시 /
   무음 all 강등 금지 / 임의·미등록 group ID 거부
