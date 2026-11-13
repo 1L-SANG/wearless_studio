@@ -65,6 +65,7 @@ function harness(mobile, pathname, entry = null) {
   }
   bindings.BeforeStoryboardRoute = ({ children }) => children;
   bindings.StoryboardRoute = () => React.createElement(bindings.Storyboard);
+  bindings.MannequinStageRoute = bindings.Mannequin;
   const components = new Function(...Object.keys(bindings), `${code}; return { App, guard: typeof MobileHandoffGuard === 'function' ? MobileHandoffGuard : null };`)(...Object.values(bindings));
   const html = renderToString(React.createElement(StaticRouter, { location: pathname }, React.createElement(components.App)));
   return { calls, html, href, effects, layoutEffects, document, attributes, timers, listeners,

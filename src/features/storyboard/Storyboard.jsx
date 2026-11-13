@@ -4,6 +4,7 @@ import { addTemplateSection, sectionRemovalImpact } from '../../lib/pageTemplate
 
 import { createLateDetailCatalog } from './storyboardLateDetails.js';
 import { isAnalysisFastEntryEnabled } from '@/lib/analysisFastEntry.js';
+import { isMannequinStageEnabled } from '@/lib/mannequinStage.js';
 import { getActiveFeatureRun, isFeatureRunPending } from '@/lib/featureRun.js';
 import { canPlanSimilarCut, createSimilarCutBlock, inheritSimilarCutRecipes, reconcileSimilarCutMutation } from '@/lib/storyboardSimilarCuts.js';
 import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
@@ -31,7 +32,8 @@ import { referenceFeedbackPatch } from '../../lib/storyboardExampleFeedback.js';
 import { uid } from '@/lib/ids.js';
 
 import { useAppStore } from '@/store/useAppStore.js';
-import { Icon, Button, ProgressBar, useToast } from '@/components/ui.jsx';
+import { Icon, Button, Modal, ProgressBar, useToast } from '@/components/ui.jsx';
+import { CreditShortfallModal } from '@/features/credits/CreditShortfallModal.jsx';
 import { useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { normalizeMatchIds } from '@/lib/api/matchingItems.js';
 import { ensureSections, normalizeBoard } from '@/lib/sections.js';
@@ -61,6 +63,8 @@ import { ensureV4StoryboardCopywriting } from './v4Copywriting.js';
 import { classifyStoryboardLoadError, storyboardNotFoundError } from './storyboardLoadError.js';
 import { buildColorOpts, visibleColorOpts } from '@/lib/colorOpts.js';
 import { continueAfterStoryboardFlush } from './storyboardNavigation.js';
+import { continueStoryboardToDetailPage, loadStoryboardCreditQuote, storyboardContinueLabel,
+  storyboardCreditResume, storyboardDetailPageCredits } from './storyboardDetailPage.js';
 
 import { shouldReuseInitialStoryboardEntry } from './storyboardEntryReuse.js';
 
@@ -312,6 +316,7 @@ function prepareStoryboardEntry(
 export function Storyboard({ toastOverride = null } = {}) {
   const navigate = useNavigate();
   const location = useLocation();
+  const mannequinStageEnabled = isMannequinStageEnabled();
   const initialEntryRef = useRef(undefined);
   if (initialEntryRef.current === undefined) {
     const initialProjectId = useAppStore.getState().projectId;
@@ -419,6 +424,18 @@ export function Storyboard({ toastOverride = null } = {}) {
   const promotedMatchClothingRef = useRef({ projectId: null, items: null });
   const storyboardSeedContextRef = useRef(storyboardSeedContext);
   const projectId = useAppStore((s) => s.projectId);
+  const account = useAppStore((s) => s.account);
+  const [creditQuote, setCreditQuote] = useState(null);
+  const detailPageQuote = creditQuote?.projectId === projectId ? creditQuote.quote : null;
+  const [creditShortfall, setCreditShortfall] = useState(null);
+  const [creditResume, setCreditResume] = useState(() => storyboardCreditResume(location.state, mannequinStageEnabled));
+  const detailPageSubmitRef = useRef(false);
+  const detailPageLifetimeRef = useRef(null);
+  useEffect(() => {
+    const lifetime = {};
+    detailPageLifetimeRef.current = lifetime;
+    return () => { if (detailPageLifetimeRef.current === lifetime) detailPageLifetimeRef.current = null; };
+  }, [projectId]);
   const shopName = useStoryboardShopName(blocks);
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
 
@@ -601,7 +618,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         const [board] = entry;
         const notice = api.storyboardEntryNotice?.(pid);
         if (active) setEntryNotice(notice);
-        if (notice !== 'rebuilt' && notice !== 'legacyGenerated') {
+        if (mannequinStageEnabled && notice !== 'rebuilt' && notice !== 'legacyGenerated') {
           void customMatchReady.then(() => isAnalysisFastEntryEnabled()
             ? (active ? requestMannequinGeneration(pid, { isActive: () => active }) : null)
             : requestMannequinGeneration(pid)).catch((error) => {
@@ -661,8 +678,15 @@ export function Storyboard({ toastOverride = null } = {}) {
             ? { ...prepared.storyboardSeedContext, matchClothing: promotedMatchClothing }
             : prepared.storyboardSeedContext);
         }
+        // 승격은 사진 뒤에 분석도 저장한다. 그 정착을 기다린 이 자리에서만 모델 견적을 읽는다.
+        if (!mannequinStageEnabled && active) {
+          void loadStoryboardCreditQuote({ mannequinStageEnabled, projectId: pid, getCreditQuote: api.getCreditQuote })
+            .then(quote => {
+              if (active && useAppStore.getState().projectId === pid) setCreditQuote({ projectId: pid, quote });
+            });
+        }
         if (notice !== 'legacyGenerated' && notice !== 'rebuilt' && (prepared.normalized || prepared.assignment.changed
-          || usePending || promotionChangedBlocks)) {
+          || usePending || promotionChangedBlocks || !mannequinStageEnabled)) {
           const autoAssignmentOnly = prepared.assignment.assignedIds.length > 0
             && prepared.assignment.protectedIds.length === 0 && !prepared.normalized
             && !usePending && !promotionChangedBlocks;
@@ -1244,6 +1268,28 @@ export function Storyboard({ toastOverride = null } = {}) {
       toast.push('이 모델로 만들 수 없는 AI 컷이 있어요. 표시된 컷을 삭제하거나 연출을 바꿔주세요.');
       return;
     }
+    if (!mannequinStageEnabled) {
+      const lifetime = detailPageLifetimeRef.current;
+      const { projectGeneration, userId } = useAppStore.getState();
+      await continueStoryboardToDetailPage({
+        submission: detailPageSubmitRef,
+        isCurrent: () => {
+          const state = useAppStore.getState();
+          return Boolean(lifetime && detailPageLifetimeRef.current === lifetime && state.projectId === projectId
+            && state.projectGeneration === projectGeneration && state.userId === userId);
+        },
+        flush: async () => { await styleSaves.flush(() => styleValueRef.current); await ensureV4StoryboardCopywriting(projectId, useAppStore.getState); return saveNow(projectId); },
+        onFailure: (message, error) => toast.push(message, { variant: 'error', error,
+          kind: 'save_error', actionName: 'save', messageCode: 'storyboard_save_failed', blocking: true }),
+        afterFlush: () => {
+          if (needsGarmentColorMeasurement(latestBlocks.current || blocks)) void api.measureGarmentColors(projectId).catch(() => {});
+        },
+        account: () => useAppStore.getState().account,
+        aiCutCount: generationCutCount, quote: detailPageQuote, selectedModelId: catalogs.analysis?.selectedModelId,
+        onShortfall: setCreditShortfall, navigate,
+      });
+      return;
+    }
     // 생성 입력은 서버가 저장된 콘티에서 읽는다 — 다음 단계로 넘기기 전에 반드시 저장.
     // 같은 직렬 체인 경유: 비행 중 자동저장 뒤에 줄서서 최신 스냅샷이 마지막에 반영됨을 보장.
     await continueAfterStoryboardFlush({
@@ -1282,13 +1328,32 @@ export function Storyboard({ toastOverride = null } = {}) {
         commitSectionRemoval(pendingRemoval.key, impact);
       }} />}
     {doneBlocked && <DoneGuardModal />}
+    {creditShortfall && <CreditShortfallModal shortfall={creditShortfall} action="detail-page" onClose={() => setCreditShortfall(null)} />}
+    {creditResume && <Modal onClose={() => {
+      setCreditResume(null);
+      navigate(location.pathname, { replace: true, state: null });
+    }}>
+      <h3>이어서 진행할까요? · {creditResume.requiredCredits}크레딧</h3>
+      <p>충전 전 멈춘 상세페이지 생성을 다시 확인해 주세요.</p>
+      <div className="modal-actions">
+        <Button variant="ghost" onClick={() => {
+          setCreditResume(null);
+          navigate(location.pathname, { replace: true, state: null });
+        }}>나중에</Button>
+        <Button variant="primary" onClick={() => {
+          setCreditResume(null);
+          navigate(location.pathname, { replace: true, state: null });
+          goToMannequin();
+        }}>이어서 진행</Button>
+      </div>
+    </Modal>}
     <div className={`page-head ${styles.pageHeadWithTheme}`}><div className={styles.pageHeadingCopy}><h1>상세페이지 초안 구성</h1>
         <p className={styles.introCopy}>예시 이미지들로 상세페이지 초안이 구성됐어요. 원하는 느낌으로 구성해보세요.</p></div>
       <div className={styles.styleControlsWrap}><StoryboardStyleControls key={projectId} pageStyle={selectedPageStyle} product={catalogs.detailProduct} disabled={atomicSaving}
         onFontChange={fontStyle => changePageStyle({ fontStyle })} onToneChange={colorMode => changePageStyle({ colorMode })} />
         {pageStyleError && <p role="alert">{pageStyleError}</p>}</div>
     </div>
-    {mannequinFailure && <div className="sec-head" role="status">
+    {mannequinStageEnabled && mannequinFailure && <div className="sec-head" role="status">
       <p className="sec-sub handoff-title">{mannequinFailure}</p>
       <Button variant="ghost" size="sm" onClick={async () => {
         if (mannequinRetryRef.current) return;
@@ -1360,7 +1425,10 @@ export function Storyboard({ toastOverride = null } = {}) {
               targetSid: selected.sectionId, targetRole: selected.cutType === 'horizon' ? 'studio' : 'styling' })}
             onChangeSpaceBackground={mode => atomicBoardChange(current => updateHorizonGroupBackground(current, selected.spaceGroupId, mode), { undoBlockId: selected.id, undoLabel: '세트 배경' })} />}
     </StoryboardDrawer>}
-    <StoryboardContinue hidden={Boolean(drawer)} count={photoBlocks.length} credits={detailPageCreditCost(generationCutCount)}
+    <StoryboardContinue hidden={Boolean(drawer)} count={photoBlocks.length}
+      label={storyboardContinueLabel(mannequinStageEnabled)}
+      credits={mannequinStageEnabled ? detailPageCreditCost(generationCutCount) : storyboardDetailPageCredits(generationCutCount,
+        { quote: detailPageQuote, plan: account?.plan, selectedModelId: catalogs.analysis?.selectedModelId })}
       undoEntry={undoEntry} undoExiting={undoExiting} onUndo={undoLatest}
       onUndoAnimationEnd={event => { if (event.target === event.currentTarget && undoExiting) finishUndoDismiss(); }}
       onUndoEnter={enterUndo} onUndoLeave={leaveUndo}

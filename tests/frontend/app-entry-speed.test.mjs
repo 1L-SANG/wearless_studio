@@ -145,6 +145,7 @@ test('ChromeLayout keeps the same entrance after landing cleanup and gives story
   const location = { pathname: '/create/input' };
   const bindings = {
     React,
+    isMannequinStageEnabled: () => true,
     document: { documentElement: { getAttribute() { entryReads += 1; return entry; } } },
     useState(initial) {
       const index = cursor++;

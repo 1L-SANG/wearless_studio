@@ -84,7 +84,7 @@ test('analysis confirmation blocks a cached account below the mannequin generati
   assert.deepEqual(mannequinGenerationCreditShortfall({ credits: 44 }), {
     availableCredits: 44,
     requiredCredits: CREDIT_COSTS.mannequinGenerate,
-    message: '크레딧이 부족해요 — 보유 44 · 필요 45. 충전 후 다시 시도해 주세요.',
+    message: '크레딧이 부족해요. 보유 44, 필요 45',
   });
 });
 
@@ -100,7 +100,7 @@ test('mannequin preflight accepts a quoted plan-aware total while preserving its
   assert.deepEqual(mannequinGenerationCreditShortfall({ credits: 63 }, 64), {
     availableCredits: 63,
     requiredCredits: 64,
-    message: '크레딧이 부족해요 — 보유 63 · 필요 64. 충전 후 다시 시도해 주세요.',
+    message: '크레딧이 부족해요. 보유 63, 필요 64',
   });
   assert.equal(mannequinGenerationCreditShortfall({ credits: 64 }, 64), null);
   assert.equal(mannequinGenerationCreditShortfall({ credits: 45 }), null);

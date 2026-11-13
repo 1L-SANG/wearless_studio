@@ -22,7 +22,7 @@ function harness(version = 3) {
     getStoryboard: async id => { notices.setStoryboardEntryNotice(id, version === 3 ? 'rebuilt' : null); return [{ id: 'photo', taxonomyVersion: 4 }]; },
     storyboardEntryNotice: notices.storyboardEntryNotice,
     saveAnalysis: async () => calls.push(['analysis']), saveStoryboard: async () => calls.push(['save']) };
-  const bindings = { ...notices, ...flowSession, api, useAppStore: { getState: () => state },
+  const bindings = { isMannequinStageEnabled: () => true, ...notices, ...flowSession, api, useAppStore: { getState: () => state },
     navigate: path => calls.push(['navigate', path]), push: msg => calls.push(['toast', msg]), pushToast: msg => calls.push(['toast', msg]),
     userId: 'seller', projectId: 'p', resumeRunRef: { current: 0 }, loadRunRef: { current: 0 },
     isMobileDevice: () => false, openingRef: { current: false }, entryToken: { current: 0 }, userRef: { current: 'seller' },

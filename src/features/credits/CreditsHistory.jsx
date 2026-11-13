@@ -8,6 +8,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
+import { isMannequinStageEnabled } from '@/lib/mannequinStage.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
 import s from './CreditsHistory.module.css';
@@ -61,7 +62,7 @@ export function CreditsHistory() {
       )}
       {isError && <div className="surface"><ErrorState error={queryError} desc="사용 내역을 불러오지 못했어요." onRetry={refetch} /></div>}
       {!isLoading && !isError && rows.length === 0 && (
-        <div className="surface"><EmptyState icon="image" title="아직 사용 내역이 없어요" desc="마네킹·상세페이지를 만들면 크레딧 사용 내역이 여기에 쌓여요." /></div>
+        <div className="surface"><EmptyState icon="image" title="아직 사용 내역이 없어요" desc={isMannequinStageEnabled() ? '마네킹·상세페이지를 만들면 크레딧 사용 내역이 여기에 쌓여요.' : '상세페이지를 만들면 크레딧 사용 내역이 여기에 쌓여요.'} /></div>
       )}
 
       {!isLoading && !isError && rows.length > 0 && (

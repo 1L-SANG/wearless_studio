@@ -99,6 +99,22 @@ const settleMockMannequinCharge = (job) => {
 // 에디터 대기 이벤트 시뮬 상태 (startDetailPage) — 페이지 새로고침 = 모듈 재실행 = 초기화(재데모 가능)
 let ewSim = null;
 const detailJobs = new Map();
+const mannequinStageUsed = (draft = DB) => Boolean(draft.mannequins?.some(cut => !cut.previewOnly) || draft.project.latestJobs?.mannequin);
+const detailPageModelFee = (plan, selectedModelId) => mannequinStageUsed() || DB.detailPageExtensionFeeCharged > 0
+  ? 0 : extensionModelFee(plan, selectedModelId);
+const detailPageCharge = () => {
+  const aiCuts = uniqueGenerationCutCount(DB.storyboard, {
+    clothingType: DB.product?.clothingType, frontClosure: DB.analysis?.frontClosure,
+  });
+  const cutCredits = detailPageCreditCost(aiCuts);
+  const modelFee = cutCredits > 0 ? detailPageModelFee(DB.account.plan, DB.analysis.selectedModelId) : 0;
+  return { creditCost: cutCredits + modelFee, extensionModelFee: modelFee };
+};
+const recordDetailPageModelCharge = (draft, fee) => {
+  if (fee <= 0) return;
+  draft.detailPageExtensionFeeCharged = fee;
+  if (DB.project.id === draft.project.id) DB.detailPageExtensionFeeCharged = fee;
+};
 const mockDraftSlot = createDraftSlotMemory({ tokenFactory: () => uid('draft-token') });
 const shouldRefreshMatchClothing = (patch) => ['clothingType', 'subCategory', 'customCategory', 'targetGenders', 'styleTags', 'colors', 'fit', 'materials'].some((key) => key in patch);
 const mockMatchCurrent = (analysis, current = analysis.matchClothing || []) => (
@@ -772,6 +788,7 @@ export const api = {
         extensionFeeAlreadyPaid: DB.mannequinExtensionFeePaid === true,
       },
       mannequinRegenerate: mannequinRegenerationQuote(plan, DB.mannequins.length),
+      detailPageGenerate: { extensionModelFee: detailPageModelFee(plan, modelId), selectedModelId: modelId },
       storyboardPerCut: CREDIT_COSTS.storyboardPerCut,
       editorImage: CREDIT_COSTS.editorImage,
       editorEdit: CREDIT_COSTS.editorEdit,
@@ -1101,8 +1118,10 @@ export const api = {
     if (Object.hasOwn(patch, 'pageStyle')) {
       if (!validPageStyle(patch.pageStyle)) throw Object.assign(new Error('페이지 스타일을 다시 골라 주세요.'), { status: 400, code: 'invalid_page_style' });
       if (_projectId && patch.pageStyle.templateId !== (DB.analysis.pageStyle?.templateId || defaultPageStyle().templateId)
-        && (DB.mannequins?.some(cut => !cut.previewOnly) || DB.project.latestJobs?.mannequin)) {
-        throw Object.assign(new Error('마네킹컷을 만든 뒤에는 템플릿을 바꿀 수 없어요.'), { status: 409, code: 'page_style_locked' });
+        && (mannequinStageUsed() || DB.project.latestJobs?.detailPage)) {
+        const message = mannequinStageUsed() ? '마네킹컷을 만든 뒤에는 템플릿을 바꿀 수 없어요.'
+          : '상세페이지를 만들기 시작한 뒤에는 템플릿을 바꿀 수 없어요.';
+        throw Object.assign(new Error(message), { status: 409, code: 'page_style_locked' });
       }
       lastPageStyle = clone(patch.pageStyle);
     }
@@ -1458,6 +1477,7 @@ export const api = {
     await wait(150);
     validateStoryboardV4(blocks);
     DB.storyboard = clone(inheritSimilarCutRecipes(blocks));
+    DB.storyboardSaved = true;
     // 자동 예시 배정은 기본 콘티의 일부다. 이미 생긴 사용자 dirty는 유지한다.
     if (shouldMarkStoryboardDirty({ autoAssignment })) DB.storyboardDirty = true;
     touch();
@@ -1481,7 +1501,8 @@ export const api = {
     validateStoryboardV4(DB.storyboard);
     assertSupportedStoryboardCuts();
     DB.project.status = 'generating'; touch();
-    const job = { projectId: DB.project.id, jobId: uid('job'), events: [], nextId: 1, status: 'running', progress: 0, result: null };
+    const job = { projectId: DB.project.id, jobId: uid('job'), events: [], nextId: 1, status: 'running', progress: 0, result: null,
+      ...detailPageCharge() };
     ewSim = job;
     detailJobs.set(job.jobId, job);
     DB.project.latestJobs.detailPage = { id: job.jobId, status: 'running', errorCode: null };
@@ -1539,10 +1560,8 @@ export const api = {
       draft.editorBlocks = blocks; draft.project.status = 'done';
       draft.project.updatedAt = new Date().toISOString();
       if (DB.project.id === job.projectId) DB.editorBlocks = blocks;
-      const aiCuts = uniqueGenerationCutCount(draft.storyboard, {
-        clothingType: draft.product?.clothingType, frontClosure: draft.analysis?.frontClosure,
-      });
-      job.result = { data: clone(blocks), credits: spend(detailPageCreditCost(aiCuts)) };
+      job.result = { data: clone(blocks), credits: spend(job.creditCost) };
+      recordDetailPageModelCharge(draft, job.extensionModelFee);
       job.progress = 100; job.status = 'done';
       draft.project.latestJobs.detailPage.status = 'done';
     })();
@@ -1581,6 +1600,9 @@ export const api = {
     assertSupportedStoryboardCuts();
     const job = joinable('detailPage', (listeners) => (async () => {
       const ownerId = DB.project.id;
+      const charge = detailPageCharge();
+      const summary = { id: uid('job'), status: 'running', errorCode: null };
+      DB.project.latestJobs.detailPage = summary;
       const emitStep = (steps) => listeners.forEach((l) => l.onStep && l.onStep(clone(steps)));
       const emitProgress = (p) => listeners.forEach((l) => l.onProgress && l.onProgress(p));
       DB.project.status = 'generating'; touch();
@@ -1598,10 +1620,10 @@ export const api = {
         selectFrameShopName(Object.values(DB.mallConnections || {})));
       DB.project.status = 'done'; touch();
       // 실서버와 동일: 동일 설정 복제 컷은 1장만 생성 — 청구도 실제 생성 수 기준(ADR-0011).
-      const aiCuts = uniqueGenerationCutCount(DB.storyboard, {
-        clothingType: DB.product?.clothingType, frontClosure: DB.analysis?.frontClosure,
-      });
-      return { data: clone(DB.editorBlocks), credits: spend(detailPageCreditCost(aiCuts)) };
+      const credits = spend(charge.creditCost);
+      recordDetailPageModelCharge(DB, charge.extensionModelFee);
+      summary.status = 'done';
+      return { data: clone(DB.editorBlocks), credits };
     })());
     job.listeners.push({ onProgress, onStep });
     return job.promise;
@@ -1736,7 +1758,8 @@ export const api = {
     if (forceEmpty) return [];
     rememberProject();
     return [...projectDrafts.values()].filter((draft) => draft.project.status !== 'done'
-      && (draft.storyboardDirty || draft.project.id.startsWith('in-progress-') || draft.project.latestJobs.mannequin))
+      && (draft.storyboardSaved || draft.storyboardDirty || draft.project.id.startsWith('in-progress-')
+        || draft.project.latestJobs.mannequin || draft.project.latestJobs.detailPage))
       .map(({ project, product, mannequins }) => {
         const detail = project.latestJobs.detailPage;
         const step = ['pending', 'running'].includes(detail?.status) ? 'generating'

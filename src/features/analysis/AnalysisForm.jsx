@@ -3,6 +3,7 @@ import { isMobileDevice } from '@/lib/deviceClass.js';
 import { mergeDraftCustomVisual } from '@/lib/draftVisuals.js';
 import { useDraftVisuals } from './useDraftVisuals.js';
 import { isAnalysisFastEntryEnabled } from '@/lib/analysisFastEntry.js';
+import { isMannequinStageEnabled } from '@/lib/mannequinStage.js';
 import { getActiveFeatureRun, isFeatureRunPending } from '@/lib/featureRun.js';
 import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
 /* =============================================================
@@ -575,7 +576,11 @@ export function AnalysisForm({
     try {
       await commitMdComment();
       await persistSelectedPageStyle();
-      await onNext({ expectedQuote: { free: mannequinGenerationCost === 0, credits: mannequinGenerationCost } });
+      if (isMannequinStageEnabled()) {
+        await onNext({ expectedQuote: { free: mannequinGenerationCost === 0, credits: mannequinGenerationCost } });
+      } else {
+        await onNext();
+      }
     } catch (error) {
       setPageStyleError(error?.message || '분석 정보를 저장하지 못했어요. 다시 눌러 주세요.');
     } finally {
@@ -1157,7 +1162,7 @@ export function AnalysisForm({
     <div className="af-template-confirm modal-actions">
       <Button variant="primary" size="lg" iconRight="arrowRight"
         className="af-cta-confirm" disabled={!pageStyleReady || confirming}
-        onClick={confirmAnalysis}><OutfitCreditLabel cost={mannequinGenerationCost} label={mannequinGenerationCtaLabel(mannequinGenerationCost)} /></Button>
+        onClick={confirmAnalysis}>{isMannequinStageEnabled() ? <OutfitCreditLabel cost={mannequinGenerationCost} label={mannequinGenerationCtaLabel(mannequinGenerationCost)} /> : '의류정보 확정 완료'}</Button>
     </div>
   );
 

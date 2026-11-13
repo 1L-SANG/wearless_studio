@@ -14,6 +14,7 @@ import { StoryboardFooter } from '@/features/shell/StoryboardFooter.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { api } from '@/lib/api/index.js';
+import { isMannequinStageEnabled } from '@/lib/mannequinStage.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
 import {
   advanceMannequinCompletion,
@@ -233,7 +234,7 @@ export function ChromeLayout({ initialEntry = false }) {
   // 뒤로가기 재진입마다 4.7초 오버레이가 재생된다(리뷰 P2).
   const [transitionKey, setTransitionKey] = useState(null);
   useEffect(() => {
-    if (pathname === '/create/storyboard' && location.state?.showMannequinTransition) {
+    if (isMannequinStageEnabled() && pathname === '/create/storyboard' && location.state?.showMannequinTransition) {
       setTransitionKey(location.key);
       navigate(pathname, { replace: true, state: null });
     }
@@ -280,14 +281,14 @@ export function ChromeLayout({ initialEntry = false }) {
         </div>
       </div>
       <TopNav />
-      <MannequinCompletionToast />
-      {pathname === '/create/storyboard' && transitionKey && (
+      {isMannequinStageEnabled() && <MannequinCompletionToast />}
+      {isMannequinStageEnabled() && pathname === '/create/storyboard' && transitionKey && (
         <StoryboardTransitionOverlay key={transitionKey} />
       )}
       {/* 두 잡 리본이 동시에 뜰 수 있다(마네킹+상세페이지) — 각자 sticky top:60px 이면
           서로 겹치므로 스택 컨테이너가 sticky 를 소유하고 리본은 static 으로 쌓는다(codex F8). */}
       <div className="job-ribbon-stack">
-        <MannequinJobRibbon />
+        {isMannequinStageEnabled() && <MannequinJobRibbon />}
         <DetailPageJobRibbon />
       </div>
       {/* 콘티는 데이터 준비 후 자체 진입 모션을 재생해 스켈레톤과 이중 애니메이션되지 않게 한다. */}

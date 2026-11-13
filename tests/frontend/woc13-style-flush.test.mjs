@@ -13,7 +13,7 @@ for(const retryFails of [false,true])for(const boardFails of [false,true])test(`
  await assert.rejects(q.save({...visible,fontStyle:'serif'}));
  const source=readFileSync('src/features/storyboard/Storyboard.jsx','utf8');
  const start=source.indexOf('  const goToMannequin ='),end=source.indexOf('\n  const runs =',start);
- const scope={blocks:[{source:'mine'}],productSectionNeedingSelection:()=>null,unsupportedAiBlock:null,continueAfterStoryboardFlush,
+ const scope={mannequinStageEnabled:true,blocks:[{source:'mine'}],productSectionNeedingSelection:()=>null,unsupportedAiBlock:null,continueAfterStoryboardFlush,
   styleSaves:q,styleValueRef:{current:visible},projectId:'p',useAppStore:{getState(){}},ensureV4StoryboardCopywriting:async()=>events.push('copy'),
   saveNow:async()=>{events.push('board');if(boardFails)throw Error('board offline');},navigate:path=>events.push(path),
   toast:{push:()=>events.push('failure')},needsGarmentColorMeasurement:()=>false,latestBlocks:{current:[]}};

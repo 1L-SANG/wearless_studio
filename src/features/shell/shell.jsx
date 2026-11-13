@@ -14,7 +14,8 @@ import { hasEditorEntered } from '@/lib/editorEntered.js';
 import { hasStoryboardEntered } from '@/lib/storyboardEntered.js';
 import { IS_FACEMARKET } from '@/lib/host.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
-import { WIZARD_STEPS, STEP_INDEX } from '@/lib/wizardSteps.js';
+import { WIZARD_STEPS, STEP_INDEX, wizardStepsForMannequinStage } from '@/lib/wizardSteps.js';
+import { isMannequinStageEnabled } from '@/lib/mannequinStage.js';
 import { flushProductDraftSave } from '@/lib/draftStore.js';
 import { recordCreditReturn } from '@/lib/creditReturn.js';
 import { draftSlot } from '@/lib/draftSlot.js';
@@ -290,10 +291,11 @@ function ProfileMenu() {
 }
 
 export function Stepper({ current }) {
-  const idx = STEP_INDEX[current] ?? 0;
+  const { steps, index } = wizardStepsForMannequinStage(isMannequinStageEnabled());
+  const idx = index[current] ?? 0;
   return (
     <div className="stepper dots">
-      {WIZARD_STEPS.map((s, i) => (
+      {steps.map((s, i) => (
         <div key={s.key} className={`step${i < idx ? ' done' : ''}${i === idx ? ' active' : ''}`}>
           {i > 0 && <span className="step-line" />}
           <span className="step-dot" title={s.label} />

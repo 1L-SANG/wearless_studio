@@ -1,4 +1,7 @@
-export function storyboardTransitionState(draft) {
+export function storyboardTransitionState(draft, mannequinStageEnabled = true) {
+  if (!mannequinStageEnabled) return {
+    customMatchPromotionStarted: Boolean(draft?.customMatch?.uploads?.length),
+  };
   return {
     showMannequinTransition: true,
     customMatchPromotionStarted: Boolean(draft?.customMatch?.uploads?.length),

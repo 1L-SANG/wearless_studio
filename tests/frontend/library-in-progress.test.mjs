@@ -45,7 +45,7 @@ function libraryHarness({ progress = rows, done = [{ id: 'done', title: '완성 
     setResumePath: (path) => calls.push(['resumePath', path]) };
   const useAppStore = (selector) => selector(state);
   useAppStore.getState = () => state;
-  const bindings = { React, resolveStoryboardResume, STORYBOARD_REVIEW_MESSAGE, publicationStyles: {}, PublicationsPanel: 'aside', useAppStore, useRef: (value) => { const index = refIndex++; refs[index] ||= { current: value }; return refs[index]; }, useState: (value) => {
+  const bindings = { isMannequinStageEnabled: () => true, React, resolveStoryboardResume, STORYBOARD_REVIEW_MESSAGE, publicationStyles: {}, PublicationsPanel: 'aside', useAppStore, useRef: (value) => { const index = refIndex++; refs[index] ||= { current: value }; return refs[index]; }, useState: (value) => {
       const index = stateIndex++;
       if (!(index in states)) states[index] = typeof value === 'function' ? value() : value;
       return [states[index], (next) => { states[index] = typeof next === 'function' ? next(states[index]) : next; }];

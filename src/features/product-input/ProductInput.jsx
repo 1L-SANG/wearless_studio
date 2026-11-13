@@ -1,5 +1,6 @@
 import { baseProductPhoto } from '@/lib/draftVisuals.js';
 import { isAnalysisFastEntryEnabled } from '@/lib/analysisFastEntry.js';
+import { isMannequinStageEnabled } from '@/lib/mannequinStage.js';
 import { createDraftFeatureRun, restoreDraftFeatureRun } from '@/lib/featureRunDraft.js';
 import { getActiveFeatureRun } from '@/lib/featureRun.js';
 import { analysisPhotoKey } from '@/lib/api/publicAnalysisRequest.js';
@@ -556,7 +557,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   const [creditShortfall, setCreditShortfall] = useState(null);
   const [creditQuote, setCreditQuote] = useState(null);
   const [creditResume, setCreditResume] = useState(() => (
-    location.state?.creditResume?.action === 'storyboard' ? location.state.creditResume : null
+    isMannequinStageEnabled() && location.state?.creditResume?.action === 'storyboard' ? location.state.creditResume : null
   ));
   const [slotLock, setSlotLock] = useState(null);
   const [reclaimChoiceOpen, setReclaimChoiceOpen] = useState(false);
@@ -954,9 +955,13 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
             useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });
             setAnalysisProjectId(projectId);
             useAppStore.getState().confirmProductInfo(projectId);
-            navigate('/create/storyboard', {
-              state: storyboardTransitionState(draft),
-            });
+            if (isMannequinStageEnabled()) {
+              navigate('/create/storyboard', {
+                state: storyboardTransitionState(draft),
+              });
+            } else {
+              navigate('/create/storyboard', { state: storyboardTransitionState(draft, false) });
+            }
             // 로컬 draft 는 **업로드가 끝난 뒤에** 지운다, 업로드 중 탭이 닫히면 그 draft 가 유일한
             // 사진 원본이라, 먼저 지우면 재시도할 재료가 없어진다.
             void promotion.promise
@@ -1068,12 +1073,12 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
 
   // 'cuts' = 컷이 이미 있음(다시 만들어야 함) · 'running' = 컷은 없지만 이 프로젝트의 생성이
   // 지금 돌고 있음(끝나면 방금 바꾼 값이 아니라 옛 선택으로 완성됨) · 'none' = 잃을 게 없음.
-  const generationWorkKind = generationWorkWarningKind({
+  const generationWorkKind = isMannequinStageEnabled() ? generationWorkWarningKind({
     cutsExist: hasExistingGenerationWorkRef.current,
     jobStatus: mannequinJobStatus,
     jobProjectId: mannequinJobProjectId,
     projectId: analysisProjectId,
-  });
+  }) : 'none';
   useEffect(() => {
     if (mobile) return;
     if (!analysisProjectId || phase !== 'done') return undefined;

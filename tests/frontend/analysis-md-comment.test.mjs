@@ -50,6 +50,7 @@ async function form(initial = '', onChange = () => {}, onNext = async () => {}) 
   const style = defaultPageStyle();
   const hooks = []; let cursor = 0, effects = [], analysis = { mdComment: initial, pageStyle: style }, tree;
   const bindings = {
+    isMannequinStageEnabled: () => true,
     React: { Fragment: 'fragment', createElement: (type, props, ...children) => ({ type, props: { ...props, children } }) },
     useState(initial) { const index = cursor++; if (!(index in hooks)) hooks[index] = typeof initial === 'function' ? initial() : initial;
       return [hooks[index], (next) => { hooks[index] = typeof next === 'function' ? next(hooks[index]) : next; }]; },

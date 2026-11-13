@@ -92,6 +92,7 @@ test('mock credit quote matches the server read contract', async (t) => {
       nextCost: 0,
     },
     storyboardPerCut: 19,
+    detailPageGenerate: { extensionModelFee: 19, selectedModelId: 'mF' },
     editorImage: 19,
     editorEdit: 5,
     editorSimilar: 8,
