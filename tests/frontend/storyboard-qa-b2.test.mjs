@@ -154,7 +154,8 @@ test('an unchanged reopening avoids a PUT and an undo still waits behind an in-f
 test('generation confirms even an unchanged board and receives the saved server blocks', async () => {
   const submitted = [{ id: 'one' }, { id: 'two', pose: 'auto' }];
   const confirmed = [{ id: 'one' }, { id: 'two' }];
-  for (const response of [{ blocks: confirmed, revision: 2 }, confirmed]) {
+  for (const response of [{ blocks: confirmed, revision: 2, detailPageRequiredCredits: 95 },
+    { blocks: confirmed, detailPageRequiredCredits: 95 }]) {
     const calls = [];
     const persistence = createStoryboardPersistence({
       invalidate() {}, onlineTarget: null,
@@ -164,8 +165,8 @@ test('generation confirms even an unchanged board and receives the saved server 
     const save = options => persistence.saveNow('p', () => submitted, { skipUnchanged: true, ...options });
     await save();
     assert.deepEqual(calls, []);
-    assert.equal(await save({ confirmSaved: true }), confirmed);
-    assert.deepEqual(calls, [[submitted, { autoAssignment: true }]]);
+    assert.equal(await save({ includeDetailPageQuote: true }), response);
+    assert.deepEqual(calls, [[submitted, { autoAssignment: true, includeDetailPageQuote: true }]]);
     persistence.dispose();
   }
 });
@@ -179,7 +180,7 @@ test('generation confirmation preserves the newer server board when a different 
     invalidate() {}, onlineTarget: null, saveStoryboard: async () => { throw conflict; },
   });
   persistence.lastSaved.set('p', local);
-  await assert.rejects(persistence.saveNow('p', () => local, { skipUnchanged: true, confirmSaved: true }), conflict);
+  await assert.rejects(persistence.saveNow('p', () => local, { skipUnchanged: true, includeDetailPageQuote: true }), conflict);
   assert.equal(persistence.lastSaved.get('p'), server);
   persistence.dispose();
 });
@@ -350,20 +351,27 @@ test('HTTP saveStoryboard forwards keepalive to the actual fetch request and moc
   supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test-token' } } });
   globalThis.fetch = async (url, options) => {
     request = { url, options };
-    return { ok: true, status: 200, json: async () => ({ blocks: [], revision: options?.method === 'PUT' ? 1 : 0 }) };
+    const quote = new URL(url, 'http://test.local').searchParams.has('includeDetailPageQuote');
+    return { ok: true, status: 200, json: async () => ({ blocks: [], revision: options?.method === 'PUT' ? 1 : 0,
+      ...(quote ? { detailPageRequiredCredits: 95 } : {}) }) };
   };
   try {
-    await httpAdapter.saveStoryboard('keepalive-project', [{ id: 'latest' }], { keepalive: true });
+    const background = await httpAdapter.saveStoryboard('keepalive-project', [{ id: 'latest' }], { keepalive: true });
+    assert.equal('detailPageRequiredCredits' in background, false);
+    assert.equal(request.options.keepalive, true);
+    const saved = await httpAdapter.saveStoryboard('keepalive-project', [{ id: 'latest' }], { includeDetailPageQuote: true });
+    assert.equal(saved.detailPageRequiredCredits, 95);
+    assert.deepEqual([...new URL(request.url, 'http://test.local').searchParams],
+      [['baseRevision', '1'], ['includeDetailPageQuote', '1']]);
   } finally {
     supabase.auth.getSession = originalGetSession;
     globalThis.fetch = originalFetch;
   }
 
   assert.equal(new URL(request.url, 'http://test.local').pathname, '/v1/projects/keepalive-project/storyboard');
-  assert.equal(request.options.keepalive, true);
   assert.deepEqual(JSON.parse(request.options.body), [{ id: 'latest' }]);
   const mockSource = readFileSync(new URL('../../src/mock/api.js', import.meta.url), 'utf8');
-  assert.match(mockSource, /saveStoryboard\(_projectId, blocks, \{ autoAssignment = false, keepalive: _keepalive = false \} = \{\}\)/);
+  assert.match(mockSource, /saveStoryboard\(_projectId, blocks, \{ autoAssignment = false, keepalive: _keepalive = false, includeDetailPageQuote = false \} = \{\}\)/);
 });
 
 test('next-step flush failure blocks navigation and reports a toast message', async () => {

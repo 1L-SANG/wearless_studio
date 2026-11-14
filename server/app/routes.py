@@ -45,7 +45,7 @@ from .services import (canonical_reference, editor_garment_mask, garment_color_m
                        mannequin_tone_render, matching, matching_cutout, product_photos,
                        retrieval, sam_retry, outfit, outfit_jobs)
 from .auth import require_user
-from .config import load_settings
+from .config import Settings, load_settings
 from .db import get_conn
 from .models import (
     Account,
@@ -3566,12 +3566,31 @@ async def get_storyboard(request: Request, project_id: str, user_id: str = Depen
         return {"blocks": blocks, "revision": revision}
 
 
+def _detail_page_cut_cost(ai_blocks: list[dict], clothing_type: str, analysis: dict,
+                          settings: Settings) -> tuple[int, int]:
+    from .workers.detail_page_job import _duplicate_source_indexes
+
+    sources = _duplicate_source_indexes(ai_blocks, clothing_type, analysis=analysis)
+    ai_count = sum(source is None for source in sources)
+    billable = max(ai_count, settings.credit_min_storyboard_cuts) if ai_count else 0
+    return ai_count, billable * settings.credit_cost_storyboard_per_cut
+
+
+async def _detail_page_model_pricing(conn, user_id, project_id, selected_model_id):
+    pricing = await repo.get_detail_page_pricing_state(conn, user_id, project_id)
+    fee = plan_pricing.detail_page_model_fee(
+        pricing["plan"], selected_model_id, mannequin_stage_used=pricing["mannequin_stage_used"],
+        already_charged=pricing["already_charged"])
+    return fee, pricing["plan"]
+
+
 @router.put("/projects/{project_id}/storyboard",
             responses={**COMMON_RESPONSES, 409: {"model": ErrorResponse, "description": "다른 곳에서 먼저 저장됨"}},
             tags=["Detail Page"], summary="콘티 저장")
 async def save_storyboard(request: Request, project_id: str, blocks: list = Body(...),
                           user_id: str = Depends(require_user),
-                          base_revision: int | None = Query(None, alias="baseRevision", ge=0)):
+                          base_revision: int | None = Query(None, alias="baseRevision", ge=0),
+                          include_detail_page_quote: bool = Query(False, alias="includeDetailPageQuote")):
     try:
         canonical = content_roles.canonicalize_storyboard(blocks, for_storage=True)
     except ValueError as exc:
@@ -3589,12 +3608,13 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         await repo.lock_page_style_project(conn, project_id)
-        analysis_style = (await repo.get_analysis(conn, project_id) or {}).get("pageStyle") or {}
+        analysis = await repo.get_analysis(conn, project_id) or {}
+        analysis_style = analysis.get("pageStyle") or {}
         if canonical:
             expected_template = analysis_style.get("templateId") or await repo.get_detail_page_locked_template(conn, project_id)
             if expected_template not in (None, canonical[0]["pageSectionKey"].split(".")[0]):
                 raise _bad_request("page_style_mismatch", "고른 템플릿으로 콘티를 다시 열어 주세요.")
-        if any(
+        needs_example_validation = any(
             isinstance(block, dict)
             and (
                 block.get("exampleId")
@@ -3602,14 +3622,12 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
                 or block.get("space_group_id")
             )
             for block in validation_blocks
-        ):
+        )
+        wants_quote = include_detail_page_quote and base_revision is not None
+        if needs_example_validation or wants_quote:
             product = await repo.get_product(conn, project_id) or {}
-            analysis = await repo.get_analysis(conn, project_id) or {}
-            clothing_type = (
-                product.get("clothingType")
-                or product.get("clothing_type")
-                or "top"
-            )
+        if needs_example_validation:
+            clothing_type = product.get("clothingType") or product.get("clothing_type") or "top"
             gender = mannequin.select_base_gender(analysis, clothing_type)
             error = space_set_assets.validate_storyboard_space_sets(
                 validation_blocks, clothing_type=clothing_type, gender=gender
@@ -3673,8 +3691,19 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
                 "message": "다른 창에서 더 최근에 저장된 내용이 있어요. 최신 내용을 다시 불러와 주세요.",
                 "meta": {"storyboard": latest, "revision": current},
             })
+        response = {"blocks": canonical, "revision": revision}
+        if wants_quote:
+            generation_storyboard = content_roles.canonicalize_storyboard(canonical)
+            ai_blocks = [block for block in generation_storyboard if block.get("source") == "ai"]
+            clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+            _, cost = _detail_page_cut_cost(ai_blocks, clothing_type, analysis, request.app.state.settings)
+            if cost > 0:
+                selected_model_id = analysis.get("selectedModelId") or analysis.get("selected_model_id")
+                fee, _ = await _detail_page_model_pricing(conn, user_id, project_id, selected_model_id)
+                cost += fee
+            response["detailPageRequiredCredits"] = cost
         await conn.commit()
-    return canonical if base_revision is None else {"blocks": canonical, "revision": revision}
+    return canonical if base_revision is None else response
 
 
 @router.get("/projects/{project_id}/editor-blocks", responses={**COMMON_RESPONSES},
@@ -4433,7 +4462,7 @@ async def generate_detail_page(
         # 크레딧 견적은 실제 생성 수 기준 — 생성 계약이 완전히 같은 복제 컷은 1장만
         # 생성해 복사하므로(ADR-0011, _duplicate_source_indexes) 예약에서도 접는다.
         # 그대로 두면 복제가 많은 보드가 사전검사(402)에서 과도하게 거절된다(Codex 2차 #3).
-        from .workers.detail_page_job import _duplicate_source_indexes, _storyboard_digest
+        from .workers.detail_page_job import _storyboard_digest
         product_row = await repo.get_product(conn, project_id)
         clothing_type = ((product_row or {}).get("clothing_type")
                          or (product_row or {}).get("clothingType") or "top")
@@ -4459,22 +4488,14 @@ async def generate_detail_page(
             code, message = (identity_scope.block_rejection(rejected, selected_model_id)
                              or (identity_scope.MISMATCH_CODE, identity_scope.MISMATCH_MESSAGE))
             raise _bad_request(code, message)
-        dup_sources = _duplicate_source_indexes(ai_blocks, clothing_type, analysis=analysis)
-        ai_count = sum(1 for source in dup_sources if source is None)
+        ai_count, cost = _detail_page_cut_cost(ai_blocks, clothing_type, analysis, s)
         min_cuts = s.credit_min_storyboard_cuts
-        billable = max(ai_count, min_cuts) if ai_count > 0 else 0
-        cost = billable * s.credit_cost_storyboard_per_cut
         job = await repo.find_detail_page_request_job(conn, user_id, project_id, scoped_key)
         created = False
         if job is None:
             fee = 0
-            pricing = None
             if cost > 0:
-                pricing = await repo.get_detail_page_pricing_state(conn, user_id, project_id)
-                fee = plan_pricing.detail_page_model_fee(
-                    pricing["plan"], selected_model_id,
-                    mannequin_stage_used=pricing["mannequin_stage_used"],
-                    already_charged=pricing["already_charged"])
+                fee, plan = await _detail_page_model_pricing(conn, user_id, project_id, selected_model_id)
             cost += fee
             # perCutCost = 예약 시점 컷당 단가 스냅샷 — 워커 정산의 단일 기준(실행 시점 설정
             # 변경·콘티 재저장으로 인한 블록 수 변동과 무관하게 견적 가격을 고정).
@@ -4484,7 +4505,7 @@ async def generate_detail_page(
             if template_id and not saved_template:
                 metadata["lockedTemplateId"] = template_id
             if fee > 0:
-                metadata.update(extensionModelFee=fee, plan=plan_pricing.plan_of(pricing["plan"]),
+                metadata.update(extensionModelFee=fee, plan=plan_pricing.plan_of(plan),
                                 selectedModelId=selected_model_id)
             job, created = await repo.create_job(
                 conn, user_id=user_id, project_id=project_id, kind="detail_page",

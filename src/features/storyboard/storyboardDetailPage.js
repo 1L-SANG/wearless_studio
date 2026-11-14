@@ -1,5 +1,5 @@
 import { detailPageCreditCost, extensionModelFee } from '../../lib/limits.js';
-import { detailPageGenerationCreditShortfall } from '../../lib/creditPreflight.js';
+import { creditShortfall } from '../../lib/creditPreflight.js';
 import { continueAfterStoryboardFlush } from './storyboardNavigation.js';
 
 export function storyboardContinueLabel(mannequinStageEnabled = true) {
@@ -40,22 +40,23 @@ export function storyboardCreditResume(state, mannequinStageEnabled = true) {
 
 // 저장된 콘티로 잔액을 사전 확인한다. 최종 과금 판정은 생성 요청의 서버 402가 맡는다.
 export async function continueStoryboardToDetailPage({ submission, flush, onFailure,
-  account, countGenerationCuts, quote, plan, selectedModelId, onShortfall, navigate, isCurrent = () => true }) {
+  account, onShortfall, navigate, isCurrent = () => true }) {
   if (submission.current || !isCurrent()) return false;
   submission.current = true;
   let moved = false;
   try {
-    await continueAfterStoryboardFlush({ flush,
+    await continueAfterStoryboardFlush({
+      flush,
       onFailure: (...args) => { if (isCurrent()) onFailure(...args); },
       navigate: saved => {
-      if (!isCurrent()) return;
-      const currentAccount = typeof account === 'function' ? account() : account;
-      const shortfall = detailPageGenerationCreditShortfall(currentAccount, countGenerationCuts(saved),
-        modelFee({ quote, plan: currentAccount?.plan ?? plan, selectedModelId }), { compactMessage: true });
-      if (shortfall) { onShortfall(shortfall); return; }
-      navigate('/create/generating');
-      moved = true;
-    } });
+        if (!isCurrent()) return;
+        const currentAccount = typeof account === 'function' ? account() : account;
+        const shortfall = creditShortfall(currentAccount, saved?.detailPageRequiredCredits, true);
+        if (shortfall) { onShortfall(shortfall); return; }
+        navigate('/create/generating');
+        moved = true;
+      },
+    });
     return moved;
   } finally {
     // 성공 뒤에는 언마운트까지 잠근다. 저장 실패와 부족 안내는 다시 시도할 수 있다.

@@ -212,7 +212,7 @@ test('콘티보드가 범위를 실제로 쓴다(배선 고정)', () => {
   // 막힌 이유가 둘로 갈린다 — 카드 문구도 그걸 따라간다(스튜디오 전용 vs 가상 전용 예시).
   assert.match(board, /rejectionOfBlock\(block, identityKind\)/);
   // 견적도 서버 예약과 같은 수를 본다.
-  assert.match(board, /uniqueGenerationCutCount\(blocksForModel\(snapshot, identityKind\),\s*\{\s*clothingType, frontClosure: catalogs\?\.frontClosure/);
+  assert.match(board, /uniqueGenerationCutCount\(blocksForModel\(blocks, identityKind\),\s*\{\s*clothingType, frontClosure: catalogs\?\.frontClosure/);
 
   const placement = readFileSync(new URL('../../src/lib/storyboardEntryPlacement.js', import.meta.url), 'utf8');
   assert.match(placement, /filterSpaceSetsForModel\(/);

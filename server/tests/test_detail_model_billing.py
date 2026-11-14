@@ -104,6 +104,37 @@ def test_detail_quote_uses_shared_policy(client, make_token, monkeypatch, manneq
     assert body["plan"] == "free" and body["storyboardPerCut"] == 19
 
 
+@pytest.mark.parametrize("plan,model,required", [("free", "mA", 95), ("seller", "mF", 105)])
+def test_storyboard_save_quote_matches_detail_generation_for_saved_duplicates(
+    client, make_token, monkeypatch, plan, model, required,
+):
+    _, _, events = _wire(monkeypatch, plan=plan, model=model, balance=required)
+    outfit = {"source": "ai", "cutType": "styling", "direction": "front", "shot": "full"}
+    board = v4_blocks([
+        {**outfit, "id": "opening", "sectionId": "first", "contentRole": "hero", "slotKey": "first.hero"},
+        {"id": "review-text", "source": "text", "taxonomyVersion": 4, "sectionId": "review",
+         "pageSectionKey": "emo.review", "pageSectionKind": "review", "pageDesignId": "I09-D06",
+         "slotKey": None},
+        {**outfit, "id": "review", "taxonomyVersion": 4, "sectionId": "review",
+         "pageSectionKey": "emo.review", "pageSectionKind": "review", "pageDesignId": "I09-D06",
+         "slotKey": "review.background"},
+        *[{**outfit, "id": f"wear-{i}", "sectionId": "wear", "colorId": f"color-{i}"} for i in range(4)],
+    ])
+    headers = auth_headers(make_token)
+    monkeypatch.setattr(repo, "save_storyboard", AsyncMock(return_value=2))
+    saved = client.put("/v1/projects/p1/storyboard?baseRevision=1&includeDetailPageQuote=1", json=board, headers=headers)
+    assert saved.status_code == 200, saved.text
+    canonical = repo.save_storyboard.call_args.args[3]
+    assert [item["contentRole"] for item in canonical if item["source"] == "ai"][:2] == ["hero", "coordination"]
+    assert saved.json() == {"blocks": canonical, "revision": 2, "detailPageRequiredCredits": required}
+    assert "reserve" not in events and "create" not in events
+    repo.get_storyboard.return_value = canonical
+    generated = client.post("/v1/projects/p1/detail-page:generate", headers=headers)
+    assert generated.status_code == 202, generated.text
+    assert repo.create_job.call_args.kwargs["metadata"]["aiCount"] == 5
+    assert repo.reserve_credits.call_args.args[-1] == required
+
+
 @pytest.mark.parametrize("cached", [False, True])
 def test_join_and_cache_skip_front_check_and_model_pricing(client, make_token, monkeypatch, cached):
     _wire(monkeypatch, front=False, balance=0, cached=cached,

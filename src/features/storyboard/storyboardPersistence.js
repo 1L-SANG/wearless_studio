@@ -78,7 +78,7 @@ export function createStoryboardPersistence({
     // 예약된 저장이 착지하기 전의 서버본을 프리패치가 노출하지 않도록 즉시 무효화한다.
     if (projectId) invalidate(projectId);
     const epoch = conflictEpochs.get(projectId);
-    const { skipUnchanged, confirmSaved, ...requestOptions } = options;
+    const { skipUnchanged, ...requestOptions } = options;
     const run = saveChain.catch(() => {}).then(() => {
       if (epoch !== conflictEpochs.get(projectId)) throw lastConflicts.get(projectId);
       const snapshot = getSnapshot();
@@ -88,7 +88,7 @@ export function createStoryboardPersistence({
       const unchanged = (candidate) => candidate === snapshot
         || (skipUnchanged && candidate != null && sbStable(candidate) === sbStable(snapshot));
       const alreadySaved = unchanged(baseline);
-      if (alreadySaved && !confirmSaved) {
+      if (alreadySaved && !requestOptions.includeDetailPageQuote) {
         if (unchanged(pending.get(projectId))) pending.delete(projectId);
         if (unchanged(retries.get(projectId)?.snapshot)) clearRetry(projectId);
         return;
@@ -100,7 +100,7 @@ export function createStoryboardPersistence({
           lastSaved.set(projectId, snapshot);
           pending.delete(projectId);
           clearRetry(projectId);
-          return Array.isArray(response) ? response : response?.blocks;
+          return response;
         },
         (error) => {
           if (error?.status === 409 && error.code === 'revision_conflict') {

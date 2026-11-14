@@ -1485,7 +1485,7 @@ export const api = {
   },
   storyboardEntryNotice,
   async getLastPageStyle() { return clone(lastPageStyle || defaultPageStyle()); },
-  async saveStoryboard(_projectId, blocks, { autoAssignment = false, keepalive: _keepalive = false } = {}) {
+  async saveStoryboard(_projectId, blocks, { autoAssignment = false, keepalive: _keepalive = false, includeDetailPageQuote = false } = {}) {
     await wait(150);
     validateStoryboardV4(blocks);
     const template = DB.analysis.pageStyle?.templateId;
@@ -1497,7 +1497,8 @@ export const api = {
     // 자동 예시 배정은 기본 콘티의 일부다. 이미 생긴 사용자 dirty는 유지한다.
     if (shouldMarkStoryboardDirty({ autoAssignment })) DB.storyboardDirty = true;
     touch();
-    return clone(DB.storyboard);
+    const saved = clone(DB.storyboard);
+    return includeDetailPageQuote ? { blocks: saved, detailPageRequiredCredits: detailPageCharge().creditCost } : saved;
   },
 
   /* ---- generation waiting (PRD §9) ----

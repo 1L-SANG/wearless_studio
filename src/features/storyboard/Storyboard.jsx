@@ -405,10 +405,11 @@ export function Storyboard({ toastOverride = null } = {}) {
   const defaultToast = useToast();
   const toast = toastOverride || defaultToast;
   const pushToast = toast.push;
-  const countGenerationCuts = snapshot => uniqueGenerationCutCount(blocksForModel(snapshot, identityKind), {
-    clothingType, frontClosure: catalogs?.frontClosure,
-  });
-  const generationCutCount = blocks == null ? null : countGenerationCuts(blocks);
+  const generationCutCount = blocks == null
+    ? null
+    : uniqueGenerationCutCount(blocksForModel(blocks, identityKind), {
+      clothingType, frontClosure: catalogs?.frontClosure,
+    });
   const unsupportedAiBlock = firstUnsupportedAiBlock(blocks, identityKind);
   const previousGenerationCutCount = useRef(null);
   useEffect(() => {
@@ -816,7 +817,8 @@ export function Storyboard({ toastOverride = null } = {}) {
     return sbSaveNow(pid, () => latestBlocks.current, saveOptions);
   };
   const saveNow = async (pid) => {
-    const saved = await flushLatest(pid, { confirmRebuilt: true, confirmSaved: !mannequinStageEnabled });
+    const saved = await flushLatest(pid, mannequinStageEnabled
+      ? { confirmRebuilt: true } : { confirmRebuilt: true, includeDetailPageQuote: true });
     if (api.storyboardEntryNotice?.(pid) === 'rebuilt') {
       setStoryboardEntryNotice(pid, null);
       setEntryNotice(null);
@@ -1348,14 +1350,11 @@ export function Storyboard({ toastOverride = null } = {}) {
             if (!isCurrent()) return;
             await ensureV4StoryboardCopywriting(projectId, useAppStore.getState);
             if (!isCurrent()) return;
-            const saved = await saveNow(projectId);
-            if (isCurrent() && !Array.isArray(saved)) throw new Error('저장된 콘티를 확인하지 못했어요.');
-            return saved;
+            return saveNow(projectId);
           },
           onFailure: (message, error) => toast.push(message, { variant: 'error', error,
             kind: 'save_error', actionName: 'save', messageCode: 'storyboard_save_failed', blocking: true }),
           account: () => useAppStore.getState().account,
-          countGenerationCuts, quote: detailPageQuote, selectedModelId: catalogs.analysis?.selectedModelId,
           onShortfall: setCreditShortfall, navigate,
         });
       } finally {

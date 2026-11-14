@@ -75,9 +75,8 @@ test('콘티 재개는 끔의 detail-page만 받는다', () => {
 function continuation(options = {}) {
   const events = [], submission = { current: false };
   const run = overrides => continueStoryboardToDetailPage({ submission,
-    flush: async () => { events.push('save'); return 5; },
-    account: { credits: 114 }, countGenerationCuts: saved => saved, plan: 'free', selectedModelId: 'mF',
-    onFailure: message => events.push(['failure', message]),
+    flush: async () => { events.push('save'); return { detailPageRequiredCredits: 114 }; },
+    account: { credits: 114 }, onFailure: message => events.push(['failure', message]),
     onShortfall: shortfall => events.push(['shortfall', shortfall.requiredCredits]),
     navigate: path => events.push(path), ...options, ...overrides });
   return { run, events, submission };
@@ -104,14 +103,14 @@ test('충분하면 저장 뒤 생성으로 한 번 이동하며 연타를 막는
   const { run, events } = continuation({ flush: () => new Promise(resolve => { release = resolve; events.push('save'); }) });
   const first = run();
   assert.equal(await run(), false);
-  release(5);
+  release({ detailPageRequiredCredits: 114 });
   assert.equal(await first, true);
   assert.equal(await run(), false);
   assert.deepEqual(events, ['save', '/create/generating']);
 });
 
 test('계정이나 예상금액을 모르면 서버에서 판정한다', async () => {
-  for (const options of [{ account: null }, { account: { credits: NaN } }, { countGenerationCuts: () => null }]) {
+  for (const options of [{ account: null }, { account: { credits: NaN } }, { flush: async () => ({ blocks: [] }) }]) {
     const { run, events } = continuation(options);
     assert.equal(await run(), true);
     assert.equal(events.at(-1), '/create/generating');

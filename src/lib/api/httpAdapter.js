@@ -94,9 +94,12 @@ const editorRevisions = createEditorRevisionSync({
 
 const storyboardRevisions = createStoryboardRevisionSync({
   load: (id) => http(`/v1/projects/${id}/storyboard?withRevision=1`),
-  put: (id, body, revision, options) => http(`/v1/projects/${id}/storyboard?baseRevision=${revision}`, {
-    ...options, method: 'PUT', body: relativizeAssetUrls(body),
-  }),
+  put: (id, body, revision, { includeDetailPageQuote, ...options } = {}) => {
+    const quoteParam = includeDetailPageQuote ? '&includeDetailPageQuote=1' : '';
+    return http(`/v1/projects/${id}/storyboard?baseRevision=${revision}${quoteParam}`, {
+      ...options, method: 'PUT', body: relativizeAssetUrls(body),
+    });
+  },
 });
 
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).

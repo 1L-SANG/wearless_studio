@@ -7,7 +7,7 @@ import { applyPromotedMatchSelection } from '../../src/lib/customMatchPromotion.
 import { continueStoryboardToDetailPage, loadStoryboardCreditQuote } from '../../src/features/storyboard/storyboardDetailPage.js';
 
 const offCreationReady = { doneBlocked: false, hasEditorEntered: () => false, atomicSavingRef: { current: false },
-  pendingPhotoUpload: { current: null }, setDetailPageSubmitting() {}, countGenerationCuts: () => assert.fail('no saved board to count'),
+  pendingPhotoUpload: { current: null }, setDetailPageSubmitting() {},
   creditQuotePending: false, customMatchPromotionPending: false, customMatchPreparationFailed: false,
   setCustomMatchConfirmationOpen() {} };
 
@@ -127,9 +127,9 @@ test('마네킹을 건너뛰면 저장되어 돌아온 컷 수로 잔액을 보�
   const source = read('src/features/storyboard/Storyboard.jsx');
   const start = source.indexOf('  const goToMannequin =');
   const code = source.slice(start, source.indexOf('\n  const runs =', start));
-  for (const [savedCount, credits, failure, outcome] of [
-    [6, 95, false, ['shortfall', 114]], [5, 95, false, '/create/generating'],
-    [6, 114, false, '/create/generating'], [5, 114, true, 'failure'],
+  for (const [savedCount, required, credits, failure, outcome] of [
+    [6, 114, 95, false, ['shortfall', 114]], [6, 95, 95, false, '/create/generating'],
+    [6, 114, 114, false, '/create/generating'], [5, 95, 114, true, 'failure'],
   ]) {
     const cuts = n => Array.from({ length: n }, (_, id) => ({ id, source: 'ai', contentRole: 'benefit', cutType: 'styling' }));
     const saved = cuts(savedCount);
@@ -141,9 +141,9 @@ test('마네킹을 건너뛰면 저장되어 돌아온 컷 수로 잔액을 보�
       styleSaves: { flush: async () => calls.push('style') }, styleValueRef: { current: {} },
       ensureV4StoryboardCopywriting: async () => calls.push('copy'), projectId: 'p',
       useAppStore: { getState: () => ({ projectId: 'p', account: { credits } }) },
-      saveNow: async () => { calls.push('board'); if (failure) throw Error('offline'); return saved; },
+      saveNow: async () => { calls.push('board'); if (failure) throw Error('offline');
+        return { blocks: saved, detailPageRequiredCredits: required }; },
       latestBlocks: { current: cuts(7) },
-      countGenerationCuts: snapshot => { assert.equal(snapshot, saved); return snapshot.length; },
       needsGarmentColorMeasurement: () => true, api: { measureGarmentColors: async () => calls.push('measure') },
       navigate: path => calls.push(path), toast: { push: () => calls.push('failure') },
       setCreditShortfall: shortfall => calls.push(['shortfall', shortfall.requiredCredits]), generationCutCount: 5,

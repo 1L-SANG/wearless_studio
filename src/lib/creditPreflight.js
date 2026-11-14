@@ -5,7 +5,7 @@ import { isMannequinStageEnabled } from './mannequinStage.js';
 
 const SHORTFALL_TITLE = '크레딧이 부족해요';
 
-function creditShortfall(account, requiredCredits, compactMessage = false) {
+export function creditShortfall(account, requiredCredits, compactMessage = false) {
   if (account == null || requiredCredits == null) return null;
   const availableCredits = account.credits;
   if (!Number.isFinite(availableCredits) || !Number.isFinite(requiredCredits)) return null;
