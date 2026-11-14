@@ -139,9 +139,14 @@ def _analysis_fit(analysis: dict | None) -> str | None:
     profile = analysis.get("fitProfile")
     if isinstance(profile, dict):
         axes = profile.get("axes")
+        axes = axes if isinstance(axes, dict) else {}
+        fit = axes.get("fit")
+        if "fit" not in axes and profile.get("source") == "auto":
+            # Selecting a complementary garment can create an auto profile with no main axes.
+            fit = analysis.get("fit")
         block = build_fit_profile_block({
             **profile,
-            "axes": {"fit": axes.get("fit")} if isinstance(axes, dict) else {},
+            "axes": {"fit": fit},
             "version": 2,
             "matchingFit": None,
         })
@@ -351,6 +356,8 @@ def build_packet(
         ),
         pose_semantics=directing.pose_semantics,
         sold_product_fit=_analysis_fit(analysis) if mannequin is None else None,
+        source_mirrored=(mannequin is None and isinstance(analysis, dict)
+                         and analysis.get("sourceMirrored") is True),
     )
     grid = InlineImage("image/png", grid_bytes)
     images = (*((mannequin,) if mannequin is not None else ()), face_sheet, body_sheet, grid,

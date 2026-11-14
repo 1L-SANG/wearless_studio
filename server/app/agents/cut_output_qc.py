@@ -858,6 +858,8 @@ def _confirmed_authority_contract(
         if fit:
             owners["declaredFit"] = "fitProfile"
         aligned["confirmedGptProductAuthority"] = dict(_CONFIRMED_PRODUCT_AUTHORITY_MARKER)
+        if getattr(prompt_input, "source_mirrored", False) is True:
+            aligned["sourceMirrored"] = True
     else:
         for attribute in ("color", "length", "silhouette", "declaredFit"):
             if attribute in owners:
@@ -1273,6 +1275,8 @@ async def verdict(
     }
     if authority_context is not None and _has_confirmed_product_authority(contract):
         authority_context["confirmedGptProductAuthority"] = contract["confirmedGptProductAuthority"]
+        if contract.get("sourceMirrored") is True:
+            authority_context["sourceMirrored"] = True
     if authority_context is not None and contract.get("productPresentation") is not None:
         authority_context.update(
             recipeFamily=contract["recipeFamily"], productVariant=contract["productVariant"],
