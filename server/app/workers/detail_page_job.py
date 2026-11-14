@@ -646,7 +646,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                  "cut_type": b.get("cutType"),
                  **({"colorExecution": color_execution} if color_execution else {}),
                  "generation": {"version": 1, "origin": "page", "recipeFrom": "self",
-                                "sourceAssetId": None, "recipe": asset_recipe.project_recipe(b)},
+                                "sourceAssetId": None, "recipe": asset_recipe.project_recipe(b),
+                                **({"confirmedGptVariant": b["_confirmedGptVariant"]}
+                                   if b.get("_confirmedGptVariant") else {})},
                  **({"fallback": list(b["_fallback"])} if b.get("_fallback") else {}),
                  **({"similar_cut": similar_metadata} if similar_metadata else {}),
                  **_background_result_metadata(b),
@@ -2636,6 +2638,10 @@ async def run_detail_page_job(app, job: dict) -> None:
             confirmed_packet = None
             if confirmed_requested:
                 try:
+                    if selected_mannequin_id and cut_mannequin_image is None:
+                        raise confirmed_gpt_runtime.ConfirmedGptRuntimeError(
+                            "confirmed_gpt_mannequin_image_required"
+                        )
                     confirmed_packet = confirmed_gpt_runtime.build_packet(
                         cut_generator.apply_reference_compatibility(
                             garment_color.render_spec(normalized, color_plan) if color_plan else normalized),
@@ -2657,6 +2663,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                         evidence_contract=analysis.get(
                             "confirmedGptProductEvidence"
                         ),
+                        analysis=analysis,
                     )
                 except Exception as e:
                     log.warning(
@@ -2670,6 +2677,10 @@ async def run_detail_page_job(app, job: dict) -> None:
                     continue
                 imgs = list(confirmed_packet.images)
                 manifest = confirmed_packet.manifest
+                cut_spec["_confirmedGptVariant"] = (
+                    "selected_mannequin_v1" if cut_mannequin_image is not None
+                    else "product_evidence_v2"
+                )
             else:
                 manifest = cut_generator.build_manifest(
                     prods, has_mannequin=cut_mannequin_asset is not None,

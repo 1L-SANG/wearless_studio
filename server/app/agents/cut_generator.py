@@ -942,13 +942,22 @@ def render_cut_prompt(
     outerwear_inner_line = ""
     actual_outfit_roles = tuple(role for role in ("inner", "footwear", "bag", "accessory")
                                 if f"OUTFIT {role.upper()}" in image_manifest) if cut in _WORN_CUTS else ()
+    has_mannequin = _MANNEQUIN_LABEL in image_manifest
     if _is_outer(clothing_type) and cut in _WORN_CUTS and "inner" not in actual_outfit_roles:
-        outerwear_inner_line = need("OUTER_INNER")
+        if has_mannequin:
+            outerwear_inner_line = need("OUTER_INNER")
+        else:
+            with open(os.path.join(_SERVER_DIR, "prompts", "cut_generate_no_mannequin_outer_v1.txt"),
+                      encoding="utf-8") as f:
+                outerwear_inner_line = f.read().strip()
     outer_closure_line = ""
     if _is_outer(clothing_type) and cut in _WORN_CUTS:
         closure = spec.get("outerClosureState")
         closure = closure if closure in _OUTER_CLOSURE_STATES else DEFAULT
         outer_closure_line = "\n".join((need("OUTER_CLOSURE:guard"), need(f"OUTER_CLOSURE:{closure}")))
+        if not has_mannequin:
+            outer_closure_line = outer_closure_line.replace(
+                "inner T-shirt from the MANNEQUIN image", "inner garment")
     detail_color_transfer_line = ""
     transfer = spec.get("_detailColorTransfer")
     # 구조 확대 모드에선 억제 — 빌린 타색 디테일 자산이 로드되지 못해 zoom 으로 떨어졌는데
