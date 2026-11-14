@@ -87,7 +87,11 @@ def patch_route_db(monkeypatch, routes_module):
     # These tests have no analysis rows unless they explicitly configure one.
     # Keep repository fakes limited to reads, without turning worker no-DB fakes into SQL connections.
     for name, empty in (("get_analysis", {}), ("get_failed_cut_outfit_recipe", None),
-                        ("has_draft_visual_work", False)):
+                        ("has_draft_visual_work", False), ("has_detail_page_job", False),
+                        ("find_detail_page_request_job", None), ("lock_page_style_project", None),
+                        ("get_detail_page_locked_template", None),
+                        ("get_detail_page_pricing_state", {"plan": "free",
+                         "mannequin_stage_used": False, "already_charged": False})):
         original = getattr(routes_module.repo, name)
         if getattr(original, "__module__", None) == routes_module.repo.__name__:
             async def no_row(*_args, _empty=empty, **_kwargs):

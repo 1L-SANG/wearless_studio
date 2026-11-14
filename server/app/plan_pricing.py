@@ -26,6 +26,13 @@ def extension_model_fee(plan: str | None, selected_model_id: str | None) -> int:
     return EXTENSION_MODEL_FEE[plan_of(plan)]
 
 
+def detail_page_model_fee(plan: str | None, selected_model_id: str | None, *,
+                          mannequin_stage_used: bool, already_charged: bool) -> int:
+    if mannequin_stage_used or already_charged:
+        return 0
+    return extension_model_fee(plan, selected_model_id)
+
+
 def free_mannequin_adjusts(plan: str | None) -> int:
     return FREE_MANNEQUIN_ADJUSTS[plan_of(plan)]
 
