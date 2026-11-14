@@ -63,6 +63,7 @@ const LAYOUT_TYPES = new Set([
     "factTable",
     "panel",
     "rule",
+    "swatchRow",
 ]);
 const HEX = /^#[\da-f]{6}$/i;
 const positive = (value) => Number.isFinite(value) && value > 0;
@@ -86,7 +87,7 @@ export function walkLayout(nodes, visit) {
             ...(Array.isArray(node.columns) ? node.columns : []),
             ...(node.overlayGroups || []),
         ])
-            walkLayout(group.nodes, visit);
+            { walkLayout(group.nodes, visit); walkLayout(group.faceFallback?.nodes, visit); }
     }
 }
 
@@ -292,6 +293,18 @@ export function validateCatalog(catalog) {
                     );
                 }
             }
+            for (const group of node.groups || []) if (group.faceFallback != null) {
+                const fallback = group.faceFallback;
+                check(id === 'T08-D07' && group.id === 'heading'
+                    && ['top', 'padding', 'gap'].every(key => positive(fallback[key]))
+                    && Array.isArray(fallback.nodes), `face fallback ${id}`);
+            }
+            if (Object.hasOwn(node, 'prefix'))
+                check(node.type === 'text' && ['Q.', 'A.'].includes(node.prefix) && positive(node.prefixWidth), `text prefix ${id}`);
+            if (Object.hasOwn(node, 'liningNumbers'))
+                check(node.type === 'text' && typeof node.liningNumbers === 'boolean', `lining numbers ${id}`);
+            if (node.type === 'swatchRow')
+                check(design.kind === 'color_product' && positive(node.size) && Number.isFinite(node.itemGap) && node.itemGap >= 0, `swatch row ${id}`);
             check(LAYOUT_TYPES.has(node.type), `layout ${id}.${node.type}`);
             if (node.type === 'photoFrame')
                 check(design.layout.includes(node) && design.kind === 'wear' && design.usage === 'styling'
@@ -317,7 +330,7 @@ export function validateCatalog(catalog) {
                 const paint = node.scrim;
                 check(
                     node.type === "overlay" && paint && typeof paint === "object" &&
-                        HEX.test(paint.color) && opacity(paint.opacity) &&
+                        (HEX.test(paint.color) || HEX.test(catalog.neutralColors[paint.color])) && opacity(paint.opacity) &&
                         (paint.heightRatio == null || positive(paint.heightRatio) && paint.heightRatio <= 1) &&
                         (paint.gradient == null || typeof paint.gradient === "boolean"),
                     `overlay scrim ${id}`,
@@ -326,7 +339,7 @@ export function validateCatalog(catalog) {
             if (node.fillOpacity != null)
                 check(["panel", "list"].includes(node.type) && opacity(node.fillOpacity), `fill opacity ${id}`);
             if (node.itemGap != null)
-                check(["list", "photoStack"].includes(node.type) && Number.isFinite(node.itemGap) && node.itemGap >= 0, `list item gap ${id}`);
+                check(["list", "photoStack", "swatchRow"].includes(node.type) && Number.isFinite(node.itemGap) && node.itemGap >= 0, `list item gap ${id}`);
             if (Object.hasOwn(node, 'includeLoose'))
                 check(node.type === 'photoStack' && node.slot === '*' && typeof node.includeLoose === 'boolean', `include loose ${id}`);
             if (node.shadow != null) {
@@ -334,7 +347,7 @@ export function validateCatalog(catalog) {
                 check(
                     ["panel", "list"].includes(node.type) && shadow && typeof shadow === "object" &&
                         [shadow.x, shadow.y, shadow.blur].every(Number.isFinite) && shadow.blur >= 0 &&
-                        HEX.test(shadow.color) && opacity(shadow.opacity),
+                        (HEX.test(shadow.color) || HEX.test(catalog.neutralColors[shadow.color])) && opacity(shadow.opacity),
                     `shape shadow ${id}`,
                 );
             }

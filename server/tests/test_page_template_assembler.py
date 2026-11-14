@@ -152,7 +152,7 @@ def test_each_fabric_group_has_its_own_contrast_and_bubbles_keep_fixed_colors():
     blocks = assemble_input(value)
     assert text(section(blocks, "emo.review"), "label")[0]["style"]["color"] == "#ffffff"
     assert text(section(blocks, "emo.review"), "items.0.text")[0]["style"]["color"] == CATALOG["templates"][0]["colors"]["ink"]
-    assert text(section(blocks, "emo.faq"), "items.0.q")[0]["style"]["color"] == CATALOG["templates"][0]["colors"]["ink"]
+    assert text(section(blocks, "emo.faq"), "items.0.q")[0]["style"]["color"] == CATALOG["templates"][0]["colors"]["muted"]
     assert all(el["style"]["color"] == "#111111" for el in text(section(blocks, "emo.sns"), "handle"))
     assert not any("_overlayGroupKey" in el for el in elements(blocks))
 
