@@ -86,6 +86,13 @@ def test_product_template_changes_only_authority_paragraphs():
       "axes": {"fit": "over", "length": "crop", "sleeve": "cap"}}},
      "fit: oversized volume, dropped shoulders, roomy chest and wide sleeves. Observable target: shoulder seam below the shoulder point and clear air around chest, waist, and sleeves."),
     ({"fit": "slim", "fitProfile": {"category": "top", "gender": "women", "axes": {}}}, None),
+    ({"fit": "semi_over", "fitProfile": {"category": "top", "gender": "women", "version": 2,
+      "source": "auto", "axes": {}}},
+     "fit: semi-oversized, relaxed volume. Observable target: extra room at shoulder, chest, and sleeves, with a mildly dropped shoulder point."),
+    ({"fit": "semi_over", "fitProfile": {"category": "top", "gender": "women", "version": 2,
+      "source": "auto", "axes": {"fit": None}}}, None),
+    ({"fit": "semi_over", "fitProfile": {"category": "pants", "gender": "women", "version": 2,
+      "source": "auto", "axes": {}}}, None),
     ({}, None),
 ])
 def test_analysis_fit_uses_generic_sources_without_new_length_or_sleeve_axes(monkeypatch, analysis, expected):
@@ -101,10 +108,26 @@ def test_old_packet_ignores_analysis_and_keeps_original_prompt(monkeypatch):
     mannequin = InlineImage("image/png", b"selected")
     baseline = _packet(monkeypatch, mannequin=mannequin)
     with_analysis = _packet(monkeypatch, mannequin=mannequin,
-                            analysis={"fit": "over", "fitProfile": {"axes": {"fit": "slim"}}})
+                            analysis={"fit": "over", "fitProfile": {"axes": {"fit": "slim"}},
+                                      "sourceMirrored": True})
     assert with_analysis.images == baseline.images
     assert with_analysis.manifest == baseline.manifest
     assert prompt.compile_confirmed_gpt_prompt(with_analysis.prompt_input) == prompt.compile_confirmed_gpt_prompt(baseline.prompt_input)
+
+
+@pytest.mark.parametrize("source_mirrored", [True, False, "true"])
+def test_product_prompt_corrects_only_confirmed_mirror_orientation(monkeypatch, source_mirrored):
+    packet = _packet(monkeypatch, analysis={"sourceMirrored": source_mirrored})
+    rendered = prompt.compile_confirmed_gpt_prompt(packet.prompt_input)
+
+    if source_mirrored is True:
+        assert "MIRRORED SOURCE PHOTOS" in rendered
+        assert "the opposite side from the photo" in rendered
+        assert "takes precedence over the uncorrected orientation" in rendered
+        assert "only to the sold product" in rendered
+    else:
+        untreated = _packet(monkeypatch)
+        assert rendered == prompt.compile_confirmed_gpt_prompt(untreated.prompt_input)
 
 
 @pytest.mark.parametrize("selected_inner", [False, True])

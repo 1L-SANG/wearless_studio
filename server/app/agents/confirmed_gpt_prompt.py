@@ -14,6 +14,8 @@ from hashlib import sha256
 from pathlib import Path
 import re
 
+from .prompts import build_mirrored_source_block
+
 
 _TEMPLATE = Path(__file__).resolve().parents[2] / "prompts" / "cut_generate_confirmed_gpt_v1.txt"
 _TEMPLATE_SHA256 = "d06ff48fa1185efadbda85d2f543b2340577716e72be9b105d6e3b8e407134fd"
@@ -188,6 +190,7 @@ class ConfirmedGptPromptInput:
     outfit: OutfitLock
     pose_semantics: PoseSemantics
     sold_product_fit: str | None = None
+    source_mirrored: bool = False
 
 
 @lru_cache(maxsize=1)
@@ -513,6 +516,12 @@ def compile_confirmed_gpt_prompt(
             if request.sold_product_fit is not None else "No analysis fit is declared."
         )
     rendered = _render(template, values)
+    if not request.scope.selected_mannequin and request.source_mirrored is True:
+        rendered += (
+            "\n\n" + build_mirrored_source_block({"sourceMirrored": True})
+            + " This rule applies only to the sold product and takes precedence over the uncorrected "
+              "orientation in the PRODUCT images and seller evidence descriptions."
+        )
     if not qc_corrections:
         return rendered
     if (

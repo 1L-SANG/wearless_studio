@@ -112,6 +112,22 @@ def test_product_color_privilege_requires_exact_confirmed_marker(profile, marker
         assert context["confirmedGptProductAuthority"] == _PRODUCT_AUTHORITY
 
 
+@pytest.mark.parametrize("profile,mirror_flag", [("generic_v1", True), ("confirmed_gpt_v1", "true")])
+def test_qc_does_not_grant_mirror_authority_to_other_profiles_or_nonboolean_values(profile, mirror_flag):
+    context = {
+        "authorityProfile": profile,
+        "attributeOwners": {"color": "storyboard" if profile == "generic_v1" else "productTruth"},
+        "referenceAllowedAttributes": [],
+        "sourceMirrored": mirror_flag,
+    }
+    if profile == "confirmed_gpt_v1":
+        context["confirmedGptProductAuthority"] = _PRODUCT_AUTHORITY
+
+    policy = qc_system_prompt("cut", context)
+    assert "sourceMirrored" not in _context(policy)
+    assert "Judge only PRODUCT as photographed in a mirror" not in policy
+
+
 def test_product_authority_marker_cannot_mix_with_mannequin_owner():
     context = _context(qc_system_prompt("cut", {
         "authorityProfile": "confirmed_gpt_v1",
@@ -120,6 +136,37 @@ def test_product_authority_marker_cannot_mix_with_mannequin_owner():
         "referenceAllowedAttributes": [],
     }))
     assert context["scope"] == "incomplete_no_additional_authority"
+
+
+@pytest.mark.parametrize("source_mirrored", [True, False, "true"])
+def test_confirmed_product_qc_judges_true_orientation_of_mirror_source_only(monkeypatch, source_mirrored):
+    from test_confirmed_gpt_no_mannequin import _packet
+
+    packet = _packet(monkeypatch, analysis={"sourceMirrored": source_mirrored})
+    captured = {}
+
+    async def analyze(settings, prompt, images, schema, *, system_prompt, **kwargs):
+        captured["policy"] = system_prompt
+        return _raw(), "fake"
+
+    monkeypatch.setattr(qc, "analyze_with_fallback", analyze)
+    plan = _plan()
+    plan["storyboard"]["shot"] = "medium"
+    result = asyncio.run(qc.verdict(
+        make_settings(), plan, qc.references_from_manifest(packet.manifest, packet.images), _img(b"OUTPUT"),
+        authority_profile="confirmed_gpt_v1", confirmed_prompt_input=packet.prompt_input))
+
+    context = _context(captured["policy"])
+    assert context["scope"] == "explicit_fields_only"
+    if source_mirrored is True:
+        assert result["contract"]["sourceMirrored"] is True
+        assert context["sourceMirrored"] is True
+        assert "readable orientation" in captured["policy"]
+        assert "asymmetric" in captured["policy"]
+        assert "only PRODUCT" in captured["policy"]
+    else:
+        assert "sourceMirrored" not in result["contract"]
+        assert "sourceMirrored" not in context
 
 
 @pytest.mark.parametrize("fit", [None, "regular fit"])

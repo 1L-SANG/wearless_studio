@@ -73,6 +73,12 @@ folds into seams or demand pixel equality unless the server contract requires it
 Return only the requested structured response. Do not change its gates, scores or
 schema, and do not decide storage, publication, retries or repair authorization.
 """
+_QC_PRODUCT_MIRROR_RULE = (
+    "Judge only PRODUCT as photographed in a mirror. Compare visible marks in their normal readable "
+    "orientation and judge asymmetric details on the side they belong to after undoing the reflection. "
+    "This rule takes precedence over uncorrected PRODUCT photo and source-description handedness. "
+    "Evaluate all other references as supplied."
+)
 
 _QC_OWNER_CHOICES = {
     **{key: {"productTruth"} for key in ("construction", "material", "pattern", "hardware", "textLogo")},
@@ -130,6 +136,10 @@ def qc_system_prompt(family: str, context=None) -> str:
                         or not all(value is True for value in marker.values())):
                     raise ValueError("invalid_qc_confirmed_product_authority")
                 product_authority = {"confirmedGptProductAuthority": dict(marker)}
+            if "sourceMirrored" in context:
+                if not product_authority or context["sourceMirrored"] is not True:
+                    raise ValueError("invalid_qc_confirmed_product_mirror_authority")
+                product_authority["sourceMirrored"] = True
             presentation = {}
             if "productPresentation" in context:
                 if profile != "generic_v1":
@@ -207,7 +217,10 @@ def qc_system_prompt(family: str, context=None) -> str:
         result.update(scope="explicit_fields_only", **safe)
     except (ValueError, TypeError, KeyError):
         pass  # Never quote rejected values or infer missing authority.
-    return QC_SYSTEM_PROMPT + "\nVALIDATED_QC_CONTEXT\n" + json.dumps(result, sort_keys=True, separators=(",", ":"))
+    policy = QC_SYSTEM_PROMPT
+    if result.get("sourceMirrored") is True:
+        policy += "\n" + _QC_PRODUCT_MIRROR_RULE
+    return policy + "\nVALIDATED_QC_CONTEXT\n" + json.dumps(result, sort_keys=True, separators=(",", ":"))
 
 
 class VisionError(RuntimeError):
