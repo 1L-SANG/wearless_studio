@@ -42,8 +42,9 @@ for (const kind of ['review', 'faq']) {
     assert.equal(bubbles.at(-1).y + bubbles.at(-1).h, 1162.5);
     assert.equal(elements.find(element => element.copyRole === 'label').style.color, '#ffffff');
     const text = elements.find(element => element.copyRole === (kind === 'review' ? 'items.0.text' : 'items.0.q'));
-    assert.equal(text.style.color, catalog.templates[0].colors.ink);
-    assert.ok(collectOverlayRegions(input).length === 0, 'fixed scrim headings never sample the bare photograph');
+    assert.equal(text.style.color, catalog.templates[0].colors[kind === 'faq' ? 'muted' : 'ink']);
+    assert.equal(collectOverlayRegions(input).length, kind === 'faq' ? 1 : 0, 'FAQ measures faces while other fixed headings skip measurement');
+    if (kind === 'faq') assert.equal(collectOverlayRegions(input)[0].avoidFaces, true);
   });
 
   test(`D216 ${kind} gradient alternative preserves the same photo and fixed white copy`, () => {

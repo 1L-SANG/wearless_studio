@@ -30,7 +30,7 @@ import { hasTitlePlate } from '../../lib/pageTemplates/titlePlate.js';
 import { editedTextElement } from './editorTextEdit.js';
 import { useEditedTemplateContrast } from './useEditedTemplateContrast.js';
 import { createEditorContrastStore, EditorContrastContext } from './editorContrastStore.js';
-import { alignSkeletonToServer, canSafelyMergeServerBlocks, clearFailedJobPreviewBlocks, decorateGenBlocks, failedJobPreviewUrls, fillGenBlocks, mergeServerBlocks, patchTemplateElement } from '@/lib/editorWaitSkeleton.js';
+import { alignSkeletonToServer, canSafelyMergeServerBlocks, clearFailedJobPreviewBlocks, decorateGenBlocks, failedJobPreviewUrls, fillGenBlocks, mergeServerBlocks, patchTemplateElement, pendingFaqHeadingIds } from '@/lib/editorWaitSkeleton.js';
 import { incompleteMessage, retryOfIncomplete, retryReuseHint } from '@/lib/detailPageJobFailure.js';
 import {
   clearEditorWaitDraft, editorWaitDraftDecision, loadEditorWaitDraftEntry, saveEditorWaitDraft,
@@ -63,7 +63,7 @@ import { thumbUrl } from '@/lib/imageCdn.js';
 import { classifyEditorLoadError } from '@/features/editor/editorLoadError.js';
 import { MAX_WARDROBE_UPLOADS, WARDROBE_UPLOAD_CONCURRENCY, runWithConcurrency } from '@/features/editor/editorUpload.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
-import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockContentBottom, getBlockRenderHeight, isEmptyTextElement, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
+import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockContentBottom, getBlockRenderHeight, getHiddenExportElementIds, getBlockExportElements, isEmptyTextElement, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import {
   buildExportSummary,
   exportBlockPng,
@@ -279,7 +279,7 @@ function ImageDropGuide({ scale, width, height, rotate = 0 }) {
 
 /* render-only element (selection + inline text edit). Position dragging enters the
    shared pointer engine; the single <Moveable> owns only resize/rotate controls. */
-function CanvasElement({ el, blockId, titlePlate = false, titlePlateElements, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onElementDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart, imageWidth = null, canvasAiJob, onCanvasAiCancel, onCanvasAiDismiss }) {
+function CanvasElement({ el, blockId, exportHidden = false, titlePlate = false, titlePlateElements, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onElementDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart, imageWidth = null, canvasAiJob, onCanvasAiCancel, onCanvasAiDismiss }) {
   /* imageWidth = 이 렌더가 실제로 필요한 이미지 폭(px). 미니 미리보기처럼 작게 그리는
      곳만 넘긴다 — 캔버스 본체와 전체화면 미리보기는 넘기지 않는다(그쪽이 내보내기 캡처
      원본이자 셀러 최종 확인 화면이라 원본 해상도를 지켜야 한다). */
@@ -453,14 +453,14 @@ function CanvasElement({ el, blockId, titlePlate = false, titlePlateElements, se
     focusEditableAtEnd(isSpeechBubbleElement(el) ? textRef.current : ref.current, fresh);
   }, [editing, el.hidden, el.id, el.shape, el.type, preview]);
 
-  if (el.hidden) return null;
+  if (el.hidden || preview && exportHidden) return null;
 
   const base = {
     left: el.x, top: el.y, width: el.w, height: el.h,
     transform: el.rotate ? `rotate(${el.rotate}deg)` : undefined, opacity: el.opacity ?? 1,
     pointerEvents: el.locked ? 'none' : undefined,
   };
-  const cls = (extra) => `el${extra ? ' ' + extra : ''}${selected ? ' on' : ''}${selected && selectionCount > 1 ? ' multi-selected' : ''}`;
+  const cls = (extra) => `el${exportHidden ? ' el-empty-template-copy' : ''}${extra ? ' ' + extra : ''}${selected ? ' on' : ''}${selected && selectionCount > 1 ? ' multi-selected' : ''}`;
   const common = { ref, 'data-elid': el.id, onPointerDown: pick, onClick: finishClick };
   const imageDropProps = preview || el.type !== 'image' ? {} : {
     onDragOver: (e) => {
@@ -625,7 +625,7 @@ function CanvasElement({ el, blockId, titlePlate = false, titlePlateElements, se
     return (
       /* 높이는 항상 auto — 고정폭 텍스트도 크기를 키우면 상자가 따라 자라야 하고,
          저장되는 el.h는 위의 h 동기화 효과가 실제 렌더 높이로 맞춘다. */
-      <div ref={ref} data-elid={el.id} className={cls(`el-text${el.keepWords ? ' el-keep-words' : ''}${editing ? ' editing' : ''}${emptyText ? ' el-empty-text' : ''}${emptyText && el.placeholder ? ' el-placeholder' : ''}`)} style={{ ...base, height: 'auto',
+      <div ref={ref} data-elid={el.id} className={cls(`el-text${el.style?.numeric === 'lining' ? ' el-lining-numbers' : ''}${el.keepWords ? ' el-keep-words' : ''}${editing ? ' editing' : ''}${emptyText ? ' el-empty-text' : ''}${emptyText && el.placeholder ? ' el-placeholder' : ''}`)} style={{ ...base, height: 'auto',
         fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: cssWeight(s.font, s.weight),
         color: s.color || '#0e0d14', letterSpacing: s.spacingMode === 'auto' ? resolveTextSpacing(s).tracking : s.tracking, textAlign: s.align || 'left',
         lineHeight: s.spacingMode === 'auto' ? resolveTextSpacing(s).lineHeight + 'px' : s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: el.keepWords ? undefined : 'pre-wrap', opacity: (el.opacity ?? 1) * (s.opacity ?? 1),
@@ -764,10 +764,12 @@ function DragObjectGhost({ kind, id, w, h }) {
   ));
 }
 
-function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onElementDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, onCropRatio, onCropZoom, idx, canvasAi, canvasAiJobs, onCanvasAiCancel, onCanvasAiDismiss }) {
+function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, pendingHeadingIds, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onElementDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, onCropRatio, onCropZoom, idx, canvasAi, canvasAiJobs, onCanvasAiCancel, onCanvasAiDismiss }) {
   // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
   const blockH = getBlockRenderHeight(block);
+  const hiddenExportIds = getHiddenExportElementIds(block);
+  const containsPendingHeading = block.elements.some(el => pendingHeadingIds?.has(el.id));
   // 블록은 요소 선택의 좌표계로 계속 활성 상태를 유지하되, 파란 선택 링과 높이 손잡이는
   // 블록 자체만 고른 경우에만 보인다. 다중 요소 선택을 부모 블록 선택처럼 보이게 하지 않는다.
   const blockActive = selectedBlockId === block.id;
@@ -909,7 +911,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
       <div className="block-clip">
         {block.elements.map((el) => (
           (crop && crop.elId === el.id) ? null : (
-            <CanvasElement key={el.id} el={el} blockId={block.id} titlePlate={hasTitlePlate(el, block.elements)} titlePlateElements={block.elements} scale={scale} preview={false}
+            <CanvasElement key={el.id} el={pendingHeadingIds?.has(el.id) ? { ...el, locked: true } : el} exportHidden={hiddenExportIds.has(el.id)} blockId={block.id} titlePlate={hasTitlePlate(el, block.elements)} titlePlateElements={block.elements} scale={scale} preview={false}
               selected={selEls && selEls.includes(el.id)} selectionCount={selEls?.length || 0} editing={editEl === el.id}
               onSelect={(e, additive) => onSelectEl(block.id, e, additive)}
               onSelectBlock={() => onSelectBlock(block.id)} onPickBelowText={pickBelowBlankText}
@@ -991,7 +993,8 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         {onEditInfo && presetTypeOf(block) && <IconButton name="pencil" onClick={() => onEditInfo(block)} title="내용 수정" />}
         <IconButton name="layers" onClick={() => onOpenLayers(block.id)} title="레이어" />
         <BlockDownloadButton block={block} index={idx} onDownload={onDownload} />
-        <IconButton name="trash" onClick={() => onDelete(block.id)} title="블록 삭제" />
+        <IconButton name="trash" onClick={() => onDelete(block.id)} disabled={containsPendingHeading}
+          title={containsPendingHeading ? '생성이 끝나면 삭제할 수 있어요' : '블록 삭제'} />
       </div>
     </div>
   );
@@ -1027,7 +1030,7 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
                   글자·표·도형이 캔버스와 동일하게 보인다 (CanvasElement preview 재사용, hidden 자동 제외) */}
               <div style={{ position: 'absolute', top: 0, left: 0, width: 1000, height: blockH,
                 transform: `scale(${(thumbW || 140) / 1000})`, transformOrigin: 'top left', pointerEvents: 'none' }}>
-                {b.elements.map((el) => (
+                {getBlockExportElements(b).map((el) => (
                   <CanvasElement key={el.id} el={el} titlePlate={hasTitlePlate(el, b.elements)} preview imageWidth={MINI_IMAGE_WIDTH} selected={false} onSelect={() => {}} onEdit={() => {}} />
                 ))}
               </div>
@@ -1130,8 +1133,8 @@ export function Editor() {
   const [infoModal, setInfoModal] = useState(null); // { type, blockId|null, initialInfo }
   const [tab, setTab] = useState('ai');
   const [selBlock, setSelBlock] = useState(null);
-  const [selEl, setSelEl] = useState(null);
-  const [selEls, setSelEls] = useState([]);
+  const [selectedId, setSelEl] = useState(null);
+  const [selectedIds, setSelEls] = useState([]);
   const [scale, setScale] = useState(0.4);
   const [spaceDown, setSpaceDown] = useState(false); // space-드래그 팬 모드 (Phase 4)
   const [rightHidden, setRightHidden] = useState(false);
@@ -1253,6 +1256,12 @@ export function Editor() {
   const genMergedRef = useRef(false);
   const [genFinalizeOriginalError, setGenFinalizeOriginalError] = useState(null);
   const [genFinalizeError, setGenFinalizeError] = useState('');
+  const pendingHeadingIds = useMemo(() => pendingFaqHeadingIds(blocks, {
+    active: genActive, status: dpJob.status, finalizeError: genFinalizeError,
+  }), [blocks, genActive, dpJob.status, genFinalizeError]);
+  const selEl = pendingHeadingIds.has(selectedId) ? null : selectedId;
+  const selEls = useMemo(() => pendingHeadingIds.size ? selectedIds.filter(id => !pendingHeadingIds.has(id)) : selectedIds,
+    [selectedIds, pendingHeadingIds]);
   // 자동저장이 실패한 상태 — {kind, message}. null 이면 정상 저장 중이다.
   const [saveError, setSaveError] = useState(null);
   const { openLogin, session } = useAuth();
@@ -1329,7 +1338,11 @@ export function Editor() {
   const [layerFloat, setLayerFloat] = useState(null);
   const [layerPos, setLayerPos] = useState(null);
   const layerFloatRef = useRef(null);
-  const [editEl, setEditEl] = useState(null);     // text element being inline-edited
+  const [editingId, setEditEl] = useState(null);
+  const editEl = pendingHeadingIds.has(editingId) ? null : editingId;
+  useEffect(() => {
+    if (pendingHeadingIds.has(editingId)) setEditEl(null);
+  }, [editingId, pendingHeadingIds]);
   // 편집이 어떤 경로로 끝나든(blur 커밋·패널 클릭·다른 요소 편집 시작) 빈 텍스트를 정리한다 —
   // blur만 믿으면 포커스를 안 거친 종료 경로가 유령 요소를 남긴다. pruneEmptyTextEl 은
   // 함수 선언이라 호이스팅되고 latestBlocks 를 읽으므로 로딩 렌더에서도 안전하다.
@@ -1695,6 +1708,12 @@ export function Editor() {
         const failedReasons = { ...finalJob.failedCutReasons,
           ...Object.fromEntries((finalJob.partial?.failedCuts || []).map(cut =>
             [cut.blockId, { ...finalJob.failedCutReasons?.[cut.blockId], ...cut }])) };
+        // Inline text lives in the DOM until blur. Commit it before replacing
+        // pending blocks, including when the seller is still typing in an FAQ.
+        const activeEditor = document.activeElement;
+        if (activeEditor?.isContentEditable && canvasRef.current?.contains(activeEditor)) {
+          flushSync(() => activeEditor.blur());
+        }
         let restoredServerLayout = false;
         // 서버 완성본의 안정 이미지 주소를 현재 임시 작업본에 합친 뒤 직접 저장한다.
         // 저장 요청 도중 사용자가 한 번 더 편집했다면 최신 ref로 다시 합쳐 저장하여 덮어쓰지 않는다.
@@ -1904,7 +1923,7 @@ export function Editor() {
   useEffect(() => {
     const h = (e) => {
       const deleteElements = selEls.length > 0;
-      const deleteBlockSelection = !deleteElements && blockFocused && Boolean(selBlock);
+      const deleteBlockSelection = !selectedIds.length && blockFocused && Boolean(selBlock);
       if (isEditorDeleteKey(e) && (deleteElements || deleteBlockSelection)) {
         e.preventDefault();
         if (kb.current.croppingOn) kb.current.cropCancel?.();
@@ -1934,6 +1953,10 @@ export function Editor() {
           if (kept.length) parts.push('생성 중에는 사진 자리를 지울 수 없어요 · 생성이 끝나면 다시 눌러 주세요');
           toast.push(parts.join(' · ') || '요소를 삭제했어요', { icon: 'trash' });
         } else {
+          if ((latestBlocks.current || []).find(b => b.id === selBlock)?.elements.some(el => pendingHeadingIds.has(el.id))) {
+            toast.push('생성이 끝나면 이 블록을 삭제할 수 있어요');
+            return;
+          }
           setBlocks((bs) => removeSelectedBlock(bs, selBlock));
           setSelEl(null); setSelEls([]); setSelBlock(null); setBlockFocused(false);
           toast.push('블록 전체를 삭제했어요', { icon: 'trash' });
@@ -1958,7 +1981,7 @@ export function Editor() {
       }
     };
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
-  }, [selEls, selBlock, blockFocused]);
+  }, [selEls, selectedIds, selBlock, blockFocused, pendingHeadingIds]);
 
   const kb = useRef({});
   const editorClipboard = useRef(null);
@@ -2149,13 +2172,14 @@ export function Editor() {
   const elById = (id) => blocks.flatMap((b) => b.elements).find((e) => e.id === id);
 
   const selectEl = (blockId, el, additive, keepTab) => {
+    if (pendingHeadingIds.has(el.id)) return;
     if (cropping) commitCrop();   // 크롭 중 다른 요소 클릭 → 크롭 확정 후 선택 (런타임 호출이라 TDZ 무관)
     setPendingSlot(null);         // 다른 요소를 고르면 프레임 사진 선택 모드를 끝낸다.
     // 요소를 고르는 것도 그 블록을 잡은 것이다 — 이걸 안 켜면 블록 테두리·빠른 도구가
     // 안 뜨고, 블록 배경을 정확히 눌러야만 보이는 상태로 돌아간다.
     setSelBlock(blockId); setBlockFocused(true); setSelEl(el.id);
     const block = blocks.find((item) => item.id === blockId);
-    const pickedIds = selectionIdsForElement(block?.elements, el);
+    const pickedIds = selectionIdsForElement(block?.elements, el).filter(id => !pendingHeadingIds.has(id));
     setSelEls((cur) => {
       if (!additive) return pickedIds;
       const allPicked = pickedIds.every((id) => cur.includes(id));
@@ -2548,15 +2572,19 @@ export function Editor() {
     els.splice(j, 0, it); return { ...b, elements: els };
   }));
   const reorderLayer = (blockId, fromId, toId) => setBlocks((bs) => bs.map((b) => {
-    if (b.id !== blockId) return b;
+    if (b.id !== blockId || pendingHeadingIds.has(fromId)) return b;
     const els = reorderElements(b.elements, fromId, toId);
     return els === b.elements ? b : { ...b, elements: els };
   }));
   const toggleElField = (blockId, elId, field) => setBlocks((bs) => bs.map((b) => b.id === blockId
-    ? { ...b, elements: b.elements.map((e) => e.id === elId ? { ...e, [field]: !e[field] } : e) } : b));
+    && !pendingHeadingIds.has(elId) ? { ...b, elements: b.elements.map((e) => e.id === elId ? { ...e, [field]: !e[field] } : e) } : b));
   const moveBlock = (idx, dir) => setBlocks((bs) => { const n = [...bs]; const j = idx + dir; if (j < 0 || j >= n.length) return n; [n[idx], n[j]] = [n[j], n[idx]]; return n; });
   const addEmpty = (idx) => setBlocks((bs) => { const n = [...bs]; const nb = { id: uid('b'), name: '직접 구성', kind: SECTION_ROLES.STYLING, contentRole: CONTENT_ROLES.CUSTOM, bg: '#ffffff', h: 300, elements: [] }; n.splice(idx + 1, 0, nb); return n; });
-  const deleteBlock = (id) => { setBlocks((bs) => bs.filter((b) => b.id !== id)); toast.push('블록을 삭제했어요'); };
+  const deleteBlock = (id) => {
+    if (blocks.find(b => b.id === id)?.elements.some(el => pendingHeadingIds.has(el.id))) return;
+    setBlocks((bs) => bs.filter(b => b.id !== id));
+    toast.push('블록을 삭제했어요');
+  };
   // 삽입 즉시 빈 프레임 슬롯을 생성 착장컷으로 역할 맞춰 자동 채운다(templates/autofill).
   // 컷풀 = wardrobe(생성컷) ⨝ wardrobeContext.storyboard(블록 contentRole). 컷 없으면 no-op(빈 슬롯).
   const roledCutsNow = () => buildRoledCutPool(wardrobe || {}, wardrobeContext.current.storyboard);
@@ -3380,6 +3408,7 @@ export function Editor() {
       ids.includes(candidate.id)
       && !candidate.hidden
       && !candidate.locked
+      && !pendingHeadingIds.has(candidate.id)
       && nodeById[candidate.id]
     ));
     if (selected.length < 1) return false;
@@ -3801,6 +3830,7 @@ export function Editor() {
         const blockNode = blockNodes[index];
         const elementRects = new Map();
         block.elements.forEach((element) => {
+          if (pendingHeadingIds.has(element.id)) return;
           const node = blockNode?.querySelector(`[data-elid="${element.id}"]`);
           if (node) elementRects.set(element.id, node.getBoundingClientRect());
         });
@@ -4211,7 +4241,8 @@ export function Editor() {
                         && !canReplaceCanvasAiResult(blocks, canvasAi.jobs.get(canvasAi.element.id))
                         ? '원래 사진이 바뀌어 교체할 수 없어요.' : null} />
                   ) : null}
-                  selectedBlockId={blockFocused ? selBlock : null} selEls={selEls} editEl={editEl} onEdit={setEditEl}
+                  selectedBlockId={blockFocused ? selBlock : null} selEls={selEls} pendingHeadingIds={pendingHeadingIds} editEl={editEl}
+                  onEdit={id => { if (!pendingHeadingIds.has(id)) setEditEl(id); }}
                   crop={cropping && cropping.blockId === b.id ? cropping : null}
                   onCropDrag={cropDrag} onCropStart={startCrop} onCropCommit={commitCrop} onCropCancel={cancelCrop} onCropReset={resetCrop}
                   onCropRatio={ratio => setCropping(c => c ? ratioEditorCrop(c, ratio) : c)} onCropZoom={factor => setCropping(c => c ? zoomEditorCrop(c, factor) : c)}
@@ -4300,7 +4331,7 @@ export function Editor() {
               <IconButton name="x" size="sm" onClick={() => setLayerFloat(null)} />
             </div>
             <div className="lf-body">
-              <LayerPanel embedded block={blocks.find((b) => b.id === layerFloat)} selEls={selEls}
+              <LayerPanel embedded block={blocks.find((b) => b.id === layerFloat)} selEls={selEls} pendingHeadingIds={pendingHeadingIds}
                 onSelect={(bid, el) => selectEl(bid, el, false, true)} onReorder={reorderLayer} onToggle={toggleElField} />
             </div>
           </div>
@@ -4314,7 +4345,7 @@ export function Editor() {
           <div className="preview-sheet">
             {blocks.map((b) => (
               <div key={b.id} style={{ position: 'relative', height: getBlockRenderHeight(b, { forExport: true }), background: colorWithOpacity(b.bg, b.bgOpacity), overflow: 'hidden', boxSizing: 'border-box' }}>
-                {b.elements.map((el) => <CanvasElement key={el.id} el={el} titlePlate={hasTitlePlate(el, b.elements)} preview selected={false} onSelect={() => {}} onEdit={() => {}} />)}
+                {getBlockExportElements(b).map((el) => <CanvasElement key={el.id} el={el} titlePlate={hasTitlePlate(el, b.elements)} preview selected={false} onSelect={() => {}} onEdit={() => {}} />)}
               </div>
             ))}
           </div>

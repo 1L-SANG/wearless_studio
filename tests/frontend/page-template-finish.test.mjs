@@ -133,10 +133,10 @@ for (const [templateId, widths] of [
     ["emo", [67, 55, 55]],
 ])
     test(`R2 fit pills keep FRONT/SIDE/BACK on one line with full padding: ${templateId}`, () => {
-        const blocks = section(
-            assemblePage(inputOf(`${templateId}-2-mono`)),
-            `${templateId}.wear_fit`,
-        );
+        const input = inputOf(`${templateId}-2-mono`);
+        const rotation = inputOf(`woc20-${templateId}-wear-sets`).storyboard.find(card => card.pageSectionKey === `${templateId}.wear_fit`).spaceGroupId;
+        input.storyboard.filter(card => card.pageSectionKey === `${templateId}.wear_fit`).forEach(card => { card.spaceGroupId = rotation; });
+        const blocks = section(assemblePage(input), `${templateId}.wear_fit`);
         const captions = elements(blocks).filter((e) =>
             e.copyRole?.startsWith("cap."),
         );

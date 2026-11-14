@@ -12,9 +12,34 @@ export function isEmptyTextElement(element) {
   return element?.type === 'text' && String(element.text ?? '').trim() === '';
 }
 
+export function getHiddenExportElementIds(block) {
+  const groups = new Map();
+  for (const element of block.elements) {
+    if (!element.groupId?.startsWith('template-copy:')) continue;
+    const group = groups.get(element.groupId) || [];
+    group.push(element);
+    groups.set(element.groupId, group);
+  }
+  const hidden = new Set(block.elements.filter(isEmptyTextElement).map(element => element.id ?? element));
+  for (const members of groups.values()) {
+    // Literal Q./A., stars and similar template ornaments are not copy. If the
+    // seller rewrites one, its changed text counts as content and keeps the group.
+    const hasContent = members.some(element => !element.hidden && (element.type === 'image'
+      || element.type === 'text' && !isEmptyTextElement(element)
+        && element.text !== element.templateCopyDecoration));
+    if (!hasContent) members.forEach(element => hidden.add(element.id ?? element));
+  }
+  return hidden;
+}
+
+export function getBlockExportElements(block) {
+  const hidden = getHiddenExportElementIds(block);
+  return block.elements.filter(element => !hidden.has(element.id ?? element));
+}
+
 function exportContentBottom(block) {
-  return block.elements.reduce(
-    (bottom, element) => element.system || isEmptyTextElement(element)
+  return getBlockExportElements(block).reduce(
+    (bottom, element) => element.system
       ? bottom
       : Math.max(bottom, (element.y || 0) + (element.h || 40)),
     0,

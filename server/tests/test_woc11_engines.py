@@ -53,13 +53,13 @@ def test_woc11_loose_photo_and_two_line_copy_render(design_id, size, weight, wid
     assert image['crop']['oy'] > 0
 
 
-@pytest.mark.parametrize('saved', ['', '옛 한 줄 문장', '첫 줄\n\n마지막 줄', '첫 줄\r\n둘째 줄'])
-def test_woc11_part_only_copy_does_not_reuse_legacy_one_line_or_seller_copy(saved):
+@pytest.mark.parametrize('saved,expected', [('', ''), ('옛 한 줄 문장', '옛 한 줄 문장'), ('첫 줄\n\n마지막 줄', ''), ('첫 줄\r\n둘째 줄', '첫 줄\n둘째 줄')])
+def test_part_only_copy_accepts_one_or_two_lines_without_using_seller_copy(saved, expected):
     value = point_input()
     value['analysis']['partDescriptionCopy'][0]['desc'] = saved
     value['analysis']['featureCopy'] = [{'point': '스냅 단추', 'desc': '판매 특징 문장'}]
     value['copy_results'] = [{'blockId': 'lead', 'texts': [{'role': 'items.0.desc', 'text': '기존 역할 문장'}]}]
     original = deepcopy(value)
     desc = next(el for el in point_elements(value) if el.get('copyRole') == 'items.0.desc')
-    assert desc['text'] == ('첫 줄\n둘째 줄' if '\r\n' in saved else '')
+    assert desc['text'] == expected
     assert value == original

@@ -53,7 +53,7 @@ for (const [pattern, expected] of [
   assert.deepEqual(blocks.flatMap(block => block.elements).filter(el => el.copyRole?.startsWith('colorName.')).map(el => el.copyRole),
     Array.from({ length: 8 }, (_, i) => `colorName.${i}`));
   assert.deepEqual(blocks.flatMap(block => block.elements).filter(el => el.copyRole?.startsWith('cap.')).map(el => el.text),
-    ['Front', 'Side', 'Back', 'Front', 'Side', 'Back', 'Front', 'Side']);
+    Array(8).fill(''));
   for (const block of blocks) for (const image of photos([block])) assert.equal(image.w, photos([block]).length === 1 ? 880 : 428);
   parityCases.push({ design: custom, input });
 });
@@ -156,14 +156,14 @@ test('natural detail preview still displays its selected source ROI without pers
   } finally { delete catalog.designs[natural.id]; }
 });
 
-test('catalog studio layouts preserve every direction label and photo ID', () => {
+test('catalog studio layouts retain photo IDs and blank captions outside rotation sets', () => {
   for (const id of ['WEAR-FIT-COLUMN-01', 'WEAR-FIT-2COL-01', 'WEAR-FIT-HERO-01']) {
     const input = inputFor(3);
     input.storyboard.forEach((card, index) => Object.assign(card, { pageDesignId: id, pageSectionKey: 'emo.wear_fit',
       pageSectionUsage: 'fit', slotKey: `wear_fit.${card.direction}`, spaceGroupId: 'studio' }));
     const blocks = assemblePage(input);
     assert.deepEqual(photos(blocks).map(el => el.sourceBlockId), ['photo-0', 'photo-1', 'photo-2']);
-    assert.deepEqual(blocks.flatMap(block => block.elements).filter(el => el.copyRole?.startsWith('cap.')).map(el => el.text), ['Front', 'Side', 'Back']);
+    assert.deepEqual(blocks.flatMap(block => block.elements).filter(el => el.copyRole?.startsWith('cap.')).map(el => el.text), Array(3).fill(''));
     parityCases.push({ design: catalog.designs[id], input });
   }
 });
@@ -231,7 +231,7 @@ for (const pattern of ['twoColumn', 'heroPair']) test(`${pattern} retains middle
     assert.equal(photos(blocks)[1].slotKey, 'wear_styling.extra2');
     const text = blocks.flatMap(block => block.elements);
     assert.deepEqual(text.filter(el => el.copyRole?.startsWith('colorName.')).map(el => el.copyRole), ['colorName.0', 'colorName.1', 'colorName.2', 'colorName.3']);
-    assert.deepEqual(text.filter(el => el.copyRole?.startsWith('cap.')).map(el => el.text), ['Front', 'Side', 'Back', 'Front']);
+    assert.deepEqual(text.filter(el => el.copyRole?.startsWith('cap.')).map(el => el.text), Array(4).fill(''));
     parityCases.push({ design: custom, input });
   }
 });
@@ -251,7 +251,7 @@ test('curated wildcard columns include loose photos in place with their normal r
     assert.deepEqual(photos(blocks).map(el => el.sourceBlockId), ['photo-0', 'photo-1', 'photo-2'], id);
     assert.deepEqual(photos(blocks).map(el => [el.w, el.h]), [size, size, size], id);
     if (id === 'P02-D01') assert.deepEqual(text.filter(el => el.copyRole?.startsWith('colorName.')).map(el => el.copyRole), ['colorName.0', 'colorName.1', 'colorName.2']);
-    else if (kind === 'wear') assert.deepEqual(text.filter(el => el.copyRole?.startsWith('cap.')).map(el => el.text), ['Front', 'Side', 'Back']);
+    else if (kind === 'wear') assert.deepEqual(text.filter(el => el.copyRole?.startsWith('cap.')).map(el => el.text), Array(3).fill(''));
     else assert.deepEqual(text.filter(el => /^items\.\d+\.name$/.test(el.copyRole)).map(el => el.text), ['단추', '소매', '밑단']);
     parityCases.push({ design: catalog.designs[id], input });
   }
@@ -284,7 +284,7 @@ test('curated color columns match swatch and copy index to the actual front and 
     const captions = elements.filter(el => /^colors\.\d+\.name$/.test(el.copyRole));
     assert.deepEqual(captions.map(el => el.text), names);
     assert.deepEqual(captions.map(el => el.copyRole), roles);
-    assert.deepEqual(elements.filter(el => el.type === 'shape' && el.shape === 'circle').map(el => el.fill), fills);
+    assert.deepEqual(elements.filter(el => el.type === 'shape' && el.shape === 'circle' && el.w === 10).map(el => el.fill), fills);
     parityCases.push({ design: catalog.designs['CP-COLUMN-01'], input });
   }
 });

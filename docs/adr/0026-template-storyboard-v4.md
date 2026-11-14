@@ -69,6 +69,16 @@ ADR-0005는 콘티를 후킹, 스타일링, 스튜디오, 의류 확인 네 섹�
 24. 페이지 조립 엔진은 프론트(`src/lib/pageTemplates/assemble.js`)와 서버(`server/app/agents/page_template_assembler.py`) 두 벌이다. 같은 카탈로그와 같은 사례 파일(`tests/fixtures/page_templates_cases.json`, 304건)로 두 결과가 같은지 시험한다. 카탈로그가 잘못되면 서버는 시작하지 않고(`server/app/main.py`의 `load_catalog`), 프론트도 같은 검사(`validateCatalog`)를 한다.
 25. 조립 결과 에디터 블록은 `pageSectionKey`, `pageSectionKind`, `pageDesignId`를 가진다. `kind`는 섹션 첫 카드의 내부 섹션 역할(`hooking`, `styling`, `studio`, `product`)이고, 첫 카드가 글 카드나 내 이미지면 `info`다. 블록에는 `contentRole`이 없고, 사진 요소가 `slotKey`, `roleHint`, `sourceBlockId`를 가진다. 페이지 끝에는 자동 블록 넷을 붙인다. 사이즈 안내(`size`), 세탁 안내(`care`), AI 생성 안내(`ai-notice`), 공통 주의(`common-notice`)다(`assemble_v4`, `server/app/agents/page_assembler.py`의 `build_auto_blocks`). 에디터 빈 칸 판정은 ADR-0019를 따른다. `pageSectionKey`가 있는 블록의 사진 칸은 kind가 `info`여도 일반 사진 칸처럼 판정하므로, 디테일 요소, 후기, 궁금한 점 섹션의 실패 칸도 에디터에서 원래 콘티대로 다시 만들 수 있다. 자동 블록 넷은 다시 만들기와 AI로 채우기 대상이 아니다.
 
+### 2026-11-14 추가 (오너 카피 피드백 중 템플릿 쪽)
+
+- 궁금한 점(`T08-D07`): 사진 위 가운데에 영문 라벨과 한글 제목을 두고, 말풍선은 "Q." 질문(연하고 작게)과 "A." 답(진하고 조금 크고 굵게)으로 나눈다. 생성 뒤 서버가 배경 사진에서 얼굴을 찾아(`server/app/agents/face_identity.py`의 YuNet) 제목 자리와 겹치면 제목을 사진 밖 위로 뺀다. 결과는 컷 메타 `overlayTextPositions`에 남는다. 검출을 못 하면 빼는 쪽이다. 측정 전 콘티와 생성 대기는 사진 위 배치다.
+- 색상과 제품(`CP-COLUMN-01`) 제목은 감성형 "N가지 색상"과 그 아래 색 원 줄, 쇼룸형 "N COLORS" 한 줄이다. 색이 하나면 "1가지 색상", "1 COLOR"다.
+- 후기 섹션 고정 제목은 "먼저 입어 본 분들의 후기"다.
+- 착용컷 사진의 방향 라벨(Front, Side, Back)은 앞, 옆, 뒤 회전 세트 사진에만 붙인다.
+- 디테일 요소 부위 설명(`copyPolicy: partOnly`)은 비어 있지 않은 한 줄이나 두 줄을 받는다.
+- 조립기가 만든 글 묶음(`groupId`가 `template-copy:`로 시작)에 글이 하나도 없으면 미리보기와 내려받기에서 그 묶음의 말풍선, 알약, 표시까지 뺀다. 편집 화면에는 자리 표시와 함께 남긴다.
+- 섹션 제목과 라벨 전체의 표기 통일은 쇼룸형 조사 뒤 따로 정한다.
+
 ## 결과
 
 - 콘티의 섹션 순서와 장수를 셀러가 템플릿 안에서 바꾼다. 저장 계약(`blocks: list`)은 그대로이고 블록 필드만 바뀐다. DB 마이그레이션은 없다.

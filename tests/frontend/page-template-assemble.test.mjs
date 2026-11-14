@@ -408,7 +408,7 @@ test("adaptive photo groups resolve independently while scrim headings and bubbl
         );
         assert.equal(
             text(faq, "items.0.q")[0].style.color,
-            catalog.templates[0].colors.ink,
+            catalog.templates[0].colors.muted,
         );
         if (value.name.endsWith("story"))
             for (const account of text(section(blocks, "emo.sns"), "handle"))
