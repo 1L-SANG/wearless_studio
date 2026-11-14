@@ -311,6 +311,34 @@ test('B5 HTTP PUT and reload preserve the same server-valid split board', async 
   }
 });
 
+test('a template reseeded for a changed product is not marked as saved', async () => {
+  const { seedStoryboard } = await vite.ssrLoadModule('/src/lib/pageTemplates/seed.js');
+  const { storyboardEntryState } = await vite.ssrLoadModule('/src/lib/pageTemplates/entryNotices.js');
+  const originalFetch = globalThis.fetch;
+  const originalGetSession = supabase.auth.getSession;
+  const product = { clothingType: 'top', colors: [{ id: 'base', isBase: true }] };
+  const analysis = { pageStyle: { templateId: 'emo' }, targetGenders: ['women'] };
+  let currentProduct = product;
+  const persisted = seedStoryboard(product, analysis);
+  supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test-token' } } });
+  globalThis.fetch = async (url) => {
+    const pathname = new URL(url, 'http://test.local').pathname;
+    if (pathname.endsWith('/storyboard')) return jsonResponse({ blocks: persisted, revision: 1 });
+    if (pathname.endsWith('/product')) return jsonResponse(currentProduct);
+    if (pathname.endsWith('/analysis')) return jsonResponse(analysis);
+    assert.equal(pathname, '/v1/projects/reseed');
+    return jsonResponse({ id: 'reseed', status: 'draft' });
+  };
+  try {
+    assert.equal(storyboardEntryState(await httpAdapter.getStoryboard('reseed')).saved, true);
+    currentProduct = { ...product, colors: [...product.colors, { id: 'extra' }] };
+    assert.equal(storyboardEntryState(await httpAdapter.getStoryboard('reseed')).saved, false);
+  } finally {
+    restoreGlobal('fetch', originalFetch);
+    supabase.auth.getSession = originalGetSession;
+  }
+});
+
 test('Editor clothing upload regression keeps uploadPhoto and uploaded.url without pickAnyImage', () => {
   const uploadEditorImage = editorSource.slice(
     editorSource.indexOf('const uploadEditorImage ='),

@@ -24,6 +24,7 @@ export function createStoryboardPersistence({
 } = {}) {
   let saveChain = Promise.resolve();
   const lastSaved = new Map();
+  const confirmedBlocks = new WeakMap();
   const pending = new Map();
   const retries = new Map();
   const conflictEpochs = new Map();
@@ -90,13 +91,17 @@ export function createStoryboardPersistence({
       if (unchanged(baseline)) {
         if (unchanged(pending.get(projectId))) pending.delete(projectId);
         if (unchanged(retries.get(projectId)?.snapshot)) clearRetry(projectId);
-        return;
+        return confirmedBlocks.get(baseline) ?? baseline;
       }
       return Promise.resolve().then(() => saveStoryboard(projectId, snapshot, requestOptions)).then(
-        () => {
+        (response) => {
+          // 비교에는 보낸 콘티를, 생성 견적에는 서버가 확정한 콘티를 쓴다.
+          const blocks = (Array.isArray(response) ? response : response?.blocks) ?? snapshot;
           lastSaved.set(projectId, snapshot);
+          if (Array.isArray(blocks) && blocks !== snapshot) confirmedBlocks.set(snapshot, blocks);
           pending.delete(projectId);
           clearRetry(projectId);
+          return blocks;
         },
         (error) => {
           if (error?.status === 409 && error.code === 'revision_conflict') {

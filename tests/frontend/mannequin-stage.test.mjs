@@ -75,15 +75,15 @@ test('콘티 재개는 끔의 detail-page만 받는다', () => {
 function continuation(options = {}) {
   const events = [], submission = { current: false };
   const run = overrides => continueStoryboardToDetailPage({ submission,
-    flush: async () => { events.push('save'); }, afterFlush: () => events.push('measure'),
-    account: { credits: 114 }, aiCutCount: 5, plan: 'free', selectedModelId: 'mF',
+    flush: async () => { events.push('save'); return 5; },
+    account: { credits: 114 }, countGenerationCuts: saved => saved, plan: 'free', selectedModelId: 'mF',
     onFailure: message => events.push(['failure', message]),
     onShortfall: shortfall => events.push(['shortfall', shortfall.requiredCredits]),
     navigate: path => events.push(path), ...options, ...overrides });
   return { run, events, submission };
 }
 
-test('저장 실패는 색 재기와 이동을 막고 재시도할 수 있다', async () => {
+test('저장 실패는 이동을 막고 재시도할 수 있다', async () => {
   const { run, events, submission } = continuation({ flush: async () => { throw Error('save offline'); } });
   assert.equal(await run(), false);
   assert.deepEqual(events, [['failure', 'save offline']]);
@@ -93,32 +93,32 @@ test('저장 실패는 색 재기와 이동을 막고 재시도할 수 있다', 
 test('저장 뒤 모델 요금까지 부족하면 안내하고 이동하지 않는다', async () => {
   const { run, events, submission } = continuation({ account: { credits: 100 } });
   assert.equal(await run(), false);
-  assert.deepEqual(events, ['save', 'measure', ['shortfall', 114]]);
+  assert.deepEqual(events, ['save', ['shortfall', 114]]);
   assert.equal(submission.current, false);
   assert.equal(await run({ account: { credits: 114 } }), true);
   assert.equal(events.at(-1), '/create/generating');
 });
 
-test('충분하면 저장과 색 재기 뒤 생성으로 한번 이동하며 연타를 막는다', async () => {
+test('충분하면 저장 뒤 생성으로 한 번 이동하며 연타를 막는다', async () => {
   let release;
   const { run, events } = continuation({ flush: () => new Promise(resolve => { release = resolve; events.push('save'); }) });
   const first = run();
   assert.equal(await run(), false);
-  release();
+  release(5);
   assert.equal(await first, true);
   assert.equal(await run(), false);
-  assert.deepEqual(events, ['save', 'measure', '/create/generating']);
+  assert.deepEqual(events, ['save', '/create/generating']);
 });
 
-test('계정과 금액을 모르면 통과하고 색 재기 예외도 이동을 막지 않는다', async () => {
-  for (const options of [{ account: null }, { account: { credits: NaN } }, { aiCutCount: null }]) {
-    const { run, events } = continuation({ ...options, afterFlush: () => { throw Error('measure'); } });
+test('계정이나 예상금액을 모르면 서버에서 판정한다', async () => {
+  for (const options of [{ account: null }, { account: { credits: NaN } }, { countGenerationCuts: () => null }]) {
+    const { run, events } = continuation(options);
     assert.equal(await run(), true);
     assert.equal(events.at(-1), '/create/generating');
   }
 });
 
-test('저장 중 화면이나 프로젝트가 바뀌면 색 재기와 부족 안내와 생성 이동을 모두 멈춘다', async () => {
+test('저장 중 화면이나 프로젝트가 바뀌면 부족 안내와 생성 이동을 멈춘다', async () => {
   for (const failure of [true, false]) {
     let active = true, release;
     const { run, events } = continuation({

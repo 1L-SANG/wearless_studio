@@ -6,7 +6,8 @@ import { transformWithEsbuild } from 'vite';
 import { applyPromotedMatchSelection } from '../../src/lib/customMatchPromotion.js';
 import { continueStoryboardToDetailPage, loadStoryboardCreditQuote } from '../../src/features/storyboard/storyboardDetailPage.js';
 
-const offCreationReady = { doneBlocked: false, hasEditorEntered: () => false,
+const offCreationReady = { doneBlocked: false, hasEditorEntered: () => false, atomicSavingRef: { current: false },
+  setDetailPageSubmitting() {}, countGenerationCuts: () => assert.fail('no saved board to count'),
   creditQuotePending: false, customMatchPromotionPending: false, customMatchPreparationFailed: false,
   setCustomMatchConfirmationOpen() {} };
 
@@ -122,27 +123,44 @@ for (const enabled of [true, false]) {
   });
 }
 
-test('콘티의 끔 분기는 같은 조건으로 색 재기를 맡기고 저장 실패면 멈춘다', async () => {
+test('마네킹을 건너뛰면 저장되어 돌아온 컷 수로 잔액을 보고 화면에서는 옷 색을 재지 않는다', async () => {
   const source = read('src/features/storyboard/Storyboard.jsx');
-  const code = source.slice(source.indexOf('  const goToMannequin ='), source.indexOf('\n  const runs =', source.indexOf('  const goToMannequin =')));
-  for (const measure of [true, false]) for (const failure of [true, false]) {
+  const start = source.indexOf('  const goToMannequin =');
+  const code = source.slice(start, source.indexOf('\n  const runs =', start));
+  for (const [savedCount, credits, failure, outcome] of [
+    [6, 95, false, ['shortfall', 114]], [5, 95, false, '/create/generating'],
+    [6, 114, false, '/create/generating'], [5, 114, true, 'failure'],
+  ]) {
+    const cuts = n => Array.from({ length: n }, (_, id) => ({ id, source: 'ai', contentRole: 'benefit', cutType: 'styling' }));
+    const saved = cuts(savedCount);
     const calls = [];
     const go = await evaluate(code, {
-      ...offCreationReady, detailPageEntryLocked: { current: false }, mannequinStageEnabled: false, blocks: [{ source: 'mine' }], productSectionNeedingSelection: () => null,
-      unsupportedAiBlock: null, continueStoryboardToDetailPage, detailPageSubmitRef: { current: false },
+      ...offCreationReady, detailPageEntryLocked: { current: false }, mannequinStageEnabled: false, blocks: cuts(5),
+      productSectionNeedingSelection: () => null, unsupportedAiBlock: null, continueStoryboardToDetailPage,
+      detailPageSubmitRef: { current: false },
       styleSaves: { flush: async () => calls.push('style') }, styleValueRef: { current: {} },
       ensureV4StoryboardCopywriting: async () => calls.push('copy'), projectId: 'p',
-      useAppStore: { getState: () => ({ projectId: 'p', account: { credits: 200 } }) },
-      saveNow: async () => { calls.push('board'); if (failure) throw Error('offline'); },
-      latestBlocks: { current: [] }, needsGarmentColorMeasurement: () => measure,
-      api: { measureGarmentColors: async () => calls.push('measure') },
+      useAppStore: { getState: () => ({ projectId: 'p', account: { credits } }) },
+      saveNow: async () => { calls.push('board'); if (failure) throw Error('offline'); return saved; },
+      latestBlocks: { current: cuts(7) },
+      countGenerationCuts: snapshot => { assert.equal(snapshot, saved); return snapshot.length; },
+      needsGarmentColorMeasurement: () => true, api: { measureGarmentColors: async () => calls.push('measure') },
       navigate: path => calls.push(path), toast: { push: () => calls.push('failure') },
-      setCreditShortfall: () => assert.fail('sufficient balance'), generationCutCount: 5,
-      detailPageLifetimeRef: { current: {} }, detailPageQuote: null, catalogs: { analysis: { selectedModelId: 'mF' } },
+      setCreditShortfall: shortfall => calls.push(['shortfall', shortfall.requiredCredits]), generationCutCount: 5,
+      detailPageLifetimeRef: { current: {} }, detailPageQuote: null, catalogs: { analysis: { selectedModelId: 'mA' } },
     }, 'goToMannequin');
     await go();
-    assert.deepEqual(calls, ['style', 'copy', 'board', ...(failure ? ['failure'] : [...(measure ? ['measure'] : []), '/create/generating'])]);
+    assert.deepEqual(calls, ['style', 'copy', 'board', outcome]);
   }
+});
+
+test('저장 중에는 하단 되돌리기와 생성 버튼을 사용할 수 없다', async () => {
+  const source = read('src/features/storyboard/StoryboardContinue.jsx').replace(/^import .*;\n/gm, '');
+  const { StoryboardContinue } = await evaluate(source, { React, styles: {} }, '({ StoryboardContinue })');
+  const children = React.Children.toArray(StoryboardContinue({ submitting: true, undoEntry: {}, count: 5, credits: 95 }).props.children);
+  const undo = React.Children.toArray(children[0].props.children).find(node => node.type === 'button');
+  assert.equal(undo.props.disabled, true);
+  assert.equal(children.at(-1).props.disabled, true);
 });
 
 for (const [enabled, saved, done, expected] of [
@@ -206,7 +224,7 @@ test('콘티 저장 중 프로젝트와 계정과 화면 수명이 바뀌면 새
       catalogs: { analysis: { selectedModelId: 'mF' } },
     }, 'goToMannequin');
     const pending = go();
-    await Promise.resolve();
+    await new Promise(setImmediate);
     if (boundary === 'project') state.projectId = 'other';
     if (boundary === 'generation') state.projectGeneration++;
     if (boundary === 'user') state.userId = 'other';
@@ -222,10 +240,10 @@ test('콘티에서 견적이나 내 옷 반영을 기다리는 동안 생성 요
   const source = read('src/features/storyboard/Storyboard.jsx');
   const start = source.indexOf('  const goToMannequin =');
   const code = source.slice(start, source.indexOf('\n  const runs =', start));
-  for (const gate of ['creditQuotePending', 'customMatchPromotionPending', 'doneBlocked']) {
+  for (const gate of ['creditQuotePending', 'customMatchPromotionPending', 'doneBlocked', 'atomicSavingRef']) {
     let starts = 0;
     const go = await evaluate(code, {
-      ...offCreationReady, detailPageEntryLocked: { current: false }, [gate]: true,
+      ...offCreationReady, detailPageEntryLocked: { current: false }, [gate]: gate === 'atomicSavingRef' ? { current: true } : true,
       mannequinStageEnabled: false, blocks: [{ source: 'mine' }], productSectionNeedingSelection: () => null,
       unsupportedAiBlock: null, projectId: 'p', detailPageLifetimeRef: { current: {} }, detailPageSubmitRef: { current: false },
       useAppStore: { getState: () => ({ projectId: 'p' }) }, latestBlocks: { current: [] },
@@ -264,6 +282,7 @@ test('콘티의 충전 및 편집 잠금 안내는 하단 생성 버튼을 숨�
   for (const condition of ['doneBlocked', 'creditShortfall', 'creditResume', 'customMatchConfirmationOpen']) {
     const node = await evaluate(`const footer = (${code});`, {
       React, StoryboardContinue: 'Footer', drawer: null, photoBlocks: [{}], mannequinStageEnabled: false,
+      detailPageSubmitting: false, atomicSaving: false,
       doneBlocked: false, creditShortfall: null, creditResume: null, customMatchConfirmationOpen: false,
       detailPageEntryLocked: { current: false }, creditQuotePending: false, customMatchPromotionPending: false,
       [condition]: true, storyboardContinueLabel: () => '', detailPageCreditCost: () => 0,

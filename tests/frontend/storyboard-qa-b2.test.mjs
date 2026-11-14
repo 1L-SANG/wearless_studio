@@ -151,6 +151,23 @@ test('an unchanged reopening avoids a PUT and an undo still waits behind an in-f
   persistence.dispose();
 });
 
+test('saving returns server blocks, including when the confirmed input is unchanged', async () => {
+  const submitted = [{ id: 'one' }, { id: 'two', pose: 'auto' }];
+  const confirmed = [{ id: 'one' }, { id: 'two' }];
+  for (const response of [{ blocks: confirmed, revision: 2 }, confirmed]) {
+    let requests = 0;
+    const persistence = createStoryboardPersistence({
+      invalidate() {}, onlineTarget: null,
+      saveStoryboard: async () => { requests++; return response; },
+    });
+    const save = blocks => persistence.saveNow('p', () => blocks, { skipUnchanged: true });
+    assert.equal(await save(submitted), confirmed);
+    assert.equal(await save(structuredClone(submitted)), confirmed);
+    assert.equal(requests, 1);
+    persistence.dispose();
+  }
+});
+
 test('background failure retries with backoff and an online event retries immediately', async () => {
   const backoffClock = fakeClock();
   let backoffCalls = 0;

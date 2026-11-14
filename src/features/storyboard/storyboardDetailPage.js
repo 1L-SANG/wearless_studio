@@ -38,20 +38,19 @@ export function storyboardCreditResume(state, mannequinStageEnabled = true) {
   return !mannequinStageEnabled && state?.creditResume?.action === 'detail-page' ? state.creditResume : null;
 }
 
-// 저장과 부가 작업이 끝난 뒤 사전 확인한다. 최종 과금 판정은 생성 요청의 서버 402가 맡는다.
-export async function continueStoryboardToDetailPage({ submission, flush, afterFlush, onFailure,
-  account, aiCutCount, quote, plan, selectedModelId, onShortfall, navigate, isCurrent = () => true }) {
+// 저장된 콘티로 잔액을 사전 확인한다. 최종 과금 판정은 생성 요청의 서버 402가 맡는다.
+export async function continueStoryboardToDetailPage({ submission, flush, onFailure,
+  account, countGenerationCuts, quote, plan, selectedModelId, onShortfall, navigate, isCurrent = () => true }) {
   if (submission.current || !isCurrent()) return false;
   submission.current = true;
   let moved = false;
   try {
     await continueAfterStoryboardFlush({ flush,
-      afterFlush: () => { if (isCurrent()) afterFlush?.(); },
       onFailure: (...args) => { if (isCurrent()) onFailure(...args); },
-      navigate: () => {
+      navigate: saved => {
       if (!isCurrent()) return;
       const currentAccount = typeof account === 'function' ? account() : account;
-      const shortfall = detailPageGenerationCreditShortfall(currentAccount, aiCutCount,
+      const shortfall = detailPageGenerationCreditShortfall(currentAccount, countGenerationCuts(saved),
         modelFee({ quote, plan: currentAccount?.plan ?? plan, selectedModelId }), { compactMessage: true });
       if (shortfall) { onShortfall(shortfall); return; }
       navigate('/create/generating');

@@ -722,7 +722,7 @@ export const httpAdapter = {
     });
     setStoryboardEntryNotice(projectId, resolved.notice);
     return recordStoryboardEntryState(resolved.notice === 'legacyGenerated' ? [] : resolved.blocks, {
-      saved: Boolean(saved?.length), done: project?.status === 'done',
+      saved: Boolean(saved?.length && resolved.blocks === saved), done: project?.status === 'done',
     });
   },
   storyboardEntryNotice,
