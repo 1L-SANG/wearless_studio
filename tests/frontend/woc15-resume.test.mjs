@@ -94,7 +94,7 @@ test('WOC15 rebuilt storyboard exit flush cannot persist before Next confirmatio
   const source = read('src/features/storyboard/Storyboard.jsx');
   notices.setStoryboardEntryNotice('review', 'rebuilt');
   const persisted = [];
-  const bindings = { ...notices, api: { storyboardEntryNotice: notices.storyboardEntryNotice },
+  const bindings = { mannequinStageEnabled: true, ...notices, api: { storyboardEntryNotice: notices.storyboardEntryNotice },
     saveTimer: { current: null }, latestBlocks: { current: [{ id: 'new', taxonomyVersion: 4 }] },
     sbSaveNow: async (_id, snapshot) => persisted.push(snapshot()), clearTimeout() {} };
   const callback = source.slice(source.indexOf('  const flushLatest ='), source.indexOf('  const saveNow ='));
@@ -146,7 +146,7 @@ for (const outcome of ['success', 'failure']) test(`WOC15 Next ${outcome} contro
   notices.setStoryboardEntryNotice('review', 'rebuilt');
   const snapshots = [], board = [{ id: 'new', taxonomyVersion: 4 }];
   let screenNotice = 'rebuilt';
-  const bindings = { ...notices, api: { storyboardEntryNotice: notices.storyboardEntryNotice },
+  const bindings = { mannequinStageEnabled: true, ...notices, api: { storyboardEntryNotice: notices.storyboardEntryNotice },
     saveTimer: { current: null }, latestBlocks: { current: board }, clearTimeout() {},
     setEntryNotice: value => { screenNotice = value; },
     sbSaveNow: async (_id, getSnapshot, options) => {

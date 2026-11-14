@@ -79,6 +79,20 @@ test('비동기 생성도 시작할 때 요금을 고정하고 합류와 완료 
   assert.equal((await api.startDetailPage(id)).credits, 886);
 });
 
+for (const method of ['startDetailPage', 'generateDetailPage']) {
+  test(`목 ${method}는 모델 요금까지 부족하면 작업과 차감을 남기지 않는다`, async () => {
+    const id = await fresh();
+    DB.account.credits = 100;
+
+    await assert.rejects(api[method](id), error =>
+      error.status === 402 && error.code === 'insufficient_credits');
+    assert.equal(DB.project.latestJobs.detailPage, null);
+    assert.equal(DB.project.status, 'draft');
+    assert.equal(DB.account.credits, 100);
+    assert.equal(DB.detailPageExtensionFeeCharged, 0);
+  });
+}
+
 test('AI 컷이 없는 상세페이지는 확장 모델 요금도 차감하지 않는다', async () => {
   const id = await fresh({ ai: false });
   assert.equal((await api.generateDetailPage(id)).credits, 1000);

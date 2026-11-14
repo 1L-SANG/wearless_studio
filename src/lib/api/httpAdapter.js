@@ -23,7 +23,7 @@ import { LIMITS } from '@/lib/limits.js';
 import { defaultAnalysisShape } from '@/lib/api/shapes.js';
 import { resolveStoryboardEntry } from '../pageTemplates/seed.js';
 import { analysisPageStyle, defaultPageStyle } from '../pageTemplates/pageStyle.js';
-import { setStoryboardEntryNotice, storyboardEntryNotice } from '../pageTemplates/entryNotices.js';
+import { recordStoryboardEntryState, setStoryboardEntryNotice, storyboardEntryNotice } from '../pageTemplates/entryNotices.js';
 import { normalizeMatchClothingSelection, toMatchItem } from '@/lib/api/matchingItems.js';
 import { mergeMatchSelection } from '@/lib/api/matchSelection.js';
 import { fetchPhotoBytes } from '../photoBytes.js';
@@ -721,7 +721,9 @@ export const httpAdapter = {
       identityKind: identityKindOf(isRealModelSelection(analysis?.selectedModelId || analysis?.selected_model_id)),
     });
     setStoryboardEntryNotice(projectId, resolved.notice);
-    return resolved.notice === 'legacyGenerated' ? [] : resolved.blocks;
+    return recordStoryboardEntryState(resolved.notice === 'legacyGenerated' ? [] : resolved.blocks, {
+      saved: Boolean(saved?.length), done: project?.status === 'done',
+    });
   },
   storyboardEntryNotice,
   async getLastPageStyle() {
@@ -943,8 +945,8 @@ export const httpAdapter = {
   async getAccount() {
     return http('/v1/me/account');
   },
-  async getCreditQuote(projectId, { selectedModelId } = {}) {
-    return http(`/v1/projects/${projectId}/credit-quote${selectedModelId ? `?selectedModelId=${encodeURIComponent(selectedModelId)}` : ''}`);
+  async getCreditQuote(projectId, { selectedModelId, signal } = {}) {
+    return http(`/v1/projects/${projectId}/credit-quote${selectedModelId ? `?selectedModelId=${encodeURIComponent(selectedModelId)}` : ''}`, { signal });
   },
   async getLibrary() {
     // mock 의 { forceEmpty, forceError } 옵션은 실서버에선 무의미 — 무시.

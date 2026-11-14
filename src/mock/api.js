@@ -59,7 +59,7 @@ import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import { mergeAnalysisPatch } from '@/lib/analysisPatch.js';
 import { resolveStoryboardEntry } from '@/lib/pageTemplates/seed.js';
 import { analysisPageStyle, defaultPageStyle, validPageStyle } from '@/lib/pageTemplates/pageStyle.js';
-import { setStoryboardEntryNotice, storyboardEntryNotice } from '@/lib/pageTemplates/entryNotices.js';
+import { recordStoryboardEntryState, setStoryboardEntryNotice, storyboardEntryNotice } from '@/lib/pageTemplates/entryNotices.js';
 import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
 import { isSupportedCutType } from '@/lib/storyboardTaxonomy.js';
 import { createDraftSlotMemory } from './draftSlotMemory.js';
@@ -109,6 +109,16 @@ const detailPageCharge = () => {
   const cutCredits = detailPageCreditCost(aiCuts);
   const modelFee = cutCredits > 0 ? detailPageModelFee(DB.account.plan, DB.analysis.selectedModelId) : 0;
   return { creditCost: cutCredits + modelFee, extensionModelFee: modelFee };
+};
+const checkDetailPageCredits = (cost) => {
+  if (DB.account.credits < cost) {
+    throw Object.assign(new Error('크레딧이 부족해요.'), { status: 402, code: 'insufficient_credits' });
+  }
+};
+const pinDetailPageTemplate = () => {
+  if (!DB.analysis.pageStyle?.templateId) {
+    DB.analysis = { ...DB.analysis, pageStyle: analysisPageStyle(null, DB.storyboard) };
+  }
 };
 const recordDetailPageModelCharge = (draft, fee) => {
   if (fee <= 0) return;
@@ -1462,20 +1472,26 @@ export const api = {
   /* ---- storyboard (PRD §8) ---- */
   async getStoryboard(/* projectId */) {
     await wait(160);
+    const saved = DB.storyboardSaved;
+    const done = DB.project.status === 'done' || DB.project.latestJobs?.detailPage?.status === 'done';
     const effectiveAnalysis = DB.analysis.pageStyle ? DB.analysis : { ...DB.analysis, pageStyle: await this.getLastPageStyle() };
     const resolved = resolveStoryboardEntry(DB.storyboard, DB.product, effectiveAnalysis, {
-      projectId: DB.project.id, generated: DB.project.status === 'done' || DB.project.latestJobs?.detailPage?.status === 'done',
+      projectId: DB.project.id, generated: done,
       identityKind: identityKindOf(isRealModelSelection(DB.analysis.selectedModelId)),
     });
     setStoryboardEntryNotice(DB.project.id, resolved.notice);
     if (resolved.notice !== 'legacyGenerated' && resolved.notice !== 'rebuilt') DB.storyboard = resolved.blocks;
-    return clone(resolved.notice === 'legacyGenerated' ? [] : resolved.blocks);
+    return recordStoryboardEntryState(clone(resolved.notice === 'legacyGenerated' ? [] : resolved.blocks), { saved, done });
   },
   storyboardEntryNotice,
   async getLastPageStyle() { return clone(lastPageStyle || defaultPageStyle()); },
   async saveStoryboard(_projectId, blocks, { autoAssignment = false, keepalive: _keepalive = false } = {}) {
     await wait(150);
     validateStoryboardV4(blocks);
+    const template = DB.analysis.pageStyle?.templateId;
+    if (template && blocks.length && blocks[0].pageSectionKey.split('.')[0] !== template) {
+      throw Object.assign(new Error('고른 템플릿으로 콘티를 다시 열어 주세요.'), { status: 400, code: 'page_style_mismatch' });
+    }
     DB.storyboard = clone(inheritSimilarCutRecipes(blocks));
     DB.storyboardSaved = true;
     // 자동 예시 배정은 기본 콘티의 일부다. 이미 생긴 사용자 dirty는 유지한다.
@@ -1500,9 +1516,12 @@ export const api = {
     if (ewSim?.status === 'running' && ewSim.projectId === DB.project.id) return { jobId: ewSim.jobId };
     validateStoryboardV4(DB.storyboard);
     assertSupportedStoryboardCuts();
+    const charge = detailPageCharge();
+    checkDetailPageCredits(charge.creditCost);
+    pinDetailPageTemplate();
     DB.project.status = 'generating'; touch();
     const job = { projectId: DB.project.id, jobId: uid('job'), events: [], nextId: 1, status: 'running', progress: 0, result: null,
-      ...detailPageCharge() };
+      ...charge };
     ewSim = job;
     detailJobs.set(job.jobId, job);
     DB.project.latestJobs.detailPage = { id: job.jobId, status: 'running', errorCode: null };
@@ -1601,6 +1620,8 @@ export const api = {
     const job = joinable('detailPage', (listeners) => (async () => {
       const ownerId = DB.project.id;
       const charge = detailPageCharge();
+      checkDetailPageCredits(charge.creditCost);
+      pinDetailPageTemplate();
       const summary = { id: uid('job'), status: 'running', errorCode: null };
       DB.project.latestJobs.detailPage = summary;
       const emitStep = (steps) => listeners.forEach((l) => l.onStep && l.onStep(clone(steps)));

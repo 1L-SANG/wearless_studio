@@ -5,7 +5,7 @@ import { isMannequinStageEnabled } from './mannequinStage.js';
 
 const SHORTFALL_TITLE = '크레딧이 부족해요';
 
-function creditShortfall(account, requiredCredits) {
+function creditShortfall(account, requiredCredits, compactMessage = false) {
   if (account == null || requiredCredits == null) return null;
   const availableCredits = account.credits;
   if (!Number.isFinite(availableCredits) || !Number.isFinite(requiredCredits)) return null;
@@ -14,7 +14,9 @@ function creditShortfall(account, requiredCredits) {
   return {
     availableCredits,
     requiredCredits,
-    message: `${SHORTFALL_TITLE}. 보유 ${availableCredits}, 필요 ${requiredCredits}`,
+    message: compactMessage
+      ? `${SHORTFALL_TITLE}. 보유 ${availableCredits}, 필요 ${requiredCredits}`
+      : `${SHORTFALL_TITLE} — 보유 ${availableCredits} · 필요 ${requiredCredits}. 충전 후 다시 시도해 주세요.`,
   };
 }
 
@@ -27,7 +29,7 @@ export function mannequinGenerationCreditShortfall(
   return creditShortfall(account, requiredCredits);
 }
 
-export function detailPageGenerationCreditShortfall(account, aiCutCount, extensionModelFee = 0) {
+export function detailPageGenerationCreditShortfall(account, aiCutCount, extensionModelFee = 0, { compactMessage = false } = {}) {
   const requiredCredits = detailPageCreditCost(aiCutCount);
-  return creditShortfall(account, requiredCredits > 0 ? requiredCredits + extensionModelFee : requiredCredits);
+  return creditShortfall(account, requiredCredits > 0 ? requiredCredits + extensionModelFee : requiredCredits, compactMessage);
 }

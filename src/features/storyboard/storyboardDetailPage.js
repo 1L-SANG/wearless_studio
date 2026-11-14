@@ -18,9 +18,20 @@ export function storyboardDetailPageCredits(aiCutCount, options) {
   return cutCredits > 0 ? cutCredits + modelFee(options) : cutCredits;
 }
 
-export async function loadStoryboardCreditQuote({ mannequinStageEnabled = true, projectId, getCreditQuote }) {
+export async function loadStoryboardCreditQuote({ mannequinStageEnabled = true, projectId, getCreditQuote, timeoutMs = 8_000 }) {
   if (mannequinStageEnabled || !projectId) return null;
-  try { return await getCreditQuote(projectId); } catch { return null; }
+  const controller = new AbortController();
+  let timer;
+  try {
+    const timeout = new Promise(resolve => {
+      timer = setTimeout(() => { controller.abort(); resolve(null); }, timeoutMs);
+    });
+    return await Promise.race([getCreditQuote(projectId, { signal: controller.signal }), timeout]);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export function storyboardCreditResume(state, mannequinStageEnabled = true) {
@@ -41,7 +52,7 @@ export async function continueStoryboardToDetailPage({ submission, flush, afterF
       if (!isCurrent()) return;
       const currentAccount = typeof account === 'function' ? account() : account;
       const shortfall = detailPageGenerationCreditShortfall(currentAccount, aiCutCount,
-        modelFee({ quote, plan: currentAccount?.plan ?? plan, selectedModelId }));
+        modelFee({ quote, plan: currentAccount?.plan ?? plan, selectedModelId }), { compactMessage: true });
       if (shortfall) { onShortfall(shortfall); return; }
       navigate('/create/generating');
       moved = true;

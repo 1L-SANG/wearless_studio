@@ -126,6 +126,31 @@ test('storyboard PUTs stay serialized when a newer snapshot is queued behind a d
   persistence.dispose();
 });
 
+test('an unchanged reopening avoids a PUT and an undo still waits behind an in-flight write', async () => {
+  const calls = [];
+  let releaseEdit;
+  const persistence = createStoryboardPersistence({
+    invalidate() {}, onlineTarget: null,
+    saveStoryboard: (_projectId, snapshot) => {
+      calls.push(snapshot[0].id);
+      if (snapshot[0].id === 'edited') return new Promise(resolve => { releaseEdit = resolve; });
+      return Promise.resolve();
+    },
+  });
+  const before = [{ id: 'saved' }];
+  persistence.lastSaved.set('p', before);
+  await persistence.saveNow('p', () => structuredClone(before), { skipUnchanged: true });
+  assert.deepEqual(calls, []);
+
+  const edit = persistence.saveNow('p', () => [{ id: 'edited' }], { skipUnchanged: true });
+  await new Promise(setImmediate);
+  const undo = persistence.saveNow('p', () => structuredClone(before), { skipUnchanged: true });
+  releaseEdit();
+  await Promise.all([edit, undo]);
+  assert.deepEqual(calls, ['edited', 'saved']);
+  persistence.dispose();
+});
+
 test('background failure retries with backoff and an online event retries immediately', async () => {
   const backoffClock = fakeClock();
   let backoffCalls = 0;

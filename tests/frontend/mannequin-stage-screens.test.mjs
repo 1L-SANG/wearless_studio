@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import React from 'react';
 import { transformWithEsbuild } from 'vite';
+import { applyPromotedMatchSelection } from '../../src/lib/customMatchPromotion.js';
 import { continueStoryboardToDetailPage, loadStoryboardCreditQuote } from '../../src/features/storyboard/storyboardDetailPage.js';
+
+const offCreationReady = { doneBlocked: false, hasEditorEntered: () => false,
+  creditQuotePending: false, customMatchPromotionPending: false, customMatchPreparationFailed: false,
+  setCustomMatchConfirmationOpen() {} };
 
 const read = path => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 async function evaluate(source, bindings, result) {
@@ -123,7 +128,7 @@ test('콘티의 끔 분기는 같은 조건으로 색 재기를 맡기고 저장
   for (const measure of [true, false]) for (const failure of [true, false]) {
     const calls = [];
     const go = await evaluate(code, {
-      mannequinStageEnabled: false, blocks: [{ source: 'mine' }], productSectionNeedingSelection: () => null,
+      ...offCreationReady, detailPageEntryLocked: { current: false }, mannequinStageEnabled: false, blocks: [{ source: 'mine' }], productSectionNeedingSelection: () => null,
       unsupportedAiBlock: null, continueStoryboardToDetailPage, detailPageSubmitRef: { current: false },
       styleSaves: { flush: async () => calls.push('style') }, styleValueRef: { current: {} },
       ensureV4StoryboardCopywriting: async () => calls.push('copy'), projectId: 'p',
@@ -140,7 +145,12 @@ test('콘티의 끔 분기는 같은 조건으로 색 재기를 맡기고 저장
   }
 });
 
-for (const enabled of [true, false]) test(`콘티 진입은 사진 정착 뒤 스위치에 맞춰 생성과 최초 저장을 한다: ${enabled}`, async () => {
+for (const [enabled, saved, done, expected] of [
+  [true, false, false, [['mannequin', 'p']]],
+  [false, false, false, ['quote', 'save']],
+  [false, true, false, ['quote']],
+  [false, true, true, []],
+]) test(`콘티 진입에서 사진 정착과 서버 저장 상태를 확인한다: ${enabled}, ${saved}, ${done}`, async () => {
   const source = read('src/features/storyboard/Storyboard.jsx');
   const start = source.indexOf('  useEffect(() => {\n    // 사진 업로드 정착');
   const end = source.indexOf('  /* 보드 썸네일 선캐싱', start);
@@ -151,7 +161,7 @@ for (const enabled of [true, false]) test(`콘티 진입은 사진 정착 뒤 �
   const calls = [], taskState = {}, board = [{ id: 'first', taxonomyVersion: 4 }];
   const prepared = { blocks: [...board], normalized: false, assignment: { changed: false, assignedIds: [], protectedIds: [] },
     catalogs: {}, matchClothing: [], storyboardSeedContext: { colors: [] }, colorOpts: [], detailColorOpts: [] };
-  const bindings = { taskState, mannequinStageEnabled: enabled, loadRetry: 0, useEffect: effect => effect(),
+  const bindings = { ...offCreationReady, detailPageEntryLocked: { current: false }, taskState, mannequinStageEnabled: enabled, loadRetry: 0, useEffect: effect => effect(),
     pidRef: { current: 'p' }, useAppStore: { getState: () => ({ projectId: 'p', loadProject: async () => {} }) },
     setLoadError: error => { if (error) assert.fail(error.message); }, navigate: () => assert.fail('unexpected route'),
     waitForAnalysisEditSave: async () => {},
@@ -159,7 +169,7 @@ for (const enabled of [true, false]) test(`콘티 진입은 사진 정착 뒤 �
     getProductPhotoPromotionTask: () => null, getCustomMatchPromotionTask: () => null, sbSaveIdle: async () => {},
     consumeStoryboardEntry: async () => { calls.push('board'); return [board]; }, loadStoryboardEntry: async () => assert.fail('entry already loaded'),
     api: { storyboardEntryNotice: () => null, getCreditQuote: async () => { calls.push('quote'); return { detailPageGenerate: { extensionModelFee: 19 } }; } },
-    loadStoryboardCreditQuote, setCreditQuote() {}, setEntryNotice() {}, isAnalysisFastEntryEnabled: () => false,
+    loadStoryboardCreditQuote, storyboardEntryState: () => ({ saved, done }), setCreditQuote() {}, setEntryNotice() {}, isAnalysisFastEntryEnabled: () => false,
     requestMannequinGeneration: async (...args) => calls.push(['mannequin', ...args]), setMannequinFailure: error => assert.fail(error),
     sbPending: new Map(), sbLastSaved: new Map(), sbStable: JSON.stringify, toast: { push: message => assert.fail(message) },
     shouldReuseInitialStoryboardEntry: () => false, initialEntryRef: { current: null }, prepareStoryboardEntry: () => prepared,
@@ -173,7 +183,7 @@ for (const enabled of [true, false]) test(`콘티 진입은 사진 정착 뒤 �
   assert.deepEqual(calls, [], '사진 준비 중에는 보드 읽기와 생성 및 저장이 없어야 한다');
   finishPhotos();
   await taskState.promise;
-  assert.deepEqual(calls, enabled ? ['photos', 'board', ['mannequin', 'p']] : ['photos', 'board', 'quote', 'save']);
+  assert.deepEqual(calls, ['photos', 'board', ...expected]);
 });
 
 test('콘티 저장 중 프로젝트와 계정과 화면 수명이 바뀌면 새 작업을 시작하지 않는다', async () => {
@@ -185,7 +195,7 @@ test('콘티 저장 중 프로젝트와 계정과 화면 수명이 바뀌면 새
     let release;
     const saved = new Promise(resolve => { release = resolve; });
     const go = await evaluate(code, {
-      mannequinStageEnabled: false, blocks: [{ source: 'mine' }], productSectionNeedingSelection: () => null,
+      ...offCreationReady, detailPageEntryLocked: { current: false }, mannequinStageEnabled: false, blocks: [{ source: 'mine' }], productSectionNeedingSelection: () => null,
       unsupportedAiBlock: null, continueStoryboardToDetailPage, detailPageSubmitRef: { current: false }, detailPageLifetimeRef: lifetime,
       styleSaves: { flush: async () => {} }, styleValueRef: { current: {} }, projectId: 'p',
       useAppStore: { getState: () => state }, ensureV4StoryboardCopywriting: async () => {}, saveNow: () => saved,
@@ -205,4 +215,95 @@ test('콘티 저장 중 프로젝트와 계정과 화면 수명이 바뀌면 새
     await pending;
     assert.deepEqual(calls, [], boundary);
   }
+});
+
+
+test('콘티에서 견적이나 내 옷 반영을 기다리는 동안 생성 요청을 시작하지 않는다', async () => {
+  const source = read('src/features/storyboard/Storyboard.jsx');
+  const start = source.indexOf('  const goToMannequin =');
+  const code = source.slice(start, source.indexOf('\n  const runs =', start));
+  for (const gate of ['creditQuotePending', 'customMatchPromotionPending', 'doneBlocked']) {
+    let starts = 0;
+    const go = await evaluate(code, {
+      ...offCreationReady, detailPageEntryLocked: { current: false }, [gate]: true,
+      mannequinStageEnabled: false, blocks: [{ source: 'mine' }], productSectionNeedingSelection: () => null,
+      unsupportedAiBlock: null, projectId: 'p', detailPageLifetimeRef: { current: {} }, detailPageSubmitRef: { current: false },
+      useAppStore: { getState: () => ({ projectId: 'p' }) }, latestBlocks: { current: [] },
+      continueStoryboardToDetailPage: async () => { starts++; }, setCreditShortfall() {}, navigate() {},
+      generationCutCount: 5, detailPageQuote: null, catalogs: { analysis: {} },
+    }, 'goToMannequin');
+    await go();
+    assert.equal(starts, 0, gate);
+  }
+});
+
+test('내 옷 반영에 실패한 콘티는 셀러가 그대로 만들기를 고른 뒤에만 생성한다', async () => {
+  const source = read('src/features/storyboard/Storyboard.jsx');
+  const start = source.indexOf('  const goToMannequin =');
+  const code = source.slice(start, source.indexOf('\n  const runs =', start));
+  const actions = [];
+  const go = await evaluate(code, {
+    ...offCreationReady, customMatchPreparationFailed: true, detailPageEntryLocked: { current: false },
+    setCustomMatchConfirmationOpen: value => actions.push(['confirm', value]), mannequinStageEnabled: false,
+    blocks: [{ source: 'mine' }], productSectionNeedingSelection: () => null, unsupportedAiBlock: null, projectId: 'p',
+    detailPageLifetimeRef: { current: {} }, detailPageSubmitRef: { current: false },
+    useAppStore: { getState: () => ({ projectId: 'p' }) }, latestBlocks: { current: [] },
+    continueStoryboardToDetailPage: async () => actions.push('start'), setCreditShortfall() {}, navigate() {},
+    generationCutCount: 5, detailPageQuote: null, catalogs: { analysis: {} },
+  }, 'goToMannequin');
+  await go();
+  assert.deepEqual(actions, [['confirm', true]]);
+  await go({ allowMissingCustomMatch: true });
+  assert.deepEqual(actions, [['confirm', true], 'start']);
+});
+
+test('콘티의 충전 및 편집 잠금 안내는 하단 생성 버튼을 숨긴다', async () => {
+  const source = read('src/features/storyboard/Storyboard.jsx');
+  const start = source.indexOf('<StoryboardContinue hidden');
+  const code = source.slice(start, source.indexOf('/>', start) + 2);
+  for (const condition of ['doneBlocked', 'creditShortfall', 'creditResume', 'customMatchConfirmationOpen']) {
+    const node = await evaluate(`const footer = (${code});`, {
+      React, StoryboardContinue: 'Footer', drawer: null, photoBlocks: [{}], mannequinStageEnabled: false,
+      doneBlocked: false, creditShortfall: null, creditResume: null, customMatchConfirmationOpen: false,
+      detailPageEntryLocked: { current: false }, creditQuotePending: false, customMatchPromotionPending: false,
+      [condition]: true, storyboardContinueLabel: () => '', detailPageCreditCost: () => 0,
+      storyboardDetailPageCredits: () => 0, generationCutCount: 0, detailPageQuote: null, account: null,
+      catalogs: { analysis: {} }, undoEntry: null, undoExiting: false, undoLatest() {}, enterUndo() {}, leaveUndo() {},
+      goToMannequin() {}, unsupportedAiBlock: null, blocks: [{ source: 'mine' }],
+    }, 'footer');
+    assert.equal(node.props.hidden, true, condition);
+  }
+});
+
+
+test('끔 상태 내 옷 준비 안내는 등록 후 새 분석을 읽고 콘티에 반영할 때까지 유지된다', async () => {
+  const source = read('src/features/storyboard/Storyboard.jsx');
+  const start = source.indexOf('  useEffect(() => {', source.indexOf('// 입력 화면이 시작한 완료 프라미스'));
+  const code = source.slice(start, source.indexOf('  // 승격 실패 안내', start));
+  let notify, finishPromotion, finishRefresh;
+  const calls = [];
+  const registration = new Promise(resolve => { finishPromotion = resolve; });
+  const analysis = new Promise(resolve => { finishRefresh = resolve; });
+  const colors = [{ id: 'base', isBase: true }];
+  let blocks = [{ id: 'card', colorId: 'base', source: 'ai', cutType: 'styling', matchIds: [] }];
+  await evaluate(code, {
+    projectId: 'p', pushToast() {}, mannequinStageEnabled: false, useEffect: effect => effect(),
+    subscribeCustomMatchPromotion(_projectId, callback) { notify = callback; },
+    setCustomMatchPromotionPending: pending => calls.push(['pending', pending]),
+    setCustomMatchPreparationFailed: failed => calls.push(['failed', failed]),
+    api: { getAnalysis: () => analysis, getMatchClothing: () => assert.fail('cached selection') },
+    promotedMatchClothingRef: { current: null }, storyboardSeedContextRef: { current: { colors } },
+    applyPromotedMatchSelection, setMatchClothing() {}, setStoryboardSeedContext() {},
+    setBlocks(update) { blocks = update(blocks); calls.push(['setBlocks', blocks[0].matchIds]); },
+  }, 'undefined');
+  const task = { status: 'pending', promise: registration };
+  notify(task);
+  task.status = 'settled';
+  notify(task);
+  finishPromotion({ attempted: true, promoted: true });
+  await new Promise(setImmediate);
+  assert.deepEqual(calls, [['failed', false], ['pending', true], ['failed', false]]);
+  finishRefresh({ matchClothing: [{ id: 'own', isCustom: true, selected: true }] });
+  await new Promise(setImmediate);
+  assert.deepEqual(calls, [['failed', false], ['pending', true], ['failed', false], ['setBlocks', ['own']], ['pending', false]]);
 });

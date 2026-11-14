@@ -78,17 +78,21 @@ export function createStoryboardPersistence({
     // 예약된 저장이 착지하기 전의 서버본을 프리패치가 노출하지 않도록 즉시 무효화한다.
     if (projectId) invalidate(projectId);
     const epoch = conflictEpochs.get(projectId);
+    const { skipUnchanged, ...requestOptions } = options;
     const run = saveChain.catch(() => {}).then(() => {
       if (epoch !== conflictEpochs.get(projectId)) throw lastConflicts.get(projectId);
       const snapshot = getSnapshot();
       if (!projectId || !snapshot) return;
       if (conflictedSnapshots.has(snapshot) && !options.restoreConflict) throw lastConflicts.get(projectId);
-      if (lastSaved.get(projectId) === snapshot) {
-        if (pending.get(projectId) === snapshot) pending.delete(projectId);
-        if (retries.get(projectId)?.snapshot === snapshot) clearRetry(projectId);
+      const baseline = lastSaved.get(projectId);
+      const unchanged = (candidate) => candidate === snapshot
+        || (skipUnchanged && candidate != null && sbStable(candidate) === sbStable(snapshot));
+      if (unchanged(baseline)) {
+        if (unchanged(pending.get(projectId))) pending.delete(projectId);
+        if (unchanged(retries.get(projectId)?.snapshot)) clearRetry(projectId);
         return;
       }
-      return Promise.resolve().then(() => saveStoryboard(projectId, snapshot, options)).then(
+      return Promise.resolve().then(() => saveStoryboard(projectId, snapshot, requestOptions)).then(
         () => {
           lastSaved.set(projectId, snapshot);
           pending.delete(projectId);

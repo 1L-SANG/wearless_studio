@@ -4,6 +4,7 @@ import { isMannequinStageEnabled } from '../../src/lib/mannequinStage.js';
 import { WIZARD_STEPS, STEP_INDEX, wizardStepsForMannequinStage } from '../../src/lib/wizardSteps.js';
 import { mannequinGenerationCreditShortfall, detailPageGenerationCreditShortfall } from '../../src/lib/creditPreflight.js';
 import { flowScreenName } from '../../src/lib/flowAbandon.js';
+import { recordStoryboardEntryState, storyboardEntryState } from '../../src/lib/pageTemplates/entryNotices.js';
 import { storyboardTransitionState } from '../../src/features/product-input/storyboardTransition.js';
 import { storyboardContinueLabel, storyboardDetailPageCredits, loadStoryboardCreditQuote, storyboardCreditResume,
   continueStoryboardToDetailPage } from '../../src/features/storyboard/storyboardDetailPage.js';
@@ -135,4 +136,22 @@ test('저장 중 화면이나 프로젝트가 바뀌면 색 재기와 부족 안
 test('다른 모델의 견적은 현재 선택한 모델의 로컬 요금으로 대신한다', () => {
   assert.equal(storyboardDetailPageCredits(5, { plan: 'free', selectedModelId: 'mF',
     quote: { detailPageGenerate: { selectedModelId: 'mA', extensionModelFee: 0 } } }), 114);
+});
+
+
+test('처음 받는 보드의 저장 여부는 화면에 표시되는 시드와 별개다', () => {
+  const seed = [{ id: 'first' }];
+  const wireSaved = [{ id: 'first' }];
+  assert.equal(recordStoryboardEntryState(seed, { saved: false, done: false }), seed);
+  assert.equal(recordStoryboardEntryState(wireSaved, { saved: true, done: true }), wireSaved);
+  assert.deepEqual(storyboardEntryState(seed), { saved: false, done: false });
+  assert.deepEqual(storyboardEntryState(wireSaved), { saved: true, done: true });
+});
+
+test('응답이 없는 견적은 제한 시간에 종료하고 로컬 견적으로 이어간다', async () => {
+  let signal;
+  const result = await loadStoryboardCreditQuote({ mannequinStageEnabled: false, projectId: 'p', timeoutMs: 5,
+    getCreditQuote: (_project, options) => { signal = options.signal; return new Promise(() => {}); } });
+  assert.equal(result, null);
+  assert.equal(signal.aborted, true);
 });
