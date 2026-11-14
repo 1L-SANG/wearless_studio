@@ -5,7 +5,7 @@ import math
 from collections import Counter
 from io import BytesIO
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from .page_template_assembler import collect_overlay_regions
 from .page_templates import CATALOG
@@ -166,7 +166,14 @@ def overlay_text_metadata(block, image, *, product=None, analysis=None, storyboa
             if isinstance(image, (bytes, bytearray)):
                 opened = Image.open(BytesIO(image))
                 image = opened
-            rgb = image.convert('RGB')
+            if block.get('source') == 'mine':
+                # Uploaded photos keep their EXIF orientation in the browser.
+                # A single frame cannot clear the heading for animated uploads.
+                if not getattr(image, 'is_animated', False):
+                    with ImageOps.exif_transpose(image) as oriented:
+                        rgb = oriented.convert('RGB')
+            else:
+                rgb = image.convert('RGB')
         except Exception:
             pass
         cut = {'blockId': block['id'], 'imageUrl': None}

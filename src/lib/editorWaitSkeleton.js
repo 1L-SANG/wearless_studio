@@ -10,6 +10,8 @@ import {
 } from './editorTextSlots.js';
 import { editedTextElement } from '../features/editor/editorTextEdit.js';
 import { getBlockRenderHeight } from '../features/editor/editorGeometry.js';
+import { resolveTextSpacing } from '../features/editor/textSpacing.js';
+import { estimateTextHeight } from './pageTemplates/assemble.js';
 
 const autoBlockHeight = (elements) => Math.max(
   0,
@@ -69,14 +71,17 @@ const copyGeometry = ({ x, y, w, h }) => ({ x, y, w, h });
 const markAutoCopy = (element) => ({ ...element, genAutoText: element.text,
   genAutoStyle: { ...(element.style || {}) }, genAutoGeometry: copyGeometry(element) });
 
-function mergeAutoCopy(element, incoming) {
-  const style = { ...(element.style || {}) };
-  const baseline = element.genAutoStyle;
-  if (baseline) {
-    for (const [key, value] of Object.entries(incoming.style || {})) {
-      if (Object.is(style[key], baseline[key])) style[key] = value;
-    }
+function mergeAutoStyle(current, baseline, incoming) {
+  const style = { ...current };
+  if (baseline) for (const [key, value] of Object.entries(incoming || {})) {
+    if (Object.is(style[key], baseline[key])) style[key] = value;
   }
+  return style;
+}
+
+function mergeAutoCopy(element, incoming) {
+  const baseline = element.genAutoStyle;
+  const style = mergeAutoStyle(element.style, baseline, incoming.style);
   const geometry = element.genAutoGeometry;
   const untouchedBox = geometry && Object.entries(geometry).every(([key, value]) => Object.is(element[key], value));
   const unchangedTextSize = baseline && ['size', 'lineHeight', 'font', 'weight', 'tracking']
@@ -279,28 +284,43 @@ const noticeBlock = (block) => (block?.elements || []).some(
   (el) => el.type === 'license-verify'
     || (el.type === 'text' && typeof el.text === 'string' && el.text.startsWith('본 상세페이지')));
 
-// Editing FAQ copy during generation must not pin an automatic title over a face.
-// Preserve manual heading/photo placement, and move the remaining composition as
-// a unit only while those original layout anchors still match the pending layout.
+const FAQ_FACE_DESIGN = 'T08-D07';
+const faqHeading = el => el.type === 'text' && (el.copyRole === 'label' || el.copyRole === 'title');
+
+export function pendingFaqHeadingIds(blocks, { active, status, finalizeError }) {
+  const ids = new Set();
+  if (!active || status === 'error' || status === 'blocked' || finalizeError) return ids;
+  for (const block of blocks || []) if (block.pageDesignId === FAQ_FACE_DESIGN) {
+    for (const el of block.elements) if (faqHeading(el) && el.sourceBlockId) ids.add(el.id);
+  }
+  return ids;
+}
+
+// Keep the layout and its contrast together. Restored drafts can still have
+// seller edits from before the headings became read-only during generation.
 function mergeFaqFaceLayout(before, merged, server) {
   const baseline = before.genTemplateBaseline?.elements;
-  if (before.pageDesignId !== 'T08-D07' || !baseline || !server) return merged;
+  if (!baseline) return merged;
   const photo = baseline.find(el => el.type === 'image');
   const finalPhoto = server.elements.find(el => el.type === 'image' && el.sourceBlockId === photo?.sourceBlockId);
   if (!photo || !finalPhoto || finalPhoto.y <= photo.y) return merged;
   const originalPhoto = before.elements.find(el => el.id === photo.id);
   const sameBox = (a, b) => a && b && ['x', 'y', 'w', 'h', 'rotate'].every(key => a[key] === b[key]);
   if (!sameBox(originalPhoto, photo) || !sameValue(originalPhoto.crop, photo.crop)) return merged;
-  const headings = ['label', 'title'].map(role => ({
-    base: baseline.find(el => el.copyRole === role),
-    current: before.elements.find(el => el.copyRole === role),
-    final: server.elements.find(el => el.copyRole === role),
-  }));
+  const headings = ['label', 'title'].map(role => {
+    const base = baseline.find(el => el.copyRole === role);
+    return { base, current: before.elements.find(el => el.id === base?.id), final: server.elements.find(el => el.copyRole === role) };
+  });
   if (headings.some(({ base, current, final }) => !base || !current || !final
-      || !['x', 'y', 'w', 'rotate'].every(key => base[key] === current[key])
-      || !sameValue(base.style, current.style))) return merged;
-  const placed = headings.map(({ base, current, final }) => ({ ...current, ...copyGeometry(final), style: { ...final.style },
-    h: current.text === base.text ? final.h : Math.max(final.h, current.h) }));
+      || !['x', 'y', 'w', 'rotate'].every(key => base[key] === current[key]))) return merged;
+  const placed = headings.map(({ base, current, final }) => {
+    const { text, placeholder } = merged.elements.find(el => el.id === current.id);
+    const style = mergeAutoStyle(current.style, current.genAutoStyle || base.style, final.style);
+    const { lineHeight, tracking } = style.spacingMode === 'auto' ? resolveTextSpacing(style) : style;
+    const h = text === final.text && sameValue(style, final.style) ? final.h
+      : estimateTextHeight(text || placeholder, final.w, style.size, lineHeight || style.size * 1.4, undefined, tracking);
+    return { id: current.id, ...copyGeometry(final), style, h };
+  });
   const [label, title] = placed;
   title.y = label.y + label.h + (headings[1].final.y - headings[0].final.y - headings[0].final.h);
   const offset = title.y + title.h + (finalPhoto.y - headings[1].final.y - headings[1].final.h) - photo.y;
@@ -384,6 +404,8 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
       emitted.add(b.pageSectionKey);
       return serverBlocks.filter(block => block.pageSectionKey === b.pageSectionKey);
     }
+    const finalFaq = b.pageDesignId === FAQ_FACE_DESIGN && serverBlocks.find(block => block.pageSectionKey === b.pageSectionKey
+      && block.elements.some(el => el.type === 'image' && el.y > 0) && block.elements.some(faqHeading));
     let copyChanged = false;
     const elements = (b.elements || []).map((el) => {
       if (el.type === 'image' && el.sourceBlockId) {
@@ -410,6 +432,7 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
         const { genAutoText, genAutoStyle, genAutoGeometry, ...rest } = el;
         const serverCopy = copyById[el.sourceBlockId]?.[copyIdentity(el)];
         if (serverCopy && el.text === genAutoText) {
+          if (finalFaq && faqHeading(el)) return { ...rest, text: serverCopy.text };
           copyChanged = true;
           const merged = mergeAutoCopy(el, {
             text: serverCopy.text,
@@ -429,7 +452,7 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
       elements,
       ...(copyChanged ? { h: Math.max(Number(b.h) || 0, autoBlockHeight(elements)) } : {}),
     };
-    return mergeFaqFaceLayout(b, merged, serverBlocks.find(block => block.pageSectionKey === b.pageSectionKey));
+    return finalFaq ? mergeFaqFaceLayout(b, merged, finalFaq) : merged;
   });
   if (serverNotice) {
     const i = out.findIndex(noticeBlock);

@@ -2853,8 +2853,30 @@ async def run_detail_page_job(app, job: dict) -> None:
                 or []
             ),
         }
+        # Uploaded FAQ backgrounds are outside the paid cut list. Read only this
+        # project's uploads and pass their placement to final assembly.
+        assembly_cuts = list(cut_results)
+        for block in storyboard:
+            own_images = block.get("ownImages")
+            if (block.get("pageDesignId") != "T08-D07" or block.get("source") != "mine"
+                    or not isinstance(own_images, list) or not own_images or not own_images[0]):
+                continue
+            data = None
+            asset_id = asset_recipe.asset_id_from_file_capability(own_images[0])
+            if asset_id:
+                try:
+                    async with pool.connection() as conn:
+                        asset = await repo.get_project_asset_for_user(conn, user_id, project_id, asset_id)
+                    if asset and asset.get("source") == "upload":
+                        data = (await _img(asset)).data
+                except Exception as exc:
+                    log.warning("FAQ photo inspection unavailable for job %s: %s", job_id, type(exc).__name__)
+            placement = await asyncio.to_thread(
+                overlay_text_metadata, block, data, product=assembly_product, analysis=analysis,
+                storyboard=storyboard, copy_results=copy_results)
+            assembly_cuts.append({"blockId": block["id"], **placement})
         editor_blocks = page_assembler.assemble(
-            storyboard, cut_results, copy_results, assembly_product, True, **assemble_kwargs)
+            storyboard, assembly_cuts, copy_results, assembly_product, True, **assemble_kwargs)
 
         # 5) 성공 종결 (원자·lease 펜스). 예약 시점 단가와 최소 컷 수 스냅샷으로 정산.
         # (job.metadata.perCutCost — routes.py가 예약과 같은 tx에서 기록). 실행 시점 설정을 쓰면

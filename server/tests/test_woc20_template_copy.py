@@ -1,11 +1,15 @@
 """WOC20 local photo measurement and copy acceptance, without provider calls."""
+import asyncio
+from io import BytesIO
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from PIL import Image
 
 from app.agents import page_template_contrast as contrast, page_part_copy
+from app.workers import detail_page_job as worker
+from conftest import fake_worker_app, make_settings, worker_job
 from page_template_cases import assemble_input, case_input, collect_input_regions
 
 
@@ -110,3 +114,58 @@ def test_duplicate_photo_alias_measures_faq_placement_on_the_generated_source(mo
     assert result['overlayTextPositions']['emo.faq:faq.background:heading'] == 'outside'
     assert result['overlayTextPositions']['emo.first:first.hero:center'] in ('top', 'center', 'bottom')
     detector.assert_called_once()
+
+
+@pytest.mark.parametrize('boxes,expected_y', [
+    ([(420, 70, 140, 120)], 246), ([], 0), (None, 246),
+], ids=['face-in-heading', 'clear-heading', 'unreadable-upload'])
+def test_detail_job_places_faq_heading_on_uploaded_photo(monkeypatch, boxes, expected_y):
+    value = case_input('emo-2-mono')
+    storyboard = [card for card in value['storyboard'] if card['pageSectionKind'] in ('first', 'faq')]
+    hero = next(card for card in storyboard if card['pageSectionKind'] == 'first')
+    asset_id = '00000000-0000-4000-8000-000000000001'
+    url = f'https://api.wearless.test/v1/assets/{asset_id}/file'
+    faq = next(card for card in storyboard if card['pageSectionKind'] == 'faq' and card['source'] == 'ai')
+    faq.update(source='mine', cutType=None, ownImages=[url])
+    pending = assemble_input({**value, 'storyboard': storyboard, 'cutResults': []})
+    assert next(el for block in pending if block['pageSectionKind'] == 'faq'
+                for el in block['elements'] if el['type'] == 'image')['y'] == 0
+
+    photo_bytes = BytesIO()
+    with Image.new('RGB', (1250, 1000), 'white') as image:
+        exif = image.getexif()
+        exif[274] = 6
+        image.save(photo_bytes, 'JPEG', exif=exif)
+
+    def detect(image):
+        assert image.size == (1000, 1250)
+        return [SimpleNamespace(box=box) for box in boxes]
+
+    monkeypatch.setattr(worker.face_identity, 'detect_faces', detect)
+    for method, result in {
+        'get_project': {}, 'get_product': value['product'], 'get_storyboard': storyboard,
+        'get_analysis': value['analysis'], 'get_project_asset_for_user': {
+            'id': asset_id, 'source': 'upload', 'r2_key': 'upload/faq.jpg', 'mime_type': 'image/jpeg',
+        },
+    }.items():
+        monkeypatch.setattr(worker.repo, method, AsyncMock(return_value=result))
+    finalized = AsyncMock(return_value={})
+    monkeypatch.setattr(worker.repo, 'finalize_detail_page_success', finalized)
+    monkeypatch.setattr(worker.repo, 'finalize_detail_page_failure', AsyncMock())
+    monkeypatch.setattr(worker.page_part_copy, 'generate', AsyncMock(return_value={}))
+    monkeypatch.setattr(worker, '_emit', AsyncMock())
+    generated_asset = {'asset_id': 'generated-hero'}
+    monkeypatch.setattr(worker, '_gen_cuts', AsyncMock(return_value=(
+        [{'blockId': hero['id'], 'imageUrl': '/v1/assets/hero/file'}],
+        [generated_asset], 0, [], None, [],
+    )))
+    r2 = SimpleNamespace(get_bytes=Mock(return_value=photo_bytes.getvalue() if boxes is not None else b'invalid image'))
+    app = fake_worker_app(make_settings(r2_bucket='b', gemini_api_key='test'), r2=r2)
+    asyncio.run(worker.run_detail_page_job(app, worker_job(credits_reserved=19)))
+
+    published = finalized.await_args.kwargs
+    block = next(block for block in published['editor_blocks'] if block.get('pageSectionKind') == 'faq')
+    photo = next(el for el in block['elements'] if el['type'] == 'image')
+    assert (photo['src'], photo['y']) == (url, expected_y)
+    assert published['cut_assets'] == [generated_asset]
+    assert published['metadata']['generatedCuts'] == 1
