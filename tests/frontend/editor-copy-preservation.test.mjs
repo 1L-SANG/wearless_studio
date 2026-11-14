@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { stripPhotoBlockTextElements } from '../../src/features/editor/editorAppearance.js';
 import { decorateGenBlocks, fillGenBlocks, mergeServerBlocks } from '../../src/lib/editorWaitSkeleton.js';
 import { loadEditorWaitDraft, saveEditorWaitDraft } from '../../src/lib/editorWaitDraft.js';
+import { applyDetailJobEvents, detailPageDonePatch } from '../../src/lib/detailPageJobEvents.js';
 
 const caption = () => ({ id: 'text', type: 'text', sourceBlockId: 'shot', copyRole: 'headline',
   textSlotVersion: 1, text: '처음 문구', x: 60, y: 1402, w: 880, h: 60,
@@ -12,6 +13,31 @@ const block = (text = caption()) => ({ id: 'block', contentRole: 'benefit', h: 1
 ] });
 const job = (text) => ({ cuts: {}, copy: text ? { shot: [{ role: 'headline', text }] } : {}, status: 'running' });
 const textOf = blocks => blocks[0].elements.find(el => el.id === 'text');
+
+for (const edited of [false, true]) {
+  test(`copy_ready 없이 완료해도 글과 사진 대기를 끝내고 셀러 편집을 보존한다 (${edited})`, () => {
+    const initial = { ...job(), progress: 0, live: [], failedCuts: [] };
+    const pending = decorateGenBlocks([block({ ...caption(), copyRole: 'body', text: '본문 자리' })], initial, {});
+    if (edited) textOf(pending).text = '셀러가 쓴 본문';
+    const progressed = applyDetailJobEvents(initial, [
+      { type: 'progress', payload: { phase: 'inputs_loaded', progress: 15 } },
+      { type: 'step', payload: { blockId: 'shot', status: 'cut_start' } },
+      { type: 'step', payload: { blockId: 'shot', status: 'cut_done', previewUrl: '/preview.png' } },
+      { type: 'progress', payload: { phase: 'cut', progress: 80 } },
+      { type: 'progress', payload: { phase: 'assemble', progress: 85 } },
+    ]);
+    const done = { ...progressed, ...detailPageDonePatch({ result: {} }, progressed) };
+    const server = [block({ ...caption(), copyRole: 'body', text: '완성 본문' })];
+    server[0].elements[0].src = '/final.png';
+    const merged = mergeServerBlocks(fillGenBlocks(pending, progressed), server, new Set());
+    assert.equal(done.status, 'done');
+    assert.equal(done.progress, 100);
+    assert.deepEqual(done.copy, {});
+    assert.equal(textOf(merged).text, edited ? '셀러가 쓴 본문' : '완성 본문');
+    assert.equal(merged[0].elements[0].src, '/final.png');
+    assert.ok(merged[0].elements.every(element => !Object.keys(element).some(key => key.startsWith('gen'))));
+  });
+}
 
 test('새 캡션을 사진 안으로 옮겨 편집해도 다시 열 때 보존한다', () => {
   const moved = { ...caption(), x: 120, y: 100, text: '셀러가 직접 고친 문구' };

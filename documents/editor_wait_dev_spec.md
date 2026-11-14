@@ -16,6 +16,8 @@
 
 > **2026-11-13 템플릿 콘티(v4) 차이.** 이 문서의 조립기 설명(§2-3의 `page_assembler.py`, `copyRole` 'headline'|'body'|'subtitle', 자동 블록 3종)과 스켈레톤 설명(§3, §6.5 F4의 단일 AI 컷 2:3 정렬과 body 카피 슬롯 보강)은 옛 콘티 기준이다. 지금 스켈레톤은 `buildEditorBlocksFromStoryboard`(`src/mock/db.js`)가 템플릿 조립 엔진(`src/lib/pageTemplates/assemble.js`의 `assemblePage`)을 불러 만들고, `alignSkeletonToServer`는 `pageSectionKey`가 있는 템플릿 블록을 그대로 둔다. 글 칸의 `copyRole`은 카탈로그 섹션 종류의 역할 이름(`title`, `para`, `items.0.desc` 등)이고 `sourceBlockId`는 섹션 첫 카드다. `copy_ready` 이벤트는 AG-02 소제목(`headline`)만 실어서 템플릿 글 칸을 채우지 못한다. 디테일 요소의 부위 설명은 완료 병합 때 서버 조립본에서 들어온다. 상품 소개 본문에 셀러 MD 코멘트가 들어 있으면(`aiDraft`가 없고 글이 있는 `body`) 대기 화면과 이벤트 반영은 그 글을 카피로 덮지 않는다(`src/lib/editorWaitSkeleton.js`의 `decorateGenBlocks`, `fillGenBlocks`). 자동 블록은 넷(size, care, ai-notice, common-notice)이다. 카피 체계는 별도 카피라이팅 작업에서 정한다.
 
+> **2026-11-13 카피 단계 삭제.** 카피 단계(AG-02 소제목 생성, AG-03 검수, 진행 18% `copy` 이벤트, 소제목 `copy_ready` 내보내기)는 지웠다. 그래서 위 문단의 `copy_ready` 설명과 본문의 카피 선행 설명은 기록으로만 남는다. 서버와 목 모드는 지금 `copy_ready`를 보내지 않고, 화면의 `copy_ready` 병합 경로(`src/lib/detailPageJobEvents.js`)는 새 카피를 위해 남겼다.
+
 ## 0. 확정 결정 (창업자 승인, 재론 금지)
 
 1. **에디터에서 대기** — 뼈대 먼저, 사진은 도착 순.

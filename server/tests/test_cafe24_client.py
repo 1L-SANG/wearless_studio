@@ -375,6 +375,7 @@ def test_store_revoke_categories_and_thumbnail_use_confirmed_contracts():
 
 @pytest.mark.parametrize("stage", ["request", "body", "close", "pagination"])
 def test_total_timeout_covers_request_body_close_and_pagination(stage):
+    STALL = 2.0
     class Stream(httpx.AsyncByteStream):
         async def __aiter__(self):
             for part in (b'{"store":', b'{"shop_name":', b'"test"}}'):
@@ -383,7 +384,7 @@ def test_total_timeout_covers_request_body_close_and_pagination(stage):
 
     async def respond(request):
         if stage == "request":
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(STALL)
         if stage == "body":
             return httpx.Response(200, stream=Stream())
         if stage == "pagination":
@@ -395,14 +396,15 @@ def test_total_timeout_covers_request_body_close_and_pagination(stage):
     class Transport(httpx.MockTransport):
         async def aclose(self):
             if stage == "close":
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(STALL)
 
     api = module().Cafe24Client("myshop", client_id="c", client_secret="s", api_version="2026-09-01",
                                 timeout=0.03, transport=Transport(respond))
     started = time.monotonic()
     with pytest.raises(TimeoutError) as error:
         asyncio.run(api.find_products_by_custom_code("access", "code") if stage == "pagination" else api.store("access"))
-    assert time.monotonic() - started < 0.15
+    # 느린 CI에서도 흔들리지 않게 여유를 크게 둔다. 제한 시간이 안 먹으면 STALL(2초) 넘게 걸려 여전히 실패한다.
+    assert time.monotonic() - started < 1.0
     assert module().classify_error(error.value) == "unreachable"
 
 

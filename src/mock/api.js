@@ -1470,9 +1470,9 @@ export const api = {
      진행 중 재호출은 기존 job 에 합류한다 — 1회만 생성·차감.
      이미 완료(status='done')면 재생성·재차감 없이 기존 결과를 반환한다. */
   /* 에디터 대기(editor_wait_dev_spec §3) — mock 이벤트 시뮬. 서버와 같은 이벤트 계약
-     (copy_ready → cut_start/cut_done 롤링 → progress → done)을 흘려 대기 화면을 실데모한다.
-     핵심 트릭: 최종 에디터 블록을 **먼저** 조립해 거기서 이미지 src·카피 텍스트를 뽑아
-     이벤트로 내보낸다 → 대기 중 채워지는 내용과 완성본이 정확히 일치한다. */
+     컷 시작·완료 이벤트와 진행률, 최종 완료 상태로 대기 화면을 시연한다.
+     최종 에디터 블록을 먼저 조립해 이미지 src를 이벤트로 내보낸다.
+     글은 완료 결과를 병합할 때 채운다. */
   async startDetailPage(_projectId) {
     if (DB.project.status === 'done') {
       return { data: clone(DB.editorBlocks), credits: DB.account.credits };  // 완료 재호출(멱등)
@@ -1496,24 +1496,15 @@ export const api = {
       if (DB.project.id === job.projectId) DB.analysis = draft.analysis;
       const blocks = buildEditorBlocksFromStoryboard(draft.storyboard, draft.product, draft.project.copywriting, draft.analysis,
         selectFrameShopName(Object.values(DB.mallConnections || {})));
-      const imgs = []; const copies = new Map();
+      const imgs = [];
       for (const b of blocks) {
         for (const el of (b.elements || [])) {
           if (el.type === 'image' && el.sourceBlockId && el.src) imgs.push(el);
-          if (el.type === 'text' && el.sourceBlockId && el.copyRole) {
-            const list = copies.get(el.sourceBlockId) || [];
-            list.push({ role: el.copyRole, text: el.text });
-            copies.set(el.sourceBlockId, list);
-          }
         }
       }
       push('progress', { progress: 15, phase: 'inputs_loaded' });
       await wait(2000);   // 빈 뼈대(회색+로고 슬롯)를 충분히 보여준다 — "여기가 채워질 자리"
 
-      if (draft.project.copywriting && copies.size) {
-        push('progress', { progress: 18, phase: 'copy' });
-        for (const [bid, texts] of copies) { await wait(600); push('step', { blockId: bid, status: 'copy_ready', texts }); }
-      }
       const storyboardById = new Map(draft.storyboard.map(block => [block.id, block]));
       imgs.sort((a, b) => Number(Boolean(storyboardById.get(a.sourceBlockId)?.similarSourceBlockId)) - Number(Boolean(storyboardById.get(b.sourceBlockId)?.similarSourceBlockId)));
       const completed = new Map();

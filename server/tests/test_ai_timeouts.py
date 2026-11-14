@@ -14,7 +14,6 @@ from conftest import make_settings
 
 CONFIG = {
     "background_ai_timeout_seconds": 120,
-    "page_copy_timeout_seconds": 300,
     "ai_breaker_failures": 3,
     "ai_breaker_window_seconds": 300,
     "ai_breaker_cooldown_seconds": 300,

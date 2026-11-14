@@ -52,6 +52,10 @@ for (const method of ['generateDetailPage', 'startDetailPage']) {
         await new Promise(resolve => setTimeout(resolve, 1));
       }
       assert.equal(job.status, 'done');
+      const { events } = await api.getJobEvents(result.jobId);
+      assert.ok(events.every(event => event.payload?.phase !== 'copy' && event.payload?.status !== 'copy_ready'));
+      assert.deepEqual(events.filter(event => event.type === 'progress').map(event => event.payload.progress), [15, 40, 60, 80, 85]);
+      assert.equal(job.progress, 100);
       blocks = job.result.data;
     }
     assert.deepEqual(DB.analysis.partDescriptionCopy.map(item => item.point), ['기존 부위', '단추', '어깨선']);

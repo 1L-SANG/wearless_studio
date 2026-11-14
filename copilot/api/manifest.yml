@@ -343,7 +343,6 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   ANALYSIS_AUX_TIMEOUT_SECONDS: "30"
   # 오너 결정 2026-10-16: 평소엔 넉넉히 기다리고 진짜 고장일 때만 예비.
   BACKGROUND_AI_TIMEOUT_SECONDS: "120"
-  PAGE_COPY_TIMEOUT_SECONDS: "300"
   AI_BREAKER_FAILURES: "3"
   AI_BREAKER_WINDOW_SECONDS: "300"
   AI_BREAKER_COOLDOWN_SECONDS: "300"

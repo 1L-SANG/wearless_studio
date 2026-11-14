@@ -7,7 +7,7 @@ import pytest
 
 from app import repo
 from app.workers import detail_page_job as dpj
-from app.agents import page_part_copy
+from app.agents import feature_copy, page_part_copy
 from conftest import fake_worker_app, make_settings, worker_job
 
 
@@ -49,12 +49,11 @@ def run_job(monkeypatch, *, enabled=True, result=None, failure=False, persist_fa
     monkeypatch.setattr(repo, "get_analysis", AsyncMock(return_value=original))
     if real_generator:
         generate = AsyncMock(return_value=(result or {}, "fake-provider"))
-        monkeypatch.setattr(dpj.feature_copy, "complete_json", generate)
+        monkeypatch.setattr(feature_copy, "complete_json", generate)
     else:
-        generate = AsyncMock(return_value=result or ({} if enabled else []),
+        generate = AsyncMock(return_value=result or {},
                              side_effect=RuntimeError("copy unavailable") if failure else None)
-        monkeypatch.setattr(dpj.page_part_copy if enabled else dpj.feature_copy, "generate", generate)
-    monkeypatch.setattr(dpj, "_gen_copy", AsyncMock(return_value=([], None)))
+        monkeypatch.setattr(dpj.page_part_copy, "generate", generate)
     monkeypatch.setattr(dpj, "_emit", AsyncMock())
     monkeypatch.setattr(dpj, "_gen_cuts", AsyncMock(return_value=([
         {"blockId": "detail", "imageUrl": "/detail.jpg", "width": 600, "height": 900}], [], 0, [], None, [])))
@@ -76,14 +75,15 @@ def run_job(monkeypatch, *, enabled=True, result=None, failure=False, persist_fa
     return generate, saved, assembled, original
 
 
+@pytest.mark.parametrize("enabled", [False, True])
 @pytest.mark.parametrize("persist_failure", [False, True])
-def test_one_request_names_only_selected_parts_and_updates_current_assembly(monkeypatch, persist_failure):
+def test_one_request_names_only_selected_parts_and_updates_current_assembly(monkeypatch, persist_failure, enabled):
     seller = {"point": "단추", "desc": "단추 여밈을 확인할 수 있습니다."}
     button = {"point": "단추", "desc": "단추가 더해진 여밈으로\n차분한 옷차림을 완성해요"}
     shoulder = {"point": "드롭 숄더", "desc": "어깨 아래로 내려온 절개라\n상체 윤곽이 한결 느긋해요"}
     generated = {"featureCopy": [seller], "partDescriptionCopy": [button, shoulder,
                  {"point": "선택하지 않은 포켓", "desc": "반환되어도 버릴 문구입니다."}]}
-    call, saved, assembled, original = run_job(monkeypatch, result=generated, persist_failure=persist_failure)
+    call, saved, assembled, original = run_job(monkeypatch, enabled=enabled, result=generated, persist_failure=persist_failure)
     assert call.await_count == 1
     assert call.call_args.args[1:3] == (["단추", "유연한 원단"], ["단추", "드롭 숄더"])
     assert call.call_args.kwargs["timeout_seconds"] == 120
@@ -92,6 +92,7 @@ def test_one_request_names_only_selected_parts_and_updates_current_assembly(monk
     assert saved.call_args.args[2] == {"featureCopy": expected_features, "partDescriptionCopy": expected_parts}
     assert assembled["analysis"]["featureCopy"] == expected_features
     assert assembled["analysis"]["partDescriptionCopy"] == expected_parts
+    assert assembled["copywriting"] is True
     assert original == analysis(), "input analysis snapshot must not be mutated"
 
 
@@ -115,22 +116,13 @@ def test_empty_or_failed_response_keeps_both_stored_fields(monkeypatch, failure)
     assert assembled["analysis"]["partDescriptionCopy"] == analysis()["partDescriptionCopy"]
 
 
-def test_toggle_off_keeps_legacy_feature_call_without_requesting_part_copy(monkeypatch):
-    generated = [{"point": "단추", "desc": "단추 여밈을 확인할 수 있습니다."}]
-    call, saved, assembled, _ = run_job(monkeypatch, enabled=False, result=generated)
-    assert call.await_count == 1
-    assert call.call_args.args[1] == ["단추", "유연한 원단"]
-    assert set(saved.call_args.args[2]) == {"featureCopy"}
-    assert assembled["copywriting"] is False
-    assert assembled["analysis"]["partDescriptionCopy"] == analysis()["partDescriptionCopy"]
-
-
-def test_real_feature_generator_uses_one_fake_provider_call_for_all_unknown_labels(monkeypatch):
+@pytest.mark.parametrize("enabled", [False, True])
+def test_real_feature_generator_uses_one_fake_provider_call_for_all_unknown_labels(monkeypatch, enabled):
     result = {"featureCopy": [{"point": "유연한 원단", "desc": "원단의 유연한 형태를 확인할 수 있습니다."}],
               "partDescriptionCopy": [
                   {"point": "단추", "desc": "단추가 더해진 여밈으로\n차분한 옷차림을 완성해요"},
                   {"point": "드롭 숄더", "desc": "어깨 아래로 내려온 절개라\n상체 윤곽이 한결 느긋해요"}]}
-    provider, saved, assembled, _ = run_job(monkeypatch, result=result, real_generator=True)
+    provider, saved, assembled, _ = run_job(monkeypatch, enabled=enabled, result=result, real_generator=True)
     assert provider.await_count == 1
     prompt = provider.call_args.args[1]
     assert "- 유연한 원단" in prompt and "- 드롭 숄더" in prompt

@@ -103,7 +103,7 @@ useAppStore = {
 [마네킹]    getMannequins로 콘티에서 시작한 마네킹 작업 결과를 읽는다(비어 있으면 generateMannequins 뒤 syncCredits)
             핏 확인 스텝(유지/조정) → 변경 시 regenerateMannequin({fitProfile}) → syncCredits, 새 버전 자동 선택
             컷 선택 → selectMannequin(id) → patchProject({selectedMannequinId}), 이어서 /create/generating으로 간다
-[생성 대기]  generateDetailPage(projectId) — 서버가 저장된 콘티·selectedMannequinId·copywriting과 분석의 pageStyle을 읽음
+[생성 대기]  generateDetailPage(projectId) — 서버가 저장된 콘티·selectedMannequinId와 분석의 pageStyle을 읽음(카피는 늘 켜져 있어 copywriting 값은 읽지 않음)
             완료 → navigate(/editor/:projectId)
 [에디터]    getEditorBlocks(projectId) → 로컬 편집 + undo. 저장은 saveEditorBlocks(저장 버튼+1.5s 디바운스+이탈 플러시, 구현됨)
 [보관함]    getLibrary() → 카드 클릭 → /editor/:projectId
