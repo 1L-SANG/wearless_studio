@@ -348,6 +348,60 @@ for (const templateId of ['emo', 'show']) {
     }
 }
 for (const item of fixture.cases.filter(item => /^woc(?:[2356]|6b|11)-/.test(item.name))) validateStoryboardV4(item.input.storyboard);
+// WOC20 covers both measurement states without needing image generation or a browser.
+fixture.cases = fixture.cases.filter(item => !item.name.startsWith('woc20-'));
+for (const templateId of ['emo', 'show']) {
+    const base = () => structuredClone(fixture.cases.find(item => item.name === `${templateId}-2-mono`).input);
+    const push = (suffix, input) => {
+        const name = `woc20-${templateId}-${suffix}`;
+        const stable = stableBlocks(input.storyboard, name);
+        const ids = new Map(input.storyboard.map((card, index) => [card.id, stable[index].id]));
+        input.storyboard = stable;
+        input.cutResults = (input.cutResults || []).filter(cut => ids.has(cut.blockId)).map(cut => ({ ...cut, blockId: ids.get(cut.blockId) }));
+        input.copyResults = (input.copyResults || []).filter(copy => ids.has(copy.blockId)).map(copy => ({ ...copy, blockId: ids.get(copy.blockId) }));
+        fixture.cases.push({ name, input });
+    };
+    for (const count of [1, 3]) {
+        const input = base();
+        input.product.colors = ['pink', 'ivory', 'blue'].slice(0, count).map((swatchId, index) => ({ id: `c${index}`, name: swatchId, swatchId, isBase: index === 0 }));
+        input.storyboard = seedStoryboard(input.product, input.analysis, { projectId: 'woc20' }).filter(card => card.pageSectionKind === 'color_product');
+        input.cutResults = []; input.copyResults = [];
+        push(`colors-${count}`, input);
+    }
+    for (const position of ['pending', 'overlay', 'outside']) {
+        const input = base();
+        input.storyboard = addTemplateSection(input.storyboard, input.product, input.analysis, 'faq')
+            .filter(card => card.pageSectionKind === 'faq').map(card => ({ ...card, pageDesignId: 'T08-D07' }));
+        const photo = input.storyboard.find(card => card.source !== 'text');
+        input.cutResults = [{ blockId: photo.id, imageUrl: 'photo:faq', width: 1000, height: 1250,
+            ...(position !== 'pending' ? { overlayTextPositions: { [`${photo.pageSectionKey}:${photo.slotKey}:heading`]: position } } : {}) }];
+        input.copyResults = [{ blockId: input.storyboard[0].id, texts: [
+            { role: 'items.0.q', text: '어떤 소재인가요?' }, { role: 'items.0.a', text: '면 60%, 폴리에스터 40%예요.' },
+            { role: 'items.1.q', text: '어떤 색이 있나요?' }, { role: 'items.1.a', text: '로즈, 아이보리, 블루가 있어요.' },
+            { role: 'items.2.q', text: '핏은 어떤 편인가요?' }, { role: 'items.2.a', text: '품이 여유 있는 세미 오버핏이에요.' } ] }];
+        push(`faq-${position}`, input);
+    }
+    for (const lines of [0, 1, 2, 3]) {
+        const input = structuredClone(fixture.cases.find(item => item.name === `woc11-${templateId}-PT-PHOTO-CARD-01-template-mono`).input);
+        input.storyboard = input.storyboard.filter(card => card.pageSectionKind === 'points');
+        input.analysis.partDescriptionCopy.forEach(item => { item.desc = ['', '단추로 앞을 여밀 수 있어요', '단추가 더해진 여밈으로\n차분한 옷차림을 완성해요', '단추가 더해진 여밈으로\n차분한 옷차림을 완성해요\n한 줄 더 있어요'][lines]; });
+        push(`part-lines-${lines}`, input);
+    }
+    const wear = base();
+    wear.storyboard = seedStoryboard(wear.product, wear.analysis, { projectId: 'woc20' }).filter(card => card.pageSectionKind === 'wear');
+    wear.cutResults = []; wear.copyResults = [];
+    push('wear-sets', wear);
+    const loose = structuredClone(wear);
+    loose.storyboard.forEach(card => { delete card.spaceGroupId; });
+    push('wear-loose', loose);
+    for (const content of ['empty', 'filled']) {
+        const input = base();
+        input.storyboard = addTemplateSection(input.storyboard, input.product, input.analysis, 'review')
+            .filter(card => card.pageSectionKind === 'review').map(card => ({ ...card, pageDesignId: 'I09-D06' }));
+        input.copyResults = content === 'empty' ? [] : [{ blockId: input.storyboard[0].id, texts: [{ role: 'items.0.text', text: '먼저 입어 본 후기예요.' }] }];
+        push(`review-${content}`, input);
+    }
+}
 const outputs = fixture.cases.map(({ input }) => ({
     blocks: assemblePage(input),
     regions: collectOverlayRegions(input),

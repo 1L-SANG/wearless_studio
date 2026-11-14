@@ -6,7 +6,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { assemblePage } from "../../src/lib/pageTemplates/assemble.js";
 import { bakeExportBackdrops } from "../../src/features/editor/editorExportRaster.js";
-import { isEmptyTextElement } from "../../src/features/editor/editorGeometry.js";
+import { isEmptyTextElement, getHiddenExportElementIds } from "../../src/features/editor/editorGeometry.js";
 import { isSpeechBubbleElement } from "../../src/features/editor/editorBubbleFit.js";
 import { cssWeight } from "../../src/features/editor/fontWeights.js";
 
@@ -51,7 +51,7 @@ const input = fixture.cases.find((c) => c.name === "show-light-swatches").input;
 const dots = assemblePage(input)
     .flatMap((b) => b.elements)
     .filter((e) => e.type === "shape" && e.shape === "circle");
-const markupOf = (el) =>
+const markupOf = (el, options = {}) =>
     renderToStaticMarkup(
         CanvasElement({
             el,
@@ -59,6 +59,7 @@ const markupOf = (el) =>
             editing: false,
             preview: false,
             scale: 1,
+            ...options,
         }),
     );
 
@@ -216,4 +217,44 @@ test("R1 circles pass unchanged through the real download clone and capture func
     );
     assert.doesNotMatch(receivedSvg, /<line|<svg/);
     assert.equal(removed, true);
+});
+
+test('WOC20 actual editor keeps empty bubbles editable and preview omits them with lining labels', () => {
+    const value = fixture.cases.find(c => c.name === 'woc20-emo-review-empty').input;
+    const block = assemblePage(value).find(b => b.pageSectionKind === 'review');
+    const hidden = getHiddenExportElementIds(block);
+    const bubble = block.elements.find(el => el.opacity === .96);
+    assert.ok(hidden.has(bubble.id));
+    assert.match(markupOf(bubble, { exportHidden: true }), /el-empty-template-copy/);
+    assert.equal(markupOf(bubble, { exportHidden: true, preview: true }), '');
+    const colors = assemblePage(fixture.cases.find(c => c.name === 'woc20-show-colors-3').input);
+    const title = colors.flatMap(b => b.elements).find(el => el.copyRole === 'title');
+    assert.match(markupOf(title), /el-lining-numbers/);
+    assert.match(readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8'), /\.el-text\.el-lining-numbers\s*\{\s*font-variant-numeric: lining-nums;/);
+});
+
+test('WOC20 real download clone removes empty copy groups and uses the measured export height', async () => {
+    const source = readFileSync(new URL('../../src/features/editor/editorExport.js', import.meta.url), 'utf8');
+    const selector = new Function(`${source.slice(source.indexOf('const CHROME_SELECTOR ='), source.indexOf('// 한 번의 다운로드'))};return CHROME_SELECTOR;`)();
+    const code = source.slice(source.indexOf('async function prepareClone('), source.indexOf('\nexport function flattenOnWhite'));
+    const value = fixture.cases.find(c => c.name === 'woc20-emo-review-empty').input;
+    const block = assemblePage(value).find(b => b.pageSectionKind === 'review');
+    const hidden = getHiddenExportElementIds(block);
+    const children = block.elements.filter(el => el.type === 'shape' || el.type === 'text').map(el => {
+        const markup = markupOf(el, { exportHidden: hidden.has(el.id) });
+        return { markup, removed: false, style: {}, classList: { remove() {} }, remove() { this.removed = true; } };
+    });
+    const clone = { classList: { remove() {} }, style: {}, dataset: { exportHeight: '1616' },
+        querySelectorAll(query) {
+            if (query === selector) return children.filter(child => selector.split(',').some(css => child.markup.includes(css.slice(1))));
+            return query === '.el' ? children.filter(child => !child.removed) : [];
+        } };
+    const scope = { document: { createElement: () => ({ style: {}, appendChild() {}, remove() {} }), body: { appendChild() {} } },
+        EXPORT_WIDTH: 1000, CHROME_SELECTOR: selector, replaceGifPosters() {}, preflightImages: async () => ({ softFailed: 0 }) };
+    const prepare = new Function(...Object.keys(scope), `${code};return prepareClone;`)(...Object.values(scope));
+    const result = await prepare({ cloneNode: () => clone });
+    assert.equal(children.filter(child => !child.removed && child.markup.includes('opacity:0.96')).length, 0);
+    assert.ok(children.some(child => !child.removed && child.markup.includes('먼저 입어 본 분들의 후기')));
+    assert.equal(result.clone.style.height, '1616px');
+    result.dispose();
 });

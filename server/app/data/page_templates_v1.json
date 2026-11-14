@@ -19,7 +19,8 @@
     "panelMuted": "#5c5c5c",
     "framePaper": "#fbfaf7",
     "frameInk": "#6b6b6b",
-    "titlePlate": "#111111"
+    "titlePlate": "#111111",
+    "photoShade": "#000000"
   },
   "editorFonts": [
     "Pretendard",
@@ -283,7 +284,7 @@
           "copyRole": "title",
           "kind": "fact",
           "source": "fact",
-          "default": "{n}가지 색이에요",
+          "default": "{n}가지 색상",
           "maxChars": null,
           "factPath": "product.colors[].name",
           "itemCount": null,
@@ -729,7 +730,7 @@
           "copyRole": "lead",
           "kind": "title",
           "source": "static",
-          "default": "이런 반응을 기대해요",
+          "default": "먼저 입어 본 분들의 후기",
           "maxChars": null,
           "factPath": null,
           "itemCount": null,
@@ -3123,7 +3124,7 @@
           "slot": "background",
           "aspect": "4/5",
           "scrim": {
-            "color": "#000000",
+            "color": "photoShade",
             "opacity": 0.3
           },
           "groups": [
@@ -3131,27 +3132,63 @@
               "id": "heading",
               "x": 70,
               "w": 860,
-              "y": 87.5,
-              "anchor": "bottom",
+              "y": 68,
+              "anchor": "top",
               "textColor": "canvas",
               "nodes": [
                 {
                   "type": "text",
                   "copyRole": "label",
-                  "size": 28,
+                  "default": "Q&A",
+                  "size": 32,
                   "color": "onPhoto",
-                  "align": "left",
+                  "align": "center",
                   "gap": 10
                 },
                 {
                   "type": "text",
                   "copyRole": "title",
                   "style": "titleKo",
-                  "size": 30,
+                  "size": 44,
+                  "lineHeight": 1.2954545454545454,
                   "color": "onPhoto",
-                  "align": "left",
-                  "gap": 20
-                },
+                  "align": "center",
+                  "gap": 0
+                }
+              ],
+              "faceFallback": {
+                "top": 120,
+                "padding": 56,
+                "gap": 26,
+                "nodes": [
+                  {
+                    "type": "text",
+                    "copyRole": "label",
+                    "default": "Q&A",
+                    "size": 32,
+                    "color": "accentInk",
+                    "align": "center",
+                    "gap": 12
+                  },
+                  {
+                    "type": "text",
+                    "copyRole": "title",
+                    "style": "titleKo",
+                    "size": 37,
+                    "color": "ink",
+                    "align": "center",
+                    "gap": 0
+                  }
+                ]
+              }
+            },
+            {
+              "id": "bubbles",
+              "x": 70,
+              "w": 860,
+              "y": 87.5,
+              "anchor": "bottom",
+              "nodes": [
                 {
                   "type": "list",
                   "copyRole": "items.n.q",
@@ -3163,14 +3200,23 @@
                       "copyRole": "items.n.q",
                       "size": 22,
                       "align": "left",
-                      "gap": 6
+                      "gap": 6,
+                      "prefix": "Q.",
+                      "prefixWidth": 34,
+                      "color": "muted"
                     },
                     {
                       "type": "text",
                       "copyRole": "items.n.a",
-                      "size": 22,
+                      "size": 26,
                       "align": "left",
-                      "gap": 0
+                      "gap": 0,
+                      "prefix": "A.",
+                      "prefixWidth": 34,
+                      "color": "ink",
+                      "style": "titleKo",
+                      "trackingEm": -0.01,
+                      "lineHeight": 1.6153846153846154
                     }
                   ],
                   "alternate": true,
@@ -3181,7 +3227,7 @@
                     "x": 0,
                     "y": 3,
                     "blur": 12,
-                    "color": "#000000",
+                    "color": "photoShade",
                     "opacity": 0.18
                   },
                   "padding": [
@@ -4173,14 +4219,34 @@
           "type": "text",
           "copyRole": "label",
           "gap": 12,
-          "size": 32
+          "size": 32,
+          "whenTemplate": "emo"
         },
         {
           "type": "text",
           "copyRole": "title",
-          "gap": 26,
+          "gap": 14,
           "size": 37,
-          "emphasis": "title"
+          "style": "titleKo",
+          "color": "ink",
+          "whenTemplate": "emo"
+        },
+        {
+          "type": "swatchRow",
+          "size": 37,
+          "itemGap": 30,
+          "gap": 30,
+          "whenTemplate": "emo"
+        },
+        {
+          "type": "text",
+          "copyRole": "title",
+          "style": "labelEn",
+          "size": 37,
+          "color": "ink",
+          "gap": 30,
+          "liningNumbers": true,
+          "whenTemplate": "show"
         },
         {
           "type": "photoStack",

@@ -17,12 +17,13 @@ def _luminance(rgb):
     return sum(value * coefficient for value, coefficient in zip(channels, (.2126, .7152, .0722)))
 
 
-def _pixel_counts(image, plan):
+def _source_region(image, plan):
+    """Map the displayed frame region back through its crop to original pixels."""
     width, height = image.size
     frame, region = plan['frame'], plan['region']
     fw, fh = frame['w'], frame['h']
     if min(width, height, fw, fh) <= 0:
-        return Counter()
+        raise ValueError('empty photo frame')
     left, top, right, bottom = [min(1, max(0, region[key])) for key in ('left', 'top', 'right', 'bottom')]
     if frame.get('crop'):
         crop = frame['crop']
@@ -33,7 +34,12 @@ def _pixel_counts(image, plan):
         visible_w, visible_h = min(width, height * aspect), min(height, width / aspect)
         x1, x2 = [(width - visible_w) / 2 + point * visible_w for point in (left, right)]
         y1, y2 = [(height - visible_h) / 2 + point * visible_h for point in (top, bottom)]
-    bounds = (max(0, math.floor(x1)), max(0, math.floor(y1)), min(width, math.ceil(x2)), min(height, math.ceil(y2)))
+    return max(0, x1), max(0, y1), min(width, x2), min(height, y2)
+
+
+def _pixel_counts(image, plan):
+    x1, y1, x2, y2 = _source_region(image, plan)
+    bounds = (math.floor(x1), math.floor(y1), math.ceil(x2), math.ceil(y2))
     if bounds[0] >= bounds[2] or bounds[1] >= bounds[3]:
         return Counter()
     # Resizing would average a checkerboard into gray and erase low-contrast pixels.
@@ -120,6 +126,35 @@ def _first_title_metadata(image, plan):
     return _plate_position(plan), light, {line['key']: {'color': light, 'shade': False} for line in plan['lines']}, True
 
 
+def _detect_heading_faces(image):
+    """Local YuNet only. None means unavailable, distinct from a valid empty result."""
+    try:
+        if image is None:
+            return None
+        from .face_identity import detect_faces
+        return detect_faces(image)
+    except Exception:
+        return None
+
+
+def _face_heading_position(image, plan, faces):
+    if faces is None:
+        return 'outside'
+    try:
+        left, top, right, bottom = _source_region(image, plan)
+        if left >= right or top >= bottom:
+            return 'outside'
+        for face in faces:
+            x, y, width, height = face.box
+            if not all(math.isfinite(value) for value in face.box) or min(width, height) <= 0:
+                return 'outside'
+            if max(left, x) < min(right, x + width) and max(top, y) < min(bottom, y + height):
+                return 'outside'
+        return 'overlay'
+    except Exception:
+        return 'outside'
+
+
 def overlay_text_metadata(block, image, *, product=None, analysis=None, storyboard=None,
                           copy_results=None, copywriting=True, profile=None, source_aliases=None):
     """Evaluate exact final-layout lines, including direct and reused appearances."""
@@ -145,9 +180,12 @@ def overlay_text_metadata(block, image, *, product=None, analysis=None, storyboa
         plans = [plan for plan in plans if plan['sourceBlockId'] in sources]
         if not plans:
             return {}
+        faces = _detect_heading_faces(rgb) if any(plan.get('avoidFaces') for plan in plans) else None
         colors, lines, positions, plates = {}, {}, {}, {}
         for plan in plans:
-            if plan.get('positionCandidates'):
+            if plan.get('avoidFaces'):
+                positions[plan['key']] = _face_heading_position(rgb, plan, faces)
+            elif plan.get('positionCandidates'):
                 position, color, measured_lines, plate = _first_title_metadata(rgb, plan)
                 if plate:
                     plates[plan["key"]] = True

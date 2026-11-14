@@ -9,6 +9,7 @@ import { baseColorOf, resolvePageTokens, sectionTokens } from "./tokens.js";
 import { buildAutoBlocks } from "./autoBlocks.js";
 import { templateSectionName } from './slots.js';
 import { isWornCropSource, reuseSourceForSlot } from './sectionDependencies.js';
+import { inferStoryboardSpaceSet } from '../storyboardSpaceSetCatalog.js';
 
 const round = (value) => Math.floor(value + 0.5);
 const lightSwatch = (hex) => {
@@ -284,22 +285,23 @@ const paddingOf = (node) =>
         : [node.padding || 0, node.padding || 0];
 const rgba = (color, opacity) =>
     `rgba(${[1, 3, 5].map((index) => parseInt(color.slice(index, index + 2), 16)).join(", ")}, ${opacity})`;
-const shapePaint = (node) => ({
+const paintColor = (color, ctx) => ctx.catalog.neutralColors[color] || color;
+const shapePaint = (node, ctx) => ({
     ...(node.fillOpacity != null ? { opacity: node.fillOpacity } : {}),
-    ...(node.shadow ? { boxShadow: `${node.shadow.x}px ${node.shadow.y}px ${node.shadow.blur}px ${rgba(node.shadow.color, node.shadow.opacity)}` } : {}),
+    ...(node.shadow ? { boxShadow: `${node.shadow.x}px ${node.shadow.y}px ${node.shadow.blur}px ${rgba(paintColor(node.shadow.color, ctx), node.shadow.opacity)}` } : {}),
 });
 const samePanelSurface = (node, fill, surfaceColor) =>
     fill && fill.toLowerCase() === surfaceColor?.toLowerCase()
     && (node.fillOpacity ?? 1) === 1 && !node.shadow;
 
-function renderScrim(scrim, x, y, width, height) {
+function renderScrim(scrim, x, y, width, height, ctx) {
     if (!scrim) return [];
-    const h = height * (scrim.heightRatio ?? 1);
+    const h = height * (scrim.heightRatio ?? 1), color = paintColor(scrim.color, ctx);
     return [{
         type: "shape", shape: "rect", x, y: y + height - h, w: width, h, radius: 0,
         ...(scrim.gradient
-            ? { fill: `linear-gradient(180deg, ${rgba(scrim.color, 0)} 0%, ${rgba(scrim.color, scrim.opacity)} 100%)` }
-            : { fill: scrim.color, opacity: scrim.opacity }),
+            ? { fill: `linear-gradient(180deg, ${rgba(color, 0)} 0%, ${rgba(color, scrim.opacity)} 100%)` }
+            : { fill: color, opacity: scrim.opacity }),
     }];
 }
 const nativeCounts = [
@@ -346,7 +348,8 @@ function factText(role, ctx) {
             .filter(Boolean)
             .join(", ");
     if (ctx.kind.kind === "color_product" && role === "title")
-        return `${koreanCount(colors.length)} 가지 색이에요`;
+        return ctx.tokens.template.id === 'show'
+            ? `${colors.length} COLOR${colors.length === 1 ? '' : 'S'}` : `${colors.length}가지 색상`;
     if (/^colors\.\d+\.name$/.test(role) || /^colorName\.\d+$/.test(role))
         return colorName(selected, catalog);
     if (/^colors\.\d+\.en$/.test(role)) {
@@ -420,8 +423,7 @@ function contentFor(node, ctx) {
             const part = ctx.analysis.partDescriptionCopy?.find?.((item) => item.point === name)?.desc;
             if (node.copyPolicy === 'partOnly') {
                 const lines = string(part).replace(/\r\n?/g, '\n').split('\n');
-                // Old one-line copy remains stored and remains usable by saved layouts.
-                text = lines.length === 2 && lines.every(line => line.trim()) ? lines.join('\n') : '';
+                text = lines.length >= 1 && lines.length <= 2 && lines.every(line => line.trim()) ? lines.join('\n') : '';
             } else {
                 text = part
                     || (ctx.card?.pointItem?.kind !== 'wornCrop'
@@ -431,6 +433,8 @@ function contentFor(node, ctx) {
         }
     }
     if (ctx.paragraphRole === role) text = ctx.paragraphText;
+    if (ctx.kind.kind === 'wear' && /^cap\.(front|side|back)$/.test(role)
+        && inferStoryboardSpaceSet(ctx.card?.spaceGroupId)?.setType !== 'horizon-rotation') text = '';
     return { text: string(text), slot, role };
 }
 
@@ -443,6 +447,9 @@ function renderText(node, x, y, width, ctx) {
             string(ctx.card.colorId) === string(ctx.baseColor.id))
     )
         return { elements: [], h: 0 };
+    const prefixX = x, prefixWidth = node.prefixWidth || 0;
+    x += prefixWidth;
+    width -= prefixWidth;
     const token = node.style || content.slot?.style || "body";
     const fontKey = ["small"].includes(token)
         ? "body"
@@ -554,6 +561,7 @@ function renderText(node, x, y, width, ctx) {
                 : color === "onPhoto"
                   ? ctx.onPhoto
                   : ctx.tokens.colors[color],
+        ...(node.liningNumbers ? { numeric: 'lining' } : {}),
     };
     if (
         ctx.tokens.template.id === "guide" &&
@@ -617,7 +625,7 @@ function renderText(node, x, y, width, ctx) {
             element.w = textW;
             element.style.align = "left";
             return {
-                elements: [
+                elements: groupCopyElements([
                     {
                         type: "shape",
                         shape: "circle",
@@ -635,12 +643,23 @@ function renderText(node, x, y, width, ctx) {
                             : {}),
                     },
                     element,
-                ],
+                ], ctx),
                 h,
             };
         }
     }
-    return { elements: [element], h };
+    return { elements: node.prefix ? [{ type: 'text', x: prefixX, y, w: prefixWidth,
+        h: lineHeight, text: node.prefix, style: { ...style, align: 'left' },
+        templateCopyDecoration: node.prefix }, element] : [element], h };
+}
+
+// Existing editor groupId keeps template decorations with their editable copy.
+function groupCopyElements(elements, ctx, extend = false) {
+    if (!elements.some(el => el.type === 'text' && el.copyRole)
+        || elements.some(el => el.type === 'image') || !extend && elements.some(el => el.groupId)) return elements;
+    const groupId = extend && elements.find(el => el.groupId)?.groupId || `template-copy:${ctx.key}:${ctx.copyGroups.next++}`;
+    return elements.map(el => ({ ...el, groupId,
+        ...(el.type === 'text' && !el.copyRole ? { templateCopyDecoration: el.text } : {}) }));
 }
 
 function selectCards(node, ctx) {
@@ -928,11 +947,13 @@ function renderGroups(groups, x, y, width, height, ctx, photo) {
         if (policy && (plated ? plateStyle.platePreference : policy.anchors).includes(meta.overlayTextPositions?.[groupKey])) gy = result.offsets[meta.overlayTextPositions[groupKey]];
         const placed = result.elements.map(element => ({ ...element, y: element.y + gy,
             ...(plated ? { groupId: titlePlateGroup(groupKey) } : {}) }));
-        const bare = placed.filter(element => element._overlayGroupKey === groupKey);
+        const bare = placed.filter(element => element._overlayGroupKey === groupKey
+            || group.faceFallback && element.type === 'text');
         const boxes = bare.length ? overlayBoxes(bare, groupKey, x, y, width, height, ctx.catalog.textMetrics, Boolean(policy)) : null;
         const lineBoxes = boxes?.lines || [];
         if (bare.length && photo.sourceBlockId && ctx.overlayRegions) {
             const plan = { sourceBlockId: photo.sourceBlockId, key: groupKey,
+                ...(group.faceFallback ? { avoidFaces: true } : {}),
                 frame: { w: photo.w, h: photo.h, ...(photo.crop ? { crop: photo.crop } : {}) }, ...regionPlan(boxes) };
             if (policy) {
                 plan.positionCandidates = policy.anchors.map(position => ({ position,
@@ -983,6 +1004,14 @@ function renderNode(node, x, y, width, ctx) {
     if (node.type === "text" || node.type === "factTable")
         return renderText(node, x, y, width, ctx);
     if (node.type === "photo") return renderPhoto(node, x, y, width, ctx);
+    if (node.type === 'swatchRow') {
+        const fills = (ctx.product.colors || []).map(color => ctx.catalog.swatchHex[color.swatchId]).filter(Boolean);
+        const size = node.size, gap = node.itemGap;
+        const start = x + (width - fills.length * size - Math.max(0, fills.length - 1) * gap) / 2;
+        return { elements: fills.map((fill, index) => ({ type: 'shape', shape: 'circle',
+            x: start + index * (size + gap), y, w: size, h: size, fill, radius: 999,
+            ...(lightSwatch(fill) ? { stroke: ctx.tokens.colors.accentLine, strokeWidth: 1 } : {}) })), h: fills.length ? size : 0 };
+    }
     if (node.type === "rule") {
         if (!width) return { elements: [], h: 0 };
         const align = node.align === "template" ? ctx.align : node.align;
@@ -1067,7 +1096,7 @@ function renderNode(node, x, y, width, ctx) {
         }
         const h = result.h + padY * 2;
         return {
-            elements: [
+            elements: groupCopyElements([
                 ...(node.fill && !sameSurface
                     ? [
                           {
@@ -1079,26 +1108,35 @@ function renderNode(node, x, y, width, ctx) {
                               h,
                               fill: ctx.tokens.colors[node.fill],
                               radius: node.radius || 0,
-                              ...shapePaint(node),
+                              ...shapePaint(node, ctx),
                           },
                       ]
                     : []),
                 ...result.elements,
-            ],
+            ], ctx),
             h,
         };
     }
     if (node.type === "overlay") {
         const result = renderPhoto(node, x, y, width, ctx);
+        const photo = result.elements[0];
+        const outside = node.groups?.find(group => group.faceFallback
+            && ctx.cuts[photo.sourceBlockId]?.overlayTextPositions?.[`${ctx.key}:${photo.slotKey}:${group.id}`] === 'outside');
+        const fallback = outside?.faceFallback;
+        const heading = fallback ? renderNodes(fallback.nodes, x + fallback.padding, y + fallback.top,
+            width - fallback.padding * 2, ctx) : { elements: [], h: 0 };
+        const offset = fallback ? fallback.top + heading.h + fallback.gap : 0;
         return {
             ...result,
+            h: result.h + offset,
             elements: [
-                ...result.elements,
-                ...renderScrim(node.scrim, x, y, width, result.h),
+                ...heading.elements,
+                ...result.elements.map(el => ({ ...el, y: el.y + offset })),
+                ...renderScrim(outside ? null : node.scrim, x, y, width, result.h, ctx),
                 ...renderGroups(
-                    node.groups,
+                    node.groups.filter(group => group !== outside),
                     x,
-                    y,
+                    y + offset,
                     width,
                     result.h,
                     ctx,
@@ -1215,7 +1253,7 @@ function renderNode(node, x, y, width, ctx) {
                     });
                 }
             }
-            elements.push(...result.elements);
+            elements.push(...groupCopyElements(result.elements, ctx, true));
             cursor += result.h + (i < count - 1 ? node.itemGap ?? node.gap ?? 0 : 0);
         }
         return { elements, h: cursor - y };
@@ -1758,6 +1796,7 @@ export function assemblePage({
             align: design.align || tokens.template.align,
             onPhoto: catalog.overlayColors.light,
             index: 0,
+            copyGroups: { next: 0 },
             overlayRegions,
             designId,
             surfaceColor: renderSection.block?.invert

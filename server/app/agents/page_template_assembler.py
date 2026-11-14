@@ -6,6 +6,7 @@ import re
 from types import SimpleNamespace
 
 from .content_roles import is_worn_crop_source
+from .space_set_assets import load_space_set_registry, parse_space_set_group_id
 
 from .page_templates import (
     CATALOG, base_color_of, get_template, resolve_page_tokens, section_definition,
@@ -38,11 +39,15 @@ def _rgba(color, opacity):
     return f"rgba({channels}, {opacity:g})"
 
 
-def _shape_paint(node):
+def _paint_color(color, ctx):
+    return ctx.catalog['neutralColors'].get(color, color)
+
+
+def _shape_paint(node, ctx):
     paint = {"opacity": node["fillOpacity"]} if node.get("fillOpacity") is not None else {}
     if node.get("shadow"):
         shadow = node["shadow"]
-        paint["boxShadow"] = f"{shadow['x']:g}px {shadow['y']:g}px {shadow['blur']:g}px {_rgba(shadow['color'], shadow['opacity'])}"
+        paint["boxShadow"] = f"{shadow['x']:g}px {shadow['y']:g}px {shadow['blur']:g}px {_rgba(_paint_color(shadow['color'], ctx), shadow['opacity'])}"
     return paint
 
 
@@ -51,12 +56,13 @@ def _same_panel_surface(node, fill, surface_color):
     return fill and fill.lower() == (surface_color or "").lower() and opacity == 1 and not node.get("shadow")
 
 
-def _render_scrim(scrim, x, y, width, height):
+def _render_scrim(scrim, x, y, width, height, ctx):
     if not scrim:
         return []
     h = height * scrim.get("heightRatio", 1)
-    paint = ({"fill": f"linear-gradient(180deg, {_rgba(scrim['color'], 0)} 0%, {_rgba(scrim['color'], scrim['opacity'])} 100%)"}
-             if scrim.get("gradient") else {"fill": scrim["color"], "opacity": scrim["opacity"]})
+    color = _paint_color(scrim['color'], ctx)
+    paint = ({"fill": f"linear-gradient(180deg, {_rgba(color, 0)} 0%, {_rgba(color, scrim['opacity'])} 100%)"}
+             if scrim.get("gradient") else {"fill": color, "opacity": scrim["opacity"]})
     return [{"type": "shape", "shape": "rect", "x": x, "y": y + height - h, "w": width, "h": h, "radius": 0, **paint}]
 
 
@@ -222,7 +228,7 @@ def _fact_text(role, ctx):
     if role == "colors":
         return ", ".join(filter(None, (_color_name(color, catalog) for color in colors)))
     if ctx.kind["kind"] == "color_product" and role == "title":
-        return f"{korean_count(len(colors))} 가지 색이에요"
+        return f"{len(colors)} COLOR{'S' if len(colors) != 1 else ''}" if ctx.tokens['template']['id'] == 'show' else f"{len(colors)}가지 색상"
     if re.fullmatch(r"colors\.\d+\.name|colorName\.\d+", role):
         return _color_name(selected, catalog)
     if re.fullmatch(r"colors\.\d+\.en", role):
@@ -273,14 +279,21 @@ def _content_for(node, ctx):
             part = next((item.get("desc") for item in ctx.analysis.get("partDescriptionCopy") or [] if isinstance(item, dict) and item.get("point") == name), None)
             if node.get("copyPolicy") == "partOnly":
                 lines = _string(part).replace("\r\n", "\n").replace("\r", "\n").split("\n")
-                # Saved one-line copy stays available to legacy layouts only.
-                text = "\n".join(lines) if len(lines) == 2 and all(line.strip() for line in lines) else ""
+                text = "\n".join(lines) if 1 <= len(lines) <= 2 and all(line.strip() for line in lines) else ""
             else:
                 legacy = (next((item.get("desc") for item in ctx.analysis.get("featureCopy") or [] if isinstance(item, dict) and item.get("point") == name), None)
                           if ((ctx.card or {}).get("pointItem") or {}).get("kind") != "wornCrop" else None)
                 text = part or legacy or text
     if getattr(ctx, "paragraph_role", None) == role:
         text = ctx.paragraph_text
+    if ctx.kind['kind'] == 'wear' and re.fullmatch(r'cap\.(front|side|back)', role):
+        try:
+            group = parse_space_set_group_id((ctx.card or {}).get('spaceGroupId'))
+            rotation = group and load_space_set_registry()[1].get(group[0], {}).get('setType') == 'horizon-rotation'
+        except ValueError:
+            rotation = False
+        if not rotation:
+            text = ''
     return _string(text), slot, role
 
 
@@ -290,6 +303,9 @@ def _render_text(node, x, y, width, ctx):
         return [], 0
     if node.get("onlyExtraColor") and (not (ctx.card or {}).get("colorId") or _string(ctx.card["colorId"]) == _string(ctx.base_color.get("id"))):
         return [], 0
+    prefix_x, prefix_width = x, node.get('prefixWidth') or 0
+    x += prefix_width
+    width -= prefix_width
     token = node.get("style") or (slot or {}).get("style") or "body"
     font_key = "body" if token == "small" else "labelEn" if token == "num" else token
     font = {**ctx.tokens["fonts"][font_key], **({"weight": 300} if node.get("weight") == "light" else {}),
@@ -337,6 +353,8 @@ def _render_text(node, x, y, width, ctx):
              "tracking": _round((font.get("trackingEm") or 0) * size * 100) / 100,
              "lineHeight": line_height, "align": node.get("align") or ctx.align,
              "color": ctx.on_photo if color == "onPhoto" else ctx.tokens["colors"][color]}
+    if node.get('liningNumbers'):
+        style['numeric'] = 'lining'
     bare_overlay = bool(getattr(ctx, "overlay_group_key", None) and not getattr(ctx, "opaque_background", False))
     fixed_color = getattr(ctx, "fixed_overlay_color", None)
     auto_contrast = bare_overlay and not fixed_color
@@ -368,10 +386,25 @@ def _render_text(node, x, y, width, ctx):
             start = x + ((width - group_w) / 2 if style["align"] == "center" else width - group_w if style["align"] == "right" else 0)
             element.update(x=start + 18, w=text_w)
             style["align"] = "left"
-            return [{"type": "shape", "shape": "circle", "x": start, "y": y + (line_height - 10) / 2,
+            return _group_copy_elements([{"type": "shape", "shape": "circle", "x": start, "y": y + (line_height - 10) / 2,
                      "w": 10, "h": 10, "fill": fill, "radius": 999,
-                     **({"stroke": ctx.tokens["colors"]["accentLine"], "strokeWidth": 1} if _light_swatch(fill) else {})}, element], height
+                     **({"stroke": ctx.tokens["colors"]["accentLine"], "strokeWidth": 1} if _light_swatch(fill) else {})}, element], ctx), height
+    if node.get('prefix'):
+        return [{'type': 'text', 'x': prefix_x, 'y': y, 'w': prefix_width, 'h': line_height,
+                 'text': node['prefix'], 'style': {**style, 'align': 'left'}, 'templateCopyDecoration': node['prefix']}, element], height
     return [element], height
+
+
+def _group_copy_elements(elements, ctx, extend=False):
+    if (not any(el['type'] == 'text' and el.get('copyRole') for el in elements)
+            or any(el['type'] == 'image' for el in elements) or not extend and any(el.get('groupId') for el in elements)):
+        return elements
+    group_id = next((el['groupId'] for el in elements if el.get('groupId')), None) if extend else None
+    if not group_id:
+        group_id = f"template-copy:{ctx.key}:{ctx.copy_groups['next']}"
+        ctx.copy_groups['next'] += 1
+    return [{**el, 'groupId': group_id,
+             **({'templateCopyDecoration': el['text']} if el['type'] == 'text' and not el.get('copyRole') else {})} for el in elements]
 
 
 def _resolve_photo(slot_key, ctx):
@@ -604,11 +637,12 @@ def _render_groups(groups, x, y, width, height, ctx, photo):
         if policy and position in (plate_style["platePreference"] if plated else policy["anchors"]):
             gy = result["offsets"][position]
         placed = [{**el, "y": el["y"] + gy, **({"groupId": f"title-plate:{group_key}"} if plated else {})} for el in result["elements"]]
-        bare = [el for el in placed if el.get("_overlayGroupKey") == group_key]
+        bare = [el for el in placed if el.get("_overlayGroupKey") == group_key or group.get('faceFallback') and el['type'] == 'text']
         boxes = _overlay_boxes(bare, group_key, x, y, width, height, ctx.catalog["textMetrics"], bool(policy)) if bare else None
         line_boxes = boxes["lines"] if boxes else []
         if bare and photo.get("sourceBlockId") and ctx.overlay_regions is not None:
             plan = {"sourceBlockId": photo["sourceBlockId"], "key": group_key,
+                    **({'avoidFaces': True} if group.get('faceFallback') else {}),
                     "frame": {"w": photo["w"], "h": photo["h"], **({"crop": photo["crop"]} if photo.get("crop") else {})}, **_region_plan(boxes)}
             if policy:
                 plan["positionCandidates"] = [{"position": position, **_region_plan(_overlay_boxes(
@@ -655,6 +689,14 @@ def _render_node(node, x, y, width, ctx):
     if kind == "photo":
         elements, h, _ = _render_photo(node, x, y, width, ctx)
         return elements, h
+    if kind == 'swatchRow':
+        fills = [fill for color in ctx.product.get('colors') or [] if (fill := ctx.catalog['swatchHex'].get(color.get('swatchId')))]
+        size, gap = node['size'], node['itemGap']
+        start = x + (width - len(fills) * size - max(0, len(fills) - 1) * gap) / 2
+        return [{'type': 'shape', 'shape': 'circle', 'x': start + index * (size + gap), 'y': y,
+                 'w': size, 'h': size, 'fill': fill, 'radius': 999,
+                 **({'stroke': ctx.tokens['colors']['accentLine'], 'strokeWidth': 1} if _light_swatch(fill) else {})}
+                for index, fill in enumerate(fills)], size if fills else 0
     if kind == "rule":
         if not width:
             return [], 0
@@ -690,11 +732,23 @@ def _render_node(node, x, y, width, ctx):
             elements, height = children(x, width)
         height += pad_y * 2
         if node.get("fill") and not same_surface:
-            elements.insert(0, {"type": "shape", "shape": "rect", "x": x, "y": y, "w": width, "h": height, "fill": ctx.tokens["colors"][node["fill"]], "radius": node.get("radius") or 0, **_shape_paint(node)})
-        return elements, height
+            elements.insert(0, {"type": "shape", "shape": "rect", "x": x, "y": y, "w": width, "h": height, "fill": ctx.tokens["colors"][node["fill"]], "radius": node.get("radius") or 0, **_shape_paint(node, ctx)})
+        return _group_copy_elements(elements, ctx), height
     if kind == "overlay":
         elements, height, card = _render_photo(node, x, y, width, ctx)
-        return elements + _render_scrim(node.get("scrim"), x, y, width, height) + _render_groups(node.get("groups"), x, y, width, height, ctx, elements[0]), height
+        photo = elements[0]
+        positions = ctx.cuts.get(photo.get('sourceBlockId'), {}).get('overlayTextPositions') or {}
+        outside = next((group for group in node.get('groups') or [] if group.get('faceFallback')
+                        and positions.get(f"{ctx.key}:{photo['slotKey']}:{group['id']}") == 'outside'), None)
+        heading, offset = [], 0
+        if outside:
+            fallback = outside['faceFallback']
+            heading, head_h = _render_nodes(fallback['nodes'], x + fallback['padding'], y + fallback['top'], width - 2 * fallback['padding'], ctx)
+            offset = fallback['top'] + head_h + fallback['gap']
+        groups = [group for group in node.get('groups') or [] if group is not outside]
+        return (heading + [{**el, 'y': el['y'] + offset} for el in elements]
+                + _render_scrim(None if outside else node.get('scrim'), x, y, width, height, ctx)
+                + _render_groups(groups, x, y + offset, width, height, ctx, photo)), height + offset
     if kind == "list":
         pattern = _string(node.get("countRole") or node.get("copyRole"))
         index_pattern = re.compile("^" + re.escape(pattern).replace(r"\.n", r"\.(\d+)") + "$")
@@ -727,7 +781,7 @@ def _render_node(node, x, y, width, ctx):
                     result.insert(0, {"type": "shape", "shape": "circle" if node["marker"] == "dot" else "rect", "x": text_start - 22,
                                       "y": first["y"] + (first["style"]["lineHeight"] - 6) / 2, "w": 6, "h": 6,
                                       "fill": ctx.tokens["colors"]["ink"], "radius": 999 if node["marker"] == "dot" else 0})
-            elements.extend(result)
+            elements.extend(_group_copy_elements(result, ctx, True))
             item_gap = node["itemGap"] if node.get("itemGap") is not None else node.get("gap") or 0
             cursor += height + (item_gap if index < count - 1 else 0)
         return elements, cursor - y
@@ -1004,7 +1058,7 @@ def assemble_v4(storyboard, cut_results, copy_results, product, copywriting, *, 
                               shop_name=shop_name.strip() if isinstance(shop_name, str) else "", copywriting=copywriting,
                               key=key, section=section, kind=kind, cuts=cuts, copy=copies.get(first["id"]) or {}, source_id=first["id"], base_color=base_color_of(product),
                               tokens=section_style, photos=photos, used=set(), failed_cuts=failed_cuts or {}, align=design.get("align") or tokens["template"]["align"],
-                              on_photo=catalog["overlayColors"]["light"], index=0, card=None, overlay_regions=overlay_regions, design_id=design_id,
+                              on_photo=catalog["overlayColors"]["light"], index=0, card=None, overlay_regions=overlay_regions, design_id=design_id, copy_groups={'next': 0},
                               surface_color=tokens["colors"]["invertBg"] if (render_section.get("block") or {}).get("invert") else section_style["colors"][design.get("surface") or "canvas"])
         pad = design.get("padding") or 0
         width = catalog["canvasWidth"] - pad * 2

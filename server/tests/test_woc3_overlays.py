@@ -44,7 +44,10 @@ def test_base_one_photo_full_scrim_and_bottom_alternating_white_bubbles(kind):
         assert bubble["boxShadow"] == "0px 3px 12px rgba(0, 0, 0, 0.18)"
     assert bubbles[-1]["y"] + bubbles[-1]["h"] == 1162.5
     assert next(el for el in content if el.get("copyRole") == "label")["style"]["color"] == "#ffffff"
-    assert collect_input_regions(value) == []
+    plans = collect_input_regions(value)
+    assert len(plans) == (1 if kind == 'faq' else 0)
+    if plans:
+        assert plans[0]['avoidFaces'] is True
 
 
 @pytest.mark.parametrize("kind", ["review", "faq"])

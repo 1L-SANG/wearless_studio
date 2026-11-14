@@ -57,7 +57,7 @@ def test_fabric_heading_and_description_are_measured_independently(heading, desc
 
 
 @pytest.mark.parametrize("kind,design_id", [
-    ("review", "I09-D06"), ("faq", "T08-D07"),
+    ("review", "I09-D06"),
     ("review", "I09-SCRIM-01"), ("faq", "T08-SCRIM-01"),
 ])
 def test_fixed_review_and_faq_designs_do_not_request_bare_image_measurement(kind, design_id):
@@ -125,7 +125,8 @@ def test_other_versions_and_images_without_bare_overlay_text_are_ignored():
 def test_measurement_regions_follow_the_copy_and_exclude_opaque_and_fixed_paint_groups():
     value = case_input("emo-2-point")
     plans = collect_input_regions(value)
-    assert [plan["key"] for plan in plans] == ["emo.first:first.hero:center"]
+    assert [plan["key"] for plan in plans] == ["emo.first:first.hero:center", "emo.faq:faq.background:heading"]
+    assert plans[-1]["avoidFaces"] is True
     for plan in plans:
         if plan["key"].endswith(":center"):
             assert (plan["region"]["top"] + plan["region"]["bottom"]) / 2 == .5

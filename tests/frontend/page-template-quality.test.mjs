@@ -361,7 +361,7 @@ test("C9/R5 point-row copy stays centered with rounded and square common photo d
         assert.equal((top + bottom) / 2, photo.y + photo.h / 2);
     }
 });
-test("C10 color title uses native Korean counters through ten", () => {
+test("C10 Korean counter utility stays stable while color titles use numeric counts", () => {
     assert.deepEqual(
         Array.from({ length: 12 }, (_, i) => koreanCount(i + 1)),
         [
@@ -383,7 +383,7 @@ test("C10 color title uses native Korean counters through ten", () => {
         texts(
             section(assemblePage(inputOf("emo-2-mono")), "emo.color_product"),
         ).find((e) => e.copyRole === "title").text,
-        "두 가지 색이에요",
+        "2가지 색상",
     );
 });
 test("C11 AI paragraphs without seller MD get at most three individually sized bubbles without losing copy", () => {

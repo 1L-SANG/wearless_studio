@@ -3814,3 +3814,8 @@
 @media (prefers-reduced-motion: reduce) {
   .sb-deck.is-section-added { animation: none; background-color: color-mix(in srgb, var(--ring-flow-2) 18%, transparent); }
 }
+
+/* Template labels use capitals and numerals of the same height. */
+.el-text.el-lining-numbers {
+  font-variant-numeric: lining-nums;
+}
