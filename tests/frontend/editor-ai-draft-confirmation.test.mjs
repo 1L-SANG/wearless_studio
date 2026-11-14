@@ -115,3 +115,35 @@ test('publish: 코드 만들기에서 확인했다면 성공 뒤 ZIP과 실패 �
   modal.render({ result: null, error: { message: '실패', files: [{}] } }); modal.click('ZIP 받기');
   assert.deepEqual(modal.calls, ['publish', 'zip', 'zip']);
 });
+
+test('에디터 내보내기 창의 키 입력이 뒤쪽 문서를 바꾸지 않는다', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
+  const handler = (name, marker, scope) => {
+    const start = source.indexOf(`    const ${name} =`, source.indexOf(marker));
+    const end = source.indexOf(`    window.addEventListener('keydown', ${name})`, start);
+    assert.ok(start >= 0 && end > start);
+    return new Function(...Object.keys(scope), `${source.slice(start, end)}; return ${name};`)(...Object.values(scope));
+  };
+  const changes = [];
+  const kb = { current: { exportModalOpen: true, canAddText: true, hasSel: true,
+    undo: () => changes.push('undo'), redo: () => changes.push('redo'),
+    paste: () => changes.push('paste'), addText: () => changes.push('text'),
+    layer: () => changes.push('layer'), save: () => changes.push('save') } };
+  const onKey = handler('onKey', '  const editorClipboard =', { kb });
+  const onSelectionKey = handler('h', '  // Delete/Backspace removes', {
+    kb, selEls: ['t'], selectedIds: ['t'], selBlock: 'b', blockFocused: true,
+    isEditorDeleteKey: () => false, setBlocks: () => changes.push('move'),
+  });
+  const event = (key, extra = {}) => ({ key, target: { tagName: 'BUTTON' }, preventDefault() {}, ...extra });
+
+  for (const key of ['z', 'y', 'v', 's']) onKey(event(key, { metaKey: true }));
+  for (const key of ['t', '[', ']', 'Escape', 'Tab']) onKey(event(key));
+  onSelectionKey(event('ArrowDown'));
+  assert.deepEqual(changes, []);
+
+  kb.current.exportModalOpen = false;
+  onKey(event('z', { metaKey: true }));
+  onSelectionKey(event('ArrowDown'));
+  assert.deepEqual(changes, ['undo', 'move']);
+});
