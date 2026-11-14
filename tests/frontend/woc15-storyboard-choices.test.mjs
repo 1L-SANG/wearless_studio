@@ -143,7 +143,7 @@ function removalHarness(initial) {
   const slice = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
   let state = initial;
   const undoEntryRef = { current: null }, scope = { blocks: initial, removeStoryboardPhoto, atomicSavingRef: { current: false },
-    catalogs: { detailProduct: product }, undoEntryRef, setBlocks: value => { state = value; }, setUndoExiting() {}, setUndoEntry() {},
+    catalogs: { detailProduct: product }, detailPageSubmitRef: { current: false }, undoEntryRef, setBlocks: value => { state = value; }, setUndoExiting() {}, setUndoEntry() {},
     scheduleUndoDismiss() {}, dismissUndo: () => { undoEntryRef.current = null; }, setPicker: null, setInsertedSectionKey() {},
     selectedId: initial[0].id, closeInspector() {}, toast: { push() {} } };
   const handlers = new Function('scope', `with (scope) {

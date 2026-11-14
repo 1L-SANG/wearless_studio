@@ -13,7 +13,7 @@ import styles from './StoryboardChoices.module.css';
 
 export function StoryboardPhotoGallery({ block, catalogs, cut, shot, shotOptions, onShotChange, clothingType = 'top', gender,
   identityKind, exampleId, onExampleChange, onExampleDrag, spaceContext, signature, projectId,
-  refs = [], onRefsChange, onUseMine, onPickRef, busy = false, ...editorProps }) {
+  refs = [], onRefsChange, onUseMine, onPickRef, onUploadStart, busy = false, ...editorProps }) {
   const selected = catalogs.genExamples?.find(example => example.id === exampleId);
   const single = isSinglePhotoSection(block), studio = !single && cut === 'horizon';
   const [place, setPlace] = useState(() => initialPhotoPlace(selected));
@@ -83,7 +83,7 @@ export function StoryboardPhotoGallery({ block, catalogs, cut, shot, shotOptions
   });
   if (cut === 'product') return <EditorMoodGuide {...editorProps} catalogs={catalogs} cut={cut} shot={shot} shotOptions={shotOptions} onShotChange={onShotChange}
     clothingType={clothingType} gender={gender} identityKind={identityKind} exampleId={exampleId} onExampleChange={onExampleChange}
-    refs={refs} onRefsChange={onRefsChange} onUseMine={onUseMine} onPickRef={onPickRef} usedExampleIds={new Set()} />;
+    refs={refs} onRefsChange={onRefsChange} onUseMine={onUseMine} onPickRef={onPickRef} onUploadStart={onUploadStart} usedExampleIds={new Set()} />;
   return <div className={styles.photoGallery}>
     {ownSet && !single && <div className={styles.samePlace}>
       <h3>같은 장소의 다른 사진</h3><div className={styles.photoGrid}>
@@ -109,7 +109,7 @@ export function StoryboardPhotoGallery({ block, catalogs, cut, shot, shotOptions
       <PhotoChoicePager page={currentPage} count={pages.length} onChange={changePage} />
     </>}
     {onUseMine && <><button type="button" className={styles.textAction} aria-expanded={mine} onClick={() => setMine(value => !value)}>내 사진으로 바꾸기</button>
-      {mine && <MineImageTab images={refs} onImagesChange={onRefsChange} onChoose={onUseMine}
+      {mine && <MineImageTab images={refs} onImagesChange={onRefsChange} onChoose={onUseMine} onUploadStart={onUploadStart}
         onPickImage={() => onPickRef ? onPickRef() : api.pickRefImage(useAppStore.getState().projectId)} />}</>}
   </div>;
 }

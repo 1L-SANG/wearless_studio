@@ -1472,19 +1472,15 @@ export const api = {
   /* ---- storyboard (PRD §8) ---- */
   async getStoryboard(/* projectId */) {
     await wait(160);
-    const persisted = DB.storyboard;
+    const saved = DB.storyboardSaved;
     const done = DB.project.status === 'done' || DB.project.latestJobs?.detailPage?.status === 'done';
     const effectiveAnalysis = DB.analysis.pageStyle ? DB.analysis : { ...DB.analysis, pageStyle: await this.getLastPageStyle() };
-    const resolved = resolveStoryboardEntry(persisted, DB.product, effectiveAnalysis, {
+    const resolved = resolveStoryboardEntry(DB.storyboard, DB.product, effectiveAnalysis, {
       projectId: DB.project.id, generated: done,
       identityKind: identityKindOf(isRealModelSelection(DB.analysis.selectedModelId)),
     });
-    const saved = DB.storyboardSaved && resolved.blocks === persisted;
     setStoryboardEntryNotice(DB.project.id, resolved.notice);
-    if (resolved.notice !== 'legacyGenerated' && resolved.notice !== 'rebuilt') {
-      DB.storyboard = resolved.blocks;
-      DB.storyboardSaved = saved;
-    }
+    if (resolved.notice !== 'legacyGenerated' && resolved.notice !== 'rebuilt') DB.storyboard = resolved.blocks;
     return recordStoryboardEntryState(clone(resolved.notice === 'legacyGenerated' ? [] : resolved.blocks), { saved, done });
   },
   storyboardEntryNotice,

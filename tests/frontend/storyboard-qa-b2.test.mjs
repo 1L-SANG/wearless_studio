@@ -151,21 +151,37 @@ test('an unchanged reopening avoids a PUT and an undo still waits behind an in-f
   persistence.dispose();
 });
 
-test('saving returns server blocks, including when the confirmed input is unchanged', async () => {
+test('generation confirms even an unchanged board and receives the saved server blocks', async () => {
   const submitted = [{ id: 'one' }, { id: 'two', pose: 'auto' }];
   const confirmed = [{ id: 'one' }, { id: 'two' }];
   for (const response of [{ blocks: confirmed, revision: 2 }, confirmed]) {
-    let requests = 0;
+    const calls = [];
     const persistence = createStoryboardPersistence({
       invalidate() {}, onlineTarget: null,
-      saveStoryboard: async () => { requests++; return response; },
+      saveStoryboard: async (_id, blocks, options) => { calls.push([blocks, options]); return response; },
     });
-    const save = blocks => persistence.saveNow('p', () => blocks, { skipUnchanged: true });
-    assert.equal(await save(submitted), confirmed);
-    assert.equal(await save(structuredClone(submitted)), confirmed);
-    assert.equal(requests, 1);
+    persistence.lastSaved.set('p', submitted);
+    const save = options => persistence.saveNow('p', () => submitted, { skipUnchanged: true, ...options });
+    await save();
+    assert.deepEqual(calls, []);
+    assert.equal(await save({ confirmSaved: true }), confirmed);
+    assert.deepEqual(calls, [[submitted, { autoAssignment: true }]]);
     persistence.dispose();
   }
+});
+
+test('generation confirmation preserves the newer server board when a different tab has saved', async () => {
+  const local = [{ id: 'old' }], server = [{ id: 'new' }];
+  const conflict = Object.assign(new Error('revision conflict'), {
+    status: 409, code: 'revision_conflict', meta: { storyboard: server },
+  });
+  const persistence = createStoryboardPersistence({
+    invalidate() {}, onlineTarget: null, saveStoryboard: async () => { throw conflict; },
+  });
+  persistence.lastSaved.set('p', local);
+  await assert.rejects(persistence.saveNow('p', () => local, { skipUnchanged: true, confirmSaved: true }), conflict);
+  assert.equal(persistence.lastSaved.get('p'), server);
+  persistence.dispose();
 });
 
 test('background failure retries with backoff and an online event retries immediately', async () => {

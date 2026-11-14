@@ -24,7 +24,6 @@ export function createStoryboardPersistence({
 } = {}) {
   let saveChain = Promise.resolve();
   const lastSaved = new Map();
-  const confirmedBlocks = new WeakMap();
   const pending = new Map();
   const retries = new Map();
   const conflictEpochs = new Map();
@@ -79,7 +78,7 @@ export function createStoryboardPersistence({
     // 예약된 저장이 착지하기 전의 서버본을 프리패치가 노출하지 않도록 즉시 무효화한다.
     if (projectId) invalidate(projectId);
     const epoch = conflictEpochs.get(projectId);
-    const { skipUnchanged, ...requestOptions } = options;
+    const { skipUnchanged, confirmSaved, ...requestOptions } = options;
     const run = saveChain.catch(() => {}).then(() => {
       if (epoch !== conflictEpochs.get(projectId)) throw lastConflicts.get(projectId);
       const snapshot = getSnapshot();
@@ -88,20 +87,20 @@ export function createStoryboardPersistence({
       const baseline = lastSaved.get(projectId);
       const unchanged = (candidate) => candidate === snapshot
         || (skipUnchanged && candidate != null && sbStable(candidate) === sbStable(snapshot));
-      if (unchanged(baseline)) {
+      const alreadySaved = unchanged(baseline);
+      if (alreadySaved && !confirmSaved) {
         if (unchanged(pending.get(projectId))) pending.delete(projectId);
         if (unchanged(retries.get(projectId)?.snapshot)) clearRetry(projectId);
-        return confirmedBlocks.get(baseline) ?? baseline;
+        return;
       }
-      return Promise.resolve().then(() => saveStoryboard(projectId, snapshot, requestOptions)).then(
+      // 생성 버튼은 변경이 없어도 다른 탭의 저장 여부를 서버 리비전으로 확인한다.
+      const saveOptions = alreadySaved ? { ...requestOptions, autoAssignment: true } : requestOptions;
+      return Promise.resolve().then(() => saveStoryboard(projectId, snapshot, saveOptions)).then(
         (response) => {
-          // 비교에는 보낸 콘티를, 생성 견적에는 서버가 확정한 콘티를 쓴다.
-          const blocks = (Array.isArray(response) ? response : response?.blocks) ?? snapshot;
           lastSaved.set(projectId, snapshot);
-          if (Array.isArray(blocks) && blocks !== snapshot) confirmedBlocks.set(snapshot, blocks);
           pending.delete(projectId);
           clearRetry(projectId);
-          return blocks;
+          return Array.isArray(response) ? response : response?.blocks;
         },
         (error) => {
           if (error?.status === 409 && error.code === 'revision_conflict') {

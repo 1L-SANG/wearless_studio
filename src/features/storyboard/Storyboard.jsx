@@ -435,6 +435,8 @@ export function Storyboard({ toastOverride = null } = {}) {
   const [creditResume, setCreditResume] = useState(() => storyboardCreditResume(location.state, mannequinStageEnabled));
   const detailPageSubmitRef = useMemo(() => ({ current: false }), [projectId]);
   const [detailPageSubmitting, setDetailPageSubmitting] = useState(false);
+  const pendingPhotoUpload = useRef(null);
+  const [photoUploadProjectId, setPhotoUploadProjectId] = useState(null);
   const detailPageEntryLocked = useRef(!mannequinStageEnabled && Boolean(storyboardEntryState(initialEntryRef.current?.raw?.[0])?.done));
   const detailPageLifetimeRef = useRef(null);
   useEffect(() => {
@@ -779,7 +781,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     });
     pushToast('다른 곳에서 먼저 저장해서 최신 내용을 불러왔어요.', { action: {
       label: '이 화면 내용으로 되돌리기',
-      onClick: () => { if (!detailPageSubmitRef.current) restore(); },
+      onClick: () => { if (!detailPageSubmitRef.current) return restore(); },
     } });
   };
   useEffect(() => {
@@ -814,7 +816,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     return sbSaveNow(pid, () => latestBlocks.current, saveOptions);
   };
   const saveNow = async (pid) => {
-    const saved = await flushLatest(pid, { confirmRebuilt: true });
+    const saved = await flushLatest(pid, { confirmRebuilt: true, confirmSaved: !mannequinStageEnabled });
     if (api.storyboardEntryNotice?.(pid) === 'rebuilt') {
       setStoryboardEntryNotice(pid, null);
       setEntryNotice(null);
@@ -1039,8 +1041,19 @@ export function Storyboard({ toastOverride = null } = {}) {
   };
   const leaveUndo = () => { undoHoveredRef.current = false; const entry = undoEntryRef.current; if (entry) scheduleUndoDismiss(entry, entry.remainingMs || UNDO_WINDOW_MS); };
   leaveDesignUndoRef.current = leaveUndo;
+  const beginPhotoUpload = () => {
+    if (detailPageSubmitRef.current || pendingPhotoUpload.current?.projectId === projectId) return null;
+    const upload = { projectId };
+    pendingPhotoUpload.current = upload;
+    setPhotoUploadProjectId(projectId);
+    return () => {
+      if (pendingPhotoUpload.current !== upload) return;
+      pendingPhotoUpload.current = null;
+      setPhotoUploadProjectId(null);
+    };
+  };
   const patch = (id, changes, { undoLabel = null } = {}) => {
-    if (atomicSavingRef.current) return;
+    if (atomicSavingRef.current || detailPageSubmitRef.current) return;
     const previous = blocks;
     const current = previous.find((block) => block.id === id);
     if (!current) return;
@@ -1298,7 +1311,8 @@ export function Storyboard({ toastOverride = null } = {}) {
   }
   const goToMannequin = async ({ allowMissingCustomMatch = false } = {}) => {
     if (!mannequinStageEnabled && (doneBlocked || detailPageEntryLocked.current || hasEditorEntered(projectId)
-      || creditQuotePending || customMatchPromotionPending || atomicSavingRef.current || detailPageSubmitRef.current)) return;
+      || creditQuotePending || customMatchPromotionPending || atomicSavingRef.current || detailPageSubmitRef.current
+      || pendingPhotoUpload.current?.projectId === projectId)) return;
     // 방어: UI disabled 와 별개로 함수 자체도 게이트 — 다른 호출 경로가 생겨도 미설정 블록 생성 불가
     if (blocks.length === 0) return;
     const missingPresentation = productSectionNeedingSelection(blocks);
@@ -1493,6 +1507,7 @@ export function Storyboard({ toastOverride = null } = {}) {
             onChange={(patchValue, options) => patch(selectedId, patchValue, options)} onAtomicChange={(patchValue, options) => atomicPatch(selectedId, patchValue, options)}
             onRetryAtomicSave={retryAtomicSave} matchClothing={matchClothing} customMatchPromotionPending={customMatchPromotionPending}
             spaceContext={selectedSpaceContext} usedExampleIds={usedExampleIds} onExampleDrag={setDragExampleId}
+            onUploadStart={mannequinStageEnabled ? undefined : beginPhotoUpload}
             onChangeSpaceSet={() => openSetPicker({ mode: 'replace', spaceGroupId: selected.spaceGroupId,
               targetSid: selected.sectionId, targetRole: selected.cutType === 'horizon' ? 'studio' : 'styling' })}
             onChangeSpaceBackground={mode => atomicBoardChange(current => updateHorizonGroupBackground(current, selected.spaceGroupId, mode), { undoBlockId: selected.id, undoLabel: '세트 배경' })} />}
@@ -1507,8 +1522,9 @@ export function Storyboard({ toastOverride = null } = {}) {
       onUndoEnter={enterUndo} onUndoLeave={leaveUndo}
       onContinue={goToMannequin} warning={unsupportedAiBlock ? 'AI 컷 설정 확인 필요'
         : customMatchPromotionPending && !mannequinStageEnabled ? '내 옷을 콘티에 반영하고 있어요'
-        : creditQuotePending ? '크레딧을 확인하고 있어요' : null}
-      disabled={creditQuotePending || (!mannequinStageEnabled && (atomicSaving || customMatchPromotionPending)) || !photoBlocks.length
+        : !mannequinStageEnabled && photoUploadProjectId === projectId ? '사진을 올리고 있어요'
+          : creditQuotePending ? '크레딧을 확인하고 있어요' : null}
+      disabled={creditQuotePending || (!mannequinStageEnabled && (atomicSaving || customMatchPromotionPending || photoUploadProjectId === projectId)) || !photoBlocks.length
         || Boolean(unsupportedAiBlock) || blocks.some(block => block.source === 'ai' && (!block.contentRole || !block.cutType))} />
   </div>;
 }

@@ -7,7 +7,7 @@ import { applyPromotedMatchSelection } from '../../src/lib/customMatchPromotion.
 import { continueStoryboardToDetailPage, loadStoryboardCreditQuote } from '../../src/features/storyboard/storyboardDetailPage.js';
 
 const offCreationReady = { doneBlocked: false, hasEditorEntered: () => false, atomicSavingRef: { current: false },
-  setDetailPageSubmitting() {}, countGenerationCuts: () => assert.fail('no saved board to count'),
+  pendingPhotoUpload: { current: null }, setDetailPageSubmitting() {}, countGenerationCuts: () => assert.fail('no saved board to count'),
   creditQuotePending: false, customMatchPromotionPending: false, customMatchPreparationFailed: false,
   setCustomMatchConfirmationOpen() {} };
 
@@ -255,6 +255,51 @@ test('콘티에서 견적이나 내 옷 반영을 기다리는 동안 생성 요
   }
 });
 
+test('내 사진 업로드는 콘티에 사진을 적용한 뒤 대기 상태를 해제한다', async () => {
+  const source = read('src/features/storyboard/StoryboardControls.jsx');
+  const start = source.indexOf('export function MineImageTab');
+  const end = source.indexOf('\n}', start) + 2;
+  const MineImageTab = await evaluate(source.slice(start, end), { React, Icon: 'svg' }, 'MineImageTab');
+  for (const [outcome, picked] of [['success', { url: '/seller.webp' }], ['cancel', null], ['failure', Error('offline')]]) {
+    let settle;
+    const upload = new Promise((resolve, reject) => { settle = outcome === 'failure' ? reject : resolve; });
+    const calls = [];
+    const tab = MineImageTab({
+      onUploadStart: () => { calls.push('start'); return () => calls.push('finish'); },
+      onPickImage: () => upload, onChoose: image => calls.push(image),
+    });
+    const button = React.Children.toArray(tab.props.children).find(node => node.type === 'button');
+    const picking = button.props.onClick();
+    assert.deepEqual(calls, ['start']);
+    settle(picked);
+    if (outcome === 'failure') await assert.rejects(picking, picked);
+    else await picking;
+    assert.deepEqual(calls, ['start', ...(outcome === 'success' ? [picked] : []), 'finish']);
+  }
+});
+
+test('마네킹을 건너뛸 때 옆 판을 닫아도 시작한 사진 업로드를 기다린다', async () => {
+  const source = read('src/features/storyboard/Storyboard.jsx');
+  const start = source.indexOf('  const goToMannequin =');
+  const code = source.slice(start, source.indexOf('\n  const runs =', start));
+  let starts = 0;
+  const scope = {
+    ...offCreationReady, pendingPhotoUpload: { current: { projectId: 'p' } },
+    detailPageEntryLocked: { current: false }, mannequinStageEnabled: false,
+    blocks: [{ source: 'mine' }], productSectionNeedingSelection: () => null, unsupportedAiBlock: null,
+    projectId: 'p', detailPageLifetimeRef: { current: {} }, detailPageSubmitRef: { current: false },
+    useAppStore: { getState: () => ({ projectId: 'p' }) },
+    continueStoryboardToDetailPage: async () => { starts++; }, setCreditShortfall() {}, navigate() {},
+    detailPageQuote: null, catalogs: { analysis: {} },
+  };
+  const go = await evaluate(code, scope, 'goToMannequin');
+  await go();
+  assert.equal(starts, 0);
+  scope.pendingPhotoUpload.current = null;
+  await go();
+  assert.equal(starts, 1);
+});
+
 test('내 옷 반영에 실패한 콘티는 셀러가 그대로 만들기를 고른 뒤에만 생성한다', async () => {
   const source = read('src/features/storyboard/Storyboard.jsx');
   const start = source.indexOf('  const goToMannequin =');
@@ -282,7 +327,7 @@ test('콘티의 충전 및 편집 잠금 안내는 하단 생성 버튼을 숨�
   for (const condition of ['doneBlocked', 'creditShortfall', 'creditResume', 'customMatchConfirmationOpen']) {
     const node = await evaluate(`const footer = (${code});`, {
       React, StoryboardContinue: 'Footer', drawer: null, photoBlocks: [{}], mannequinStageEnabled: false,
-      detailPageSubmitting: false, atomicSaving: false,
+      detailPageSubmitting: false, atomicSaving: false, photoUploadProjectId: null, projectId: 'p',
       doneBlocked: false, creditShortfall: null, creditResume: null, customMatchConfirmationOpen: false,
       detailPageEntryLocked: { current: false }, creditQuotePending: false, customMatchPromotionPending: false,
       [condition]: true, storyboardContinueLabel: () => '', detailPageCreditCost: () => 0,

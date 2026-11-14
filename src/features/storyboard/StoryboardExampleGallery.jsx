@@ -24,7 +24,7 @@ export function PlaceTabs({ value, onChange }) {
 
 export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, shotOptions = null, onShotChange,
   clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null,
-  refs = [], onRefsChange, onPickRef, onUseMine = null, identityKind = null, usedExampleIds = new Set(), spaceContext = null,
+  refs = [], onRefsChange, onPickRef, onUseMine = null, onUploadStart, identityKind = null, usedExampleIds = new Set(), spaceContext = null,
   gallerySeedFactory = createGallerySessionSeed, productPresentation = null }) {
   const [mode, setMode] = useState('set'), [place, setPlace] = useState('all'), [shotFilter, setShotFilter] = useState('all');
   const [expandedSetId, setExpandedSetId] = useState(null), [mine, setMine] = useState(false);
@@ -183,7 +183,7 @@ export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, sh
       productPresentation: candidateShot === 'ghost' ? (productPresentation || 'ghost') : null,
     })} />;
   const mineControl = onUseMine && <><button type="button" className={styles.mineToggle} onClick={() => setMine(!mine)} aria-expanded={mine}>내 사진으로 바꾸기</button>
-    {mine && <MineImageTab images={refs} onImagesChange={onRefsChange} onChoose={onUseMine}
+    {mine && <MineImageTab images={refs} onImagesChange={onRefsChange} onChoose={onUseMine} onUploadStart={onUploadStart}
       onPickImage={() => onPickRef ? onPickRef() : api.pickRefImage(useAppStore.getState().projectId)} />}</>;
   if (cut === 'product' && shot === 'ghost' && productPresentation) return <div className={`insp-sec ${styles.exampleSection}`}>
     <div className={styles.exampleHeading}><label className="lbl">제품컷 형식</label></div>
