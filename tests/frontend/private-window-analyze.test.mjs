@@ -9,6 +9,11 @@ import { draftStoreFixture, drainDraftTasks } from './helpers/draft-store-fixtur
 
 const cache = mkdtempSync(join(tmpdir(), 'private-window-analyze-'));
 after(() => rmSync(cache, { recursive: true, force: true }));
+// CI가 느리면 정해 둔 횟수만큼 비워도 요청 전일 수 있다. 횟수 대신 시간(최대 5초)으로 기다린다.
+const waitUntil = async (ready, ms = 5000) => {
+  const end = Date.now() + ms;
+  while (!ready() && Date.now() < end) await new Promise((yes) => setTimeout(yes, 5));
+};
 const deferred = () => { let resolve; const promise = new Promise((yes) => { resolve = yes; }); return { promise, resolve }; };
 async function setup(t) {
   const vite = await createServer({ optimizeDeps: { noDiscovery: true, include: [] }, configFile: false, cacheDir: cache,
@@ -150,7 +155,7 @@ for (const mismatch of ['updatedAt', 'photoCount', 'photoType', 'photoId']) test
 test('다른 탭의 실행으로 바뀐 초안에는 핵심 분석 결과를 쓰지 않는다', async (t) => {
   const f = await setup(t);
   const starting = f.start();
-  for (let i = 0; i < 50 && !f.requests.some(([part]) => part === 'core'); i += 1) await drainDraftTasks();
+  await waitUntil(() => f.requests.some(([part]) => part === 'core'));
   assert.equal(f.requests.some(([part]) => part === 'core'), true);
   const replacement = { ...f.storage.saved, analysis: { featureRun: { runId: 'other-tab', photoSignature: 'other-photo' } } };
   f.storage.replaceDraft(replacement); f.resolveCore();
@@ -188,7 +193,7 @@ for (const change of ['run', 'identity', 'photo']) test(`메모리 핵심 분석
   const f = await setup(t); f.storage.failWrites(new Error('storage blocked'));
   const starting = f.start();
   // CI는 느려서 고정 횟수로 비우면 core 요청 전일 수 있다. 요청이 나갈 때까지 기다린다.
-  for (let i = 0; i < 50 && !f.requests.some(([part]) => part === 'core'); i += 1) await drainDraftTasks();
+  await waitUntil(() => f.requests.some(([part]) => part === 'core'));
   assert.equal(f.requests.some(([part]) => part === 'core'), true);
   const before = structuredClone(f.analysis);
   if (change === 'run') f.features.setActiveFeatureRun(null);
