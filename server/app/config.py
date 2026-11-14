@@ -120,7 +120,6 @@ class Settings:
     analysis_timeout_seconds: float = 30.0
     # 셀러가 화면에서 기다리지 않는 글 생성과 출고 검수의 공급자별 대기 상한.
     background_ai_timeout_seconds: float = 120.0
-    page_copy_timeout_seconds: float = 300.0
     ai_breaker_failures: int = 3
     ai_breaker_window_seconds: float = 300.0
     ai_breaker_cooldown_seconds: float = 300.0
@@ -912,7 +911,6 @@ def load_settings() -> Settings:
         analysis_spike=_flag("ANALYSIS_SPIKE", "off", {"off", "on"}),
         analysis_timeout_seconds=float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "30")),
         background_ai_timeout_seconds=float(os.getenv("BACKGROUND_AI_TIMEOUT_SECONDS", "120")),
-        page_copy_timeout_seconds=float(os.getenv("PAGE_COPY_TIMEOUT_SECONDS", "300")),
         ai_breaker_failures=int(os.getenv("AI_BREAKER_FAILURES", "3")),
         ai_breaker_window_seconds=float(os.getenv("AI_BREAKER_WINDOW_SECONDS", "300")),
         ai_breaker_cooldown_seconds=float(os.getenv("AI_BREAKER_COOLDOWN_SECONDS", "300")),

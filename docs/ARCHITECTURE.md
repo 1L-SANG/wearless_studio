@@ -209,7 +209,7 @@ graph TB
   end
 
   subgraph Agents["AI 에이전트 (app/agents, 52 파일)"]
-    AGX["AG-01 product_analyst · AG-02 copywriter · AG-03 copy_qc<br/>AG-04 mannequin · AG-06 cut_generator · AG-07 cut_variator<br/>AG-P1 축 QC · AG-P2 image_qc · M-02 page_assembler"]
+    AGX["AG-01 product_analyst · AG-04 mannequin · AG-06 cut_generator · AG-07 cut_variator<br/>AG-P1 축 QC · AG-P2 image_qc · M-02 page_assembler"]
     GI["gemini_image.py — provider 분기(Gemini/OpenAI)"]
     MR["model_routing.py — tier→모델 단일소스"]
   end
@@ -336,13 +336,10 @@ graph TB
   end
 
   subgraph PL4["PL-4 상세페이지"]
-    A02["AG-02 copywriter<br/>소제목, 컷보다 먼저<br/>지금 템플릿 글 칸에는 안 들어감"]
-    A02 --> A03["AG-03 copy_qc"]
-    A03 --> PPC["page_part_copy<br/>디테일 요소 부위 설명"]
+    PPC["page_part_copy<br/>디테일 요소 부위 설명, 컷보다 먼저"]
     A06["AG-06 cut_generator<br/>tier: detail_cut (gpt-image-2)"]
     A06 --> CQ["cut_output_qc (repair)"]
     PPC --> M02["M-02 page_template_assembler<br/>템플릿 조립, AI 호출 없음<br/>EditorBlock[]과 자동 블록 넷"]
-    A03 --> M02
     CQ --> M02
   end
 

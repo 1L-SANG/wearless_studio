@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.agents import (
-    copy_qc, copywriter, cut_output_qc, feature_copy, feature_extractor,
+    cut_output_qc, feature_copy, feature_extractor,
     garment_color_observer, image_qc, input_consistency,
     mannequin_base_fidelity_qc, mannequin_fit_qc, mannequin_series_qc,
     mannequin_untuck, page_output_qc, points_merge, product_analyst, vision_llm,
@@ -13,7 +13,6 @@ from app.agents import (
 from app.agents.gemini_image import InlineImage
 from app.workers import detail_page_job
 from conftest import fake_worker_app, make_settings, worker_job
-from test_copywriter import _blocks
 from test_cut_output_qc import _plan
 from test_page_output_qc import plan
 
@@ -35,8 +34,6 @@ def _invoke(name, s, image):
             cut_output_qc.LabeledReference("product", image)], image),
         "page_qc": lambda: page_output_qc.judge(
             s, plan(), [image] * 3, product_truth_refs=[image, image]),
-        "copywriter": lambda: copywriter.generate(s, blocks=_blocks(), product={}, analysis={}),
-        "copy_qc": lambda: copy_qc.review(s, [{"blockId": "b1", "text": "소맷단 버튼"}], {}),
         "feature_copy": lambda: feature_copy.generate(s, ["빈티지한 워싱감"], {}, {}),
         "product_analyst": lambda: product_analyst.analyze(s, {}, [image]),
         "wash_care": lambda: product_analyst.draft_wash_care(s, {}, {}),
@@ -55,7 +52,7 @@ def _invoke(name, s, image):
     ("fit_qc", "background"), ("base_qc", "background"),
     ("series_qc", "background"), ("untuck", "background"),
     ("cut_qc", "background"), ("page_qc", "background"),
-    ("copywriter", "background"), ("copy_qc", "background"), ("feature_copy", 19),
+    ("feature_copy", 19),
     ("product_analyst", 19), ("wash_care", 19), ("feature_extractor", 19),
     ("input_consistency", 19), ("points_merge", 8), ("garment_color_observer", 19),
 ])
@@ -80,7 +77,7 @@ def test_provider_timeout_follows_caller_policy(monkeypatch, name, expected, bac
 
 
 @pytest.mark.parametrize("background_timeout", [120, 137])
-def test_detail_page_feature_copy_passes_background_timeout(monkeypatch, background_timeout):
+def test_detail_page_part_copy_passes_background_timeout(monkeypatch, background_timeout):
     seen = []
 
     async def capture(settings, prompt, schema, *, timeout_seconds=None):
