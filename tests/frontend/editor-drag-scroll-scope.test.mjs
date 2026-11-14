@@ -25,6 +25,7 @@ function dragHarness({ type = 'shape', threshold = 0 } = {}) {
   const clip = { getBoundingClientRect: () => ({ left: 0, top: -wrap.scrollTop, right: 1000, bottom: 1000 - wrap.scrollTop, width: 1000, height: 1000 }) };
   const blockNode = { dataset: { blockid: 'source' }, querySelector: () => clip, querySelectorAll: () => [node] };
   const scope = {
+    pendingHeadingIds: new Set(),
     wrapRef: { current: wrap }, scale: 1, genActive: false, getBlockRenderHeight, clampDragDelta,
     snapEditorDragDelta, snapEditorSpacing, photoMoveDestination, hidePointerSnapGuides() {}, showPointerSnapGuides() {}, syncPointerGroupSelectionBounds() {},
     activePointerDragCleanup: { current: null }, gesturing: { current: false }, setCanvasGesture() {}, pointerGroupRectFrame: { current: null },

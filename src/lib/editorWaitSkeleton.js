@@ -10,6 +10,8 @@ import {
 } from './editorTextSlots.js';
 import { editedTextElement } from '../features/editor/editorTextEdit.js';
 import { getBlockRenderHeight } from '../features/editor/editorGeometry.js';
+import { resolveTextSpacing } from '../features/editor/textSpacing.js';
+import { estimateTextHeight } from './pageTemplates/assemble.js';
 
 const autoBlockHeight = (elements) => Math.max(
   0,
@@ -69,14 +71,17 @@ const copyGeometry = ({ x, y, w, h }) => ({ x, y, w, h });
 const markAutoCopy = (element) => ({ ...element, genAutoText: element.text,
   genAutoStyle: { ...(element.style || {}) }, genAutoGeometry: copyGeometry(element) });
 
-function mergeAutoCopy(element, incoming) {
-  const style = { ...(element.style || {}) };
-  const baseline = element.genAutoStyle;
-  if (baseline) {
-    for (const [key, value] of Object.entries(incoming.style || {})) {
-      if (Object.is(style[key], baseline[key])) style[key] = value;
-    }
+function mergeAutoStyle(current, baseline, incoming) {
+  const style = { ...current };
+  if (baseline) for (const [key, value] of Object.entries(incoming || {})) {
+    if (Object.is(style[key], baseline[key])) style[key] = value;
   }
+  return style;
+}
+
+function mergeAutoCopy(element, incoming) {
+  const baseline = element.genAutoStyle;
+  const style = mergeAutoStyle(element.style, baseline, incoming.style);
   const geometry = element.genAutoGeometry;
   const untouchedBox = geometry && Object.entries(geometry).every(([key, value]) => Object.is(element[key], value));
   const unchangedTextSize = baseline && ['size', 'lineHeight', 'font', 'weight', 'tracking']
@@ -279,6 +284,83 @@ const noticeBlock = (block) => (block?.elements || []).some(
   (el) => el.type === 'license-verify'
     || (el.type === 'text' && typeof el.text === 'string' && el.text.startsWith('본 상세페이지')));
 
+const FAQ_FACE_DESIGN = 'T08-D07';
+const faqHeading = el => el.type === 'text' && (el.copyRole === 'label' || el.copyRole === 'title');
+
+export function pendingFaqHeadingIds(blocks, { active, status, finalizeError }) {
+  const ids = new Set();
+  if (!active || status === 'error' || status === 'blocked' || finalizeError) return ids;
+  for (const block of blocks || []) if (block.pageDesignId === FAQ_FACE_DESIGN) {
+    for (const el of block.elements) if (faqHeading(el) && el.sourceBlockId) ids.add(el.id);
+  }
+  return ids;
+}
+
+function faqElementKey(el) {
+  if (el.type === 'image') return JSON.stringify([el.type, el.sourceBlockId, el.slotKey]);
+  if (el.type === 'text' && el.copyRole) return JSON.stringify([el.type, el.sourceBlockId, copyIdentity(el)]);
+  if (el.groupId) return JSON.stringify([el.type, el.groupId, el.templateCopyDecoration || el.shape]);
+  if (el.pageSectionGap) return 'section-gap';
+  return null;
+}
+
+// The server numbers elements by paint order. Moving the heading outside the
+// photo changes that order, so keep the existing canvas IDs for the same items.
+function preserveFaqElementIds(local, final) {
+  const byKey = new Map(local.elements.map(el => [faqElementKey(el), el.id]));
+  const reservedIds = new Set(local.elements.map(el => el.id));
+  return { ...final, id: local.id, elements: final.elements.map(el => {
+    const key = faqElementKey(el);
+    if (key && byKey.has(key)) {
+      const id = byKey.get(key);
+      byKey.delete(key);
+      return { ...el, id };
+    }
+    let id = el.id;
+    while (reservedIds.has(id)) id += ':final';
+    reservedIds.add(id);
+    return { ...el, id };
+  }) };
+}
+
+// Keep the layout and its contrast together. Restored drafts can still have
+// seller edits from before the headings became read-only during generation.
+function mergeFaqFaceLayout(before, merged, server) {
+  const baseline = before.genTemplateBaseline?.elements;
+  if (!baseline) return merged;
+  const photo = baseline.find(el => el.type === 'image');
+  const finalPhoto = server.elements.find(el => el.type === 'image' && el.sourceBlockId === photo?.sourceBlockId);
+  if (!photo || !finalPhoto || finalPhoto.y <= photo.y) return merged;
+  const originalPhoto = before.elements.find(el => el.id === photo.id);
+  const sameBox = (a, b) => a && b && ['x', 'y', 'w', 'h', 'rotate'].every(key => a[key] === b[key]);
+  if (!sameBox(originalPhoto, photo) || !sameValue(originalPhoto.crop, photo.crop)) return merged;
+  const headings = ['label', 'title'].map(role => {
+    const base = baseline.find(el => el.copyRole === role);
+    return { base, current: before.elements.find(el => el.id === base?.id), final: server.elements.find(el => el.copyRole === role) };
+  });
+  if (headings.some(({ base, current, final }) => !base || !current || !final
+      || !['x', 'y', 'w', 'rotate'].every(key => base[key] === current[key]))) return merged;
+  const placed = headings.map(({ base, current, final }) => {
+    const { text, placeholder } = merged.elements.find(el => el.id === current.id);
+    const style = mergeAutoStyle(current.style, current.genAutoStyle || base.style, final.style);
+    const { lineHeight, tracking } = style.spacingMode === 'auto' ? resolveTextSpacing(style) : style;
+    const h = text === final.text && sameValue(style, final.style) ? final.h
+      : estimateTextHeight(text || placeholder, final.w, style.size, lineHeight || style.size * 1.4, undefined, tracking);
+    return { id: current.id, ...copyGeometry(final), style, h };
+  });
+  const [label, title] = placed;
+  title.y = label.y + label.h + (headings[1].final.y - headings[0].final.y - headings[0].final.h);
+  const offset = title.y + title.h + (finalPhoto.y - headings[1].final.y - headings[1].final.h) - photo.y;
+  const scrim = baseline.find(el => el.type === 'shape' && !el.groupId && sameBox(el, photo));
+  const originalScrim = before.elements.find(el => el.id === scrim?.id);
+  const removeScrim = scrim && sameValue(templateSnapshot(originalScrim || {}), scrim);
+  const elements = merged.elements.filter(el => !removeScrim || el.id !== scrim.id).map(el => {
+    const heading = placed.find(item => item.id === el.id);
+    return heading ? { ...el, ...copyGeometry(heading), style: heading.style } : { ...el, y: el.y + offset };
+  });
+  return { ...merged, elements, h: Math.max(merged.h + offset, server.h) };
+}
+
 /* 로컬 스켈레톤이 서버 완성본의 구조를 전부 대표할 때만 로컬 기준 병합이 안전하다.
    콘티 조회 실패·mock/server 행 규칙 차이로 서버 컷 하나라도 로컬에 없으면, 로컬본을 PUT할 때
    그 컷이 영구 삭제된다. 그런 불일치에서는 셀러 편집보다 서버 생성물 보존을 우선한다. */
@@ -347,8 +429,15 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
     if (untouched.has(b.pageSectionKey)) {
       if (emitted.has(b.pageSectionKey)) return [];
       emitted.add(b.pageSectionKey);
-      return serverBlocks.filter(block => block.pageSectionKey === b.pageSectionKey);
+      const finalRun = serverBlocks.filter(block => block.pageSectionKey === b.pageSectionKey);
+      return finalRun.map((block) => {
+        if (b.pageDesignId !== FAQ_FACE_DESIGN || !block.elements.some(el => el.type === 'image' && el.y > 0)
+          || !block.elements.some(faqHeading)) return block;
+        return preserveFaqElementIds(b, block);
+      });
     }
+    const finalFaq = b.pageDesignId === FAQ_FACE_DESIGN && serverBlocks.find(block => block.pageSectionKey === b.pageSectionKey
+      && block.elements.some(el => el.type === 'image' && el.y > 0) && block.elements.some(faqHeading));
     let copyChanged = false;
     const elements = (b.elements || []).map((el) => {
       if (el.type === 'image' && el.sourceBlockId) {
@@ -375,6 +464,7 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
         const { genAutoText, genAutoStyle, genAutoGeometry, ...rest } = el;
         const serverCopy = copyById[el.sourceBlockId]?.[copyIdentity(el)];
         if (serverCopy && el.text === genAutoText) {
+          if (finalFaq && faqHeading(el)) return { ...rest, text: serverCopy.text };
           copyChanged = true;
           const merged = mergeAutoCopy(el, {
             text: serverCopy.text,
@@ -389,11 +479,12 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
       }
       return el;
     });
-    return {
+    const merged = {
       ...Object.fromEntries(Object.entries(b).filter(([key]) => key !== 'genTemplateBaseline')),
       elements,
       ...(copyChanged ? { h: Math.max(Number(b.h) || 0, autoBlockHeight(elements)) } : {}),
     };
+    return finalFaq ? mergeFaqFaceLayout(b, merged, finalFaq) : merged;
   });
   if (serverNotice) {
     const i = out.findIndex(noticeBlock);

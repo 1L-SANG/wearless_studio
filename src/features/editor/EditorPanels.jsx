@@ -1257,7 +1257,7 @@ function layerMeta(el) {
   const names = { circle: '원', rect: '사각형', triangle: '삼각형', diamond: '마름모', star: '별', heart: '하트', hexagon: '육각형', bubble: '말풍선' };
   return { icon: 'shapes', label: names[el.shape] || '도형' };
 }
-export function LayerPanel({ block, selEls = [], embedded, onSelect, onReorder, onToggle }) {
+export function LayerPanel({ block, selEls = [], pendingHeadingIds, embedded, onSelect, onReorder, onToggle }) {
   const [dragId, setDragId] = useState(null);
   const [overId, setOverId] = useState(null);
   if (!block) return <EmptyState icon="layers" title="블록을 선택하세요" desc="블록을 클릭하면 그 안의 레이어가 순서대로 나와요." />;
@@ -1272,10 +1272,13 @@ export function LayerPanel({ block, selEls = [], embedded, onSelect, onReorder, 
           {rows.map(({ el }) => {
             const m = layerMeta(el);
             const on = selEls.includes(el.id);
+            const pending = pendingHeadingIds?.has(el.id);
+            const pendingTitle = pending ? '생성이 끝나면 편집할 수 있어요' : undefined;
             return (
               <div key={el.id}
                 className={`layer-row${on ? ' on' : ''}${dragId === el.id ? ' dragging' : ''}${overId === el.id ? ' over' : ''}${el.hidden ? ' is-hidden' : ''}`}
-                draggable
+                title={pendingTitle}
+                draggable={!pending}
                 onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/layer', el.id); setDragId(el.id); }}
                 onDragEnd={() => { setDragId(null); setOverId(null); }}
                 /* 드롭 허용 판정은 React 상태(dragId)가 아니라 드래그 데이터로 한다 —
@@ -1296,8 +1299,8 @@ export function LayerPanel({ block, selEls = [], embedded, onSelect, onReorder, 
                 <span className="lr-grip"><Icon name="gripV" size={15} /></span>
                 <span className="lr-ico">{m.thumb ? <img src={m.thumb} alt="" /> : <Icon name={m.icon} size={15} />}</span>
                 <span className="lr-label">{m.label}</span>
-                <button type="button" className="lr-btn" title={el.hidden ? '표시' : '숨기기'} onClick={(e) => { e.stopPropagation(); onToggle(block.id, el.id, 'hidden'); }}><Icon name={el.hidden ? 'eyeOff' : 'eye'} size={15} /></button>
-                <button type="button" className={`lr-btn${el.locked ? ' on' : ''}`} title={el.locked ? '잠금 해제' : '잠금'} onClick={(e) => { e.stopPropagation(); onToggle(block.id, el.id, 'locked'); }}><Icon name={el.locked ? 'lock' : 'unlock'} size={15} /></button>
+                <button type="button" className="lr-btn" disabled={pending} title={el.hidden ? '표시' : '숨기기'} onClick={(e) => { e.stopPropagation(); onToggle(block.id, el.id, 'hidden'); }}><Icon name={el.hidden ? 'eyeOff' : 'eye'} size={15} /></button>
+                <button type="button" className={`lr-btn${el.locked || pending ? ' on' : ''}`} disabled={pending} title={pendingTitle || (el.locked ? '잠금 해제' : '잠금')} onClick={(e) => { e.stopPropagation(); onToggle(block.id, el.id, 'locked'); }}><Icon name={el.locked || pending ? 'lock' : 'unlock'} size={15} /></button>
               </div>
             );
           })}

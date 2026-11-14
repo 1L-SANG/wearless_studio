@@ -165,7 +165,7 @@ test('the actual completion handler preserves an event root when partial omits t
     partial: { failedCuts: [{ blockId: 'child', reason: 'duplicate_cut_source_failed', retryable: false }] } };
   const { failedCutIds, failedReasons } = evaluate(
     `${source('        const failedCutIds =', '        let restoredServerLayout =')}; return { failedCutIds, failedReasons };`,
-    { finalJob });
+    { finalJob, document: { activeElement: null } });
   const blocks = [{ id: 'page', elements: [image()] }];
   const saved = [{ id: 'page', elements: [image({ genFailed: true,
     genFailReason: 'duplicate_cut_source_failed', genFailRetryable: false })] }];

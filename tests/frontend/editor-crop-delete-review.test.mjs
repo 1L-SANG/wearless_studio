@@ -26,7 +26,7 @@ function harness(frameSlot) {
     current = latestBlocks.current = prevBlocks.current = next;
   };
   const kb = { current: { croppingOn: true, cropCancel: cancel, cropCommit() { throw new Error('Delete must not commit an unconfirmed crop'); } } };
-  const scope = { selEls: ['photo'], selBlock: 'source', blockFocused: true, isEditorDeleteKey, isPhotoSlotElement,
+  const scope = { selEls: ['photo'], selectedIds: ['photo'], pendingHeadingIds: new Set(), selBlock: 'source', blockFocused: true, isEditorDeleteKey, isPhotoSlotElement,
     latestBlocks, blocks: current, genActiveRef: { current: false }, removeSelectedElements, removeSelectedBlock,
     presetTypeOf, applySlotFillToInfo, setBlocks, setSelEl() {}, setSelEls() {}, setSelBlock() {}, setBlockFocused() {},
     toast: { push() {} }, kb, croppingRef, setCropping, cancelCrop: cancel };

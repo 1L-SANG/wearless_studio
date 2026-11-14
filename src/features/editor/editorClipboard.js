@@ -24,6 +24,8 @@ const pasteAxisOffset = (min, max, limit, distance) => {
   return Math.max(-min, Math.min(limit - max, distance));
 };
 
+const pastedGroupPrefix = (groupId) => groupId.startsWith('template-copy:') ? 'template-copy:grp' : 'grp';
+
 export function copyEditorElements(blocks, selectedIds) {
   if (!Array.isArray(blocks) || !selectedIds?.length) return null;
   const selected = new Set(selectedIds);
@@ -50,7 +52,7 @@ export function pasteEditorElements(block, copiedElements, createId, distance = 
   const elements = source.map((element) => ({
     ...element,
     id: createId('el'),
-    ...(element.groupId ? { groupId: remap(groupIds, element.groupId, 'grp') } : {}),
+    ...(element.groupId ? { groupId: remap(groupIds, element.groupId, pastedGroupPrefix(element.groupId)) } : {}),
     ...(element.bubblePairId ? { bubblePairId: remap(bubblePairIds, element.bubblePairId, 'pair') } : {}),
     x: (Number(element.x) || 0) + dx,
     y: (Number(element.y) || 0) + dy,
@@ -88,7 +90,7 @@ export function pasteEditorBlock(copiedBlock, createId) {
     const next = {
       ...element,
       id: createId('el'),
-      ...(element.groupId ? { groupId: remap(groupIds, element.groupId, 'grp') } : {}),
+      ...(element.groupId ? { groupId: remap(groupIds, element.groupId, pastedGroupPrefix(element.groupId)) } : {}),
       ...(element.bubblePairId ? { bubblePairId: remap(bubblePairIds, element.bubblePairId, 'pair') } : {}),
     };
     for (const key of ELEMENT_AUTOMATION_KEYS) delete next[key];

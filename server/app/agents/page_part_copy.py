@@ -71,12 +71,13 @@ def validate_parts(items, labels):
                or char in "<>`" for char in desc):
             continue
         lines = desc.split("\n")
-        if len(lines) != 2 or any(not line or line != line.strip()
+        if len(lines) not in (1, 2) or any(not line or line != line.strip()
                                   or len(line) > MAX_LINE_CHARS for line in lines):
             continue
-        if not lines[0].endswith(("로", "라")) or not _END.search(lines[1]):
+        if (len(lines) == 2 and not lines[0].endswith(("로", "라"))) or not _END.search(lines[-1]):
             continue
-        if not _PLAIN_LINE.fullmatch(lines[0]) or not _PLAIN_LINE.fullmatch(lines[1].removesuffix(".")):
+        if any(not _PLAIN_LINE.fullmatch(line.removesuffix('.') if index == len(lines) - 1 else line)
+               for index, line in enumerate(lines)):
             continue
         if any(not re.search(r"[가-힣]", line) for line in lines):
             continue

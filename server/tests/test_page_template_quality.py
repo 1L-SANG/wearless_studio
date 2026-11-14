@@ -273,7 +273,12 @@ def test_r1_circular_swatches_and_light_color_borders(template, color_mode):
 
 @pytest.mark.parametrize('template,widths', [('show', [91, 73, 73]), ('emo', [67, 55, 55])])
 def test_r2_fit_pills_stay_on_one_line_with_padding(template, widths):
-    blocks = section(assemble_input(case_input(template + '-2-mono')), template + '.wear_fit')
+    value = case_input(template + '-2-mono')
+    rotation = next(card['spaceGroupId'] for card in case_input(f'woc20-{template}-wear-sets')['storyboard'] if card['pageSectionKey'] == template + '.wear_fit')
+    for card in value['storyboard']:
+        if card['pageSectionKey'] == template + '.wear_fit':
+            card['spaceGroupId'] = rotation
+    blocks = section(assemble_input(value), template + '.wear_fit')
     captions = [e for e in elements(blocks) if e.get('copyRole', '').startswith('cap.')]
     assert [e['text'] for e in captions] == (['FRONT', 'SIDE', 'BACK'] if template == 'show' else ['Front', 'Side', 'Back'])
     assert [e['w'] for e in captions] == widths

@@ -13,7 +13,7 @@ FONTS = {"Pretendard", "Cormorant", "Roboto Mono", "Cal Sans", "Gowun Dodum", "G
 FACT_PATHS = {"product.name", "product.colors[].name", "product.colors[].swatchId", "analysis.materials", "analysis.fit", "analysis.detailRecommendations.candidates[].label", "analysis.featureCopy", "analysis.partDescriptionCopy", "analysis.mdComment", "profiles.display_name", "mall_connections.shop_name"}
 COLORS = {"ink", "muted", "accentInk", "accentBg", "accentLine", "panel", "invertBg", "invertInk", "canvas", "onPhoto", "summaryBg", "pointBg", "framePaper", "frameInk"}
 STYLES = {"titleKo", "labelEn", "body", "small", "num"}
-LAYOUT_TYPES = {"text", "photo", "photoStack", "photoGrid", "photoFlow", "photoFrame", "overlay", "pointRows", "list", "factTable", "panel", "rule"}
+LAYOUT_TYPES = {"text", "photo", "photoStack", "photoGrid", "photoFlow", "photoFrame", "overlay", "pointRows", "list", "factTable", "panel", "rule", "swatchRow"}
 CHOICE_LAYOUTS = {"wear": ("column", "twoColumn", "heroPair"), "color_product": ("column", "grid"), "points": ("column", "below")}
 HEX = re.compile(r"#[\da-f]{6}\Z", re.I)
 
@@ -38,6 +38,7 @@ def walk_layout(nodes):
         columns = node.get("columns") if isinstance(node.get("columns"), list) else []
         for group in [*(node.get("groups") or []), *columns, *(node.get("overlayGroups") or [])]:
             yield from walk_layout(group.get("nodes"))
+            yield from walk_layout((group.get("faceFallback") or {}).get("nodes"))
 
 
 def _role_pattern(role):
@@ -184,6 +185,19 @@ def validate_catalog(catalog):
                           and not isinstance(policy.get("edgeInsetRatio"), bool)
                           and math.isfinite(policy["edgeInsetRatio"]) and 0 <= policy["edgeInsetRatio"] < .5,
                           f"overlay position {key}.{group_id}")
+            for group in node.get('groups') or []:
+                if group.get('faceFallback') is not None:
+                    fallback = group['faceFallback']
+                    check(key == 'T08-D07' and group.get('id') == 'heading'
+                          and all(_positive(fallback.get(prop)) for prop in ('top', 'padding', 'gap'))
+                          and isinstance(fallback.get('nodes'), list), f'face fallback {key}')
+            if 'prefix' in node:
+                check(node.get('type') == 'text' and node['prefix'] in ('Q.', 'A.') and _positive(node.get('prefixWidth')), f'text prefix {key}')
+            if 'liningNumbers' in node:
+                check(node.get('type') == 'text' and isinstance(node['liningNumbers'], bool), f'lining numbers {key}')
+            if node.get('type') == 'swatchRow':
+                check(design.get('kind') == 'color_product' and _positive(node.get('size'))
+                      and isinstance(node.get('itemGap'), (int, float)) and math.isfinite(node['itemGap']) and node['itemGap'] >= 0, f'swatch row {key}')
             check(node.get("type") in LAYOUT_TYPES, f"layout {key}.{node.get('type')}")
             if node.get("type") == "photoFrame":
                 count, gap = node.get("count"), node.get("gap")
@@ -210,21 +224,21 @@ def validate_catalog(catalog):
             if node.get("scrim") is not None:
                 paint = node["scrim"]
                 check(node.get("type") == "overlay" and isinstance(paint, dict)
-                      and isinstance(paint.get("color"), str) and HEX.fullmatch(paint["color"]) and _opacity(paint.get("opacity"))
+                      and isinstance(paint.get("color"), str) and (HEX.fullmatch(paint["color"]) or HEX.fullmatch(catalog["neutralColors"].get(paint["color"], ""))) and _opacity(paint.get("opacity"))
                       and (paint.get("heightRatio") is None or _positive(paint["heightRatio"]) and paint["heightRatio"] <= 1)
                       and (paint.get("gradient") is None or isinstance(paint["gradient"], bool)), f"overlay scrim {key}")
             if node.get("fillOpacity") is not None:
                 check(node.get("type") in ("panel", "list") and _opacity(node["fillOpacity"]), f"fill opacity {key}")
             if node.get("itemGap") is not None:
                 value = node["itemGap"]
-                check(node.get("type") in ("list", "photoStack") and isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0, f"list item gap {key}")
+                check(node.get("type") in ("list", "photoStack", "swatchRow") and isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0, f"list item gap {key}")
             if "includeLoose" in node:
                 check(node.get("type") == "photoStack" and node.get("slot") == "*" and isinstance(node["includeLoose"], bool), f"include loose {key}")
             if node.get("shadow") is not None:
                 shadow = node["shadow"]
                 check(node.get("type") in ("panel", "list") and isinstance(shadow, dict)
                       and all(isinstance(shadow.get(prop), (int, float)) and not isinstance(shadow[prop], bool) and math.isfinite(shadow[prop]) for prop in ("x", "y", "blur"))
-                      and shadow["blur"] >= 0 and isinstance(shadow.get("color"), str) and HEX.fullmatch(shadow["color"])
+                      and shadow["blur"] >= 0 and isinstance(shadow.get("color"), str) and (HEX.fullmatch(shadow["color"]) or HEX.fullmatch(catalog["neutralColors"].get(shadow["color"], "")))
                       and _opacity(shadow.get("opacity")), f"shape shadow {key}")
             if node.get("singleLine") is not None:
                 check(node.get("type") == "text" and isinstance(node["singleLine"], bool), f"single line {key}")
