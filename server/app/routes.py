@@ -1288,6 +1288,8 @@ async def save_analysis(
             await repo.lock_page_style_project(conn, project_id)
             previous_style = (await repo.get_analysis(conn, project_id) or {}).get("pageStyle")
             previous_template = previous_style.get("templateId") if isinstance(previous_style, dict) else None
+            if not previous_template:
+                previous_template = await repo.get_detail_page_locked_template(conn, project_id)
             if (not previous_template and await repo.has_detail_page_job(conn, project_id)
                     and not await repo.page_style_locked(conn, project_id)):
                 storyboard = await repo.get_storyboard(conn, project_id)
@@ -3586,9 +3588,12 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
+        await repo.lock_page_style_project(conn, project_id)
         analysis_style = (await repo.get_analysis(conn, project_id) or {}).get("pageStyle") or {}
-        if canonical and analysis_style.get("templateId") not in (None, canonical[0]["pageSectionKey"].split(".")[0]):
-            raise _bad_request("page_style_mismatch", "고른 템플릿으로 콘티를 다시 열어 주세요.")
+        if canonical:
+            expected_template = analysis_style.get("templateId") or await repo.get_detail_page_locked_template(conn, project_id)
+            if expected_template not in (None, canonical[0]["pageSectionKey"].split(".")[0]):
+                raise _bad_request("page_style_mismatch", "고른 템플릿으로 콘티를 다시 열어 주세요.")
         if any(
             isinstance(block, dict)
             and (
@@ -4405,15 +4410,26 @@ async def generate_detail_page(
         if existing:  # 완료 재호출 → 기존 결과 반환(재생성·재차감 없음)
             account = await repo.get_account(conn, user_id)
             return JSONResponse({"data": existing, "credits": (account or {}).get("credits", 0)})
+        # FaceMarket 수요 기록은 중간 커밋을 하므로, 그 뒤에 마네킹·분석 저장과 같은 잠금을 잡는다.
         if license_row is not None:
             await _reject_facemarket_cutover_closed(conn)
-            await facemarket.set_project_license(conn, project_id, license_row["id"])
-        # FaceMarket 수요 기록은 중간 커밋을 하므로, 그 뒤에 마네킹·분석 저장과 같은 잠금을 잡는다.
         await repo.lock_page_style_project(conn, project_id)
+        if license_row is not None:
+            await facemarket.set_project_license(conn, project_id, license_row["id"])
         locked_analysis = await repo.get_analysis(conn, project_id) or {}
-        # 모델·라이선스를 판정한 콘티는 유지한다. 그 사이 편집됐으면 워커의 digest 검사가 해제한다.
-        if storyboard and locked_analysis.get("pageStyle", {}).get("templateId") not in (None, storyboard[0]["pageSectionKey"].split(".")[0]):
-            raise _bad_request("page_style_mismatch", "고른 템플릿으로 콘티를 다시 열어 주세요.")
+        saved_template = (locked_analysis.get("pageStyle") or {}).get("templateId")
+        template_id = storyboard[0]["pageSectionKey"].split(".")[0] if storyboard else None
+        if storyboard:
+            if not saved_template:
+                # 잠금 대기 중 템플릿이 바뀌었다면 옛 요청으로 새 작업의 템플릿을 굳히지 않는다.
+                current_board = await repo.get_storyboard(conn, project_id)
+                first_card = current_board[0] if current_board else None
+                current_key = first_card.get("pageSectionKey") if isinstance(first_card, dict) else None
+                if not isinstance(current_key, str) or current_key.split(".")[0] != template_id:
+                    raise _bad_request("page_style_mismatch", "고른 템플릿으로 콘티를 다시 열어 주세요.")
+            expected_template = saved_template or await repo.get_detail_page_locked_template(conn, project_id)
+            if expected_template not in (None, template_id):
+                raise _bad_request("page_style_mismatch", "고른 템플릿으로 콘티를 다시 열어 주세요.")
         # 크레딧 견적은 실제 생성 수 기준 — 생성 계약이 완전히 같은 복제 컷은 1장만
         # 생성해 복사하므로(ADR-0011, _duplicate_source_indexes) 예약에서도 접는다.
         # 그대로 두면 복제가 많은 보드가 사전검사(402)에서 과도하게 거절된다(Codex 2차 #3).
@@ -4465,6 +4481,8 @@ async def generate_detail_page(
             metadata = {"creditCostVersion": s.credit_cost_version,
                         "perCutCost": s.credit_cost_storyboard_per_cut, "aiCount": ai_count,
                         "minCuts": min_cuts, "storyboardDigest": _storyboard_digest(storyboard)}
+            if template_id and not saved_template:
+                metadata["lockedTemplateId"] = template_id
             if fee > 0:
                 metadata.update(extensionModelFee=fee, plan=plan_pricing.plan_of(pricing["plan"]),
                                 selectedModelId=selected_model_id)

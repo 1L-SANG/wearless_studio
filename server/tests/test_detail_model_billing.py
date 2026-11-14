@@ -15,6 +15,8 @@ from test_detail_incomplete_cuts_partial import STORYBOARD, _IntentDB, _R2, _run
 from test_page_templates_v4 import style
 from test_plan_pricing import _wire_sql_regenerate
 
+_GET_DETAIL_PAGE_LOCKED_TEMPLATE = repo.get_detail_page_locked_template
+
 
 def _wire(monkeypatch, *, plan="free", model="mF", mannequin=False, charged=False,
           ai=True, front=True, balance=200, existing=None, cached=False):
@@ -186,6 +188,36 @@ def _show_storyboard():
               "shot": "medium", "direction": "front"}]
     content_roles.validate_storyboard_v4(board)
     return board
+
+
+def test_detail_start_pins_template_before_later_storyboard_save(client, make_token, monkeypatch):
+    conn = _sql_detail(monkeypatch)
+    board = _show_storyboard()
+    monkeypatch.setattr(repo, "get_storyboard", AsyncMock(return_value=board))
+    save_board = AsyncMock(return_value=1)
+    monkeypatch.setattr(repo, "save_storyboard", save_board)
+    headers = auth_headers(make_token)
+
+    started = client.post("/v1/projects/p1/detail-page:generate", headers=headers)
+    assert started.status_code == 202, started.text
+    different_template = v4_blocks([{"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full"}])
+    rejected = client.put("/v1/projects/p1/storyboard", headers=headers, json=different_template)
+    assert rejected.status_code == 400, rejected.text
+    assert rejected.json()["error"]["code"] == "page_style_mismatch"
+    save_board.assert_not_awaited()
+    assert asyncio.run(_GET_DETAIL_PAGE_LOCKED_TEMPLATE(conn, "p1")) == "show"
+
+    monkeypatch.setattr(repo, "save_analysis", AsyncMock(return_value={
+        "project_id": "p1", "payload": {"pageStyle": style(templateId="show", fontStyle="serif")},
+    }))
+    resp = client.patch("/v1/projects/p1/analysis?merge=1", headers=headers,
+                        json={"pageStyle": style(templateId="show", fontStyle="serif")})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["pageStyle"]["fontStyle"] == "serif"
+    refused = client.patch("/v1/projects/p1/analysis?merge=1", headers=headers,
+                           json={"pageStyle": style(templateId="emo")})
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["code"] == "page_style_locked"
 
 
 @pytest.mark.parametrize("patch,status", [

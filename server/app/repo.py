@@ -1851,6 +1851,18 @@ async def has_detail_page_job(conn: AsyncConnection, project_id: str) -> bool:
         return bool(row and row["locked"])
 
 
+async def get_detail_page_locked_template(conn: AsyncConnection, project_id: str) -> str | None:
+    """Read the first accepted template for a project that had no saved page style."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select metadata->>'lockedTemplateId' as template_id from jobs where project_id = %s "
+            "and kind = 'detail_page' and metadata->>'lockedTemplateId' in ('emo', 'show') "
+            "order by created_at, id limit 1", (project_id,),
+        )
+        row = await cur.fetchone()
+    return row["template_id"] if row else None
+
+
 async def last_page_style(conn: AsyncConnection, user_id: str) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute("select a.payload->'pageStyle' as page_style from analyses a "
