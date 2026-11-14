@@ -15,6 +15,7 @@ test('confirmation proceeds for a saved real selection without a brand-category 
   const confirmations = [];
   const style = defaultPageStyle();
   const bindings = {
+    isMannequinStageEnabled: () => true,
     a: { selectedModelId: '11111111-1111-1111-1111-111111111111', brandUseCategory: null, pageStyle: style },
     confirming: false, onBeforeConfirm: undefined, setConfirming() {}, onConfirmingChange() {}, pageStyleSaveRef: { current: Promise.resolve() }, pageStyleValueRef: { current: style }, setPageStyleError() {},
     pageStyleReady: true, validPageStyle, onChange: () => assert.fail('unchanged template saved again'),

@@ -28,7 +28,7 @@ const WORN_CUT_TYPES = new Set(['styling', 'horizon']);
 const WORN_ROLE_BY_CUT_TYPE = { styling: CONTENT_ROLES.COORDINATION, horizon: CONTENT_ROLES.FIT };
 export const shouldRenderGenerationExampleGuide = block => Boolean(block?.cutType);
 
-export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct = false, catalogs, colorOpts, detailColorOpts, clothingType, subCategory, customCategory, exampleGender, identityKind = null, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, customMatchPromotionPending = false, spaceContext, onChangeSpaceSet, onExampleDrag, onChangeSpaceBackground, usedExampleIds }) {
+export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct = false, catalogs, colorOpts, detailColorOpts, clothingType, subCategory, customCategory, exampleGender, identityKind = null, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, customMatchPromotionPending = false, spaceContext, onChangeSpaceSet, onExampleDrag, onChangeSpaceBackground, onUploadStart, usedExampleIds }) {
   const [matchOpen, setMatchOpen] = useState(false);
   const [pendingRecipe, setPendingRecipe] = useState(null);
   const [pendingChoice, setPendingChoice] = useState(null);
@@ -250,7 +250,7 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
               value="mine" onChange={() => {}} cut="styling" clothingType={clothingType} gender={exampleGender}
               isOptionPublished={(value) => value === 'mine'} />
           </div>
-          <MineImageTab images={block.ownImages || []}
+          <MineImageTab images={block.ownImages || []} onUploadStart={onUploadStart}
             onImagesChange={(images) => {
               const nextImages = normalizeMineImages(images);
               onChange({ ownImages: nextImages, thumb: nextImages[0] || null });
@@ -320,7 +320,7 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
             {!productPresentationOf(block) && <p className="hint">예시 사진은 연출만 참고해요.</p>}
           </>}
           {shouldRenderGenerationExamples && (
-            <MoodGuide block={block} projectId={projectId} signature={signature} busy={busy || pickerSaving} usedExampleIds={usedExampleIds} identityKind={identityKind} onUseMine={(ref) => onChange({
+            <MoodGuide block={block} projectId={projectId} signature={signature} busy={busy || pickerSaving} usedExampleIds={usedExampleIds} identityKind={identityKind} onUploadStart={onUploadStart} onUseMine={(ref) => onChange({
               source: 'mine', title: '내 이미지', cutType: null, contentRole: CONTENT_ROLES.CUSTOM,
               ownImages: [ref?.url || ref], thumb: ref?.url || ref,
               exampleId: null, exampleSelectionOrigin: null, refScope: null,

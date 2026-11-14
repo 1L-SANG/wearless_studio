@@ -54,6 +54,7 @@ function confirmButton(props, effects) {
   const end = source.indexOf('  const [customMatchOpen,', start);
   const style = defaultPageStyle();
   const bindings = {
+    isMannequinStageEnabled: () => true,
     confirming: false, onBeforeConfirm: props.onBeforeConfirm, onNext: props.onNext,
     setConfirming: () => effects.push('confirming'), onConfirmingChange: () => effects.push('lock'),
     commitMdComment: () => effects.push('mdSave'), pageStyleSaveRef: { current: Promise.resolve() }, pageStyleValueRef: { current: style }, setPageStyleError() {},
@@ -104,6 +105,7 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
   slot.settleVisualPreparations ||= async () => {};
   slot.getVisualHandoff ||= () => ({});
   const bindings = {
+    isMannequinStageEnabled: () => true,
     baseProductPhoto,
     mergeOutfitSaveResponse, outfitContextKey, syncOutfitLegacySelection,
     mannequinGenerationTotal, normalizePlanTier, confirmDraftPhotos,

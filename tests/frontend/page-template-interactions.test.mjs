@@ -39,7 +39,7 @@ function boardHarness() {
     catalogs: { detailProduct: product, analysis, genExamples: [] },
     activeSectionKey: null, captureSectionPreview: () => null, locked: false, atomicSavingRef: { current: false }, projectId: 'woq2', identityKind: null,
     exampleGender: 'women', selectedId: null, setPicker: null,
-    undoEntryRef, setUndoEntry: value => { undo = value; }, setUndoExiting() {},
+    detailPageSubmitRef: { current: false }, undoEntryRef, setUndoEntry: value => { undo = value; }, setUndoExiting() {},
     scheduleUndoDismiss: entry => schedules.push(entry),
     dismissUndo: () => { undoEntryRef.current = null; undo = null; },
     setBlocks: value => { blocks = value; }, finishEdit() {}, setSelectedId() {}, setSelectedViewId() {}, setSetPicker() {}, setDrawer() {}, setPendingRemoval() {},

@@ -26,6 +26,7 @@ import { BANK_TRANSFER_ENABLED, SUBSCRIPTION_PRODUCTS_ENABLED, SUBSCRIPTION_TRAN
 import { IS_GENERAL_PAYMENT_REVIEW_HOST } from '@/lib/host.js';
 import { requestTossCardPayment, resolveTopupCheckout } from '@/lib/generalPaymentReview.js';
 import { TOPUP_VALIDITY_EFFECTIVE_DATE_KO } from '@/lib/topupPolicy.js';
+import { isMannequinStageEnabled } from '@/lib/mannequinStage.js';
 import { BankTransferModal } from './BankTransferModal.jsx';
 import { topupBonusCredits } from '@/lib/limits.js';
 import { CopyButton, PIcon, TransferDeadline, num, won } from './bankTransferParts.jsx';
@@ -77,7 +78,18 @@ const PLAN_DETAILS = {
   },
 };
 
+export function pricingForMannequinStage(mannequinStageEnabled = true) {
+  if (mannequinStageEnabled) return { standardPageCredits: STANDARD_PAGE_CREDITS, details: PLAN_DETAILS };
+  return {
+    standardPageCredits: 209,
+    details: Object.fromEntries(Object.entries(PLAN_DETAILS).map(([code, details]) => [code, {
+      ...details, features: details.features.filter(feature => !feature.startsWith('마네킹컷 ')),
+    }])),
+  };
+}
+
 export function Pricing() {
+  const pricing = pricingForMannequinStage(isMannequinStageEnabled());
   const [entry] = useState(readEntry);
   const topupRef = useRef(null);
   const [buying, setBuying] = useState(null);     // 결제창 여는 중인 planCode
@@ -283,7 +295,7 @@ export function Pricing() {
           {subs.map((p) => {
             const isCurrent = p.code === currentPlan;
             const credits = Number(p.credits).toLocaleString('ko-KR');
-            const details = Object.hasOwn(PLAN_DETAILS, p.code) ? PLAN_DETAILS[p.code] : null;
+            const details = Object.hasOwn(pricing.details, p.code) ? pricing.details[p.code] : null;
             return (
               <div key={p.id} className={`${s.card}${isCurrent ? ' ' + s.current : ''}`}>
                 {p.code === 'seller' && <span className={s.popular}>MOST POPULAR</span>}
@@ -306,7 +318,7 @@ export function Pricing() {
                     </span>
                     <span className={s.creditUnit}>크레딧</span>
                   </div>
-                  <p className={s.pageEstimate}>상세페이지 약 <strong>{Math.floor(Number(p.credits) / STANDARD_PAGE_CREDITS)}개</strong></p>
+                  <p className={s.pageEstimate}>상세페이지 약 <strong>{Math.floor(Number(p.credits) / pricing.standardPageCredits)}개</strong></p>
                 </div>
                 {details && <ul className={s.features}>
                   {[...details.features, ...(topupBonusEnabled && details.topupBonus ? [details.topupBonus] : [])].map((feature) => <li key={feature}>

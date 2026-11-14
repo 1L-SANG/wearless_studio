@@ -67,15 +67,21 @@ export function ShotSegment({
 
 export const MINE_SHOT_OPTION = Object.freeze({ value: 'mine', label: '내 이미지' });
 
-export function MineImageTab({ images = [], onImagesChange, onChoose, onPickImage }) {
+export function MineImageTab({ images = [], onImagesChange, onChoose, onPickImage, onUploadStart }) {
   const upload = async () => {
-    const picked = await onPickImage?.();
-    if (!picked) return;
-    if (onChoose) {
-      onChoose(picked);
-      return;
+    const finish = onUploadStart?.();
+    if (onUploadStart && !finish) return;
+    try {
+      const picked = await onPickImage?.();
+      if (!picked) return;
+      if (onChoose) {
+        onChoose(picked);
+        return;
+      }
+      onImagesChange?.([...images, picked]);
+    } finally {
+      finish?.();
     }
-    onImagesChange?.([...images, picked]);
   };
   return (
     <div className="sb-mine-tab">

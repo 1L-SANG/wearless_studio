@@ -410,10 +410,12 @@ export function buildDraft() {
     analysis,
     mannequins: mannequins.map(cut => ({ ...cut, previewOnly: true })),
     mannequinExtensionFeePaid: false,
+    detailPageExtensionFeeCharged: 0,
     storyboard: ['before', 'after'].includes(mockQuery().get('mockLegacy'))
       ? storyboard.map(({ pageSectionKey, pageSectionKind, pageSectionUsage, pageDesignId, slotKey, ...b }) => ({ ...b, taxonomyVersion: 3 }))
       : storyboard,
     storyboardDirty: false,
+    storyboardSaved: false,
     editorBlocks,
     wardrobe,
     wardrobeGifs: {},

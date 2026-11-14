@@ -214,8 +214,8 @@ async function storyboardKeyboardGuard(saving) {
     `const tree = ${source.slice(start, end + 1)}null</div>;`, 'StoryboardKeyboardGuard.jsx',
     { jsx: 'transform' },
   );
-  return new Function('React', 'atomicSaving', 'initialBoardRevealed', 'styles', 'drawer', `${code}; return tree;`)(
-    React, saving, true, {}, null,
+  return new Function('React', 'interactionBusy', 'detailPageSubmitting', 'initialBoardRevealed', 'styles', 'drawer', `${code}; return tree;`)(
+    React, saving, false, true, {}, null,
   ).props.onKeyDownCapture;
 }
 

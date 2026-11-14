@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
+import { isMannequinStageEnabled } from '@/lib/mannequinStage.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Button, Skeleton, ErrorState, useToast } from '@/components/ui.jsx';
 import { HangTag } from '@/features/shell/HangTag.jsx';
@@ -20,10 +21,11 @@ import { PublicationsPanel } from './PublicationsPanel.jsx';
 import publicationStyles from './PublicationsPanel.module.css';
 
 const STAGES = { storyboard: '콘티', mannequin: '마네킹', editor: '에디터' };
-const stageOf = (step) => ['generating', 'failed'].includes(step) ? 'editor' : step;
+const stageOf = (step) => !isMannequinStageEnabled() && step === 'mannequin' ? 'storyboard'
+  : ['generating', 'failed'].includes(step) ? 'editor' : step;
 const resumePath = (project) => project.status === 'done'
   || ['pending', 'running', 'error', 'cancelled', 'done'].includes(project.latestJobs?.detailPage?.status)
-  ? `/editor/${project.id}` : project.selectedMannequinId ? '/create/mannequin' : '/create/storyboard';
+  ? `/editor/${project.id}` : project.selectedMannequinId && isMannequinStageEnabled() ? '/create/mannequin' : '/create/storyboard';
 
 export function Library() {
   const navigate = useNavigate();

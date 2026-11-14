@@ -1,4 +1,5 @@
 import { isProductInfoConfirmed } from './flowSession.js';
+import { isMannequinStageEnabled } from './mannequinStage.js';
 
 const FLOW_SCREEN_NAMES = [
   ['/create/storyboard', '콘티 화면'],
@@ -6,7 +7,8 @@ const FLOW_SCREEN_NAMES = [
   ['/editor', '에디터 화면'],
   ['/create/input', '입력 화면'],
 ];
-export function flowScreenName(path) {
+export function flowScreenName(path, mannequinStageEnabled = isMannequinStageEnabled()) {
+  if (!mannequinStageEnabled && path?.startsWith('/create/mannequin')) return '콘티 화면';
   return FLOW_SCREEN_NAMES.find(([prefix]) => path?.startsWith(prefix))?.[1] || '진행하던 화면';
 }
 

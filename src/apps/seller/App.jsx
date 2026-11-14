@@ -15,6 +15,7 @@
    ============================================================= */
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, Routes, Route, Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { isMannequinStageEnabled } from '@/lib/mannequinStage.js';
 import { ChromeLayout } from '@/features/shell/ChromeLayout.jsx';
 import { removeSellerBootBackground } from '@/features/shell/sellerGlow.js';
 import { useDocumentEntry } from '@/features/shell/useDocumentEntry.js';
@@ -887,6 +888,12 @@ function RootRedirect() {
    domainRouteRedirect 가 라우터보다 먼저 /create/input 으로 돌렸다, host.js·#214). 여기
    등록해 두던 서브트리는 도달 불가능한 죽은 가지였다 — 번들만 무겁게 했다. 되살리지 마라. */
 
+function MannequinStageRoute() {
+  const location = useLocation();
+  return isMannequinStageEnabled() ? <Mannequin />
+    : <Navigate to="/create/storyboard" replace state={location.state} />;
+}
+
 export default function App() {
   const { pathname, search } = useLocation();
   const cafe24Launching = pathname === '/settings/malls' && new URLSearchParams(search).has('mall_id');
@@ -1005,7 +1012,7 @@ export default function App() {
             <Route element={<MobileHandoffGuard />}>
               <Route element={<RequireAuth />}>
                 <Route element={<RequireProject />}>
-                  <Route path="mannequin" element={<Mannequin />} />
+                  <Route path="mannequin" element={<MannequinStageRoute />} />
                   <Route path="storyboard" element={<StoryboardRoute />} />
                   <Route path="generating" element={<Generating />} />
                 </Route>

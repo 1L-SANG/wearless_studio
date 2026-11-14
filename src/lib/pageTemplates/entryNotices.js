@@ -1,3 +1,12 @@
+const entryStates = new WeakMap();
+
+export function recordStoryboardEntryState(blocks, state) {
+  entryStates.set(blocks, state);
+  return blocks;
+}
+
+export const storyboardEntryState = blocks => entryStates.get(blocks);
+
 const notices = new Map();
 export const setStoryboardEntryNotice = (projectId, notice) => notices.set(projectId, notice);
 export const storyboardEntryNotice = projectId => notices.get(projectId) || null;

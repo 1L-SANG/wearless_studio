@@ -102,7 +102,7 @@ function designActionHarness(initial) {
   let state = initial;
   const undoEntryRef = { current: null }, scope = { blocks: initial, changeTemplateSectionDesign,
     drawer: { mode: 'design', runKey: daily(initial).key }, catalogs: { detailProduct: product },
-    undoEntryRef, setBlocks: value => { state = value; }, setUndoExiting() {}, setUndoEntry() {}, scheduleUndoDismiss() {},
+    detailPageSubmitRef: { current: false }, undoEntryRef, setBlocks: value => { state = value; }, setUndoExiting() {}, setUndoEntry() {}, scheduleUndoDismiss() {},
     dismissUndo: () => { undoEntryRef.current = null; }, setPicker: null, setInsertedSectionKey() {}, toast: { push() {} },
   };
   const handlers = new Function('scope', `with (scope) {

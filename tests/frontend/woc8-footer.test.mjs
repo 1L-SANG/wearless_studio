@@ -146,6 +146,7 @@ test('only the exact storyboard route receives the compact footer and viewport s
   const SiteFooter = await load('src/features/shell/SiteFooter.jsx', 'SiteFooter', shared);
   const location = { pathname: '/create/storyboard' };
   const ChromeLayout = await load('src/features/shell/ChromeLayout.jsx', 'ChromeLayout', {
+    isMannequinStageEnabled: () => true,
     document: { documentElement: { getAttribute: () => null } },
     useState: initial => [typeof initial === 'function' ? initial() : initial, () => {}],
     useRef: () => ({ current: null }), useEffect() {}, useLayoutEffect() {},

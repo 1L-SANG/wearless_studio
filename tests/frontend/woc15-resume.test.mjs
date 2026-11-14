@@ -22,7 +22,7 @@ function harness(version = 3) {
     getStoryboard: async id => { notices.setStoryboardEntryNotice(id, version === 3 ? 'rebuilt' : null); return [{ id: 'photo', taxonomyVersion: 4 }]; },
     storyboardEntryNotice: notices.storyboardEntryNotice,
     saveAnalysis: async () => calls.push(['analysis']), saveStoryboard: async () => calls.push(['save']) };
-  const bindings = { ...notices, ...flowSession, api, useAppStore: { getState: () => state },
+  const bindings = { isMannequinStageEnabled: () => true, ...notices, ...flowSession, api, useAppStore: { getState: () => state },
     navigate: path => calls.push(['navigate', path]), push: msg => calls.push(['toast', msg]), pushToast: msg => calls.push(['toast', msg]),
     userId: 'seller', projectId: 'p', resumeRunRef: { current: 0 }, loadRunRef: { current: 0 },
     isMobileDevice: () => false, openingRef: { current: false }, entryToken: { current: 0 }, userRef: { current: 'seller' },
@@ -94,7 +94,7 @@ test('WOC15 rebuilt storyboard exit flush cannot persist before Next confirmatio
   const source = read('src/features/storyboard/Storyboard.jsx');
   notices.setStoryboardEntryNotice('review', 'rebuilt');
   const persisted = [];
-  const bindings = { ...notices, api: { storyboardEntryNotice: notices.storyboardEntryNotice },
+  const bindings = { mannequinStageEnabled: true, ...notices, api: { storyboardEntryNotice: notices.storyboardEntryNotice },
     saveTimer: { current: null }, latestBlocks: { current: [{ id: 'new', taxonomyVersion: 4 }] },
     sbSaveNow: async (_id, snapshot) => persisted.push(snapshot()), clearTimeout() {} };
   const callback = source.slice(source.indexOf('  const flushLatest ='), source.indexOf('  const saveNow ='));
@@ -146,7 +146,7 @@ for (const outcome of ['success', 'failure']) test(`WOC15 Next ${outcome} contro
   notices.setStoryboardEntryNotice('review', 'rebuilt');
   const snapshots = [], board = [{ id: 'new', taxonomyVersion: 4 }];
   let screenNotice = 'rebuilt';
-  const bindings = { ...notices, api: { storyboardEntryNotice: notices.storyboardEntryNotice },
+  const bindings = { mannequinStageEnabled: true, ...notices, api: { storyboardEntryNotice: notices.storyboardEntryNotice },
     saveTimer: { current: null }, latestBlocks: { current: board }, clearTimeout() {},
     setEntryNotice: value => { screenNotice = value; },
     sbSaveNow: async (_id, getSnapshot, options) => {

@@ -17,3 +17,11 @@ export const STEP_INDEX = {
   generating: 3,
   editor: 3,
 };
+
+export function wizardStepsForMannequinStage(mannequinStageEnabled = true) {
+  if (mannequinStageEnabled) return { steps: WIZARD_STEPS, index: STEP_INDEX };
+  return {
+    steps: WIZARD_STEPS.filter(step => step.key !== 'mannequin'),
+    index: { input: 0, analysis: 0, storyboard: 1, mannequin: 1, generating: 2, editor: 2 },
+  };
+}
