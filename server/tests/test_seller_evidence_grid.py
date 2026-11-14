@@ -120,8 +120,43 @@ def test_grid_accepts_one_panel_at_one_to_three_ratio():
         assert max(rendered.size) <= grid.MAX_GRID_LONG_EDGE
 
 
+@pytest.mark.parametrize("wide_or_tall, canvas_size, displayed_size, untouched_index", [
+    ((1200, 3600), (1872, 3473), (640, 1919), 3),
+    ((3200, 800), (3578, 2422), (2558, 640), 0),
+])
+def test_grid_expands_only_the_required_row_or_column(
+    wide_or_tall, canvas_size, displayed_size, untouched_index,
+):
+    sizes = [(1200, 1600), wide_or_tall, (1200, 1600), (1200, 1600)]
+    data, records, preflight, _ = grid.compose_labelled_grid(
+        _panels_for_sizes(sizes), direction="front", evidence_id="fixture_front"
+    )
+    assert preflight["passed"] is True
+    assert [record["panel"] for record in records] == [1, 2, 3, 4]
+    assert all(min(record["displayedDimensions"].values()) >= grid.MIN_PANEL_SHORT_EDGE
+               for record in records)
+    assert records[1]["displayedDimensions"] == dict(zip(("width", "height"), displayed_size))
+    assert records[untouched_index]["displayedDimensions"] == {"width": 651, "height": 868}
+    with Image.open(BytesIO(data)) as rendered:
+        assert rendered.size == canvas_size
+
+
+def test_grid_uses_pillow_rounding_at_the_canvas_limit():
+    portrait = (1200, 1600)
+    sizes = [portrait, (3847, 800), portrait, portrait]
+    data, records, preflight, _ = grid.compose_labelled_grid(
+        _panels_for_sizes(sizes), direction="front", evidence_id="fixture_front"
+    )
+    assert preflight["passed"] is True
+    assert records[1]["displayedDimensions"] == {"width": 3076, "height": 640}
+    with Image.open(BytesIO(data)) as rendered:
+        assert rendered.width == grid.MAX_GRID_LONG_EDGE
+
+
 @pytest.mark.parametrize("sizes", [
-    [(1200, 1600), (1000, 3000), (1200, 1600), (1200, 1600)],
+    [(1200, 1600), (1200, 3600), (1200, 3600), (1200, 1600)],
+    [(1200, 1600), (3200, 800), (3200, 800), (1200, 1600)],
+    [(1200, 1600), (3849, 800), (1200, 1600), (1200, 1600)],
     [(7000, 1000)],
 ])
 def test_grid_rejects_extreme_ratios_before_allocating_canvas(monkeypatch, sizes):

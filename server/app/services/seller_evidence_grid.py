@@ -116,6 +116,14 @@ def panel_map(records: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _minimum_box_long_edge(long_edge: int, short_edge: int) -> int:
+    # Pillow contain rounds the fitted short side. A value within half a
+    # pixel of the minimum can already satisfy it, including at the grid cap.
+    scale = short_edge / long_edge
+    needed = math.ceil((MIN_PANEL_SHORT_EDGE - 0.5) * long_edge / short_edge)
+    return needed if round(scale * needed) >= MIN_PANEL_SHORT_EDGE else needed + 1
+
+
 def compose_labelled_grid(
     panels: list[dict[str, Any]],
     *,
@@ -128,11 +136,15 @@ def compose_labelled_grid(
     if not isinstance(evidence_id, str) or not _EVIDENCE_ID_RE.fullmatch(evidence_id):
         raise ValueError("seller_evidence_grid_id_required")
     gap = 24
-    cell_w, cell_h = 900, 1100
+    base_cell_w, base_cell_h = 900, 1100
     header_h, label_h = 150, 190
-    box_w, box_h = cell_w - 48, cell_h - label_h - 42
+    horizontal_padding, vertical_padding = 48, label_h + 42
+    box_w, box_h = base_cell_w - horizontal_padding, base_cell_h - vertical_padding
+    columns = 1 if len(panels) == 1 else 2
+    rows = math.ceil(len(panels) / columns)
+    column_widths = [base_cell_w] * columns
+    row_heights = [base_cell_h] * rows
     images: dict[int, Image.Image] = {}
-    needs_larger_cells = False
     for index, panel in enumerate(panels):
         if panel["judgeability"] == "missing":
             continue
@@ -143,31 +155,19 @@ def compose_labelled_grid(
         except Exception as exc:
             raise ValueError("seller_evidence_image_decode_failed") from exc
         images[index] = oriented
-        # Match Pillow's contain sizing, including rounding, without resampling.
-        image_ratio = oriented.width / oriented.height
-        box_ratio = box_w / box_h
-        fitted_size = (box_w, box_h)
-        if image_ratio > box_ratio:
-            fitted_size = (box_w, round(oriented.height / oriented.width * box_w))
-        elif image_ratio < box_ratio:
-            fitted_size = (round(oriented.width / oriented.height * box_h), box_h)
-        if min(fitted_size) < MIN_PANEL_SHORT_EDGE:
-            needs_larger_cells = True
+        row, column = divmod(index, columns)
+        # Match Pillow's contain rounding so layouts that already pass keep their pixels.
+        # A narrow photo only needs more height in its row, and a wide one more
+        # width in its column. Keep their labels and reading order intact.
+        if round(oriented.width / oriented.height * box_h) < MIN_PANEL_SHORT_EDGE:
+            height_needed = _minimum_box_long_edge(oriented.height, oriented.width)
+            row_heights[row] = max(row_heights[row], height_needed + vertical_padding)
+        elif round(oriented.height / oriented.width * box_w) < MIN_PANEL_SHORT_EDGE:
+            width_needed = _minimum_box_long_edge(oriented.width, oriented.height)
+            column_widths[column] = max(column_widths[column], width_needed + horizontal_padding)
 
-    # Enlarge cells within the same grid when seller pixels would be too small.
-    # Keep base cells for already-passing photos to preserve their exact output.
-    if needs_larger_cells:
-        for oriented in images.values():
-            if oriented.width > oriented.height:
-                box_w = max(box_w, math.ceil(MIN_PANEL_SHORT_EDGE * oriented.width / oriented.height))
-            elif oriented.height > oriented.width:
-                box_h = max(box_h, math.ceil(MIN_PANEL_SHORT_EDGE * oriented.height / oriented.width))
-        cell_w, cell_h = box_w + 48, box_h + 232
-    columns = 1 if len(panels) == 1 else 2
-    rows = math.ceil(len(panels) / columns)
-    last_row_count = len(panels) - columns * (rows - 1)
-    width = gap + columns * (cell_w + gap)
-    height = header_h + rows * (cell_h + gap) + gap
+    width = sum(column_widths) + (columns + 1) * gap
+    height = header_h + sum(row_heights) + (rows + 1) * gap
     if max(width, height) > MAX_GRID_LONG_EDGE:
         raise ValueError("seller_evidence_display_resolution_too_small")
     canvas = Image.new("RGB", (width, height), "white")
@@ -193,11 +193,12 @@ def compose_labelled_grid(
     records: list[dict[str, Any]] = []
     for index, panel in enumerate(panels):
         row, column = divmod(index, columns)
-        row_count = last_row_count if row == rows - 1 else columns
-        row_width = row_count * cell_w + (row_count - 1) * gap
+        cell_w, cell_h = column_widths[column], row_heights[row]
+        row_count = min(columns, len(panels) - row * columns)
+        row_width = sum(column_widths[:row_count]) + (row_count - 1) * gap
         row_offset = (width - row_width) // 2
-        x = row_offset + column * (cell_w + gap)
-        y = header_h + row * (cell_h + gap)
+        x = row_offset + sum(column_widths[:column]) + column * gap
+        y = header_h + sum(row_heights[:row]) + row * gap
         authority = panel["surfaceAuthority"]
         status = panel["judgeability"]
         authority_color = "#a52323" if authority == "DOMINANT" else "#555555"
