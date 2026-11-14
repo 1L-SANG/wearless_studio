@@ -4354,7 +4354,7 @@ export function Editor() {
 
       {publish && (
         <Modal onClose={() => { if (!pubBusy) setPublish(false); }} wide>
-          <EditorPublishModal settings={pubSettings} summary={pubSummary} busy={pubBusy}
+          <EditorPublishModal blocks={blocks} settings={pubSettings} summary={pubSummary} busy={pubBusy}
             progress={pubProg} error={pubError} result={pubResult}
             previousCount={pubResult?.previousCount ?? publicationInfo.count} realModelBlocked={realModelBlocked}
             onChange={setPubSettings} onCancel={() => { if (!pubBusy) setPublish(false); }} onPublish={runPublish}
@@ -4370,6 +4370,7 @@ export function Editor() {
           <ClientErrorCapture point="errorState" action="download" messageCode="download_failed"
             active={Boolean(dlError && dlOriginalError)} error={dlOriginalError} projectId={projectId} />
           <EditorDownloadModal
+            blocks={blocks}
             settings={dlSettings}
             gifCount={gifImages.length}
             onDownloadGifs={() => receiveGifs()}

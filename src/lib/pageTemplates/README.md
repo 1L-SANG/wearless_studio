@@ -873,7 +873,8 @@ the voice and format set by the copywriting work, and until that rewrite is
 connected the comment is placed verbatim. Without a comment, AI writes a draft.
 Elements from `aiDraft` slots, and a `seller+ai` body without a
 comment, carry `aiDraft: true`; the editor
-does not show a draft badge for it. The copy system (which slot gets which copy,
+does not show a draft badge for it. A seller text edit clears the flag, and the
+download and paste-code modals ask once when unedited drafts remain. The copy system (which slot gets which copy,
 and where bold or emphasis goes) is decided in separate copywriting work.
 
 Open items for that work: late copy can change text height and the

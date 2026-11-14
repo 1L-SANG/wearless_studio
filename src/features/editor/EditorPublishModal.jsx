@@ -3,9 +3,11 @@ import { PUBLISH_PRESETS } from './detailPublish.js';
 import { RadioCard } from './ExportRadioCard.jsx';
 import shared from './EditorDownloadModal.module.css';
 import styles from './EditorPublishModal.module.css';
+import { EditorAiDraftConfirmation, useAiDraftConfirmation } from './EditorAiDraftConfirmation.jsx';
 
-export function EditorPublishModal({ settings, summary, busy, progress, error, result, previousCount,
+export function EditorPublishModal({ blocks = [], settings, summary, busy, progress, error, result, previousCount,
   realModelBlocked, onChange, onCancel, onPublish, onCopyHtml, onCopyUrls, onDownloadZip }) {
+  const draft = useAiDraftConfirmation(blocks, { publish: onPublish, zip: onDownloadZip });
   const done = Math.max(0, Math.min(progress?.done || 0, progress?.total || 0));
   return (
     <div className={`${shared.modal} ${styles.publish}`}>
@@ -17,11 +19,11 @@ export function EditorPublishModal({ settings, summary, busy, progress, error, r
         <div className={styles.thumbnails} aria-label="게시한 이미지 조각">
           {result.files.map((file, i) => <img key={file.index} src={file.previewUrl || file.url} alt={`상세 ${i + 1}`} />)}
         </div>
-        <div className={`modal-actions ${styles.actions}`}>
+        {!draft.confirming && <div className={`modal-actions ${styles.actions}`}>
           <Button variant="primary" disabled={busy} onClick={onCopyHtml}>HTML 복사</Button>
           <Button variant="ghost" disabled={busy} onClick={onCopyUrls}>이미지 주소 복사</Button>
-          <Button variant="ghost" disabled={busy} onClick={onDownloadZip}>ZIP 받기</Button>
-        </div>
+          <Button variant="ghost" disabled={busy} onClick={() => draft.request('zip')}>ZIP 받기</Button>
+        </div>}
         {result.showHtml && <label className={styles.copyLabel}>HTML
           <textarea className={styles.copyText} readOnly value={result.html} onFocus={(event) => event.target.select()} />
         </label>}
@@ -32,9 +34,9 @@ export function EditorPublishModal({ settings, summary, busy, progress, error, r
           <p>스마트스토어: 상세설명 SmartEditor ONE의 HTML 모드</p>
         </details>
         {previousCount > 0 && <p className={styles.notice}>이전 버전 {previousCount}개가 남아 있어요. 몰을 새 주소로 바꾼 뒤 보관함에서 지울 수 있어요.</p>}
-        <footer className={shared.footer}><div className={`modal-actions ${shared.actions}`}>
+        {!draft.confirming && <footer className={shared.footer}><div className={`modal-actions ${shared.actions}`}>
           <Button variant="ghost" onClick={onCancel}>닫기</Button>
-        </div></footer>
+        </div></footer>}
       </> : <>
         <div className={shared.groups}>
           <fieldset className={shared.group}>
@@ -60,11 +62,14 @@ export function EditorPublishModal({ settings, summary, busy, progress, error, r
         <progress className={shared.progress} aria-label="게시 진행" max={progress?.total || undefined} value={progress?.total ? done : undefined} />
       </div>}
       {error && !busy && <div className={shared.error} role="alert"><p>{error.message || error}</p>
-        {error.files?.length > 0 && <div className="modal-actions"><Button onClick={onDownloadZip}>ZIP 받기</Button></div>}
+        {error.files?.length > 0 && !draft.confirming && <div className="modal-actions"><Button onClick={() => draft.request('zip')}>ZIP 받기</Button></div>}
       </div>}
-      {!result && <footer className={shared.footer}><div className={`modal-actions ${shared.actions}`}>
+      {draft.confirming ? <footer className={shared.footer}>
+        <EditorAiDraftConfirmation sectionNames={draft.sectionNames} onCancel={onCancel} onConfirm={draft.confirm} busy={busy}
+          confirmLabel={draft.pendingAction === 'publish' ? '그대로 만들기' : '그대로 다운로드'} />
+      </footer> : !result && <footer className={shared.footer}><div className={`modal-actions ${shared.actions}`}>
         <Button variant="ghost" disabled={busy} onClick={onCancel}>취소</Button>
-        <Button variant="primary" icon="link" disabled={busy || realModelBlocked} onClick={onPublish}>{error ? '다시 시도' : '코드 만들기'}</Button>
+        <Button variant="primary" icon="link" disabled={busy || realModelBlocked} onClick={() => draft.request('publish')}>{error ? '다시 시도' : '코드 만들기'}</Button>
       </div></footer>}
     </div>
   );
