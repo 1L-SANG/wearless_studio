@@ -70,6 +70,61 @@ test('FAQ with a manually positioned heading keeps the white on-photo label and 
   assert.equal(saved.elements.some(item => item.opacity === .3), true);
 });
 
+test('the selected FAQ question and photo retain their identity when the server moves the title', () => {
+  const { pending, final } = pendingFaq();
+  const block = faq(pending);
+  const selected = [element(block, 'items.0.q'), photo(block), block.elements.find(item => item.templateCopyDecoration === 'A.')];
+  const completed = faq(wait.mergeServerBlocks(pending, final));
+  assert.equal(photo(completed).y, 246);
+  assert.deepEqual(selected.map(item => [item.id, item.type, item.copyRole, item.templateCopyDecoration]),
+    selected.map(({ id }) => {
+      const item = completed.elements.find(candidate => candidate.id === id);
+      return [item.id, item.type, item.copyRole, item.templateCopyDecoration];
+    }));
+  assert.equal(new Set(completed.elements.map(item => item.id)).size, completed.elements.length);
+});
+
+test('the editor commits a focused FAQ answer before merging and saving the measured block', async () => {
+  const { pending, final } = pendingFaq();
+  const block = faq(pending);
+  const answer = element(block, 'items.0.a');
+  const typedText = '사진 만들기를 기다리면서 작성한 답이에요';
+  const latestBlocks = { current: pending };
+  const saved = [];
+  let finalizeError;
+  const source = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
+  const finalEffect = source.slice(source.indexOf("  useEffect(() => {\n    if (!genActive || dpJob.status !== 'done'"),
+    source.indexOf('  // history (rapid bursts'));
+  const commitSource = source.slice(source.indexOf('  const commitTextValue ='), source.indexOf('  // 내용이 빈 일반 텍스트'));
+  const identity = value => value;
+  const setBlocks = update => { latestBlocks.current = update(latestBlocks.current); };
+  const compile = (code, bindings, result = '') => new Function(...Object.keys(bindings), code + result)(...Object.values(bindings));
+  const commit = compile(commitSource, { setBlocks, editedTextElement }, 'return commitTextValue;');
+  const activeElement = { isContentEditable: true, blur: () => commit(block.id, answer.id, typedText) };
+  compile(finalEffect, {
+    useEffect: effect => effect(), genActive: true, dpJob: { status: 'done' }, genMergedRef: { current: false },
+    setGenFinalizeError: error => { finalizeError = error; }, setGenFinalizeOriginalError() {},
+    getFinalEditorBlocks: async () => final, projectId: 'fixture',
+    api: { getAnalysis: async () => null, saveEditorBlocks: async (_id, value) => { saved.push(value); } },
+    useAppStore: { getState: () => ({ detailPageJob: {} }) }, latestBlocks,
+    canvasRef: { current: { contains: item => item === activeElement } }, document: { activeElement }, flushSync: action => action(),
+    canSafelyMergeServerBlocks: wait.canSafelyMergeServerBlocks, mergeServerBlocks: wait.mergeServerBlocks,
+    stripPhotoBlockTextElements: identity, buildInfoCtx: () => ({}), needsDefaultTemplate: () => false,
+    productName: '', clothingType: '', catalogs: {}, product: {}, analysis: {}, colorOpts: [], fmModels: {},
+    ensureShippingReturnsBlock: identity, normalizeEditorSelectionGroups: identity, expandBlockHeights: identity,
+    upgradeLegacyKiwiTemplateBlocks: identity, uid: identity, setBlocksState() {}, persistable: identity,
+    clearEditorWaitDraft() {}, pendingGenerationDraft: { current: false }, genActiveRef: { current: true },
+    setGenActive() {}, detailPageCompletionMessage: () => null, toast: { push() {} }, genFinalizeAttempt: 0,
+  });
+  await new Promise(setImmediate);
+  assert.equal(finalizeError, '');
+  assert.equal(saved.length, 1);
+  const completed = faq(saved[0]);
+  assert.equal(photo(completed).y, 246);
+  assert.equal(element(completed, 'items.0.a').id, answer.id);
+  assert.equal(element(completed, 'items.0.a').text, typedText);
+});
+
 test('copying an empty FAQ frame keeps its decorative placeholders out of the export', () => {
   const block = faq(assemblePage({ ...input('emo-faq-pending'), copyResults: [] }));
   let serial = 0;

@@ -1708,6 +1708,12 @@ export function Editor() {
         const failedReasons = { ...finalJob.failedCutReasons,
           ...Object.fromEntries((finalJob.partial?.failedCuts || []).map(cut =>
             [cut.blockId, { ...finalJob.failedCutReasons?.[cut.blockId], ...cut }])) };
+        // Inline text lives in the DOM until blur. Commit it before replacing
+        // pending blocks, including when the seller is still typing in an FAQ.
+        const activeEditor = document.activeElement;
+        if (activeEditor?.isContentEditable && canvasRef.current?.contains(activeEditor)) {
+          flushSync(() => activeEditor.blur());
+        }
         let restoredServerLayout = false;
         // 서버 완성본의 안정 이미지 주소를 현재 임시 작업본에 합친 뒤 직접 저장한다.
         // 저장 요청 도중 사용자가 한 번 더 편집했다면 최신 ref로 다시 합쳐 저장하여 덮어쓰지 않는다.

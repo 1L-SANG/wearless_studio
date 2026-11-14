@@ -296,6 +296,33 @@ export function pendingFaqHeadingIds(blocks, { active, status, finalizeError }) 
   return ids;
 }
 
+function faqElementKey(el) {
+  if (el.type === 'image') return JSON.stringify([el.type, el.sourceBlockId, el.slotKey]);
+  if (el.type === 'text' && el.copyRole) return JSON.stringify([el.type, el.sourceBlockId, copyIdentity(el)]);
+  if (el.groupId) return JSON.stringify([el.type, el.groupId, el.templateCopyDecoration || el.shape]);
+  if (el.pageSectionGap) return 'section-gap';
+  return null;
+}
+
+// The server numbers elements by paint order. Moving the heading outside the
+// photo changes that order, so keep the existing canvas IDs for the same items.
+function preserveFaqElementIds(local, final) {
+  const byKey = new Map(local.elements.map(el => [faqElementKey(el), el.id]));
+  const reservedIds = new Set(local.elements.map(el => el.id));
+  return { ...final, id: local.id, elements: final.elements.map(el => {
+    const key = faqElementKey(el);
+    if (key && byKey.has(key)) {
+      const id = byKey.get(key);
+      byKey.delete(key);
+      return { ...el, id };
+    }
+    let id = el.id;
+    while (reservedIds.has(id)) id += ':final';
+    reservedIds.add(id);
+    return { ...el, id };
+  }) };
+}
+
 // Keep the layout and its contrast together. Restored drafts can still have
 // seller edits from before the headings became read-only during generation.
 function mergeFaqFaceLayout(before, merged, server) {
@@ -402,7 +429,12 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
     if (untouched.has(b.pageSectionKey)) {
       if (emitted.has(b.pageSectionKey)) return [];
       emitted.add(b.pageSectionKey);
-      return serverBlocks.filter(block => block.pageSectionKey === b.pageSectionKey);
+      const finalRun = serverBlocks.filter(block => block.pageSectionKey === b.pageSectionKey);
+      return finalRun.map((block) => {
+        if (b.pageDesignId !== FAQ_FACE_DESIGN || !block.elements.some(el => el.type === 'image' && el.y > 0)
+          || !block.elements.some(faqHeading)) return block;
+        return preserveFaqElementIds(b, block);
+      });
     }
     const finalFaq = b.pageDesignId === FAQ_FACE_DESIGN && serverBlocks.find(block => block.pageSectionKey === b.pageSectionKey
       && block.elements.some(el => el.type === 'image' && el.y > 0) && block.elements.some(faqHeading));

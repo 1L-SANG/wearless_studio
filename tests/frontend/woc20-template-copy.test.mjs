@@ -124,7 +124,8 @@ test('WOC20 completion replaces the pending FAQ with the taller measured block a
     overlayTextPositions: { [`${source.pageSectionKey}:${source.slotKey}:heading`]: 'outside' } }];
   const final = assemblePage(finalInput);
   const merged = mergeServerBlocks(live, final);
-  assert.deepEqual(merged, final);
+  const withoutElementIds = items => items.map(block => ({ ...block, elements: block.elements.map(({ id, ...el }) => el) }));
+  assert.deepEqual(withoutElementIds(merged), withoutElementIds(final));
   const faq = merged.find(block => block.pageSectionKind === 'faq');
   assert.equal(faq.h - assembled.find(block => block.pageSectionKind === 'faq').h, 246);
   assert.equal(getBlockRenderHeight(faq, { forExport: true }), faq.h);
