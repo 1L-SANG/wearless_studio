@@ -130,11 +130,46 @@ def compose_labelled_grid(
     gap = 24
     cell_w, cell_h = 900, 1100
     header_h, label_h = 150, 190
+    box_w, box_h = cell_w - 48, cell_h - label_h - 42
+    images: dict[int, Image.Image] = {}
+    needs_larger_cells = False
+    for index, panel in enumerate(panels):
+        if panel["judgeability"] == "missing":
+            continue
+        try:
+            with Image.open(BytesIO(panel["data"])) as opened:
+                oriented = ImageOps.exif_transpose(opened).convert("RGB")
+                oriented.load()
+        except Exception as exc:
+            raise ValueError("seller_evidence_image_decode_failed") from exc
+        images[index] = oriented
+        # Match Pillow's contain sizing, including rounding, without resampling.
+        image_ratio = oriented.width / oriented.height
+        box_ratio = box_w / box_h
+        fitted_size = (box_w, box_h)
+        if image_ratio > box_ratio:
+            fitted_size = (box_w, round(oriented.height / oriented.width * box_w))
+        elif image_ratio < box_ratio:
+            fitted_size = (round(oriented.width / oriented.height * box_h), box_h)
+        if min(fitted_size) < MIN_PANEL_SHORT_EDGE:
+            needs_larger_cells = True
+
+    # Enlarge cells within the same grid when seller pixels would be too small.
+    # Keep base cells for already-passing photos to preserve their exact output.
+    if needs_larger_cells:
+        for oriented in images.values():
+            if oriented.width > oriented.height:
+                box_w = max(box_w, math.ceil(MIN_PANEL_SHORT_EDGE * oriented.width / oriented.height))
+            elif oriented.height > oriented.width:
+                box_h = max(box_h, math.ceil(MIN_PANEL_SHORT_EDGE * oriented.height / oriented.width))
+        cell_w, cell_h = box_w + 48, box_h + 232
     columns = 1 if len(panels) == 1 else 2
     rows = math.ceil(len(panels) / columns)
     last_row_count = len(panels) - columns * (rows - 1)
     width = gap + columns * (cell_w + gap)
     height = header_h + rows * (cell_h + gap) + gap
+    if max(width, height) > MAX_GRID_LONG_EDGE:
+        raise ValueError("seller_evidence_display_resolution_too_small")
     canvas = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(canvas)
     title_font = _font(34)
@@ -203,12 +238,7 @@ def compose_labelled_grid(
         if status == "missing":
             draw.text((x + 210, y + 560), "NOT PROVIDED — DO NOT INFER", fill=status_color, font=label_font)
         else:
-            try:
-                with Image.open(BytesIO(panel["data"])) as opened:
-                    oriented = ImageOps.exif_transpose(opened).convert("RGB")
-                    oriented.load()
-            except Exception as exc:
-                raise ValueError("seller_evidence_image_decode_failed") from exc
+            oriented = images[index]
             fitted = ImageOps.contain(
                 oriented,
                 (image_box[2] - image_box[0], image_box[3] - image_box[1]),

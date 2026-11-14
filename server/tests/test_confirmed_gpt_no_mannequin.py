@@ -2,8 +2,10 @@
 
 from dataclasses import replace
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 
+from PIL import Image
 import pytest
 
 from app.agents import confirmed_gpt_prompt as prompt, confirmed_gpt_runtime as runtime
@@ -53,6 +55,28 @@ def test_packet_without_mannequin_has_exact_product_order_and_labels(monkeypatch
     rendered = prompt.compile_confirmed_gpt_prompt(packet.prompt_input)
     assert "MANNEQUIN" not in rendered
     assert "SOLD PRODUCT GARMENT-LOCAL COLOR AND FIT AUTHORITY:" in rendered
+
+
+@pytest.mark.parametrize("with_mannequin", [False, True])
+def test_packet_accepts_two_to_three_seller_photo_and_binds_grid_hash(monkeypatch, with_mannequin):
+    out = BytesIO()
+    Image.new("RGB", (1200, 1800), "navy").save(out, format="PNG")
+    source = out.getvalue()
+    monkeypatch.setattr(runtime, "bind_confirmed_gpt_directing", lambda *a, **k: _directing())
+    packet = runtime.build_packet(
+        _spec(), clothing_type="top", identity_source="VIRTUAL",
+        selected_model_id="mF", effective_model_id="mF", uses_base_color=True,
+        mannequin_image=InlineImage("image/png", b"mannequin") if with_mannequin else None,
+        face_direction_sheet=InlineImage("image/png", b"face"),
+        full_body_direction_sheet=InlineImage("image/png", b"body"),
+        seller_images=(("Front", InlineImage("image/png", source)),),
+        matching_images=(), example_image=InlineImage("image/png", b"example"),
+        evidence_contract=_contract(source),
+    )
+    grid_image = packet.images[3 if with_mannequin else 2]
+    assert sha256(grid_image.data).hexdigest() == packet.evidence_grid_sha256
+    with Image.open(BytesIO(grid_image.data)) as rendered:
+        assert rendered.size == (948, 1390)
 
 
 def test_product_template_changes_only_authority_paragraphs():
