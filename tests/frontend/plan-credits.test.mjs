@@ -154,7 +154,7 @@ test('http and screen wiring refreshes quotes without delaying local labels', ()
   const productInput = read('../../src/features/product-input/ProductInput.jsx');
   const mannequin = read('../../src/features/mannequin/Mannequin.jsx');
 
-  assert.match(http, /async getCreditQuote\(projectId, \{ selectedModelId \} = \{\}\)/);
+  assert.match(http, /async getCreditQuote\(projectId, \{ selectedModelId, signal \} = \{\}\)/);
   assert.match(http, /credit-quote\$\{selectedModelId \? `\?selectedModelId=\$\{encodeURIComponent\(selectedModelId\)\}` : ''\}/);
   assert.match(productInput, /api\.getCreditQuote\(analysisProjectId, \{ selectedModelId: analysis\?\.selectedModelId \}\)/);
   assert.match(analysis, /mannequinGenerationCtaLabel\(mannequinGenerationCost\)/);
