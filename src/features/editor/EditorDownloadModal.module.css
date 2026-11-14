@@ -214,6 +214,26 @@
   margin-top: 0;
 }
 
+.draftConfirmation {
+  display: grid;
+  gap: var(--sp-12);
+}
+
+.modal .draftMessage {
+  margin: 0;
+  color: var(--fg-1);
+  font-size: 14px;
+  text-wrap: balance;
+}
+
+.draftConfirmation .actions {
+  flex-wrap: wrap;
+}
+
+.draftConfirmation .actions :global(.btn) {
+  flex: 1 1 auto;
+}
+
 .actions .cancel {
   min-width: 88px;
   box-shadow: 0 0 0 1px var(--ring-strong);

@@ -1159,6 +1159,7 @@ export function Editor() {
   const [dlError, setDlError] = useState('');
   const [dlOriginalError, setDlOriginalError] = useState(null);
   const [publish, setPublish] = useState(false);
+  const exportModalOpen = download || publish;
   const [registerMall, setRegisterMall] = useState(null);
   const mallSavedSource = useRef(null);
   const [pubBusy, setPubBusy] = useState(false);
@@ -1922,6 +1923,7 @@ export function Editor() {
   // first, or the whole top-level block when the block itself is selected.
   useEffect(() => {
     const h = (e) => {
+      if (kb.current.exportModalOpen) return;
       const deleteElements = selEls.length > 0;
       const deleteBlockSelection = !selectedIds.length && blockFocused && Boolean(selBlock);
       if (isEditorDeleteKey(e) && (deleteElements || deleteBlockSelection)) {
@@ -1987,6 +1989,7 @@ export function Editor() {
   const editorClipboard = useRef(null);
   useEffect(() => {
     const onKey = (e) => {
+      if (kb.current.exportModalOpen) return;
       const t = e.target;
       const typing = /input|textarea/i.test(t.tagName) || t.isContentEditable;
       const mod = e.ctrlKey || e.metaKey;
@@ -3727,7 +3730,7 @@ export function Editor() {
 
   // keep latest action handlers for the global keyboard effect (incl. crop keys)
   kb.current = { undo, redo, save, copy: copySelectedElements, paste: pasteCopiedElements, addText, canAddText: selEls.length === 0 && !!selBlock, layer: layerEl, hasSel: !!selEl,
-    croppingOn: !!cropping, cropCommit: commitCrop, cropCancel: cancelCrop };
+    exportModalOpen, croppingOn: !!cropping, cropCommit: commitCrop, cropCancel: cancelCrop };
 
   const TOOLS = [
     { id: 'ai', icon: 'sparkles', label: 'AI' },
@@ -3933,7 +3936,7 @@ export function Editor() {
 
   return (
     <EditorContrastContext.Provider value={contrastStore}>
-    <div className="editor">
+    <div className="editor" inert={exportModalOpen ? '' : undefined}>
       {/* 저장 실패 배너 — 조용히 실패하면 셀러가 한참 작업한 뒤에야 전부 날아간 걸 안다.
           편집분은 이미 이 브라우저에 임시 보관돼 있으므로 그 사실부터 말하고, 원인별로
           할 수 있는 행동(로그인 / 새로고침 / 다시 저장)을 하나만 준다(2026-08-19 오너 신고). */}
@@ -4354,7 +4357,7 @@ export function Editor() {
 
       {publish && (
         <Modal onClose={() => { if (!pubBusy) setPublish(false); }} wide>
-          <EditorPublishModal settings={pubSettings} summary={pubSummary} busy={pubBusy}
+          <EditorPublishModal blocks={blocks} settings={pubSettings} summary={pubSummary} busy={pubBusy}
             progress={pubProg} error={pubError} result={pubResult}
             previousCount={pubResult?.previousCount ?? publicationInfo.count} realModelBlocked={realModelBlocked}
             onChange={setPubSettings} onCancel={() => { if (!pubBusy) setPublish(false); }} onPublish={runPublish}
@@ -4370,6 +4373,7 @@ export function Editor() {
           <ClientErrorCapture point="errorState" action="download" messageCode="download_failed"
             active={Boolean(dlError && dlOriginalError)} error={dlOriginalError} projectId={projectId} />
           <EditorDownloadModal
+            blocks={blocks}
             settings={dlSettings}
             gifCount={gifImages.length}
             onDownloadGifs={() => receiveGifs()}

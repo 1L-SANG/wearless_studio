@@ -5,6 +5,7 @@ import {
 } from '@/features/editor/editorExport.js';
 import styles from './EditorDownloadModal.module.css';
 import { RadioCard } from './ExportRadioCard.jsx';
+import { EditorAiDraftConfirmation, useAiDraftConfirmation } from './EditorAiDraftConfirmation.jsx';
 
 const FORMAT_OPTIONS = [
   { id: 'jpeg', title: 'JPG', desc: '가볍게, 품질 90' },
@@ -29,6 +30,7 @@ function formatBytes(bytes) {
 }
 
 export function EditorDownloadModal({
+  blocks = [],
   settings: rawSettings,
   summary,
   notice,
@@ -41,6 +43,7 @@ export function EditorDownloadModal({
   gifCount = 0,
   onDownloadGifs,
 }) {
+  const draft = useAiDraftConfirmation(blocks, { download: onDownload });
   const settings = normalizeExportSettings(rawSettings);
   const original = settings.preset === 'original';
   const progressInfo = progress && typeof progress === 'object' ? progress : null;
@@ -172,12 +175,13 @@ export function EditorDownloadModal({
             <p>설정을 바꾸거나 다시 시도해 주세요.</p>
           </div>
         )}
-        <div className={`modal-actions ${styles.actions}`}>
+        {draft.confirming ? <EditorAiDraftConfirmation sectionNames={draft.sectionNames}
+          onCancel={onCancel} onConfirm={draft.confirm} busy={busy} /> : <div className={`modal-actions ${styles.actions}`}>
           <Button variant="ghost" className={styles.cancel} onClick={onCancel} disabled={busy}>취소</Button>
-          <Button variant="primary" icon={busy ? undefined : error ? 'refresh' : 'download'} onClick={onDownload} disabled={busy}>
+          <Button variant="primary" icon={busy ? undefined : error ? 'refresh' : 'download'} onClick={() => draft.request('download')} disabled={busy}>
             {busy ? '만드는 중…' : error ? '다시 시도' : '다운로드'}
           </Button>
-        </div>
+        </div>}
       </footer>
     </div>
   );

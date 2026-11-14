@@ -88,13 +88,18 @@ function mergeAutoCopy(element, incoming) {
     .every(key => Object.is(element.style?.[key], baseline[key]));
   const labelWidth = element.copyRole === 'label' && incoming.w != null && untouchedBox && unchangedTextSize
     ? { w: incoming.w } : {};
-  return { ...element, text: incoming.text, style,
+  const next = { ...element, text: incoming.text, style,
     ...labelWidth,
     ...(incoming.h != null && untouchedBox && unchangedTextSize ? { h: incoming.h } : {}),
     genAutoText: incoming.text,
     genAutoStyle: { ...(baseline || {}), ...(incoming.style || {}) },
     genAutoGeometry: geometry ? { ...geometry, ...labelWidth, ...(incoming.h != null ? { h: incoming.h } : {}) } : undefined,
   };
+  if (Object.hasOwn(incoming, 'aiDraft')) {
+    if (incoming.aiDraft === true) next.aiDraft = true;
+    else delete next.aiDraft;
+  }
+  return next;
 }
 
 /* mock 조립기는 구조(블록·행 분할·자동 블록)의 정본이지만, 단일 AI 컷의 지오메트리가
@@ -464,14 +469,10 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
         const { genAutoText, genAutoStyle, genAutoGeometry, ...rest } = el;
         const serverCopy = copyById[el.sourceBlockId]?.[copyIdentity(el)];
         if (serverCopy && el.text === genAutoText) {
-          if (finalFaq && faqHeading(el)) return { ...rest, text: serverCopy.text };
-          copyChanged = true;
-          const merged = mergeAutoCopy(el, {
-            text: serverCopy.text,
-            ...(serverCopy.w != null ? { w: serverCopy.w } : {}),
-            ...(serverCopy.h != null ? { h: serverCopy.h } : {}),
-            ...(serverCopy.style ? { style: serverCopy.style } : {}),
-          });
+          const keepFaqHeading = finalFaq && faqHeading(el);
+          if (!keepFaqHeading) copyChanged = true;
+          const merged = mergeAutoCopy(el, { ...(keepFaqHeading ? { text: serverCopy.text } : serverCopy),
+            aiDraft: serverCopy.aiDraft });
           const { genAutoText: _text, genAutoStyle: _style, genAutoGeometry: _geometry, ...result } = merged;
           return { ...result, ...(serverCopy.contrastLines ? { contrastLines: serverCopy.contrastLines, contrastFor: serverCopy.contrastFor } : {}) };
         }
