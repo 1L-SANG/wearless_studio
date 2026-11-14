@@ -49,10 +49,16 @@ class MannequinRegenerateQuote(CamelModel):
     next_cost: int
 
 
+class DetailPageGenerateQuote(CamelModel):
+    extension_model_fee: int
+    selected_model_id: str | None
+
+
 class CreditQuote(CamelModel):
     plan: PlanTier
     mannequin_generate: MannequinGenerateQuote
     mannequin_regenerate: MannequinRegenerateQuote
+    detail_page_generate: DetailPageGenerateQuote
     storyboard_per_cut: int
     editor_image: int
     editor_edit: int

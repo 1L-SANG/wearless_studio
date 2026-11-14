@@ -14,11 +14,15 @@ from hashlib import sha256
 from pathlib import Path
 import re
 
+from .prompts import build_mirrored_source_block
+
 
 _TEMPLATE = Path(__file__).resolve().parents[2] / "prompts" / "cut_generate_confirmed_gpt_v1.txt"
 _TEMPLATE_SHA256 = "d06ff48fa1185efadbda85d2f543b2340577716e72be9b105d6e3b8e407134fd"
 _OUTFIT_TEMPLATE = _TEMPLATE.with_name("cut_generate_confirmed_gpt_outfit_v2.txt")
 _OUTFIT_TEMPLATE_SHA256 = "76cf2babce4278341228e0abed704c57739278895395d5c3aa98ff5a886da33a"
+_PRODUCT_TEMPLATE = _TEMPLATE.with_name("cut_generate_confirmed_gpt_product_v2.txt")
+_PRODUCT_TEMPLATE_SHA256 = "f9895688b8276ebda9f1a53a4409a2f963350f7381f8d366fed766bfc743fd3f"
 _OUTFIT_ROLES = ("inner", "footwear", "bag", "accessory")
 _TOKEN_RE = re.compile(r"\$\{([a-z_]+)\}")
 _CODE_RE = re.compile(r"[a-z0-9_]+")
@@ -185,6 +189,8 @@ class ConfirmedGptPromptInput:
     uncertainties: tuple[SellerUncertainty, ...]
     outfit: OutfitLock
     pose_semantics: PoseSemantics
+    sold_product_fit: str | None = None
+    source_mirrored: bool = False
 
 
 @lru_cache(maxsize=1)
@@ -197,6 +203,14 @@ def load_confirmed_gpt_template() -> str:
         )
     # Repository text files carry one POSIX trailing LF; the immutable provider
     # prompt did not.  Remove exactly that repository-only terminator.
+    return raw.decode("utf-8").removesuffix("\n")
+
+
+@lru_cache(maxsize=1)
+def load_confirmed_gpt_product_template() -> str:
+    raw = _PRODUCT_TEMPLATE.read_bytes()
+    if sha256(raw).hexdigest() != _PRODUCT_TEMPLATE_SHA256:
+        raise ConfirmedGptPromptError("confirmed_gpt_product_template_drift")
     return raw.decode("utf-8").removesuffix("\n")
 
 
@@ -223,20 +237,20 @@ def _validate_scope(scope: ConfirmedGptScope) -> None:
         raise ConfirmedGptPromptError("confirmed_gpt_requires_direction_compatible_reference")
     if scope.space_group_id is not None:
         raise ConfirmedGptPromptError("confirmed_gpt_excludes_space_groups")
-    if scope.selected_mannequin is not True:
-        raise ConfirmedGptPromptError("confirmed_gpt_requires_selected_mannequin")
+    if type(scope.selected_mannequin) is not bool:
+        raise ConfirmedGptPromptError("confirmed_gpt_selected_mannequin_must_be_boolean")
     if scope.example_source != "service":
         raise ConfirmedGptPromptError("confirmed_gpt_requires_service_example")
 
 
 def _role_manifest(roles: tuple[InputRole, ...], *, matching_attached: bool,
-                   selected_roles: tuple[str, ...] = ()) -> str:
+                   selected_roles: tuple[str, ...] = (), selected_mannequin: bool = True) -> str:
     try:
         normalized = tuple(InputRole(role) for role in roles)
     except (TypeError, ValueError) as exc:
         raise ConfirmedGptPromptError("confirmed_gpt_unknown_input_role") from exc
     expected = (
-        InputRole.SELECTED_MANNEQUIN_CUT,
+        *((InputRole.SELECTED_MANNEQUIN_CUT,) if selected_mannequin else ()),
         InputRole.MODEL_FACE_DIRECTION_SHEET,
         InputRole.MODEL_FULL_BODY_DIRECTION_SHEET,
         InputRole.SOLD_PRODUCT_LABELED_EVIDENCE_GRID,
@@ -250,8 +264,16 @@ def _role_manifest(roles: tuple[InputRole, ...], *, matching_attached: bool,
             "confirmed_gpt_input_order_mismatch:"
             + ",".join(role.value for role in normalized)
         )
+    authorities = _ROLE_AUTHORITY
+    if not selected_mannequin:
+        authorities = {**authorities, InputRole.SOLD_PRODUCT_LABELED_EVIDENCE_GRID: (
+            "is final sold-product identity, color, construction, seam, closure, pattern-topology, "
+            "pattern-placement and permanent-detail pixel truth, and fit evidence together with "
+            "the seller-confirmed analysis fit; its labels, panel judgeability and HARD/UNCERTAIN "
+            "fact map limit what may be asserted or reconstructed"
+        )}
     return "\n".join(
-        f"{ordinal}. {role.value} — {_ROLE_AUTHORITY[role]}"
+        f"{ordinal}. {role.value} — {authorities[role]}"
         for ordinal, role in enumerate(normalized, 1)
     )
 
@@ -376,7 +398,7 @@ def _facts(
     return "\n".join(hard_lines), "\n".join(uncertain_lines)
 
 
-def _outfit_lock(outfit: OutfitLock) -> str:
+def _outfit_lock(outfit: OutfitLock, *, selected_mannequin: bool = True) -> str:
     if not isinstance(outfit, OutfitLock) or not isinstance(outfit.matching_attached, bool):
         raise ConfirmedGptPromptError("confirmed_gpt_outfit_lock_required")
     selected = outfit.selected_roles
@@ -395,10 +417,10 @@ def _outfit_lock(outfit: OutfitLock) -> str:
         "the complete outfit requires one; never copy the example garment."
     )
     inner_line = ("Inner: reproduce SELECTED INNER EVIDENCE."
-                  if "inner" in selected else f"Fixed inner: {fixed_inner}.")
+                  if "inner" in selected else f"Fixed inner: {fixed_inner}." if selected_mannequin else "")
     footwear_line = ("Footwear: reproduce SELECTED FOOTWEAR EVIDENCE."
                      if "footwear" in selected else f"Fixed footwear: {footwear}.")
-    result = f"{inner_line} {footwear_line} {matching}"
+    result = " ".join(part for part in (inner_line, footwear_line, matching) if part)
     if selected:
         raw = _OUTFIT_TEMPLATE.read_bytes()
         if sha256(raw).hexdigest() != _OUTFIT_TEMPLATE_SHA256:
@@ -456,16 +478,19 @@ def compile_confirmed_gpt_prompt(
     if not isinstance(request, ConfirmedGptPromptInput):
         raise ConfirmedGptPromptError("confirmed_gpt_prompt_input_required")
     _validate_scope(request.scope)
+    if not request.scope.selected_mannequin and InputRole.SELECTED_MANNEQUIN_CUT in request.ordered_roles:
+        raise ConfirmedGptPromptError("confirmed_gpt_requires_selected_mannequin")
     if not isinstance(request.cut_lock, CutLock):
         raise ConfirmedGptPromptError("confirmed_gpt_cut_lock_required")
     # Validate the proven B/H cut family before any direction-dependent seller
     # evidence is interpreted. This keeps unsupported side/back requests from
     # surfacing a misleading evidence-map error first.
     cut_lock = _cut_lock(request.cut_lock)
-    outfit_lock = _outfit_lock(request.outfit)
+    outfit_lock = _outfit_lock(request.outfit, selected_mannequin=request.scope.selected_mannequin)
     manifest = _role_manifest(
         request.ordered_roles, matching_attached=request.outfit.matching_attached,
         selected_roles=request.outfit.selected_roles,
+        selected_mannequin=request.scope.selected_mannequin,
     )
     evidence = _seller_evidence_map(
         request.seller_evidence, direction=request.cut_lock.user_direction
@@ -483,7 +508,20 @@ def compile_confirmed_gpt_prompt(
         "outfit_lock": outfit_lock,
         "pose_semantics": _pose_semantics(request.pose_semantics),
     }
-    rendered = _render(load_confirmed_gpt_template(), values)
+    template = load_confirmed_gpt_template()
+    if not request.scope.selected_mannequin:
+        template = load_confirmed_gpt_product_template()
+        values["sold_product_fit"] = (
+            _line(request.sold_product_fit, "sold_product_fit")
+            if request.sold_product_fit is not None else "No analysis fit is declared."
+        )
+    rendered = _render(template, values)
+    if not request.scope.selected_mannequin and request.source_mirrored is True:
+        rendered += (
+            "\n\n" + build_mirrored_source_block({"sourceMirrored": True})
+            + " This rule applies only to the sold product and takes precedence over the uncorrected "
+              "orientation in the PRODUCT images and seller evidence descriptions."
+        )
     if not qc_corrections:
         return rendered
     if (

@@ -648,7 +648,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                  "cut_type": b.get("cutType"),
                  **({"colorExecution": color_execution} if color_execution else {}),
                  "generation": {"version": 1, "origin": "page", "recipeFrom": "self",
-                                "sourceAssetId": None, "recipe": asset_recipe.project_recipe(b)},
+                                "sourceAssetId": None, "recipe": asset_recipe.project_recipe(b),
+                                **({"confirmedGptVariant": b["_confirmedGptVariant"]}
+                                   if b.get("_confirmedGptVariant") else {})},
                  **({"fallback": list(b["_fallback"])} if b.get("_fallback") else {}),
                  **({"similar_cut": similar_metadata} if similar_metadata else {}),
                  **_background_result_metadata(b),
@@ -2706,6 +2708,10 @@ async def run_detail_page_job(app, job: dict) -> None:
             confirmed_packet = None
             if confirmed_requested:
                 try:
+                    if selected_mannequin_id and cut_mannequin_image is None:
+                        raise confirmed_gpt_runtime.ConfirmedGptRuntimeError(
+                            "confirmed_gpt_mannequin_image_required"
+                        )
                     confirmed_packet = confirmed_gpt_runtime.build_packet(
                         cut_generator.apply_reference_compatibility(
                             garment_color.render_spec(normalized, color_plan) if color_plan else normalized),
@@ -2727,6 +2733,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                         evidence_contract=analysis.get(
                             "confirmedGptProductEvidence"
                         ),
+                        analysis=analysis,
                     )
                 except Exception as e:
                     log.warning(
@@ -2740,6 +2747,10 @@ async def run_detail_page_job(app, job: dict) -> None:
                     continue
                 imgs = list(confirmed_packet.images)
                 manifest = confirmed_packet.manifest
+                cut_spec["_confirmedGptVariant"] = (
+                    "selected_mannequin_v1" if cut_mannequin_image is not None
+                    else "product_evidence_v2"
+                )
             else:
                 manifest = cut_generator.build_manifest(
                     prods, has_mannequin=cut_mannequin_asset is not None,
@@ -2960,15 +2971,20 @@ async def run_detail_page_job(app, job: dict) -> None:
             # 매칭 대체로 접힌 칸을 실패로 세지 않고, 대체가 없는 예약 정산은 유지한다.
             charge_metadata = {**charge_metadata, "aiCount": min(
                 metadata["aiCount"], charge_metadata["aiCount"], generation_counts["aiCount"])}
+        model_fee = metadata.get("extensionModelFee", 0)
         charge = calculate_detail_charge(
-            completed=len(cut_assets), reserved=reserved, metadata=charge_metadata,
+            completed=len(cut_assets), reserved=reserved - model_fee, metadata=charge_metadata,
             fallback_per_cut=s.credit_cost_storyboard_per_cut,
         )
+        model_fee_charged = model_fee if charge > 0 else 0
+        charge += model_fee_charged
         success_metadata = {
             **({"outfitRecipes": outfit_recipes} if outfit_recipes else {}),
             "creditCostVersion": s.credit_cost_version,
             "generatedCuts": len(cut_assets),
         }
+        if model_fee > 0:
+            success_metadata["extensionModelFeeCharged"] = model_fee_charged
         if failed_block_ids:
             success_metadata["partial"] = {
                 "requestedCuts": len(ai_blocks), "completedCuts": len(cut_results),

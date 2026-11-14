@@ -1025,7 +1025,8 @@ def test_render_outer_closure_states_and_hardware_guard(state, phrase, inner_phr
     p = _render({
         "cutType": "styling", "shot": "full", "direction": "front",
         "outerClosureState": state, "exampleId": "ex_styling_outer_full_1",
-    }, clothing_type="outer")
+    }, clothing_type="outer", manifest=cut.build_manifest(
+        [{"slot": "Front"}], has_mannequin=True, has_match=False, mood_count=0))
     assert phrase in p
     for other in ("FULLY CLOSED", "OPEN DOWN TO THE CHEST", "HALF OPEN", "OPEN DOWN TO THE WAIST", "FULLY OPEN"):
         assert (other in p) is (other == phrase)
@@ -1041,7 +1042,9 @@ def test_render_outer_closure_states_and_hardware_guard(state, phrase, inner_phr
 
 @pytest.mark.parametrize("state", [None, "unknown"])
 def test_render_outer_closure_defaults_open_for_styling(state):
-    p = _render({"cutType": "styling", "shot": "full", "outerClosureState": state}, clothing_type="outer")
+    p = _render({"cutType": "styling", "shot": "full", "outerClosureState": state},
+                clothing_type="outer", manifest=cut.build_manifest(
+                    [{"slot": "Front"}], has_mannequin=True, has_match=False, mood_count=0))
     assert "FULLY OPEN" in p
     assert "keep the inner T-shirt exactly the same as in the attached MANNEQUIN" in p
 

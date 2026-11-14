@@ -45,7 +45,7 @@ def test_detail_requires_every_requested_cut_to_be_supported(
         return v4_blocks([dict(BOTH_BLOCK), dict(VIRTUAL_ONLY)])
 
     async def fake_product(conn, project_id):
-        return {"clothing_type": "top"}
+        return {"clothing_type": "top", "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
 
     async def fake_editor(conn, project_id):
         return []

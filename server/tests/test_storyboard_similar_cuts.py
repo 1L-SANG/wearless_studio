@@ -4,6 +4,7 @@ from storyboard_v4_cases import v4_blocks
 import asyncio
 import contextlib
 import copy
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -383,7 +384,8 @@ def test_reservation_counts_seven_followups_without_duplicate_discount(client, m
     monkeypatch.setattr(repo, "get_project", project)
     monkeypatch.setattr(repo, "get_storyboard", storyboard)
     monkeypatch.setattr(repo, "get_analysis", empty)
-    monkeypatch.setattr(repo, "get_product", empty)
+    monkeypatch.setattr(repo, "get_product", AsyncMock(return_value={
+        "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}))
     monkeypatch.setattr(repo, "get_editor_blocks", empty)
     monkeypatch.setattr(repo, "create_job", create)
     monkeypatch.setattr(repo, "reserve_credits", reserve)

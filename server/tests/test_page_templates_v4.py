@@ -181,7 +181,8 @@ def test_generation_quote_excludes_text_and_matches_frontend_count(client, make_
     blocks = [*board(), text()]
     monkeypatch.setattr(repo, "get_storyboard", AsyncMock(return_value=blocks))
     monkeypatch.setattr(repo, "get_editor_blocks", AsyncMock(return_value=[]))
-    monkeypatch.setattr(repo, "get_product", AsyncMock(return_value={"clothingType": "top"}))
+    monkeypatch.setattr(repo, "get_product", AsyncMock(return_value={"clothingType": "top",
+        "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}))
     monkeypatch.setattr(routes, "_outfit_generation_snapshot", AsyncMock(return_value={"version": 1, "slots": {}}))
     create = AsyncMock(return_value=({"id": "job", "payload": {}}, True))
     monkeypatch.setattr(repo, "create_job", create)
