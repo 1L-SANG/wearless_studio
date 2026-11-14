@@ -111,12 +111,13 @@ def test_server_versions_match_published_manifest():
     assert by_slug["privacy-seller"]["version"] == legal_versions.SELLER_PRIVACY_VERSION
 
 
-def test_privacy_revision_does_not_force_reconsent():
-    # 처리방침 v1.2(2026-10-19 시행)는 고지 대상이라 v1.1 동의자도 그대로 통과한다.
-    assert routes._consent_payload(_row(privacy="v1.1"))["needsConsent"] is False
-    assert routes._consent_payload(_row(privacy="v1.2"))["needsConsent"] is False
-    assert routes._consent_payload(_row(privacy="v1.0"))["needsConsent"] is True
-    assert legal_versions.required_versions()["privacy"] == "v1.2"
+@pytest.mark.parametrize("today", [date(2026, 11, 22), date(2026, 11, 23)])
+def test_privacy_revision_does_not_force_reconsent(today):
+    # 처리방침 v1.3(2026-11-23 시행)은 고지 대상이라 v1.1·v1.2 동의자도 그대로 통과한다.
+    for version in ("v1.1", "v1.2", "v1.3"):
+        assert routes._consent_payload(_row(privacy=version), today=today)["needsConsent"] is False
+    assert routes._consent_payload(_row(privacy="v1.0"), today=today)["needsConsent"] is True
+    assert legal_versions.required_versions()["privacy"] == "v1.3"
 
 
 def test_existing_v13_consent_is_valid_until_v14_effective_date():
