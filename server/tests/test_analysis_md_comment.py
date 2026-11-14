@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app import repo, routes
-from app.agents import copywriter, copy_qc, feature_copy, prompts, selling_points
+from app.agents import feature_copy, page_part_copy, prompts, selling_points
 from app.workers.detail_page_job import _fallback_product_name
 from conftest import auth_headers
 from test_analysis_server_owned_fields import _Conn
@@ -97,13 +97,11 @@ MEMO = "MD_ONLY_셀러가쓴메모_이문구는생성에넘기지않음"
 PRODUCT = {"name": "가을 니트", "clothingType": "top", "colors": []}
 ANALYSIS = {"sellingPoints": ["라운드넥"], "aiSuggestedPoints": ["라운드넥"],
             "materials": [{"name": "코튼", "ratio": 100}], "subCategory": "knit"}
-BLOCKS = [{"id": "b1", "source": "ai", "cutType": "styling", "contentRole": "coordination", "shot": "full"}]
 
 
 @pytest.mark.parametrize("builder", [
-    lambda analysis: copywriter.build_prompt(BLOCKS, PRODUCT, analysis),
+    lambda analysis: page_part_copy.build_prompt(analysis["sellingPoints"], ["목선"], PRODUCT, analysis),
     lambda analysis: feature_copy.build_prompt(analysis["sellingPoints"], PRODUCT, analysis),
-    lambda analysis: copy_qc.build_prompt([{"textId": "b1:headline", "text": "가을 니트"}], analysis),
     lambda analysis: _fallback_product_name(PRODUCT, analysis),
 ])
 def test_copy_and_product_name_ignore_md_comment(builder):

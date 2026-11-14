@@ -6,7 +6,7 @@ AI 호출 없음. id는 uid()(랜덤) 대신 **인덱스 기반 결정적 id**�
 (`b{i}` / `b{i}e{j}`) — 같은 입력이면 항상 같은 출력(계약 §1-4).
 
 입력: storyboard(StoryboardBlock[]) + cut_results(AG-06 산출 {blockId,imageUrl})
-     + copy_results(AG-02/03 산출 {blockId,texts:[{role,text}]}) + product + copywriting.
+     + copy_results(새 페이지 카피용 입력, 지금은 빈 목록 {blockId,texts:[{role,text}]}) + product + copywriting.
 출력: EditorBlock[] (계약 §3.5) — storyboard 순서를 따르는 블록들 + 자동 블록 3종(size/care/ai-notice).
 
 컷 생성 실패(해당 블록의 cut_result 없음)는 크래시가 아니라 빈 슬롯(src=None) 렌더.

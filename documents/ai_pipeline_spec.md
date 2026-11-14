@@ -23,7 +23,7 @@
 | PL-1 분석 | 입력 '입력 완료' → `analyzeProduct` | AG-01(라이브) → M-01(라이브) | — | `Analysis` (실측 null) |
 | PL-2 마네킹 생성 | 콘티 화면이 콘티를 불러온 뒤 **자동**으로 `generateMannequins`를 시작한다(옛 콘티를 새로 깔아 확인을 기다릴 때는 빼고). 마네킹 화면에 들어가도 다시 요청하며, 진행 중인 작업이 있으면 합류한다 | AG-04 ×1 단일컷 **(라이브)** | `mannequinGenerate` | `MannequinCut[]` |
 | PL-3 마네킹 재생성 | 핏 확인 스텝 후 '수정사항 반영하여 재생성' → `regenerateMannequin(projectId, { fitProfile })` | AG-04(라이브) ×1 — 요청 스냅샷으로 재실행하고 성공 종결 때 analysis와 버전 핏을 함께 확정 | `mannequinGenerate` | `MannequinCut[]` (새 버전 추가·자동 선택) |
-| PL-4 상세페이지 생성 | 콘티를 `saveStoryboard`로 저장하고 마네킹컷을 고른 뒤 생성 화면에서 `generateDetailPage` | 카피 단계 AG-02·AG-03과 부위 설명 카피(`page_part_copy`)가 먼저 돌고, 이어서 AG-06 ×N, 마지막에 M-02 템플릿 조립(모두 라이브) | AI 1~4 생성 컷은 최소 5컷 값, 5컷 이상은 실제 생성 컷 × `storyboardPerCut` | 완성 컷과 이유가 남는 빈 칸의 `EditorBlock[]` (ADR-0017) |
+| PL-4 상세페이지 생성 | 콘티를 `saveStoryboard`로 저장하고 마네킹컷을 고른 뒤 생성 화면에서 `generateDetailPage` | 부위 설명 카피(`page_part_copy`)가 먼저 돌고, 이어서 AG-06 ×N, 마지막에 M-02 템플릿 조립(모두 라이브). 옛 카피 단계(AG-02, AG-03)는 2026-11-13에 지웠다 | AI 1~4 생성 컷은 최소 5컷 값, 5컷 이상은 실제 생성 컷 × `storyboardPerCut` | 완성 컷과 이유가 남는 빈 칸의 `EditorBlock[]` (ADR-0017) |
 | PL-5 에디터 새 이미지 | AI 탭 `새 이미지 추가` → `generateImage(mode:'new')` | AG-06(라이브) | `editorImage` | `WardrobeImage` |
 | PL-6 현재 이미지 수정 | AI 탭 `현재 이미지 수정`의 `generateImage(mode:'vary')` | 착용 사진은 AG-07 비슷한 컷, 레시피가 있는 디테일컷은 디테일 전용 경로(라이브) | `editorImage` | `WardrobeImage` |
 
@@ -74,7 +74,7 @@ prep(기준 색상 이미지·분석 속성·매칭 하의 이미지·fitProfile
 
 ### PL-4 상세페이지 생성 — `generateDetailPage(projectId)` ★핵심
 
-입력은 전부 서버 상태에서 읽는다: 저장된 `storyboard` + `project(copywriting, selectedMannequinId)` + `product`/`analysis`(페이지 스타일 `pageStyle` 포함). 클라이언트가 들고 있는 값을 믿지 않는다 (frontend_state_model §5). 콘티는 `taxonomyVersion: 4`만 받는다. 시작 라우트가 `validate_storyboard_v4`로 검사해 옛 콘티는 변환하지 않고 `storyboard_outdated`로 거절하며, 분석의 템플릿과 콘티의 템플릿이 다르면 `page_style_mismatch`로 거절한다(`server/app/routes.py`). 생성 입력은 `canonicalize_storyboard`가 사진 칸 정의에 맞춰 `cutType`·`shot`·`contentRole`을 정리한 콘티다. 첫 장의 첫 AI 착용 카드만 `hero`이고 `sectionRole`은 그 값에서 파생한 내부값이다. `selectedMannequinId`의 마네킹컷은 기준색으로 만든 자산이므로 기준색 착용컷에만 첨부하고, 다른 색을 고른 블록은 그 색상의 셀러 상품 사진을 색상 정본으로 쓴다. 해당 컷에 톤 에디터 적용본이 있으면 원본 컷 asset이 아니라 최신 `mannequinToneAdjusted` asset을 기준 이미지로 쓴다.
+입력은 전부 서버 상태에서 읽는다: 저장된 `storyboard` + `project(selectedMannequinId)` + `product`, `analysis`(페이지 스타일 `pageStyle` 포함). 클라이언트가 들고 있는 값을 믿지 않는다 (frontend_state_model §5). 콘티는 `taxonomyVersion: 4`만 받는다. 시작 라우트가 `validate_storyboard_v4`로 검사해 옛 콘티는 변환하지 않고 `storyboard_outdated`로 거절하며, 분석의 템플릿과 콘티의 템플릿이 다르면 `page_style_mismatch`로 거절한다(`server/app/routes.py`). 생성 입력은 `canonicalize_storyboard`가 사진 칸 정의에 맞춰 `cutType`·`shot`·`contentRole`을 정리한 콘티다. 첫 장의 첫 AI 착용 카드만 `hero`이고 `sectionRole`은 그 값에서 파생한 내부값이다. `selectedMannequinId`의 마네킹컷은 기준색으로 만든 자산이므로 기준색 착용컷에만 첨부하고, 다른 색을 고른 블록은 그 색상의 셀러 상품 사진을 색상 정본으로 쓴다. 해당 컷에 톤 에디터 적용본이 있으면 원본 컷 asset이 아니라 최신 `mannequinToneAdjusted` asset을 기준 이미지로 쓴다.
 
 ```
 info     상품·분석·콘티 데이터 수집/검증 (비AI)
@@ -82,10 +82,9 @@ prep     exact 요청 블록은 선택 resolved 마네킹 → grid_face_directio
          라벨 셀러 근거 그리드 1장 → 선택 매칭 최대 1장 → 서비스 예시 순서로 패킷 준비.
          그 밖의 VIRTUAL 착용컷은 기존 face_front + body_front 쌍을 포함한 generic
          프롬프트·에셋 계약을 준비한다 (비AI).
-copy     컷보다 먼저 돈다. copywriting=true(템플릿 콘티는 늘 켬)면 시그니처를 뺀 AI 사진마다
-         AG-02 소제목(headline)을 만들고 묶음 AG-03으로 검수한다(revise 채택).
-         이어서 page_part_copy 한 번의 호출로 디테일 요소 섹션의 부위 설명(partDescriptionCopy)과
-         강조 특징 설명(featureCopy)을 만들어 analysis에 병합 저장한다.
+copy     컷보다 먼저 돈다. page_part_copy 한 번의 호출로 디테일 요소 섹션의 부위 설명
+         (partDescriptionCopy)과 강조 특징 설명(featureCopy)을 만들어 analysis에 병합 저장한다.
+         옛 소제목 생성(AG-02)과 검수(AG-03)는 2026-11-13에 지웠다.
 cuts     AG-06 cut-generator — source='ai' 블록별 병렬 실행. 일반 블록은 모두 detail_cut GPT로
          Stage 1과 조건부 Stage 2를 만들고, exact 대상만 과거 입력·프롬프트 패킷을 추가한다.
          첫 시그니처 컷은 별도 image_signature 계약을 유지한다.
@@ -98,8 +97,8 @@ assemble M-02 템플릿 조립 (비AI). page_assembler.assemble이 page_template
          끝에 자동 블록 넷(size, care, ai-notice, common-notice)을 붙여 EditorBlock[]을 만든다.
 done     project.status='done' · { data: EditorBlock[], credits }
 ```
-- **진행 표시**: HTTP 경로는 진행 이벤트 `inputs_loaded`(15), `copy`(18), `cut`(20~80), `assemble`(85)의 수치 진행률을 보낸다. mock 체크리스트(`src/mock/db.js`의 `genSteps`)는 호환용 key(info/prep/styling/horizon/product/copy/assemble)와 옛 라벨을 유지하며 템플릿 섹션 이름을 쓰지 않는다. HTTP의 단계 체크리스트 실배선은 TODO다.
-- **카피(AI 글 칸)**: AI가 채우는 글은 디테일 요소 섹션의 부위 설명, 상품 소개 본문, 후기 초안이다. 두 줄 부위 설명(`partDescriptionCopy`)을 쓰고, 일부 디자인은 그 값이 없을 때 강조 특징 설명(`featureCopy`)을 쓴다. AG-02 소제목은 AG-03 검수 뒤 `copy_ready` 이벤트로 나가고 조립기에도 넘어가지만, 템플릿 글 칸에는 `headline` 역할이 없어 페이지에 실리지 않는다(`server/app/workers/detail_page_job.py`의 `_gen_copy`, `page_template_assembler.py`의 `ctx.copy`). 템플릿의 다른 AI 글 칸(첫 장 영문 상품명, 착용컷 제목과 소개, 색상 소개, 원단 제목과 설명, 상품 소개 제목과 요약, 디테일 요소 제목과 핏 설명, 추천 대상, 질문과 답 등)은 지금 빈 글과 안내 문구로 나가고 셀러가 에디터에서 채운다. 카피 체계는 별도 카피라이팅 작업에서 정한다.
+- **진행 표시**: HTTP 경로는 진행 이벤트 `inputs_loaded`(15), `cut`(20~80), `assemble`(85)의 수치 진행률을 보낸다. 옛 `copy`(18) 이벤트는 카피 단계와 함께 지웠다. mock 체크리스트(`src/mock/db.js`의 `genSteps`)는 호환용 key(info, prep, styling, horizon, product, copy, assemble)와 옛 라벨을 유지하며 템플릿 섹션 이름을 쓰지 않는다. HTTP의 단계 체크리스트 실배선은 TODO다.
+- **카피(AI 글 칸)**: AI가 채우는 글은 디테일 요소 섹션의 부위 설명, 상품 소개 본문, 후기 초안이다. 두 줄 부위 설명(`partDescriptionCopy`)을 쓰고, 일부 디자인은 그 값이 없을 때 강조 특징 설명(`featureCopy`)을 쓴다. 옛 사진별 소제목 생성(AG-02)과 검수(AG-03)는 템플릿 글 칸에 쓰이지 않아 2026-11-13에 지웠다. 조립기의 `copy_results` 입력(`page_template_assembler.py`의 `ctx.copy`)과 화면의 `copy_ready` 병합 경로는 새 카피를 위해 남겼고, 지금 워커는 빈 목록을 넘긴다. 템플릿의 다른 AI 글 칸(첫 장 영문 상품명, 착용컷 제목과 소개, 색상 소개, 원단 제목과 설명, 상품 소개 제목과 요약, 디테일 요소 제목과 핏 설명, 추천 대상, 질문과 답 등)은 지금 빈 글과 안내 문구로 나가고 셀러가 에디터에서 채운다. 카피 체계는 별도 카피라이팅 작업에서 정한다.
 - **MD 코멘트(상품 소개 본문)**: 2026-11-13 오너 결정에 따라 상품 소개 본문(`seller+ai`)에는 셀러가 분석 화면에 쓴 `analysis.mdComment`를 AI가 실제 쇼핑몰 상세페이지의 MD 코멘트처럼 다듬어 넣는다. 감성형과 쇼룸형 모두 넣고, 쇼룸형은 상품 소개 요약 판 맨 위에 영문 라벨 "Comment"와 본문을 둔다. 다듬는 말투와 형식은 카피라이팅 작업이 정한다. 다듬기가 붙기 전에는 원문을 줄바꿈까지 그대로 하나의 글상자에 넣는다(`page_template_assembler.py`의 `_content_for`). 셀러 글이 없으면 AI가 초안을 쓴다.
 - **후기 초안**: 2026-10-26 오너 결정에 따라 후기 섹션은 셀러가 고치기 쉽도록 AI가 초안을 넣어 두고, 셀러가 에디터에서 실제 후기로 고친다. 초안은 매번 조금씩 다르게 쓰고, 이름 칸 기본값은 "김태희", 별점 기본값은 5개다.
 - **크레딧**: 시작 시 AI 생성 컷을 예약한다. 1~4 생성 컷은 최소 5컷 값, 5장 이상은 실제 생성 컷 수 × `storyboardPerCut`으로 예약하고, 성공 시 견적에서 못 만든 유료 컷 값을 뺀다(내 이미지와 복제 컷 제외, ADR-0017, 계약 §6).
