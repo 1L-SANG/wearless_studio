@@ -54,7 +54,7 @@ from ..agents.catalog_image import catalog_image
 from ..agents.model_routing import resolve_detail_cut_model
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
-from ..services import garment_color_measure, matching, outfit_generation
+from ..services import garment_color_measure, garment_color_tune, matching, outfit_generation
 from ..services import garment_color as color_storage
 from . import cut_checkpoints as _cut_checkpoints
 from . import detail_shot_runtime
@@ -1135,6 +1135,10 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                         raise garment_color.GarmentColorError("color_check_failed")
                     if color_check["status"] in ("unavailable", "indeterminate"):
                         cut_warnings.append({"code": f"color_check_{color_check['status']}"})
+                    img, mime = await garment_color_tune.after_color_check(
+                        s, master=master_image, target=color["target_image"], output=InlineImage(mime, img),
+                        clothing_type=clothing_type, sub_category=cut_analysis.get("subCategory"),
+                        color_execution=color_execution, warnings=cut_warnings)
                 except (garment_color.GarmentColorError, face_identity.FacePassUnavailable) as exc:
                     await _cut_failed(target_block, getattr(exc, "reason", "face_pass_unavailable"))
                     if failed_cuts is not None and color_check is not None:
@@ -1364,6 +1368,10 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                             raise garment_color.GarmentColorError("color_check_failed")
                         if report["status"] in ("unavailable", "indeterminate"):
                             color_warnings.append({"code": f"color_check_{report['status']}"})
+                        output, mime = await garment_color_tune.after_color_check(
+                            s, master=master_image, target=color["target_image"], output=InlineImage(mime, output),
+                            clothing_type=clothing_type, sub_category=analysis.get("subCategory"),
+                            color_execution=color_execution, warnings=color_warnings)
                     except (garment_color.GarmentColorError, face_identity.FacePassUnavailable) as exc:
                         await _cut_failed(block, getattr(exc, "reason", "face_pass_unavailable"))
                         if failed_cuts is not None:
