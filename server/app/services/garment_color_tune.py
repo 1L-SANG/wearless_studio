@@ -74,6 +74,10 @@ def _target_color(rgb: np.ndarray, candidates: list[np.ndarray]) -> tuple[np.nda
     if len(plausible) != 1:
         return None, {"status": "skipped", "reason": "target_ambiguous" if plausible else "target_no_garment_mask"}
     mask, _, _ = consistency.trim_specks(plausible[0])
+    return _measure_target_color(rgb, mask)
+
+
+def _measure_target_color(rgb: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray | None, dict]:
     region = consistency._region(rgb, mask)
     codes = consistency.judge_mask_quality(consistency._quality(region, mask.size))
     if codes:
@@ -124,8 +128,10 @@ async def tune(settings, *, master: InlineImage, target: InlineImage, output: In
     async def execute():
         nonlocal stage
         side = matching_side
+        selected_matching = False
         if recipe and pool is not None and job is not None:
             side = await _matching_side(pool, job, recipe, clothing_type)
+            selected_matching = side is not None
         if clothing_type not in tone_mask.CATEGORY_PROMPTS:
             return output.data, output.mime, {"status": "skipped", "reason": "unknown_garment_type"}
         category_prompt, _ = tone_mask.prompts_for(clothing_type, sub_category)
@@ -157,9 +163,20 @@ async def tune(settings, *, master: InlineImage, target: InlineImage, output: In
         if other_prompt:
             stage = "target_candidates"
             target_others = await masks(target_input, target_rgb, other_prompt)
-            if await run_cpu_bound(lambda: _overlap(target_mask, target_others).sum()
-                                   > MAX_OVERLAP_FRAC * target_mask.sum()):
+            overlap = await run_cpu_bound(_overlap, target_mask, target_others)
+            overlap_px = int(np.count_nonzero(overlap))
+            if overlap_px > MAX_OVERLAP_FRAC * target_mask.sum():
                 return output.data, output.mime, {"status": "skipped", "reason": "target_ambiguous"}
+            if overlap_px:
+                stage = "target_measure"
+                target_mask, target_record = await run_cpu_bound(_measure_target_color, target_rgb,
+                                                                target_mask & ~overlap)
+                if target_mask is None:
+                    return output.data, output.mime, target_record
+                target_ab = target_record["target_ab"]
+                if float(np.hypot(*target_ab)) < consistency.TARGET_ACHROMATIC_CHROMA:
+                    return output.data, output.mime, {**target_record, "status": "untouched",
+                                                     "reason": "target_achromatic"}
         stage = "output_candidates"
         output_input = await run_cpu_bound(fal_api.prepare_image, output.data)
         candidates = await masks(output_input, rgb, category_prompt)
@@ -169,6 +186,9 @@ async def tune(settings, *, master: InlineImage, target: InlineImage, output: In
         if other_prompt:
             protected = await masks(output_input, rgb, other_prompt)
             matching_record["matching_found"] = bool(await run_cpu_bound(_plausible_masks, protected))
+            if selected_matching and recipe.get("shot") == "full" and not matching_record["matching_found"]:
+                return output.data, output.mime, {**target_record, "status": "skipped",
+                                                 "reason": "matching_unverified", "matching_found": False}
         stage = "apply"
         data, mime, record = await run_cpu_bound(_finish, master, output, rgb, candidates,
                                                 target_ab, clothing_type, side, protected)

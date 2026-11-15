@@ -150,8 +150,8 @@ def test_recolor_protects_the_coordination_and_rejects_ambiguous_source_masks(mo
         }
 
     monkeypatch.setattr(T.fal_api, "run_model", run)
-    measured = Mock(wraps=T._target_color)
-    monkeypatch.setattr(T, "_target_color", measured)
+    measured = Mock(wraps=T._measure_target_color)
+    monkeypatch.setattr(T, "_measure_target_color", measured)
     sources = {name: InlineImage("image/png", png(rgb))
                for name, rgb in (("master", master), ("target", target), ("output", output))}
     from conftest import fake_worker_app, worker_job
@@ -163,11 +163,15 @@ def test_recolor_protects_the_coordination_and_rejects_ambiguous_source_masks(mo
         pool=fake_worker_app(settings).state.pool, job=job, recipe={"matchIds": ["actual-pants"]}))
     assert metadata.await_args.args[1:] == ("actual-pants", job["user_id"], job["project_id"])
     assert calls[0] == "top"
-    measured.assert_called_once()
+    assert measured.call_count == (0 if failure == "target_ambiguous" else
+                                   2 if failure == "target_small_overlap" else 1)
     if failure in {"separate", "output_small_overlap", "target_small_overlap"}:
         assert record["status"] == "corrected"
         assert record["matching_found"] is True
-        assert record["target_ab"] == G.measure_garment_color(target, shirt)["center"][1:]
+        target_mask = shirt & ~target_other if failure == "target_small_overlap" else shirt
+        assert record["target_measure"] == G.measure_garment_color(target, target_mask)
+        assert record["target_ab"] == record["target_measure"]["center"][1:]
+        assert calls == ["top", "lower body garment", "top", "lower body garment"]
         with Image.open(io.BytesIO(result)) as im:
             pixels = np.array(im)
         assert np.any(pixels[shirt] != output[shirt])
@@ -199,6 +203,63 @@ def inputs(target_color=(0.62, 0.06, 0.05)):
     return dict(master=InlineImage("image/png", png(scene((0.62, -0.02, -0.05))[0])),
                 target=InlineImage("image/png", png(scene(target_color)[0])),
                 output=InlineImage("image/png", png(scene()[0])), clothing_type="top")
+
+
+@pytest.mark.parametrize("colors,reason,calls", [
+    (((0.62, 0.04, 0.05), (0.62, 0.085, 0.05)), "within_tolerance", 4),
+    (((0.62, 0.01, 0.0), (0.62, 0.029, 0.0)), "target_achromatic", 2)])
+def test_target_overlap_remeasurement_preserves_already_matching_two_panel_shirt(monkeypatch, fal, colors, reason, calls):
+    shirt = np.zeros((280, 200), bool)
+    shirt[45:155, 40:160] = True
+    pants = np.zeros_like(shirt)
+    pants[155:266, 40:160] = True
+    rgb = np.full((280, 200, 3), 210, np.uint8)
+    rgb[shirt] = np.rint(G.oklab_to_srgb(np.array(colors[0]))).astype(np.uint8)
+    rgb[:, 100:][(shirt | pants)[:, 100:]] = np.rint(G.oklab_to_srgb(np.array(colors[1]))).astype(np.uint8)
+    contaminated = shirt.copy()
+    contaminated[155:158, 100:154] = True
+    assert 0 < (contaminated & pants).sum() <= T.MAX_OVERLAP_FRAC * contaminated.sum()
+    clean_measure = G.measure_garment_color(rgb, shirt)
+    contaminated_ab = G.measure_garment_color(rgb, contaminated)["center"][1:]
+    assert np.hypot(*contaminated_ab) >= G.TARGET_ACHROMATIC_CHROMA
+    if reason == "within_tolerance":
+        wrong_result, wrong_record = G.match_to_target_color(rgb, shirt, contaminated_ab)
+        assert wrong_record["status"] == "corrected"
+        assert np.count_nonzero(np.any(wrong_result != rgb, axis=2)) == shirt.sum()
+
+    async def respond(settings, model, payload):
+        mask = contaminated if fal.await_count == 1 else pants if payload["prompt"] == "lower body garment" else shirt
+        return {"masks": [{"url": T.fal_api.image_input_url(png(
+            (mask * 255).astype(np.uint8)), "image/png")}], "scores": [0.99]}
+    fal.side_effect = respond
+    source = InlineImage("image/png", png(rgb))
+    data, mime, record = asyncio.run(T.tune(make_settings(garment_color_tune_enabled=True, fal_key="fake"),
+        master=source, target=source, output=source, clothing_type="top"))
+    assert data is source.data and mime == source.mime
+    assert record["status"] == "untouched" and record["reason"] == reason
+    assert record["target_measure"] == clean_measure
+    assert record["target_ab"] == clean_measure["center"][1:]
+    assert [call.args[2]["prompt"] for call in fal.await_args_list] == [
+        "top", "lower body garment", "top", "lower body garment"][:calls]
+
+
+def test_target_overlap_rechecks_mask_quality_before_remeasurement(monkeypatch, fal):
+    _, mask = scene()
+    other = np.zeros_like(mask)
+    other[100:102, 100:102] = True
+    async def respond(settings, model, payload):
+        candidate = other if payload["prompt"] == "lower body garment" else mask
+        return {"masks": [{"url": T.fal_api.image_input_url(png(
+            (candidate * 255).astype(np.uint8)), "image/png")}], "scores": [0.99]}
+    fal.side_effect = respond
+    judge = Mock(side_effect=[[], ["mask_thin"]])
+    monkeypatch.setattr(G, "judge_mask_quality", judge)
+    kwargs = inputs()
+    data, mime, record = asyncio.run(T.tune(make_settings(garment_color_tune_enabled=True, fal_key="fake"), **kwargs))
+    assert data is kwargs["output"].data and mime == kwargs["output"].mime
+    assert record == {"status": "skipped", "reason": "target_mask_thin"}
+    assert judge.call_count == 2 and fal.await_count == 2
+    assert judge.call_args_list[1].args[0]["area_frac"] == (mask & ~other).sum() / mask.size
 
 
 @pytest.mark.parametrize("overlap_px", [1, 384, 385])
@@ -269,6 +330,51 @@ def test_selected_matching_without_plausible_mask_still_corrects(monkeypatch, fa
         assert np.array_equal(result[protected], scene()[0][protected])
     else:
         assert "overlap_trimmed_px" not in record
+
+
+@pytest.mark.parametrize("shot", ["full", "medium", None, "close"])
+@pytest.mark.parametrize("protection", ["missing", "low_score", "implausible", "found"])
+@pytest.mark.parametrize("selected", [True, False])
+def test_only_full_shot_with_selected_unverified_matching_skips(monkeypatch, fal, shot, protection, selected):
+    from conftest import fake_worker_app, worker_job
+    kwargs = inputs()
+    _, mask = scene()
+    mask[150:] = False
+    protected = np.zeros_like(mask)
+    protected[170:230, 40:152] = True
+    if protection == "implausible":
+        protected[:] = False
+        protected[180, 100] = True
+    async def respond(settings, model, payload):
+        masks, score = [mask], 0.99
+        if payload["prompt"] == "lower body garment":
+            masks = [] if protection == "missing" else [protected]
+            score = 0.49 if protection == "low_score" else 0.5
+        return {"masks": [{"url": T.fal_api.image_input_url(png(
+            (candidate * 255).astype(np.uint8)), "image/png")} for candidate in masks],
+            "scores": [score] * len(masks)}
+    fal.side_effect = respond
+    settings = make_settings(garment_color_tune_enabled=True, fal_key="fake")
+    metadata = AsyncMock(return_value={"clothing_type": "bottom"})
+    monkeypatch.setattr(T.repo, "get_matching_item_metadata", metadata)
+    recipe = {"matchIds": ["actual-pants"] if selected else []}
+    if shot is not None:
+        recipe["shot"] = shot
+    finish = Mock(wraps=T._finish)
+    monkeypatch.setattr(T, "_finish", finish)
+    data, mime, record = asyncio.run(T.tune(settings, **kwargs,
+        pool=fake_worker_app(settings).state.pool, job=worker_job(), recipe=recipe))
+    assert record["matching_found"] is (protection == "found")
+    assert record["target_ab"] == record["target_measure"]["center"][1:]
+    assert [call.args[2]["prompt"] for call in fal.await_args_list] == [
+        "top", "lower body garment", "top", "lower body garment"]
+    if selected and shot == "full" and protection != "found":
+        assert data is kwargs["output"].data and mime == kwargs["output"].mime
+        assert record["status"] == "skipped" and record["reason"] == "matching_unverified"
+        finish.assert_not_called()
+    else:
+        assert record["status"] == "corrected"
+        finish.assert_called_once()
 
 
 def test_no_other_prompt_omits_matching_found(fal):
