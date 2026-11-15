@@ -43,6 +43,7 @@ from ..agents.catalog_image import catalog_image
 from ..agents.model_routing import resolve_editor_cut_model
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
+from ..services import garment_color_tune
 from ._common import emit_job_event as _emit
 from . import detail_shot_runtime
 from ..agents.detail_shot_pipeline import DetailShotRejected
@@ -207,7 +208,7 @@ async def run_editor_image_job(app, job: dict) -> None:
         await _fail(message, {"error": reason, "detailQc": getattr(exc, "metadata", {})},
                     code=reason if reason == "invalid_cut_spec" else "generation_failed")
 
-    async def _check_color(master, target, output, clothing_type):
+    async def _check_color(master, target, output, clothing_type, sub_category=None, *, recipe=None):
         report = await garment_color_qc.check(s, master, target, output, clothing_type=clothing_type)
         report = {**report, "checkedOutputSha256": hashlib.sha256(output.data).hexdigest(),
                   "scope": "color_stage_before_neck_repair"}
@@ -216,6 +217,10 @@ async def run_editor_image_job(app, job: dict) -> None:
             raise garment_color.GarmentColorError("color_check_failed")
         if report["status"] in ("unavailable", "indeterminate"):
             example_warnings.append({"code": f"color_check_{report['status']}"})
+        return await garment_color_tune.after_color_check(
+            s, master=master, target=target, output=output, clothing_type=clothing_type,
+            sub_category=sub_category, color_execution=color_execution, warnings=example_warnings,
+            pool=pool, job=job, recipe=recipe, real_model=fm_face_injected)
 
     async def _fail(
         message: str,
@@ -535,7 +540,9 @@ async def run_editor_image_job(app, job: dict) -> None:
                             mode=edit_mode, clothing_type=edit_clothing_type,
                             closure_state=payload.get("outerClosureState"), front_closure=front_closure, **edit_kwargs)
                     if edit_mode == "color":
-                        await _check_color(src_img, target_img, InlineImage(mime, image), edit_clothing_type)
+                        image, mime = await _check_color(src_img, target_img, InlineImage(mime, image),
+                                                        edit_clothing_type, edit_analysis.get("subCategory"),
+                                                        recipe=generation_recipe)
                 elif similar_envelope is not None:
                     await _emit(pool, job_id, "progress", {"progress": 25, "phase": "planning"})
                     similar_cut_metadata, similar_context = await _plan_similar_cut(
@@ -562,7 +569,9 @@ async def run_editor_image_job(app, job: dict) -> None:
                             editor_settings, app.state.gemini, color_master_image, target_img, color_plan,
                             cut_type=cut_type, clothing_type=edit_clothing_type,
                             front_closure=front_closure, **color_face_kwargs)
-                        await _check_color(color_master_image, target_img, InlineImage(mime, image), edit_clothing_type)
+                        image, mime = await _check_color(color_master_image, target_img, InlineImage(mime, image),
+                                                        edit_clothing_type, edit_analysis.get("subCategory"),
+                                                        recipe=generation_recipe)
 
                 else:
                     # 소유 자산의 레시피로 같은 대상과 원본 면을 다시 촬영한다.
@@ -1318,7 +1327,9 @@ async def run_editor_image_job(app, job: dict) -> None:
                     color_plan, cut_type=normalized["cutType"], clothing_type=clothing_type,
                     front_closure=outer_closure.front_closure_of(analysis), **color_face_kwargs)
                 chosen = InlineImage(mime, image)
-                await _check_color(color_master_image, color_target_image, chosen, clothing_type)
+                image, mime = await _check_color(color_master_image, color_target_image, chosen,
+                                                clothing_type, analysis.get("subCategory"), recipe=cut_spec)
+                chosen = InlineImage(mime, image)
                 face_pass_outcome.update({**prior_outcome, **face_pass_outcome})
                 _remember_outcome(image)
                 face_pass_outcome.update(outcome_by_image[hashlib.sha256(image).hexdigest()])

@@ -29,6 +29,7 @@ class Settings:
     cloudflare_cache_purge_token: str | None = None
     # 누끼와 톤 마스크는 fal SAM 3, 정돈 사진은 Qwen을 사용한다.
     fal_key: str | None = None
+    garment_color_tune_enabled: bool = False
     matching_flatlay_provider: str = "gemini"  # gemini | qwen
     draft_visuals: str = "off"  # off | on, authenticated desktop drafts
     draft_visuals_daily_budget_usd: float = 5.0
@@ -854,6 +855,7 @@ def load_settings() -> Settings:
         cloudflare_zone_id=os.getenv("CLOUDFLARE_ZONE_ID") or None,
         cloudflare_cache_purge_token=os.getenv("CLOUDFLARE_CACHE_PURGE_TOKEN") or None,
         fal_key=(os.getenv("FAL_KEY") or "").strip() or None,
+        garment_color_tune_enabled=(os.getenv("GARMENT_COLOR_TUNE_ENABLED", "false").lower() == "true"),
         matching_flatlay_provider=_flag("MATCHING_FLATLAY_PROVIDER", "gemini", {"gemini", "qwen"}),
         draft_visuals=_flag("DRAFT_VISUALS", "off", {"off", "on"}),
         draft_visuals_daily_budget_usd=float(os.getenv("DRAFT_VISUALS_DAILY_BUDGET_USD", "5")),

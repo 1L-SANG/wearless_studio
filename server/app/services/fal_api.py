@@ -38,12 +38,19 @@ def image_input_url(encoded: bytes, mime: str) -> str:
     return f"data:{mime};base64,{base64.b64encode(encoded).decode('ascii')}"
 
 
-def prepare_image(data: bytes) -> PreparedImage:
-    with Image.open(io.BytesIO(data)) as opened:
-        upright = ImageOps.exif_transpose(opened)
-        has_alpha = "A" in upright.getbands() or "transparency" in upright.info
-        image = upright.convert("RGBA" if has_alpha else "RGB")
-        image.thumbnail((MAX_PX, MAX_PX), Image.Resampling.LANCZOS)
+def prepare_image(data: bytes, *, color_managed: bool = False) -> PreparedImage:
+    if color_managed:
+        from ..agents.garment_color_evidence import _frame
+        image, _ = _frame(data, MAX_PX)
+        has_alpha = image.getchannel("A").getextrema()[0] < 255
+        if not has_alpha:
+            image = image.convert("RGB")
+    else:
+        with Image.open(io.BytesIO(data)) as opened:
+            upright = ImageOps.exif_transpose(opened)
+            has_alpha = "A" in upright.getbands() or "transparency" in upright.info
+            image = upright.convert("RGBA" if has_alpha else "RGB")
+            image.thumbnail((MAX_PX, MAX_PX), Image.Resampling.LANCZOS)
     out = io.BytesIO()
     if has_alpha:
         image.save(out, "PNG")

@@ -235,7 +235,7 @@ def _valid_final_meta(meta) -> bool:
 
 def _color_request(value: dict) -> dict:
     return {key: item for key, item in value.items()
-            if key not in {"colorCheck", "masterAssetId", "masterSha256", "masterSource"}}
+            if key not in {"colorCheck", "colorTune", "masterAssetId", "masterSha256", "masterSource"}}
 
 
 def _verified_pass(meta, fingerprint: str) -> bool:
