@@ -154,9 +154,12 @@ RECHECK_RATIO = 0.15
 RECHECK_FLOOR = 0.003
 
 # 다른 색상 AI 결과 전용. 같은 색상 묶음의 SHIFT_LIMITS와 분리한다.
-TARGET_ALGORITHM_VERSION = "garment-target-color-v1"
+TARGET_ALGORITHM_VERSION = "garment-target-color-v2"
 # recolor-probe-20261113/tune 실제 13장: 최대 오차 0.032, 이동 0.04까지 흠 없음. 0.06부터 경계와 피부, 단추 번짐.
 TARGET_CHROMA_CAP = 0.04
+# 실제 13장 재확인(11/15): 운영 방식으로 재면 0.043, 0.049가 나온다. 한도를 넘어도 한도만큼은 옮긴다.
+# 이 값을 넘는 오차는 윤곽이나 AI 결과가 틀렸을 가능성이 커서 조금도 옮기지 않는다.
+TARGET_CHROMA_GIVE_UP = 0.08
 # 시험하지 않은 임시값. 이보다 작은 오차는 건드리지 않는다.
 TARGET_CHROMA_TOLERANCE = 0.01
 # 거의 무채색인 목표는 색 방향을 맞추지 않는다(2026-11-15 운영 계약).
@@ -196,7 +199,7 @@ def match_to_target_color(image: np.ndarray, mask: np.ndarray, target_ab) -> tup
         record["needed_shift"] = {"d_l": 0.0, "d_ab": _floats(delta), "distance_ab": distance}
         if float(np.hypot(*target_ab)) < TARGET_ACHROMATIC_CHROMA:
             record.update(status="untouched", reason="target_achromatic")
-        elif distance > TARGET_CHROMA_CAP:
+        elif distance > TARGET_CHROMA_GIVE_UP:
             record["reason"] = "over_cap"
         elif distance < TARGET_CHROMA_TOLERANCE:
             record.update(status="untouched", reason="within_tolerance")

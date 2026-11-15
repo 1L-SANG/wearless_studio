@@ -16,6 +16,7 @@ from . import fal_api, garment_color_consistency as consistency, matching, tone_
 # fal HTTP 호출의 기존 60초 상한을 준비, 전체 호출, CPU 계산을 포함한 단계 전체에 적용한다.
 TIMEOUT_S = fal_api.TIMEOUT_S
 MIN_CONFIDENCE = 0.5
+MAX_OVERLAP_FRAC = 0.02
 _MATCHING_PROMPTS = {"top": "top", "bottom": "lower body garment"}
 
 
@@ -61,6 +62,13 @@ def _plausible_masks(masks: list[np.ndarray]) -> list[np.ndarray]:
     return [mask for mask in masks if tone_mask.plausible(tone_mask.candidate_stats(mask))[0]]
 
 
+def _overlap(mask: np.ndarray, protected: list[np.ndarray]) -> np.ndarray:
+    overlap = np.zeros_like(mask)
+    for other in protected:
+        overlap |= mask & other
+    return overlap
+
+
 def _target_color(rgb: np.ndarray, candidates: list[np.ndarray]) -> tuple[np.ndarray | None, dict]:
     plausible = tone_mask.dedupe(_plausible_masks(candidates))
     if len(plausible) != 1:
@@ -79,16 +87,26 @@ def _finish(master: InlineImage, output: InlineImage, rgb: np.ndarray, candidate
             target_ab: list[float], clothing_type, matching_side, protected: list) -> tuple[bytes, str, dict]:
     # Check both before ranking and after mask cleanup, which can fill holes.
     candidates = tone_mask.dedupe(_plausible_masks(candidates))
-    candidates = [mask for mask in candidates if not any(np.any(mask & other) for other in protected)]
-    if len(candidates) != 1:
+    separated = []
+    for mask in candidates:
+        overlap = _overlap(mask, protected)
+        if overlap.sum() <= MAX_OVERLAP_FRAC * mask.sum():
+            separated.append((mask & ~overlap, overlap))
+    if len(separated) != 1:
         raise tone_mask.NoGarmentCandidate("the product mask could not be separated")
-    selected = tone_mask.produce(output.data, master.data, candidates=candidates,
+    mask, trimmed = separated[0]
+    selected = tone_mask.produce(output.data, master.data, candidates=[mask],
                                  clothing_type=clothing_type, matching_side=matching_side)
     with Image.open(io.BytesIO(selected.png)) as image:
         mask = np.array(image.convert("L")) > 127
-    if any(np.any(mask & other) for other in protected):
+    overlap = _overlap(mask, protected)
+    if overlap.sum() > MAX_OVERLAP_FRAC * mask.sum():
         raise tone_mask.NoGarmentCandidate("product mask overlaps the other garment")
+    mask &= ~overlap
     result, record = consistency.match_to_target_color(rgb, mask, target_ab)
+    overlap_trimmed_px = int(np.count_nonzero(trimmed | overlap))
+    if overlap_trimmed_px:
+        record["overlap_trimmed_px"] = overlap_trimmed_px
     if result is rgb:
         return output.data, output.mime, record
     encoded = io.BytesIO()
@@ -101,6 +119,7 @@ async def tune(settings, *, master: InlineImage, target: InlineImage, output: In
                job=None, recipe=None) -> tuple[bytes, str, dict]:
     """취소 신호 말고는 예외를 내보내지 않는다. 옮기지 않은 사진은 디코딩 여부와 무관하게 원래 바이트를 돌려준다."""
     stage = "matching"
+    matching_record = {}
 
     async def execute():
         nonlocal stage
@@ -138,7 +157,8 @@ async def tune(settings, *, master: InlineImage, target: InlineImage, output: In
         if other_prompt:
             stage = "target_candidates"
             target_others = await masks(target_input, target_rgb, other_prompt)
-            if await run_cpu_bound(lambda: any(np.any(target_mask & other) for other in target_others)):
+            if await run_cpu_bound(lambda: _overlap(target_mask, target_others).sum()
+                                   > MAX_OVERLAP_FRAC * target_mask.sum()):
                 return output.data, output.mime, {"status": "skipped", "reason": "target_ambiguous"}
         stage = "output_candidates"
         output_input = await run_cpu_bound(fal_api.prepare_image, output.data)
@@ -148,12 +168,11 @@ async def tune(settings, *, master: InlineImage, target: InlineImage, output: In
         protected = []
         if other_prompt:
             protected = await masks(output_input, rgb, other_prompt)
-            if side and not await run_cpu_bound(_plausible_masks, protected):
-                return output.data, output.mime, {**target_record, "status": "skipped", "reason": "matching_unverified"}
+            matching_record["matching_found"] = bool(await run_cpu_bound(_plausible_masks, protected))
         stage = "apply"
         data, mime, record = await run_cpu_bound(_finish, master, output, rgb, candidates,
                                                 target_ab, clothing_type, side, protected)
-        return data, mime, {**target_record, **record}
+        return data, mime, {**target_record, **matching_record, **record}
 
     try:
         if not getattr(settings, "garment_color_tune_enabled", False):
@@ -173,7 +192,7 @@ async def tune(settings, *, master: InlineImage, target: InlineImage, output: In
         # URL, 사진 바이트, provider 예외 문자열은 기록하지 않는다.
         reason = {"matching": "matching_unverified", "decode": "invalid_image", "target_candidates": "fal_failed",
                   "output_candidates": "fal_failed"}.get(stage, "calculation_failed")
-    return output.data, output.mime, {"status": "skipped", "reason": reason, "stage": stage}
+    return output.data, output.mime, {"status": "skipped", "reason": reason, "stage": stage, **matching_record}
 
 
 async def after_color_check(settings, *, master: InlineImage, target: InlineImage,
