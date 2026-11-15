@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image, ImageOps
 
 from .. import repo
+from ..agents import garment_color_evidence
 from ..agents.gemini_image import InlineImage, run_cpu_bound
 from . import fal_api, garment_color_consistency as consistency, matching, tone_mask
 
@@ -41,9 +42,19 @@ async def _matching_side(pool, job, recipe: dict, clothing_type: str) -> str | N
     return expected
 
 
+class ColorProfileUnverified(ValueError):
+    """RGB outside the garment must be suitable for verbatim preservation in the saved PNG."""
+
+
 def _decode(data: bytes) -> np.ndarray:
     with Image.open(io.BytesIO(data)) as image:
-        return np.array(ImageOps.exif_transpose(image).convert("RGB"))
+        rgb = np.array(ImageOps.exif_transpose(image).convert("RGB"))
+        if not (image.info.get("icc_profile") or "A" in image.getbands() or "transparency" in image.info):
+            return rgb
+    normalized, _ = garment_color_evidence._frame(data)
+    if normalized.getchannel("A").getextrema()[0] < 255 or not np.array_equal(rgb, np.array(normalized.convert("RGB"))):
+        raise ColorProfileUnverified
+    return rgb
 
 
 def _plausible_masks(masks: list[np.ndarray]) -> list[np.ndarray]:
@@ -108,11 +119,14 @@ async def tune(settings, *, master: InlineImage, target: InlineImage, output: In
         stage = "decode"
         rgb = await run_cpu_bound(_decode, output.data)
         await run_cpu_bound(_decode, master.data)
-        target_input = await run_cpu_bound(fal_api.prepare_image, target.data)
+        target_input = await run_cpu_bound(fal_api.prepare_image, target.data, color_managed=True)
         target_rgb = await run_cpu_bound(lambda: np.array(target_input.image.convert("RGB")))
         stage = "target_candidates"
         target_masks = await masks(target_input, target_rgb, category_prompt)
         stage = "target_measure"
+        if target_input.image.mode == "RGBA":
+            alpha = np.asarray(target_input.image.getchannel("A")) > 127
+            target_masks = [mask & alpha for mask in target_masks]
         target_mask, target_record = await run_cpu_bound(_target_color, target_rgb, target_masks)
         if target_mask is None:
             return output.data, output.mime, target_record
@@ -153,6 +167,8 @@ async def tune(settings, *, master: InlineImage, target: InlineImage, output: In
         reason = "no_candidate"
     except MatchingUnverified:
         reason = "matching_unverified"
+    except ColorProfileUnverified:
+        reason = "encoded_color_unverified"
     except Exception:
         # URL, 사진 바이트, provider 예외 문자열은 기록하지 않는다.
         reason = {"matching": "matching_unverified", "decode": "invalid_image", "target_candidates": "fal_failed",
@@ -163,13 +179,16 @@ async def tune(settings, *, master: InlineImage, target: InlineImage, output: In
 async def after_color_check(settings, *, master: InlineImage, target: InlineImage,
                             output: InlineImage, clothing_type, color_execution: dict,
                             warnings: list, sub_category=None, matching_side=None,
-                            pool=None, job=None, recipe=None) -> tuple[bytes, str]:
+                            pool=None, job=None, recipe=None, real_model=False) -> tuple[bytes, str]:
     """다섯 생성 자리의 기록, 해시, 경고 배선. QC가 본 사진의 해시는 그대로 둔다."""
     if color_execution["colorCheck"]["status"] == "failed":
         return output.data, output.mime
-    data, mime, record = await tune(settings, master=master, target=target, output=output,
-        clothing_type=clothing_type, sub_category=sub_category, matching_side=matching_side,
-        pool=pool, job=job, recipe=recipe)
+    if real_model:
+        data, mime, record = output.data, output.mime, {"status": "skipped", "reason": "real_model"}
+    else:
+        data, mime, record = await tune(settings, master=master, target=target, output=output,
+            clothing_type=clothing_type, sub_category=sub_category, matching_side=matching_side,
+            pool=pool, job=job, recipe=recipe)
     color_execution["colorTune"] = {"algorithm_version": consistency.TARGET_ALGORITHM_VERSION, **record,
         "inputOutputSha256": hashlib.sha256(output.data).hexdigest(),
         "outputSha256": hashlib.sha256(data).hexdigest()}

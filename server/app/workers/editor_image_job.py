@@ -220,7 +220,7 @@ async def run_editor_image_job(app, job: dict) -> None:
         return await garment_color_tune.after_color_check(
             s, master=master, target=target, output=output, clothing_type=clothing_type,
             sub_category=sub_category, color_execution=color_execution, warnings=example_warnings,
-            pool=pool, job=job, recipe=recipe)
+            pool=pool, job=job, recipe=recipe, real_model=fm_face_injected)
 
     async def _fail(
         message: str,

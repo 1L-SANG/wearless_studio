@@ -538,9 +538,9 @@ g_pred = (g_L + d_l,  gain * g_a + d_a,  gain * g_b + d_b)
 
 `garment_color_tune.tune(settings, *, master, target, output, clothing_type, sub_category=None, matching_side=None)`가 바이트 연결을 맡는다. 세 사진은 `InlineImage`다. master는 색 적용 전 대표색 컷, target은 목표색 Front 사진, output은 AI 색 적용 결과다. 반환값은 사진 바이트, MIME, 기록 dict다.
 
-1. 스위치가 꺼져 있으면 사진을 읽거나 fal을 부르지 않고 `{"status": "disabled"}`를 돌려준다. fal 설정이 없으면 `skipped`, `fal_unconfigured`다.
+1. 스위치가 꺼져 있으면 사진을 읽거나 fal을 부르지 않고 `{"status": "disabled"}`를 돌려준다. fal 설정이 없으면 `skipped`, `fal_unconfigured`다. 실존 모델 자산이 들어간 컷은 fal에 보내지 않고 `skipped`, `real_model`로 기록한다.
 2. 실제 컷의 레시피에서 사용한 매칭 의류의 종류를 확인한다. 종류가 맞지 않거나 안에 입은 별도 옷이 함께 지정돼 윤곽을 나누기 어려우면 보정을 건너뛴다.
-3. 목표색 사진은 fal 입력과 같은 긴 변 2048px 이하에서 상품 종류에 맞는 윤곽을 찾는다. 품질 검사를 통과한 후보가 하나여야 색을 잰다. 거의 무채색이면 여기서 끝낸다. 상의나 하의는 반대편 의류 후보도 확인한다. 목표색을 잰 윤곽과 겹치면 보정을 건너뛴다.
+3. 목표색 사진은 포함된 색상 프로파일과 방향을 적용해 sRGB로 읽고, fal 입력과 같은 긴 변 2048px 이하에서 상품 종류에 맞는 윤곽을 찾는다. 기존 컷의 색과 투명도를 보존할 수 없으면 `encoded_color_unverified`로 보정을 건너뛴다. 품질 검사를 통과한 후보가 하나여야 색을 잰다. 거의 무채색이면 여기서 끝낸다. 상의나 하의는 반대편 의류 후보도 확인한다. 목표색을 잰 윤곽과 겹치면 보정을 건너뛴다.
 4. 색을 바꾼 결과에서도 상품 종류와 반대편 의류의 윤곽을 찾는다. 상품 후보가 여러 개로 나뉘거나, 선택한 코디의 윤곽을 확인할 수 없으면 보정을 건너뛴다. 코디와 겹치는 상품 후보를 빼고 기존 `tone_mask.produce`로 윤곽을 정한다. 작은 구멍을 메우는 정리를 거친 뒤에도 코디와 겹치지 않아야 한다.
 5. 계산 함수를 부른다. 옮겼을 때만 PNG로 인코딩한다. 그 밖에는 output의 바이트 객체와 MIME을 그대로 돌려준다.
 

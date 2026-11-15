@@ -1138,7 +1138,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     img, mime = await garment_color_tune.after_color_check(
                         s, master=master_image, target=color["target_image"], output=InlineImage(mime, img),
                         clothing_type=clothing_type, sub_category=(cut_analysis or {}).get("subCategory"),
-                        color_execution=color_execution, warnings=cut_warnings, pool=app.state.pool, job=job, recipe=b)
+                        color_execution=color_execution, warnings=cut_warnings, pool=app.state.pool, job=job, recipe=b,
+                        real_model=real_identity_attached)
                 except (garment_color.GarmentColorError, face_identity.FacePassUnavailable) as exc:
                     await _cut_failed(target_block, getattr(exc, "reason", "face_pass_unavailable"))
                     if failed_cuts is not None and color_check is not None:
@@ -1372,7 +1373,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                             s, master=master_image, target=color["target_image"], output=InlineImage(mime, output),
                             clothing_type=clothing_type, sub_category=analysis.get("subCategory"),
                             color_execution=color_execution, warnings=color_warnings, pool=app.state.pool, job=job,
-                            recipe=(root_asset["metadata"].get("generation") or {}).get("recipe"))
+                            recipe=(root_asset["metadata"].get("generation") or {}).get("recipe"),
+                            real_model=real_derived)
                     except (garment_color.GarmentColorError, face_identity.FacePassUnavailable) as exc:
                         await _cut_failed(block, getattr(exc, "reason", "face_pass_unavailable"))
                         if failed_cuts is not None:

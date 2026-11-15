@@ -2,13 +2,14 @@
 import asyncio
 import hashlib
 import io
+import struct
 import threading
 from dataclasses import replace
 from unittest.mock import AsyncMock, Mock
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, ImageCms
 
 from app.agents.gemini_image import InlineImage
 from app.services import garment_color_consistency as G, garment_color_tune as T
@@ -208,6 +209,57 @@ def test_disabled_and_unconfigured_do_not_call_fal(fal, enabled, key, expected):
     fal.assert_not_awaited()
 
 
+def _display_p3():
+    # Display P3 uses the sRGB transfer curve and different D50-adapted primaries.
+    data = bytearray(ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes())
+    primaries = {b"rXYZ": (33759, 15807, -69), b"gXYZ": (19135, 45367, 2745),
+                 b"bXYZ": (10296, 4363, 51385)}
+    for index in range(struct.unpack_from(">I", data, 128)[0]):
+        tag, offset, _ = struct.unpack_from(">4sII", data, 132 + index * 12)
+        if tag in primaries:
+            struct.pack_into(">iii", data, offset + 8, *primaries[tag])
+    return ImageCms.ImageCmsProfile(io.BytesIO(data))
+
+
+def _p3_png(rgb):
+    p3 = _display_p3()
+    profiled = ImageCms.profileToProfile(Image.fromarray(rgb), ImageCms.createProfile("sRGB"), p3, outputMode="RGB")
+    with io.BytesIO() as stream:
+        profiled.save(stream, "PNG", icc_profile=p3.tobytes())
+        return stream.getvalue()
+
+
+def test_wide_gamut_reference_reads_the_same_color_as_its_srgb_equivalent(fal):
+    _, mask = scene()
+    rgb = np.full((256, 192, 3), (200, 205, 210), np.uint8)
+    rgb[mask] = (189, 100, 80)
+    target = InlineImage("image/png", _p3_png(rgb))
+    cut = InlineImage("image/png", png(rgb))
+    data, _, record = asyncio.run(T.tune(make_settings(garment_color_tune_enabled=True, fal_key="fake"),
+        master=cut, target=target, output=cut, clothing_type="top"))
+    assert record["reason"] == "within_tolerance"
+    assert data is cut.data
+
+
+def test_wide_gamut_output_keeps_its_original_profile_and_pixels(fal):
+    kwargs = inputs()
+    kwargs["output"] = InlineImage("image/png", _p3_png(scene()[0]))
+    data, _, record = asyncio.run(T.tune(make_settings(garment_color_tune_enabled=True, fal_key="fake"), **kwargs))
+    assert data is kwargs["output"].data
+    assert record["reason"] == "encoded_color_unverified"
+    fal.assert_not_awaited()
+
+
+def test_real_model_cut_never_goes_to_fal(fal):
+    kwargs = inputs()
+    execution = {"colorCheck": {"status": "passed"}}
+    data, _ = asyncio.run(T.after_color_check(make_settings(garment_color_tune_enabled=True, fal_key="fake"),
+        **kwargs, color_execution=execution, warnings=[], real_model=True))
+    assert data is kwargs["output"].data
+    assert execution["colorTune"]["reason"] == "real_model"
+    fal.assert_not_awaited()
+
+
 def test_target_color_is_measured_at_fal_input_size(monkeypatch, fal):
     kwargs = inputs()
     target = np.array(Image.fromarray(scene((0.62, 0.06, 0.05))[0]).resize((1200, 2400)))
@@ -376,7 +428,7 @@ def test_over_cap_warning_is_persisted_with_cut(request, monkeypatch, flow_fixtu
     assert image["sha256"] == sha(b"FINAL")
 
 
-def test_tuned_hash_keeps_face_outcome_and_feeds_neck_repair(monkeypatch):
+def test_real_face_outcome_feeds_neck_repair_without_fal(monkeypatch):
     from app.agents import garment_color
     from app.workers import detail_page_job as worker
     from conftest import worker_job
@@ -393,7 +445,7 @@ def test_tuned_hash_keeps_face_outcome_and_feeds_neck_repair(monkeypatch):
         return b"FINAL", "image/png"
     monkeypatch.setattr(worker.cut_generator, "generate", generate)
     monkeypatch.setattr(garment_color, "apply", apply)
-    install_tune(monkeypatch)
+    _, tuned = install_tune(monkeypatch)
     def eligible(*a, **kw):
         assert kw["outcome"] == {"face_pass": "applied", "face_recipe": "color-face"}
         return True
@@ -405,11 +457,13 @@ def test_tuned_hash_keeps_face_outcome_and_feeds_neck_repair(monkeypatch):
              "target_image": InlineImage("image/png", b"BLUE")}
     result = asyncio.run(worker._gen_cuts(app, worker_job(), [prepared], product(), {},
         face_identity_spec=IDENTITY, color_context={"original": color}))
-    assert repair.call_args.args[2].data == b"TUNED-FINAL"
+    tuned.assert_not_awaited()
+    assert repair.call_args.args[2].data == b"FINAL"
     asset = result[1][0]
     assert asset["sha256"] == sha(b"NECK-FINAL")
     assert asset["metadata"]["face_recipe"] == "color-face"
-    assert asset["metadata"]["colorExecution"]["colorTune"]["outputSha256"] == sha(b"TUNED-FINAL")
+    assert asset["metadata"]["colorExecution"]["colorTune"]["outputSha256"] == sha(b"FINAL")
+    assert asset["metadata"]["colorExecution"]["colorTune"]["reason"] == "real_model"
 
 
 @pytest.mark.parametrize("child_status", ["passed", "unavailable", "indeterminate", "failed"])
