@@ -4,7 +4,7 @@ import hashlib
 import io
 import threading
 from dataclasses import replace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import numpy as np
 import pytest
@@ -208,6 +208,25 @@ def test_disabled_and_unconfigured_do_not_call_fal(fal, enabled, key, expected):
     fal.assert_not_awaited()
 
 
+def test_target_color_is_measured_at_fal_input_size(monkeypatch, fal):
+    kwargs = inputs()
+    target = np.array(Image.fromarray(scene((0.62, 0.06, 0.05))[0]).resize((1200, 2400)))
+    kwargs["target"] = InlineImage("image/png", png(target))
+    original = T._target_color
+    def measure(rgb, masks):
+        assert max(rgb.shape[:2]) == T.fal_api.MAX_PX
+        assert all(mask.shape == rgb.shape[:2] for mask in masks)
+        return original(rgb, masks)
+    measured = Mock()
+    def check(rgb, masks):
+        measured(rgb.shape)
+        return measure(rgb, masks)
+    monkeypatch.setattr(T, "_target_color", check)
+    _, _, result = asyncio.run(T.tune(make_settings(garment_color_tune_enabled=True, fal_key="fake"), **kwargs))
+    assert result.get("reason") != "calculation_failed"
+    measured.assert_called_once()
+
+
 def test_noop_preserves_original_jpeg_encoding(fal):
     kwargs = inputs((0.62, 0.08, 0.05))
     stream = io.BytesIO()
@@ -240,7 +259,7 @@ def test_service_failure_never_changes_bytes_or_raises(monkeypatch, fal, failure
     elif failure == "timeout":
         async def hang(*a, **kw):
             await asyncio.Event().wait()
-        monkeypatch.setattr(T.tone_mask, "generate_candidates", hang)
+        monkeypatch.setattr(T.tone_mask, "candidates_for_prepared_image", hang)
         monkeypatch.setattr(T, "TIMEOUT_S", 0.02)
     elif failure == "cpu_timeout":
         # 대기 중인 CPU 작업도 전체 상한에 포함된다.
@@ -268,12 +287,13 @@ def test_job_cancellation_is_not_swallowed(fal):
 def test_cpu_work_runs_off_the_event_loop(monkeypatch, fal):
     main = threading.get_ident()
     seen = []
-    for name in ("_decode", "_target_color", "_finish"):
-        original = getattr(T, name)
+    for module, name in ((T, "_decode"), (T, "_target_color"), (T, "_finish"),
+                         (T.fal_api, "prepare_image")):
+        original = getattr(module, name)
         def check(*a, _func=original, **kw):
             seen.append(threading.get_ident())
             return _func(*a, **kw)
-        monkeypatch.setattr(T, name, check)
+        monkeypatch.setattr(module, name, check)
     asyncio.run(T.tune(make_settings(garment_color_tune_enabled=True, fal_key="fake"), **inputs()))
     assert len(seen) >= 5 and all(tid != main for tid in seen)
 

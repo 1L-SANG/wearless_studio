@@ -1137,7 +1137,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                         cut_warnings.append({"code": f"color_check_{color_check['status']}"})
                     img, mime = await garment_color_tune.after_color_check(
                         s, master=master_image, target=color["target_image"], output=InlineImage(mime, img),
-                        clothing_type=clothing_type, sub_category=cut_analysis.get("subCategory"),
+                        clothing_type=clothing_type, sub_category=(cut_analysis or {}).get("subCategory"),
                         color_execution=color_execution, warnings=cut_warnings, pool=app.state.pool, job=job, recipe=b)
                 except (garment_color.GarmentColorError, face_identity.FacePassUnavailable) as exc:
                     await _cut_failed(target_block, getattr(exc, "reason", "face_pass_unavailable"))

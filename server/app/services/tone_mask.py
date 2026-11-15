@@ -533,17 +533,22 @@ def prompts_for(clothing_type: str | None, sub_category: str | None) -> tuple[st
 
 
 async def generate_candidates(settings, generated: bytes, *, clothing_type: str | None,
-                              sub_category: str | None = None, prompts: tuple[str, ...] | None = None,
-                              min_score: float | None = None) -> list[np.ndarray]:
-    """Fetch mask candidates for the requested prompts. The tone editor keeps its default prompts."""
+                              sub_category: str | None = None) -> list[np.ndarray]:
+    """Fetch mask candidates for the tone editor at the original cut size."""
     prepared = await asyncio.to_thread(fal_api.prepare_image, generated)
     # fal 입력은 2048px로 줄어들 수 있지만 판정과 출력은 원본 컷 크기를 유지한다.
     gen = cv2.imdecode(np.frombuffer(generated, np.uint8), cv2.IMREAD_COLOR)
     if gen is None:
         raise SegmentationUnavailable("generated cut failed to decode")
     source_rgb = cv2.cvtColor(gen, cv2.COLOR_BGR2RGB)
+    return await candidates_for_prepared_image(settings, prepared, source_rgb, prompts_for(clothing_type, sub_category))
+
+
+async def candidates_for_prepared_image(settings, prepared: fal_api.PreparedImage, source_rgb: np.ndarray,
+                                        prompts: tuple[str, ...], *, min_score: float | None = None) -> list[np.ndarray]:
+    """Reuse one encoded request image across prompts and map masks to source_rgb."""
     candidates = []
-    for prompt in prompts if prompts is not None else prompts_for(clothing_type, sub_category):
+    for prompt in prompts:
         body = await fal_api.run_model(settings, MODEL_VERSION, {
             "image_url": prepared.url, "prompt": prompt, "return_multiple_masks": True,
             "max_masks": MAX_MASKS, "include_scores": True, "output_format": "png"})

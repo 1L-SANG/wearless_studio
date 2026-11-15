@@ -101,16 +101,17 @@ async def tune(settings, *, master: InlineImage, target: InlineImage, output: In
         category_prompt, _ = tone_mask.prompts_for(clothing_type, sub_category)
         other_prompt = _MATCHING_PROMPTS.get(side or matching.complementary_type(clothing_type))
 
-        async def masks(image: InlineImage, prompt: str) -> list[np.ndarray]:
-            return await tone_mask.generate_candidates(settings, image.data, clothing_type=clothing_type,
-                prompts=(prompt,), min_score=MIN_CONFIDENCE)
+        async def masks(image: fal_api.PreparedImage, pixels: np.ndarray, prompt: str) -> list[np.ndarray]:
+            return await tone_mask.candidates_for_prepared_image(settings, image, pixels,
+                (prompt,), min_score=MIN_CONFIDENCE)
 
         stage = "decode"
         rgb = await run_cpu_bound(_decode, output.data)
         await run_cpu_bound(_decode, master.data)
-        target_rgb = await run_cpu_bound(_decode, target.data)
+        target_input = await run_cpu_bound(fal_api.prepare_image, target.data)
+        target_rgb = await run_cpu_bound(lambda: np.array(target_input.image.convert("RGB")))
         stage = "target_candidates"
-        target_masks = await masks(target, category_prompt)
+        target_masks = await masks(target_input, target_rgb, category_prompt)
         stage = "target_measure"
         target_mask, target_record = await run_cpu_bound(_target_color, target_rgb, target_masks)
         if target_mask is None:
@@ -122,16 +123,17 @@ async def tune(settings, *, master: InlineImage, target: InlineImage, output: In
                                              "reason": "target_achromatic"}
         if other_prompt:
             stage = "target_candidates"
-            target_others = await masks(target, other_prompt)
+            target_others = await masks(target_input, target_rgb, other_prompt)
             if await run_cpu_bound(lambda: any(np.any(target_mask & other) for other in target_others)):
                 return output.data, output.mime, {"status": "skipped", "reason": "target_ambiguous"}
         stage = "output_candidates"
-        candidates = await masks(output, category_prompt)
+        output_input = await run_cpu_bound(fal_api.prepare_image, output.data)
+        candidates = await masks(output_input, rgb, category_prompt)
         if not candidates:
             return output.data, output.mime, {**target_record, "status": "skipped", "reason": "no_candidate"}
         protected = []
         if other_prompt:
-            protected = await masks(output, other_prompt)
+            protected = await masks(output_input, rgb, other_prompt)
             if side and not await run_cpu_bound(_plausible_masks, protected):
                 return output.data, output.mime, {**target_record, "status": "skipped", "reason": "matching_unverified"}
         stage = "apply"
