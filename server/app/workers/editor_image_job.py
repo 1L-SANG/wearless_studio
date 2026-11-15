@@ -208,7 +208,7 @@ async def run_editor_image_job(app, job: dict) -> None:
         await _fail(message, {"error": reason, "detailQc": getattr(exc, "metadata", {})},
                     code=reason if reason == "invalid_cut_spec" else "generation_failed")
 
-    async def _check_color(master, target, output, clothing_type, sub_category=None):
+    async def _check_color(master, target, output, clothing_type, sub_category=None, *, recipe=None):
         report = await garment_color_qc.check(s, master, target, output, clothing_type=clothing_type)
         report = {**report, "checkedOutputSha256": hashlib.sha256(output.data).hexdigest(),
                   "scope": "color_stage_before_neck_repair"}
@@ -219,7 +219,8 @@ async def run_editor_image_job(app, job: dict) -> None:
             example_warnings.append({"code": f"color_check_{report['status']}"})
         return await garment_color_tune.after_color_check(
             s, master=master, target=target, output=output, clothing_type=clothing_type,
-            sub_category=sub_category, color_execution=color_execution, warnings=example_warnings)
+            sub_category=sub_category, color_execution=color_execution, warnings=example_warnings,
+            pool=pool, job=job, recipe=recipe)
 
     async def _fail(
         message: str,
@@ -540,7 +541,8 @@ async def run_editor_image_job(app, job: dict) -> None:
                             closure_state=payload.get("outerClosureState"), front_closure=front_closure, **edit_kwargs)
                     if edit_mode == "color":
                         image, mime = await _check_color(src_img, target_img, InlineImage(mime, image),
-                                                        edit_clothing_type, edit_analysis.get("subCategory"))
+                                                        edit_clothing_type, edit_analysis.get("subCategory"),
+                                                        recipe=generation_recipe)
                 elif similar_envelope is not None:
                     await _emit(pool, job_id, "progress", {"progress": 25, "phase": "planning"})
                     similar_cut_metadata, similar_context = await _plan_similar_cut(
@@ -568,7 +570,8 @@ async def run_editor_image_job(app, job: dict) -> None:
                             cut_type=cut_type, clothing_type=edit_clothing_type,
                             front_closure=front_closure, **color_face_kwargs)
                         image, mime = await _check_color(color_master_image, target_img, InlineImage(mime, image),
-                                                        edit_clothing_type, edit_analysis.get("subCategory"))
+                                                        edit_clothing_type, edit_analysis.get("subCategory"),
+                                                        recipe=generation_recipe)
 
                 else:
                     # 소유 자산의 레시피로 같은 대상과 원본 면을 다시 촬영한다.
@@ -1325,7 +1328,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                     front_closure=outer_closure.front_closure_of(analysis), **color_face_kwargs)
                 chosen = InlineImage(mime, image)
                 image, mime = await _check_color(color_master_image, color_target_image, chosen,
-                                                clothing_type, analysis.get("subCategory"))
+                                                clothing_type, analysis.get("subCategory"), recipe=cut_spec)
                 chosen = InlineImage(mime, image)
                 face_pass_outcome.update({**prior_outcome, **face_pass_outcome})
                 _remember_outcome(image)

@@ -539,14 +539,14 @@ g_pred = (g_L + d_l,  gain * g_a + d_a,  gain * g_b + d_b)
 `garment_color_tune.tune(settings, *, master, target, output, clothing_type, sub_category=None, matching_side=None)`가 바이트 연결을 맡는다. 세 사진은 `InlineImage`다. master는 색 적용 전 대표색 컷, target은 목표색 Front 사진, output은 AI 색 적용 결과다. 반환값은 사진 바이트, MIME, 기록 dict다.
 
 1. 스위치가 꺼져 있으면 사진을 읽거나 fal을 부르지 않고 `{"status": "disabled"}`를 돌려준다. fal 설정이 없으면 `skipped`, `fal_unconfigured`다.
-2. 세 사진을 해독할 수 있는지 확인한다. target에 `fal_cutout.cutout_png`를 한 번 호출한다. 기존 정규화와 크기 제한을 거친 누끼의 RGB와 알파 127 초과 영역을 쓴다. 작은 조각을 정리하고 기존 윤곽 품질 검사를 통과한 영역에서 `_region`, `_measure`로 목표색을 잰다. 저장 누끼를 읽으려면 자산과 사진 해시의 별도 조회가 필요하므로 이번에는 캐시를 연결하지 않는다.
-3. 목표가 거의 무채색이면 여기서 끝낸다. 그 밖에는 `tone_mask.generate_candidates`로 output의 후보를 받는다. 이 함수는 종류 낱말과 clothing으로 fal을 두 번 부른다.
-4. `tone_mask.produce(generated=output.data, base=master.data, ...)`로 윤곽을 고른다. 설명에는 맨몸 base라고 적혀 있지만 코드는 base의 신체를 검사하지 않는다. 두 사진의 차분을 채점에만 쓰므로 같은 장면에서 옷 색만 바뀐 쌍에도 재사용한다. 기존 tone_mask의 선택 규칙은 바꾸지 않는다.
+2. 실제 컷의 레시피에서 사용한 매칭 의류의 종류를 확인한다. 종류가 맞지 않거나 안에 입은 별도 옷이 함께 지정돼 윤곽을 나누기 어려우면 보정을 건너뛴다.
+3. 목표색 사진에서 상품 종류에 맞는 윤곽을 찾는다. 품질 검사를 통과한 후보가 하나여야 색을 잰다. 거의 무채색이면 여기서 끝낸다. 상의나 하의는 반대편 의류 후보도 확인한다. 목표색을 잰 윤곽과 겹치면 보정을 건너뛴다.
+4. 색을 바꾼 결과에서도 상품 종류와 반대편 의류의 윤곽을 찾는다. 상품 후보가 여러 개로 나뉘거나, 선택한 코디의 윤곽을 확인할 수 없으면 보정을 건너뛴다. 코디와 겹치는 상품 후보를 빼고 기존 `tone_mask.produce`로 윤곽을 정한다. 작은 구멍을 메우는 정리를 거친 뒤에도 코디와 겹치지 않아야 한다.
 5. 계산 함수를 부른다. 옮겼을 때만 PNG로 인코딩한다. 그 밖에는 output의 바이트 객체와 MIME을 그대로 돌려준다.
 
-해독, 재기, 선택, 이동과 인코딩은 `run_cpu_bound`로 이벤트 루프 밖에서 돈다. 서비스 전체 시간 상한 `TIMEOUT_S`는 기존 `fal_api.TIMEOUT_S`와 같은 60초다. CPU 풀 대기와 fal 호출, 다운로드도 이 상한에 들어간다. 이미 시작한 CPU 스레드가 상한 뒤 끝날 수 있지만 그 결과를 채택하거나 저장하지 않는다.
+해독, 재기, 선택, 이동과 인코딩은 `run_cpu_bound`로 이벤트 루프 밖에서 돈다. 서비스 전체 시간 상한 `TIMEOUT_S`는 기존 `fal_api.TIMEOUT_S`와 같은 60초다. 코디 정보 조회, CPU 풀 대기, fal 호출과 다운로드도 이 상한에 들어간다. 이미 시작한 CPU 스레드가 상한 뒤 끝날 수 있지만 그 결과를 채택하거나 저장하지 않는다.
 
-서비스는 잡 취소 신호 말고는 예외를 밖으로 내보내지 않는다. 취소 신호는 그대로 전달해 잡이 멈추게 한다. fal 실패는 `fal_failed`, 후보 없음은 `no_candidate`, 목표 누끼 없음은 `target_no_garment_mask`, 깨진 입력은 `invalid_image`, 시간 초과는 `timeout`, 나머지 계산 실패는 `calculation_failed`로 기록하고 output을 그대로 돌려준다. 목표 윤곽 품질 실패에는 기존 품질 코드 앞에 `target_`을 붙인다. fal 호출 비용은 기존 `fal_api.run_model` 계측만 쓴다. 정상 컷은 SAM 3 호출이 세 번 늘고 코드의 기존 추정 단가로 총 $0.015다. 거의 무채색인 목표는 한 번, $0.005에서 끝난다. 기존 HTTP 재시도가 발동하면 요청 횟수는 더 늘 수 있다.
+서비스는 잡 취소 신호 말고는 예외를 밖으로 내보내지 않는다. 취소 신호는 그대로 전달해 잡이 멈추게 한다. fal 실패는 `fal_failed`, 후보 없음은 `no_candidate`, 목표 누끼 없음은 `target_no_garment_mask`, 깨진 입력은 `invalid_image`, 시간 초과는 `timeout`, 나머지 계산 실패는 `calculation_failed`로 기록하고 output을 그대로 돌려준다. 목표 윤곽 품질 실패에는 기존 품질 코드 앞에 `target_`을 붙인다. 후보가 모호하면 `target_ambiguous` 또는 `no_candidate`, 코디 구분을 확인하지 못하면 `matching_unverified`를 남긴다. fal 호출 비용은 기존 `fal_api.run_model`로 잰다. 정상 상의·하의 컷은 SAM 3 호출 4회로 $0.020, 원피스는 2회로 $0.010이다. 거의 무채색인 목표는 1회, $0.005에서 끝난다. 기존 HTTP 재시도가 발동하면 요청 횟수는 더 늘 수 있다.
 
 ### 10.4 기록과 생성 경로
 

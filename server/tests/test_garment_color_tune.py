@@ -91,11 +91,77 @@ def test_target_rejects_invalid_input(bad):
         G.match_to_target_color(rgb, mask.astype(np.uint8), (0.06, 0.05))
 
 
+@pytest.mark.parametrize("failure", ["target_ambiguous", "target_wrong_only", "output_combined", "output_partial_overlap", "separate"])
+def test_recolor_protects_the_coordination_and_rejects_ambiguous_source_masks(monkeypatch, failure):
+    shirt = np.zeros((280, 200), bool)
+    shirt[45:153, 60:140] = True
+    pants = np.zeros_like(shirt)
+    pants[153:266, 52:148] = True
+    backdrop = np.full((280, 200, 3), (213, 212, 210), np.uint8)
+
+    def fill(image, mask, lab):
+        image[mask] = np.rint(G.oklab_to_srgb(np.array(lab))).astype(np.uint8)
+
+    output = backdrop.copy()
+    fill(output, shirt | pants, (0.62, 0.04, 0.05))
+    master, target = output.copy(), output.copy()
+    fill(master, shirt, (0.62, 0.03, 0.048))
+    fill(target, pants, (0.62, 0.064, 0.05))
+    if not failure.startswith("target_"):
+        fill(target, shirt, (0.62, 0.064, 0.05))
+    overlap = np.zeros_like(shirt)
+    overlap[153:176, 60:140] = True
+    product_mask = {"output_combined": shirt | pants,
+                    "output_partial_overlap": shirt | overlap}.get(failure, shirt)
+    calls = []
+
+    async def run(settings, model, body):
+        prompt = body["prompt"]
+        calls.append(prompt)
+        if len(calls) == 1:
+            masks = {"target_ambiguous": [shirt, pants], "target_wrong_only": [pants]}.get(failure, [shirt])
+        elif prompt in {"pants", "lower body garment"}:
+            masks = [pants]
+        else:
+            masks = [product_mask]
+        return {
+            "masks": [{"url": T.fal_api.image_input_url(png(np.repeat(
+                (mask * 255).astype(np.uint8)[..., None], 3, axis=2)), "image/png")} for mask in masks],
+            "scores": [0.99] * len(masks),
+        }
+
+    monkeypatch.setattr(T.fal_api, "run_model", run)
+    sources = {name: InlineImage("image/png", png(rgb))
+               for name, rgb in (("master", master), ("target", target), ("output", output))}
+    from conftest import fake_worker_app, worker_job
+    settings = make_settings(garment_color_tune_enabled=True, fal_key="fake")
+    job = worker_job()
+    metadata = AsyncMock(return_value={"clothing_type": "bottom"})
+    monkeypatch.setattr(T.repo, "get_matching_item_metadata", metadata)
+    result, _, record = asyncio.run(T.tune(settings, **sources, clothing_type="top",
+        pool=fake_worker_app(settings).state.pool, job=job, recipe={"matchIds": ["actual-pants"]}))
+    assert metadata.await_args.args[1:] == ("actual-pants", job["user_id"], job["project_id"])
+    assert calls[0] == "top"
+    if failure == "separate":
+        assert record["status"] == "corrected"
+        with Image.open(io.BytesIO(result)) as im:
+            pixels = np.array(im)
+        assert np.any(pixels[shirt] != output[shirt])
+        assert np.array_equal(pixels[~shirt], output[~shirt])
+    else:
+        assert result is sources["output"].data
+        assert record["reason"] == ("target_ambiguous" if failure.startswith("target_") else "no_candidate")
+
+
 @pytest.fixture
 def fal(monkeypatch):
     _, mask = scene()
     uri = T.fal_api.image_input_url(png(np.repeat((mask * 255).astype(np.uint8)[..., None], 3, axis=2)), "image/png")
-    run = AsyncMock(return_value={"masks": [{"url": uri}], "scores": [0.99]})
+    async def respond(settings, model, payload):
+        if payload["prompt"] == "lower body garment":
+            return {"masks": [], "scores": []}
+        return {"masks": [{"url": uri}], "scores": [0.99]}
+    run = AsyncMock(side_effect=respond)
     monkeypatch.setattr(T.fal_api, "run_model", run)
     return run
 
@@ -107,8 +173,8 @@ def inputs(target_color=(0.62, 0.06, 0.05)):
 
 
 @pytest.mark.parametrize("target,reason,calls", [
-    ((0.62, 0.06, 0.05), None, 3), ((0.62, 0.08, 0.05), "over_cap", 3),
-    ((0.62, 0.035, 0.05), "within_tolerance", 3), ((0.62, 0.0, 0.0), "target_achromatic", 1)])
+    ((0.62, 0.06, 0.05), None, 4), ((0.62, 0.08, 0.05), "over_cap", 4),
+    ((0.62, 0.035, 0.05), "within_tolerance", 4), ((0.62, 0.0, 0.0), "target_achromatic", 1)])
 def test_service_real_pixel_pipeline_with_fake_fal(fal, target, reason, calls):
     kwargs = inputs(target)
     execution, warnings = {"colorCheck": {"status": "passed", "checkedOutputSha256": sha(kwargs["output"].data)}}, []
@@ -160,7 +226,13 @@ def test_service_failure_never_changes_bytes_or_raises(monkeypatch, fal, failure
     if failure == "fal":
         fal.side_effect = RuntimeError("provider down")
     elif failure == "no_candidate":
-        monkeypatch.setattr(T.tone_mask, "generate_candidates", AsyncMock(return_value=[]))
+        calls = 0
+        response = fal.side_effect
+        async def no_output(settings, model, payload):
+            nonlocal calls
+            calls += 1
+            return {"masks": [], "scores": []} if calls >= 3 else await response(settings, model, payload)
+        fal.side_effect = no_output
     elif failure == "selection":
         def reject(*a, **kw):
             raise T.tone_mask.NoGarmentCandidate("no plausible candidate")
@@ -168,7 +240,7 @@ def test_service_failure_never_changes_bytes_or_raises(monkeypatch, fal, failure
     elif failure == "timeout":
         async def hang(*a, **kw):
             await asyncio.Event().wait()
-        monkeypatch.setattr(T.fal_cutout, "cutout_png", hang)
+        monkeypatch.setattr(T.tone_mask, "generate_candidates", hang)
         monkeypatch.setattr(T, "TIMEOUT_S", 0.02)
     elif failure == "cpu_timeout":
         # 대기 중인 CPU 작업도 전체 상한에 포함된다.
@@ -203,7 +275,7 @@ def test_cpu_work_runs_off_the_event_loop(monkeypatch, fal):
             return _func(*a, **kw)
         monkeypatch.setattr(T, name, check)
     asyncio.run(T.tune(make_settings(garment_color_tune_enabled=True, fal_key="fake"), **inputs()))
-    assert len(seen) == 5 and all(tid != main for tid in seen)
+    assert len(seen) >= 5 and all(tid != main for tid in seen)
 
 
 def test_switch_environment_defaults_off(monkeypatch):
@@ -244,6 +316,14 @@ def install_tune(monkeypatch, status="passed", *, reason=None):
 def test_new_cut_paths_adopt_tune_only_after_accepted_qc(request, monkeypatch, flow_fixture, status):
     flow = request.getfixturevalue(flow_fixture)
     flow.app.state.settings = replace(flow.app.state.settings, garment_color_tune_enabled=True)
+    from app.workers import detail_page_job, editor_image_job
+    worker = detail_page_job if flow_fixture == "detail_flow" else editor_image_job
+    monkeypatch.setattr(worker.repo, "get_matching_item_asset", AsyncMock(return_value="matching-asset"))
+    monkeypatch.setattr(worker, "catalog_image", lambda mime, data: InlineImage(mime, data))
+    if flow_fixture == "detail_flow":
+        flow.board[0]["matchIds"] = ["selected-pants"]
+    else:
+        flow.job["payload"]["matchIds"] = ["selected-pants"]
     qc, tuned = install_tune(monkeypatch, status)
     flow.run()
     assert qc.await_count == 1
@@ -253,6 +333,7 @@ def test_new_cut_paths_adopt_tune_only_after_accepted_qc(request, monkeypatch, f
         assert not finals
         return
     assert tuned.await_count == 1
+    assert tuned.await_args.kwargs["recipe"]["matchIds"] == ["selected-pants"]
     image = finals[0]["cut_assets"][0] if flow_fixture == "detail_flow" else finals[0]["image"]
     assert any(c[0] == "upload" and c[2] == b"TUNED-FINAL" for c in flow.calls)
     assert image["metadata"]["colorExecution"]["colorTune"]["outputSha256"] == sha(b"TUNED-FINAL")
@@ -322,7 +403,7 @@ def test_detail_similar_path_and_checkpoint_reuse_do_not_tune_twice(monkeypatch,
     app.state.settings = replace(app.state.settings, garment_color_tune_enabled=True)
     db = _IntentDB()
     db.install(monkeypatch)
-    original, followup = source(colorId="blue"), child(colorId="blue")
+    original, followup = source(colorId="blue", matchIds=["resolved-pants"]), child(colorId="blue")
     async def apply(s, p, master, *a, **kw):
         return b"BLUE-" + master.data, "image/png"
     monkeypatch.setattr(garment_color, "apply", apply)
@@ -342,6 +423,7 @@ def test_detail_similar_path_and_checkpoint_reuse_do_not_tune_twice(monkeypatch,
     first = asyncio.run(run("first"))
     assert qc.await_count == 2
     assert tuned.await_count == (1 if child_status == "failed" else 2)
+    assert all(call.kwargs["recipe"]["matchIds"] == ["resolved-pants"] for call in tuned.await_args_list)
     for asset in first[1]:
         assert app.state.r2.get_bytes(asset["key"]).startswith(b"TUNED-BLUE-")
     if child_status == "failed":

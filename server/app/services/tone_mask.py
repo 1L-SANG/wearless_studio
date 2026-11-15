@@ -533,8 +533,9 @@ def prompts_for(clothing_type: str | None, sub_category: str | None) -> tuple[st
 
 
 async def generate_candidates(settings, generated: bytes, *, clothing_type: str | None,
-                              sub_category: str | None = None) -> list[np.ndarray]:
-    """종류 단어와 clothing으로 최대 6개 후보를 받는다. 차분과 상품은 채점에만 쓴다."""
+                              sub_category: str | None = None, prompts: tuple[str, ...] | None = None,
+                              min_score: float | None = None) -> list[np.ndarray]:
+    """Fetch mask candidates for the requested prompts. The tone editor keeps its default prompts."""
     prepared = await asyncio.to_thread(fal_api.prepare_image, generated)
     # fal 입력은 2048px로 줄어들 수 있지만 판정과 출력은 원본 컷 크기를 유지한다.
     gen = cv2.imdecode(np.frombuffer(generated, np.uint8), cv2.IMREAD_COLOR)
@@ -542,7 +543,7 @@ async def generate_candidates(settings, generated: bytes, *, clothing_type: str 
         raise SegmentationUnavailable("generated cut failed to decode")
     source_rgb = cv2.cvtColor(gen, cv2.COLOR_BGR2RGB)
     candidates = []
-    for prompt in prompts_for(clothing_type, sub_category):
+    for prompt in prompts if prompts is not None else prompts_for(clothing_type, sub_category):
         body = await fal_api.run_model(settings, MODEL_VERSION, {
             "image_url": prepared.url, "prompt": prompt, "return_multiple_masks": True,
             "max_masks": MAX_MASKS, "include_scores": True, "output_format": "png"})
@@ -555,16 +556,19 @@ async def generate_candidates(settings, generated: bytes, *, clothing_type: str 
                 score = scores[index] if isinstance(scores, list) else item["score"]
                 if not isinstance(url, str) or not url or isinstance(score, bool):
                     raise ValueError
-                if not math.isfinite(float(score)):
+                score = float(score)
+                if not math.isfinite(score):
                     raise ValueError
             except (KeyError, IndexError, TypeError, ValueError):
                 raise SamUnavailable("fal SAM returned invalid mask scores or URL") from None
+            if min_score is not None and score < min_score:
+                continue
             data = await fal_api.fetch_image(url)
             try:
                 mask = await asyncio.to_thread(fal_cutout._mask_from_color, data, source_rgb)
             except (OSError, ValueError):
                 raise SamUnavailable("fal SAM returned invalid mask image") from None
-            # fal 점수는 응답 유효성만 확인한다. 선택은 기존 score_candidate 공식만 쓴다.
+            # The tone editor ranks with score_candidate; color tuning also sets a confidence floor.
             candidates.append(mask)
     return candidates
 
