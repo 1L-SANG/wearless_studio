@@ -54,10 +54,10 @@ function partDescription(designId, templateId = 'show', fontStyle = 'template') 
 }
 
 for (const templateId of ['emo', 'show']) for (const fontStyle of Object.keys(pageTemplatesCatalog.fontStyles)) {
-  test(`WOC11 real editor text uses Pretendard light only for plain descriptions: ${templateId}/${fontStyle}`, () => {
+  test(`WOC23 real editor descriptions use regular Pretendard: ${templateId}/${fontStyle}`, () => {
     const body = resolvePageTokens({ templateId, fontStyle }).fonts.body;
     assert.deepEqual([body.font, body.weight], ['Pretendard', 400], 'page font choices must leave the existing body face intact');
-    for (const [design, weight, size] of [['PT-TEXT-PHOTO-01', 300, 37], ['PT-PHOTO-CARD-01', 400, 35]]) {
+    for (const [design, weight, size] of [['PT-TEXT-PHOTO-01', 400, 32], ['PT-PHOTO-CARD-01', 400, 32]]) {
       const element = partDescription(design, templateId, fontStyle);
       assert.deepEqual([element.style.font, element.style.weight, element.style.size], ['Pretendard', weight, size]);
       assert.equal(cssWeight(element.style.font, element.style.weight), weight);
@@ -65,8 +65,9 @@ for (const templateId of ['emo', 'show']) for (const fontStyle of Object.keys(pa
       assert.match(markup, new RegExp(`font-weight:${weight}(?:;|")`));
       assert.match(markup, new RegExp(`font-size:${size}px(?:;|")`));
       assert.match(markup, /font-family:var\(--font-body\)/);
-      assert.match(markup, /white-space:pre-wrap/);
-      assert.ok(markup.includes(desc), 'the explicit two-line sentence survives editor rendering');
+      if (design === 'PT-TEXT-PHOTO-01') assert.match(markup, /el-keep-words/);
+      else assert.match(markup, /white-space:pre-wrap/);
+      assert.ok(markup.includes(design === 'PT-TEXT-PHOTO-01' ? desc.replace(/\s+/g, ' ') : desc), 'the explicit two-line sentence survives editor rendering');
     }
   });
 }
@@ -86,7 +87,7 @@ test('WOC11 both Pretendard CSS aliases declare light through bold using the bun
   }
 });
 
-test('WOC11 download clone carries 300/400 and actual bundled font bytes to the SVG boundary', async t => {
+test('WOC11 download clone carries 400/400 and actual bundled font bytes to the SVG boundary', async t => {
   const source = readFileSync(new URL('../../src/features/editor/editorExport.js', import.meta.url), 'utf8');
   const prepare = source.slice(source.indexOf('async function prepareClone('), source.indexOf('\nexport function flattenOnWhite'));
   const capture = source.slice(source.indexOf('async function captureBlockCanvas('), source.indexOf('\nexport async function captureBlockCanvasSlices'));
@@ -159,9 +160,9 @@ test('WOC11 download clone carries 300/400 and actual bundled font bytes to the 
     toSvg: async (clone, options) => {
       svgBoundary = { clone, options };
       assert.notEqual(clone, block);
-      assert.deepEqual(clone.children.map(child => child.style.fontWeight), [300, 400]);
-      assert.deepEqual(clone.children.map(child => child.style.fontSize), [37, 35]);
-      assert.ok(clone.children.every(child => child.text === desc));
+      assert.deepEqual(clone.children.map(child => child.style.fontWeight), [400, 400]);
+      assert.deepEqual(clone.children.map(child => child.style.fontSize), [32, 32]);
+      assert.ok(clone.children.every((child, index) => child.text === (index ? desc : desc.replace(/\s+/g, ' '))));
       assert.match(options.fontEmbedCSS, /font-family:\s*"Pretendard Variable"/);
       assert.match(options.fontEmbedCSS, /font-weight:\s*100 900/);
       const embedded = options.fontEmbedCSS.match(/base64,([^"')\s]+)/)[1];
@@ -180,7 +181,7 @@ test('WOC11 download clone carries 300/400 and actual bundled font bytes to the 
   assert.equal(svgBoundary.options.width, 1000);
   assert.equal(rasterBoundary.svg, 'offline-font-svg-boundary');
   assert.deepEqual([rasterBoundary.options.width, rasterBoundary.options.height], [2000, 320]);
-  assert.deepEqual(block.children.map(child => child.style.fontWeight), [300, 400]);
+  assert.deepEqual(block.children.map(child => child.style.fontWeight), [400, 400]);
   assert.equal(saves.length, 1);
   assert.equal(removed, true);
 });

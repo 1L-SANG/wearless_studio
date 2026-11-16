@@ -48,8 +48,8 @@ for (const template of ['emo', 'show']) {
       : item === title ? editedTextElement(title, { text: '직접 쓴 FAQ 제목', style: { ...title.style, font: 'Pretendard' } }) : item);
 
     const saved = faq(wait.mergeServerBlocks(pending, final));
-    assert.equal(photo(saved).y, 246);
-    assert.equal(element(saved, 'label').y, 120);
+    assert.equal(photo(saved).y, template === 'show' ? 293 : 303);
+    assert.equal(element(saved, 'label').y, 0);
     assert.equal(element(saved, 'label').style.color, element(faq(final), 'label').style.color);
     assert.equal(element(saved, 'label').style.italic, !label.style.italic);
     assert.equal(element(saved, 'title').text, '직접 쓴 FAQ 제목');
@@ -63,10 +63,10 @@ test('FAQ with a manually positioned heading keeps the white on-photo label and 
   const block = faq(pending);
   element(block, 'title').y += 50;
   const saved = faq(wait.mergeServerBlocks(pending, final));
-  assert.equal(photo(saved).y, 0);
-  assert.equal(element(saved, 'label').y, 68);
-  assert.equal(element(saved, 'label').style.color, '#ffffff');
-  assert.equal(element(saved, 'title').y, 167);
+  assert.equal(photo(saved).y, 94);
+  assert.equal(element(saved, 'label').y, 0);
+  assert.equal(element(saved, 'label').style.color, '#1f1f1f');
+  assert.equal(element(saved, 'title').y, 212);
   assert.equal(saved.elements.some(item => item.opacity === .3), true);
 });
 
@@ -75,7 +75,7 @@ test('the selected FAQ question and photo retain their identity when the server 
   const block = faq(pending);
   const selected = [element(block, 'items.0.q'), photo(block), block.elements.find(item => item.templateCopyDecoration === 'A.')];
   const completed = faq(wait.mergeServerBlocks(pending, final));
-  assert.equal(photo(completed).y, 246);
+  assert.equal(photo(completed).y, 303);
   assert.deepEqual(selected.map(item => [item.id, item.type, item.copyRole, item.templateCopyDecoration]),
     selected.map(({ id }) => {
       const item = completed.elements.find(candidate => candidate.id === id);
@@ -120,7 +120,7 @@ test('the editor commits a focused FAQ answer before merging and saving the meas
   assert.equal(finalizeError, '');
   assert.equal(saved.length, 1);
   const completed = faq(saved[0]);
-  assert.equal(photo(completed).y, 246);
+  assert.equal(photo(completed).y, 303);
   assert.equal(element(completed, 'items.0.a').id, answer.id);
   assert.equal(element(completed, 'items.0.a').text, typedText);
 });

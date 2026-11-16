@@ -57,40 +57,36 @@ test('WOC11 visible points are two flat designs and both creation defaults rende
 for (const templateId of ['emo', 'show']) for (const fontStyle of Object.keys(catalog.fontStyles)) {
   test(`WOC11 card typography and palette follow ${templateId}/${fontStyle}`, () => {
     const input = inputFor(templateId, CARD, { pageStyle: { templateId, fontStyle, colorMode: 'point' } });
-    const tokens = resolvePageTokens(input.pageStyle, 'blue');
-    const blocks = blocksOf(input), items = blocks.flatMap(b => b.elements), image = photoOf(items);
+    const tokens = resolvePageTokens(input.pageStyle, 'blue'), type = tokens.template.typography;
+    const blocks = blocksOf(input), items = itemsOf(input), image = photoOf(items);
     const title = textOf(items, 'items.0.name'), desc = textOf(items, 'items.0.desc'), label = textOf(items, 'label');
     assert.equal(blocks[0].bg, tokens.colors.panel);
-    assert.deepEqual([image.x, image.w, image.h, image.radius], [60, 880, 1100, 0]);
-    assert.ok(items.some(el => el.type === 'shape' && el.fill === '#ffffff' && el.x === 60 && el.w === 880));
-    assert.equal(label.style.font, tokens.fonts.labelEn.font);
-    assert.equal(label.text.toLowerCase(), 'detail');
-    assert.equal(textOf(items, 'title'), undefined);
-    assert.deepEqual([title.x, title.w, title.style.size, title.style.font, title.style.weight, title.style.align], [110, 780, 42, tokens.fonts.titleKo.font, tokens.fonts.titleKo.weight, 'center']);
-    assert.deepEqual([desc.x, desc.w, desc.style.size, desc.style.weight, desc.style.lineHeight, desc.style.color], [110, 780, 35, 400, 60, tokens.colors.muted]);
-    assert.equal(desc.text, descriptions[0]);
-    assert.equal(desc.h, 120);
+    assert.deepEqual([image.x, image.w, image.h, image.radius], [56, 888, 1110, 0]);
+    assert.ok(items.some(el => el.type === 'shape' && el.fill === '#ffffff' && el.x === 56 && el.w === 888));
+    assert.equal(label.style.font, tokens.fonts.labelEn.font); assert.equal(label.style.size, templateId === 'show' ? 42 : 48);
+    assert.deepEqual([title.x, title.w, title.style.size, title.style.font, title.style.weight, title.style.align], [106, 788, templateId === 'show' ? 46 : 48, tokens.fonts.titleKo.font, templateId === 'show' ? 700 : tokens.fonts.titleKo.weight, tokens.template.align]);
+    assert.deepEqual([desc.x, desc.w, desc.style.size, desc.style.weight, desc.style.lineHeight], [106, 788, 32, 400, templateId === 'show' ? 48 : 52]);
+    assert.equal(desc.text, descriptions[0]); assert.equal(desc.h, desc.style.lineHeight * 2);
     assert.equal(title.y - image.y - image.h, 50);
-    const global = globalItems(input), shapes = global.filter(el => el.type === 'shape' && el.fill === '#ffffff' && el.w === 880);
+    const shapes = globalItems(input).filter(el => el.type === 'shape' && el.fill === '#ffffff' && el.w === 888);
     assert.equal(shapes[1].y - shapes[0].y - shapes[0].h, 50);
-  });
+});
   test(`WOC11 plain numbering and measured gaps follow ${templateId}/${fontStyle}`, () => {
     const input = inputFor(templateId, PLAIN, { pageStyle: { templateId, fontStyle, colorMode: 'point' } });
     const tokens = resolvePageTokens(input.pageStyle, 'blue'), items = globalItems(input);
     const title = textOf(items, 'items.0.name'), desc = textOf(items, 'items.0.desc'), image = photoOf(items), next = textOf(items, 'items.1.name');
-    assert.ok(blocksOf(input).every(b => b.bg === '#ffffff'));
-    assert.equal(textOf(items, 'label'), undefined); assert.equal(textOf(items, 'title'), undefined);
-    assert.deepEqual([title.text, title.x, title.y, title.w, title.style.size, title.style.font, title.style.weight, title.style.tracking], [`1. ${labels[0]}`, 43, 120, 914, 46, tokens.fonts.titleKo.font, tokens.fonts.titleKo.weight, -1.38]);
-    assert.equal(next.text, `2. ${labels[1]}`);
-    assert.deepEqual([desc.x, desc.w, desc.style.size, desc.style.weight, desc.style.lineHeight, desc.style.tracking, desc.style.color], [43, 914, 37, 300, 50, -1.85, tokens.colors.ink]);
-    assert.deepEqual([image.x, image.w, image.h], [40, 920, 1150]);
-    assert.equal(desc.y - title.y - title.h, 66);
-    assert.equal(image.y - desc.y - desc.h, 24);
-    assert.equal(next.y - image.y - image.h, 230);
-    assert.equal(desc.text, descriptions[0]);
+    assert.ok(blocksOf(input).every(block => block.bg === '#ffffff'));
+    assert.equal(textOf(items, 'label').style.size, templateId === 'show' ? 42 : 48);
+    assert.equal(title.text, `1. ${labels[0]}`); assert.equal(next.text, `2. ${labels[1]}`);
+    assert.deepEqual([title.x, title.w, title.style.size, title.style.font, title.style.weight, title.style.align], [56, 888, templateId === 'show' ? 46 : 48, tokens.fonts.titleKo.font, templateId === 'show' ? 700 : tokens.fonts.titleKo.weight, tokens.template.align]);
+    assert.deepEqual([desc.x, desc.w, desc.style.size, desc.style.weight, desc.style.lineHeight, desc.style.tracking], [56, 888, 32, 400, templateId === 'show' ? 48 : 52, 0]);
+    assert.deepEqual([image.x, image.w, image.h], [56, 888, 1110]);
+    assert.equal(desc.y - title.y - title.h, 14); assert.equal(image.y - desc.y - desc.h, 32);
+    assert.equal(next.y - image.y - image.h, 120);
+    assert.equal(desc.text, descriptions[0].replace(/\s+/g, ' '));
     const lastBlock = blocksOf(input).at(-1), lastPhoto = lastBlock.elements.find(el => el.type === 'image');
     assert.equal(lastBlock.h - lastPhoto.y - lastPhoto.h - tokens.template.spacing.sectionGap, 60);
-  });
+});
 }
 
 test('WOC11 card neutral and point surfaces keep the caption white', () => {
@@ -98,7 +94,7 @@ test('WOC11 card neutral and point surfaces keep the caption white', () => {
     const input = inputFor('emo', CARD, { baseSwatchId: swatch, pageStyle: { templateId: 'emo', colorMode } });
     const tokens = resolvePageTokens(input.pageStyle, swatch);
     assert.equal(blocksOf(input)[0].bg, tokens.colors.panel);
-    assert.ok(itemsOf(input).some(el => el.type === 'shape' && el.fill === '#ffffff' && el.w === 880));
+    assert.ok(itemsOf(input).some(el => el.type === 'shape' && el.fill === '#ffffff' && el.w === 888));
   }
 });
 
@@ -125,7 +121,7 @@ test('WOC11 seller-owned photos use matching metadata and ignore a previous gene
   input.product.colors[0].images = [{ src: 'seller:landscape', width: 1500, height: 1000 }];
   const image = photoOf(itemsOf(input));
   assert.equal(image.src, 'seller:landscape');
-  assert.deepEqual(image.crop, { iw: 1725, ih: 1150, ox: 403, oy: 0 });
+  assert.deepEqual(image.crop, { iw: 1665, ih: 1110, ox: 389, oy: 0 });
   input.product.colors[0].images = [];
   assert.equal(photoOf(itemsOf(input)).crop, undefined, 'stale generated size cannot distort a seller photo');
 });
@@ -133,10 +129,10 @@ test('WOC11 seller-owned photos use matching metadata and ignore a previous gene
 test('WOC11 saved worn regions center-cover the fixed viewport without mutating source regions', () => {
   const input = wornInputFor(), original = structuredClone(input);
   const items = itemsOf(input), image = photoOf(items);
-  assert.deepEqual([image.x, image.w, image.h, image.pointItemKind], [40, 920, 1150, 'wornCrop']);
-  assert.deepEqual(image.crop, { iw: 3833, ih: 5750, ox: 882, oy: 1150 });
+  assert.deepEqual([image.x, image.w, image.h, image.pointItemKind], [56, 888, 1110, 'wornCrop']);
+  assert.deepEqual(image.crop, { iw: 3700, ih: 5550, ox: 851, oy: 1110 });
   assert.equal(textOf(items, 'items.0.name').text, `1. ${labels[1]}`);
-  assert.equal(textOf(items, 'items.0.desc').text, descriptions[1]);
+  assert.equal(textOf(items, 'items.0.desc').text, descriptions[1].replace(/\s+/g, ' '));
   assert.deepEqual(input, original);
   const old = photoOf(itemsOf(wornInputFor('P06-D01')));
   assert.deepEqual([old.w, old.h, old.crop], [532, 399, { iw: 1000, ih: 1500, ox: 84, oy: 251 }]);
@@ -148,7 +144,7 @@ test('WOC11 worn sources use actual landscape size or the 3:4 fallback and prese
     input.storyboard[1].pointItems.push({ ...input.storyboard[1].pointItems[0], label: labels[0], bodyPart: 'hem', cropRegion: [.1, .6, .6, .3] });
     const images = itemsOf(input).filter(el => el.type === 'image');
     assert.equal(images.length, 2);
-    assert.ok(images.every(image => image.w === 920 && image.h === 1150 && image.crop.iw >= image.w && image.crop.ih >= image.h));
+    assert.ok(images.every(image => image.w === 888 && image.h === 1110 && image.crop.iw >= image.w && image.crop.ih >= image.h));
     assert.ok(Math.abs(images[0].crop.iw / images[0].crop.ih - (meta.height === 1000 && meta.dimensionsKnown !== false ? 1.5 : .75)) < .001);
   }
 });
@@ -159,7 +155,7 @@ test('WOC11 loose photos receive their names, descriptions and fixed viewport wi
     const items = itemsOf(input);
     assert.equal(items.filter(el => el.type === 'image').length, 2);
     assert.equal(textOf(items, 'items.1.name').text, `${design === PLAIN ? '2. ' : ''}${labels[1]}`);
-    assert.equal(textOf(items, 'items.1.desc').text, descriptions[1]);
+    assert.equal(textOf(items, 'items.1.desc').text, design === PLAIN ? descriptions[1].replace(/\s+/g, ' ') : descriptions[1]);
     assert.ok(items.filter(el => el.type === 'image').every(el => el.w / el.h === .8));
   }
 });
@@ -189,14 +185,14 @@ test('WOC11 text and repeat policy validators reject malformed opt-ins', () => {
 });
 
 const legacyDigests = {
-  'emo:PT-COLUMN-01': 'be03680d885eecd7b72d1baf9712338c0c1021907a6b6fb761c8ac0cacb13fb4',
-  'emo:P06-D01': '95ce065faf55f3246f96879236afac65893d28cb94125a5043c6e151eca68ef3',
-  'emo:PT-COLUMN-CARD-01': 'f80db8302a30f41aac745f4568b73f60622b136fdc53c4d9d9d2840e45a7e1d0',
-  'emo:PT-BELOW-CARD-01': '201e93e7401ef0a7ea2035616ae6feee8472cd88fce3864b2398320b56a86304',
-  'show:PT-COLUMN-01': 'b5c9bf89614bb8c59c983c31597126dfb274c1dd805b7fc64a39adba7079229e',
-  'show:P06-D01': '51ed2e6760243e6ff509c0966c50f85b56eb3b0a1c1b01518fa27b1ae4dcb043',
-  'show:PT-COLUMN-CARD-01': '4f724cfc71e23cb2d5dd414ae53e6a9eb5f8ae141a2215738381325cc412df41',
-  'show:PT-BELOW-CARD-01': 'a93efd8b1279dc88352b87ae1ad3bfbde425eaac5830f9209e4dba35d077431c',
+  'emo:PT-COLUMN-01': '6932df6218686563dfbfb8359a2f25e35342ef276d6b8b8e540debd894af5538',
+  'emo:P06-D01': 'dc693db9476446363632edea3babe12da9f17ceacdef533b131f7d3a26fe38cc',
+  'emo:PT-COLUMN-CARD-01': 'a816a00ff49207c50a27aecc2c96718830523d04888c4d5e242da9b6d04cb618',
+  'emo:PT-BELOW-CARD-01': 'bcec98e42b8c7c4a5de95881620954070ec25c7c1c0a97bf85bdd40667715bdf',
+  'show:PT-COLUMN-01': '9665f62b58c4a655b6229f6c8f35743b0e6ab9a1e971d49e02e3e355adc82acf',
+  'show:P06-D01': 'ffe2e54f9d1c9d85547d54ccf799b4d38f7619f5687856523f18d11ab57c5f8a',
+  'show:PT-COLUMN-CARD-01': '0f1e59e995b2da06209a14b44999953cb002ab839003dfb63ed141700941118c',
+  'show:PT-BELOW-CARD-01': 'e139cb45c686a9f39560db86e722d6f5f5580bba265599b00817cb587e41c4bf',
 };
 test('WOC11 hiding preserves all eight saved legacy renderings apart from explicit contain metadata', () => {
   for (const [key, expected] of Object.entries(legacyDigests)) {

@@ -20,8 +20,8 @@ def test_saved_catalog_designs_and_current_defaults_without_sns_by_default():
     assert [group["name"] for group in CATALOG["menuGroups"]] == ["사진", "옷 자세히", "상품 설명", "후기와 소통"]
     assert [len([s for s in t["sections"] if s["presence"] == "default"]) for t in CATALOG["templates"]] == [10, 7]
     assert [s["instanceKey"] for s in get_template("show")["sections"] if s["kind"] == "points"] == ["points"]
-    assert len(CATALOG["designs"]) == 52
-    assert sum(bool(design.get("pickerHidden")) for design in CATALOG["designs"].values()) == 27
+    assert len(CATALOG["designs"]) == 55
+    assert sum(bool(design.get("pickerHidden")) for design in CATALOG["designs"].values()) == 28
     assert [design["id"] for design in CATALOG["designs"].values() if design.get("framePhotos") and design.get("pickerHidden")] == [
         "WEAR-STYLING-FRAME-COLUMN-03", "WEAR-STYLING-FRAME-2COL-03", "WEAR-STYLING-FRAME-HERO-03",
     ]
@@ -122,7 +122,7 @@ def test_invalid_catalog_structure_is_rejected(mutation):
         for node in walk_layout(catalog["designs"]["CP-EMO-01"]["layout"]):
             if mutation == "color_name" and node.get("copyRole") == "colors.n.name":
                 node["copyRole"] = "colors.n.en"
-            if node.get("slot") == mutation:
+            if node.get("slot") in (mutation, '*'):
                 node["slot"] = "removed"
     elif mutation == "review_reuse":
         catalog["templates"][0]["sections"][1]["photoSlots"][0].update(fill="reuse", recipe=None, reuseFrom={"kind": "wear", "usage": "styling", "slot": "g", "index": 0})

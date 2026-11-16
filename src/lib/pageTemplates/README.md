@@ -9,9 +9,9 @@
 - 조립기는 JS `assemblePage`와 Python `assemble_v4` 두 벌이다. `page_assembler.assemble`과 목 `buildEditorBlocksFromStoryboard`는 늘 이 조립기를 부르며, 옛 조립 경로는 없다. 페이지 끝에는 자동 블록 넷(사이즈 안내, 세탁 안내, AI 생성 안내, 공통 주의)을 붙인다.
 - 감성형 첫 장 제목(`P01-D09`)은 가운데, 위, 아래 세 자리 중 글자 대비가 3:1 이상인 곳에 두고, 비슷하면 가운데, 아래, 위 순으로 고른다. 모두 안 되면 검정 60% 받침을 깔고, 받침은 가운데를 먼저 쓰되 받침 자리의 절반 이상이 옷에 걸리면 아래로 옮긴다. 아래도 절반 이상 걸리면 덜 걸리는 쪽, 같으면 가운데에 둔다. 세부 규칙은 루트 `DESIGN.md` 15.5.4에 둔다.
 - 카피는 늘 켠다. AI 글이 들어가는 칸은 디테일 요소 섹션의 부위 설명(`analysis.partDescriptionCopy`), 상품 소개 본문, 후기 초안이고, 다른 AI 글 칸은 지금 빈 글과 안내 문구(placeholder)로 나간다. 카피 체계는 별도 카피라이팅 작업에서 정한다.
-- 상품 소개 본문(`seller+ai`)에는 감성형과 쇼룸형 모두 셀러의 MD 코멘트(`analysis.mdComment`)를 AI가 실제 쇼핑몰 상세페이지의 MD 코멘트처럼 다듬어 넣는다(2026-11-13 오너 결정). 다듬는 말투와 형식은 카피라이팅 작업이 정하고, 다듬기가 붙기 전에는 원문을 줄바꿈까지 그대로 글상자 하나에 넣는다. 셀러 글이 없으면 AI가 초안을 쓴다. 쇼룸형은 상품 소개 요약 판(`T06-D01`) 위에 영문 라벨 "Comment"와 본문을 둔다.
+- 상품 소개 본문(`seller+ai`)에는 감성형과 쇼룸형 모두 셀러의 MD 코멘트(`analysis.mdComment`)를 AI가 실제 쇼핑몰 상세페이지의 MD 코멘트처럼 다듬어 넣는다(2026-11-13 오너 결정). 다듬는 말투와 형식은 카피라이팅 작업이 정하고, 다듬기가 붙기 전에는 원문을 줄바꿈까지 그대로 글상자 하나에 넣는다. 셀러 글이 없으면 AI가 초안을 쓴다. 쇼룸형은 사진 다음 사양판(`T06-D01`: 상품명, MD 코멘트 본문, 사양)이나 어두운 소개판(`T06-COMMENT-01`: 맨 위 영문 라벨 "COMMENT", 상품명, 본문, 사양)에 둔다.
 - 후기 섹션은 셀러가 고치기 쉽도록 AI가 매번 조금씩 다른 초안을 넣어 두고, 셀러가 에디터에서 실제 후기로 고친다(2026-10-26 오너 결정). 이름 칸 기본값은 "김태희", 별점 기본값은 5개다.
-- 두 엔진은 같은 카탈로그와 같은 사례 파일(`tests/fixtures/page_templates_cases.json` 304건 등)로 결과가 같은지 검사한다. 상품 소개 MD 코멘트 사례(이름이 `woc17-`로 시작하는 묶음)도 이 파일에 있다. 카탈로그가 잘못되면 API가 시작하지 않는다.
+- 두 엔진은 같은 카탈로그와 같은 사례 파일(`tests/fixtures/page_templates_cases.json` 404건 등)로 결과가 같은지 검사한다. 상품 소개 MD 코멘트 사례(이름이 `woc17-`로 시작하는 묶음)도 이 파일에 있다. 카탈로그가 잘못되면 API가 시작하지 않는다.
 
 The shared catalog is `server/app/data/page_templates_v1.json`. JavaScript imports
 it directly; Python reads and validates it in `app.agents.page_templates`. API
@@ -173,7 +173,7 @@ Each axis row disappears when it has at most one eligible option. Non-axis
 sections retain the flat design list. `pickerHidden` only hides choices; it does
 not invalidate or migrate saved layouts. Existing same-kind/usage/photo-count
 and color-coverage rules still apply, followed by explicit `minPhotos` and
-`minColors` constraints.
+`minColors` constraints (no current design sets `minColors`).
 
 Styling and fit each offer 한 열, 2열 (at least two photos), and 큰 사진 아래 두 칸
 (at least three). Fit uses only 기본 decoration; styling offers 기본 and 액자. Their column

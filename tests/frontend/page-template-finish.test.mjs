@@ -51,49 +51,22 @@ for (const item of quality.metricCases)
 
 for (const item of quality.gridCases)
     test(`R4 fixed grid cell widths and placement: ${item.name}`, () => {
-        const input = inputOf(item.name);
-        const templateId = input.storyboard[0].pageSectionKey.split('.')[0];
-        const blocks = section(
-            assemblePage(input),
-            `${templateId}.color_product`,
-        );
-        const fronts = elements(blocks).filter(
-            (e) => e.type === "image" && /\.front\d*$/.test(e.slotKey),
-        );
-        assert.deepEqual(
-            fronts.map((e) => e.w),
-            item.xs.map(() => item.cellW),
-        );
-        assert.deepEqual(
-            fronts.map((e) => e.x),
-            item.xs,
-        );
-        assert.deepEqual(
-            fronts.map((e) => e.sourceBlockId),
-            input.storyboard
-                .filter(
-                    (c) =>
-                        /\.front\d*$/.test(c.slotKey || "") &&
-                        c.pageSectionKind === "color_product",
-                )
-                .map((c) => c.id),
-        );
-        const last = fronts.at(-1);
-        if (
-            (item.name.endsWith("3-mono") && !item.name.startsWith('common-')) ||
-            item.name === "common-four-color-grid"
-        )
-            assert.equal(last.x + last.w / 2, catalog.canvasWidth / 2);
-        assert.equal(
-            blocks.filter((b) => b.elements.some((e) => fronts.includes(e)))
-                .length,
-            Math.ceil(
-                fronts.length /
-                    catalog.designs[input.storyboard.find(card => card.pageSectionKind === 'color_product').pageDesignId]
-                        .layout.find((n) => n.type === "photoGrid").columns,
-            ),
-        );
-    });
+        const input = inputOf(item.name), tid = input.storyboard[0].pageSectionKey.split('.')[0];
+        const blocks = section(assemblePage(input), `${tid}.color_product`);
+        const photos = elements(blocks).filter(el => el.type === 'image');
+        const design = catalog.designs[input.storyboard.find(card => card.pageSectionKind === 'color_product').pageDesignId];
+        if (design.choiceAxes?.layout.id === 'column') assert.ok(photos.every(el => el.x === 0 && el.w === 1000));
+        else {
+            const rowCount = Math.ceil(photos.length / 3), base = Math.floor(photos.length / rowCount), extra = photos.length % rowCount;
+            let index = 0;
+            for (let row = 0; row < rowCount; row++) {
+                const count = base + (row >= rowCount - extra ? 1 : 0), width = Math.floor((888 - 24 * (count - 1)) / count);
+                assert.deepEqual(photos.slice(index, index + count).map(el => [el.x, el.w]), Array.from({ length: count }, (_, n) => [56 + n * (width + 24), width]));
+                index += count;
+            }
+        }
+        assert.deepEqual(photos.map(el => el.sourceBlockId), input.storyboard.filter(card => card.pageSectionKind === 'color_product' && card.source !== 'text').map(card => card.id));
+});
 
 for (const templateId of ["emo", "show"])
     for (const colorMode of ["mono", "point"])
@@ -107,7 +80,7 @@ for (const templateId of ["emo", "show"])
             const page = assemblePage(input);
             const dots = elements(
                 section(page, `${templateId}.color_product`),
-            ).filter((e) => e.type === "shape" && e.w === 10 && e.h === 10);
+            ).filter((e) => e.type === "shape" && e.w === 26 && e.h === 26);
             assert.ok(dots.length >= 3);
             const tokens = resolvePageTokens(
                 input.pageStyle,
@@ -133,99 +106,25 @@ for (const [templateId, widths] of [
     ["emo", [67, 55, 55]],
 ])
     test(`R2 fit pills keep FRONT/SIDE/BACK on one line with full padding: ${templateId}`, () => {
-        const input = inputOf(`${templateId}-2-mono`);
-        const rotation = inputOf(`woc20-${templateId}-wear-sets`).storyboard.find(card => card.pageSectionKey === `${templateId}.wear_fit`).spaceGroupId;
-        input.storyboard.filter(card => card.pageSectionKey === `${templateId}.wear_fit`).forEach(card => { card.spaceGroupId = rotation; });
-        const blocks = section(assemblePage(input), `${templateId}.wear_fit`);
-        const captions = elements(blocks).filter((e) =>
-            e.copyRole?.startsWith("cap."),
-        );
-        assert.deepEqual(
-            captions.map((e) => e.text),
-            templateId === 'show' ? ["FRONT", "SIDE", "BACK"] : ["Front", "Side", "Back"],
-        );
-        assert.deepEqual(
-            captions.map((e) => e.w),
-            widths,
-        );
-        for (const caption of captions) {
-            assert.equal(caption.style.size, 22);
-            assert.equal(caption.h, caption.style.lineHeight);
-            const pill = elements(blocks).find(
-                (e) =>
-                    e.shape === "rect" &&
-                    e.radius === 999 &&
-                    e.x === caption.x - 18 &&
-                    e.y === caption.y - 9,
-            );
-            assert.ok(pill);
-            assert.equal(pill.w, caption.w + 36);
-            assert.equal(pill.h, caption.h + 18);
-            assert.equal(
-                measureTextWidth(
-                    caption.text,
-                    1000,
-                    22,
-                    catalog.textMetrics,
-                    caption.style.tracking,
-                ),
-                caption.w,
-            );
-        }
-    });
+        const input = inputOf(`${templateId}-2-mono`), blocks = section(assemblePage(input), `${templateId}.wear_fit`);
+        assert.equal(elements(blocks).filter(el => el.copyRole?.startsWith('cap.')).length, 0);
+        assert.ok(elements(blocks).filter(el => el.type === 'image').every(el => el.x === 0 && el.w === 1000));
+        assert.equal(elements(blocks).find(el => el.copyRole === 'label').text.toUpperCase(), 'LOOKBOOK');
+});
 
 test("R3 stacked showroom facts follow the center axis and common columns stay left aligned", () => {
-    for (const templateId of ["show", "emo"]) {
-        const facts = elements(
-            section(
-                assemblePage(inputOf(templateId === 'emo' ? 'common-2-mono' : 'show-2-mono')),
-                `${templateId}.intro`,
-            ),
-        ).filter((e) => e.copyRole === "facts");
-        assert.ok(facts.length >= 6);
-        for (const fact of facts) {
-            assert.equal(
-                fact.style.align,
-                templateId === "show" ? "center" : "left",
-            );
-            if (templateId === "show") assert.equal(fact.x + fact.w / 2, 500);
-        }
+    for (const templateId of ['show', 'emo']) {
+        const facts = elements(section(assemblePage(inputOf(templateId === 'emo' ? 'common-2-mono' : 'show-2-mono')), `${templateId}.intro`)).filter(el => el.copyRole === 'facts');
+        assert.equal(facts.length, 6);
+        assert.ok(facts.every(el => el.style.align === 'left'));
+        assert.deepEqual(facts.filter(el => el.factPart === 'label').map(el => el.x), [56, 56, 56]);
     }
 });
 
 test("R6 showroom summary dots follow each first line and center the dot/text group", () => {
-    const els = elements(
-        section(assemblePage(inputOf("show-2-mono")), "show.intro"),
-    );
-    const summaries = els.filter((e) =>
-        /^summary\.\d+$/.test(e.copyRole || ""),
-    );
-    assert.equal(summaries.length, 3);
-    for (const text of summaries) {
-        const firstLine = wrapText(
-            text.text || text.placeholder,
-            text.w,
-            text.style.size,
-            catalog.textMetrics,
-            text.style.tracking,
-        )[0];
-        const textW = measureTextWidth(
-            firstLine,
-            text.w,
-            text.style.size,
-            catalog.textMetrics,
-            text.style.tracking,
-        );
-        const textStart = text.x + (text.w - textW) / 2;
-        const dot = els.find(
-            (e) =>
-                e.shape === "circle" &&
-                e.w === 6 &&
-                e.x === textStart - 22 &&
-                e.y + 3 === text.y + text.style.lineHeight / 2,
-        );
-        assert.ok(dot);
-        assert.equal((dot.x + textStart + textW) / 2, 500);
-        assert.equal(text.style.align, "center");
-    }
+    const block = section(assemblePage(inputOf('show-2-mono')), 'show.intro')[0];
+    assert.equal(block.elements.filter(el => /^summary\./.test(el.copyRole || '')).length, 0);
+    assert.equal(block.elements.find(el => el.copyRole === 'name').style.size, 54);
+    assert.equal(block.elements.find(el => el.copyRole === 'body').style.size, 30);
+    assert.equal(block.elements.filter(el => el.factPart === 'label').length, 3);
 });

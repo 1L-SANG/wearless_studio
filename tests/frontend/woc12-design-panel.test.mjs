@@ -25,7 +25,7 @@ const options=html=>[...html.matchAll(/<button\b([^>]*aria-pressed[^>]*)>([\s\S]
 for(const [kind,usage] of [['first'],['wear','styling'],['points'],['fabric']])test(`WOC12 ${kind}/${usage||''} uses fixed silver pictures and names only in accessibility/tooltips`,()=>{
  const blocks=board(),html=render(blocks,runOf(blocks,kind,usage));
  assert.match(html,/aria-label="디자인 선택"/);
- assert.equal((html.match(/data-design-illustration=/g)||[]).length,2);
+ assert.equal((html.match(/data-design-illustration=/g)||[]).length,kind==='first'?3:2);
  assert.doesNotMatch(html,/완성 모습|액자에 넣을 사진|data-frame-count|<image|<text|<tspan|designCheck|<small>기본/);
  for(const [,attrs,content] of options(html)){assert.match(attrs,/aria-label="[^"]+"/);assert.match(attrs,/title="[^"]+"/);assert.equal(content.replace(/<[^>]+>/g,'').trim(),'');}
 });

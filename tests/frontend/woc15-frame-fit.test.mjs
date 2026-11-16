@@ -16,7 +16,7 @@ for (const shape of ['square', 'landscape']) {
     const photo = block.elements.find(element => element.type === 'image' && !element.blur);
     assert.equal(photo.fit, 'contain');
     assert.equal(photo.src, `seller:${shape}`);
-    assert.deepEqual([photo.x, photo.y, photo.w, photo.h], [220, 301, 560, 747]);
+    assert.deepEqual([photo.x, photo.y, photo.w, photo.h], [220, 357, 560, 747]);
     assert.equal(photo.crop, undefined);
     assert.equal(block.elements.find(element => element.blur).fit, undefined, 'backdrop retains default cover');
   });
@@ -26,6 +26,6 @@ test('frame keeps known generated photo geometry while persisting its contain mo
   const [block] = assemblePage(inputFor('ai', 'generated:portrait', { width: 900, height: 1200 }));
   const photo = block.elements.find(element => element.type === 'image' && !element.blur);
   assert.equal(photo.fit, 'contain');
-  assert.deepEqual([photo.x, photo.y, photo.w, photo.h], [220, 301, 560, 747]);
+  assert.deepEqual([photo.x, photo.y, photo.w, photo.h], [220, 357, 560, 747]);
   assert.equal(photo.crop, undefined);
 });

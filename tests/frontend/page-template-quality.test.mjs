@@ -203,29 +203,13 @@ test("C3 catalog validates separate padding and rejects malformed geometry in bo
     assert.equal(validateCatalog(catalog), catalog);
 });
 test("C4 section gaps are locked canvas rectangles without adding blocks", () => {
-    const page = assemblePage(inputOf("show-2-mono"));
-    for (const key of ["show.fabric", "show.points"]) {
-        const blocks = section(page, key),
-            last = blocks.at(-1),
-            gap = last.elements.at(-1);
-        assert.equal(
-            last.bg,
-            catalog.templates.find((t) => t.id === "show").colors.invertBg,
-        );
-        assert.equal(gap.pageSectionGap, true);
-        assert.equal(gap.locked, true);
-        assert.equal(gap.fill, catalog.canvasColor);
-        assert.equal(gap.y + gap.h, last.h);
-        assert.equal(gap.w, 1000);
-        assert.equal(
-            blocks.length,
-            new Set(
-                elements(blocks)
-                    .filter((e) => e.type === "image")
-                    .map((e) => e.sourceBlockId),
-            ).size,
-        );
-    }
+    const input = inputOf('show-2-mono');
+    input.storyboard = input.storyboard.filter(card => card.pageSectionKind === 'intro').map(card => ({ ...card, pageDesignId: 'T06-COMMENT-01' }));
+    const blocks = section(assemblePage(input), 'show.intro'), last = blocks.at(-1), gap = last.elements.at(-1);
+    assert.equal(last.bg, catalog.templates.find(t => t.id === 'show').colors.invertBg);
+    assert.equal(gap.pageSectionGap, true); assert.equal(gap.locked, true);
+    assert.equal(gap.fill, catalog.canvasColor); assert.equal(gap.w, 1000);
+    assert.equal(gap.y + gap.h, last.h); assert.equal(blocks.length, 1);
 });
 test("C5 photoStack/photoGrid/pointRows apply their trailing gap once", () => {
     for (const [name, id, type, role] of [
@@ -254,7 +238,7 @@ test("C5 photoStack/photoGrid/pointRows apply their trailing gap once", () => {
             const b = assemblePage(inputOf(name));
             const find = (page) =>
                 texts(page).find((e) => e.text === "after repeat");
-            assert.equal(find(b).y - find(a).y, 40);
+            assert.equal(find(b).y - find(a).y, node.type === 'photoGrid' && node.balancedRows || design.kind === 'wear' ? 0 : 40);
             assert.equal(a.length, b.length);
         } finally {
             node.gap = oldGap;
@@ -294,10 +278,10 @@ test("C7 inline/columns/stacked tables show confirmed facts and no invented SIZE
                         (e) =>
                             e.factLabel === "COLOR" && e.factPart === "value",
                     );
-                assert.equal(label.style.size, 18);
+                assert.equal(label.style.size, 28);
                 assert.equal(label.style.align, layout === 'columns' ? 'left' : 'center');
                 if (layout === "columns") {
-                    assert.equal(value.x - label.x, 150);
+                    assert.equal(value.x - label.x, 180);
                     assert.equal(value.y, label.y);
                 } else {
                     assert.equal(value.x, label.x);
@@ -444,7 +428,7 @@ test("C14 color dots use swatch values and sit next to measured captions", () =>
         )) {
             const index = Number(text.copyRole.split(".")[1]);
             const dot = els.find(
-                (e) => e.type === "shape" && e.w === 10 && e.x === text.x - 18,
+                (e) => e.type === "shape" && e.w === 26 && e.x === text.x - 36,
             );
             assert.equal(
                 dot.fill,
@@ -635,7 +619,7 @@ test("C2 max hugging also works without a visible background and text-width rule
             },
         );
 });
-test("C16 optional English color roles use the actual name or remain hidden", () => {
+test("WOC23 English color roles use seller English or the exact Korean name", () => {
     const grid = catalog.designs["CP-EMO-01"].layout.find(
         (n) => n.type === "photoGrid",
     );
@@ -656,7 +640,7 @@ test("C16 optional English color roles use the actual name or remain hidden", ()
             const english = texts(assemblePage(input)).find(
                 (e) => e.copyRole === "colors.0.en",
             );
-            assert.equal(english?.text, name === "Mint" ? "Mint" : undefined);
+            assert.equal(english?.text, "MINT");
         }
     } finally {
         grid.captions.pop();

@@ -28,14 +28,14 @@ def test_rules_frame_copy_and_follow_group_ink(color):
     els = first(value)
     rules = [e for e in els if e['type'] == 'shape']
     assert [(e['x'], e['y'], e['w'], e['h'], e['fill']) for e in rules] == [
-        (309, 522, 382, 1.5, color), (309, 726.5, 382, 1.5, color)]
+        (309, 510.5, 382, 1.5, color), (309, 738, 382, 1.5, color)]
     texts = [e for e in els if e.get('copyRole')]
     assert texts[0]['y'] - rules[0]['y'] - rules[0]['h'] == 18
     assert rules[1]['y'] - texts[-1]['y'] - texts[-1]['h'] == 18
     assert all(e['style']['color'] == color for e in texts)
 
 
-@pytest.mark.parametrize('position,label_y,rule_y', [('center', 541.5, 522), ('top', 119.5, 100), ('bottom', 963.5, 944)])
+@pytest.mark.parametrize('position,label_y,rule_y', [('center', 530, 510.5), ('top', 119.5, 100), ('bottom', 940.5, 921)])
 def test_saved_position_moves_copy_rules_and_sampling_together(position, label_y, rule_y):
     value = case_input('emo-2-mono')
     value['cutResults'][0]['overlayTextPositions'] = {KEY: position}
@@ -45,14 +45,14 @@ def test_saved_position_moves_copy_rules_and_sampling_together(position, label_y
     plan = next(p for p in collect_input_regions(value) if p['key'] == KEY)
     assert plan['lines'][0]['region']['top'] == label_y / 1250
     assert [p['position'] for p in plan['positionCandidates']] == ['center', 'top', 'bottom']
-    assert [p['lines'][0]['region']['top'] for p in plan['positionCandidates']] == [.4332, .0956, .7708]
+    assert [p['lines'][0]['region']['top'] for p in plan['positionCandidates']] == [.424, .0956, .7524]
 
 
 @pytest.mark.parametrize('position', [None, 'left', {'y': 0}, 10])
 def test_missing_or_invalid_position_stays_centered(position):
     value = case_input('emo-2-mono')
     value['cutResults'][0]['overlayTextPositions'] = {KEY: position}
-    assert next(e for e in first(value) if e.get('copyRole') == 'label')['y'] == 541.5
+    assert next(e for e in first(value) if e.get('copyRole') == 'label')['y'] == 530
 
 
 def paint_mixed(image, top, bottom, low=0, high=255):
@@ -74,7 +74,7 @@ def test_first_passing_position_uses_exact_line_pixels(bad, position, background
     assert len(result['overlayTextLines']) == 3
     assert all(style == {'color': color, 'shade': False} for style in result['overlayTextLines'].values())
     value['cutResults'][0].update(result)
-    assert next(e for e in first(value) if e.get('copyRole') == 'label')['y'] == {'center': 541.5, 'top': 119.5, 'bottom': 963.5}[position]
+    assert next(e for e in first(value) if e.get('copyRole') == 'label')['y'] == {'center': 530, 'top': 119.5, 'bottom': 940.5}[position]
     assert all(e['fill'] == color for e in first(value) if e['type'] == 'shape')
 
 

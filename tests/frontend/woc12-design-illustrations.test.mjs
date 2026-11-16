@@ -31,12 +31,16 @@ const variants = [
     [0, 0, 150, 130, 0, paper], [14, 10, 122, 88, 2, photo],
     [14, 106, 46, 4.6, 2.3, title], [14, 116, 72, 2.6, 1.3, text],
   ] },
+  { kind: 'first', designId: 'P01-SHOW-COMMENT-01', shape: 'first-comment-board', rects: [
+    [0, 0, 150, 130, 0, paper], [14, 10, 122, 78, 2, photo], [14, 88, 122, 36, 0, title],
+    [22, 94, 24, 2, 1, paper], [22, 101, 64, 4.6, 2.3, paper], [22, 112, 92, 2.6, 1.3, paper],
+  ] },
   { kind: 'wear', decoration: 'basic', designId: 'P02-D01', shape: 'wear-basic', rects: [
     [0, 0, 150, 130, 0, paper], [24, 10, 102, 62, 2, photo], [24, 76, 102, 54, 2, photo],
   ] },
   { kind: 'wear', decoration: 'frame', designId: 'WEAR-STYLING-FRAME-COLUMN-02', shape: 'wear-frame', rects: [
     [0, 0, 150, 130, 0, paper], [0, 0, 150, 130, 0, outer], [30, 10, 90, 110, 0, paper],
-    [58, 17, 34, 2.4, 1.2, text], [38, 25, 74, 40, 2, photo], [38, 69, 74, 40, 2, photo], [62, 113, 26, 2, 1, text],
+    [48, 17, 54, 4.6, 2.3, title], [62, 25, 26, 2, 1, text], [38, 35, 74, 35, 2, photo], [38, 74, 74, 35, 2, photo],
   ] },
   { kind: 'points', designId: 'PT-PHOTO-CARD-01', shape: 'points-card', rects: [
     [0, 0, 150, 130, 0, pale], [24, 12, 102, 106, 0, paper], [24, 12, 102, 70, 2, photo],
@@ -51,10 +55,9 @@ const variants = [
     [14, 40, 58, 58, 2, photo], [82, 45, 54, 2.6, 1.3, text], [82, 52, 46, 2.6, 1.3, text],
     [82, 59, 50, 2.6, 1.3, text], [82, 78, 40, 2.6, 1.3, text], [82, 86, 48, 2, 1, title], [14, 110, 90, 2.6, 1.3, text],
   ] },
-  { kind: 'fabric', designId: 'T03-D06', shape: 'fabric-overlay', rects: [
-    [0, 0, 150, 130, 0, paper], [31, 10, 88, 110, 2, photo],
-    [39, 20, 46, 4.6, 2.3, paper], [39, 30, 56, 2.6, 1.3, paper],
-    [39, 87, 44, 2.6, 1.3, paper], [39, 98, 63, 2.6, 1.3, paper], [39, 105, 52, 2.6, 1.3, paper],
+  { kind: 'fabric', designId: 'T03-D06', shape: 'fabric-outside', rects: [
+    [0, 0, 150, 130, 0, paper], [14, 12, 34, 2.6, 1.3, text], [14, 26, 122, 64, 2, photo],
+    [14, 100, 70, 4.6, 2.3, title], [14, 111, 42, 2, 1, text], [14, 119, 110, 2.6, 1.3, text], [14, 125, 94, 2.6, 1.3, text],
   ] },
 ];
 const rectsOf = html => [...html.matchAll(/<rect\b([^>]*)>/g)].map(([, attributes]) => {
@@ -70,7 +73,7 @@ for (const variant of variants) test(`WOC12 ${variant.shape} renders its fixed s
 });
 
 for (const [kind, base, paired] of [
-  ['first', 'P01-D09', 'P01-D09-G'], ['first', 'P01-SHOW-01', 'P01-SHOW-01-G'],
+  ['first', 'P01-D09', 'P01-D09-G'], ['first', 'P01-SHOW-COMMENT-01', 'P01-SHOW-COMMENT-01-G'], ['first', 'P01-SHOW-01', 'P01-SHOW-01-G'],
   ['fabric', 'T03-D01', 'T03-D01-P'], ['fabric', 'T03-D06', 'T03-D06-P'],
 ]) test(`WOC12 ${paired} keeps the same illustration as its base design`, () => {
   assert.equal(render({ kind, designId: paired }), render({ kind, designId: base }));

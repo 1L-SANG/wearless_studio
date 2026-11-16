@@ -20,7 +20,7 @@ test('WOC6 layouts remain available alongside current points choices and saved h
   assert.deepEqual(visible('wear', 'fit'), ['WEAR-FIT-2COL-01', 'WEAR-FIT-COLUMN-01', 'WEAR-FIT-HERO-01']);
   assert.deepEqual(visible('color_product'), ['CP-COLUMN-01', 'CP-EMO-01']);
   assert.deepEqual(visible('points'), ['PT-PHOTO-CARD-01', 'PT-TEXT-PHOTO-01']);
-  assert.deepEqual(visible('first'), ['P01-D09', 'P01-SHOW-01']);
+  assert.deepEqual(visible('first'), ['P01-D09', 'P01-SHOW-01', 'P01-SHOW-COMMENT-01']);
   assert.deepEqual(visible('fabric'), ['T03-D01', 'T03-D06']);
   assert.deepEqual(visible('review'), ['I09-D06']);
   assert.deepEqual(visible('faq'), ['T08-D07']);
@@ -47,7 +47,7 @@ test('wear and color choices retain axes and eligibility while points choices st
     assert.equal(catalog.designs[`${prefix}-2COL-01`].minPhotos, 2);
     assert.equal(catalog.designs[`${prefix}-HERO-01`].minPhotos, 3);
   }
-  assert.equal(catalog.designs['CP-EMO-01'].minColors, 2);
+  assert.equal(catalog.designs['CP-EMO-01'].minColors, undefined);
 });
 
 test('validators accept the photoFlow contract and reject unsupported row policies', () => {

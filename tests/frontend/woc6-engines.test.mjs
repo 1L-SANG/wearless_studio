@@ -54,7 +54,7 @@ for (const [pattern, expected] of [
     Array.from({ length: 8 }, (_, i) => `colorName.${i}`));
   assert.deepEqual(blocks.flatMap(block => block.elements).filter(el => el.copyRole?.startsWith('cap.')).map(el => el.text),
     Array(8).fill(''));
-  for (const block of blocks) for (const image of photos([block])) assert.equal(image.w, photos([block]).length === 1 ? 880 : 428);
+  for (const block of blocks) for (const image of photos([block])) assert.equal(image.w, photos([block]).length === 1 ? 880 : 440);
   parityCases.push({ design: custom, input });
 });
 
@@ -163,7 +163,7 @@ test('catalog studio layouts retain photo IDs and blank captions outside rotatio
       pageSectionUsage: 'fit', slotKey: `wear_fit.${card.direction}`, spaceGroupId: 'studio' }));
     const blocks = assemblePage(input);
     assert.deepEqual(photos(blocks).map(el => el.sourceBlockId), ['photo-0', 'photo-1', 'photo-2']);
-    assert.deepEqual(blocks.flatMap(block => block.elements).filter(el => el.copyRole?.startsWith('cap.')).map(el => el.text), Array(3).fill(''));
+    assert.deepEqual(blocks.flatMap(block => block.elements).filter(el => el.copyRole?.startsWith('cap.')).map(el => el.text), []);
     parityCases.push({ design: catalog.designs[id], input });
   }
 });
@@ -188,17 +188,14 @@ test('catalog point variants use real source aspect and retain each designed cop
 test('catalog color layouts render only supplied front/back cuts with their color names', () => {
   for (const id of ['CP-COLUMN-01', 'CP-EMO-01']) for (const withBack of [false, true]) {
     const input = inputFor(withBack ? 3 : 2);
-    input.storyboard.forEach((card, i) => Object.assign(card, { pageDesignId: id, pageSectionKind: 'color_product',
-      pageSectionKey: 'emo.color_product', cutType: 'product', shot: 'ghost', colorId: i === 1 ? 'other' : 'base',
-      direction: i === 2 ? 'back' : 'front', slotKey: `color_product.${i === 2 ? 'back' : 'front'}.${card.colorId}` }));
-    // Slot identity follows the assigned color, independently of original card order.
+    input.storyboard.forEach((card, index) => Object.assign(card, { pageDesignId: id, pageSectionKind: 'color_product', pageSectionKey: 'emo.color_product', cutType: 'product', shot: 'ghost', colorId: index === 1 ? 'other' : 'base', direction: index === 2 ? 'back' : 'front' }));
     input.storyboard.forEach(card => { card.slotKey = `color_product.${card.direction}.${card.colorId}`; });
-    const blocks = assemblePage(input);
+    const blocks = assemblePage(input), elements = blocks.flatMap(block => block.elements);
     assert.deepEqual(photos(blocks).map(el => el.sourceBlockId), withBack ? ['photo-0', 'photo-1', 'photo-2'] : ['photo-0', 'photo-1']);
-    assert.deepEqual(blocks.flatMap(block => block.elements).filter(el => /^colors\.\d+\.name$/.test(el.copyRole)).map(el => el.text),
-      withBack ? ['블랙', '화이트', '블랙'] : ['블랙', '화이트']);
-    assert.equal(blocks.flatMap(block => block.elements).filter(el => el.copyRole === 'cap.back').length, withBack ? 1 : 0);
-    if (id === 'CP-COLUMN-01') assert.ok(photos(blocks).every(el => el.w === 888));
+    const names = elements.filter(el => /^colors\.\d+\.name$/.test(el.copyRole || ''));
+    assert.deepEqual(names.map(el => el.text), id === 'CP-COLUMN-01' || !withBack ? ['블랙 BLACK', '화이트 WHITE'] : ['블랙 BLACK', '화이트 WHITE', '블랙 BLACK']);
+    assert.equal(elements.filter(el => el.copyRole === 'cap.back').length, 0);
+    if (id === 'CP-COLUMN-01') assert.ok(photos(blocks).every(el => el.w === 1000));
     parityCases.push({ design: catalog.designs[id], input });
   }
 });
@@ -238,7 +235,7 @@ for (const pattern of ['twoColumn', 'heroPair']) test(`${pattern} retains middle
 
 test('curated wildcard columns include loose photos in place with their normal ratio and captions', () => {
   for (const [id, kind, size] of [
-    ['P02-D01', 'wear', [888, 1110]], ['WEAR-FIT-COLUMN-01', 'wear', [888, 1110]],
+    ['P02-D01', 'wear', [1000, 1250]], ['WEAR-FIT-COLUMN-01', 'wear', [1000, 1250]],
     ['PT-COLUMN-01', 'points', [888, 1332]], ['P06-D01', 'points', [532, 798]],
     ['PT-COLUMN-CARD-01', 'points', [840, 1260]], ['PT-BELOW-CARD-01', 'points', [532, 798]],
   ]) {
@@ -250,8 +247,8 @@ test('curated wildcard columns include loose photos in place with their normal r
     const blocks = assemblePage(input), text = blocks.flatMap(block => block.elements);
     assert.deepEqual(photos(blocks).map(el => el.sourceBlockId), ['photo-0', 'photo-1', 'photo-2'], id);
     assert.deepEqual(photos(blocks).map(el => [el.w, el.h]), [size, size, size], id);
-    if (id === 'P02-D01') assert.deepEqual(text.filter(el => el.copyRole?.startsWith('colorName.')).map(el => el.copyRole), ['colorName.0', 'colorName.1', 'colorName.2']);
-    else if (kind === 'wear') assert.deepEqual(text.filter(el => el.copyRole?.startsWith('cap.')).map(el => el.text), Array(3).fill(''));
+    if (id === 'P02-D01') assert.deepEqual(text.filter(el => el.copyRole?.startsWith('colorName.')).map(el => el.copyRole), []);
+    else if (kind === 'wear') assert.deepEqual(text.filter(el => el.copyRole?.startsWith('cap.')).map(el => el.text), []);
     else assert.deepEqual(text.filter(el => /^items\.\d+\.name$/.test(el.copyRole)).map(el => el.text), ['단추', '소매', '밑단']);
     parityCases.push({ design: catalog.designs[id], input });
   }
@@ -266,25 +263,21 @@ test('saved hidden wildcard design retains its existing null-slot overflow order
   assert.deepEqual(photos(blocks).map(el => [el.sourceBlockId, el.w, el.h]), [
     ['photo-0', 1000, 1333], ['photo-2', 1000, 1333], ['photo-1', 1000, 1500],
   ]);
-  assert.deepEqual(blocks.flatMap(block => block.elements).filter(el => el.copyRole?.startsWith('colorName.')).map(el => el.copyRole), ['colorName.0', 'colorName.1']);
+  assert.deepEqual(blocks.flatMap(block => block.elements).filter(el => el.copyRole?.startsWith('colorName.')).map(el => el.copyRole), []);
   parityCases.push({ design: catalog.designs['P02-D02'], input });
 });
 
 test('curated color columns match swatch and copy index to the actual front and back photo color', () => {
-  for (const [colors, cards, names, fills, roles] of [
-    [[{ id: 'black', name: '블랙', swatchId: 'black', isBase: true }, { id: 'white', name: '화이트', swatchId: 'white' }],
-      [['white', 'front'], ['black', 'back']], ['화이트', '블랙'], ['#ffffff', '#15141a'], ['colors.1.name', 'colors.0.name']],
-    [[{ id: 'white', name: '화이트', swatchId: 'white' }, { id: 'black', name: '블랙', swatchId: 'black', isBase: true }],
-      [['black', 'front'], ['white', 'front'], ['black', 'back']], ['블랙', '화이트', '블랙'], ['#15141a', '#ffffff', '#15141a'], ['colors.1.name', 'colors.0.name', 'colors.1.name']],
-  ]) {
-    const input = inputFor(cards.length); input.product = { ...product, colors };
-    input.storyboard.forEach((card, i) => Object.assign(card, { pageDesignId: 'CP-COLUMN-01', pageSectionKind: 'color_product',
-      pageSectionKey: 'emo.color_product', cutType: 'product', shot: 'ghost', colorId: cards[i][0], direction: cards[i][1], slotKey: `color_product.${cards[i][1]}.${cards[i][0]}` }));
-    const elements = assemblePage(input).filter(block => block.pageSectionKey).flatMap(block => block.elements);
-    const captions = elements.filter(el => /^colors\.\d+\.name$/.test(el.copyRole));
-    assert.deepEqual(captions.map(el => el.text), names);
-    assert.deepEqual(captions.map(el => el.copyRole), roles);
-    assert.deepEqual(elements.filter(el => el.type === 'shape' && el.shape === 'circle' && el.w === 10).map(el => el.fill), fills);
+  for (const colors of [product.colors.map((color, index) => ({ ...color, swatchId: index ? 'white' : 'black' })), product.colors.map((color, index) => ({ ...color, swatchId: index ? 'white' : 'black' })).reverse()]) {
+    const input = inputFor(3); input.product = { ...product, colors };
+    input.storyboard.forEach((card, index) => Object.assign(card, { pageDesignId: 'CP-COLUMN-01', pageSectionKind: 'color_product', pageSectionKey: 'emo.color_product', cutType: 'product', shot: 'ghost', colorId: index === 1 ? 'other' : 'base', direction: index === 2 ? 'back' : 'front' }));
+    input.storyboard.forEach(card => { card.slotKey = `color_product.${card.direction}.${card.colorId}`; });
+    const elements = assemblePage(input).filter(block => block.pageSectionKey).flatMap(block => block.elements), names = elements.filter(el => /^colors\.\d+\.name$/.test(el.copyRole || ''));
+    assert.deepEqual(names.map(el => el.text), colors.map(color => color.name === '블랙' ? '블랙 BLACK' : '화이트 WHITE'));
+    assert.deepEqual(names.map(el => el.copyRole), colors.map((_, index) => `colors.${index}.name`));
+    assert.deepEqual(elements.filter(el => el.shape === 'circle' && el.w === 26).map(el => el.fill), colors.map(color => catalog.swatchHex[color.swatchId]));
+    const fronts = elements.filter(el => el.type === 'image' && el.slotKey.includes('.front'));
+    assert.deepEqual(fronts.map(el => input.storyboard.find(card => card.id === el.sourceBlockId).colorId), colors.map(color => color.id));
     parityCases.push({ design: catalog.designs['CP-COLUMN-01'], input });
   }
 });

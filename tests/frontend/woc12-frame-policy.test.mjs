@@ -160,9 +160,9 @@ test('WOC12 actual design action rejects nonautomatic counts, changes only the f
 test('WOC12 fit, color, flat sections and first attachments keep their choices and cut counts', () => {
   const blocks = seedStoryboard(product, analysis);
   const expected = {
-    first: ['P01-D09', 'P01-SHOW-01'], color_product: ['CP-COLUMN-01', 'CP-EMO-01'],
+    first: ['P01-D09', 'P01-SHOW-01', 'P01-SHOW-COMMENT-01'], color_product: ['CP-COLUMN-01', 'CP-EMO-01'],
     points: ['PT-PHOTO-CARD-01', 'PT-TEXT-PHOTO-01'], review: ['I09-D06'],
-    intro: ['T01-D07', 'T06-D01'], for_you: ['T08-D01'], faq: ['T08-D07'], fabric: ['T03-D01', 'T03-D06'],
+    intro: ['T01-D07', 'T06-D01', 'T06-COMMENT-01'], for_you: ['T08-D01'], faq: ['T08-D07'], fabric: ['T03-D01', 'T03-D06'],
   };
   for (const run of sectionRuns(blocks).filter(run => run.kind !== 'wear' || run.usage === 'fit')) {
     const offered = sectionDesignChoices(run, { storyboard: blocks, product });

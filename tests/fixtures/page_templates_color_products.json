@@ -1,0 +1,12 @@
+{
+  "cases": [
+    { "id": "all-known", "names": ["블랙", "아이보리", "그레이"], "english": ["BLACK", "IVORY", "GRAY"] },
+    { "id": "one-unknown", "names": ["블랙", "아이보리", "자두", "그레이"], "english": null },
+    { "id": "seller-english-known", "names": ["블랙", "Dusty Blue", "아이보리"], "english": ["BLACK", "DUSTY BLUE", "IVORY"] },
+    { "id": "seller-english-unknown", "names": ["블랙", "Dusty Blue", "자두"], "english": null },
+    { "id": "single-known", "names": ["스카이블루"], "english": ["SKY BLUE"] },
+    { "id": "single-unknown", "names": ["자두"], "english": null },
+    { "id": "single-english", "names": ["navy"], "english": ["NAVY"] },
+    { "id": "unknown-without-photo", "names": ["블랙", "아이보리", "자두"], "english": null, "renderColorIndexes": [0, 1] }
+  ]
+}

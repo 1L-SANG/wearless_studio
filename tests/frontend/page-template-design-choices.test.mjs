@@ -42,9 +42,9 @@ for (const templateId of ['emo', 'show']) test(`${templateId}: candidates preser
 
 test('saved first ghost pairs remain usable while retired first and SNS layouts stay out of choices', () => {
   const blocks = board('emo'), runs = sectionRuns(blocks);
-  assert.deepEqual(choices(blocks, runs[0]).map(design => design.id), ['P01-D09', 'P01-SHOW-01']);
+  assert.deepEqual(choices(blocks, runs[0]).map(design => design.id), ['P01-D09', 'P01-SHOW-01', 'P01-SHOW-COMMENT-01']);
   const show = board('show');
-  assert.deepEqual(choices(show, sectionRuns(show)[0]).map(design => design.id), ['P01-SHOW-01', 'P01-D09']);
+  assert.deepEqual(choices(show, sectionRuns(show)[0]).map(design => design.id), ['P01-SHOW-01', 'P01-D09', 'P01-SHOW-COMMENT-01']);
   assert.equal(changeTemplateSectionDesign(blocks, runs[0].key, 'P01-D11', { product }), blocks);
   const base = blocks.map(block => block.pageSectionKey === runs[0].key ? { ...block, pageDesignId: 'P01-D11' } : block);
   validateStoryboardV4(base);
@@ -56,7 +56,7 @@ test('saved first ghost pairs remain usable while retired first and SNS layouts 
   assert.equal(pairedRun.designId, 'P01-D01');
   assert.equal(sectionDesignPhotoCount(pairedRun, pairedRun.designId, paired), 2);
   assert.equal(sectionDesignGenerationCount(pairedRun, pairedRun.designId, paired, product), 1);
-  assert.deepEqual(choices(paired, pairedRun).map(design => design.id), ['P01-D09', 'P01-SHOW-01']);
+  assert.deepEqual(choices(paired, pairedRun).map(design => design.id), ['P01-D09', 'P01-SHOW-01', 'P01-SHOW-COMMENT-01']);
   assert.equal(changeTemplateSectionDesign(blocks, runs[0].key, 'P01-D01', { product }), blocks);
   const withSNS = addTemplateSection(blocks, product, analysis('emo'), 'sns');
   const sns = sectionRuns(withSNS).find(run => run.kind === 'sns');

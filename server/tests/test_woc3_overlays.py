@@ -34,16 +34,16 @@ def test_base_one_photo_full_scrim_and_bottom_alternating_white_bubbles(kind):
     assert (photos[0]["w"], photos[0]["h"]) == (1000, 1250)
     scrim = next((el for el in content if el.get("fill") == "#000000"), None)
     assert scrim is not None
-    assert [scrim[key] for key in ("x", "y", "w", "h", "opacity")] == [0, 0, 1000, 1250, .3]
+    assert [scrim[key] for key in ("x", "y", "w", "h", "opacity")] == [0, photos[0]["y"], 1000, 1250, .3]
     bubbles = [el for el in content if el.get("opacity") == .96]
     assert len(bubbles) == 3
     for index, bubble in enumerate(bubbles):
         assert bubble["fill"] == "#ffffff" and bubble["w"] <= 731
         assert bubble["x"] + bubble["w"] == 930 if index % 2 else bubble["x"] == 70
-        assert 625 < bubble["y"] and bubble["y"] + bubble["h"] <= 1162.5
+        assert photos[0]["y"] + 625 < bubble["y"] and bubble["y"] + bubble["h"] <= photos[0]["y"] + 1162.5
         assert bubble["boxShadow"] == "0px 3px 12px rgba(0, 0, 0, 0.18)"
-    assert bubbles[-1]["y"] + bubbles[-1]["h"] == 1162.5
-    assert next(el for el in content if el.get("copyRole") == "label")["style"]["color"] == "#ffffff"
+    assert bubbles[-1]["y"] + bubbles[-1]["h"] == photos[0]["y"] + 1162.5
+    assert next(el for el in content if el.get("copyRole") == "label")["style"]["color"] == CATALOG["templates"][0]["colors"]["ink"]
     plans = collect_input_regions(value)
     assert len(plans) == (1 if kind == 'faq' else 0)
     if plans:
@@ -58,24 +58,24 @@ def test_gradient_alternative_uses_the_same_one_photo_with_white_copy(kind):
     content = section_elements(value)
     assert len([el for el in content if el["type"] == "image"]) == 1
     [scrim] = [el for el in content if el["type"] == "shape"]
-    assert [scrim[key] for key in ("x", "y", "w", "h")] == [0, 525, 1000, 725]
+    assert [scrim[key] for key in ("x", "y", "w", "h")] == [0, next(el["y"] for el in content if el["type"] == "image") + 525, 1000, 725]
     assert scrim["fill"] == "linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.72) 100%)"
-    assert all(el["style"]["color"] == "#ffffff" for el in content if el["type"] == "text")
+    assert all(el["style"]["color"] == "#ffffff" for el in content if el["type"] == "text" and el.get("copyRole") != "label")
     assert collect_input_regions(value) == []
 
 
 def test_generic_catalog_scrim_controls_geometry_and_fixed_white_suppresses_sampling(monkeypatch):
     design = deepcopy(CATALOG["designs"]["I09-D06"])
     design["id"] = "GENERIC-OVERLAY"
-    design["layout"][0].update(aspect="4/5", scrim={"color": "#123456", "opacity": .4, "heightRatio": .5, "gradient": True})
-    for group in design["layout"][0]["groups"]:
+    next(node for node in design["layout"] if node["type"] == "overlay").update(aspect="4/5", scrim={"color": "#123456", "opacity": .4, "heightRatio": .5, "gradient": True})
+    for group in next(node for node in design["layout"] if node["type"] == "overlay")["groups"]:
         group["textColor"] = "#ffffff"
     monkeypatch.setitem(CATALOG["designs"], design["id"], design)
     value = overlay_input("review", design["id"])
     content = section_elements(value)
     scrim = next((el for el in content if el.get("fill", "").startswith("linear-gradient(")), None)
     assert scrim is not None
-    assert [scrim["y"], scrim["h"]] == [625, 625]
+    assert [scrim["y"], scrim["h"]] == [next(el["y"] for el in content if el["type"] == "image") + 625, 625]
     assert scrim["fill"] == "linear-gradient(180deg, rgba(18, 52, 86, 0) 0%, rgba(18, 52, 86, 0.4) 100%)"
     assert collect_input_regions(value) == []
     with Image.new("RGB", (40, 50), "white") as image:
@@ -94,7 +94,7 @@ def test_generic_catalog_scrim_controls_geometry_and_fixed_white_suppresses_samp
 ])
 def test_generic_paint_validation_rejects_invalid_data(prop, value, pattern):
     catalog = deepcopy(CATALOG)
-    overlay = catalog["designs"]["I09-D06"]["layout"][0]
+    overlay = next(node for node in catalog["designs"]["I09-D06"]["layout"] if node["type"] == "overlay")
     target = overlay if prop == "scrim" else next(node for node in overlay["groups"][0]["nodes"] if node["type"] == "list")
     target[prop] = value
     with pytest.raises(ValueError, match=pattern):
@@ -103,6 +103,6 @@ def test_generic_paint_validation_rejects_invalid_data(prop, value, pattern):
 
 def test_generic_group_fixed_text_color_validation():
     catalog = deepcopy(CATALOG)
-    catalog["designs"]["I09-D06"]["layout"][0]["groups"][0]["textColor"] = "white"
+    next(node for node in catalog["designs"]["I09-D06"]["layout"] if node["type"] == "overlay")["groups"][0]["textColor"] = "white"
     with pytest.raises(ValueError, match="overlay text color"):
         validate_catalog(catalog)

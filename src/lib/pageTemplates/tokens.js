@@ -61,7 +61,7 @@ export function resolvePageTokens(
 }
 
 export function sectionTokens(tokens, section, catalog = pageTemplatesCatalog) {
-    if (!section.block?.invert || tokens.template.id !== "show") return tokens;
+    if (!section.block?.invert) return tokens;
     const colors = {
         ...tokens.colors,
         ink: tokens.colors.invertInk,

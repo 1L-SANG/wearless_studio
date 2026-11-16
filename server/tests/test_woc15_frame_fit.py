@@ -18,6 +18,6 @@ def test_frame_preserves_contain_and_existing_geometry(source, src, meta):
     photo = next(element for element in blocks[0]["elements"] if element["type"] == "image" and not element.get("blur"))
     assert photo.get("fit") == "contain"
     assert photo["src"] == src
-    assert [photo[key] for key in ("x", "y", "w", "h")] == [220, 301, 560, 747]
+    assert [photo[key] for key in ("x", "y", "w", "h")] == [220, 357, 560, 747]
     assert "crop" not in photo
     assert "fit" not in next(element for element in blocks[0]["elements"] if element.get("blur"))

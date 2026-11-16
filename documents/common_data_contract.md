@@ -654,32 +654,34 @@ GenerationExample {
 | `schemaVersion`, `catalogVersion` | 파일 형식 버전과 내용 버전. `PageStyle.catalogVersion`은 `catalogVersion`과 같아야 한다 |
 | `canvasWidth` | 페이지 기준 폭 1000. 카탈로그 검사가 `schemaVersion: 1`과 함께 이 값을 확인한다 |
 | `defaults` | `{ templateId: 'emo', fontStyle: 'template', colorMode: 'mono' }`. PageStyle 기본값 |
-| `templates[]` | 고를 수 있는 템플릿 두 개, `emo`(감성형)와 `show`(쇼룸형). 각 템플릿은 글꼴(`fonts`), 색(`colors`), 간격, 기본 섹션 순서(`sections`), 섹션 추가 때 쓰는 정의(`addPlacements`), 미리보기를 가진다 |
+| `templates[]` | 고를 수 있는 템플릿 두 개, `emo`(감성형)와 `show`(쇼룸형). 각 템플릿은 글꼴(`fonts`), 색(`colors`), 간격(`spacing`, 사진 사이 `photoGap` 포함), 역할별 글자 크기(`typography`: `label`, `productName`, `title`, `intro`, `body`, `small`), 색 이름 꼴(`colorNames`: `englishOnly`, 색 점 크기와 간격), 기본 섹션 순서(`sections`), 섹션 추가 때 쓰는 정의(`addPlacements`), 미리보기를 가진다 |
 | `templates[].sections[]` | `instanceKey`, `kind`, `designId`(기본 디자인), `usage`(wear만), `presence`(`optional`은 기본 콘티에 넣지 않음), `photoSlots[]` |
 | `photoSlots[]` | `slotKey`, `fill`(`generate`는 AI 카드, `reuse`는 같은 콘티의 다른 사진 재사용), `count`, `color`(`base`, `each`, `cycle`), `requiresBack`, `contentRole`, `recipe` |
 | `photoSlots[].recipe` | `cutType`, `allowedCutTypes`, `shot`, `allowedShots`, `direction`, `faceExposure`, `set`(`styling` 장소 세트, `sequence` 연속 세트, `rotation` 회전 세트, 없음), `detailPool`(`points`, `fabric`) |
 | `kinds` | 섹션 종류 10개. `name`(wear는 `namesByUsage`), `menuGroup`, `repeatable`, `usages`, `storyboardTextCard`, `textSlots` |
 | `menuGroups` | 섹션 추가 메뉴 묶음. `photo`(사진), `detail`(옷 자세히), `describe`(상품 설명), `social`(후기와 소통). 지금 콘티의 섹션 추가 판은 이 묶음으로 나누지 않고 한 목록으로 보인다(`StoryboardSectionPicker.jsx`) |
-| `designs` | 섹션 디자인 정의. `kind`, `displayName`, `usage`, `layout`과 선택 메타데이터 `choiceAxes`(`layout`: 한 열, 2열, 큰 사진 아래 두 칸, 색 격자 등. `decoration`: 기본, 액자, 부위별 카드), `minPhotos`, `minColors`, `framePhotos`, `pickerHidden` |
+| `designs` | 섹션 디자인 정의. `kind`, `displayName`, `usage`, `layout`과 선택 메타데이터 `choiceAxes`(`layout`: 한 열, 2열, 큰 사진 아래 두 칸, 색 격자 등. `decoration`: 기본, 액자, 부위별 카드), `minPhotos`, `framePhotos`, `pickerHidden`, `introDesignId`(첫 장 디자인 뒤에 붙는 소개판, 예: `P01-SHOW-01`은 `T06-D01`). 검사기는 `minColors`도 받지만 지금 쓰는 디자인은 없다. 글 노드의 글자 크기는 `typographyRole`로 템플릿의 `typography`를 읽는다 |
 | `fontStyles` | 글자 스타일 네 개. 템플릿의 `labelEn`, `titleKo` 글꼴을 덮어쓰는 값이며 `template`은 덮어쓰지 않는다 |
 | `fontStyleLabels` | 글자 스타일의 화면 이름. 지금은 `plainGothic`(담백 고딕) 하나만 있고, 나머지 이름은 화면 코드가 정한다(`StoryboardThemePicker.jsx`) |
 | `pendingFontBundles` | 아직 번들에 넣지 않은 글꼴 목록. 지금은 빈 배열이다 |
 | `pointPalette`, `swatchHex`, `neutralColors`, `overlayColors`, `canvasColor` | 페이지 색감과 고정 색. `point` 모드는 기준 색상 스와치의 `pointPalette` 값을 쓴다 |
 | `photoBudgets` | `{ detail: 4, maxExtraColors: 3 }`. `detail`은 페이지 전체 디테일 사진 한도다(`src/lib/pageTemplates/detailBudget.js`의 `DETAIL_PHOTO_CAP`). `maxExtraColors`는 코드가 읽지 않는다. 추가 색상 한도는 착용컷 사진 칸의 `count.maxExtraColors`(지금 3)가 정한다(`seed.js`의 `seedStoryboard`) |
+| `sectionLabel` | 섹션 라벨의 좌우 안쪽(`inset` 56)과 라벨 뒤 간격(`gap` 36) |
+| `colorNameEnglish` | 한글 색 이름을 영문 대문자로 바꾸는 사전(띄어쓰기를 빼고 정확히 같을 때만). 한 상품의 색 중 하나라도 영문이 없으면 그 상품은 모두 한글로 쓴다 |
 | `firstTitleBand`, `firstTitlePlate` | 첫 장 사진 위 상품명의 위치 후보와 자동 받침 규칙(PRD §8) |
 | `frameStyle` | 일상 착용컷 액자 꾸밈의 치수와 색 |
 | `textMetrics`, `factPaths`, `fitLabels`, `swatchLabels`, `commonNotice`, `autoBlocks`, `editorFonts` | 조립용 글자 측정값, 글 칸이 읽는 사실 경로, 표시 이름, 자동 블록 설정 |
 
 - `pageDesignId`는 배치와 꾸밈 조합 하나를 뜻하는 완성된 디자인 ID다. 화면은 `choiceAxes`로 배치와 디자인을 나눠 보여 주지만 저장값은 `pageDesignId` 하나다. `framePhotos` 같은 메타데이터는 콘티나 DB의 새 필드가 아니다.
 - `pickerHidden`은 고르기 목록에서만 숨긴다. 저장된 숨은 디자인은 그대로 조립하고 옮기지 않는다.
-- 첫 장과 원단 설명에는 제품 사진을 붙이는 짝 디자인(`P01-D09`와 `P01-D09-G`, `P01-SHOW-01`과 `P01-SHOW-01-G`, `T03-D01`과 `T03-D01-P`, `T03-D06`과 `T03-D06-P` 등)이 있다. 짝 쪽은 `pickerHidden`이다.
+- 첫 장과 원단 설명에는 제품 사진을 붙이는 짝 디자인(`P01-D09`와 `P01-D09-G`, `P01-SHOW-01`과 `P01-SHOW-01-G`, `P01-SHOW-COMMENT-01`과 `P01-SHOW-COMMENT-01-G`, `T03-D01`과 `T03-D01-P`, `T03-D06`과 `T03-D06-P` 등)이 있다. 짝 쪽은 `pickerHidden`이다.
 - 예전 `guide` 템플릿은 카탈로그 `templates`에 없어 고를 수 없다. 그 템플릿용 디자인(`CP-GUIDE-01`, `T03-GUIDE-01`)은 `pickerHidden` 디자인으로 남아 있다.
 
 글 칸(`kinds[].textSlots`)의 `source`는 `static`(고정 문구), `fact`(상품명, 색 이름, 소재 혼용률 같은 사실), `ai`, `aiDraft`(셀러가 고칠 초안), `seller+ai`(셀러 입력이 있으면 그 글을 다듬어 쓰고, 없으면 AI 초안을 쓰는 칸. 지금은 상품 소개 본문 하나이며 §3.2 `mdComment` 참고)다. 글 칸에 연결된 글 요소는 `sourceBlockId`, `copyRole`, `textSlotVersion: 1`을 갖고, 글이 비면 편집 화면에만 보이는 `placeholder`(디자인 노드나 카탈로그의 `default`)를 단다. 동작은 다음과 같다.
 
 - `static` 칸은 고정 문구로, `fact` 칸은 값이 있으면 그 사실로 조립할 때 채운다.
 - AI가 채우는 칸은 디테일 요소의 부위 설명(`items.n.desc`, `analysis.partDescriptionCopy`를 읽는다. §3.2), 후기 초안, 상품 소개 본문이다.
-- 상품 소개 본문(`seller+ai`)은 `analysis.mdComment`가 있으면 그 글을 AI가 다듬어 넣고(다듬기가 붙기 전에는 원문 그대로 하나의 글상자), 없으면 AI 초안을 넣는다(§3.2). 감성형과 쇼룸형 모두 같다. 쇼룸형 상품 소개(`T06-D01`)는 요약 판 맨 위에 영문 라벨 `Comment`와 이 본문을 둔다.
+- 상품 소개 본문(`seller+ai`)은 `analysis.mdComment`가 있으면 그 글을 AI가 다듬어 넣고(다듬기가 붙기 전에는 원문 그대로 하나의 글상자), 없으면 AI 초안을 넣는다(§3.2). 감성형과 쇼룸형 모두 같다. 쇼룸형은 사진 다음 사양판(`T06-D01`)이나 어두운 소개판(`T06-COMMENT-01`, 맨 위 영문 라벨 `COMMENT`)에 이 본문을 둔다.
 - 후기(`review`)는 셀러가 고치기 쉽도록 AI가 초안을 넣어 두고 셀러가 에디터에서 실제 후기로 고치는 칸이다(2026-10-26 오너 결정). 초안은 만들 때마다 조금씩 다르게 쓰고, 이름 칸 기본값은 `김태희`, 별점 기본값은 5개다.
 - 그 밖의 `ai`, `aiDraft` 칸(첫 장 영문 상품명, 착용컷 제목과 소개, 원단 제목과 설명, 색상 소개, 상품 소개의 제목과 요약, 디테일 요소 제목과 핏 설명, 추천 대상, 질문과 답 등)은 빈 글과 안내 문구로 나간다. 옛 사진별 제목 카피 생성(AG-02 `headline`)과 검수(AG-03)는 카탈로그에 `headline` 글 칸이 없어 쓰이지 않았고 2026-11-13에 지웠다. 조립기의 `copy_results` 입력(`page_template_assembler.py`의 `ctx.copy`)은 새 카피를 위해 남겼다.
 - `aiDraft: true`인 글 요소는 셀러가 글 내용을 바꾸면 그 표시를 지운다(위치, 크기, 색 같은 서식만 바꾸면 남는다, `src/features/editor/editorTextEdit.js`). 내려받기 창과 몰에 붙여넣을 코드 만들기 창은 실제로 나가는 글 중 표시가 남고 글이 빈 칸이 아닌 요소가 있으면, 그 섹션 이름을 한 줄로 보여 주고 한 번만 묻는다(`src/features/editor/editorAiDrafts.js`, 2026-11-14 오너 결정). 블록 하나 내려받기와 쇼핑몰 직접 등록은 묻지 않는다.

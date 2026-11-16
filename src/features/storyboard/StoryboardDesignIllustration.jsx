@@ -30,6 +30,14 @@ const shapes = {
     <Bar x={14} y={106} width={46} height={4.6} fill={title} />
     <Bar x={14} y={116} width={72} />
   </>,
+  'first-comment-board': <>
+    <rect width="150" height="130" fill={paper} />
+    <Photo x={14} y={10} width={122} height={78} />
+    <rect x="14" y="88" width="122" height="36" fill={title} />
+    <Bar x={22} y={94} width={24} height={2} fill={paper} />
+    <Bar x={22} y={101} width={64} height={4.6} fill={paper} />
+    <Bar x={22} y={112} width={92} fill={paper} />
+  </>,
   'wear-basic': <>
     <rect width="150" height="130" fill={paper} />
     <Photo x={24} y={10} width={102} height={62} />
@@ -39,10 +47,10 @@ const shapes = {
     <rect width="150" height="130" fill={paper} />
     <rect width="150" height="130" fill={outer} />
     <rect x="30" y="10" width="90" height="110" fill={paper} />
-    <Bar x={58} y={17} width={34} height={2.4} />
-    <Photo x={38} y={25} width={74} height={40} />
-    <Photo x={38} y={69} width={74} height={40} />
-    <Bar x={62} y={113} width={26} height={2} />
+    <Bar x={48} y={17} width={54} height={4.6} fill={title} />
+    <Bar x={62} y={25} width={26} height={2} />
+    <Photo x={38} y={35} width={74} height={35} />
+    <Photo x={38} y={74} width={74} height={35} />
   </>,
   'points-card': <>
     <rect width="150" height="130" fill={pale} />
@@ -71,21 +79,21 @@ const shapes = {
     <Bar x={82} y={86} width={48} height={2} fill={title} />
     <Bar x={14} y={110} width={90} />
   </>,
-  'fabric-overlay': <>
+  'fabric-outside': <>
     <rect width="150" height="130" fill={paper} />
-    <Photo x={31} y={10} width={88} height={110} />
-    <Bar x={39} y={20} width={46} height={4.6} fill={paper} />
-    <Bar x={39} y={30} width={56} fill={paper} />
-    <Bar x={39} y={87} width={44} fill={paper} />
-    <Bar x={39} y={98} width={63} fill={paper} />
-    <Bar x={39} y={105} width={52} fill={paper} />
+    <Bar x={14} y={12} width={34} />
+    <Photo x={14} y={26} width={122} height={64} />
+    <Bar x={14} y={100} width={70} height={4.6} fill={title} />
+    <Bar x={14} y={111} width={42} height={2} />
+    <Bar x={14} y={119} width={110} />
+    <Bar x={14} y={125} width={94} />
   </>,
 };
 
 const designShapes = {
-  first: { 'P01-D09': 'first-centered', 'P01-SHOW-01': 'first-product-name' },
+  first: { 'P01-D09': 'first-centered', 'P01-SHOW-01': 'first-product-name', 'P01-SHOW-COMMENT-01': 'first-comment-board' },
   points: { 'PT-PHOTO-CARD-01': 'points-card', 'PT-TEXT-PHOTO-01': 'points-text-first' },
-  fabric: { 'T03-D01': 'fabric-side', 'T03-D06': 'fabric-overlay' },
+  fabric: { 'T03-D01': 'fabric-side', 'T03-D06': 'fabric-outside' },
 };
 
 // These are fixed choice illustrations, independent of the current photos,

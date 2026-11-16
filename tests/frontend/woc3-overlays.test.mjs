@@ -29,18 +29,18 @@ for (const kind of ['review', 'faq']) {
     assert.equal(photo.w, 1000); assert.equal(photo.h, 1250);
     const scrim = elements.find(element => element.type === 'shape' && element.fill === '#000000');
     assert.ok(scrim, 'the entire photo is darkened independently of the photo contents');
-    assert.deepEqual([scrim.x, scrim.y, scrim.w, scrim.h, scrim.opacity], [0, 0, 1000, 1250, .3]);
+    assert.deepEqual([scrim.x, scrim.y, scrim.w, scrim.h, scrim.opacity], [0, photo.y, 1000, 1250, .3]);
     const bubbles = elements.filter(element => element.type === 'shape' && element.opacity === .96);
     assert.equal(bubbles.length, 3);
     for (const [index, bubble] of bubbles.entries()) {
       assert.equal(bubble.fill, '#ffffff');
       assert.ok(bubble.w <= 731);
       assert.equal(index % 2 ? bubble.x + bubble.w : bubble.x, index % 2 ? 930 : 70);
-      assert.ok(bubble.y > 625 && bubble.y + bubble.h <= 1162.5);
+      assert.ok(bubble.y > photo.y + 625 && bubble.y + bubble.h <= photo.y + 1162.5);
       assert.equal(bubble.boxShadow, '0px 3px 12px rgba(0, 0, 0, 0.18)');
     }
-    assert.equal(bubbles.at(-1).y + bubbles.at(-1).h, 1162.5);
-    assert.equal(elements.find(element => element.copyRole === 'label').style.color, '#ffffff');
+    assert.equal(bubbles.at(-1).y + bubbles.at(-1).h, photo.y + 1162.5);
+    assert.equal(elements.find(element => element.copyRole === 'label').style.color, catalog.templates[0].colors.ink);
     const text = elements.find(element => element.copyRole === (kind === 'review' ? 'items.0.text' : 'items.0.q'));
     assert.equal(text.style.color, catalog.templates[0].colors[kind === 'faq' ? 'muted' : 'ink']);
     assert.equal(collectOverlayRegions(input).length, kind === 'faq' ? 1 : 0, 'FAQ measures faces while other fixed headings skip measurement');
@@ -53,10 +53,10 @@ for (const kind of ['review', 'faq']) {
     const elements = assembled(input);
     assert.equal(elements.filter(element => element.type === 'image').length, 1);
     const scrim = elements.find(element => element.type === 'shape');
-    assert.deepEqual([scrim.x, scrim.y, scrim.w, scrim.h], [0, 525, 1000, 725]);
+    assert.deepEqual([scrim.x, scrim.y, scrim.w, scrim.h], [0, elements.find(el => el.type === 'image').y + 525, 1000, 725]);
     assert.equal(scrim.fill, 'linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.72) 100%)');
     assert.equal(elements.filter(element => element.type === 'shape').length, 1);
-    assert.ok(elements.filter(element => element.type === 'text').every(element => element.style.color === '#ffffff'));
+    assert.ok(elements.filter(element => element.type === 'text' && element.copyRole !== 'label').every(element => element.style.color === '#ffffff'));
     assert.deepEqual(collectOverlayRegions(input), []);
   });
 }
@@ -64,15 +64,15 @@ for (const kind of ['review', 'faq']) {
 test('generic scrim/fixed-color geometry follows catalog data even with an unrelated design id', () => {
   const design = structuredClone(catalog.designs['I09-D06']);
   design.id = 'GENERIC-OVERLAY';
-  design.layout[0].aspect = '4/5';
-  design.layout[0].scrim = { color: '#123456', opacity: .4, heightRatio: .5, gradient: true };
-  design.layout[0].groups.forEach(group => { group.textColor = '#ffffff'; });
+  design.layout.find(node => node.type === 'overlay').aspect = '4/5';
+  design.layout.find(node => node.type === 'overlay').scrim = { color: '#123456', opacity: .4, heightRatio: .5, gradient: true };
+  design.layout.find(node => node.type === 'overlay').groups.forEach(group => { group.textColor = '#ffffff'; });
   catalog.designs[design.id] = design;
   try {
     const input = inputFor('review', design.id), elements = assembled(input);
     const scrim = elements.find(element => element.fill?.startsWith('linear-gradient('));
     assert.ok(scrim);
-    assert.deepEqual([scrim.y, scrim.h], [625, 625]);
+    assert.deepEqual([scrim.y, scrim.h], [elements.find(el => el.type === 'image').y + 625, 625]);
     assert.equal(scrim.fill, 'linear-gradient(180deg, rgba(18, 52, 86, 0) 0%, rgba(18, 52, 86, 0.4) 100%)');
     assert.deepEqual(collectOverlayRegions(input), []);
   } finally { delete catalog.designs[design.id]; }
@@ -88,7 +88,7 @@ for (const [property, value, error] of [
   ['shadow', { x: 0, y: 3, blur: -1, color: '#000000', opacity: .18 }, 'shape shadow'],
 ]) test(`both catalog consumers reject malformed ${property} ${JSON.stringify(value)}`, () => {
   const changed = structuredClone(catalog);
-  const node = changed.designs['I09-D06'].layout[0];
+  const node = changed.designs['I09-D06'].layout.find(node => node.type === 'overlay');
   const target = property === 'scrim' ? node : node.groups[0].nodes.find(child => child.type === 'list');
   target[property] = value;
   assert.throws(() => validateCatalog(changed), new RegExp(error));
@@ -96,7 +96,7 @@ for (const [property, value, error] of [
 
 test('catalog rejects malformed fixed group text color', () => {
   const changed = structuredClone(catalog);
-  changed.designs['I09-D06'].layout[0].groups[0].textColor = 'white';
+  changed.designs['I09-D06'].layout.find(node => node.type === 'overlay').groups[0].textColor = 'white';
   assert.throws(() => validateCatalog(changed), /overlay text color/);
 });
 

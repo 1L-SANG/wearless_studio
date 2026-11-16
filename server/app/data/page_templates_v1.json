@@ -310,7 +310,7 @@
           "source": "fact",
           "default": "",
           "maxChars": null,
-          "factPath": "product.colors[].swatchId",
+          "factPath": "product.colors[].name",
           "itemCount": null,
           "style": "body",
           "color": "ink",
@@ -368,8 +368,7 @@
       ],
       "phase": 1,
       "requiredCopyRoles": [
-        "colors.n.name",
-        "cap.back"
+        "colors.n.name"
       ],
       "requiredPhotoSlots": [
         "front",
@@ -547,6 +546,18 @@
           "style": "body",
           "color": "ink",
           "uppercase": false
+        },
+        {
+          "copyRole": "name",
+          "kind": "fact",
+          "source": "fact",
+          "default": "",
+          "maxChars": null,
+          "factPath": "product.name",
+          "itemCount": null,
+          "style": "titleKo",
+          "color": "ink",
+          "uppercase": false
         }
       ],
       "phase": 1,
@@ -566,7 +577,7 @@
           "copyRole": "label",
           "kind": "label",
           "source": "static",
-          "default": "Point",
+          "default": "Detail",
           "maxChars": null,
           "factPath": null,
           "itemCount": null,
@@ -885,6 +896,18 @@
           "itemCount": null,
           "style": "body",
           "color": "ink",
+          "uppercase": false
+        },
+        {
+          "copyRole": "label",
+          "kind": "label",
+          "source": "static",
+          "default": "SNS",
+          "maxChars": null,
+          "factPath": null,
+          "itemCount": null,
+          "style": "labelEn",
+          "color": "accentInk",
           "uppercase": false
         }
       ],
@@ -1220,7 +1243,8 @@
                   "gap": 12,
                   "size": 32,
                   "color": "onPhoto",
-                  "align": "center"
+                  "typographyRole": "label",
+                  "style": "labelEn"
                 },
                 {
                   "type": "text",
@@ -1229,7 +1253,6 @@
                   "size": 51,
                   "style": "titleKo",
                   "color": "onPhoto",
-                  "align": "center",
                   "titleWrap": {
                     "photoWidthRatio": 0.7,
                     "sizes": [
@@ -1239,7 +1262,8 @@
                     ],
                     "maxLines": 2,
                     "minSizeMaxLines": 3
-                  }
+                  },
+                  "typographyRole": "productName"
                 },
                 {
                   "type": "text",
@@ -1247,7 +1271,8 @@
                   "gap": 18,
                   "size": 23,
                   "color": "onPhoto",
-                  "align": "center"
+                  "typographyRole": "small",
+                  "style": "small"
                 },
                 {
                   "type": "rule",
@@ -1338,8 +1363,9 @@
           "copyRole": "label",
           "gap": 16,
           "size": 19,
-          "align": "left",
-          "color": "muted"
+          "color": "muted",
+          "typographyRole": "label",
+          "style": "labelEn"
         },
         {
           "type": "text",
@@ -1348,15 +1374,16 @@
           "style": "titleKo",
           "size": 40,
           "fitWidth": true,
-          "align": "left"
+          "typographyRole": "productName"
         },
         {
           "type": "text",
           "copyRole": "tagline",
           "gap": 20,
           "size": 21,
-          "align": "left",
-          "color": "muted"
+          "color": "muted",
+          "typographyRole": "body",
+          "style": "body"
         },
         {
           "type": "text",
@@ -1364,15 +1391,17 @@
           "gap": 30,
           "size": 23,
           "color": "muted",
-          "align": "left"
+          "typographyRole": "small",
+          "style": "small"
         },
         {
           "type": "text",
           "copyRole": "intro",
           "size": 23,
-          "align": "left",
           "gap": 30,
-          "hideEmpty": true
+          "hideEmpty": true,
+          "typographyRole": "body",
+          "style": "body"
         },
         {
           "type": "panel",
@@ -1416,7 +1445,9 @@
           "type": "text",
           "copyRole": "label",
           "gap": 16,
-          "size": 21
+          "size": 21,
+          "typographyRole": "label",
+          "style": "labelEn"
         },
         {
           "type": "text",
@@ -1424,28 +1455,34 @@
           "gap": 26,
           "style": "titleKo",
           "size": 47,
-          "fitWidth": true
+          "fitWidth": true,
+          "typographyRole": "productName"
         },
         {
           "type": "text",
           "copyRole": "tagline",
           "gap": 20,
-          "size": 26
+          "size": 26,
+          "typographyRole": "body",
+          "style": "body"
         },
         {
           "type": "text",
           "copyRole": "colors",
           "gap": 14,
           "size": 23,
-          "color": "muted"
+          "color": "muted",
+          "typographyRole": "small",
+          "style": "small"
         },
         {
           "type": "text",
           "copyRole": "intro",
           "size": 23,
-          "align": "left",
           "gap": 30,
-          "hideEmpty": true
+          "hideEmpty": true,
+          "typographyRole": "body",
+          "style": "body"
         }
       ],
       "overflow": {
@@ -1460,15 +1497,17 @@
       "id": "P02-D01",
       "displayName": "큰 사진 이어 보기",
       "kind": "wear",
-      "padding": 56,
+      "padding": 0,
       "top": 0,
       "bottom": 0,
       "layout": [
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 35,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "photoStack",
@@ -1478,15 +1517,7 @@
               "type": "photo",
               "slot": "$current",
               "aspect": "4/5",
-              "gap": 0,
-              "radius": 16
-            },
-            {
-              "type": "text",
-              "copyRole": "colorName.n",
-              "gap": 0,
-              "size": 25,
-              "onlyExtraColor": true
+              "gap": 0
             }
           ]
         }
@@ -1506,7 +1537,8 @@
           "id": "basic",
           "name": "기본"
         }
-      }
+      },
+      "contentInset": 56
     },
     "P02-D02": {
       "id": "P02-D02",
@@ -1517,6 +1549,14 @@
       "bottom": 0,
       "layout": [
         {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
+        },
+        {
           "type": "rule",
           "w": 42,
           "h": 2,
@@ -1526,26 +1566,22 @@
         },
         {
           "type": "text",
-          "copyRole": "label",
-          "gap": 12,
-          "size": 32,
-          "whenTemplate": "guide",
-          "default": "Styling"
-        },
-        {
-          "type": "text",
           "copyRole": "title",
           "gap": 26,
           "size": 37,
           "emphasis": "title",
-          "whenTemplate": "guide"
+          "whenTemplate": "guide",
+          "typographyRole": "title",
+          "style": "titleKo"
         },
         {
           "type": "text",
           "copyRole": "para",
           "gap": 35,
           "size": 25,
-          "whenTemplate": "guide"
+          "whenTemplate": "guide",
+          "typographyRole": "body",
+          "style": "body"
         },
         {
           "type": "photoStack",
@@ -1556,13 +1592,6 @@
               "slot": "$current",
               "aspect": "3/4",
               "gap": 0
-            },
-            {
-              "type": "text",
-              "copyRole": "colorName.n",
-              "gap": 0,
-              "size": 23,
-              "onlyExtraColor": true
             }
           ]
         }
@@ -1587,8 +1616,10 @@
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 30,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "photoStack",
@@ -1612,16 +1643,7 @@
                         18
                       ],
                       "fill": "canvas",
-                      "nodes": [
-                        {
-                          "type": "text",
-                          "copyRole": "cap.{direction}",
-                          "gap": 0,
-                          "style": "labelEn",
-                          "size": 22,
-                          "color": "ink"
-                        }
-                      ],
+                      "nodes": [],
                       "gap": 0,
                       "radius": 999,
                       "hug": true,
@@ -1654,88 +1676,35 @@
       "bottom": 0,
       "layout": [
         {
-          "type": "rule",
-          "w": 42,
-          "h": 2,
-          "color": "accentInk",
-          "gap": 20,
-          "whenTemplate": "guide"
-        },
-        {
-          "type": "text",
-          "copyRole": "label",
-          "gap": 12,
-          "size": 32
-        },
-        {
           "type": "text",
           "copyRole": "title",
-          "gap": 26,
-          "size": 37,
-          "emphasis": "title"
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label",
+          "liningNumbers": true
         },
         {
           "type": "photoGrid",
-          "slot": "front",
-          "columns": 2,
+          "slot": "*",
+          "columns": 3,
+          "balancedRows": true,
           "aspect": "4/5",
-          "gap": 40,
+          "gap": 24,
+          "rowGap": 40,
+          "captionGap": 18,
           "captions": [
             {
               "type": "text",
               "copyRole": "colors.n.name",
-              "gap": 8,
-              "style": "titleKo",
-              "size": 24,
-              "fitWidth": true,
-              "swatchDot": true
-            },
-            {
-              "type": "text",
-              "copyRole": "colors.n.desc",
-              "gap": 8,
-              "size": 22,
-              "color": "muted"
+              "gap": 0,
+              "colorLabel": true,
+              "swatchDot": true,
+              "align": "center",
+              "typographyRole": "colorName",
+              "style": "body"
             }
           ]
-        },
-        {
-          "type": "photoStack",
-          "slot": "back",
-          "items": [
-            {
-              "type": "photo",
-              "slot": "$current",
-              "aspect": "4/5",
-              "gap": 0,
-              "x": 0,
-              "w": 428
-            },
-            {
-              "type": "text",
-              "copyRole": "colors.n.name",
-              "gap": 8,
-              "size": 24,
-              "x": 0,
-              "w": 428,
-              "swatchDot": true
-            },
-            {
-              "type": "text",
-              "copyRole": "cap.back",
-              "gap": 0,
-              "size": 22,
-              "x": 0,
-              "w": 428
-            }
-          ]
-        },
-        {
-          "type": "text",
-          "copyRole": "notice",
-          "gap": 14,
-          "size": 22,
-          "hideEmpty": true
         }
       ],
       "overflow": {
@@ -1752,8 +1721,7 @@
           "id": "basic",
           "name": "기본"
         }
-      },
-      "minColors": 2
+      }
     },
     "CP-SHOW-01": {
       "id": "CP-SHOW-01",
@@ -1764,74 +1732,35 @@
       "bottom": 0,
       "layout": [
         {
-          "type": "rule",
-          "w": 42,
-          "h": 2,
-          "color": "accentInk",
-          "gap": 20,
-          "whenTemplate": "guide"
-        },
-        {
           "type": "text",
-          "copyRole": "label",
-          "gap": 12,
-          "size": 32
+          "copyRole": "title",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label",
+          "liningNumbers": true
         },
         {
           "type": "photoGrid",
-          "slot": "front",
-          "columns": 2,
-          "aspect": "1/1",
-          "gap": 19,
+          "slot": "*",
+          "columns": 3,
+          "balancedRows": true,
+          "aspect": "4/5",
+          "gap": 24,
+          "rowGap": 40,
+          "captionGap": 18,
           "captions": [
             {
               "type": "text",
               "copyRole": "colors.n.name",
-              "gap": 8,
-              "style": "titleKo",
-              "size": 24,
-              "fitWidth": true,
-              "swatchDot": true
+              "gap": 0,
+              "colorLabel": true,
+              "swatchDot": true,
+              "align": "center",
+              "typographyRole": "colorName",
+              "style": "body"
             }
           ]
-        },
-        {
-          "type": "photoStack",
-          "slot": "back",
-          "items": [
-            {
-              "type": "photo",
-              "slot": "$current",
-              "aspect": "4/5",
-              "gap": 0,
-              "x": 0,
-              "w": 428
-            },
-            {
-              "type": "text",
-              "copyRole": "colors.n.name",
-              "gap": 8,
-              "size": 24,
-              "x": 0,
-              "w": 428,
-              "swatchDot": true
-            },
-            {
-              "type": "text",
-              "copyRole": "cap.back",
-              "gap": 0,
-              "size": 22,
-              "x": 0,
-              "w": 428
-            }
-          ]
-        },
-        {
-          "type": "text",
-          "copyRole": "notice",
-          "gap": 14,
-          "size": 22,
-          "hideEmpty": true
         }
       ],
       "overflow": {
@@ -1850,74 +1779,35 @@
       "bottom": 0,
       "layout": [
         {
-          "type": "rule",
-          "w": 42,
-          "h": 2,
-          "color": "accentInk",
-          "gap": 20,
-          "whenTemplate": "guide"
-        },
-        {
           "type": "text",
-          "copyRole": "label",
-          "gap": 12,
-          "size": 32
+          "copyRole": "title",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label",
+          "liningNumbers": true
         },
         {
           "type": "photoGrid",
-          "slot": "front",
+          "slot": "*",
           "columns": 3,
+          "balancedRows": true,
           "aspect": "4/5",
-          "gap": 5,
+          "gap": 24,
+          "rowGap": 40,
+          "captionGap": 18,
           "captions": [
             {
               "type": "text",
               "copyRole": "colors.n.name",
-              "gap": 8,
-              "style": "titleKo",
-              "size": 24,
-              "fitWidth": true,
-              "swatchDot": true
+              "gap": 0,
+              "colorLabel": true,
+              "swatchDot": true,
+              "align": "center",
+              "typographyRole": "colorName",
+              "style": "body"
             }
           ]
-        },
-        {
-          "type": "photoStack",
-          "slot": "back",
-          "items": [
-            {
-              "type": "photo",
-              "slot": "$current",
-              "aspect": "4/5",
-              "gap": 0,
-              "x": 0,
-              "w": 428
-            },
-            {
-              "type": "text",
-              "copyRole": "colors.n.name",
-              "gap": 8,
-              "size": 24,
-              "x": 0,
-              "w": 428,
-              "swatchDot": true
-            },
-            {
-              "type": "text",
-              "copyRole": "cap.back",
-              "gap": 0,
-              "size": 22,
-              "x": 0,
-              "w": 428
-            }
-          ]
-        },
-        {
-          "type": "text",
-          "copyRole": "notice",
-          "gap": 14,
-          "size": 22,
-          "hideEmpty": true
         }
       ],
       "overflow": {
@@ -1938,15 +1828,19 @@
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 12,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "text",
           "copyRole": "title",
           "gap": 26,
           "size": 37,
-          "emphasis": "title"
+          "emphasis": "title",
+          "typographyRole": "title",
+          "style": "titleKo"
         },
         {
           "type": "panel",
@@ -1976,7 +1870,9 @@
                   "type": "text",
                   "copyRole": "body",
                   "gap": 20,
-                  "size": 25
+                  "size": 25,
+                  "typographyRole": "body",
+                  "style": "body"
                 },
                 {
                   "type": "panel",
@@ -1988,7 +1884,8 @@
                       "copyRole": "mix",
                       "gap": 10,
                       "size": 20,
-                      "align": "left"
+                      "style": "small",
+                      "typographyRole": "small"
                     },
                     {
                       "type": "rule",
@@ -2010,7 +1907,9 @@
           "copyRole": "notice",
           "gap": 14,
           "size": 22,
-          "hideEmpty": true
+          "hideEmpty": true,
+          "typographyRole": "body",
+          "style": "body"
         }
       ],
       "overflow": {
@@ -2021,82 +1920,54 @@
     },
     "T03-D06": {
       "id": "T03-D06",
-      "displayName": "사진 안 소재 설명",
+      "displayName": "사진 밖 소재 설명",
       "kind": "fabric",
       "padding": 56,
-      "top": 74,
+      "top": 0,
       "bottom": 0,
       "layout": [
         {
-          "type": "overlay",
+          "type": "text",
+          "copyRole": "label",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
+        },
+        {
+          "type": "photo",
           "slot": "fabric",
           "aspect": "4/5",
-          "groups": [
-            {
-              "x": 51,
-              "y": 47,
-              "w": 786,
-              "nodes": [
-                {
-                  "type": "text",
-                  "copyRole": "label",
-                  "gap": 12,
-                  "size": 53,
-                  "color": "onPhoto",
-                  "align": "left"
-                },
-                {
-                  "type": "text",
-                  "copyRole": "title",
-                  "gap": 26,
-                  "size": 30,
-                  "emphasis": "title",
-                  "color": "onPhoto",
-                  "align": "left"
-                }
-              ],
-              "id": "heading"
-            },
-            {
-              "x": 51,
-              "y": 47,
-              "w": 786,
-              "anchor": "bottom",
-              "nodes": [
-                {
-                  "type": "text",
-                  "copyRole": "mix",
-                  "gap": 14,
-                  "size": 22,
-                  "color": "onPhoto",
-                  "align": "left"
-                },
-                {
-                  "type": "text",
-                  "copyRole": "body",
-                  "gap": 0,
-                  "size": 25,
-                  "color": "onPhoto",
-                  "align": "left"
-                }
-              ],
-              "id": "description"
-            }
-          ]
+          "gap": 44
         },
         {
           "type": "text",
-          "copyRole": "notice",
+          "copyRole": "title",
           "gap": 14,
-          "size": 22,
-          "hideEmpty": true
+          "style": "titleKo",
+          "typographyRole": "title"
+        },
+        {
+          "type": "text",
+          "copyRole": "mix",
+          "gap": 22,
+          "style": "small",
+          "typographyRole": "small"
+        },
+        {
+          "type": "text",
+          "copyRole": "body",
+          "gap": 0,
+          "typographyRole": "body",
+          "style": "body"
         }
       ],
       "overflow": {
         "type": "photoStack",
         "aspect": "source",
         "gap": 40
-      }
+      },
+      "invert": false
     },
     "T03-GUIDE-01": {
       "id": "T03-GUIDE-01",
@@ -2107,6 +1978,14 @@
       "bottom": 0,
       "layout": [
         {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
+        },
+        {
           "type": "rule",
           "w": 42,
           "h": 2,
@@ -2116,29 +1995,28 @@
         },
         {
           "type": "text",
-          "copyRole": "label",
-          "gap": 12,
-          "size": 32,
-          "default": "Fabric check"
-        },
-        {
-          "type": "text",
           "copyRole": "title",
           "gap": 26,
           "size": 37,
-          "emphasis": "title"
+          "emphasis": "title",
+          "typographyRole": "title",
+          "style": "titleKo"
         },
         {
           "type": "text",
           "copyRole": "body",
           "gap": 20,
-          "size": 25
+          "size": 25,
+          "typographyRole": "body",
+          "style": "body"
         },
         {
           "type": "text",
           "copyRole": "mix",
           "gap": 14,
-          "size": 23
+          "size": 23,
+          "style": "small",
+          "typographyRole": "small"
         },
         {
           "type": "rule",
@@ -2158,7 +2036,9 @@
           "copyRole": "notice",
           "gap": 14,
           "size": 22,
-          "hideEmpty": true
+          "hideEmpty": true,
+          "typographyRole": "body",
+          "style": "body"
         }
       ],
       "overflow": {
@@ -2177,6 +2057,14 @@
       "bottom": 0,
       "layout": [
         {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
+        },
+        {
           "type": "rule",
           "w": 42,
           "h": 2,
@@ -2186,35 +2074,37 @@
         },
         {
           "type": "text",
-          "copyRole": "label",
-          "gap": 12,
-          "size": 32
-        },
-        {
-          "type": "text",
           "copyRole": "title",
           "gap": 26,
           "size": 37,
-          "emphasis": "title"
+          "emphasis": "title",
+          "typographyRole": "title",
+          "style": "titleKo"
         },
         {
           "type": "text",
           "copyRole": "body",
           "gap": 20,
-          "size": 25
+          "size": 25,
+          "typographyRole": "body",
+          "style": "body"
         },
         {
           "type": "text",
           "copyRole": "mix",
           "gap": 14,
-          "size": 23
+          "size": 23,
+          "style": "small",
+          "typographyRole": "small"
         },
         {
           "type": "text",
           "copyRole": "notice",
           "gap": 14,
           "size": 22,
-          "hideEmpty": true
+          "hideEmpty": true,
+          "typographyRole": "body",
+          "style": "body"
         }
       ],
       "overflow": {
@@ -2236,8 +2126,10 @@
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 26,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "panel",
@@ -2283,7 +2175,8 @@
                   "gap": 14,
                   "size": 21,
                   "color": "muted",
-                  "align": "left"
+                  "typographyRole": "small",
+                  "style": "small"
                 },
                 {
                   "type": "panel",
@@ -2299,15 +2192,17 @@
                       "gap": 26,
                       "size": 30,
                       "emphasis": "title",
-                      "align": "left",
-                      "firstItemOnly": true
+                      "firstItemOnly": true,
+                      "typographyRole": "title",
+                      "style": "titleKo"
                     },
                     {
                       "type": "text",
                       "copyRole": "body",
                       "gap": 0,
                       "size": 25,
-                      "align": "left"
+                      "typographyRole": "intro",
+                      "style": "body"
                     }
                   ],
                   "gap": 20,
@@ -2332,136 +2227,46 @@
     },
     "T06-D01": {
       "id": "T06-D01",
-      "displayName": "한눈에 보는 요약",
+      "displayName": "사진 다음 사양판",
       "kind": "intro",
       "padding": 56,
-      "top": 0,
+      "top": 64,
       "bottom": 0,
       "layout": [
         {
+          "type": "text",
+          "copyRole": "name",
+          "gap": 40,
+          "style": "titleKo",
+          "typographyRole": "productName"
+        },
+        {
+          "type": "text",
+          "copyRole": "body",
+          "gap": 48,
+          "typographyRole": "intro",
+          "style": "body"
+        },
+        {
           "type": "rule",
-          "w": 42,
-          "h": 2,
-          "color": "accentInk",
-          "gap": 20,
-          "whenTemplate": "emo"
+          "h": 1,
+          "color": "accentLine",
+          "gap": 40
         },
         {
-          "type": "text",
-          "copyRole": "label",
-          "gap": 12,
-          "size": 32,
-          "whenTemplate": "emo",
-          "default": "Check point"
+          "type": "factTable",
+          "copyRole": "facts",
+          "layout": "columns",
+          "size": 30,
+          "gap": 36,
+          "labelWidth": 180,
+          "rowGap": 18
         },
         {
-          "type": "text",
-          "copyRole": "title",
-          "gap": 26,
-          "size": 37,
-          "emphasis": "title",
-          "whenTemplate": "emo",
-          "default": "한눈에 보는 특징"
-        },
-        {
-          "type": "panel",
-          "padding": 56,
-          "fill": "summaryBg",
-          "nodes": [
-            {
-              "type": "text",
-              "copyRole": "label",
-              "gap": 12,
-              "size": 32,
-              "x": 56,
-              "w": 776,
-              "whenTemplate": "show"
-            },
-            {
-              "type": "text",
-              "copyRole": "body",
-              "gap": 30,
-              "size": 25,
-              "x": 56,
-              "w": 776,
-              "whenTemplate": "show"
-            },
-            {
-              "type": "factTable",
-              "copyRole": "facts",
-              "size": 25,
-              "gap": 30,
-              "layout": "stacked"
-            },
-            {
-              "type": "rule",
-              "w": 42,
-              "h": 2,
-              "color": "accentLine",
-              "gap": 20,
-              "align": "template"
-            },
-            {
-              "type": "list",
-              "copyRole": "summary.n",
-              "count": 3,
-              "gap": 12,
-              "items": [
-                {
-                  "type": "text",
-                  "copyRole": "summary.n",
-                  "gap": 0,
-                  "size": 25
-                }
-              ],
-              "marker": "dot"
-            },
-            {
-              "type": "text",
-              "copyRole": "summary.line",
-              "gap": 20,
-              "size": 25
-            }
-          ],
-          "gap": 20,
-          "whenTemplate": "show"
-        },
-        {
-          "type": "panel",
-          "padding": 28,
-          "fill": "summaryBg",
-          "nodes": [
-            {
-              "type": "factTable",
-              "copyRole": "facts",
-              "size": 25,
-              "gap": 30,
-              "layout": "columns"
-            },
-            {
-              "type": "list",
-              "copyRole": "summary.n",
-              "count": 3,
-              "gap": 4,
-              "items": [
-                {
-                  "type": "text",
-                  "copyRole": "summary.n",
-                  "gap": 0,
-                  "size": 25
-                }
-              ],
-              "marker": "dot"
-            },
-            {
-              "type": "text",
-              "copyRole": "summary.line",
-              "gap": 20,
-              "size": 25
-            }
-          ],
-          "gap": 20,
-          "whenTemplate": "emo"
+          "type": "swatchRow",
+          "size": 40,
+          "itemGap": 14,
+          "gap": 0
         }
       ],
       "overflow": {
@@ -2469,7 +2274,8 @@
         "aspect": "source",
         "gap": 40
       },
-      "storyboardTextNote": "상품 정보와 MD 코멘트"
+      "storyboardTextNote": "상품 정보와 MD 코멘트",
+      "invert": false
     },
     "PT-EMO-01": {
       "id": "PT-EMO-01",
@@ -2482,22 +2288,28 @@
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 12,
-          "size": 32,
-          "default": "Fit check"
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "default": "Detail",
+          "typographyRole": "label"
         },
         {
           "type": "text",
           "copyRole": "title",
           "gap": 26,
           "size": 37,
-          "emphasis": "title"
+          "emphasis": "title",
+          "typographyRole": "title",
+          "style": "titleKo"
         },
         {
           "type": "text",
           "copyRole": "fit.body",
           "gap": 20,
-          "size": 25
+          "size": 25,
+          "typographyRole": "body",
+          "style": "body"
         },
         {
           "type": "panel",
@@ -2519,7 +2331,9 @@
               "type": "text",
               "copyRole": "fit.tip",
               "gap": 0,
-              "size": 23
+              "size": 23,
+              "typographyRole": "body",
+              "style": "body"
             }
           ],
           "gap": 72,
@@ -2550,14 +2364,17 @@
               "copyRole": "items.n.name",
               "gap": 12,
               "style": "titleKo",
-              "size": 32
+              "size": 32,
+              "typographyRole": "title"
             },
             {
               "type": "text",
               "copyRole": "items.n.desc",
               "gap": 0,
               "size": 25,
-              "color": "muted"
+              "color": "muted",
+              "typographyRole": "body",
+              "style": "body"
             }
           ],
           "valign": "center",
@@ -2568,7 +2385,9 @@
           "copyRole": "notice",
           "gap": 14,
           "size": 22,
-          "hideEmpty": true
+          "hideEmpty": true,
+          "typographyRole": "body",
+          "style": "body"
         }
       ],
       "overflow": {
@@ -2590,21 +2409,28 @@
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 12,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "default": "Detail",
+          "typographyRole": "label"
         },
         {
           "type": "text",
           "copyRole": "title",
           "gap": 26,
           "size": 37,
-          "emphasis": "title"
+          "emphasis": "title",
+          "typographyRole": "title",
+          "style": "titleKo"
         },
         {
           "type": "text",
           "copyRole": "fit.body",
           "gap": 20,
-          "size": 25
+          "size": 25,
+          "typographyRole": "body",
+          "style": "body"
         },
         {
           "type": "panel",
@@ -2626,7 +2452,9 @@
               "type": "text",
               "copyRole": "fit.tip",
               "gap": 0,
-              "size": 23
+              "size": 23,
+              "typographyRole": "body",
+              "style": "body"
             }
           ],
           "gap": 20,
@@ -2641,7 +2469,9 @@
           "copyRole": "notice",
           "gap": 14,
           "size": 22,
-          "hideEmpty": true
+          "hideEmpty": true,
+          "typographyRole": "body",
+          "style": "body"
         }
       ],
       "overflow": {
@@ -2663,16 +2493,20 @@
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 12,
-          "size": 32,
-          "default": "Detail"
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "default": "Detail",
+          "typographyRole": "label"
         },
         {
           "type": "text",
           "copyRole": "title",
           "gap": 26,
           "size": 37,
-          "emphasis": "title"
+          "emphasis": "title",
+          "typographyRole": "title",
+          "style": "titleKo"
         },
         {
           "type": "photoStack",
@@ -2693,13 +2527,16 @@
               "copyRole": "items.n.name",
               "gap": 12,
               "style": "titleKo",
-              "size": 30
+              "size": 30,
+              "typographyRole": "title"
             },
             {
               "type": "text",
               "copyRole": "items.n.desc",
               "gap": 20,
-              "size": 25
+              "size": 25,
+              "typographyRole": "body",
+              "style": "body"
             }
           ]
         },
@@ -2708,7 +2545,9 @@
           "copyRole": "notice",
           "gap": 14,
           "size": 22,
-          "hideEmpty": true
+          "hideEmpty": true,
+          "typographyRole": "body",
+          "style": "body"
         }
       ],
       "overflow": {
@@ -2738,6 +2577,15 @@
       "bottom": 0,
       "layout": [
         {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "default": "Detail",
+          "typographyRole": "label"
+        },
+        {
           "type": "rule",
           "w": 42,
           "h": 2,
@@ -2747,16 +2595,12 @@
         },
         {
           "type": "text",
-          "copyRole": "label",
-          "gap": 12,
-          "size": 32
-        },
-        {
-          "type": "text",
           "copyRole": "title",
           "gap": 26,
           "size": 37,
-          "emphasis": "title"
+          "emphasis": "title",
+          "typographyRole": "title",
+          "style": "titleKo"
         },
         {
           "type": "pointRows",
@@ -2778,13 +2622,16 @@
               "copyRole": "items.n.name",
               "gap": 12,
               "style": "titleKo",
-              "size": 30
+              "size": 30,
+              "typographyRole": "title"
             },
             {
               "type": "text",
               "copyRole": "items.n.desc",
               "gap": 0,
-              "size": 22
+              "size": 22,
+              "typographyRole": "body",
+              "style": "body"
             }
           ],
           "padding": 28,
@@ -2797,7 +2644,9 @@
           "copyRole": "notice",
           "gap": 14,
           "size": 22,
-          "hideEmpty": true
+          "hideEmpty": true,
+          "typographyRole": "body",
+          "style": "body"
         }
       ],
       "overflow": {
@@ -2817,6 +2666,15 @@
       "bottom": 75,
       "layout": [
         {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "default": "Detail",
+          "typographyRole": "label"
+        },
+        {
           "type": "rule",
           "w": 42,
           "h": 2,
@@ -2826,23 +2684,20 @@
         },
         {
           "type": "text",
-          "copyRole": "label",
-          "gap": 12,
-          "size": 32,
-          "default": "Fit check"
-        },
-        {
-          "type": "text",
           "copyRole": "title",
           "gap": 26,
           "size": 37,
-          "emphasis": "title"
+          "emphasis": "title",
+          "typographyRole": "title",
+          "style": "titleKo"
         },
         {
           "type": "text",
           "copyRole": "fit.body",
           "gap": 20,
-          "size": 25
+          "size": 25,
+          "typographyRole": "body",
+          "style": "body"
         },
         {
           "type": "photoStack",
@@ -2883,7 +2738,8 @@
                       "copyRole": "items.n.desc",
                       "size": 22,
                       "gap": 0,
-                      "align": "center"
+                      "typographyRole": "body",
+                      "style": "body"
                     }
                   ]
                 }
@@ -2914,7 +2770,8 @@
               "copyRole": "fit.tip",
               "size": 23,
               "gap": 0,
-              "align": "center"
+              "typographyRole": "body",
+              "style": "body"
             }
           ]
         },
@@ -2923,7 +2780,9 @@
           "copyRole": "notice",
           "gap": 14,
           "size": 22,
-          "hideEmpty": true
+          "hideEmpty": true,
+          "typographyRole": "body",
+          "style": "body"
         }
       ],
       "overflow": {
@@ -2946,6 +2805,14 @@
       "bottom": 0,
       "layout": [
         {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
+        },
+        {
           "type": "rule",
           "w": 42,
           "h": 2,
@@ -2955,16 +2822,12 @@
         },
         {
           "type": "text",
-          "copyRole": "label",
-          "gap": 12,
-          "size": 32
-        },
-        {
-          "type": "text",
           "copyRole": "title",
           "gap": 26,
           "size": 37,
-          "emphasis": "title"
+          "emphasis": "title",
+          "typographyRole": "title",
+          "style": "titleKo"
         },
         {
           "type": "list",
@@ -2989,7 +2852,8 @@
               "size": 23,
               "x": 44,
               "w": 640,
-              "align": "left"
+              "typographyRole": "body",
+              "style": "body"
             }
           ],
           "countRole": "items.n",
@@ -3023,6 +2887,16 @@
       "bottom": 0,
       "layout": [
         {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "x": 56,
+          "w": 888,
+          "typographyRole": "label"
+        },
+        {
           "type": "overlay",
           "slot": "background",
           "aspect": "4/5",
@@ -3041,20 +2915,12 @@
               "nodes": [
                 {
                   "type": "text",
-                  "copyRole": "label",
-                  "size": 28,
-                  "color": "onPhoto",
-                  "align": "left",
-                  "gap": 10
-                },
-                {
-                  "type": "text",
                   "copyRole": "lead",
                   "style": "titleKo",
                   "size": 30,
                   "color": "onPhoto",
-                  "align": "left",
-                  "gap": 20
+                  "gap": 20,
+                  "typographyRole": "title"
                 },
                 {
                   "type": "list",
@@ -3066,16 +2932,18 @@
                       "type": "text",
                       "copyRole": "items.n.text",
                       "size": 22,
-                      "align": "left",
-                      "gap": 6
+                      "gap": 6,
+                      "typographyRole": "body",
+                      "style": "body"
                     },
                     {
                       "type": "text",
                       "copyRole": "items.n.who",
                       "size": 17,
                       "color": "muted",
-                      "align": "left",
-                      "gap": 0
+                      "gap": 0,
+                      "typographyRole": "body",
+                      "style": "body"
                     }
                   ],
                   "alternate": true,
@@ -3120,6 +2988,17 @@
       "bottom": 0,
       "layout": [
         {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "x": 56,
+          "w": 888,
+          "typographyRole": "label",
+          "default": "Q&A"
+        },
+        {
           "type": "overlay",
           "slot": "background",
           "aspect": "4/5",
@@ -3138,22 +3017,12 @@
               "nodes": [
                 {
                   "type": "text",
-                  "copyRole": "label",
-                  "default": "Q&A",
-                  "size": 32,
-                  "color": "onPhoto",
-                  "align": "center",
-                  "gap": 10
-                },
-                {
-                  "type": "text",
                   "copyRole": "title",
                   "style": "titleKo",
                   "size": 44,
-                  "lineHeight": 1.2954545454545454,
                   "color": "onPhoto",
-                  "align": "center",
-                  "gap": 0
+                  "gap": 0,
+                  "typographyRole": "title"
                 }
               ],
               "faceFallback": {
@@ -3163,21 +3032,12 @@
                 "nodes": [
                   {
                     "type": "text",
-                    "copyRole": "label",
-                    "default": "Q&A",
-                    "size": 32,
-                    "color": "accentInk",
-                    "align": "center",
-                    "gap": 12
-                  },
-                  {
-                    "type": "text",
                     "copyRole": "title",
                     "style": "titleKo",
                     "size": 37,
                     "color": "ink",
-                    "align": "center",
-                    "gap": 0
+                    "gap": 0,
+                    "typographyRole": "title"
                   }
                 ]
               }
@@ -3199,24 +3059,24 @@
                       "type": "text",
                       "copyRole": "items.n.q",
                       "size": 22,
-                      "align": "left",
                       "gap": 6,
                       "prefix": "Q.",
                       "prefixWidth": 34,
-                      "color": "muted"
+                      "color": "muted",
+                      "typographyRole": "body",
+                      "style": "body"
                     },
                     {
                       "type": "text",
                       "copyRole": "items.n.a",
                       "size": 26,
-                      "align": "left",
                       "gap": 0,
                       "prefix": "A.",
                       "prefixWidth": 34,
                       "color": "ink",
-                      "style": "titleKo",
+                      "style": "body",
                       "trackingEm": -0.01,
-                      "lineHeight": 1.6153846153846154
+                      "typographyRole": "body"
                     }
                   ],
                   "alternate": true,
@@ -3261,6 +3121,16 @@
       "bottom": 0,
       "layout": [
         {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "x": 56,
+          "w": 888,
+          "typographyRole": "label"
+        },
+        {
           "type": "overlay",
           "slot": "sns1",
           "aspect": "4/5",
@@ -3280,7 +3150,9 @@
                       "type": "text",
                       "copyRole": "lines.n",
                       "gap": 0,
-                      "size": 24
+                      "size": 24,
+                      "typographyRole": "body",
+                      "style": "body"
                     }
                   ],
                   "fill": "canvas",
@@ -3306,7 +3178,9 @@
                       "copyRole": "reply",
                       "gap": 0,
                       "size": 25,
-                      "color": "invertInk"
+                      "color": "invertInk",
+                      "typographyRole": "body",
+                      "style": "body"
                     }
                   ],
                   "gap": 20,
@@ -3334,6 +3208,14 @@
       "bottom": 0,
       "layout": [
         {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
+        },
+        {
           "type": "photoGrid",
           "slots": [
             "sns1",
@@ -3354,7 +3236,9 @@
                   "copyRole": "handle",
                   "gap": 14,
                   "size": 20,
-                  "color": "onPhoto"
+                  "color": "onPhoto",
+                  "typographyRole": "small",
+                  "style": "small"
                 }
               ],
               "id": "account"
@@ -3374,7 +3258,9 @@
                       "type": "text",
                       "copyRole": "lines.n",
                       "gap": 0,
-                      "size": 23
+                      "size": 23,
+                      "typographyRole": "body",
+                      "style": "body"
                     }
                   ],
                   "gap": 20,
@@ -3395,27 +3281,16 @@
     },
     "P01-SHOW-01": {
       "id": "P01-SHOW-01",
-      "displayName": "큰 사진과 작은 상품명",
+      "displayName": "큰 사진",
       "kind": "first",
       "padding": 0,
       "top": 0,
-      "bottom": 28,
+      "bottom": 0,
       "layout": [
         {
           "type": "photo",
           "slot": "hero",
           "aspect": "3/4",
-          "gap": 20
-        },
-        {
-          "type": "text",
-          "copyRole": "name",
-          "x": 70,
-          "w": 860,
-          "size": 28,
-          "align": "left",
-          "color": "ink",
-          "singleLine": true,
           "gap": 0
         }
       ],
@@ -3423,7 +3298,8 @@
         "type": "photoStack",
         "aspect": "source",
         "gap": 40
-      }
+      },
+      "introDesignId": "T06-D01"
     },
     "I09-SCRIM-01": {
       "id": "I09-SCRIM-01",
@@ -3433,6 +3309,16 @@
       "top": 0,
       "bottom": 0,
       "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "x": 56,
+          "w": 888,
+          "typographyRole": "label"
+        },
         {
           "type": "overlay",
           "slot": "background",
@@ -3454,20 +3340,12 @@
               "nodes": [
                 {
                   "type": "text",
-                  "copyRole": "label",
-                  "size": 28,
-                  "color": "onPhoto",
-                  "align": "left",
-                  "gap": 10
-                },
-                {
-                  "type": "text",
                   "copyRole": "lead",
                   "style": "titleKo",
                   "size": 30,
                   "color": "onPhoto",
-                  "align": "left",
-                  "gap": 20
+                  "gap": 20,
+                  "typographyRole": "title"
                 },
                 {
                   "type": "list",
@@ -3479,16 +3357,18 @@
                       "type": "text",
                       "copyRole": "items.n.text",
                       "size": 22,
-                      "align": "left",
-                      "gap": 6
+                      "gap": 6,
+                      "typographyRole": "body",
+                      "style": "body"
                     },
                     {
                       "type": "text",
                       "copyRole": "items.n.who",
                       "size": 17,
                       "color": "muted",
-                      "align": "left",
-                      "gap": 0
+                      "gap": 0,
+                      "typographyRole": "body",
+                      "style": "body"
                     }
                   ],
                   "itemGap": 18
@@ -3514,6 +3394,17 @@
       "bottom": 0,
       "layout": [
         {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "x": 56,
+          "w": 888,
+          "typographyRole": "label",
+          "default": "Q&A"
+        },
+        {
           "type": "overlay",
           "slot": "background",
           "aspect": "4/5",
@@ -3534,20 +3425,12 @@
               "nodes": [
                 {
                   "type": "text",
-                  "copyRole": "label",
-                  "size": 28,
-                  "color": "onPhoto",
-                  "align": "left",
-                  "gap": 10
-                },
-                {
-                  "type": "text",
                   "copyRole": "title",
                   "style": "titleKo",
                   "size": 30,
                   "color": "onPhoto",
-                  "align": "left",
-                  "gap": 20
+                  "gap": 20,
+                  "typographyRole": "title"
                 },
                 {
                   "type": "list",
@@ -3559,15 +3442,17 @@
                       "type": "text",
                       "copyRole": "items.n.q",
                       "size": 22,
-                      "align": "left",
-                      "gap": 6
+                      "gap": 6,
+                      "typographyRole": "body",
+                      "style": "body"
                     },
                     {
                       "type": "text",
                       "copyRole": "items.n.a",
                       "size": 22,
-                      "align": "left",
-                      "gap": 0
+                      "gap": 0,
+                      "typographyRole": "body",
+                      "style": "body"
                     }
                   ],
                   "itemGap": 18
@@ -3618,7 +3503,8 @@
                   "gap": 12,
                   "size": 32,
                   "color": "onPhoto",
-                  "align": "center"
+                  "typographyRole": "label",
+                  "style": "labelEn"
                 },
                 {
                   "type": "text",
@@ -3627,7 +3513,6 @@
                   "size": 51,
                   "style": "titleKo",
                   "color": "onPhoto",
-                  "align": "center",
                   "titleWrap": {
                     "photoWidthRatio": 0.7,
                     "sizes": [
@@ -3637,7 +3522,8 @@
                     ],
                     "maxLines": 2,
                     "minSizeMaxLines": 3
-                  }
+                  },
+                  "typographyRole": "productName"
                 },
                 {
                   "type": "text",
@@ -3645,7 +3531,8 @@
                   "gap": 18,
                   "size": 23,
                   "color": "onPhoto",
-                  "align": "center"
+                  "typographyRole": "small",
+                  "style": "small"
                 },
                 {
                   "type": "rule",
@@ -3699,27 +3586,16 @@
     },
     "P01-SHOW-01-G": {
       "id": "P01-SHOW-01-G",
-      "displayName": "큰 사진과 상품명, 고스트컷",
+      "displayName": "큰 사진과 고스트컷",
       "kind": "first",
       "padding": 0,
       "top": 0,
-      "bottom": 28,
+      "bottom": 0,
       "layout": [
         {
           "type": "photo",
           "slot": "hero",
           "aspect": "3/4",
-          "gap": 20
-        },
-        {
-          "type": "text",
-          "copyRole": "name",
-          "x": 70,
-          "w": 860,
-          "size": 28,
-          "align": "left",
-          "color": "ink",
-          "singleLine": true,
           "gap": 0
         },
         {
@@ -3746,7 +3622,8 @@
         "aspect": "source",
         "gap": 40
       },
-      "pickerHidden": true
+      "pickerHidden": true,
+      "introDesignId": "T06-D01"
     },
     "T03-D01-P": {
       "id": "T03-D01-P",
@@ -3759,15 +3636,19 @@
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 12,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "text",
           "copyRole": "title",
           "gap": 26,
           "size": 37,
-          "emphasis": "title"
+          "emphasis": "title",
+          "typographyRole": "title",
+          "style": "titleKo"
         },
         {
           "type": "panel",
@@ -3797,7 +3678,9 @@
                   "type": "text",
                   "copyRole": "body",
                   "gap": 20,
-                  "size": 25
+                  "size": 25,
+                  "typographyRole": "body",
+                  "style": "body"
                 },
                 {
                   "type": "panel",
@@ -3809,7 +3692,8 @@
                       "copyRole": "mix",
                       "gap": 10,
                       "size": 20,
-                      "align": "left"
+                      "style": "small",
+                      "typographyRole": "small"
                     },
                     {
                       "type": "rule",
@@ -3831,7 +3715,9 @@
           "copyRole": "notice",
           "gap": 14,
           "size": 22,
-          "hideEmpty": true
+          "hideEmpty": true,
+          "typographyRole": "body",
+          "style": "body"
         },
         {
           "type": "panel",
@@ -3859,75 +3745,46 @@
     },
     "T03-D06-P": {
       "id": "T03-D06-P",
-      "displayName": "사진 안 소재 설명과 제품컷",
+      "displayName": "사진 밖 소재 설명과 제품컷",
       "kind": "fabric",
       "padding": 56,
-      "top": 74,
+      "top": 0,
       "bottom": 0,
       "layout": [
         {
-          "type": "overlay",
+          "type": "text",
+          "copyRole": "label",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
+        },
+        {
+          "type": "photo",
           "slot": "fabric",
           "aspect": "4/5",
-          "groups": [
-            {
-              "x": 51,
-              "y": 47,
-              "w": 786,
-              "nodes": [
-                {
-                  "type": "text",
-                  "copyRole": "label",
-                  "gap": 12,
-                  "size": 53,
-                  "color": "onPhoto",
-                  "align": "left"
-                },
-                {
-                  "type": "text",
-                  "copyRole": "title",
-                  "gap": 26,
-                  "size": 30,
-                  "emphasis": "title",
-                  "color": "onPhoto",
-                  "align": "left"
-                }
-              ],
-              "id": "heading"
-            },
-            {
-              "x": 51,
-              "y": 47,
-              "w": 786,
-              "anchor": "bottom",
-              "nodes": [
-                {
-                  "type": "text",
-                  "copyRole": "mix",
-                  "gap": 14,
-                  "size": 22,
-                  "color": "onPhoto",
-                  "align": "left"
-                },
-                {
-                  "type": "text",
-                  "copyRole": "body",
-                  "gap": 0,
-                  "size": 25,
-                  "color": "onPhoto",
-                  "align": "left"
-                }
-              ],
-              "id": "description"
-            }
-          ]
+          "gap": 44
         },
         {
           "type": "text",
-          "copyRole": "notice",
+          "copyRole": "title",
           "gap": 14,
-          "size": 22,
-          "hideEmpty": true
+          "style": "titleKo",
+          "typographyRole": "title"
+        },
+        {
+          "type": "text",
+          "copyRole": "mix",
+          "gap": 22,
+          "style": "small",
+          "typographyRole": "small"
+        },
+        {
+          "type": "text",
+          "copyRole": "body",
+          "gap": 0,
+          "typographyRole": "body",
+          "style": "body"
         },
         {
           "type": "panel",
@@ -3951,21 +3808,24 @@
         "aspect": "source",
         "gap": 40
       },
-      "pickerHidden": true
+      "pickerHidden": true,
+      "invert": false
     },
     "WEAR-STYLING-2COL-01": {
       "id": "WEAR-STYLING-2COL-01",
       "displayName": "2열",
       "kind": "wear",
-      "padding": 56,
+      "padding": 0,
       "top": 0,
       "bottom": 0,
       "layout": [
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 35,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "photoFlow",
@@ -3974,15 +3834,7 @@
           "groupBy": "spaceGroup",
           "aspect": "4/5",
           "gap": 24,
-          "captions": [
-            {
-              "type": "text",
-              "copyRole": "colorName.n",
-              "gap": 0,
-              "size": 25,
-              "onlyExtraColor": true
-            }
-          ]
+          "captions": []
         }
       ],
       "overflow": {
@@ -4001,21 +3853,24 @@
         }
       },
       "usage": "styling",
-      "minPhotos": 2
+      "minPhotos": 2,
+      "contentInset": 56
     },
     "WEAR-STYLING-HERO-01": {
       "id": "WEAR-STYLING-HERO-01",
       "displayName": "큰 사진 아래 두 칸",
       "kind": "wear",
-      "padding": 56,
+      "padding": 0,
       "top": 0,
       "bottom": 0,
       "layout": [
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 35,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "photoFlow",
@@ -4024,15 +3879,7 @@
           "groupBy": "spaceGroup",
           "aspect": "4/5",
           "gap": 24,
-          "captions": [
-            {
-              "type": "text",
-              "copyRole": "colorName.n",
-              "gap": 0,
-              "size": 25,
-              "onlyExtraColor": true
-            }
-          ]
+          "captions": []
         }
       ],
       "overflow": {
@@ -4051,21 +3898,24 @@
         }
       },
       "usage": "styling",
-      "minPhotos": 3
+      "minPhotos": 3,
+      "contentInset": 56
     },
     "WEAR-FIT-2COL-01": {
       "id": "WEAR-FIT-2COL-01",
       "displayName": "2열",
       "kind": "wear",
-      "padding": 56,
+      "padding": 0,
       "top": 0,
       "bottom": 0,
       "layout": [
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 35,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "photoFlow",
@@ -4074,16 +3924,7 @@
           "groupBy": "spaceGroup",
           "aspect": "4/5",
           "gap": 24,
-          "captions": [
-            {
-              "type": "text",
-              "copyRole": "cap.{direction}",
-              "gap": 0,
-              "style": "small",
-              "size": 22,
-              "color": "ink"
-            }
-          ]
+          "captions": []
         }
       ],
       "overflow": {
@@ -4102,21 +3943,24 @@
         }
       },
       "usage": "fit",
-      "minPhotos": 2
+      "minPhotos": 2,
+      "contentInset": 56
     },
     "WEAR-FIT-HERO-01": {
       "id": "WEAR-FIT-HERO-01",
       "displayName": "큰 사진 아래 두 칸",
       "kind": "wear",
-      "padding": 56,
+      "padding": 0,
       "top": 0,
       "bottom": 0,
       "layout": [
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 35,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "photoFlow",
@@ -4125,16 +3969,7 @@
           "groupBy": "spaceGroup",
           "aspect": "4/5",
           "gap": 24,
-          "captions": [
-            {
-              "type": "text",
-              "copyRole": "cap.{direction}",
-              "gap": 0,
-              "style": "small",
-              "size": 22,
-              "color": "ink"
-            }
-          ]
+          "captions": []
         }
       ],
       "overflow": {
@@ -4153,21 +3988,24 @@
         }
       },
       "usage": "fit",
-      "minPhotos": 3
+      "minPhotos": 3,
+      "contentInset": 56
     },
     "WEAR-FIT-COLUMN-01": {
       "id": "WEAR-FIT-COLUMN-01",
       "displayName": "큰 사진 이어 보기",
       "kind": "wear",
-      "padding": 56,
+      "padding": 0,
       "top": 0,
       "bottom": 0,
       "layout": [
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 30,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "photoStack",
@@ -4177,15 +4015,7 @@
               "type": "photo",
               "slot": "$current",
               "aspect": "4/5",
-              "gap": 16
-            },
-            {
-              "type": "text",
-              "copyRole": "cap.{direction}",
-              "gap": 0,
-              "style": "small",
-              "size": 22,
-              "color": "ink"
+              "gap": 0
             }
           ]
         }
@@ -4205,48 +4035,33 @@
           "name": "기본"
         }
       },
-      "usage": "fit"
+      "usage": "fit",
+      "contentInset": 56
     },
     "CP-COLUMN-01": {
       "id": "CP-COLUMN-01",
       "displayName": "색별 이어 보기",
       "kind": "color_product",
-      "padding": 56,
+      "padding": 0,
       "top": 0,
       "bottom": 0,
       "layout": [
         {
           "type": "text",
-          "copyRole": "label",
-          "gap": 12,
-          "size": 32,
-          "whenTemplate": "emo"
-        },
-        {
-          "type": "text",
           "copyRole": "title",
-          "gap": 14,
-          "size": 37,
-          "style": "titleKo",
+          "gap": 36,
+          "style": "labelEn",
           "color": "ink",
-          "whenTemplate": "emo"
+          "typographyRole": "label",
+          "liningNumbers": true
         },
         {
           "type": "swatchRow",
-          "size": 37,
-          "itemGap": 30,
-          "gap": 30,
-          "whenTemplate": "emo"
-        },
-        {
-          "type": "text",
-          "copyRole": "title",
-          "style": "labelEn",
-          "size": 37,
-          "color": "ink",
-          "gap": 30,
-          "liningNumbers": true,
-          "whenTemplate": "show"
+          "names": true,
+          "size": 26,
+          "itemGap": 34,
+          "gap": 40,
+          "copyRole": "colors.n.name"
         },
         {
           "type": "photoStack",
@@ -4255,17 +4070,7 @@
             {
               "type": "photo",
               "slot": "$current",
-              "aspect": "4/5",
-              "gap": 16
-            },
-            {
-              "type": "text",
-              "copyRole": "colors.n.name",
-              "gap": 0,
-              "style": "titleKo",
-              "size": 24,
-              "fitWidth": true,
-              "swatchDot": true
+              "aspect": "4/5"
             }
           ]
         },
@@ -4276,32 +4081,9 @@
             {
               "type": "photo",
               "slot": "$current",
-              "aspect": "4/5",
-              "gap": 16
-            },
-            {
-              "type": "text",
-              "copyRole": "colors.n.name",
-              "gap": 8,
-              "style": "titleKo",
-              "size": 24,
-              "fitWidth": true,
-              "swatchDot": true
-            },
-            {
-              "type": "text",
-              "copyRole": "cap.back",
-              "gap": 0,
-              "size": 22
+              "aspect": "4/5"
             }
           ]
-        },
-        {
-          "type": "text",
-          "copyRole": "notice",
-          "gap": 14,
-          "size": 22,
-          "hideEmpty": true
         }
       ],
       "overflow": {
@@ -4318,7 +4100,8 @@
           "id": "basic",
           "name": "기본"
         }
-      }
+      },
+      "contentInset": 56
     },
     "PT-COLUMN-01": {
       "id": "PT-COLUMN-01",
@@ -4331,16 +4114,20 @@
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 12,
-          "size": 32,
-          "default": "Detail"
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "default": "Detail",
+          "typographyRole": "label"
         },
         {
           "type": "text",
           "copyRole": "title",
           "gap": 26,
           "size": 37,
-          "emphasis": "title"
+          "emphasis": "title",
+          "typographyRole": "title",
+          "style": "titleKo"
         },
         {
           "type": "photoStack",
@@ -4359,7 +4146,8 @@
               "copyRole": "items.n.name",
               "gap": 0,
               "style": "titleKo",
-              "size": 30
+              "size": 30,
+              "typographyRole": "title"
             }
           ]
         },
@@ -4368,7 +4156,9 @@
           "copyRole": "notice",
           "gap": 14,
           "size": 22,
-          "hideEmpty": true
+          "hideEmpty": true,
+          "typographyRole": "body",
+          "style": "body"
         }
       ],
       "overflow": {
@@ -4400,16 +4190,20 @@
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 12,
-          "size": 32,
-          "default": "Detail"
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "default": "Detail",
+          "typographyRole": "label"
         },
         {
           "type": "text",
           "copyRole": "title",
           "gap": 26,
           "size": 37,
-          "emphasis": "title"
+          "emphasis": "title",
+          "typographyRole": "title",
+          "style": "titleKo"
         },
         {
           "type": "photoStack",
@@ -4436,14 +4230,17 @@
                   "copyRole": "items.n.name",
                   "gap": 12,
                   "style": "titleKo",
-                  "size": 30
+                  "size": 30,
+                  "typographyRole": "title"
                 },
                 {
                   "type": "text",
                   "copyRole": "items.n.desc",
                   "gap": 0,
                   "size": 25,
-                  "singleLine": true
+                  "singleLine": true,
+                  "typographyRole": "body",
+                  "style": "body"
                 }
               ],
               "gap": 0
@@ -4455,7 +4252,9 @@
           "copyRole": "notice",
           "gap": 14,
           "size": 22,
-          "hideEmpty": true
+          "hideEmpty": true,
+          "typographyRole": "body",
+          "style": "body"
         }
       ],
       "overflow": {
@@ -4487,16 +4286,20 @@
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 12,
-          "size": 32,
-          "default": "Detail"
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "default": "Detail",
+          "typographyRole": "label"
         },
         {
           "type": "text",
           "copyRole": "title",
           "gap": 26,
           "size": 37,
-          "emphasis": "title"
+          "emphasis": "title",
+          "typographyRole": "title",
+          "style": "titleKo"
         },
         {
           "type": "photoStack",
@@ -4523,14 +4326,17 @@
                   "copyRole": "items.n.name",
                   "gap": 12,
                   "style": "titleKo",
-                  "size": 30
+                  "size": 30,
+                  "typographyRole": "title"
                 },
                 {
                   "type": "text",
                   "copyRole": "items.n.desc",
                   "gap": 0,
                   "size": 25,
-                  "singleLine": true
+                  "singleLine": true,
+                  "typographyRole": "body",
+                  "style": "body"
                 }
               ],
               "gap": 0,
@@ -4544,7 +4350,9 @@
           "copyRole": "notice",
           "gap": 14,
           "size": 22,
-          "hideEmpty": true
+          "hideEmpty": true,
+          "typographyRole": "body",
+          "style": "body"
         }
       ],
       "overflow": {
@@ -4569,15 +4377,17 @@
       "id": "WEAR-STYLING-FRAME-COLUMN-01",
       "displayName": "한 열 액자 1장",
       "kind": "wear",
-      "padding": 56,
+      "padding": 0,
       "top": 0,
       "bottom": 0,
       "layout": [
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 35,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "photoFrame",
@@ -4587,15 +4397,7 @@
           "groupBy": "spaceGroup",
           "aspect": "4/5",
           "gap": 24,
-          "captions": [
-            {
-              "type": "text",
-              "copyRole": "colorName.n",
-              "gap": 0,
-              "size": 25,
-              "onlyExtraColor": true
-            }
-          ]
+          "captions": []
         }
       ],
       "overflow": {
@@ -4615,21 +4417,24 @@
         }
       },
       "framePhotos": 1,
-      "minPhotos": 1
+      "minPhotos": 1,
+      "contentInset": 56
     },
     "WEAR-STYLING-FRAME-COLUMN-02": {
       "id": "WEAR-STYLING-FRAME-COLUMN-02",
       "displayName": "한 열 액자 2장",
       "kind": "wear",
-      "padding": 56,
+      "padding": 0,
       "top": 0,
       "bottom": 0,
       "layout": [
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 35,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "photoFrame",
@@ -4639,15 +4444,7 @@
           "groupBy": "spaceGroup",
           "aspect": "4/5",
           "gap": 24,
-          "captions": [
-            {
-              "type": "text",
-              "copyRole": "colorName.n",
-              "gap": 0,
-              "size": 25,
-              "onlyExtraColor": true
-            }
-          ]
+          "captions": []
         }
       ],
       "overflow": {
@@ -4667,22 +4464,25 @@
         }
       },
       "framePhotos": 2,
-      "minPhotos": 2
+      "minPhotos": 2,
+      "contentInset": 56
     },
     "WEAR-STYLING-FRAME-COLUMN-03": {
       "id": "WEAR-STYLING-FRAME-COLUMN-03",
       "pickerHidden": true,
       "displayName": "한 열 액자 3장",
       "kind": "wear",
-      "padding": 56,
+      "padding": 0,
       "top": 0,
       "bottom": 0,
       "layout": [
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 35,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "photoFrame",
@@ -4692,15 +4492,7 @@
           "groupBy": "spaceGroup",
           "aspect": "4/5",
           "gap": 24,
-          "captions": [
-            {
-              "type": "text",
-              "copyRole": "colorName.n",
-              "gap": 0,
-              "size": 25,
-              "onlyExtraColor": true
-            }
-          ]
+          "captions": []
         }
       ],
       "overflow": {
@@ -4720,21 +4512,24 @@
         }
       },
       "framePhotos": 3,
-      "minPhotos": 3
+      "minPhotos": 3,
+      "contentInset": 56
     },
     "WEAR-STYLING-FRAME-2COL-01": {
       "id": "WEAR-STYLING-FRAME-2COL-01",
       "displayName": "2열 액자 1장",
       "kind": "wear",
-      "padding": 56,
+      "padding": 0,
       "top": 0,
       "bottom": 0,
       "layout": [
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 35,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "photoFrame",
@@ -4744,15 +4539,7 @@
           "groupBy": "spaceGroup",
           "aspect": "4/5",
           "gap": 24,
-          "captions": [
-            {
-              "type": "text",
-              "copyRole": "colorName.n",
-              "gap": 0,
-              "size": 25,
-              "onlyExtraColor": true
-            }
-          ]
+          "captions": []
         }
       ],
       "overflow": {
@@ -4772,21 +4559,24 @@
       },
       "usage": "styling",
       "minPhotos": 2,
-      "framePhotos": 1
+      "framePhotos": 1,
+      "contentInset": 56
     },
     "WEAR-STYLING-FRAME-2COL-02": {
       "id": "WEAR-STYLING-FRAME-2COL-02",
       "displayName": "2열 액자 2장",
       "kind": "wear",
-      "padding": 56,
+      "padding": 0,
       "top": 0,
       "bottom": 0,
       "layout": [
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 35,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "photoFrame",
@@ -4796,15 +4586,7 @@
           "groupBy": "spaceGroup",
           "aspect": "4/5",
           "gap": 24,
-          "captions": [
-            {
-              "type": "text",
-              "copyRole": "colorName.n",
-              "gap": 0,
-              "size": 25,
-              "onlyExtraColor": true
-            }
-          ]
+          "captions": []
         }
       ],
       "overflow": {
@@ -4824,22 +4606,25 @@
       },
       "usage": "styling",
       "minPhotos": 2,
-      "framePhotos": 2
+      "framePhotos": 2,
+      "contentInset": 56
     },
     "WEAR-STYLING-FRAME-2COL-03": {
       "id": "WEAR-STYLING-FRAME-2COL-03",
       "pickerHidden": true,
       "displayName": "2열 액자 3장",
       "kind": "wear",
-      "padding": 56,
+      "padding": 0,
       "top": 0,
       "bottom": 0,
       "layout": [
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 35,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "photoFrame",
@@ -4849,15 +4634,7 @@
           "groupBy": "spaceGroup",
           "aspect": "4/5",
           "gap": 24,
-          "captions": [
-            {
-              "type": "text",
-              "copyRole": "colorName.n",
-              "gap": 0,
-              "size": 25,
-              "onlyExtraColor": true
-            }
-          ]
+          "captions": []
         }
       ],
       "overflow": {
@@ -4877,21 +4654,24 @@
       },
       "usage": "styling",
       "minPhotos": 3,
-      "framePhotos": 3
+      "framePhotos": 3,
+      "contentInset": 56
     },
     "WEAR-STYLING-FRAME-HERO-01": {
       "id": "WEAR-STYLING-FRAME-HERO-01",
       "displayName": "큰 사진 아래 두 칸 액자 1장",
       "kind": "wear",
-      "padding": 56,
+      "padding": 0,
       "top": 0,
       "bottom": 0,
       "layout": [
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 35,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "photoFrame",
@@ -4901,15 +4681,7 @@
           "groupBy": "spaceGroup",
           "aspect": "4/5",
           "gap": 24,
-          "captions": [
-            {
-              "type": "text",
-              "copyRole": "colorName.n",
-              "gap": 0,
-              "size": 25,
-              "onlyExtraColor": true
-            }
-          ]
+          "captions": []
         }
       ],
       "overflow": {
@@ -4929,21 +4701,24 @@
       },
       "usage": "styling",
       "minPhotos": 3,
-      "framePhotos": 1
+      "framePhotos": 1,
+      "contentInset": 56
     },
     "WEAR-STYLING-FRAME-HERO-02": {
       "id": "WEAR-STYLING-FRAME-HERO-02",
       "displayName": "큰 사진 아래 두 칸 액자 2장",
       "kind": "wear",
-      "padding": 56,
+      "padding": 0,
       "top": 0,
       "bottom": 0,
       "layout": [
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 35,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "photoFrame",
@@ -4953,15 +4728,7 @@
           "groupBy": "spaceGroup",
           "aspect": "4/5",
           "gap": 24,
-          "captions": [
-            {
-              "type": "text",
-              "copyRole": "colorName.n",
-              "gap": 0,
-              "size": 25,
-              "onlyExtraColor": true
-            }
-          ]
+          "captions": []
         }
       ],
       "overflow": {
@@ -4981,22 +4748,25 @@
       },
       "usage": "styling",
       "minPhotos": 3,
-      "framePhotos": 2
+      "framePhotos": 2,
+      "contentInset": 56
     },
     "WEAR-STYLING-FRAME-HERO-03": {
       "id": "WEAR-STYLING-FRAME-HERO-03",
       "pickerHidden": true,
       "displayName": "큰 사진 아래 두 칸 액자 3장",
       "kind": "wear",
-      "padding": 56,
+      "padding": 0,
       "top": 0,
       "bottom": 0,
       "layout": [
         {
           "type": "text",
           "copyRole": "label",
-          "gap": 35,
-          "size": 32
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
         },
         {
           "type": "photoFrame",
@@ -5006,15 +4776,7 @@
           "groupBy": "spaceGroup",
           "aspect": "4/5",
           "gap": 24,
-          "captions": [
-            {
-              "type": "text",
-              "copyRole": "colorName.n",
-              "gap": 0,
-              "size": 25,
-              "onlyExtraColor": true
-            }
-          ]
+          "captions": []
         }
       ],
       "overflow": {
@@ -5034,27 +4796,27 @@
       },
       "usage": "styling",
       "minPhotos": 3,
-      "framePhotos": 3
+      "framePhotos": 3,
+      "contentInset": 56
     },
     "PT-PHOTO-CARD-01": {
       "id": "PT-PHOTO-CARD-01",
       "displayName": "사진과 글 칸 카드",
       "kind": "points",
-      "padding": 60,
+      "padding": 56,
       "top": 100,
       "bottom": 80,
-      "align": "center",
       "surface": "panel",
       "invert": false,
       "layout": [
         {
           "type": "text",
           "copyRole": "label",
+          "gap": 36,
           "style": "labelEn",
+          "color": "ink",
           "default": "Detail",
-          "size": 34,
-          "color": "muted",
-          "gap": 50
+          "typographyRole": "label"
         },
         {
           "type": "photoStack",
@@ -5083,7 +4845,8 @@
                       "style": "titleKo",
                       "size": 42,
                       "color": "ink",
-                      "gap": 16
+                      "gap": 16,
+                      "typographyRole": "title"
                     },
                     {
                       "type": "text",
@@ -5092,7 +4855,7 @@
                       "style": "body",
                       "size": 35,
                       "color": "muted",
-                      "lineHeight": 1.7
+                      "typographyRole": "body"
                     }
                   ]
                 }
@@ -5112,44 +4875,43 @@
       "id": "PT-TEXT-PHOTO-01",
       "displayName": "제목, 설명, 사진",
       "kind": "points",
-      "padding": 40,
+      "padding": 56,
       "top": 120,
       "bottom": 60,
-      "align": "left",
       "surface": "canvas",
       "invert": false,
       "layout": [
         {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "default": "Detail",
+          "typographyRole": "label"
+        },
+        {
           "type": "photoStack",
           "slot": "*",
           "includeLoose": true,
-          "itemGap": 230,
+          "itemGap": 120,
           "items": [
             {
               "type": "text",
               "copyRole": "items.n.name",
+              "gap": 14,
               "style": "titleKo",
               "numberPrefix": true,
-              "size": 46,
-              "color": "ink",
-              "trackingEm": -0.03,
-              "x": 3,
-              "w": 914,
-              "gap": 66
+              "typographyRole": "title"
             },
             {
               "type": "text",
               "copyRole": "items.n.desc",
-              "copyPolicy": "partOnly",
+              "gap": 32,
               "style": "body",
-              "size": 37,
-              "weight": "light",
-              "color": "ink",
-              "trackingEm": -0.05,
-              "lineHeight": 1.35,
-              "x": 3,
-              "w": 914,
-              "gap": 24
+              "copyPolicy": "partOnly",
+              "singleLine": true,
+              "typographyRole": "body"
             },
             {
               "type": "photo",
@@ -5165,7 +4927,118 @@
         "aspect": "4/5",
         "gap": 230
       },
-      "storyboardTextNote": "번호 붙은 부위 이름과 두 줄 설명"
+      "storyboardTextNote": "번호 붙은 부위 이름과 한 줄 설명"
+    },
+    "T06-COMMENT-01": {
+      "id": "T06-COMMENT-01",
+      "displayName": "어두운 소개판",
+      "kind": "intro",
+      "padding": 56,
+      "top": 80,
+      "bottom": 80,
+      "layout": [
+        {
+          "type": "text",
+          "copyRole": "label",
+          "gap": 36,
+          "style": "labelEn",
+          "color": "ink",
+          "typographyRole": "label"
+        },
+        {
+          "type": "text",
+          "copyRole": "name",
+          "gap": 30,
+          "style": "titleKo",
+          "typographyRole": "productName"
+        },
+        {
+          "type": "text",
+          "copyRole": "body",
+          "gap": 44,
+          "typographyRole": "intro",
+          "style": "body"
+        },
+        {
+          "type": "factTable",
+          "copyRole": "facts",
+          "layout": "columns",
+          "size": 30,
+          "gap": 0,
+          "labelWidth": 180,
+          "rowGap": 18
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "storyboardTextNote": "상품 정보와 MD 코멘트",
+      "invert": true
+    },
+    "P01-SHOW-COMMENT-01": {
+      "id": "P01-SHOW-COMMENT-01",
+      "displayName": "큰 사진과 어두운 소개판",
+      "kind": "first",
+      "padding": 0,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "photo",
+          "slot": "hero",
+          "aspect": "3/4",
+          "gap": 0
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "introDesignId": "T06-COMMENT-01"
+    },
+    "P01-SHOW-COMMENT-01-G": {
+      "id": "P01-SHOW-COMMENT-01-G",
+      "displayName": "큰 사진과 어두운 소개판과 고스트컷",
+      "kind": "first",
+      "padding": 0,
+      "top": 0,
+      "bottom": 0,
+      "layout": [
+        {
+          "type": "photo",
+          "slot": "hero",
+          "aspect": "3/4",
+          "gap": 0
+        },
+        {
+          "type": "panel",
+          "padding": 56,
+          "fill": "panel",
+          "nodes": [
+            {
+              "type": "photo",
+              "slot": "ghost",
+              "aspect": "1/1",
+              "gap": 0,
+              "x": 140,
+              "w": 496
+            }
+          ],
+          "gap": 20,
+          "x": 56,
+          "w": 888
+        }
+      ],
+      "overflow": {
+        "type": "photoStack",
+        "aspect": "source",
+        "gap": 40
+      },
+      "pickerHidden": true,
+      "introDesignId": "T06-COMMENT-01"
     }
   },
   "templates": [
@@ -5206,13 +5079,13 @@
         "accentBg": "#f4f4f4",
         "accentLine": "#e2e2e2",
         "panel": "#f4f4f4",
-        "invertBg": null,
+        "invertBg": "#111111",
         "invertInk": null
       },
       "spacing": {
         "sectionGap": 120,
         "textSectionGap": 100,
-        "photoGap": 40
+        "photoGap": 0
       },
       "sections": [
         {
@@ -6015,6 +5888,49 @@
         "src": "/templates/previews/preview-emo-v1.webp",
         "fallbackSrc": "/models/demo/cut1.webp",
         "description": "착용 연출과 다정한 소개"
+      },
+      "typography": {
+        "label": {
+          "size": 48,
+          "lineHeight": 1.2
+        },
+        "productName": {
+          "size": 51,
+          "lineHeight": 1.3,
+          "weight": 600
+        },
+        "title": {
+          "size": 48,
+          "lineHeight": 1.3,
+          "weight": 600
+        },
+        "intro": {
+          "size": 32,
+          "lineHeight": 1.7
+        },
+        "body": {
+          "size": 32,
+          "lineHeight": 1.6,
+          "weight": 400
+        },
+        "small": {
+          "size": 28,
+          "lineHeight": 1.45,
+          "weight": 400
+        },
+        "colorName": {
+          "size": 30,
+          "lineHeight": 1.45,
+          "weight": 600,
+          "trackingEm": 0
+        }
+      },
+      "colorNames": {
+        "englishOnly": false,
+        "dotSize": 26,
+        "dotGap": 10,
+        "itemGap": 34,
+        "rowGap": 14
       }
     },
     {
@@ -6026,17 +5942,17 @@
         "name": "매거진"
       },
       "voice": "noun_short",
-      "align": "center",
+      "align": "left",
       "fonts": {
         "titleKo": {
           "font": "Pretendard",
-          "weight": 600,
+          "weight": 700,
           "italic": false,
           "trackingEm": -0.02
         },
         "labelEn": {
           "font": "Cormorant",
-          "weight": 400,
+          "weight": 500,
           "italic": false,
           "trackingEm": 0.12,
           "uppercase": true
@@ -6061,7 +5977,7 @@
       "spacing": {
         "sectionGap": 149,
         "textSectionGap": 149,
-        "photoGap": 47
+        "photoGap": 40
       },
       "sections": [
         {
@@ -6126,7 +6042,7 @@
           "alternatives": [],
           "photoSlots": [],
           "block": {
-            "invert": true
+            "invert": false
           }
         },
         {
@@ -6223,7 +6139,7 @@
             }
           ],
           "block": {
-            "invert": true
+            "invert": false
           },
           "fallbackDesignId": "T03-TEXT-01"
         },
@@ -6760,6 +6676,49 @@
         "src": "/templates/previews/preview-show-v1.webp",
         "fallbackSrc": "/models/demo/cut2.webp",
         "description": "사진 중심의 간결한 구성"
+      },
+      "typography": {
+        "label": {
+          "size": 42,
+          "lineHeight": 1.2
+        },
+        "productName": {
+          "size": 54,
+          "lineHeight": 1.25,
+          "weight": 700
+        },
+        "title": {
+          "size": 46,
+          "lineHeight": 1.3,
+          "weight": 700
+        },
+        "intro": {
+          "size": 30,
+          "lineHeight": 1.7
+        },
+        "body": {
+          "size": 32,
+          "lineHeight": 1.5,
+          "weight": 400
+        },
+        "small": {
+          "size": 28,
+          "lineHeight": 1.45,
+          "weight": 400
+        },
+        "colorName": {
+          "size": 28,
+          "lineHeight": 1.45,
+          "weight": 400,
+          "trackingEm": 0.12
+        }
+      },
+      "colorNames": {
+        "englishOnly": true,
+        "dotSize": 26,
+        "dotGap": 10,
+        "itemGap": 34,
+        "rowGap": 14
       }
     }
   ],
@@ -6795,8 +6754,8 @@
     "photoTop": 34,
     "footerGap": 40,
     "remainderGap": 40,
-    "textSize": 22,
-    "textLineHeight": 31,
+    "textSize": 28,
+    "textLineHeight": 41,
     "textWeight": 500,
     "textTrackingEm": 0.04,
     "blur": 48,
@@ -6868,5 +6827,54 @@
       0.2,
       0.96
     ]
+  },
+  "sectionLabel": {
+    "inset": 56,
+    "gap": 36
+  },
+  "colorNameEnglish": {
+    "블랙": "BLACK",
+    "화이트": "WHITE",
+    "오프화이트": "OFF WHITE",
+    "아이보리": "IVORY",
+    "크림": "CREAM",
+    "베이지": "BEIGE",
+    "오트밀": "OATMEAL",
+    "그레이": "GRAY",
+    "회색": "GRAY",
+    "라이트그레이": "LIGHT GRAY",
+    "다크그레이": "DARK GRAY",
+    "차콜": "CHARCOAL",
+    "멜란지": "MELANGE",
+    "네이비": "NAVY",
+    "블루": "BLUE",
+    "스카이블루": "SKY BLUE",
+    "소라": "SKY BLUE",
+    "민트": "MINT",
+    "카키": "KHAKI",
+    "올리브": "OLIVE",
+    "그린": "GREEN",
+    "브라운": "BROWN",
+    "카멜": "CAMEL",
+    "모카": "MOCHA",
+    "버건디": "BURGUNDY",
+    "와인": "WINE",
+    "레드": "RED",
+    "핑크": "PINK",
+    "라벤더": "LAVENDER",
+    "퍼플": "PURPLE",
+    "옐로우": "YELLOW",
+    "머스타드": "MUSTARD",
+    "오렌지": "ORANGE",
+    "연청": "LIGHT DENIM",
+    "중청": "MID DENIM",
+    "진청": "DARK DENIM",
+    "흑청": "BLACK DENIM",
+    "검정": "BLACK",
+    "검정색": "BLACK",
+    "검은색": "BLACK",
+    "흰색": "WHITE",
+    "라이트블루": "LIGHT BLUE",
+    "다크블루": "DARK BLUE"
   }
 }

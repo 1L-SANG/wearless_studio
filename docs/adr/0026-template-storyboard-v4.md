@@ -53,7 +53,7 @@ ADR-0005는 콘티를 후킹, 스타일링, 스튜디오, 의류 확인 네 섹�
 18. AI가 채우는 글은 디테일 요소의 부위 설명(`analysis.partDescriptionCopy`, `server/app/agents/page_part_copy.py`), 후기 초안(20항), 상품 소개 본문이다. 기본 디자인이 아닌 일부 디테일 요소 디자인은 부위 설명이 없을 때 셀러 강조 특징 설명(`analysis.featureCopy`)으로 대신 채운다. 사진마다 `headline`만 만들던 옛 소제목 생성(AG-02)과 검수(AG-03)는 카탈로그 글 칸에 `headline` 역할이 없어 조립에 쓰이지 않았고, 2026-11-13에 지웠다. 그래서 첫 장 영문 상품명, 착용컷 제목과 소개, 원단 제목과 설명, 색상 소개, 디테일 요소 제목과 핏 설명, 상품 소개 제목과 요약, 추천 대상, 질문과 답, SNS 문구 같은 다른 AI 글 칸은 빈 글과 안내 문구(`placeholder`)로 나간다(`page_template_assembler.py`의 `_content_for`, `_render_text`). 상품명, 색 이름, 소재 같은 사실 칸은 상품과 분석 값을 그대로 쓴다.
     - 상품 소개 본문(`seller+ai`)에는 셀러가 분석 화면에서 쓴 MD 코멘트(`analysis.mdComment`)를 넣는다(2026-11-13 오너 결정). 셀러마다 말투와 형식이 달라서, AI가 실제 쇼핑몰 상세페이지에 실리는 MD 코멘트처럼 다듬고 고쳐서 넣는다. 감성형과 쇼룸형 모두 넣는다. 다듬는 말투와 형식은 카피라이팅 작업이 정한다.
     - 다듬기가 붙기 전에는 두 템플릿 모두 셀러 원문을 줄바꿈까지 그대로 하나의 글상자에 넣는다(`page_template_assembler.py`의 `_seller_comment`, `_render_paragraphs`). 셀러 글이 없거나 공백뿐이면 AI가 초안을 쓴다. 생성 대기 화면은 셀러 원문이 든 본문을 늦게 온 카피로 덮지 않는다(`src/lib/editorWaitSkeleton.js`).
-    - 쇼룸형 상품 소개(한눈에 보는 요약, `T06-D01`)는 요약 판 맨 위에 영문 라벨 "Comment"와 MD 코멘트 본문을 둔다.
+    - 쇼룸형 상품 소개는 첫 장 디자인을 따라 사진 다음 사양판(`T06-D01`: 상품명, MD 코멘트 본문, 사양)이나 어두운 소개판(`T06-COMMENT-01`: 맨 위 영문 라벨 "COMMENT", 상품명, MD 코멘트 본문, 사양)으로 나온다(2026-11-17).
     - 카탈로그의 상품 소개 설명 문구(`storyboardTextNote`)는 "MD 코멘트를 넣어요"다. 다만 글만 있는 상품 소개는 콘티의 섹션 추가 목록에 나오지 않으므로(`src/features/storyboard/StoryboardSectionPicker.jsx`의 `isHiddenStoryboardKind`) 지금 화면에는 이 문구가 보이지 않는다.
 19. 카피 체계(어느 칸에 무엇을 어떤 말투로 쓸지, 굵게와 강조를 어디에 줄지)는 별도 카피라이팅 작업에서 정한다.
 20. 후기 섹션은 2026-10-26 오너 결정을 따른다. 셀러가 고치기 쉽도록 AI가 후기 초안을 미리 넣어 두고, 셀러가 에디터에서 실제 후기로 고친다. 초안은 매번 조금씩 다르게 쓰고, 이름 칸 기본값은 "김태희", 별점 기본값은 5개다. 카탈로그의 후기 글 칸(`items.n.text`, `items.n.who`)은 AI 초안 칸(`aiDraft`)이다.
@@ -66,18 +66,18 @@ ADR-0005는 콘티를 후킹, 스타일링, 스튜디오, 의류 확인 네 섹�
 
 ### 조립 엔진과 에디터 블록
 
-24. 페이지 조립 엔진은 프론트(`src/lib/pageTemplates/assemble.js`)와 서버(`server/app/agents/page_template_assembler.py`) 두 벌이다. 같은 카탈로그와 같은 사례 파일(`tests/fixtures/page_templates_cases.json`, 304건)로 두 결과가 같은지 시험한다. 카탈로그가 잘못되면 서버는 시작하지 않고(`server/app/main.py`의 `load_catalog`), 프론트도 같은 검사(`validateCatalog`)를 한다.
+24. 페이지 조립 엔진은 프론트(`src/lib/pageTemplates/assemble.js`)와 서버(`server/app/agents/page_template_assembler.py`) 두 벌이다. 같은 카탈로그와 같은 사례 파일(`tests/fixtures/page_templates_cases.json`, 404건)로 두 결과가 같은지 시험한다. 카탈로그가 잘못되면 서버는 시작하지 않고(`server/app/main.py`의 `load_catalog`), 프론트도 같은 검사(`validateCatalog`)를 한다.
 25. 조립 결과 에디터 블록은 `pageSectionKey`, `pageSectionKind`, `pageDesignId`를 가진다. `kind`는 섹션 첫 카드의 내부 섹션 역할(`hooking`, `styling`, `studio`, `product`)이고, 첫 카드가 글 카드나 내 이미지면 `info`다. 블록에는 `contentRole`이 없고, 사진 요소가 `slotKey`, `roleHint`, `sourceBlockId`를 가진다. 페이지 끝에는 자동 블록 넷을 붙인다. 사이즈 안내(`size`), 세탁 안내(`care`), AI 생성 안내(`ai-notice`), 공통 주의(`common-notice`)다(`assemble_v4`, `server/app/agents/page_assembler.py`의 `build_auto_blocks`). 에디터 빈 칸 판정은 ADR-0019를 따른다. `pageSectionKey`가 있는 블록의 사진 칸은 kind가 `info`여도 일반 사진 칸처럼 판정하므로, 디테일 요소, 후기, 궁금한 점 섹션의 실패 칸도 에디터에서 원래 콘티대로 다시 만들 수 있다. 자동 블록 넷은 다시 만들기와 AI로 채우기 대상이 아니다.
 
 ### 2026-11-14 추가 (오너 카피 피드백 중 템플릿 쪽)
 
 - 궁금한 점(`T08-D07`): 사진 위 가운데에 영문 라벨과 한글 제목을 두고, 말풍선은 "Q." 질문(연하고 작게)과 "A." 답(진하고 조금 크고 굵게)으로 나눈다. 생성 뒤 서버가 배경 사진에서 얼굴을 찾아(`server/app/agents/face_identity.py`의 YuNet) 제목 자리와 겹치면 제목을 사진 밖 위로 뺀다. 결과는 컷 메타 `overlayTextPositions`에 남는다. 검출을 못 하면 빼는 쪽이다. 측정 전 콘티와 생성 대기는 사진 위 배치다.
-- 색상과 제품(`CP-COLUMN-01`) 제목은 감성형 "N가지 색상"과 그 아래 색 원 줄, 쇼룸형 "N COLORS" 한 줄이다. 색이 하나면 "1가지 색상", "1 COLOR"다.
+- 색상과 제품 제목은 감성형 "N가지 색상", 쇼룸형 "N COLORS"다. 색이 하나면 "1가지 색상", "1 COLOR"다. 제목 아래에는 색 점과 색 이름 범례를 한 번 둔다(쇼룸형 영문 대문자, 감성형 한글과 영문. 영문이 없는 색이 하나라도 있으면 모두 한글). 색상 디자인은 `CP-COLUMN-01`(색별 이어 보기)과 `CP-EMO-01`(색 격자) 둘이다(2026-11-17).
 - 후기 섹션 고정 제목은 "먼저 입어 본 분들의 후기"다.
-- 착용컷 사진의 방향 라벨(Front, Side, Back)은 앞, 옆, 뒤 회전 세트 사진에만 붙인다.
+- 착용컷 사진 아래의 방향 글자(Front, Side, Back)는 쓰지 않는다(2026-11-17, 사진 아래 작은 단독 글 없음).
 - 디테일 요소 부위 설명(`copyPolicy: partOnly`)은 비어 있지 않은 한 줄이나 두 줄을 받는다.
 - 조립기가 만든 글 묶음(`groupId`가 `template-copy:`로 시작)에 글이 하나도 없으면 미리보기와 내려받기에서 그 묶음의 말풍선, 알약, 표시까지 뺀다. 편집 화면에는 자리 표시와 함께 남긴다.
-- 섹션 제목과 라벨 전체의 표기 통일은 쇼룸형 조사 뒤 따로 정한다.
+- 섹션 라벨 표기는 통일했다(2026-11-15 오너 결정). 첫장소개 다음 모든 섹션이 섹션 맨 위에서 같은 꼴의 라벨로 시작하고(쇼룸형 왼쪽 영문 대문자 42, 감성형 가운데 기울인 영문 48), 스튜디오 착용컷 라벨은 LOOKBOOK이다(DESIGN.md 15.5.5).
 
 ## 결과
 
