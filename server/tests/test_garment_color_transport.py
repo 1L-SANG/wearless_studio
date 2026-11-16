@@ -10,7 +10,7 @@ from PIL import Image
 
 from app import public_routes, repo, routes
 from app.agents import garment_color_evidence as evidence, garment_color_observer as observer
-from app.agents import horizon_background as hb
+from app.agents import horizon_background as hb, vision_llm
 from app.services import garment_color_measure as measure
 from app.workers import analyze_job
 from conftest import FakePool, auth_headers, make_settings, patch_route_db
@@ -56,7 +56,7 @@ def test_analysis_never_observes_or_builds_a_color_contract(monkeypatch):
     monkeypatch.setattr(analyze_job, "_judge_input_consistency", consistency)
     monkeypatch.setattr(evidence, "build_contract", forbidden)
     monkeypatch.setattr(observer, "observe", forbidden)
-    monkeypatch.setattr(observer, "analyze_with_fallback", forbidden)
+    monkeypatch.setattr(vision_llm, "_call_gpt", forbidden)
     product = {"colors": [{"id": "base", "isBase": True}, {"id": "red"}]}
     result = asyncio.run(analyze_job.analyze_image_bytes(
         make_settings(), [(png("blue"), "image/png"), (png("gray"), "image/png")],
@@ -80,10 +80,10 @@ def test_public_analyze_response_has_no_garment_color_keys(client, monkeypatch):
 
 def test_observer_never_calls_provider_without_sources_and_returns_only_regions(monkeypatch):
     seen = []
-    async def provider(settings, prompt, images, schema, **kwargs):
+    async def provider(settings, model, prompt, images, schema, timeout, **kwargs):
         seen.append((prompt, images, schema))
-        return {"regions": []}, "fake"
-    monkeypatch.setattr(observer, "analyze_with_fallback", provider)
+        return {"regions": []}
+    monkeypatch.setattr(vision_llm, "_call_gpt", provider)
     assert asyncio.run(observer.observe(make_settings(), [])) == []
     assert not seen
     source = {"sourceIndex": 4, "colorId": "not-a-prompt", "slot": "Front", "data": png("blue"), "mime": "image/png"}
@@ -104,11 +104,11 @@ def test_observer_rejects_oversize_header_before_pixel_conversion_and_keeps_sour
     def open_image(stream, *args, **kwargs):
         return Oversize() if stream.getvalue() == b"large-image-header" else original_open(stream, *args, **kwargs)
     seen = {}
-    async def provider(settings, prompt, images, schema, **kwargs):
+    async def provider(settings, model, prompt, images, schema, timeout, **kwargs):
         seen.update(prompt=prompt, images=images)
-        return {"regions": []}, "fake"
+        return {"regions": []}
     monkeypatch.setattr(Image, "open", open_image)
-    monkeypatch.setattr(observer, "analyze_with_fallback", provider)
+    monkeypatch.setattr(vision_llm, "_call_gpt", provider)
     large = {"sourceIndex": 1, "colorId": "large", "slot": "Front", "data": b"large-image-header", "mime": "image/png"}
     small = {"sourceIndex": 4, "colorId": "small", "slot": "Front", "data": png("blue"), "mime": "image/png"}
     assert observer._observer_image(b"broken", "image/png") is None
