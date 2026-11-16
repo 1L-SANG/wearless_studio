@@ -36,7 +36,7 @@ from .directing_profile import render_directing_profile
 from .gemini_image import GeminiImageClient, InlineImage
 from .model_routing import resolve_model
 from .fit_axes import build_fit_profile_block
-from .prompts import _product_block, _sanitize
+from .prompts import _product_block, _sanitize, build_mirrored_source_block
 from . import face_angle_swap, face_identity, space_set_assets
 from .reference_mode import reference_scope
 from ..facemarket_physique import build_body_profile_block, build_face_shape_block, build_hair_block
@@ -1049,9 +1049,17 @@ def render_cut_prompt(
         if spec["cutType"] in _WORN_CUTS and not is_framed_signature else ""
     )
     block = _product_block(product, analysis or {}, include_legacy_fit=fit_profile is None)
+    mirror_block = ""
+    if (cut in _WORN_CUTS and (analysis or {}).get("sourceMirrored") is True
+            and not has_mannequin and not face_pass):
+        mirror_block = (
+            build_mirrored_source_block(analysis)
+            + " This rule applies only to the sold product and takes precedence over the uncorrected "
+              "orientation in the PRODUCT images."
+        )
     outfit_block = need("OUTFIT_REFS") if actual_outfit_roles else ""
     return "\n\n".join(
-        part for part in (text, directing_block, fit_block, body_block, hair_block, face_shape_block, block, outfit_block)
+        part for part in (text, directing_block, fit_block, body_block, hair_block, face_shape_block, block, mirror_block, outfit_block)
         if part
     )
 

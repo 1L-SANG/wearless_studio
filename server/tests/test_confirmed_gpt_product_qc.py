@@ -112,8 +112,11 @@ def test_product_color_privilege_requires_exact_confirmed_marker(profile, marker
         assert context["confirmedGptProductAuthority"] == _PRODUCT_AUTHORITY
 
 
-@pytest.mark.parametrize("profile,mirror_flag", [("generic_v1", True), ("confirmed_gpt_v1", "true")])
-def test_qc_does_not_grant_mirror_authority_to_other_profiles_or_nonboolean_values(profile, mirror_flag):
+@pytest.mark.parametrize("profile,mirror_flag", [
+    ("generic_v1", True), ("generic_v1", "true"), ("generic_v1", 1),
+    ("confirmed_gpt_v1", "true"), ("confirmed_gpt_v1", 1),
+])
+def test_qc_does_not_grant_mirror_authority_without_server_marker_or_for_nonboolean_values(profile, mirror_flag):
     context = {
         "authorityProfile": profile,
         "attributeOwners": {"color": "storyboard" if profile == "generic_v1" else "productTruth"},

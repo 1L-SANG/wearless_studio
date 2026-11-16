@@ -1235,6 +1235,7 @@ async def verdict(
     *,
     authority_profile: str = "generic_v1",
     confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
+    source_mirrored: bool = False,
 ) -> dict:
     """Judge one candidate; reference order is preserved and output is always attached last.
 
@@ -1253,6 +1254,11 @@ async def verdict(
         contract = _confirmed_authority_contract(contract, confirmed_prompt_input)
     elif confirmed_prompt_input is not None:
         raise VisionError("cut_output_qc: confirmed framing contract on generic profile")
+    elif (source_mirrored is True
+            and contract["recipeFamily"] in {"styling", "horizon"}
+            and any(reference.role == "product" for reference in checked_references)
+            and not any(reference.role == "mannequin" for reference in checked_references)):
+        contract["sourceMirrored"] = True
     applicable = gate_applicability(contract)
     forced = _forced_preflight(contract, checked_references, generated_image)
     if not _valid_image(generated_image):
@@ -1277,6 +1283,9 @@ async def verdict(
         authority_context["confirmedGptProductAuthority"] = contract["confirmedGptProductAuthority"]
         if contract.get("sourceMirrored") is True:
             authority_context["sourceMirrored"] = True
+    if (authority_context is not None and authority_profile == "generic_v1"
+            and contract.get("sourceMirrored") is True):
+        authority_context.update(genericProductMirrorAuthority=True, sourceMirrored=True)
     if authority_context is not None and contract.get("productPresentation") is not None:
         authority_context.update(
             recipeFamily=contract["recipeFamily"], productVariant=contract["productVariant"],

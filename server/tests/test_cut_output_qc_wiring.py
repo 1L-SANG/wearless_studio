@@ -50,6 +50,7 @@ def _detail_spec():
 def _run_detail_cut(
     monkeypatch, *, qc_mode="shadow", manifest="1. PRODUCT — front", events=None,
     generated_outputs=None, confirmed_packet=None, spec=None, settings_overrides=None,
+    analysis=None,
 ):
     events = [] if events is None else events
     captured = {}
@@ -88,7 +89,7 @@ def _run_detail_cut(
         worker_job(),
         [prepared],
         {"clothingType": "top"},
-        {"fitProfile": {"axes": {"fit": "regular"}}},
+        {"fitProfile": {"axes": {"fit": "regular"}}} if analysis is None else analysis,
     ))
     captured.update(events=events, r2=r2, result=result)
     return captured
@@ -237,6 +238,29 @@ def _qc_result(*failed_gates):
     for gate in failed_gates:
         raw["gates"][dpj.cut_output_qc.GATES.index(gate)]["status"] = "FAIL"
     return dpj.cut_output_qc.validate(raw)
+
+
+@pytest.mark.parametrize("mirror_value", [True, False, "true", 1, None])
+def test_generic_worker_passes_analysis_mirror_boolean_to_initial_and_repair_qc(monkeypatch, mirror_value):
+    seen = []
+
+    async def recording_qc(settings, plan, references, generated, **kwargs):
+        seen.append((generated.data, kwargs))
+        return _qc_result("garmentConstruction") if generated.data == b"INITIAL" else _qc_result()
+
+    monkeypatch.setattr(dpj.cut_output_qc, "verdict", recording_qc)
+    analysis = {} if mirror_value is None else {"sourceMirrored": mirror_value}
+    run = _run_detail_cut(
+        monkeypatch, qc_mode="repair", analysis=analysis,
+        spec={"id": "worn", "cutType": "horizon", "shot": "full", "direction": "front"},
+        generated_outputs=[b"INITIAL", b"REPAIRED"],
+    )
+
+    expected_kwargs = {"source_mirrored": True} if mirror_value is True else {}
+    assert seen == [(b"INITIAL", expected_kwargs), (b"REPAIRED", expected_kwargs)]
+    if mirror_value is True:
+        assert all(kwargs["source_mirrored"] is True for _, kwargs in seen)
+    assert run["r2"].saved == [b"REPAIRED"]
 
 
 def test_detail_shadow_qc_observes_generated_output_before_save(monkeypatch):
