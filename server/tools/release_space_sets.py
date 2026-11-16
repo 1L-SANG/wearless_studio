@@ -1900,7 +1900,7 @@ def _validate_frontend_catalog(value: object, *, label: str) -> None:
             member_label = f"sets[{set_index}].members[{expected_order - 1}]"
             if (
                 not isinstance(member, dict)
-                or set(member) - {"variants"} != _FRONTEND_MEMBER_FIELDS
+                or set(member) - {"variants", "studioStyle"} != _FRONTEND_MEMBER_FIELDS
             ):
                 violations.append(f"{member_label}_fields_invalid")
                 continue
@@ -2077,7 +2077,7 @@ def _validate_published_registry(value: object, *, label: str) -> None:
             member_label = f"{set_label}.members[{member_index}]"
             if (
                 not isinstance(member, dict)
-                or (set(member) | ({"pose"} if space_set.get("setType") != "styling" else set())) != _PUBLISHED_MEMBER_FIELDS
+                or ((set(member) - {"studioStyle"}) | ({"pose"} if space_set.get("setType") != "styling" else set())) != _PUBLISHED_MEMBER_FIELDS
             ):
                 violations.append(f"{member_label}_fields_invalid")
                 continue
@@ -2157,7 +2157,7 @@ def _validate_catalog_pair(frontend: dict, registry: dict, *, label: str) -> Non
         "spaceVariation",
         "platePolicy",
     )
-    recipe_fields = ("exampleId", "order", "cutType", "shot", "direction")
+    recipe_fields = ("exampleId", "order", "cutType", "shot", "direction", "studioStyle")
     for frontend_set, server_set in zip(frontend_sets, server_sets):
         set_id = server_set["setId"]
         if frontend_set.get("setApplicableClothingTypes", frontend_set.get("applicableClothingTypes")) != server_set.get("setApplicableClothingTypes", server_set.get("applicableClothingTypes")):

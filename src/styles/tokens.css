@@ -78,6 +78,8 @@
   --sb-continue-height: calc(var(--cta-height) + var(--sp-8) * 2);
   --sb-page-edge: max(var(--sp-24), calc((100vw - 1030px) / 2));
   --sb-drawer-width: min(520px, 40vw);
+  --sb-drawer-padding-top: var(--sp-4);
+  --sb-drawer-padding-inline: var(--sp-20);
   --sb-detail-veil-start: .56;
   --sb-detail-veil-end: .84;
   --sb-detail-title-size: 15px;
@@ -253,6 +255,29 @@
   --sb-fs-note: 13px;
   --sb-fs-meta: 12px;
   --sb-line-control: var(--fg-3);
+  /* WOC22 photo controls and set options, matching the owner-approved mocks. */
+  --sb-segment-height: 30px;
+  --sb-option-height: 36px;
+  --sb-frame-icon-width: 18px;
+  --sb-frame-icon-height: 24px;
+  --sb-set-card-height: 155px;
+  --sb-tray-cut-width: 88px;
+  --sb-tray-cut-height: 117px;
+  --sb-tray-stroke: 1.5px;
+  --sb-tray-ants-duration: 1.1s;
+  --sb-tray-outline-top: 2px;
+  --sb-tray-outline-inline: 9px;
+  --sb-tray-outline-bottom: 10px;
+  --sb-photo-sticky-layer: 5;
+  --sb-photo-sticky-shadow: 0 1px 0 var(--ring-strong), 0 8px 16px -12px color-mix(in srgb, var(--fg-1) 18%, transparent);
+  --sb-set-nudge-duration: 700ms;
+  --sb-set-nudge-color: color-mix(in srgb, var(--accent-blue) 32%, transparent);
+  --sb-photo-dim-opacity: .72;
+  --sb-photo-veil-opacity: .5;
+  --sb-option-disabled-opacity: .42;
+  --sb-set-unplaced-opacity: .4;
+  --sb-reason-width: 248px;
+  --sb-photo-more-bg: color-mix(in srgb, var(--fg-1) 72%, transparent);
   --sb-t-fast: var(--cta-transition);
   --sb-t-base: 200ms;
   --sb-spin: 9s;

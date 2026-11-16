@@ -321,6 +321,8 @@ def load_example_asset_registry() -> tuple[str | None, dict[str, dict]]:
             for field in ("cutType", "shot"):
                 if isinstance(value.get(field), str) and value[field]:
                     entry[field] = value[field]
+            if value.get("studioStyle") == "minimal":
+                entry["studioStyle"] = "minimal"
             if "direction" in value and (
                 value.get("direction") is None or value.get("direction") in _DIRECTIONS
             ):

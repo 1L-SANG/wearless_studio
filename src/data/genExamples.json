@@ -517,7 +517,8 @@
     "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_06.webp",
     "variants": [
       "all"
-    ]
+    ],
+    "studioStyle": "minimal"
   },
   {
     "applicableClothingTypes": [
@@ -557,7 +558,8 @@
     "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_08.webp",
     "variants": [
       "all"
-    ]
+    ],
+    "studioStyle": "minimal"
   },
   {
     "applicableClothingTypes": [
@@ -677,7 +679,8 @@
     "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_medium_08.webp",
     "variants": [
       "all"
-    ]
+    ],
+    "studioStyle": "minimal"
   },
   {
     "applicableClothingTypes": [
@@ -977,7 +980,8 @@
     "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_medium_snapshot_05.webp",
     "variants": [
       "all"
-    ]
+    ],
+    "studioStyle": "minimal"
   },
   {
     "applicableClothingTypes": [
@@ -1057,7 +1061,8 @@
     "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_home_07.webp",
     "variants": [
       "all"
-    ]
+    ],
+    "studioStyle": "minimal"
   },
   {
     "applicableClothingTypes": [
@@ -1077,7 +1082,8 @@
     "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_home_08.webp",
     "variants": [
       "all"
-    ]
+    ],
+    "studioStyle": "minimal"
   },
   {
     "applicableClothingTypes": [
@@ -1137,7 +1143,8 @@
     "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_home_08.webp",
     "variants": [
       "all"
-    ]
+    ],
+    "studioStyle": "minimal"
   },
   {
     "applicableClothingTypes": [

@@ -202,10 +202,12 @@ def _candidate(context, recipe, rule, rank, *, path="new", anchor=None, detail=N
 
 
 def _examples_for(context, cut, shot, direction):
+    from .studio_examples import is_minimal_example
     clothing = context["product"].get("clothingType") or context["product"].get("clothing_type")
     gender = mannequin.select_base_gender(context["analysis"], clothing)
     return [(key, entry) for key, entry in sorted(context["examples"].items()) if isinstance(entry, dict) and entry.get("all")
             and not str(key).startswith(("sig_", "ss_")) and entry.get("cutType") == cut and entry.get("shot") == shot
+            and not is_minimal_example(entry)
             and entry.get("direction") == direction and entry.get("gender") == gender and clothing in (entry.get("applicableClothingTypes") or [])]
 
 

@@ -1,6 +1,7 @@
 import React from 'react';
+import { cutTypeDisplay } from '../../lib/storyboardTaxonomy.js';
 import { Icon } from '@/components/ui.jsx';
-import { packStageRows } from '../../lib/pageTemplates/storyboardStage.js';
+import { packStageRows, withStageAdditions } from '../../lib/pageTemplates/storyboardStage.js';
 import { templateSectionName, wearUsageForBlock } from '../../lib/pageTemplates/slots.js';
 import { isTextOnlySection, visibleSectionRuns } from '../../lib/pageTemplates/sectionRuns.js';
 import { reuseSlotsForBlock, reuseSourceForSlot } from '../../lib/pageTemplates/sectionDependencies.js';
@@ -15,12 +16,14 @@ import { StoryboardPreview } from './StoryboardPreview.jsx';
 import { StoryboardPaleSlot } from './StoryboardPaleSlot.jsx';
 import { stageAdditions } from '../../lib/pageTemplates/stageAdditions.js';
 import { pairedPhotoSlot } from '../../lib/pageTemplates/pairedDesigns.js';
+import { setPhotoGroupId, setOptionDisplayState } from '../../lib/storyboardSetOptions.js';
+import { SetHeadMarks, SetCaptionTone } from './SetOptionMarks.jsx';
 import styles from './StoryboardLayout.module.css';
 
 export const PHOTO_POSITION_DRAG_MIME = 'application/x-wearless-photo-position';
 
 export function StoryboardStage({ run, number, blocks = [], page, catalogs, toneColor = null, colorOpts = [], photoOrdinals, selectedId, selectedViewId, selectedGroupId, dimOthers, matchClothing = [], identityKind,
-  busy, canDesign, onDesign, onSelectPhoto, onRemovePhoto, onRemovePairedPhoto, onAddAddition, onSimilar, onAddSet, onReplaceSet,
+  busy, canDesign, onDesign, onSelectPhoto, onNudgeSet, setNudge, onRemovePhoto, onRemovePairedPhoto, onAddAddition, onSimilar, onAddSet, onReplaceSet,
   overview, onLeaveOverview, onSelectSection, onHoverPosition, onSwapPosition, onSwapBlocked, onPhotoDragStart, onPhotoDragEnd }) {
   const visibleKeys = visibleSectionRuns(blocks).map(section => section.key);
   if (overview) return <section className={styles.overview} aria-label="페이지 전체 보기">
@@ -52,13 +55,7 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, tone
   const sourceKey = sourceRun && byId.get(sourceRun.sourceId)?.pageSectionKey;
   const sourceNumber = visibleKeys.indexOf(sourceKey) + 1;
   const additions = stageAdditions(blocks, run.key, { product: catalogs.detailProduct, analysis: catalogs.analysis });
-  const stagedPhotos = photos.flatMap((block, index) => {
-    const addition = run.kind === 'first' && index === 0 ? additions.find(item => item.kind === 'firstGhost')
-      : block.spaceGroupId !== photos[index + 1]?.spaceGroupId && additions.find(item => item.groupId === block.spaceGroupId);
-    return addition ? [block, { id: addition.id, paleAddition: addition, spaceGroupId: addition.groupId || null, colorId: block.colorId }] : [block];
-  });
-  stagedPhotos.push(...additions.filter(item => !item.groupId && item.kind !== 'firstGhost').map(item => ({ id: item.id, paleAddition: item,
-    ...(run.kind === 'points' ? { stageRowKind: 'detail' } : {}) })));
+  const stagedPhotos = withStageAdditions(photos, additions, { add: canAdd });
   const rows = packStageRows(stagedPhotos, { add: canAdd });
   const baseColor = catalogs.detailProduct?.colors?.find(color => color.isBase)?.id || photos[0]?.colorId;
   const colorProducts = run.kind === 'color_product';
@@ -66,7 +63,8 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, tone
     const colors = catalogs.detailProduct?.colors || [], index = colors.findIndex(color => color.id === id);
     return colorDisplayName(colors[index], index >= 0 ? `색상 ${index + 1}` : '색상');
   };
-  const spaceHeading = group => !colorProducts && group.kind === 'space' && (run.kind === 'wear' || group.blocks.length > 1);
+  const spaceHeading = group => !colorProducts && group.kind === 'space'
+    && Boolean(setPhotoGroupId(blocks.find(block => block.spaceGroupId === group.blocks[0].spaceGroupId), blocks));
   const colorHeading = group => run.kind === 'wear' && group.kind === 'color';
   return <section className={styles.stage} aria-label={`${templateSectionName(run.blocks[0])} 무대`}>
     <div className={styles.stageHead}><svg className={styles.stageToneBand} width="100%" height="100%" aria-hidden="true"><rect width="100%" height="100%" fill={toneColor || 'var(--bg-2)'} /></svg>
@@ -86,8 +84,13 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, tone
           {run.kind === 'wear' && <button type="button" className={styles.pill} disabled={busy} onClick={onAddSet}>＋ 장소 세트 추가</button>}
         </div> : <div className={styles.stageGroup} key={`${group.key}:${rowIndex}`} data-span={group.blocks.length}>
           {hasHeading && <div className={styles.groupHead}>
-            {spaceHeading(group) && <><strong>{spaceSetDisplayName(inferStoryboardSpaceSet(group.blocks[0].spaceGroupId))}</strong><i />
-              <button type="button" className={styles.pill} disabled={busy} onClick={() => onReplaceSet(blocks.find(block => block.spaceGroupId === group.blocks[0].spaceGroupId) || group.blocks[0])}>{group.blocks[0].cutType === 'horizon' ? '스튜디오 세트 바꾸기' : '장소 바꾸기'}</button></>}
+            {spaceHeading(group) && <><SetHeadMarks horizon={group.blocks[0].cutType === 'horizon'}
+              state={setOptionDisplayState(blocks.filter(block => block.spaceGroupId === group.blocks[0].spaceGroupId), catalogs.detailProduct, catalogs.frontClosure, colorOpts, catalogs.garmentColorEvidence)} /><strong>{spaceSetDisplayName(inferStoryboardSpaceSet(group.blocks[0].spaceGroupId))}</strong><i />
+              {group.last !== false && <button type="button" className={`${styles.pill}${setNudge?.groupId === group.blocks[0].spaceGroupId ? ` ${styles.setNudge}` : ''}`}
+                key={setNudge?.groupId === group.blocks[0].spaceGroupId ? setNudge.serial : 'set'}
+                data-set-change={group.blocks[0].spaceGroupId} data-set-nudge={setNudge?.groupId === group.blocks[0].spaceGroupId || undefined}
+                ref={node => { if (node && setNudge?.groupId === group.blocks[0].spaceGroupId) node.scrollIntoView?.({ block: 'nearest', inline: 'nearest', behavior: 'instant' }); }}
+                disabled={busy} onClick={() => onReplaceSet(blocks.find(block => block.spaceGroupId === group.blocks[0].spaceGroupId) || group.blocks[0])}>{cutTypeDisplay(group.blocks[0].cutType, group.blocks[0].exampleId).studioStyle ? '스튜디오 세트 바꾸기' : '장소 바꾸기'}</button>}</>}
             {colorHeading(group) && <><strong>{group.blocks[0].colorId !== baseColor ? colorName(group.blocks[0].colorId) : '추가한 컷'}</strong><i /></>}
           </div>}
           <div className={styles.groupPhotos} data-columns={group.blocks.length}>
@@ -100,6 +103,10 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, tone
               const removable = optionalPhoto || !block.borrowed && run.kind !== 'sns' && !requiredOpening && block.pageSectionKey === run.key && (ownPhotos.length > 1 || run.blocks.some(item => item.source === 'text'));
               const sourceId = block.sourceId || block.id;
               const ordinal = photoOrdinals.get(sourceId);
+              const lockedGroupId = setPhotoGroupId(byId.get(sourceId) || block, blocks);
+              const captionColor = colorOpts.find(color => color.id === block.colorId);
+              const captionTone = block.cutType === 'horizon' && block.spaceGroupId
+                && !lockedGroupId && setOptionDisplayState([block], catalogs.detailProduct, catalogs.frontClosure, colorOpts, catalogs.garmentColorEvidence).backgroundOn;
               const selected = selectedGroupId ? block.spaceGroupId === selectedGroupId : selectedViewId ? block.position?.viewId === selectedViewId : selectedId === sourceId;
               const swapReason = positionSwapReason(block);
               const geometry = detailStageGeometry(block.position?.element);
@@ -112,7 +119,7 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, tone
               return <article className={`${styles.photoCard}${dimOthers && !selected ? ` ${styles.dimPhoto}` : ''}`} key={block.id} data-planned-detail={detailLabel ? true : undefined} onMouseEnter={() => onHoverPosition?.(block.position?.viewId || null)} onMouseLeave={() => onHoverPosition?.(null)}>
                 <div className={styles.photoFrame}>
                   <button type="button" data-storyboard-photo={sourceId} className={`${styles.photo}${selected ? ` ${styles.selectedPhoto}` : ''}`}
-                    disabled={busy} onClick={() => onSelectPhoto(sourceId, block.position?.viewId, block.borrowed ? run.key : undefined)}
+                    disabled={busy} onClick={() => lockedGroupId ? onNudgeSet?.(lockedGroupId) : onSelectPhoto(sourceId, block.position?.viewId, block.borrowed ? run.key : undefined)}
                     draggable={!busy} onDragStart={event => {
                       if (swapReason) { event.preventDefault(); onSwapBlocked?.(swapReason); return; }
                       event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(PHOTO_POSITION_DRAG_MIME, sourceId); onPhotoDragStart?.();
@@ -124,7 +131,7 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, tone
                       if (!from) return;
                       const reason = swapReason || storyboardPositionSwapReason(blocks, from, sourceId);
                       if (reason) onSwapBlocked?.(reason); else onSwapPosition?.(from, sourceId);
-                    }} aria-pressed={selected} aria-label={`${detailLabel ? `${detailLabel} 확대컷, AI가 이 부분을 새로 만들어요, ` : ''}${ordinal}번째 컷 사진 바꾸기`}>
+                    }} aria-pressed={selected} aria-label={lockedGroupId ? `${ordinal}번째 컷, 세트 사진` : `${detailLabel ? `${detailLabel} 확대컷, AI가 이 부분을 새로 만들어요, ` : ''}${ordinal}번째 컷 사진 바꾸기`}>
                     {block.position?.label && <span className={styles.positionBadge}>{block.position.label}</span>}
                     {crop ? <svg className={`${styles.cropPreview}${detailLabel ? ` ${styles.detailSource}` : ''}`} viewBox={`0 0 ${geometry.w} ${geometry.h}`} width="100%" height="100%" preserveAspectRatio={detailLabel ? "xMidYMid slice" : "xMidYMid meet"} aria-hidden="true">
                       <svg width={geometry.w} height={geometry.h} viewBox={`0 0 ${geometry.w} ${geometry.h}`} overflow="hidden">
@@ -136,15 +143,18 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, tone
                       <b>{detailLabel} 확대컷</b><small>AI가 이 부분을 새로 만들어요</small></span></>}
                     {block.similarSourceBlockId && <span className={styles.similarVeil}>{String(photoOrdinals.get(block.similarSourceBlockId)).padStart(2, '0')}번째 컷과 비슷하게</span>}
                   </button>
-                  {removable && <button type="button" className={styles.removePhoto} disabled={busy} onClick={() => optionalPhoto ? onRemovePairedPhoto(run.key) : onRemovePhoto(block.id)} aria-label={optionalPhoto ? `${run.kind === 'first' ? '고스트컷' : '제품컷'} 빼기` : `${ordinal}번째 컷 빼기`}><Icon name="x" size={14} /></button>}
+                  {removable && <button type="button" className={styles.removePhoto} disabled={busy} onClick={() => optionalPhoto ? onRemovePairedPhoto(run.key) : onRemovePhoto(block.id)} aria-label={optionalPhoto ? `${run.kind === 'first' ? '고스트컷' : cutTypeDisplay('product').label} 빼기` : `${ordinal}번째 컷 빼기`}><Icon name="x" size={14} /></button>}
                   {matching?.thumb && <span className={styles.matchBadge} title={`매칭 의류 · ${matching.name || ''}`}><img src={matching.thumb} alt="" /><small>매칭</small></span>}
                   {rejection && <span className={styles.unsupported} title={rejection.message}>이 모델로 만들 수 없는 컷</span>}
                   {run.kind !== 'sns' && block.pageSectionKey === run.key && canPlanSimilarCut(block) && photos.length < 12 && <button type="button" className={`btn btn-primary btn-glowring ${styles.similar}`}
                     disabled={busy} onClick={() => onSimilar(block.id)}>비슷한 컷 추가</button>}
                 </div>
-                <div className={styles.photoCaption}>{catalogs.detailProduct?.colors?.length > 1 && <span className={styles.captionGarment}><svg className={styles.captionColor} viewBox="0 0 14 14" aria-hidden="true">
-                  <circle cx="7" cy="7" r="6" fill={colorOpts.find(color => color.id === block.colorId)?.hex || 'var(--fg-3)'} />
-                </svg><span className={styles.captionColorName}>{colorName(block.colorId)}</span></span>}<strong>{ordinal}번째 컷</strong></div>
+                <div className={styles.photoCaption}>{(catalogs.detailProduct?.colors?.length > 1 || captionTone) && <span className={styles.captionGarment}>
+                  {catalogs.detailProduct?.colors?.length > 1 && <><svg className={styles.captionColor} viewBox="0 0 14 14" aria-hidden="true">
+                    <circle cx="7" cy="7" r="6" fill={captionColor?.hex || 'var(--fg-3)'} />
+                  </svg><span className={styles.captionColorName}>{colorName(block.colorId)}</span></>}
+                  {captionTone && <SetCaptionTone color={captionColor} />}
+                </span>}<strong>{ordinal}번째 컷</strong></div>
               </article>;
             })}
           </div>

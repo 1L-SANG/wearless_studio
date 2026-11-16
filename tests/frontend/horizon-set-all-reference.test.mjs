@@ -26,14 +26,15 @@ for (const [cutType, expected] of [['horizon','all'],['styling','pose']]) {
     assert.ok(ensureSections(v4Fixture(legacy)).every(member => member.refScope === expected));
   });
 }
-test('pending recipe and reserved addition accept published complete-only horizon members without pose assets', async () => {
+test('R5 ordinary pending recipe and reserved addition accept published complete-only horizon members without pose assets', async () => {
  const styling=STORYBOARD_SPACE_SETS.find(set=>set.setType==='styling'&&set.gender==='women'&&set.applicableClothingTypes.includes('top'));
  const horizon=STORYBOARD_SPACE_SETS.find(set=>set.setType==='horizon-sequence'&&set.gender==='women'&&set.applicableClothingTypes.includes('top'));
  const selected=STORYBOARD_SPACE_SET_EXAMPLES.find(example=>example.spaceSetId===horizon.id&&example.shot==='medium');
  assert.deepEqual(selected.variants,['all']);
- const current=createSpaceSetMembers(styling,{ taxonomyVersion:4,pageSectionKey:'emo.wear_99',pageSectionKind:'wear',
+ const grouped=createSpaceSetMembers(styling,{ taxonomyVersion:4,pageSectionKey:'emo.wear_99',pageSectionKind:'wear',
   pageSectionUsage:'styling',pageDesignId:'P02-D01',sectionId:'live',sectionRole:'styling',contentRole:'coordination',colorId:'base' },
   {spaceGroupId:spaceSetGroupId(styling.id,'pending')})[0];
+ const current={...grouped,spaceGroupId:null,spaceSetMemberOrder:null};
  const h=await storyboardPhotoPanelHarness({block:current,catalogs:{genExamples:STORYBOARD_SPACE_SET_EXAMPLES,
   detailProduct:{clothingType:'top'},shotTypes:[{value:'full'},{value:'medium'}],productShotTypes:[{value:'ghost'}]},
   clothingType:'top',exampleGender:'women',colorOpts:[{id:'base'}],detailColorOpts:[{id:'base'}],

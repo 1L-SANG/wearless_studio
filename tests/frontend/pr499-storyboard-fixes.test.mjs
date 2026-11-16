@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import * as setOptions from '../../src/lib/storyboardSetOptions.js';
+import { updateHorizonGroupBackground } from '../../src/lib/horizonBackground.js';
 import * as similar from '../../src/lib/storyboardSimilarCuts.js';
 import * as spaces from '../../src/lib/storyboardSpaceSets.js';
 import * as catalog from '../../src/lib/storyboardSpaceSetCatalog.js';
@@ -13,6 +15,8 @@ import { preserveDetailTargetBinding } from '../../src/lib/detailRecommendations
 import { reconcileHorizonGroupBackground } from '../../src/lib/horizonBackgroundAvailability.js';
 import { shuffleSectionExamples } from '../../src/lib/storyboardExampleShuffle.js';
 import { uniqueGenerationCutCount } from '../../src/lib/generationCutCount.js';
+import { similarSpaceSetMember, insertSpaceSetMember } from '../../src/lib/pageTemplates/stageAdditions.js';
+import { spaceSetMembersForProduct } from '../../src/lib/storyboardEntryPlacement.js';
 
 const source = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
 const slice = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
@@ -26,8 +30,8 @@ const ids = blocks => blocks.map(block => block.id);
 function board(initial, overrides = {}) {
   let blocks = initial, renderSnapshot = null, n = 0;
   const undo = [], messages = [];
-  const context = { ...similar, ...spaces, ...catalog, ...photos, sectionRuns, normalizeBoard, reconcileSectionDependencies, wornCropRegions,
-    preserveDetailTargetBinding, reconcileHorizonGroupBackground,
+  const context = { ...setOptions, updateHorizonGroupBackground, ...similar, ...spaces, ...catalog, ...photos, sectionRuns, normalizeBoard, reconcileSectionDependencies, wornCropRegions,
+    preserveDetailTargetBinding, reconcileHorizonGroupBackground, similarSpaceSetMember, insertSpaceSetMember, spaceSetMembersForProduct,
     catalogs: { genExamples: catalog.STORYBOARD_SPACE_SET_EXAMPLES, detailProduct: { clothingType: 'top', colors: [{ id: 'base', isBase: true }] } },
     uid: () => `added${++n}`, locked: false, atomicSavingRef: { current: false }, setAtomicSaving() {}, setSelectedId() {},
     directSaveSnapshots: { current: new WeakSet() }, atomicRetryRef: { current: null }, setDrawer() {},
@@ -51,17 +55,17 @@ function board(initial, overrides = {}) {
   };
   return { ...Object.fromEntries(Object.entries(actions).map(([key, action]) => [key, invoke(action)])), undo, messages, blocks: () => blocks, restore: snapshot => { blocks = snapshot; } };
 }
-for (const index of [0, 1]) test(`similar cut after set member ${index} keeps one continuous run and increases the generation count`, () => {
-  const before = originals(), h = board(before); h.addSimilar(before[index].id);
+for (const index of [0, 1]) test(`similar cut after set member ${index} keeps one continuous run and increases the generation count`, async () => {
+  const before = originals(), h = board(before); await h.addSimilar(before[index].id);
   assert.equal(h.blocks()[index + 1].similarSourceBlockId, before[index].id);
   assert.equal(h.blocks()[index + 1].spaceGroupId, groupId);
   assert.equal(spaces.groupConsecutiveSpaceRuns(h.blocks()).length, 1);
   assert.equal(uniqueGenerationCutCount(h.blocks()), 4);
 });
-test('similar additions follow the original and all its earlier children even when the set has no reserved member', () => {
+test('similar additions follow the original and all its earlier children even when the set has no reserved member', async () => {
   const roots = originals(set.members.length), h = board([roots[0], followup(roots[0]), ...roots.slice(1)]);
   assert.equal(spaces.nextSpaceSetMemberReservation(set, roots), null);
-  h.addSimilar('child'); h.addSimilar('root0');
+  await h.addSimilar('child'); await h.addSimilar('root0');
   assert.deepEqual(ids(h.blocks()).slice(0, 5), ['root0', 'child', 'added1', 'added2', 'root1']);
   assert.ok(h.blocks().slice(1, 4).every(block => block.similarSourceBlockId === 'root0' && !block.spaceSetMemberOrder));
 });

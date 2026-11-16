@@ -31,14 +31,15 @@ test('WOC5 opening pale ghost keeps its own position and never joins the hero lo
   assert.ok(html.indexOf('고스트컷 넣기') < html.indexOf('2번째 컷 사진 바꾸기'));
   assert.doesNotMatch(html, />장소 바꾸기</);
 });
-test('WOC5 a pale-only continuation retains the real set replacement target', async () => {
+test('WOC5 a full row omits a pale-only continuation and keeps the real set replacement target', async () => {
   const value = input(), run = sectionRuns(value.storyboard).find(r => r.kind === 'wear');
   const set = storyboardSpaceSetsFor({ gender: 'women', clothingType: 'top' }).find(s => s.setType === 'styling' && s.members.length === 3);
   const members = createSpaceSetMembers(set, run.blocks[0], { spaceGroupId: spaceSetGroupId(set.id, 'continued'), members: set.members.slice(0, 2) });
   const group = members.flatMap((b, i) => [b, createSimilarCutBlock(b, `similar-${i}`)]), selected = [];
   const tree = await storyboardStage(group, { catalogs: { detailProduct: value.product }, onReplaceSet: b => selected.push(b) });
   const buttons = nodes(tree).filter(n => n.type === 'button' && textOf(n) === '장소 바꾸기');
-  assert.equal(buttons.length, 2); buttons.forEach(button => button.props.onClick());
+  assert.equal(buttons.length, 1); assert.ok(!nodes(tree).some(n => n.type === 'pale-slot'));
+  buttons.forEach(button => button.props.onClick());
   assert.ok(selected.every(block => block === group[0] && block.sectionId === run.sectionId));
 });
 test('WOC5 pale fabric uses exactly the crop geometry that adding its bound detail will render', () => {

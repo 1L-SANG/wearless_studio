@@ -2,7 +2,7 @@
 @keyframes drawerEnter { from { opacity: 0; transform: translateX(var(--sp-16)); } }
 :global(.sb-v5-theme) .drawerBar { display: flex; align-items: center; justify-content: space-between; flex: 0 0 48px; height: 48px; padding: 0 var(--sp-12) 0 var(--sp-20); background: var(--bg-1); box-shadow: 0 1px 0 transparent; transition: box-shadow var(--sb-t-fast); }
 :global(.sb-v5-theme) .drawerScrolled { box-shadow: 0 1px 0 var(--ring); }
-:global(.sb-v5-theme) .drawerBody { min-height: 0; padding: var(--sp-4) var(--sp-20) var(--sp-24); overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; overscroll-behavior: contain; }
+:global(.sb-v5-theme) .drawerBody { min-height: 0; padding: var(--sb-drawer-padding-top) var(--sb-drawer-padding-inline) var(--sp-24); overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; overscroll-behavior: contain; }
 :global(.sb-v5-theme) .close { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: var(--r-pill); padding: 0; background: transparent; color: var(--fg-2); cursor: pointer; transition: color var(--sb-t-fast), background-color var(--sb-t-fast); }
 :global(.sb-v5-theme) .close:hover { background: var(--bg-2); color: var(--fg-1); }
 :global(body.sb-v5-theme) :global(.topnav) { transition: opacity var(--sb-t-base) var(--sb-ease); }
@@ -18,6 +18,8 @@
 :global(.sb-v5-theme) .photoPanel :global(.insp-sec) { padding: var(--sp-20) 0; margin: 0; border-bottom: 1px solid var(--ring); }
 :global(.sb-v5-theme) .photoPanel :global(.insp-sec):first-child { padding-top: 0; }
 :global(.sb-v5-theme) .photoPanel .garmentColorField:global(.insp-sec) { margin-top: var(--sp-20); padding-top: var(--sp-20); border-top: 1px solid var(--ring); }
+:global(.sb-v5-theme) .splitPhotoPanel .garmentColorField:global(.insp-sec) { margin-top: 0; padding-top: var(--sp-20); border-top: 0; }
+:global(.sb-v5-theme) .photoOptions[aria-disabled="true"] { opacity: var(--sb-option-disabled-opacity); }
 :global(.sb-v5-theme) .photoPanel :global(.lbl), :global(.sb-v5-theme) .photoPanel :global(.insp-detail-btn) { font: 600 var(--sb-fs-sub)/1.3 var(--font-body); letter-spacing: -.01em; color: var(--fg-1); }
 :global(.sb-v5-theme) .photoPanel :global(.lbl) { margin-bottom: var(--sp-12); }
 :global(.sb-v5-theme) .garmentColorField > :global(.lbl) { display: block; }
@@ -149,9 +151,8 @@
 :global(.sb-v5-theme) .back { display: inline-flex; align-items: center; gap: var(--sp-4); min-height: 32px; border: 0; padding: 0; margin: 0; background: transparent; color: var(--fg-2); font: 540 var(--sb-fs-btn)/1.2 var(--font-body); text-decoration: underline; text-underline-offset: var(--sp-3); cursor: pointer; }
 :global(.sb-v5-theme) .back:hover { color: var(--fg-1); }
 :global(.sb-v5-theme) .gallery > .back { margin-bottom: var(--sp-12); }
-:global(.sb-v5-theme) .mineToggle:active, :global(.sb-v5-theme) .studioChange:active, :global(.sb-v5-theme) .removeText:active { background: var(--bg-2); }
+:global(.sb-v5-theme) .mineToggle:active, :global(.sb-v5-theme) .removeText:active { background: var(--bg-2); }
 :global(.sb-v5-theme) .mineToggle { margin-top: var(--sp-16); }
-:global(.sb-v5-theme) .studioChange { margin-bottom: var(--sp-12); }
 :global(.sb-v5-theme) .sameSetSection { padding-bottom: var(--sp-20); }
 :global(.sb-v5-theme) .sameSetPhotos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-12) var(--sp-8); }
 :global(.sb-v5-theme) .sameSetPhotos .galleryItem { padding: 0; }
@@ -193,13 +194,7 @@
 :global(.sb-v5-theme) .placeTabs button:last-child { font-size: var(--sb-fs-btn); font-weight: 540; }
 
 /* Existing inspector controls keep their behavior and inherit the v5 type roles. */
-:global(.sb-v5-theme) .photoPanel :global(.sb-horizon-background) { margin-bottom: var(--sp-20); }
-:global(.sb-v5-theme) .photoPanel :global(.sb-horizon-background legend) { margin-bottom: var(--sp-12); font: 600 var(--sb-fs-sub)/1.3 var(--font-body); color: var(--fg-1); }
-:global(.sb-v5-theme) .photoPanel :global(.sb-horizon-background > p) { margin-top: var(--sp-8); color: var(--fg-2); font: 400 var(--sb-fs-note)/1.45 var(--font-body); }
-:global(.sb-v5-theme) .photoPanel :global(.sb-horizon-background-options label), :global(.sb-v5-theme) .photoPanel :global(.sb-shot-seg button) { font: 540 var(--sb-fs-btn)/1.2 var(--font-body); letter-spacing: -.01em; }
-:global(.sb-v5-theme) .photoPanel :global(.sb-horizon-background-options label) { min-height: 36px; border-color: var(--sb-line-control); border-radius: var(--r-pill); }
-:global(.sb-v5-theme) .photoPanel :global(.sb-horizon-background-options label[data-selected="true"]) { border-color: var(--fg-1); }
-:global(.sb-v5-theme) .photoPanel :global(.sb-horizon-background-options label:has(input:disabled)) { opacity: .42; }
+:global(.sb-v5-theme) .photoPanel :global(.sb-shot-seg button) { font: 540 var(--sb-fs-btn)/1.2 var(--font-body); letter-spacing: -.01em; }
 :global(.sb-v5-theme) .photoPanel :global(.ds-field-scope), :global(.sb-v5-theme) .photoPanel :global(.product-source-label), :global(.sb-v5-theme) .photoPanel :global(.product-source-missing), :global(.sb-v5-theme) .photoPanel :global(.sb-exthumb-error) { font-size: var(--sb-fs-meta); line-height: 1.5; color: var(--fg-2); }
 :global(.sb-v5-theme) .photoPanel :global(.detail-target-image), :global(.sb-v5-theme) .photoPanel :global(.product-source-tile) { border-radius: var(--r-3); }
 :global(.sb-v5-theme) .photoPanel :global(.ref-upload) { min-height: 36px; border-color: var(--sb-line-control); border-radius: var(--r-pill); color: var(--fg-1); font: 540 var(--sb-fs-btn)/1.2 var(--font-body); }
@@ -209,9 +204,11 @@
 :global(.sb-v5-theme) .panelUndo { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-6); margin-top: var(--sp-12); font: 400 var(--sb-fs-note)/1.45 var(--font-body); color: var(--fg-1); }
 :global(.sb-v5-theme) .panelUndo button { padding: 0; border: 0; background: transparent; color: var(--fg-1); font: inherit; text-decoration: underline; text-underline-offset: var(--sp-3); cursor: pointer; }
 
-:global(.sb-v5-theme) .mineToggle, :global(.sb-v5-theme) .studioChange { min-height: 36px; border: 1px solid var(--sb-line-control); border-radius: var(--r-pill); padding: 0 14px; background: var(--bg-1); color: var(--fg-1); font: 540 var(--sb-fs-btn)/1.2 var(--font-body); cursor: pointer; transition: border-color var(--sb-t-fast), background-color var(--sb-t-fast); }
+:global(.sb-v5-theme) .mineToggle { min-height: 36px; border: 1px solid var(--sb-line-control); border-radius: var(--r-pill); padding: 0 14px; background: var(--bg-1); color: var(--fg-1); font: 540 var(--sb-fs-btn)/1.2 var(--font-body); cursor: pointer; transition: border-color var(--sb-t-fast), background-color var(--sb-t-fast); }
 
-:global(.sb-v5-theme) .mineToggle:hover, :global(.sb-v5-theme) .studioChange:hover { border-color: var(--fg-2); }
+:global(.sb-v5-theme) .mineToggle:hover { border-color: var(--fg-2); }
 
 :global(.sb-v5-theme).designDrawer { --sb-drawer-width: var(--sb-design-drawer-width); }
 :global(.sb-v5-theme).designDrawer .drawerBody { display: flex; flex-direction: column; flex: 1; overflow-y: auto; scrollbar-gutter: stable; }
+
+:global(.sb-v5-theme) .photoPanel .cutTabs:global(.insp-sec) { border-bottom: 0; padding-bottom: 0; }

@@ -2,6 +2,7 @@ import { referenceFeedbackPatch as feedback } from '../../src/lib/storyboardExam
 import { readStoryboardSources } from './helpers/storyboardComponents.mjs';
 import { v4Fixture } from './helpers/templateStoryboard.mjs';
 import test from 'node:test';
+import { isSignatureExampleId } from '../../src/lib/signatureCutPool.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { seedTemplateFixture as defaultStoryboard } from './helpers/templateStoryboard.mjs';
@@ -58,7 +59,7 @@ test('콘티 샷 전환 확정은 기존 원본 면을 보존하고 착용컷의
   const body = board.slice(board.indexOf('  const commitPendingRecipe ='), board.indexOf('  const generationExamplePatch ='));
   for (const direction of ['front', 'back', 'side']) {
     let changes;
-    const scope = { ...taxonomy, generationExampleSelectionPatch, referenceFeedbackPatch: feedback,
+    const scope = { ...taxonomy, isSignatureExampleId, generationExampleSelectionPatch, referenceFeedbackPatch: feedback,
       block: { id: 'card', source: 'ai', cutType: 'horizon', contentRole: 'fit', direction, shot: 'full', colorId: 'base' },
       pendingRecipe: { cutType: 'product', shot: 'ghost' }, pendingSaving: false, catalogs, guideCatalogs: catalogs,
       effectiveSectionRole: 'product', hasDetailImage: false, colorOpts: [{ id: 'base' }], detailColorOpts: [{ id: 'base' }],

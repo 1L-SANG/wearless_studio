@@ -1,14 +1,10 @@
 import toneOrder from '../../data/exampleToneOrder.json' with { type: 'json' };
-import tags from '../../../server/app/data/example_tags.json' with { type: 'json' };
 import { hashSeed } from '../storyboardEntryPlacement.js';
 import { selectGenerationExamples, generationGalleryPageForExample } from '../generationExamples.js';
 import { blockAllowedForModel, filterSpaceSetsForModel } from '../identityScope.js';
 import { PLACE_TABS, examplePlace, exampleSpaceSet, groupGalleryExamples } from './storyboardGallery.js';
 
 export const PHOTO_PLACE_TABS = Object.freeze(PLACE_TABS.filter(tab => tab.value !== 'all'));
-export const PHOTO_LIGHTS = Object.freeze([
-  { value: 'all', label: '전체' }, { value: 'soft', label: '부드러운 빛' }, { value: 'hard', label: '강한 빛' },
-]);
 export const isSinglePhotoSection = block => ['first', 'review', 'faq'].includes(block?.pageSectionKind);
 export const resolvePhotoPlace = (place, tabs) => tabs.some(tab => tab.value === place) ? place : tabs[0]?.value ?? null;
 const photoPlaceValue = example => {
@@ -22,16 +18,8 @@ export const initialPhotoFraming = (block, example = null) => {
 };
 export const framingLabel = (shot, clothingType) => shot === 'full' ? '전신' : clothingType === 'bottom' ? '하반신' : '상반신';
 
-export function exampleLight(example) {
-  const own = tags.examples[example?.id] || {};
-  const set = exampleSpaceSet(example);
-  return example?.lightQuality || own.scene?.lightQuality
-    || tags.sets[example?.spaceSetId || own.setId || set?.id]?.scene?.lightQuality || null;
-}
-
-export function visiblePhotoPlaces(examples, { light = 'all' } = {}) {
-  const places = new Set(examples.filter(example => light === 'all' || exampleLight(example) === light)
-    .map(photoPlaceValue));
+export function visiblePhotoPlaces(examples) {
+  const places = new Set(examples.map(photoPlaceValue));
   return PHOTO_PLACE_TABS.filter(tab => places.has(tab.value));
 }
 
@@ -49,13 +37,13 @@ export function orderPhotoChoices(entries, { projectId = 'default', scope = '', 
 }
 
 export function photoGalleryChoices(catalog, sets, {
-  cutTypes = ['styling'], clothingType = 'top', gender, identityKind, shot = 'all', place = 'cafe', light = 'all',
-  selectedId, projectId, order,
+  cutTypes = ['styling'], clothingType = 'top', gender, identityKind, shot = 'all', place = 'cafe',
+  selectedId, projectId, order, studioStyle = null, groupStudioShoots = true, resolvedPlace = null,
 } = {}) {
   const shots = shot === 'all' ? ['full', 'medium'] : [shot];
   const allowedSets = filterSpaceSetsForModel(sets, identityKind), allowedSetIds = new Set(allowedSets.map(set => set.id));
   const candidates = [...new Map(cutTypes.flatMap(cutType => shots.flatMap(value =>
-    selectGenerationExamples(catalog, { cutType, shot: value, clothingType, gender, includeSetOnly: true,
+    selectGenerationExamples(catalog, { cutType, studioStyle, shot: value, clothingType, gender, includeSetOnly: true,
       limit: catalog?.length || 0 }))).map(example => [example.id, example])).values()].filter(example => {
     const set = exampleSpaceSet(example);
     if (set && !allowedSetIds.has(set.id)) return false;
@@ -63,13 +51,13 @@ export function photoGalleryChoices(catalog, sets, {
       direction: example.direction || 'front', refScope: set && example.cutType === 'styling' ? 'pose' : 'all',
       spaceSetId: set?.id, exampleId: example.id }, identityKind);
   });
-  const tabs = visiblePhotoPlaces(candidates, { light });
-  const activePlace = place === 'studio' ? 'studio' : resolvePhotoPlace(place, tabs);
-  const filtered = candidates.filter(example => (activePlace === 'studio' ? example.cutType === 'horizon' : photoPlaceValue(example) === activePlace)
-    && (light === 'all' || exampleLight(example) === light));
-  const entries = groupGalleryExamples(filtered, allowedSets, { selectedId, minimumSetMembers: 1 });
+  const tabs = visiblePhotoPlaces(candidates);
+  const activePlace = studioStyle === 'minimal' ? 'indoor' : place === 'studio' ? 'studio' : resolvedPlace ?? resolvePhotoPlace(place, tabs);
+  const filtered = candidates.filter(example => (studioStyle === 'minimal' || (activePlace === 'studio' ? example.cutType === 'horizon' : photoPlaceValue(example) === activePlace)));
+  const entries = groupGalleryExamples(filtered, allowedSets, { selectedId, minimumSetMembers: 1,
+    groupStudioShoots: groupStudioShoots && (cutTypes.includes('horizon') || studioStyle === 'minimal') });
   return { candidates, tabs, place: activePlace,
-    entries: orderPhotoChoices(entries, { projectId, scope: `${activePlace}:${shot}:${light}`, order }) };
+    entries: orderPhotoChoices(entries, { projectId, scope: `${activePlace}:${shot}:all`, order }) };
 }
 
 export function photoChoicePages(entries, signature = null, pageSize = 6) {

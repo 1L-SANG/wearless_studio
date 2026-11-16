@@ -27,6 +27,7 @@ import { api } from '@/lib/api/index.js';
 import { CATALOG_DRAG_MIME } from '@/lib/storyboardCatalogDrag.js';
 import { reconcileHorizonGroupBackground } from '@/lib/horizonBackgroundAvailability.js';
 import { needsGarmentColorMeasurement, updateHorizonGroupBackground } from '@/lib/horizonBackground.js';
+import { setPhotoGroupId, updateSetOuterClosure, normalizeNeutralSetBackground } from '@/lib/storyboardSetOptions.js';
 import { preserveDetailTargetBinding, isProductDetail, detailTargetPresentation } from '@/lib/detailRecommendations.js';
 import { referenceFeedbackPatch } from '../../lib/storyboardExampleFeedback.js';
 import { uid } from '@/lib/ids.js';
@@ -38,7 +39,7 @@ import { useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { hasEditorEntered } from '@/lib/editorEntered.js';
 import { normalizeMatchIds } from '@/lib/api/matchingItems.js';
 import { ensureSections, normalizeBoard } from '@/lib/sections.js';
-import { hasDetailSource } from '@/lib/storyboardTaxonomy.js';
+import { hasDetailSource, cutTypeDisplay } from '@/lib/storyboardTaxonomy.js';
 import { assignGenerationExamples, generationExampleImageSources } from '@/lib/generationExamples.js';
 import { inferStoryboardSpaceSet, spaceSetGroupId, withStoryboardSpaceSetExamples } from '@/lib/storyboardSpaceSetCatalog.js';
 import { stripStaleSpaceSetBindings } from '@/lib/storyboardSpaceSetStaleness.js';
@@ -49,6 +50,7 @@ import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
 import { CREDIT_COSTS, crossedBelowDetailPageMinimum, detailPageCreditCost } from '@/lib/limits.js';
 import { genderForClothingType } from '@/lib/productGender.js';
 import { detachSpaceMembership, insertSpaceSet, rekeySeparatedSpaceRuns, replaceSpaceSetRun } from '@/lib/storyboardSpaceSets.js';
+import { spaceSetMembersForProduct } from '@/lib/storyboardEntryPlacement.js';
 import { consumeStoryboardEntry, loadStoryboardEntry, peekStoryboardEntry } from './storyboardEntryPrefetch.js';
 import { sbLastSaved, sbPending, sbSaveIdle, sbSaveNow, sbSetSaveRepair, sbSetConflictHandler, sbStable } from './storyboardPersistence.js';
 import { setStoryboardEntryNotice, storyboardEntryState, STORYBOARD_REVIEW_MESSAGE } from '@/lib/pageTemplates/entryNotices.js';
@@ -77,7 +79,7 @@ import { sectionRuns, visibleSectionRuns } from '../../lib/pageTemplates/section
 import { moveTemplateSection, changeTemplateSectionDesign } from '../../lib/pageTemplates/sectionActions.js';
 import { removeStoryboardPhoto, patchStoryboardPhoto, canReplaceStoryboardSet } from '../../lib/pageTemplates/photoActions.js';
 import { reconcileSectionDependencies } from '../../lib/pageTemplates/sectionDependencies.js';
-import { addStageAddition, removePairedPhoto, stageAdditions } from '../../lib/pageTemplates/stageAdditions.js';
+import { addStageAddition, removePairedPhoto, stageAdditions, similarSpaceSetMember, insertSpaceSetMember } from '../../lib/pageTemplates/stageAdditions.js';
 import { pairedPhotoSlot } from '../../lib/pageTemplates/pairedDesigns.js';
 import { wornCropRegions } from '../../lib/pageTemplates/seed.js';
 import { usedGalleryExampleIds } from '../../lib/pageTemplates/storyboardGallery.js';
@@ -371,6 +373,21 @@ export function Storyboard({ toastOverride = null } = {}) {
   const [draggingSectionChoice, setDraggingSectionChoice] = useState(false);
   const [setPicker, setSetPicker] = useState(null);
   const [setPickerError, setSetPickerError] = useState(null);
+  const [setNudge, setSetNudge] = useState(null);
+  useEffect(() => {
+    if (!setNudge) return undefined;
+    const timer = setTimeout(() => setSetNudge(null), 700);
+    return () => clearTimeout(timer);
+  }, [setNudge]);
+  useEffect(() => {
+    if (drawer?.mode !== 'photo' || !setPhotoGroupId(blocks?.find(block => block.id === selectedId), blocks || [])) return;
+    setDrawer(null); setSelectedId(null); setSelectedViewId(null);
+  }, [blocks, selectedId, drawer?.mode]);
+  useEffect(() => {
+    if (drawer?.mode !== 'set' || setPicker?.mode !== 'replace'
+      || setPhotoGroupId(blocks?.find(block => block.spaceGroupId === setPicker.spaceGroupId), blocks || [])) return;
+    setDrawer(null); setSetPicker(null); setSetPickerError(null); setSelectedId(null); setSelectedViewId(null);
+  }, [blocks, drawer?.mode, setPicker?.mode, setPicker?.spaceGroupId]);
   const [insertedSectionKey, setInsertedSectionKey] = useState(null);
   const sectionRefs = useRef(new Map());
   const designFocusId = drawer?.mode === 'design' ? blocks?.find(block => block.pageSectionKey === drawer.runKey)?.pageDesignId : null;
@@ -390,7 +407,6 @@ export function Storyboard({ toastOverride = null } = {}) {
   const [undoExiting, setUndoExiting] = useState(false);
   const [initialBoardRevealed, setInitialBoardRevealed] = useState(() => prefersReducedMotion());
   const atomicSavingRef = useRef(false);
-  const atomicRetryRef = useRef(null);
   const directSaveSnapshots = useRef(new WeakSet());
   const undoEntryRef = useRef(null);
   const undoTimerRef = useRef(null);
@@ -1067,7 +1083,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     setBlocks(next);
     showUndo(previous, next, { blockId: id, label: undoLabel || undoLabelForPatch(applied) });
   };
-  const atomicPatch = async (id, changes, { retryAtomic = false, pickerOwnsError = false, undoLabel = null } = {}) => {
+  const atomicPatch = async (id, changes, { pickerOwnsError = false, undoLabel = null } = {}) => {
     if (atomicSavingRef.current) throw new Error('storyboard_atomic_save_in_progress');
     atomicSavingRef.current = true;
     setAtomicSaving(true);
@@ -1079,11 +1095,9 @@ export function Storyboard({ toastOverride = null } = {}) {
     setBlocks(next);
     try {
       if (api.storyboardEntryNotice?.(projectId) !== 'rebuilt') await sbSaveNow(projectId, () => next);
-      atomicRetryRef.current = null;
     } catch (error) {
       if (error?.code === 'revision_conflict') throw error;
       if (sbPending.get(projectId) === next) sbPending.delete(projectId);
-      atomicRetryRef.current = retryAtomic ? { previous, next } : null;
       directSaveSnapshots.current.add(previous);
       setBlocks(previous);
       clearUndoForSnapshot(next);
@@ -1093,7 +1107,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       setAtomicSaving(false);
     }
   };
-  const atomicBoardChange = async (buildNext, { nextSelectedId = null, undoBlockId = null, undoLabel = '설정' } = {}) => {
+  const atomicBoardChange = async (buildNext, { nextSelectedId = null, undoBlockId = null, undoLabel = '설정', standaloneUndo = false } = {}) => {
     if (atomicSavingRef.current) throw new Error('storyboard_atomic_save_in_progress');
     atomicSavingRef.current = true;
     setAtomicSaving(true);
@@ -1102,20 +1116,18 @@ export function Storyboard({ toastOverride = null } = {}) {
     const reconciled = reconcileSectionDependencies(previous, built, catalogs.detailProduct,
       { cropRegions: wornCropRegions[clothingType] || wornCropRegions.top });
     const next = reconcileSimilarCutMutation(previous, normalizeStoryboardMutation(reconciled));
-    showUndo(previous, next, { blockId: undoBlockId || nextSelectedId || 'multi', label: undoLabel });
+    showUndo(previous, next, { blockId: undoBlockId || nextSelectedId || 'multi', label: undoLabel, standalone: standaloneUndo });
     directSaveSnapshots.current.add(next);
     setBlocks(next);
     try {
       if (api.storyboardEntryNotice?.(projectId) !== 'rebuilt') await sbSaveNow(projectId, () => next);
-      atomicRetryRef.current = null;
-      if (nextSelectedId) {
+      if (nextSelectedId && !setPhotoGroupId(next.find(block => block.id === nextSelectedId), next)) {
         setSelectedId(nextSelectedId);
       }
       return next;
     } catch (error) {
       if (error?.code === 'revision_conflict') throw error;
       if (sbPending.get(projectId) === next) sbPending.delete(projectId);
-      atomicRetryRef.current = null;
       directSaveSnapshots.current.add(previous);
       setBlocks(previous);
       clearUndoForSnapshot(next);
@@ -1129,28 +1141,48 @@ export function Storyboard({ toastOverride = null } = {}) {
     if (atomicSavingRef.current) return;
     setDrawer(null); setSetPicker(null); setSetPickerError(null); setSelectedId(null); setSelectedViewId(null);
   };
+  const nudgeSet = groupId => {
+    const host = blocks.find(block => block.spaceGroupId === groupId);
+    if (!host) return;
+    setActiveSectionKey(host.pageSectionKey); setOverview(false);
+    setSetNudge(previous => ({ groupId, serial: (previous?.serial || 0) + 1 }));
+  };
   const selectCard = (id, viewId = null, displaySectionKey = null) => {
     if (atomicSavingRef.current || Date.now() < photoDragUntil.current) return;
     const block = blocks.find(item => item.id === id);
     if (!block) return;
+    const lockedGroupId = setPhotoGroupId(block, blocks);
+    if (lockedGroupId) { nudgeSet(lockedGroupId); return; }
     setSelectedId(id); setSelectedViewId(viewId); setActiveSectionKey(displaySectionKey || block.pageSectionKey); setOverview(false);
     setSetPicker(null); setSetPickerError(null); setDrawer({ mode: 'photo' });
   };
   const openSetPicker = picker => {
     if (atomicSavingRef.current) return;
+    if (picker.mode === 'replace' && !setPhotoGroupId(blocks.find(block => block.spaceGroupId === picker.spaceGroupId), blocks)) return;
     setSetPickerError(null); setSetPicker(picker); setDrawer({ mode: 'set' });
   };
-  const addSimilar = id => {
+  const addSimilar = async id => {
+    if (atomicSavingRef.current) return;
     const picked = blocks.find(block => block.id === id);
     const source = picked?.similarSourceBlockId ? blocks.find(block => block.id === picked.similarSourceBlockId) : picked;
     if (!canPlanSimilarCut(source) || blocks.filter(block => block.pageSectionKey === source.pageSectionKey && block.source !== 'text').length >= 12) return;
-    const child = createSimilarCutBlock(source, uid('blk'));
     let end = blocks.indexOf(source);
     blocks.forEach((block, index) => { if (block.similarSourceBlockId === source.id) end = Math.max(end, index); });
+    const member = similarSpaceSetMember(blocks, source);
+    if (member) {
+      try {
+        await atomicBoardChange(current => insertSpaceSetMember(current, source.pageSectionKey, member,
+          { product: catalogs.detailProduct, garmentColorEvidence: catalogs.garmentColorEvidence }, end + 1),
+        { undoBlockId: source.id, undoLabel: '비슷한 컷 추가', standaloneUndo: true });
+        toast.push('세트의 같은 구도 사진을 넣었어요');
+      } catch { toast.push('컷을 저장하지 못했어요. 다시 시도해주세요.'); }
+      return;
+    }
+    const child = createSimilarCutBlock(source, uid('blk'));
     const next = [...blocks]; next.splice(end + 1, 0, child);
     const normalized = normalizeStoryboardMutation(next);
     setBlocks(normalized); showUndo(blocks, normalized, { blockId: child.id, label: '비슷한 컷 추가' });
-    setSelectedId(child.id);
+    if (!setPhotoGroupId(child, normalized)) setSelectedId(child.id);
   };
   const remove = id => {
     if (atomicSavingRef.current) return;
@@ -1164,7 +1196,8 @@ export function Storyboard({ toastOverride = null } = {}) {
     if (atomicSavingRef.current || !activeRun) return;
     try {
       await atomicBoardChange(current => addStageAddition(current, activeRun.key, item,
-        { product: catalogs.detailProduct, analysis: catalogs.analysis }), { undoLabel: `${item.label} 넣기` });
+        { product: catalogs.detailProduct, analysis: catalogs.analysis, garmentColorEvidence: catalogs.garmentColorEvidence }),
+      { undoLabel: `${item.label} 넣기`, standaloneUndo: item.kind === 'spaceMember' });
     } catch { toast.push('컷을 저장하지 못했어요. 다시 시도해주세요.'); }
   };
   const removeOptionalPhoto = async key => {
@@ -1174,32 +1207,38 @@ export function Storyboard({ toastOverride = null } = {}) {
       closeInspector();
     } catch { toast.push('컷을 저장하지 못했어요. 다시 시도해주세요.'); }
   };
-  const chooseSpaceSet = async set => {
+  const chooseSpaceSet = async (set, options = {}) => {
     if (!setPicker || atomicSavingRef.current) return;
     const run = sectionRuns(blocks).find(item => item.sectionId === setPicker.targetSid);
     if (!run) return;
     if (setPicker.mode !== 'replace' && (run.kind !== 'wear' || wearUsageForBlock(run.blocks.find(block => block.source !== 'text') || run.blocks[0]) !== 'styling')) return;
     const currentMembers = setPicker.spaceGroupId ? blocks.filter(block => block.spaceGroupId === setPicker.spaceGroupId) : [];
-    if (setPicker.mode === 'replace' ? !canReplaceStoryboardSet(blocks, setPicker.spaceGroupId, set)
+    if (setPicker.mode === 'replace' && !setPhotoGroupId(currentMembers[0], blocks)) return;
+    if (setPicker.mode === 'replace' ? !canReplaceStoryboardSet(blocks, setPicker.spaceGroupId, set, catalogs.detailProduct)
       : run.blocks.filter(block => block.source !== 'text').length + set.members.length > 12) {
       setSetPickerError('이 세트를 넣으면 12컷을 넘어요. 컷을 먼저 빼주세요.'); return;
     }
     if (setPicker.mode === 'replace' && inferStoryboardSpaceSet(setPicker.spaceGroupId)?.id === set.id) return;
     const groupId = spaceSetGroupId(set.id, uid('sg'));
-    const ids = set.members.map((_member, index) => currentMembers.filter(block => !block.similarSourceBlockId)[index]?.id || uid('blk'));
+    const members = setPicker.mode === 'replace' ? spaceSetMembersForProduct(set, catalogs.detailProduct) : set.members;
+    const ids = members.map((_member, index) => currentMembers.filter(block => !block.similarSourceBlockId)[index]?.id || uid('blk'));
     let removedSimilarCount = 0;
     setSetPickerError(null);
     try {
       await atomicBoardChange(current => {
         const host = run.blocks.find(block => block.source === 'ai') || run.blocks[0];
-        const next = setPicker.mode === 'replace'
-          ? replaceSpaceSetRun(current, setPicker.spaceGroupId, set, { spaceGroupId: groupId, makeId: (_member, index) => ids[index], setSelectionOrigin: 'user' })
+        let next = setPicker.mode === 'replace'
+          ? replaceSpaceSetRun(current, setPicker.spaceGroupId, set, { spaceGroupId: groupId, makeId: (_member, index) => ids[index], setSelectionOrigin: 'user', product: catalogs.detailProduct })
           : insertSpaceSet(current, run.end, set, host, { spaceGroupId: groupId, makeId: (_member, index) => ids[index], setSelectionOrigin: 'user' });
         removedSimilarCount = current.filter(block => block.similarSourceBlockId && !next.some(item => item.id === block.id)).length;
+        if (options.backgroundMode) next = updateHorizonGroupBackground(next, groupId, options.backgroundMode);
+        next = normalizeNeutralSetBackground(next, groupId, catalogs.detailProduct);
         return reconcileHorizonGroupBackground(next, groupId, catalogs.detailProduct, catalogs.garmentColorEvidence, set.id);
       }, { nextSelectedId: ids[0], undoLabel: setPicker.mode === 'replace' ? '장소 바꾸기' : '장소 세트 추가' });
       setSetPicker({ ...setPicker, mode: 'replace', spaceGroupId: groupId });
-      if (removedSimilarCount) toast.push(`원본과 연결된 비슷한 컷 ${removedSimilarCount}컷도 함께 정리했어요`);
+      const notices = [removedSimilarCount ? `원본과 연결된 비슷한 컷 ${removedSimilarCount}컷도 함께 정리했어요` : null,
+        members.length < set.members.length ? '색이 많아서 2장만 먼저 놓았어요' : null].filter(Boolean);
+      if (notices.length) toast.push(notices.join('. '));
     } catch { setSetPickerError('장소 세트를 저장하지 못했어요. 다시 시도해주세요.'); }
   };
   const locked = false;
@@ -1284,33 +1323,6 @@ export function Storyboard({ toastOverride = null } = {}) {
     const example = catalogs.genExamples.find(item => item.id === exampleId);
     if (example && ['styling', 'horizon'].includes(example.cutType)) addSection('wear', example.cutType === 'horizon' ? 'fit' : 'styling', undefined, beforeKey, example);
   };
-  async function retryAtomicSave() {
-    let atomicRetry = atomicRetryRef.current;
-    if (atomicRetry && latestBlocks.current !== atomicRetry.previous) {
-      atomicRetryRef.current = null;
-      atomicRetry = null;
-    }
-    if (!atomicRetry || atomicSavingRef.current) return false;
-    atomicSavingRef.current = true;
-    setAtomicSaving(true);
-    directSaveSnapshots.current.add(atomicRetry.next);
-    setBlocks(atomicRetry.next);
-    try {
-      if (api.storyboardEntryNotice?.(projectId) !== 'rebuilt') await sbSaveNow(projectId, () => atomicRetry.next);
-      atomicRetryRef.current = null;
-      showUndo(atomicRetry.previous, atomicRetry.next, { blockId: 'retry', label: '설정' });
-      return true;
-    } catch (error) {
-      if (error?.code === 'revision_conflict') throw error;
-      if (sbPending.get(projectId) === atomicRetry.next) sbPending.delete(projectId);
-      directSaveSnapshots.current.add(atomicRetry.previous);
-      setBlocks(atomicRetry.previous);
-      throw error;
-    } finally {
-      atomicSavingRef.current = false;
-      setAtomicSaving(false);
-    }
-  }
   const goToMannequin = async ({ allowMissingCustomMatch = false } = {}) => {
     if (!mannequinStageEnabled && (doneBlocked || detailPageEntryLocked.current || hasEditorEntered(projectId)
       || creditQuotePending || customMatchPromotionPending || atomicSavingRef.current || detailPageSubmitRef.current
@@ -1320,7 +1332,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     const missingPresentation = productSectionNeedingSelection(blocks);
     if (missingPresentation) {
       setActiveSectionKey(missingPresentation.key); setSelectedId(missingPresentation.ids[0]); setDrawer({ mode: 'photo' });
-      toast.push('제품컷의 촬영 방식을 골라 주세요.'); return;
+      toast.push(`${cutTypeDisplay('product').label}의 촬영 방식을 골라 주세요.`); return;
     }
     if (blocks.some((b) => b.source === 'ai' && (!b.contentRole || !b.cutType))) { toast.push('생성 설정을 준비하지 못한 이미지가 있어요'); return; }
     if (unsupportedAiBlock) {
@@ -1381,10 +1393,6 @@ export function Storyboard({ toastOverride = null } = {}) {
   const photoBlocks = blocks.filter(block => block.source !== 'text');
   const photoOrdinals = new Map(photoBlocks.map((block, index) => [block.id, index + 1]));
   const page = pagePreview;
-  const selectedSpaceContext = selected?.spaceGroupId ? {
-    siblings: blocks.filter(block => block.spaceGroupId === selected.spaceGroupId),
-    set: inferStoryboardSpaceSet(selected.spaceGroupId),
-  } : null;
   const pickerRun = runs.find(run => run.sectionId === setPicker?.targetSid);
   const pickerMembers = setPicker?.spaceGroupId ? blocks.filter(block => block.spaceGroupId === setPicker.spaceGroupId) : [];
   const usedExampleIds = usedGalleryExampleIds(blocks, selectedId);
@@ -1469,6 +1477,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         dimOthers={drawer?.mode === 'photo' || drawer?.mode === 'set' && setPicker?.mode === 'replace'} busy={interactionBusy} canDesign={sectionDesignChoices(activeRun, { storyboard: blocks, product: catalogs.detailProduct }).length > 1}
         onHoverPosition={setHighlightedPosition} onSwapPosition={swapPosition} onSwapBlocked={setSwapNotice}
         onPhotoDragStart={() => { photoDragUntil.current = Infinity; }} onPhotoDragEnd={() => { photoDragUntil.current = Date.now() + 200; }}
+        onNudgeSet={nudgeSet} setNudge={setNudge}
         onDesign={() => setDrawer({ mode: 'design', runKey: activeRun.key })} onSelectPhoto={selectCard}
         onRemovePhoto={remove} onRemovePairedPhoto={removeOptionalPhoto} onAddAddition={addOptionalPhoto} onSimilar={addSimilar}
         onAddSet={() => openSetPicker({ mode: 'add', targetSid: activeRun.sectionId, targetRole: activeRun.usage === 'fit' ? 'studio' : 'styling' })}
@@ -1480,7 +1489,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         }} onSelectSection={selectSection} />
     </div>
     {swapNotice && <p role="status" className={styles.swapNotice}>{swapNotice}</p>}
-    {drawer && <StoryboardDrawer mode={drawer.mode} busy={interactionBusy} onClose={closeInspector}
+    {drawer && (drawer.mode !== 'photo' || !setPhotoGroupId(selected, blocks)) && <StoryboardDrawer mode={drawer.mode} busy={interactionBusy} onClose={closeInspector}
       title={drawer.mode === 'design' ? `${templateSectionName(blocks.find(block => block.pageSectionKey === drawer.runKey))} 디자인` : undefined}
       focusKey={`${drawer.mode}:${drawer.runKey || ''}:${drawer.beforeSectionKey || ''}:${selectedId || ''}`}>
       {['add', 'design'].includes(drawer.mode) ? <StoryboardSectionPicker mode={drawer.mode} runKey={drawer.runKey}
@@ -1489,12 +1498,16 @@ export function Storyboard({ toastOverride = null } = {}) {
         onChoose={(kind, usage, designId, source) => drawer.mode === 'design' ? changeDesign(designId)
           : addSection(kind, usage, designId, automaticSectionInsertionKey(blocks, kind, usage), null, source)}
         onDragChange={setDraggingSectionChoice} />
-        : drawer.mode === 'set' ? <StoryboardSpaceSetPanel mode={setPicker?.mode} error={setPickerError} onChoose={chooseSpaceSet}
-          projectId={projectId}
+        : drawer.mode === 'set' ? <StoryboardSpaceSetPanel key={selectedId || setPicker?.targetSid} mode={setPicker?.mode} error={setPickerError} onChoose={chooseSpaceSet}
+          projectId={projectId} product={catalogs.detailProduct} colorOpts={detailColorOpts} frontClosure={catalogs.frontClosure} garmentColorEvidence={catalogs.garmentColorEvidence}
+          onChangeSpaceBackground={mode => atomicBoardChange(current => updateHorizonGroupBackground(current, setPicker.spaceGroupId, mode),
+            { undoBlockId: pickerMembers[0]?.id, undoLabel: '세트 배경' })}
+          onChangeSpaceOuterClosure={closed => atomicBoardChange(current => updateSetOuterClosure(current, setPicker.spaceGroupId, closed),
+            { undoBlockId: pickerMembers[0]?.id, undoLabel: '아우터 잠그기' })}
           gender={exampleGender} clothingType={clothingType} identityKind={identityKind} busy={interactionBusy}
           usage={pickerRun?.usage} cutType={pickerMembers[0]?.cutType || pickerRun?.blocks.find(block => block.source === 'ai')?.cutType}
           currentMembers={pickerMembers} remaining={12 - (pickerRun?.blocks.filter(block => block.source !== 'text').length || 0)} onExampleDrag={setDragExampleId}
-          canChooseSet={set => setPicker?.mode !== 'replace' || canReplaceStoryboardSet(blocks, setPicker.spaceGroupId, set)} />
+          canChooseSet={set => setPicker?.mode !== 'replace' || canReplaceStoryboardSet(blocks, setPicker.spaceGroupId, set, catalogs.detailProduct)} />
           : selected?.similarSourceBlockId ? <div className={styles.similarPanel}>
             <h2>비슷한 컷</h2><p>기준 사진이 완성되면 같은 촬영의 다른 순간으로 만들어요.</p>
             <button type="button" onClick={() => selectCard(selected.similarSourceBlockId)}>기준 컷 {photoOrdinals.get(selected.similarSourceBlockId)}번 설정 보기</button>
@@ -1504,12 +1517,10 @@ export function Storyboard({ toastOverride = null } = {}) {
             clothingType={clothingType} subCategory={storyboardSeedContext.subCategory} customCategory={storyboardSeedContext.customCategory}
             exampleGender={exampleGender} identityKind={identityKind} hasDetailImage={hasDetailImage} projectId={projectId}
             onChange={(patchValue, options) => patch(selectedId, patchValue, options)} onAtomicChange={(patchValue, options) => atomicPatch(selectedId, patchValue, options)}
-            onRetryAtomicSave={retryAtomicSave} matchClothing={matchClothing} customMatchPromotionPending={customMatchPromotionPending}
-            spaceContext={selectedSpaceContext} usedExampleIds={usedExampleIds} onExampleDrag={setDragExampleId}
+            matchClothing={matchClothing} customMatchPromotionPending={customMatchPromotionPending}
+            usedExampleIds={usedExampleIds} onExampleDrag={setDragExampleId}
             onUploadStart={mannequinStageEnabled ? undefined : beginPhotoUpload}
-            onChangeSpaceSet={() => openSetPicker({ mode: 'replace', spaceGroupId: selected.spaceGroupId,
-              targetSid: selected.sectionId, targetRole: selected.cutType === 'horizon' ? 'studio' : 'styling' })}
-            onChangeSpaceBackground={mode => atomicBoardChange(current => updateHorizonGroupBackground(current, selected.spaceGroupId, mode), { undoBlockId: selected.id, undoLabel: '세트 배경' })} />}
+            />}
     </StoryboardDrawer>}
     <StoryboardContinue hidden={Boolean(drawer || (!mannequinStageEnabled
       && (doneBlocked || detailPageEntryLocked.current || creditShortfall || creditResume || customMatchConfirmationOpen)))} count={photoBlocks.length}

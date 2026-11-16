@@ -98,6 +98,7 @@
 .groupHead { display: flex; align-items: center; gap: var(--sp-8); min-height: var(--sb-group-head-height); margin-bottom: var(--sp-8); font-size: var(--sb-fs-meta); line-height: 1.4; color: var(--fg-2); }
 .groupHead strong { flex-shrink: 1; color: var(--fg-1); font-weight: 600; text-wrap: balance; }
 .groupHead i { flex: 1; height: 1px; min-width: var(--sp-8); background: var(--sb-line-control); }
+.stageGroup[data-span="1"] .groupHead { flex-wrap: wrap; }
 .groupHead .pill { min-height: var(--sb-group-head-height); font-size: var(--sb-fs-meta); padding: 0 var(--sp-12); flex-shrink: 0; }
 .groupPhotos { display: grid; align-items: start; gap: var(--conti-photo-gap); grid-template-columns: minmax(0, 1fr); }
 .groupPhotos[data-columns="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -117,7 +118,7 @@
 .removePhoto:hover { color: var(--fg-1); }
 .removePhoto:hover::before { box-shadow: var(--elev-lift); }
 .photoCaption { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-4); margin-top: var(--sp-8); min-height: 20px; color: var(--fg-2); font-size: var(--sb-fs-meta); line-height: 1.4; font-variant-numeric: tabular-nums; }
-.photoCaption span { display: inline-flex; align-items: center; min-height: 20px; padding: 0 var(--sp-8); border-radius: var(--r-2); color: var(--fg-2); background: var(--sb-place-bg); font-weight: 500; }
+.photoCaption > span { display: inline-flex; align-items: center; min-height: 20px; padding: 0 var(--sp-8); border-radius: var(--r-2); color: var(--fg-2); background: var(--sb-place-bg); font-weight: 500; }
 .photoCaption .detachedPlace { background: transparent; box-shadow: inset 0 0 0 1px var(--ring-strong); }
 .photoCaption strong { margin-left: auto; font-weight: 500; }
 .photoMissing { display: grid; place-items: center; height: 100%; padding: var(--sp-12); font-size: var(--sb-fs-note); color: var(--fg-2); }
@@ -222,3 +223,14 @@
 .previewDetailNotice { pointer-events: none; text-anchor: start; }
 .previewDetailTitle { fill: var(--fg-1); font: 650 var(--sb-detail-overview-title)/1.3 var(--font-body); text-wrap: balance; }
 .previewDetailNote { fill: var(--fg-2-read); font: 400 var(--sb-detail-overview-note)/1.35 var(--font-body); text-wrap: balance; }
+
+/* Set photos lead to their existing set-level action without changing selection. */
+.setNudge { animation: setNudge var(--sb-set-nudge-duration) ease-out; }
+@keyframes setNudge {
+  0% { border-color: var(--accent-blue); box-shadow: 0 0 0 0 var(--sb-set-nudge-color); }
+  60% { border-color: var(--accent-blue); box-shadow: 0 0 0 var(--sp-4) transparent; }
+  100% { border-color: var(--sb-line-control); box-shadow: 0 0 0 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .setNudge { border-color: var(--accent-blue); }
+}

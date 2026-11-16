@@ -734,7 +734,8 @@
       "direction": "front",
       "gender": "men",
       "shot": "full",
-      "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_06.webp"
+      "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_06.webp",
+      "studioStyle": "minimal"
     },
     "ex_styling_men_outer_full_07": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_men_outer_full_07.png",
@@ -788,7 +789,8 @@
       "direction": "front",
       "gender": "men",
       "shot": "full",
-      "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_08.webp"
+      "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_08.webp",
+      "studioStyle": "minimal"
     },
     "ex_styling_men_outer_medium_01": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_men_outer_medium_01.png",
@@ -934,7 +936,8 @@
       "direction": "front",
       "gender": "men",
       "shot": "medium",
-      "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_medium_08.webp"
+      "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_medium_08.webp",
+      "studioStyle": "minimal"
     },
     "ex_styling_men_top_full_snapshot_06": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_men_top_full_snapshot_06.png",
@@ -1232,7 +1235,8 @@
       "direction": "front",
       "gender": "women",
       "shot": "medium",
-      "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_medium_snapshot_05.webp"
+      "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_medium_snapshot_05.webp",
+      "studioStyle": "minimal"
     },
     "ex_styling_women_bottom_medium_snapshot_06": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_bottom_medium_snapshot_06.png",
@@ -1340,7 +1344,8 @@
       "direction": "front",
       "gender": "women",
       "shot": "full",
-      "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_home_07.webp"
+      "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_home_07.webp",
+      "studioStyle": "minimal"
     },
     "ex_styling_women_dress_full_home_08": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_full_home_08.png",
@@ -1367,7 +1372,8 @@
       "direction": "front",
       "gender": "women",
       "shot": "full",
-      "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_home_08.webp"
+      "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_home_08.webp",
+      "studioStyle": "minimal"
     },
     "ex_styling_women_dress_medium_city_03": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_medium_city_03.png",
@@ -1448,7 +1454,8 @@
       "direction": "front",
       "gender": "women",
       "shot": "medium",
-      "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_home_08.webp"
+      "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_home_08.webp",
+      "studioStyle": "minimal"
     },
     "ex_styling_women_outer_full_alley_01": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_outer_full_alley_01.png",

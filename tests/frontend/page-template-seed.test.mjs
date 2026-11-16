@@ -28,10 +28,11 @@ const analysis = (templateId, candidates = [candidate('fabric', 'fabric'), candi
 for (const template of ['emo', 'show']) for (const colors of [1, 2, 3]) test(`${template} × ${colors} colors seeds catalog sections and exact generated counts`, () => {
   const p = product(colors), a = analysis(template), b = seedStoryboard(p, a, { projectId: 'seed-test' });
   assert.deepEqual(deriveSections(b).map(s => s.pageSectionKey), getTemplate(template).sections.filter(s => s.presence !== 'optional').map(s => `${template}.${s.instanceKey}`));
-  const expected = { emo: [17, 18, 21], show: [15, 16, 19] }[template][colors - 1];
+  const expected = { emo: [17, 18, 21], show: [15, 16, 17] }[template][colors - 1];
   assert.equal(b.filter(b => b.source === 'ai').length, expected);
   const album = b.filter(b => b.pageSectionKey === `${template}.wear_styling`);
-  assert.deepEqual(album.map(b => b.colorId), [...Array(colors === 1 ? 6 : 4).fill('c0'), ...Array.from({ length: colors - 1 }, (_, i) => [`c${i + 1}`, `c${i + 1}`]).flat()]);
+  const baseCount = template === 'show' && colors >= 3 ? 2 : colors === 1 ? 6 : 4;
+  assert.deepEqual(album.map(b => b.colorId), [...Array(baseCount).fill('c0'), ...Array.from({ length: colors - 1 }, (_, i) => [`c${i + 1}`, `c${i + 1}`]).flat()]);
   assert.ok(album.every(b => b.pageSectionUsage === (template === 'show' ? 'fit' : 'styling')));
   assert.deepEqual(b.filter(b => b.pageSectionKey === `${template}.wear_fit`).map(b => b.direction), ['front', 'side', 'back']);
   assert.ok(b.every(b => b.taxonomyVersion === 4 && b.sectionLayout === 'stack'));

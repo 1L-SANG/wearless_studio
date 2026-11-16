@@ -50,6 +50,7 @@ test('R2-1 stage, photo stacks and every set panel expose only seller set names'
   const props = stageProps('emo', 'wear', 'styling');
   const set = sets.find(set => set.setType === 'styling');
   props.run = { ...props.run, blocks: props.run.blocks.map(block => ({ ...block, spaceGroupId: groupId(set.id, 'round2') })) };
+  props.blocks = props.blocks.map(block => props.run.blocks.find(member => member.id === block.id) || block);
   const markups = [html(Stage, props)];
   for (const clothingType of ['top', 'bottom']) for (const cut of ['styling', 'horizon']) {
     const markup = html(Gallery, { catalogs: setExamples({ genExamples: [] }), cut, shot: 'full', clothingType, gender: 'women' });

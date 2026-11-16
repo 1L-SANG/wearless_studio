@@ -47,51 +47,49 @@ const catalogs={...withStoryboardSpaceSetExamples({genExamples:raw}),detailProdu
 const board=()=>seedStoryboard(product,analysis);
 const basic=(block=board()[0])=>({block,catalogs,cut:block.cutType,shot:block.shot,clothingType:'top',gender:'women',exampleId:block.exampleId,projectId:'woc4',onExampleChange(){}});
 
-test('WOC4 actual photo filters show every place with cafe selected and a light dropdown',()=>{
+test('R5 actual photo filters keep cafe-first places and remove the light dropdown',()=>{
   const html=render(Filters,{place:'cafe',light:'all'});
-  assert.match(html,/빛: 전체/);assert.match(html,/>공원<\/button>/);assert.match(html,/aria-pressed="true"[^>]*>카페/);
+  assert.doesNotMatch(html,/빛/);assert.match(html,/>공원<\/button>/);assert.match(html,/aria-pressed="true"[^>]*>카페/);
   assert.doesNotMatch(html,/>전체<\/button>|더보기/);
   const css=readFileSync('src/features/storyboard/StoryboardChoices.module.css','utf8');
   assert.match(css,/\.places \{[^}]*flex-wrap: wrap/);assert.match(css,/\.places button \{[^}]*white-space: nowrap/);
-  assert.match(css,/\.lightActive \{[^}]*1px var\(--sb-line-control\)/);
+  assert.doesNotMatch(css,/\.lightMenu|\.lightActive/);
 });
 
-test('WOC4 actual first gallery has one pinned signature and medium framing with photo-only cards',()=>{
+test('R3 first studio minimal gallery has one pinned signature and medium framing with photo-only cards',()=>{
   const block=board()[0],signature=signatureCardForBlock(block,{product,analysis,gender:'women',projectId:'woc4'});
-  const html=render(Gallery,{...basic(block),signature});
+  const html=render(Gallery,{...basic(block),studioStyle:'minimal',signature});
   assert.equal((html.match(/aria-label="시그니처 사진"/g)||[]).length,1);
   assert.equal([...html.matchAll(/data-example-id="([^"]+)"/g)][0][1],signature.id);
-  assert.match(html,/aria-pressed="true"[^>]*>상반신/);
+  assert.match(html,/aria-pressed="true"[\s\S]*?data-label="상반신"/);
   assert.doesNotMatch(html,/이미 사용|지난번|n번째 컷에|장<|PASS|Attrangs/);
   const bottom=render(Gallery,{...basic(block),clothingType:'bottom'});
-  assert.match(bottom,/aria-pressed="true"[^>]*>하반신/);
+  assert.match(bottom,/data-label="하반신"/);
 });
 
-test('WOC4 a single-photo set expands in place with only the chosen framing and selecting invokes one example',async()=>{
+test('R5 a saved single-photo shoot opens in the top tray with one framing and selecting keeps that tray',async()=>{
   const h=hookHarness(),picked=[];
   const Comp=await loadStoryboardComponent('StoryboardPhotoGallery.jsx','StoryboardPhotoGallery',{
     ...h.hooks,storyboardSpaceSetsFor,filterSpaceSetsForModel,generationExampleImageSources,
     Icon:'icon',EditorMoodGuide:'editor-guide',MineImageTab:'mine-images',api:{},useAppStore:{getState:()=>({})},
   });
-  const member=photoGalleryChoices(catalogs.genExamples,storyboardSpaceSetsFor({gender:'women',clothingType:'top'}),{gender:'women',clothingType:'top',shot:'medium',place:'home'}).entries.find(e=>e.members)?.members[0];
-  const block={...board()[0],exampleId:member.id},props={...basic(block),onExampleChange:id=>picked.push(id)};
+  const member=raw.find(example=>example.id==='ex_horizon_women_top_full_front_02');
+  const block={...board()[0],cutType:'horizon',exampleId:member.id},props={...basic(block),studioStyle:'horizon',onExampleChange:id=>picked.push(id)};
   try {
     let tree=h.render(Comp,props);
-    const frame=nodes(tree).find(n=>n.type==='photo-framing'); assert.equal(frame.props.value,'medium');
-    const group=nodes(tree).find(n=>n.type==='button' && n.props['aria-expanded']===false && n.props['data-photo-choice']);
-    assert.ok(group);group.props.onClick();tree=h.render(Comp,props);
-    const open=nodes(tree).find(n=>n.props?.['aria-label']==='이 장소의 사진');assert.ok(open);
+    const frame=nodes(tree).find(n=>n.type==='photo-framing'); assert.equal(frame.props.value,'full');
+    const open=nodes(tree).find(n=>n.props?.['data-photo-tray']);assert.ok(open);
     const members=nodes(open).filter(n=>n.type==='button');assert.ok(members.length);
-    for(const button of members)assert.equal(catalogs.genExamples.find(e=>e.id===button.props['data-example-id']).shot,'medium');
+    for(const button of members)assert.equal(catalogs.genExamples.find(e=>e.id===button.props['data-example-id']).shot,'full');
     await members[0].props.onClick();await Promise.resolve();assert.equal(picked.length,1);
-    tree=h.render(Comp,props);assert.equal(nodes(tree).some(n=>n.props?.['aria-label']==='이 장소의 사진'),false);
+    tree=h.render(Comp,props);assert.ok(nodes(tree).some(n=>n.props?.['data-photo-tray']));
   } finally {h.close();}
 });
 
-test('WOC4 emotional first can select signature then a place set member with valid respective recipes',async()=>{
+test('R3 first photo uses top-level cut tabs and can select signature then a styling set member',async()=>{
   const block=board()[0];const h=await storyboardPhotoPanelHarness({block,catalogs,clothingType:'top',exampleGender:'women',projectId:'woc4',colorOpts:[{id:'base'}]});
   try {
-    const tree=h.render();assert.equal(nodes(tree).some(n=>n.type==='underline-tabs'),false,'single-photo slots use the place/framing gallery, not the retired cut-family transaction');
+    const tree=h.render();assert.equal(nodes(tree).some(n=>n.type==='underline-tabs'),true,'2026-11-15 owner decision: single-photo slots begin with the permitted cut categories');
     let guide=nodes(tree).find(n=>n.type==='mood-guide');const sig=guide.props.signature;
     assert.ok(sig);guide.props.onExampleChange(sig.id,'all');
     assert.equal(h.block.cutType,'horizon');assert.equal(h.block.shot,'medium');assert.equal(h.block.refScope,'all');assert.equal(h.block.exampleId,sig.id);
@@ -195,16 +193,17 @@ test('WOC4 keyboard paging moves focus off a disappearing photo into the persist
     ...h.hooks,storyboardSpaceSetsFor,filterSpaceSetsForModel,generationExampleImageSources,
     Icon:'icon',EditorMoodGuide:'editor-guide',MineImageTab:'mine-images',api:{},useAppStore:{getState:()=>({})},
   });
-  const chosen=photoGalleryChoices(catalogs.genExamples,storyboardSpaceSetsFor({gender:'men',clothingType:'bottom'}),{gender:'men',clothingType:'bottom',place:'building'}).entries[0].example;
-  const block={...board()[0],pageSectionKind:'wear',cutType:'styling',exampleId:chosen.id};
-  const props={...basic(block),gender:'men',clothingType:'bottom'};
+  const template=raw.find(example=>example.cutType==='styling'&&example.gender==='men'&&example.applicableClothingTypes.includes('bottom'));
+  const examples=Array.from({length:13},(_,index)=>({...template,id:`r5-page-${index}`,shot:'full',placeType:'building'}));
+  const chosen=examples[0],block={...board()[0],pageSectionKind:'wear',cutType:'styling',exampleId:chosen.id};
+  const props={...basic(block),catalogs:{...catalogs,genExamples:examples},gender:'men',clothingType:'bottom'};
   const attach=tree=>{
     const region=nodes(tree).find(n=>n.props?.['aria-label']==='생성예시 갤러리');
     if(region.ref)region.ref.current={ownerDocument:{activeElement:focusedCard},contains:el=>el===focusedCard,focus:options=>focusCalls.push(options)};
   };
   try {
     let tree=h.render(Comp,props,attach);
-    nodes(tree).find(n=>n.type==='photo-framing').props.onChange('all');
+    nodes(tree).find(n=>n.type==='photo-framing').props.onChange('full');
     tree=h.render(Comp,props,attach);assert.ok(nodes(tree).find(n=>n.type==='photo-pages').props.count>1);
     const region=nodes(tree).find(n=>n.props?.['aria-label']==='생성예시 갤러리');
     region.props.onKeyDown({key:'ArrowRight',preventDefault(){}});

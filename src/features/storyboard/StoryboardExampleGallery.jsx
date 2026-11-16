@@ -8,6 +8,7 @@ import { storyboardSpaceSetsFor } from '../../lib/storyboardSpaceSetCatalog.js';
 import { spaceSetDisplayName } from '../../lib/spaceSetDisplayNames.js';
 import { examplePlace, filterGalleryExamples, visiblePlaceTabs, groupGalleryExamples, sampleGalleryEntries, createGallerySessionSeed } from '../../lib/pageTemplates/storyboardGallery.js';
 import { isSourceBasedDetailRecipe } from '../../lib/detailRecommendations.js';
+import { cutTypeDisplay } from '../../lib/storyboardTaxonomy.js';
 import { ExampleThumb, MineImageTab, ShotSegment } from './StoryboardControls.jsx';
 import { StoryboardStackPopup } from './StoryboardStackPopup.jsx';
 import styles from './StoryboardPanels.module.css';
@@ -26,6 +27,7 @@ export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, sh
   clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null,
   refs = [], onRefsChange, onPickRef, onUseMine = null, onUploadStart, identityKind = null, usedExampleIds = new Set(), spaceContext = null,
   gallerySeedFactory = createGallerySessionSeed, productPresentation = null }) {
+  const studioStyle = cutTypeDisplay(cut, exampleId, catalogs.genExamples).studioStyle;
   const [mode, setMode] = useState('set'), [place, setPlace] = useState('all'), [shotFilter, setShotFilter] = useState('all');
   const [expandedSetId, setExpandedSetId] = useState(null), [mine, setMine] = useState(false);
   const ownSet = spaceContext?.set;
@@ -41,17 +43,18 @@ export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, sh
   const candidates = useMemo(() => {
     const shots = cut === 'product' ? [shot] : (shotOptions || [{ value: 'full' }, { value: 'medium' }]).map(option => option.value);
     return filterExamplesForModel(shots.flatMap(value => selectGenerationExamples(catalogs.genExamples, {
-      cutType: cut, shot: value, clothingType, gender, includeSetOnly: cut !== 'product',
+      cutType: cut, studioStyle, shot: value, clothingType, gender, includeSetOnly: cut !== 'product',
       limit: catalogs.genExamples?.length || 0,
     })), identityKind);
-  }, [catalogs.genExamples, cut, shot, shotOptions, clothingType, gender, identityKind, direction, sideStyle]);
+  }, [catalogs.genExamples, cut, studioStyle, shot, shotOptions, clothingType, gender, identityKind, direction, sideStyle]);
   const sets = useMemo(() => filterSpaceSetsForModel(storyboardSpaceSetsFor({ gender, clothingType }), identityKind)
     .filter(set => set.id !== ownSet?.id && set.members.some(member => candidates.some(example => example.id === member.exampleId))), [candidates, gender, clothingType, identityKind, ownSet?.id]);
   const expandedSet = sets.find(set => set.id === expandedSetId);
   const hasSetMode = mode === 'set' && sets.length > 0;
   const showingStacks = hasSetMode && !expandedSet;
   const otherCandidates = ownSet ? candidates.filter(example => !ownSet.members.some(member => member.exampleId === example.id)) : candidates;
-  const filtered = filterGalleryExamples(otherCandidates, { place, shot: shotFilter });
+  const galleryPlace = cut === 'horizon' || studioStyle === 'minimal' ? 'all' : place;
+  const filtered = filterGalleryExamples(otherCandidates, { place: galleryPlace, shot: shotFilter });
   const shotVal = cut === 'product' ? shot : shotFilter;
   const sessionSeed = useMemo(() => gallerySeedFactory(), [gallerySeedFactory, cut, clothingType, gender, identityKind, place, shotVal, fullGalleryOpen]);
   const eligible = expandedSet ? filtered.filter(example => expandedSet.members.some(member => member.exampleId === example.id)) : filtered;
@@ -109,7 +112,7 @@ export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, sh
   };
   // 예시 선택으로 바뀌는 direction·sideStyle은 페이지 초기화 조건이 아니다.
   useEffect(() => {
-    const conditions = [cut, shotVal, clothingType, gender, place, mode, expandedSetId, fullGalleryOpen];
+    const conditions = [cut, studioStyle, shotVal, clothingType, gender, place, mode, expandedSetId, fullGalleryOpen];
     const previous = previousGalleryContext.current;
     const conditionsChanged = !previous || conditions.some((value, index) => value !== previous.conditions[index]);
     const selectedPage = generationGalleryPageForExample(galleryPages, selectedGalleryId);
@@ -123,7 +126,7 @@ export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, sh
       scrollToGalleryPage(galleryPageCount - 1, 'auto');
     }
     previousGalleryContext.current = { conditions, exampleId, mineTab };
-  }, [cut, shotVal, clothingType, gender, exampleId, galleryPage, galleryPageCount, mineTab, place, mode, expandedSetId, fullGalleryOpen]);
+  }, [cut, studioStyle, shotVal, clothingType, gender, exampleId, galleryPage, galleryPageCount, mineTab, place, mode, expandedSetId, fullGalleryOpen]);
   useEffect(() => () => clearTimeout(galleryScrollTimer.current), []);
   useEffect(() => {
     const dots = dotsRef.current;
@@ -186,7 +189,7 @@ export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, sh
     {mine && <MineImageTab images={refs} onImagesChange={onRefsChange} onChoose={onUseMine} onUploadStart={onUploadStart}
       onPickImage={() => onPickRef ? onPickRef() : api.pickRefImage(useAppStore.getState().projectId)} />}</>;
   if (cut === 'product' && shot === 'ghost' && productPresentation) return <div className={`insp-sec ${styles.exampleSection}`}>
-    <div className={styles.exampleHeading}><label className="lbl">제품컷 형식</label></div>
+    <div className={styles.exampleHeading}><label className="lbl">{cutTypeDisplay(cut).label} 형식</label></div>
     {productShotControls}{mineControl}
   </div>;
   return <div className={`insp-sec ${styles.exampleSection}`}>
@@ -219,10 +222,10 @@ export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, sh
         aria-pressed={mode === value} className={mode === value ? styles.modeOn : ''}
         onClick={() => { setMode(value); setExpandedSetId(null); }}>{label}</button>)}
     </div>}
-    {cut === 'styling' && <PlaceTabs value={place} onChange={value => { setPlace(value); setExpandedSetId(null); }} />}
+    {cut === 'styling' && studioStyle !== 'minimal' && <PlaceTabs value={place} onChange={value => { setPlace(value); setExpandedSetId(null); }} />}
     {cut !== 'product' && <div className={`modal-actions ${styles.shotPills}`} aria-label="구도">
       {[['all', '전체'], ['full', '전신'], ['medium', clothingType === 'bottom' ? '하반신' : '상반신']].map(([value, label]) => <button type="button" key={value}
-        disabled={value !== 'all' && !filterGalleryExamples(otherCandidates, { place, shot: value }).length}
+        disabled={value !== 'all' && !filterGalleryExamples(otherCandidates, { place: galleryPlace, shot: value }).length}
         aria-pressed={shotFilter === value} className={shotFilter === value ? styles.shotOn : ''} onClick={() => setShotFilter(value)}>{label}</button>)}
     </div>}
     {expandedSet && <button type="button" className={styles.back} onClick={() => setExpandedSetId(null)}><Icon name="chevLeft" size={14} />전체 예시</button>}

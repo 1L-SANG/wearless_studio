@@ -5,7 +5,6 @@ import OuterClosureField from '@/components/OuterClosureField.jsx';
 import { DetailTargetPicker } from './DetailTargetPicker.jsx';
 import { ProductSourcePicker } from './ProductSourcePicker.jsx';
 import { StoryboardGarmentColorField as GarmentColorField } from './StoryboardGarmentColorField.jsx';
-import HorizonBackgroundControl from './HorizonBackgroundControl.jsx';
 import { UnderlineTabs, ShotSegment, MineImageTab, MINE_SHOT_OPTION } from './StoryboardControls.jsx';
 import { StoryboardPhotoGallery as MoodGuide } from './StoryboardPhotoGallery.jsx';
 import { ProductPresentationPicker } from './ProductPresentationPicker.jsx';
@@ -14,9 +13,10 @@ import { referenceFeedbackPatch } from '../../lib/storyboardExampleFeedback.js';
 import { photoSlotForBlock } from '../../lib/pageTemplates/slots.js';
 import { isSinglePhotoSection } from '../../lib/pageTemplates/storyboardPhotoChoices.js';
 import { productSectionState } from '../../lib/pageTemplates/productPresentation.js';
-import { horizonBackgroundAvailability } from '../../lib/horizonBackgroundAvailability.js';
+import { setPhotoGroupId } from '../../lib/storyboardSetOptions.js';
 import { normalizeOuterClosureState } from '../../lib/outerClosure.js';
-import { CONTENT_ROLES, SECTION_ROLES, cutTypeOptionsForSection, normalizedRecipePatch, defaultContentRoleForSection, productPresentationOf } from '../../lib/storyboardTaxonomy.js';
+import { CONTENT_ROLES, SECTION_ROLES, cutTypeDisplay, cutTypeOptionsForSection, normalizedRecipePatch, defaultContentRoleForSection, productPresentationOf } from '../../lib/storyboardTaxonomy.js';
+import { studioStyleOptions } from '../../lib/cutDisplaySelection.js';
 import { hasAvailableGenerationRecipe, isSourceBasedProductRecipe } from '../../lib/generationExamples.js';
 import { productSourceColorPatch } from '../../lib/productSourcePhotos.js';
 import { generationExampleSelectionPatch } from '../../lib/storyboardExampleSelection.js';
@@ -28,14 +28,12 @@ const WORN_CUT_TYPES = new Set(['styling', 'horizon']);
 const WORN_ROLE_BY_CUT_TYPE = { styling: CONTENT_ROLES.COORDINATION, horizon: CONTENT_ROLES.FIT };
 export const shouldRenderGenerationExampleGuide = block => Boolean(block?.cutType);
 
-export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct = false, catalogs, colorOpts, detailColorOpts, clothingType, subCategory, customCategory, exampleGender, identityKind = null, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, customMatchPromotionPending = false, spaceContext, onChangeSpaceSet, onExampleDrag, onChangeSpaceBackground, onUploadStart, usedExampleIds }) {
+export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct = false, catalogs, colorOpts, detailColorOpts, clothingType, subCategory, customCategory, exampleGender, identityKind = null, hasDetailImage, projectId, onChange, onAtomicChange, requestedRecipe, onCancelRequestedRecipe, matchClothing, customMatchPromotionPending = false, onExampleDrag, onUploadStart, usedExampleIds }) {
   const [matchOpen, setMatchOpen] = useState(false);
   const [pendingRecipe, setPendingRecipe] = useState(null);
   const [pendingChoice, setPendingChoice] = useState(null);
   const [pendingError, setPendingError] = useState(null);
   const [pendingSaving, setPendingSaving] = useState(false);
-  const [pickerSaveError, setPickerSaveError] = useState(null);
-  const [pickerSaving, setPickerSaving] = useState(false);
   useEffect(() => { setMatchOpen(false); }, [block?.id]);
   useEffect(() => {
     // block과 requestedRecipe가 둘 다 null이면 undefined===undefined로 참이 되어
@@ -45,13 +43,14 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
         ...(requestedRecipe.cutType === 'product' && requestedRecipe.shot === 'ghost'
           ? { productPresentation: productPresentationOf(block) || 'ghost' } : {}) } : null);
     setPendingChoice(null); setPendingError(null); setPendingSaving(false);
-    setPickerSaveError(null); setPickerSaving(false);
   }, [block?.id, requestedRecipe?.blockId, requestedRecipe?.cutType, requestedRecipe?.shot]);
 
-  if (!block) return null;
+  const lockedGroupId = setPhotoGroupId(block, blocks || []);
+  if (!block || lockedGroupId) return null;
   const productMode = block.source === 'ai' && block.cutType === 'product' && block.shot === 'ghost';
   const productState = productMode ? productSectionState(blocks || [block], block.pageSectionKey) : null;
   const modeRequired = productState && ['missing', 'mixed'].includes(productState.status);
+  const optionLock = { className: styles.photoOptions, inert: pendingRecipe ? '' : undefined, 'aria-disabled': pendingRecipe ? true : undefined };
   const colorField = !fixedProduct && block.source === 'ai' && block.cutType ? <GarmentColorField
     colorOpts={detailColorOpts?.length ? detailColorOpts : colorOpts} product={catalogs.detailProduct} block={block}
     value={block.colorId} disabled={busy || Boolean(modeRequired)}
@@ -63,7 +62,7 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
   if (productMode) return <div className={`inspector ${styles.photoPanel}`}>
     <ProductPresentationPicker block={block} blocks={blocks} product={catalogs.detailProduct}
       fixedProduct={fixedProduct} clothingType={clothingType} busy={busy} onChange={onAtomicChange || onChange} />
-    {colorField}
+    <div {...optionLock}>{colorField}</div>
   </div>;
 
   const signatureExamples = signatureExamplesForBlock(block, { product: catalogs.detailProduct,
@@ -75,12 +74,18 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
   const isDetail = block.contentRole === CONTENT_ROLES.DETAIL;
   const shouldRenderGenerationExamples = shouldRenderGenerationExampleGuide(block);
   const effectiveSectionRole = requestedRecipe?.sectionRole || block.sectionRole;
-  const pendingInSpace = !!block.spaceGroupId && !requestedRecipe;
   // 디테일 샷 상시 제공(2026-08-07 개편) — 디테일 사진이 없어도 서버가 원본 구조 확대로 생성
   const slotDefinition = photoSlotForBlock(block);
   const permittedShots = slotDefinition?.recipe?.allowedShots;
   const wornShotOptions = catalogs.shotTypes.filter(option => !permittedShots || permittedShots.includes(option.value));
   const productShotOptions = catalogs.productShotTypes.filter(option => !permittedShots || permittedShots.includes(option.value));
+  const display = cutTypeDisplay(block.cutType, block.exampleId, guideCatalogs.genExamples);
+  const activeDisplay = pendingRecipe
+    ? { ...cutTypeDisplay(pendingRecipe.cutType, null, guideCatalogs.genExamples),
+      ...(pendingRecipe.studioStyle ? { value: 'horizon', studioStyle: pendingRecipe.studioStyle } : {}) } : display;
+  const studioOptions = studioStyleOptions(guideCatalogs.genExamples?.filter(example => !isSignatureExampleId(example.id)), {
+    shots: wornShotOptions.map(option => option.value), clothingType, gender: exampleGender, identityKind,
+  }).map(option => option.value === 'minimal' && signature ? { ...option, disabled: false } : option);
   const hasSelectableExamples = (cutType, shot) => hasAvailableGenerationRecipe(
     guideCatalogs.genExamples,
     {
@@ -98,11 +103,15 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
       : wornShotOptions.map((item) => item.value);
     return {
       ...option,
-      disabled: !shots.some((shot) => hasSelectableExamples(option.value, shot)),
+      disabled: option.value === 'horizon'
+        ? studioOptions.every(item => item.disabled) : !shots.some((shot) => hasSelectableExamples(option.value, shot)),
     };
   });
-  const onCutTypeChange = (cutType) => {
-    if (block.cutType === cutType) { setPendingRecipe(null); return; }
+  const onCutTypeChange = (value, studioStyle = (display.value === 'horizon' && display.studioStyle)
+    || studioOptions.find(option => option.value === 'horizon' && !option.disabled)?.value
+    || studioOptions.find(option => !option.disabled)?.value || 'horizon') => {
+    const cutType = value === 'horizon' && studioStyle === 'minimal' ? 'styling' : value;
+    if (display.value === value && (value !== 'horizon' || display.studioStyle === studioStyle)) { setPendingRecipe(null); return; }
     const availableShots = cutType === 'product' ? productShotOptions : wornShotOptions;
     const shot = availableShots.find((option) => option.value === block.shot
       && hasSelectableExamples(cutType, option.value))?.value
@@ -110,7 +119,8 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
       || block.shot;
     setPendingError(null);
     setPendingChoice(null);
-    setPendingRecipe({ cutType, shot, ...(cutType === 'product' && shot === 'ghost' ? { productPresentation: 'ghost' } : {}) });
+    setPendingRecipe({ cutType, shot, ...(value === 'horizon' ? { studioStyle } : {}),
+      ...(cutType === 'product' && shot === 'ghost' ? { productPresentation: 'ghost' } : {}) });
   };
   const onShotChange = (shot) => {
     if (block.cutType === 'product' && shot === 'detail') {
@@ -137,9 +147,10 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
       return { shot, refScope: current.cutType === 'horizon' ? 'all' : 'pose', exampleSelectionOrigin: 'user' };
     });
   };
-  const commitPendingRecipe = async (exampleId) => {
-    if (!pendingRecipe || pendingSaving) return;
+  const commitPendingRecipe = async (exampleId, recipe = pendingRecipe) => {
+    if (!recipe || pendingSaving) return;
     const example = (guideCatalogs.genExamples || []).find((item) => item.id === exampleId);
+    const pendingRecipe = isSignatureExampleId(exampleId) ? { ...recipe, cutType: 'horizon', shot: 'medium' } : recipe;
     if (!example && !isSourceBasedProductRecipe({ ...pendingRecipe, clothingType })) return;
     const current = block;
     const nextRole = pendingRecipe.cutType === 'product'
@@ -153,6 +164,7 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
       source: 'ai',
       sectionRole: effectiveSectionRole,
       cutType: pendingRecipe.cutType,
+      exampleId,
       shot: pendingRecipe.shot,
       productPresentation: pendingRecipe.productPresentation ?? null,
     }, nextRole, { hasDetailImage });
@@ -167,13 +179,15 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
       ...(recipePatch.cutType !== 'product' || recipePatch.shot !== 'detail'
         ? { detailTargetId: null, detailTargetOrigin: null } : {}),
       source: 'ai',
-      shot: WORN_CUT_TYPES.has(recipePatch.cutType) ? example.shot : recipePatch.shot,
+      shot: WORN_CUT_TYPES.has(recipePatch.cutType) ? example?.shot || recipePatch.shot : recipePatch.shot,
       colorId,
       angle: 'same',
       exampleId,
       baseThumb: current.baseThumb ?? current.thumb,
       exampleSelectionOrigin: exampleId ? 'user' : null,
       refScope: selection.patch.refScope,
+      ...(isSignatureExampleId(exampleId) ? { cutType: 'horizon', shot: 'medium', direction: 'front', sideStyle: null, refScope: 'all',
+        spaceGroupId: null, spaceVariation: null, spaceSetMemberOrder: null, setSelectionOrigin: null, horizonBackgroundMode: null } : {}),
       outerClosureState: clothingType === 'outer' && WORN_CUT_TYPES.has(recipePatch.cutType)
         ? normalizeOuterClosureState(current.outerClosureState)
         : null,
@@ -199,8 +213,9 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
   };
   const generationExamplePatch = (current, example, scope) => {
     const opening = isSignatureBlock(current);
-    const base = opening ? { ...current, cutType: example.cutType, shot: example.shot } : current;
-    const recipe = opening ? normalizedRecipePatch(base, CONTENT_ROLES.HERO) : {};
+    const single = isSinglePhotoSection(current);
+    const base = single ? { ...current, cutType: example.cutType, shot: example.shot } : current;
+    const recipe = single ? normalizedRecipePatch({ ...base, exampleId: example.id }, opening ? CONTENT_ROLES.HERO : current.contentRole) : {};
     const selected = generationExampleSelectionPatch({ ...base, ...recipe }, example, {
       clothingType,
       defaultColorId: (isDetail ? detailColorOpts : colorOpts)[0]?.id,
@@ -220,18 +235,6 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
   const onGenerationExampleChange = (exampleId, scope) => {
     const example = (guideCatalogs.genExamples || []).find((item) => item.id === exampleId);
     if (!example) return undefined;
-    if (block.spaceGroupId) {
-      const selected = generationExamplePatch(block, example, scope);
-      setPickerSaveError(null);
-      setPickerSaving(true);
-      return onAtomicChange(selected.changes, {
-        retryAtomic: true,
-        pickerOwnsError: true,
-        undoLabel: selected.settingsReset ? '예시·설정 초기화' : '참조',
-      }).catch(() => {
-        setPickerSaveError('변경 내용을 저장하지 못했어요');
-      }).finally(() => setPickerSaving(false));
-    }
     const selected = generationExamplePatch(block, example, scope);
     onChange(selected.changes, {
       undoLabel: selected.settingsReset ? '예시·설정 초기화' : '참조',
@@ -241,8 +244,8 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
   const showOuterClosure = clothingType === 'outer' && block.source === 'ai' && WORN_CUT_TYPES.has(block.cutType);
   const outerClosureState = normalizeOuterClosureState(block.outerClosureState);
   return (
-    <div className={`inspector ${styles.photoPanel}`}>
-      {isMine && !block.spaceGroupId ? (
+    <div className={`inspector ${styles.photoPanel}${!isMine && (pendingRecipe?.cutType || block.cutType) !== 'product' ? ` ${styles.splitPhotoPanel}` : ''}`}>
+      {isMine && !lockedGroupId ? (
         <>
           <div className="sb-exhead">
             <label className="lbl">샷 종류</label>
@@ -261,12 +264,6 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
             }} />
         </>
       ) : <>
-      {block.cutType === 'horizon' && block.spaceGroupId && <div className="insp-sec">
-        <button type="button" className={styles.studioChange} onClick={onChangeSpaceSet}>다른 스튜디오 세트로 바꾸기</button>
-        <HorizonBackgroundControl block={block} memberCount={spaceContext?.siblings?.length}
-          onChange={onChangeSpaceBackground} availability={horizonBackgroundAvailability(spaceContext?.siblings, catalogs.detailProduct,
-            catalogs.garmentColorEvidence, spaceContext?.set?.id)} />
-      </div>}
       {!block.cutType ? (
         <>
           <div className="insp-empty-hint"><Icon name="info" size={15} />이 이미지의 생성 설정을 준비하지 못했어요. 블록을 취소하고 다시 추가해주세요.</div>
@@ -274,27 +271,37 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
       ) : (
         <>
       {/* 세트 멤버는 컷 종류가 세트에 고정 — 잠금 표시 대신 아예 숨긴다(2026-08-15 오너). */}
-      {!spaceContext && !isSinglePhotoSection(block) && (
-        <div className="insp-sec">
+      {cutTypeOptions.length > 1 && <>
+      {isSinglePhotoSection(block) && (
+        <div className={`insp-sec ${styles.cutTabs}`}>
+          <div className="sb-cut-label-row"><label className="lbl">컷 종류</label></div>
+          <UnderlineTabs options={cutTypeOptions} value={activeDisplay.value}
+            onChange={value => { if (value !== activeDisplay.value) onCutTypeChange(value); }} />
+        </div>
+      )}
+      {!isSinglePhotoSection(block) && (
+        <div className={`insp-sec ${styles.cutTabs}`}>
           <div className="sb-cut-label-row"><label className="lbl">컷 종류</label></div>
           <UnderlineTabs
             options={cutTypeOptions}
-            value={pendingRecipe?.cutType || block.cutType}
-            onChange={onCutTypeChange} />
+            value={activeDisplay.value}
+            onChange={value => { if (value !== activeDisplay.value) onCutTypeChange(value); }} />
         </div>
       )}
+      </>}
+
 
       {pendingRecipe ? (
         <div className="sb-pending-recipe">
           {isSourceBasedProductRecipe({ ...pendingRecipe, clothingType }) && <div className="modal-actions">
-            <button type="button" className="btn btn-primary" disabled={pendingSaving} onClick={() => commitPendingRecipe(null)}>제품컷 적용</button>
+            <button type="button" className="btn btn-primary" disabled={pendingSaving} onClick={() => commitPendingRecipe(null)}>{`${cutTypeDisplay(pendingRecipe.cutType).label} 적용`}</button>
           </div>}
           {requestedRecipe && <button type="button" className="insp-cancel-new" onClick={() => {
             setPendingRecipe(null);
             onCancelRequestedRecipe?.();
           }}>섹션 이동 취소</button>}
           {shouldRenderGenerationExamples && (
-            <MoodGuide block={block} projectId={projectId} busy={busy} usedExampleIds={usedExampleIds} identityKind={identityKind} catalogs={guideCatalogs} cut={pendingRecipe.cutType}
+            <MoodGuide block={block} projectId={projectId} signature={signature} busy={busy} usedExampleIds={usedExampleIds} identityKind={identityKind} catalogs={guideCatalogs} cut={pendingRecipe.cutType}
               direction={block.direction}
               sideStyle={block.sideStyle ?? null}
               shot={pendingRecipe.shot}
@@ -303,8 +310,10 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
               onShotChange={(shot) => setPendingRecipe((current) => ({ ...current, shot,
                 ...(current.cutType === 'product' ? { productPresentation: shot === 'ghost' ? 'ghost' : null } : {}) }))}
               clothingType={clothingType} gender={exampleGender}
-              exampleId={pendingChoice} onExampleChange={commitPendingRecipe} onExampleDrag={onExampleDrag}
-              refScope={pendingInSpace && pendingRecipe.cutType !== 'horizon' ? 'pose' : 'all'} />
+              studioStyle={activeDisplay.studioStyle} studioOptions={studioOptions}
+              onStudioStyleChange={value => onCutTypeChange('horizon', value)}
+              exampleId={pendingChoice} onExampleChange={exampleId => commitPendingRecipe(exampleId)} onExampleDrag={onExampleDrag}
+              refScope="all" />
           )}
           {pendingError && <div className="sb-save-error">{pendingError}
             <button type="button" disabled={(!pendingChoice && !isSourceBasedProductRecipe({ ...pendingRecipe, clothingType })) || pendingSaving}
@@ -315,20 +324,22 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
         <>
           {isDetail && <DetailTargetPicker block={block} product={catalogs.detailProduct}
             catalogs={catalogs} recommendations={catalogs.detailRecommendations} onChange={onChange} />}
-          {isProduct && !isDetail && !block.spaceGroupId && <>
+          {isProduct && !isDetail && !lockedGroupId && <>
             <ProductSourcePicker block={block} product={catalogs.detailProduct} catalogs={catalogs} onChange={onChange} />
             {!productPresentationOf(block) && <p className="hint">예시 사진은 연출만 참고해요.</p>}
           </>}
           {shouldRenderGenerationExamples && (
-            <MoodGuide block={block} projectId={projectId} signature={signature} busy={busy || pickerSaving} usedExampleIds={usedExampleIds} identityKind={identityKind} onUploadStart={onUploadStart} onUseMine={(ref) => onChange({
+            <MoodGuide block={block} projectId={projectId} signature={signature} busy={busy} usedExampleIds={usedExampleIds} identityKind={identityKind} onUploadStart={onUploadStart} onUseMine={(ref) => onChange({
               source: 'mine', title: '내 이미지', cutType: null, contentRole: CONTENT_ROLES.CUSTOM,
               ownImages: [ref?.url || ref], thumb: ref?.url || ref,
               exampleId: null, exampleSelectionOrigin: null, refScope: null,
               refImages: [], refAssetIds: [],
               spaceGroupId: null, spaceVariation: null,
-            })} catalogs={guideCatalogs} cut={block.cutType} spaceContext={spaceContext}
+            })} catalogs={guideCatalogs} cut={block.cutType}
               direction={block.direction} sideStyle={block.sideStyle ?? null} shot={block.shot}
               productPresentation={productPresentationOf(block)}
+              studioStyle={activeDisplay.studioStyle} studioOptions={studioOptions}
+              onStudioStyleChange={value => onCutTypeChange('horizon', value)}
               shotOptions={isProduct ? productShotOptions : wornShotOptions}
               onShotChange={block.cutType === 'horizon' && block.exampleId && (block.refScope || 'all') === 'all' ? null : onShotChange}
               clothingType={clothingType} gender={exampleGender}
@@ -342,22 +353,11 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
                 refAssetIds: references.map((value) => value?.assetId).filter(Boolean),
               })} />
           )}
-          {pickerSaveError && <div className="sb-save-error">{pickerSaveError}
-            <button type="button" disabled={pickerSaving} onClick={async () => {
-              setPickerSaving(true);
-              try {
-                const retried = await onRetryAtomicSave();
-                if (retried) setPickerSaveError(null);
-              } catch {
-                setPickerSaveError('변경 내용을 저장하지 못했어요');
-              } finally {
-                setPickerSaving(false);
-              }
-            }}>다시 시도</button>
-          </div>}
+
         </>
       )}
 
+      <div {...optionLock}>
       {colorField}
 
       {showOuterClosure && (
@@ -366,8 +366,8 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
       )}
 
       {/* 매칭 의류가 없으면 편집 패널이 빈 화면이 되므로 진입 자체를 막는다.
-          세트 멤버(spaceGroupId)는 세트 연출이 정본이라 매칭 편집도 숨긴다(2026-08-15 오너). */}
-      {WORN_CUT_TYPES.has(block.cutType) && !block.spaceGroupId
+          원본 2장 이상인 세트만 잠그고, 한 장짜리 장소 묶음은 일반 사진처럼 편집한다. */}
+      {WORN_CUT_TYPES.has(block.cutType) && !lockedGroupId
         && ((Array.isArray(matchClothing) && matchClothing.length > 0) || customMatchPromotionPending) && (
         <>
           <button className={`insp-detail-btn${matchOpen ? ' open' : ''}`} onClick={() => setMatchOpen((v) => !v)}>
@@ -397,6 +397,7 @@ export function StoryboardPhotoPanel({ block, blocks, busy = false, fixedProduct
           )}
         </>
       )}
+      </div>
 
       {/* 추가 옵션(얼굴 노출·앵글)은 필드와 생성 로직을 유지하고 MVP 이후 재도입한다. */}
         </>

@@ -388,7 +388,7 @@ test('next-step flush failure blocks navigation and reports a toast message', as
   assert.deepEqual(toasts, ['세트 저장에 실패했어요']);
   assert.match(storyboardSource, /continueAfterStoryboardFlush\(\{[\s\S]*?flush: async \(\) => \{ await styleSaves\.flush\(\(\) => styleValueRef.current\); await ensureV4StoryboardCopywriting\(projectId, useAppStore.getState\); return saveNow\(projectId\); \},[\s\S]*?onFailure: \(message, error\) => toast\.push\(message, \{ variant: \'error\', error/);
   assert.doesNotMatch(storyboardSource, /\{saveError && <div className="sb-save-error">/);
-  assert.match(storyboardSource, /pickerSaveError && <div className="sb-save-error">/);
+  assert.match(storyboardSource, /pendingError && <div className="sb-save-error">/); // R5 removes only the set-photo picker retry UI.
   assert.match(storyboardSource, /setSetPickerError\('장소 세트를 저장하지 못했어요\. 다시 시도해주세요\.'/);
 });
 

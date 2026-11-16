@@ -3,7 +3,7 @@ import { getTemplate, pageTemplatesCatalog } from './catalog.js';
 import { analysisPageStyle } from './pageStyle.js';
 import { seedDetailTargets } from './detailBudget.js';
 import { genderForClothingType } from '../productGender.js';
-import { entryStylingMembers, pickEntrySets } from '../storyboardEntryPlacement.js';
+import { entryStylingMembers, pickEntrySets, colorList, spaceSetMembersForProduct } from '../storyboardEntryPlacement.js';
 import { spaceSetGroupId } from '../storyboardSpaceSetCatalog.js';
 import { matchingIdsForColor } from '../colorwayMatching.js';
 import { ensureSections } from '../sections.js';
@@ -11,7 +11,6 @@ import { productPresentationOf } from '../storyboardTaxonomy.js';
 import { Placeholder } from '../../mock/placeholders.js';
 import { wornCropRegion } from './wornCropGeometry.js';
 
-const colorList = product => product?.colors?.length ? product.colors : [{ id: 'col1', isBase: true }];
 const baseColor = product => { const colors = colorList(product); return colors.find(c => c.isBase) || colors[0]; };
 const numbered = section => section.kind === 'points' && section.photoSlots?.some(slot => slot.recipe?.detailPool === 'points');
 
@@ -67,12 +66,15 @@ export function seedStoryboard(product = {}, analysis = {}, context = {}) {
   const colors = colorList(product), base = baseColor(product);
   const clothingType = product.clothingType || analysis.clothingType || 'top';
   const baseCount = colors.length === 1 ? 6 : 4;
+  const sections = context.sectionDefinitions || template.sections.filter(section => section.presence !== 'optional');
   const sets = pickEntrySets({ gender: genderForClothingType(clothingType, analysis.targetGenders), clothingType,
-    projectId: context.projectId, stylingCount: Math.ceil(baseCount / 2), identityKind: context.identityKind });
+    projectId: context.projectId, stylingCount: Math.ceil(baseCount / 2), identityKind: context.identityKind,
+    preferSequenceFraming: colors.length >= 3 && sections.some(section => section.kind === 'wear'
+      && section.photoSlots?.[0]?.recipe?.set === 'sequence' && typeof section.photoSlots[0].count !== 'number') });
   const { fabric, points } = seedDetailTargets(analysis);
   let pointsUsed = false;
   let blocks = [];
-  for (const section of context.sectionDefinitions || template.sections.filter(s => s.presence !== 'optional')) {
+  for (const section of sections) {
     if (section.kind === 'fabric' && !fabric) continue;
     if (numbered(section) && points.length < 2 && !context.includeDerivedPoints) continue;
     const sectionId = uid('sec');
@@ -102,6 +104,7 @@ export function seedStoryboard(product = {}, analysis = {}, context = {}) {
       // A numeric count is the menu's fixed-size section, built from one location set.
       // Default sections retain the catalog's base/extra-color budget below.
       const fixedCount = typeof slot.count === 'number' ? slot.count : null;
+      let baseTarget = fixedCount || (slot.recipe.set === 'sequence' && colors.length >= 3 ? 2 : baseCount);
       const addedSet = context.stylingSet || (slot.recipe.set === 'styling' ? sets.stylingSets[0] : sets.sequenceSet);
       if (fixedCount && addedSet) {
         const groupId = spaceSetGroupId(addedSet.id, uid('sg'));
@@ -120,9 +123,11 @@ export function seedStoryboard(product = {}, analysis = {}, context = {}) {
         }
       } else if (!fixedCount && sets.sequenceSet) {
         const set = sets.sequenceSet, groupId = spaceSetGroupId(set.id, uid('sg'));
-        for (const member of set.members.slice(0, baseCount)) photos.push(setPhoto(slot, member, set, groupId, String(photos.length + 1)));
+        const members = spaceSetMembersForProduct(set, product);
+        for (const member of colors.length === 1 ? members.slice(0, baseCount) : members) photos.push(setPhoto(slot, member, set, groupId, String(photos.length + 1)));
+        if (colors.length === 2 && members.length) baseTarget = members.length;
       }
-      while (photos.length < (fixedCount || baseCount)) photos.push(make(slot, base.id, String(photos.length + 1), { shot: photos.length % 2 ? 'medium' : 'full' }));
+      while (photos.length < baseTarget) photos.push(make(slot, base.id, String(photos.length + 1), { shot: photos.length % 2 ? 'medium' : 'full' }));
       for (const color of colors.filter(c => c.id !== base.id).slice(0, fixedCount ? 0 : slot.count.maxExtraColors)) {
         for (let i = 0; i < slot.count.perExtraColor; i++) photos.push(make(slot, color.id, String(photos.length + 1), { shot: i ? 'medium' : 'full' }));
       }

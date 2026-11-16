@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Icon } from '@/components/ui.jsx';
 import { isSourceBasedDetailRecipe } from '../../lib/detailRecommendations.js';
 import { isGenerationCombinationPublic } from '../../lib/generationExamples.js';
+import { cutTypeDisplay } from '../../lib/storyboardTaxonomy.js';
 import styles from './StoryboardPanels.module.css';
 
 export function UnderlineTabs({ options, value, onChange }) {
@@ -9,6 +10,15 @@ export function UnderlineTabs({ options, value, onChange }) {
     {options.map(option => <button type="button" key={option.value} disabled={option.disabled}
       className={`utab${value === option.value ? ' on' : ''}`} aria-pressed={value === option.value}
       title={option.disabled ? option.disabledReason || '이 조건은 아직 서비스에 공개되지 않았어요' : undefined}
+      onClick={() => onChange(option.value)}>{option.label}</button>)}
+  </div>;
+}
+
+export function StudioStyleChips({ options, value, onChange, disabled = false }) {
+  return <div className="chips modal-actions">
+    {options.map(option => <button type="button" key={option.value}
+      className={`chip${value === option.value ? ' on' : ''}`} aria-pressed={value === option.value}
+      disabled={disabled || option.disabled} title={option.disabled ? option.disabledReason : undefined}
       onClick={() => onChange(option.value)}>{option.label}</button>)}
   </div>;
 }
@@ -46,7 +56,7 @@ export function ShotSegment({
   return (
     <div className="seg sb-shot-seg" data-count={options.length}
       data-idx={Math.max(0, options.findIndex((option) => option.value === value))}
-      aria-label={cut === 'product' ? '제품컷 형식' : '샷 종류'}>
+      aria-label={cut === 'product' ? `${cutTypeDisplay(cut).label} 형식` : '샷 종류'}>
       {options.map((option) => {
         const published = !option.disabled && (isOptionPublished
           ? isOptionPublished(option.value)
@@ -117,4 +127,3 @@ export function MineImageTab({ images = [], onImagesChange, onChoose, onPickImag
     </div>
   );
 }
-
