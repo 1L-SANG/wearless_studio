@@ -111,19 +111,26 @@ def _validate_decisions(raw, early_count, late_count):
     return decisions
 
 
-async def merge_points(settings, early, late):
+async def merge_points(settings, early, late, *, metadata=None):
+    if metadata is not None:
+        metadata.clear()
     if not late:
         return []
     if not early:
         return [{"late": i, "action": "new", "early": None} for i in range(len(late))]
     prompt = _PROMPT_FILE.read_text(encoding="utf-8")
     prompt = prompt.format(early=_data_lines("E", early), late=_data_lines("L", late))
-    merge_settings = replace(settings, analysis_model_order="gemini", analysis_timeout_seconds=8)
+    merge_settings = replace(settings, analysis_timeout_seconds=8)
+    models = {"gemini": settings.model_text_gemini_merge or settings.model_text_gemini,
+              "gpt": settings.model_text_gpt_merge or settings.model_text}
     try:
-        raw, _provider = await vision_llm.analyze_with_fallback(
+        raw, provider = await vision_llm.analyze_with_fallback(
             merge_settings, prompt, [], _SCHEMA, thinking_level="low",
-            models={"gemini": settings.model_text_gemini_merge},
+            models=models, order=settings.model_order_points_merge.split(","),
+            reasoning_effort="none",
         )
     except Exception:
         raise PointsMergeError("model_failed") from None
+    if metadata is not None:
+        metadata.update(provider=provider, model=models[provider])
     return _validate_decisions(raw, len(early), len(late))
