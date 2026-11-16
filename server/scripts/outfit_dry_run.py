@@ -37,7 +37,7 @@ async def measure_request(local_images, source_images, pools, *, context, fixed,
     prompt_chars = len(request["prompt"])
     system_chars = len(request["system_prompt"])
     return {
-        "prompt_version": agent.PROPS_PROMPT_VERSION if prop_role else agent.PROMPT_VERSION,
+        "prompt_version": agent.GEMINI_PROPS_PROMPT_VERSION if prop_role else agent.GEMINI_PROMPT_VERSION,
         "candidates_per_role": {role: len(pool) for role, pool in pools.items()},
         "image_count": len(sizes),
         "product_image": {"width": sizes[0][0], "height": sizes[0][1]},

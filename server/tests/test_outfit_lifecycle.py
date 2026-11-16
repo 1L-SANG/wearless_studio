@@ -198,7 +198,9 @@ def test_outfit_selection_save_keeps_main_cutout_processing_and_tidy_thumbnail(c
 
 def test_stored_same_context_recommendation_does_not_restart_after_cache_eviction(client, make_token, state, monkeypatch):
     saved, product, items = state
-    client.app.state.settings = replace(client.app.state.settings, gemini_api_key='', outfit_recommendation_enabled=True)
+    client.app.state.settings = replace(client.app.state.settings, gemini_api_key='mock', outfit_recommendation_enabled=True)
+    # Keep the effective provider identity unchanged across cache eviction.
+    monkeypatch.setattr(outfit.outfit_recommender, 'recommend', AsyncMock(side_effect=RuntimeError('offline')))
     saved.update(asyncio.run(outfit.recommend(client.app.state.settings, client.app.state.r2,
         product, saved, [(b'\x89PNG-bytes', 'image/png')], items, slots=['Front'])))
     outfit.clear_cache()

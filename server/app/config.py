@@ -106,6 +106,7 @@ class Settings:
     model_text_gemini_similar: str = "gemini-3.8-flash"
     model_order_similar_plan: str = "gpt,gemini"
     model_text_gemini_outfit: str = "gemini-3.8-flash"
+    model_order_outfit: str = "gpt,gemini"
     outfit_timeout_seconds: float = 30.0
     outfit_props_timeout_seconds: float = 10.0
     outfit_recommendation_enabled: bool = False
@@ -754,6 +755,18 @@ def _model_order_similar_plan() -> str:
     return default
 
 
+def _model_order_outfit() -> str:
+    default = "gpt,gemini"
+    raw = os.getenv("MODEL_ORDER_OUTFIT")
+    if raw is None:
+        return default
+    value = ",".join(part.strip().lower() for part in raw.split(","))
+    if value in {default, "gemini,gpt"}:
+        return value
+    logger.warning("Invalid MODEL_ORDER_OUTFIT; using %s", default)
+    return default
+
+
 def _model_order_features() -> str:
     default = "gpt,gemini"
     raw = os.getenv("MODEL_ORDER_FEATURES")
@@ -940,6 +953,7 @@ def load_settings() -> Settings:
         model_text_gemini_similar=(
             os.getenv("MODEL_ROUTING_TEXT_GEMINI_SIMILAR") or "gemini-3.8-flash"),
         model_order_similar_plan=_model_order_similar_plan(),
+        model_order_outfit=_model_order_outfit(),
         model_text_gemini_outfit="gemini-3.8-flash",
         outfit_recommendation_enabled=_flag("OUTFIT_RECOMMENDATION", "off", {"off", "on"}) == "on",
         outfit_props_ready=_flag("OUTFIT_PROPS_READY", "off", {"off", "on"}) == "on",
