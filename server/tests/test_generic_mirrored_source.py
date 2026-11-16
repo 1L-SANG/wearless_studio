@@ -4,6 +4,7 @@ import pytest
 
 from app.agents import cut_generator as cg
 from app.agents import cut_output_qc as qc
+from app.agents.cut_plan import compile_cut_plan
 from app.agents.prompts import _product_block, build_mirrored_source_block
 from app.agents.vision_llm import _QC_PRODUCT_MIRROR_RULE, qc_system_prompt
 from conftest import make_settings
@@ -107,6 +108,26 @@ def test_generic_qc_grants_mirror_authority_only_after_server_reference_checks(
         assert context["genericProductMirrorAuthority"] is True
         assert '"sourceMirrored":true' in captured["prompt"]
         assert captured["policy"].count(_QC_PRODUCT_MIRROR_RULE) == 1
+
+
+def test_generic_qc_keeps_product_cut_policy_without_mirror_authority(monkeypatch):
+    prompts = []
+
+    async def analyze(settings, prompt, images, schema, *, system_prompt, **kwargs):
+        prompts.append((prompt, system_prompt))
+        return _raw(), "fake"
+
+    monkeypatch.setattr(qc, "analyze_with_fallback", analyze)
+    spec = cg.normalize_spec({"cutType": "product", "shot": "ghost", "productPresentation": "ghost"},
+                             clothing_type="top")
+    plan = compile_cut_plan(cg.apply_reference_compatibility(spec), "top")
+    refs = [qc.LabeledReference("product", _img(b"PRODUCT"))]
+    for mirrored in (False, True):
+        result = asyncio.run(qc.verdict(
+            make_settings(), plan, refs, _img(b"OUTPUT"), source_mirrored=mirrored))
+        assert "sourceMirrored" not in result["contract"]
+
+    assert prompts[0] == prompts[1]
 
 
 @pytest.mark.parametrize("profile,marker,source_mirrored", [

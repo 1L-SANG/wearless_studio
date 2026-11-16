@@ -1255,6 +1255,7 @@ async def verdict(
     elif confirmed_prompt_input is not None:
         raise VisionError("cut_output_qc: confirmed framing contract on generic profile")
     elif (source_mirrored is True
+            and contract["recipeFamily"] in {"styling", "horizon"}
             and any(reference.role == "product" for reference in checked_references)
             and not any(reference.role == "mannequin" for reference in checked_references)):
         contract["sourceMirrored"] = True
