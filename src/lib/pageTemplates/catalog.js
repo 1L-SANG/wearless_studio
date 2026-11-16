@@ -50,6 +50,7 @@ const COLORS = new Set([
     "frameInk",
 ]);
 const STYLES = new Set(["titleKo", "labelEn", "body", "small", "num"]);
+const TYPE_ROLES = ['label', 'productName', 'title', 'intro', 'body', 'small', 'colorName'];
 const LAYOUT_TYPES = new Set([
     "text",
     "photo",
@@ -124,6 +125,10 @@ export function validateCatalog(catalog) {
         ),
         "swatch colors",
     );
+    const colorEnglish = catalog.colorNameEnglish;
+    check(colorEnglish && typeof colorEnglish === 'object' && !Array.isArray(colorEnglish) && Object.keys(colorEnglish).length > 0
+        && Object.entries(colorEnglish).every(([name, english]) => /^[가-힣]+$/u.test(name)
+            && typeof english === 'string' && /^[A-Z]+(?: [A-Z]+)*$/.test(english)), 'Korean color English names');
     check(
         ["emo", "show"].includes(catalog?.defaults?.templateId) &&
             typeof catalog?.defaults?.fontStyle === 'string' &&
@@ -228,6 +233,8 @@ export function validateCatalog(catalog) {
             check(typeof design.pickerHidden === 'boolean', `pickerHidden ${id}`);
         if (Object.hasOwn(design, 'invert'))
             check(typeof design.invert === 'boolean', `design invert ${id}`);
+        if (Object.hasOwn(design, 'introDesignId'))
+            check(design.kind === 'first' && designs[design.introDesignId]?.kind === 'intro', `opening intro ${id}`);
         if (Object.hasOwn(design, 'choiceAxes')) {
             const axes = design.choiceAxes;
             check(CHOICE_LAYOUTS[design.kind]?.includes(axes?.layout?.id)
@@ -304,7 +311,14 @@ export function validateCatalog(catalog) {
             if (Object.hasOwn(node, 'liningNumbers'))
                 check(node.type === 'text' && typeof node.liningNumbers === 'boolean', `lining numbers ${id}`);
             if (node.type === 'swatchRow')
-                check(design.kind === 'color_product' && positive(node.size) && Number.isFinite(node.itemGap) && node.itemGap >= 0, `swatch row ${id}`);
+                check(['color_product', 'intro'].includes(design.kind) && positive(node.size) && Number.isFinite(node.itemGap) && node.itemGap >= 0, `swatch row ${id}`);
+            if (Object.hasOwn(node, 'typographyRole'))
+                check(node.type === 'text' && TYPE_ROLES.includes(node.typographyRole), `typography role ${id}`);
+            for (const key of ['colorLabel', 'balancedRows', 'names']) if (Object.hasOwn(node, key))
+                check(typeof node[key] === 'boolean' && (key === 'colorLabel' ? node.type === 'text' && node.copyRole === 'colors.n.name'
+                    : key === 'balancedRows' ? node.type === 'photoGrid' : node.type === 'swatchRow' && design.kind === 'color_product'), `color layout ${id}.${key}`);
+            for (const key of ['rowGap', 'captionGap', 'labelWidth']) if (Object.hasOwn(node, key))
+                check(Number.isFinite(node[key]) && node[key] >= 0, `layout spacing ${id}.${key}`);
             check(LAYOUT_TYPES.has(node.type), `layout ${id}.${node.type}`);
             if (node.type === 'photoFrame')
                 check(design.layout.includes(node) && design.kind === 'wear' && design.usage === 'styling'
@@ -506,7 +520,7 @@ export function validateCatalog(catalog) {
         for (const role of kind?.requiredCopyRoles || [])
             check(roles.has(role), `required copyRole ${id}.${role}`);
         for (const slot of kind?.requiredPhotoSlots || [])
-            check(photos.has(slot), `required photo ${id}.${slot}`);
+            check(photos.has(slot) || photos.has('*'), `required photo ${id}.${slot}`);
         check(design.overflow?.type === "photoStack", `overflow ${id}`);
     }
     const ids = new Set();
@@ -517,6 +531,8 @@ export function validateCatalog(catalog) {
             `template ${template.id}`,
         );
         ids.add(template.id);
+        check(TYPE_ROLES.every(key => positive(template.typography?.[key]?.size) && positive(template.typography?.[key]?.lineHeight)), `template typography ${template.id}`);
+        check(typeof template.colorNames?.englishOnly === 'boolean' && ['dotSize', 'dotGap', 'itemGap', 'rowGap'].every(key => positive(template.colorNames?.[key])), `color names ${template.id}`);
         check(
             ["titleKo", "labelEn", "body"].every(
                 (key) => template.fonts?.[key],
@@ -534,7 +550,7 @@ export function validateCatalog(catalog) {
         for (const value of Object.values(template.colors || {}))
             check(value === null || HEX.test(value), `color ${template.id}`);
         check(
-            template.id === "show" || !template.colors?.invertBg,
+            HEX.test(template.colors?.invertBg),
             `invert skin ${template.id}`,
         );
         const keys = new Set(),

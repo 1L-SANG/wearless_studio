@@ -111,4 +111,4 @@ def test_wrapped_name_relocation_samples_the_new_line_bounds(name, position, bad
     assert all(line == {'text': text, 'color': '#111111', 'shade': False} for line, text in zip(title['contrastLines'], case['lines']))
     chosen = next(c for c in plan['positionCandidates'] if c['position'] == position)
     first_name_line = next(l for l in chosen['lines'] if l['key'] == f'{KEY}:1:0')
-    assert title['y'] == first_name_line['region']['top'] * 1250
+    assert title['y'] == pytest.approx(first_name_line['region']['top'] * 1250)

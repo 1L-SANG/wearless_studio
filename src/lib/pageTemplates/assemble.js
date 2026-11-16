@@ -40,6 +40,12 @@ const colorName = (color, catalog) =>
     string(
         color?.name || color?.label || catalog.swatchLabels[color?.swatchId],
     );
+const colorEnglishName = (color, catalog) => {
+    const name = string(color.name || color.label).trim();
+    if (/^[A-Za-z][A-Za-z\s-]*$/.test(name)) return name.toUpperCase();
+    const key = name.replace(/\s+/gu, '');
+    return Object.hasOwn(catalog.colorNameEnglish, key) ? catalog.colorNameEnglish[key] : '';
+};
 const roleFor = (role, ctx) =>
     string(role)
         .replace(/\.n(?=\.|$)/g, `.${ctx.index || 0}`)
@@ -319,6 +325,12 @@ const nativeCounts = [
 ];
 export const koreanCount = (count) => nativeCounts[count] || string(count);
 
+export function balancedPhotoRows(count, maxColumns = 3) {
+    if (!count) return [];
+    const rows = Math.ceil(count / maxColumns), base = Math.floor(count / rows), extra = count % rows;
+    return Array.from({ length: rows }, (_, index) => base + (index >= rows - extra ? 1 : 0));
+}
+
 function materialsText(analysis, product) {
     return (analysis.materials || product.materials || [])
         .map((item) => {
@@ -353,8 +365,7 @@ function factText(role, ctx) {
     if (/^colors\.\d+\.name$/.test(role) || /^colorName\.\d+$/.test(role))
         return colorName(selected, catalog);
     if (/^colors\.\d+\.en$/.test(role)) {
-        const name = colorName(selected, catalog);
-        return /^[A-Za-z][A-Za-z\s-]*$/.test(name) ? name : "";
+        return ctx.useEnglishColorNames ? colorEnglishName(selected, catalog) : '';
     }
     if (role === "mix") return materialsText(analysis, product);
     if (role === "who") return string(ctx.profile.display_name) || "MD";
@@ -411,7 +422,7 @@ function contentFor(node, ctx) {
         text =
             node.default ??
             (role === "label" && ctx.section.usage === "fit"
-                ? "Fit"
+                ? "LOOKBOOK"
                 : slot.default);
     else if (slot.source === "fact") text = factText(role, ctx);
     else if (slot.source === "seller+ai" && sellerComment(ctx))
@@ -432,10 +443,27 @@ function contentFor(node, ctx) {
             }
         }
     }
+    if (node.colorLabel) {
+        const english = factText(role.replace(/\.name$/, '.en'), ctx);
+        const name = string(text).trim();
+        text = ctx.tokens.template.colorNames.englishOnly ? english || name
+            : english ? name.toUpperCase() === english ? english : `${name} ${english}` : name;
+    }
     if (ctx.paragraphRole === role) text = ctx.paragraphText;
     if (ctx.kind.kind === 'wear' && /^cap\.(front|side|back)$/.test(role)
         && inferStoryboardSpaceSet(ctx.card?.spaceGroupId)?.setType !== 'horizon-rotation') text = '';
     return { text: string(text), slot, role };
+}
+
+// Type belongs to the selected template, including when a design is shared.
+function typographyFor(node, ctx) {
+    if (!node.typographyRole && !node.colorLabel) return { size: node.size || 25 };
+    const key = node.typographyRole || 'colorName';
+    const spec = ctx.tokens.template.typography[key];
+    if (key === 'colorName' && !ctx.useEnglishColorNames)
+        return { ...spec, trackingEm: ctx.tokens.fonts.body.trackingEm };
+    return ctx.tokens.template.id === 'emo' && ['title', 'productName'].includes(key)
+        ? { ...spec, weight: ctx.tokens.fonts.titleKo.weight } : spec;
 }
 
 function renderText(node, x, y, width, ctx) {
@@ -456,9 +484,12 @@ function renderText(node, x, y, width, ctx) {
         : token === "num"
           ? "labelEn"
           : token;
+    const typography = typographyFor(node, ctx);
     const font = { ...ctx.tokens.fonts[fontKey],
         ...(node.weight === 'light' ? { weight: 300 } : {}),
-        ...(node.trackingEm != null ? { trackingEm: node.trackingEm } : {}) };
+        ...(node.trackingEm != null ? { trackingEm: node.trackingEm } : {}),
+        ...(typography.weight != null ? { weight: typography.weight } : {}),
+        ...(typography.trackingEm != null ? { trackingEm: typography.trackingEm } : {}) };
     const metrics = ctx.catalog.textMetrics;
     const uppercase =
         content.slot?.uppercase ||
@@ -466,8 +497,10 @@ function renderText(node, x, y, width, ctx) {
     let text = uppercase ? content.text.toUpperCase() : content.text;
     if (node.numberPrefix && text) text = `${(ctx.index || 0) + 1}. ${text}`;
     if (node.singleLine) text = text.replace(/\s+/gu, " ").trim();
-    let layoutWidth = Math.max(1, width - (node.swatchDot ? 18 : 0));
-    let size = node.size || 25;
+    const dot = ctx.tokens.template.colorNames;
+    const dotSpace = node.swatchDot ? dot.dotSize + dot.dotGap : 0;
+    let layoutWidth = Math.max(1, width - dotSpace);
+    let size = typography.size;
     const fallback = content.slot?.default || "";
     let display = text || (uppercase ? fallback.toUpperCase() : fallback);
     if (node.singleLine) display = display.replace(/\s+/gu, " ").trim();
@@ -481,7 +514,7 @@ function renderText(node, x, y, width, ctx) {
         const layout = layoutProductTitle(
             display,
             layoutWidth,
-            titleWrap,
+            { ...titleWrap, sizes: [typography.size, ...titleWrap.sizes.slice(1)] },
             metrics,
             font.trackingEm || 0,
         );
@@ -531,7 +564,7 @@ function renderText(node, x, y, width, ctx) {
             : fontKey === "labelEn"
               ? metrics.labelLineHeight
               : metrics.lineHeight;
-    const lineHeight = Math.ceil(node.lineHeight != null ? size * node.lineHeight : (size * factor) / metrics.unitsPerEm);
+    const lineHeight = Math.ceil(size * (typography.lineHeight || node.lineHeight || factor / metrics.unitsPerEm));
     let color = node.color || content.slot?.color || "ink";
     if (!node.color && fontKey === "titleKo")
         color =
@@ -608,12 +641,12 @@ function renderText(node, x, y, width, ctx) {
         if (fill) {
             const textW = measureTextWidth(
                 text,
-                width - 18,
+                width - dotSpace,
                 size,
                 metrics,
                 style.tracking,
             );
-            const groupW = textW + 18;
+            const groupW = textW + dotSpace;
             const start =
                 x +
                 (style.align === "center"
@@ -621,7 +654,7 @@ function renderText(node, x, y, width, ctx) {
                     : style.align === "right"
                       ? width - groupW
                       : 0);
-            element.x = start + 18;
+            element.x = start + dotSpace;
             element.w = textW;
             element.style.align = "left";
             return {
@@ -630,9 +663,9 @@ function renderText(node, x, y, width, ctx) {
                         type: "shape",
                         shape: "circle",
                         x: start,
-                        y: y + (lineHeight - 10) / 2,
-                        w: 10,
-                        h: 10,
+                        y: y + (lineHeight - dot.dotSize) / 2,
+                        w: dot.dotSize,
+                        h: dot.dotSize,
                         fill,
                         radius: 999,
                         ...(lightSwatch(fill)
@@ -669,9 +702,14 @@ function selectCards(node, ctx) {
     // place; saved legacy layouts retain their existing overflow behavior.
     if (node.slot === "*" && (node.type === "photoFlow" || node.includeLoose || ctx.catalog.designs[ctx.designId]?.choiceAxes))
         return ctx.photos;
-    return ctx.photos.filter((card) =>
+    const selected = ctx.photos.filter((card) =>
         matches(localSlot(card, ctx.section), node.slot || "*"),
     );
+    if (ctx.kind.kind === 'color_product' && node.slot === 'front') {
+        const order = new Map((ctx.product.colors || []).map((color, index) => [string(color.id), index]));
+        selected.sort((a, b) => (order.get(string(a.colorId)) ?? Infinity) - (order.get(string(b.colorId)) ?? Infinity));
+    }
+    return selected;
 }
 
 function resolvePhoto(slotKey, ctx) {
@@ -1005,9 +1043,10 @@ function renderNode(node, x, y, width, ctx) {
         return renderText(node, x, y, width, ctx);
     if (node.type === "photo") return renderPhoto(node, x, y, width, ctx);
     if (node.type === 'swatchRow') {
+        if (node.names) return renderColorLegend(x, y, width, ctx);
         const fills = (ctx.product.colors || []).map(color => ctx.catalog.swatchHex[color.swatchId]).filter(Boolean);
         const size = node.size, gap = node.itemGap;
-        const start = x + (width - fills.length * size - Math.max(0, fills.length - 1) * gap) / 2;
+        const start = x + (ctx.align === 'center' ? (width - fills.length * size - Math.max(0, fills.length - 1) * gap) / 2 : 0);
         return { elements: fills.map((fill, index) => ({ type: 'shape', shape: 'circle',
             x: start + index * (size + gap), y, w: size, h: size, fill, radius: 999,
             ...(lightSwatch(fill) ? { stroke: ctx.tokens.colors.accentLine, strokeWidth: 1 } : {}) })), h: fills.length ? size : 0 };
@@ -1261,6 +1300,32 @@ function renderNode(node, x, y, width, ctx) {
     throw new Error(`Unsupported nested layout ${node.type}`);
 }
 
+function renderColorLegend(x, y, width, ctx) {
+    const spec = ctx.tokens.template.colorNames;
+    const rows = [];
+    let row = [], rowWidth = 0;
+    for (let index = 0; index < (ctx.product.colors || []).length; index += 1) {
+        const result = renderText({ copyRole: 'colors.n.name', colorLabel: true, swatchDot: true, align: 'left' },
+            0, 0, width, { ...ctx, card: null, index });
+        const w = Math.max(0, ...result.elements.map(el => el.x + (el.type === 'text'
+            ? measureTextWidth(el.text, el.w, el.style.size, ctx.catalog.textMetrics, el.style.tracking) : el.w)));
+        if (row.length && rowWidth + spec.itemGap + w > width) {
+            rows.push({ items: row, w: rowWidth }); row = []; rowWidth = 0;
+        }
+        row.push({ ...result, x: rowWidth + (row.length ? spec.itemGap : 0) });
+        rowWidth += (row.length > 1 ? spec.itemGap : 0) + w;
+    }
+    if (row.length) rows.push({ items: row, w: rowWidth });
+    const elements = [];
+    let cursor = y;
+    rows.forEach((row, index) => {
+        const start = x + (ctx.align === 'center' ? (width - row.w) / 2 : 0);
+        row.items.forEach(item => elements.push(...item.elements.map(el => ({ ...el, x: start + item.x + el.x, y: cursor + el.y }))));
+        cursor += Math.max(...row.items.map(item => item.h)) + (index + 1 < rows.length ? spec.rowGap : 0);
+    });
+    return { elements, h: cursor - y };
+}
+
 function renderNodes(nodes, x, y, width, ctx) {
     let cursor = y;
     const elements = [];
@@ -1393,26 +1458,28 @@ function renderFactTable(node, x, y, width, ctx) {
         const lab = renderText(
             {
                 literal: label.toUpperCase(),
-                style: "body",
-                size: round((node.size || 25) * 0.72),
+                style: 'small',
+                typographyRole: 'small',
+                size: 28,
                 color: "muted",
                 align,
             },
             x,
             cursor,
-            stacked ? width : 150,
+            stacked ? width : node.labelWidth || 150,
             ctx,
         );
         const val = renderText(
             {
                 literal: value,
                 style: "body",
+                typographyRole: ctx.kind.kind === 'intro' ? 'intro' : 'body',
                 size: node.size || 25,
                 align,
             },
-            x + (stacked ? 0 : 150),
+            x + (stacked ? 0 : node.labelWidth || 150),
             cursor + (stacked ? lab.h + 4 : 0),
-            stacked ? width : width - 150,
+            stacked ? width : width - (node.labelWidth || 150),
             ctx,
         );
         for (const [part, result] of [
@@ -1431,7 +1498,7 @@ function renderFactTable(node, x, y, width, ctx) {
             );
         cursor +=
             (stacked ? lab.h + 4 + val.h : Math.max(lab.h, val.h)) +
-            (index < rows.length - 1 ? (stacked ? 24 : 20) : 0);
+            (index < rows.length - 1 ? node.rowGap ?? (stacked ? 24 : 20) : 0);
     });
     if (rows.length && node.layout === "columns") {
         elements.push({
@@ -1482,9 +1549,13 @@ export function selectFramePhotos(cards, count) {
 function renderFrameFact(text, role, x, y, width, ctx) {
     if (!text) return { elements: [], h: 0 };
     const frame = ctx.catalog.frameStyle;
+    if (role === 'name') {
+        const result = renderText({ literal: text, typographyRole: 'productName', style: 'titleKo', color: frame.ink }, x, y, width, ctx);
+        return { ...result, elements: result.elements.map(el => ({ ...el, sourceBlockId: ctx.sourceId, copyRole: role, textSlotVersion: 1 })) };
+    }
     const style = { font: ctx.tokens.fonts.body.font, size: frame.textSize, weight: frame.textWeight, italic: false,
         tracking: round(frame.textTrackingEm * frame.textSize * 100) / 100, lineHeight: frame.textLineHeight,
-        align: 'center', color: ctx.tokens.colors[frame.ink] };
+        align: ctx.align, color: ctx.tokens.colors[frame.ink] };
     const h = estimateTextHeight(text, width, style.size, style.lineHeight, ctx.catalog.textMetrics, style.tracking);
     return { elements: [{ type: 'text', x, y, w: width, h, text, style,
         sourceBlockId: ctx.sourceId, copyRole: role, textSlotVersion: 1 }], h };
@@ -1497,18 +1568,18 @@ function renderFrameBand(selection, y, ctx) {
     let cursor = cardY + frame.paddingTop;
     const head = renderFrameFact(string(ctx.product.name), 'name', photoX, cursor, photoWidth, ctx);
     const content = [...head.elements];
-    cursor += head.h + (head.h ? frame.photoTop : 0);
+    cursor += head.h;
+    if (ctx.shopName) {
+        if (head.h) cursor += frame.footerGap;
+        const signature = renderFrameFact(ctx.shopName, 'who', photoX, cursor, photoWidth, ctx);
+        content.push(...signature.elements); cursor += signature.h;
+    }
+    if (head.h || ctx.shopName) cursor += frame.photoTop;
     selection.frame.forEach((card, i) => {
         const result = renderPhoto({ type: 'photo', slot: '$current', fit: 'contain', aspect: 'source', fallbackAspect: frame.fallbackAspect },
             photoX, cursor, photoWidth, { ...ctx, card, index: ctx.photos.indexOf(card) });
         content.push(...result.elements); cursor += result.h + (i + 1 < selection.frame.length ? frame.photoGap : 0);
     });
-    const shopName = ctx.shopName;
-    if (shopName) {
-        cursor += frame.footerGap;
-        const foot = renderFrameFact(shopName, 'who', photoX, cursor, photoWidth, ctx);
-        content.push(...foot.elements); cursor += foot.h;
-    }
     const cardHeight = cursor + frame.paddingBottom - cardY, height = cardHeight + frame.bandPadding * 2;
     // A background reuse must not consume a remaining original photo.
     const backdrop = renderPhoto({ type: 'photo', slot: '$current', aspect: '4/5' }, 0, y, ctx.catalog.canvasWidth,
@@ -1537,8 +1608,8 @@ function photoFlowRows(node, cards) {
 
 function renderRepeated(node, cards, ctx, x, y, width) {
     if (node.type === "photoGrid" || node.type === "photoFlow") {
-        const columns = node.type === "photoFlow" ? cards.length : Math.min(node.columns, ctx.gridCardCount);
-        const gap = node.gap || 0,
+        const columns = node.type === "photoFlow" || node.balancedRows ? cards.length : Math.min(node.columns, ctx.gridCardCount);
+        const gap = ctx.kind.kind === 'wear' ? ctx.tokens.template.spacing.photoGap : node.gap || 0,
             cellW = Math.floor((width - gap * (columns - 1)) / columns);
         const startX =
             x +
@@ -1569,7 +1640,7 @@ function renderRepeated(node, cards, ctx, x, y, width) {
             const captions = renderNodes(
                 node.captions,
                 startX + i * (cellW + gap),
-                y + photo.h + 16,
+                y + photo.h + (node.captionGap ?? 16),
                 cellW,
                 item,
             );
@@ -1587,7 +1658,7 @@ function renderRepeated(node, cards, ctx, x, y, width) {
                     ),
                     ...captions.elements,
                 ],
-                h: photo.h + (captions.h ? 16 + captions.h : 0),
+                h: photo.h + (captions.h ? (node.captionGap ?? 16) + captions.h : 0),
             };
         });
         return {
@@ -1719,6 +1790,8 @@ export function assemblePage({
     );
     if (tokens.template.id !== templateId)
         throw new Error("Mixed page templates");
+    const colors = product.colors || [];
+    const useEnglishColorNames = colors.length > 0 && colors.every(color => colorEnglishName(color, catalog));
     const runs = [],
         seen = new Set();
     for (const card of storyboard) {
@@ -1745,7 +1818,9 @@ export function assemblePage({
         ]),
     );
     const blocks = [];
-    for (const run of runs) {
+    const opening = runs.find(run => run[0].pageSectionKind === 'first')?.[0];
+    const linkedIntro = catalog.designs[opening?.pageDesignId]?.introDesignId;
+    for (const [runIndex, run] of runs.entries()) {
         const first = run[0],
             key = first.pageSectionKey,
             kind = catalog.kinds[first.pageSectionKind];
@@ -1756,7 +1831,7 @@ export function assemblePage({
             first.pageSectionUsage,
             first.pageDesignId,
         );
-        let designId = first.pageDesignId || section.designId;
+        let designId = first.pageSectionKind === 'intro' && linkedIntro ? linkedIntro : first.pageDesignId || section.designId;
         const photos = pointPhotosForRun(run, storyboard);
         if (!photos.length && section.fallbackDesignId)
             designId = section.fallbackDesignId;
@@ -1778,6 +1853,7 @@ export function assemblePage({
             catalog,
             storyboard,
             product,
+            useEnglishColorNames,
             analysis,
             profile,
             shopName: typeof shopName === "string" ? shopName.trim() : "",
@@ -1851,7 +1927,7 @@ export function assemblePage({
                 const rows = selection.remainingGroups.flatMap(group => node.pattern === 'column'
                     ? group.map(card => ({ cards: [card] })) : photoFlowRows({ ...node, groupBy: 'none' }, group));
                 const remainderNode = node.pattern === 'column'
-                    ? { type: 'photoStack', items: [{ type: 'photo', slot: '$current', aspect: node.aspect, radius: 16 }, ...node.captions] }
+                    ? { type: 'photoStack', items: [{ type: 'photo', slot: '$current', aspect: node.aspect }, ...node.captions] }
                     : { ...node, type: 'photoFlow' };
                 const photoIndexes = new Map(ctx.photos.map((card, index) => [card.id, index]));
                 if (rows.length) { y += catalog.frameStyle.remainderGap; flush(); }
@@ -1861,7 +1937,7 @@ export function assemblePage({
                     elements.push(...result.elements); y += result.h;
                     if (index + 1 < rows.length) y += tokens.template.spacing.photoGap;
                 });
-                if (rows.length && node.pattern !== 'column') y += node.gap || 0;
+                if (rows.length && node.pattern !== 'column' && kind.kind !== 'wear') y += node.gap || 0;
             } else if (node.type === "photoFlow") {
                 const rows = photoFlowRows(node, selectCards(node, ctx));
                 if (elements.some((el) => el.type === "image")) flush();
@@ -1872,12 +1948,17 @@ export function assemblePage({
                     y += result.h;
                     if (index + 1 < rows.length) y += tokens.template.spacing.photoGap;
                 });
-                if (rows.length) y += node.gap || 0;
+                if (rows.length && kind.kind !== 'wear') y += node.gap || 0;
             } else if (["photoStack", "pointRows", "photoGrid"].includes(node.type)) {
                 const selected = selectCards(node, ctx);
-                const step = node.type === "photoGrid" ? node.columns : 1;
-                if (elements.some((el) => el.type === "image")) flush();
-                for (let i = 0; i < selected.length; i += step) {
+                const counts = node.type === 'photoGrid' && node.balancedRows ? balancedPhotoRows(selected.length, node.columns)
+                    : Array.from({ length: Math.ceil(selected.length / (node.type === 'photoGrid' ? node.columns : 1)) }, () => node.type === 'photoGrid' ? node.columns : 1);
+                if (selected.length && elements.some((el) => el.type === "image")) {
+                    if (kind.kind === 'wear' || kind.kind === 'color_product' && design.choiceAxes?.layout.id === 'column') y += tokens.template.spacing.photoGap;
+                    flush();
+                }
+                for (let row = 0, i = 0; row < counts.length; i += counts[row], row += 1) {
+                    const step = counts[row];
                     if (i) flush(node.itemGap != null ? 0 : undefined);
                     const result = renderRepeated(
                         node,
@@ -1890,11 +1971,11 @@ export function assemblePage({
                     elements.push(...result.elements);
                     y += result.h;
                     if (i + step < selected.length)
-                        y += node.itemGap ?? tokens.template.spacing.photoGap;
+                        y += node.rowGap ?? node.itemGap ?? tokens.template.spacing.photoGap;
                 }
-                if (selected.length) y += node.gap || 0;
+                if (selected.length && (node.type !== 'photoGrid' || !node.balancedRows)) y += node.gap || 0;
             } else {
-                const inset = ["text", "factTable", "rule"].includes(node.type)
+                const inset = ["text", "factTable", "rule", "swatchRow"].includes(node.type)
                     ? design.contentInset || 0
                     : 0;
                 const result = renderNode(
@@ -1920,6 +2001,9 @@ export function assemblePage({
             }
         }
         for (const card of photos.filter((card) => !ctx.used.has(card.id))) {
+            const fullWidthGroup = ['first', 'wear'].includes(kind.kind)
+                || kind.kind === 'color_product' && design.choiceAxes?.layout.id === 'column';
+            if (fullWidthGroup && elements.some(el => el.type === 'image')) y += tokens.template.spacing.photoGap;
             flush();
             const result = renderPhoto(
                 {
@@ -1933,12 +2017,15 @@ export function assemblePage({
                 { ...ctx, card, index: part },
             );
             elements.push(...result.elements);
-            y = result.h + (design.overflow.gap || 0);
+            y = result.h + (fullWidthGroup ? 0 : design.overflow.gap || 0);
         }
         flush();
         if (blocks.at(-1)?.pageSectionKey === key) {
             const block = blocks.at(-1);
-            const gap = photos.length
+            const next = runs[runIndex + 1]?.[0];
+            const adjacentIntro = kind.kind === 'first' && next?.pageSectionKind === 'intro'
+                && (linkedIntro || ['T06-D01', 'T06-COMMENT-01'].includes(next.pageDesignId));
+            const gap = adjacentIntro ? 0 : photos.length
                 ? tokens.template.spacing.sectionGap
                 : tokens.template.spacing.textSectionGap;
             if (block.bg.toLowerCase() !== catalog.canvasColor.toLowerCase())

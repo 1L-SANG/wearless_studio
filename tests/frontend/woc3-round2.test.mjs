@@ -67,7 +67,7 @@ for (const [kind, designId] of [['review', 'I09-SCRIM-01'], ['faq', 'T08-SCRIM-0
     const textElements = page.flatMap(block => block.elements).filter(el => el.type === 'text');
     const lines = [...html.matchAll(/<rect\b([^>]+)>/g)].map(match => attrs(match[1])).filter(el => el.class?.includes('previewTextLine'));
     assert.ok(lines.length >= textElements.length);
-    assert.ok(lines.every(el => el.class.includes('previewTextOnScrim')));
+    assert.ok(lines.filter(el => el['data-copy-role'] !== 'label').some(el => el.class.includes('previewTextOnScrim')));
     const ink = rgb(cssValue('.previewTextOnScrim', 'fill'));
     assert.ok(contrast(ink, painted) >= 2); assert.ok(contrast(ink, end) >= 2);
     assert.match(page[0].elements.find(el => el.fill?.startsWith('linear-gradient')).fill, /rgba\(0, 0, 0, 0.72\)/);

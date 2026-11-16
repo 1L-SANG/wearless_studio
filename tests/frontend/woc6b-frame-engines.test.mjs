@@ -85,9 +85,9 @@ for (const [layout] of layouts) for (const count of [1, 2, 3]) test(`${layout} f
   const card = all.find(el => el.type === 'shape' && el.fill === catalog.neutralColors.framePaper);
   assert.equal(card.w, 680); assert.equal(card.x, 160); assert.equal(card.y - backdrops[0].y, 110);
   const head = all.find(el => el.text === input.product.name), foot = all.find(el => el.text === input.shopName);
-  assert.deepEqual([head.y - card.y, head.style.size, head.style.weight, head.style.tracking, head.style.color], [52, 22, 500, .88, catalog.neutralColors.frameInk]);
-  assert.equal(framed[0].y - head.y - head.h, 34); assert.equal(foot.y - framed.at(-1).y - framed.at(-1).h, 40);
-  assert.equal(card.y + card.h - foot.y - foot.h, 46); assert.equal(backdrops[0].h - card.h, 220);
+  assert.deepEqual([head.y - card.y, head.style.size, head.style.weight, head.style.tracking, head.style.color], [52, 51, 600, -1.02, catalog.neutralColors.frameInk]);
+  assert.equal(foot.y - head.y - head.h, 40); assert.equal(framed[0].y - foot.y - foot.h, 34);
+  assert.equal(card.y + card.h - framed.at(-1).y - framed.at(-1).h, 46); assert.equal(backdrops[0].h - card.h, 220);
   assert.equal(blocks[0].h - backdrops[0].y - backdrops[0].h, 40);
   assert.ok(visible(blocks).slice(count).every(el => el.h === Math.floor(el.w * 5 / 4 + .5)));
   assert.equal(all.filter(el => el.copyRole === 'label').length, 1);

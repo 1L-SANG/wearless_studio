@@ -77,11 +77,11 @@ test('WOC11 22 full-width codepoints fit both description boxes across all page 
       const descriptions = page.filter(block => block.pageSectionKey === run.key).flatMap(block => block.elements).filter(el => /items\.\d+\.desc$/.test(el.copyRole));
       assert.equal(descriptions.length, 3);
       for (const el of descriptions) {
-        assert.equal(el.text, `${line}\n${line}`);
+        assert.equal(el.text, id === 'PT-TEXT-PHOTO-01' ? `${line} ${line}` : `${line}\n${line}`);
         assert.equal(el.style.font, resolvePageTokens(value.analysis.pageStyle).fonts.body.font);
         assert.equal(wrapText(line, el.w, el.style.size, catalog.textMetrics, el.style.tracking).length, 1);
         assert.ok(measureTextWidth(line, 10000, el.style.size, catalog.textMetrics, el.style.tracking) <= el.w);
-        assert.equal(el.h, el.style.lineHeight * 2);
+        assert.equal(el.h, el.style.lineHeight * (id === 'PT-TEXT-PHOTO-01' ? 1 : 2));
       }
     }
   }

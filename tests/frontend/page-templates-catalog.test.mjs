@@ -14,8 +14,8 @@ import {
 test("catalog keeps saved designs and exposes the current defaults without SNS by default", () => {
     assert.equal(validateCatalog(catalog), catalog);
     assert.equal(Object.keys(catalog.kinds).length, 10);
-    assert.equal(Object.keys(catalog.designs).length, 52);
-    assert.equal(Object.values(catalog.designs).filter(design => design.pickerHidden).length, 27);
+    assert.equal(Object.keys(catalog.designs).length, 55);
+    assert.equal(Object.values(catalog.designs).filter(design => design.pickerHidden).length, 28);
     assert.equal(
         (catalog.firstTitleBand.top + catalog.firstTitleBand.bottom) / 2,
         0.5,
@@ -213,7 +213,7 @@ const mutations = [
         "missing fronts",
         (c) =>
             walkLayout(c.designs["CP-EMO-01"].layout, (n) => {
-                if (n.slot === "front") n.slot = "removed";
+                if (n.slot === "front" || n.slot === "*") n.slot = "removed";
             }),
         /required photo/,
     ],
@@ -221,7 +221,7 @@ const mutations = [
         "missing backs",
         (c) =>
             walkLayout(c.designs["CP-SHOW-01"].layout, (n) => {
-                if (n.slot === "back") n.slot = "removed";
+                if (n.slot === "back" || n.slot === "*") n.slot = "removed";
             }),
         /required photo/,
     ],

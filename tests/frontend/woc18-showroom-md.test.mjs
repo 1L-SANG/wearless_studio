@@ -32,39 +32,24 @@ for (const templateId of ['emo', 'show']) test(`WOC18 actual ${templateId} defau
   assert.equal(body[0].sourceBlockId, source.id);
 });
 
-test('WOC18 showroom Comment and body lead the padded summary panel with inherited inverted ink', () => {
+test('WOC23 showroom specification board leads with the product name and seller MD', () => {
   const block = introOf(assemblePage(inputFor('show')));
-  const label = block.elements.find(element => element.copyRole === 'label');
-  const body = block.elements.find(element => element.copyRole === 'body');
-  const facts = block.elements.filter(element => element.copyRole === 'facts');
-  assert.ok(label && body && facts.length);
-  assert.equal(label.text, 'COMMENT');
-  assert.equal(label.style.size, 32);
-  assert.equal(body.style.size, 25);
-  assert.equal(label.style.color, catalog.neutralColors.invertMuted);
-  assert.equal(body.style.color, getTemplate('show').colors.invertInk);
-  assert.equal(block.bg, getTemplate('show').colors.invertBg);
-  assert.equal(label.y, 56, 'Comment starts at the panel top padding');
-  for (const element of [label, body]) {
-    assert.deepEqual([element.x, element.w], [112, 776]);
-    assert.equal(element.x + element.w / 2, 500);
-    assert.equal(element.style.align, 'center');
-  }
-  assert.equal(body.y, label.y + label.h + 12);
-  assert.equal(facts[0].y, body.y + body.h + 30);
-  assert.deepEqual([facts[0].x, facts[0].w], [56, 888]);
-  assert.deepEqual(facts.map(element => element.text), ['COLOR', '아이보리', 'FABRIC', '면 100%', 'FIT', '스탠다드핏']);
-  const summary = block.elements.filter(element => /^summary\.\d+$/.test(element.copyRole || ''));
-  assert.deepEqual(summary.map(element => element.text), ['첫 특징', '둘째 특징', '셋째 특징']);
-  assert.ok(summary.every(element => element.y >= facts.at(-1).y + facts.at(-1).h));
-  assert.equal(block.elements.find(element => element.copyRole === 'summary.line').text, '기존 요약 한 줄');
+  const name = block.elements.find(el => el.copyRole === 'name'), body = block.elements.find(el => el.copyRole === 'body');
+  assert.equal(name.text, product.name); assert.equal(name.style.size, 54); assert.equal(name.style.weight, 700);
+  assert.equal(body.style.size, 30); assert.equal(body.text, memo);
+  assert.equal(block.bg, catalog.canvasColor);
+  assert.deepEqual([name.x, name.w, name.style.align], [56, 888, 'left']);
+  assert.equal(body.y, name.y + name.h + 40);
+  assert.deepEqual(block.elements.filter(el => el.copyRole === 'facts').map(el => el.text), ['COLOR', '아이보리', 'FABRIC', '면 100%', 'FIT', '스탠다드핏']);
+  assert.equal(block.elements.some(el => /^summary\./.test(el.copyRole || '')), false);
 });
 
-test('WOC18 empty showroom MD still renders Comment and the existing empty AI body slot', () => {
+test('WOC23 empty showroom MD keeps its product title and empty AI body slot', () => {
   const block = introOf(assemblePage(inputFor('show', '', '')));
   const label = block.elements.find(element => element.copyRole === 'label');
   const body = block.elements.find(element => element.copyRole === 'body');
-  assert.equal(label?.text, 'COMMENT');
+  assert.equal(label, undefined);
+  assert.equal(block.elements.find(el => el.copyRole === 'name').text, product.name);
   assert.equal(body?.text, '');
   assert.equal(body.placeholder, 'MD 코멘트');
   assert.equal(body.aiDraft, true);

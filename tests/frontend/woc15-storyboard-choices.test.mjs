@@ -172,7 +172,7 @@ for (const designId of ['WEAR-STYLING-2COL-01', 'WEAR-STYLING-FRAME-COLUMN-02'])
     const assembled = assemblePage({ storyboard: h.blocks, product, analysis }).filter(block => block.pageSectionKey === run.key);
     const photos = assembled.flatMap(block => block.elements).filter(element => element.type === 'image' && !element.blur);
     assert.equal(photos.length, 1);
-    assert.equal(photos[0].w, designId.includes('FRAME') ? 560 : 888);
+    assert.equal(photos[0].w, designId.includes('FRAME') ? 560 : 1000);
     h.undo(); assert.deepEqual(h.blocks, before); assert.deepEqual(initial, before);
   });
 }

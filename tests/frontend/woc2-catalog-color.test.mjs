@@ -105,7 +105,8 @@ for (const colorMode of ['mono', 'point']) test(`retained summary design stays v
   const intro = assemblePage({ storyboard, product, analysis }).filter(block => block.pageSectionKey === 'emo.intro');
   const elements = intro.flatMap(block => block.elements);
   assert.ok(elements.some(element => element.type === 'text'), 'retained shared summary produces readable content');
-  if (colorMode === 'point') assert.ok(elements.some(element => element.fill === '#edf4ff'), 'point summary uses the garment-tone surface');
+  assert.equal(intro[0].bg, '#ffffff');
+  assert.equal(elements.find(element => element.copyRole === 'name').style.size, 51);
 });
 
 test('color design candidates must display every sale color, including a fourth color', () => {

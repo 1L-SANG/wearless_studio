@@ -23,8 +23,8 @@ for (const templateId of ['emo', 'show']) {
       assert.equal(elements[0].aiDraft, undefined);
       assert.equal(elements[0].paragraphCount, templateId === 'emo' ? 1 : undefined);
       if (templateId === 'show') {
-        assert.deepEqual([elements[0].x, elements[0].y, elements[0].w], [112, 107, 776]);
-        assert.equal(elements[0].style.align, 'center');
+        assert.deepEqual([elements[0].x, elements[0].y, elements[0].w], [56, 172, 888]);
+        assert.equal(elements[0].style.align, 'left');
       }
       assert.equal(input.analysis.mdComment, original);
     });
@@ -47,12 +47,12 @@ parityInputs.push(longInput);
 test('show 190-character MD keeps the raw text and wraps within the padded panel', () => {
   const [body] = bodies(assemblePage(longInput));
   assert.equal(body.text, longSeller);
-  assert.deepEqual([body.x, body.y, body.w], [112, 107, 776]);
+  assert.deepEqual([body.x, body.y, body.w], [56, 172, 888]);
   // Eight complete words fit per 776px line, so this 190-character comment needs four lines.
   assert.equal(longSeller.length, 190);
-  assert.equal(body.h, 160);
-  assert.equal(body.style.lineHeight, 40);
-  assert.equal(body.style.align, 'center');
+  assert.equal(body.h, 204);
+  assert.equal(body.style.lineHeight, 51);
+  assert.equal(body.style.align, 'left');
 });
 
 test('MD priority and exact multiline content match across JavaScript and Python engines', () => {

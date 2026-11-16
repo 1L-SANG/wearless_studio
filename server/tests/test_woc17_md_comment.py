@@ -25,8 +25,8 @@ def test_seller_md_priority_preserves_exact_original(template_id, original):
     assert not elements[0].get("aiDraft")
     assert elements[0].get("paragraphCount") == (1 if template_id == "emo" else None)
     if template_id == "show":
-        assert [elements[0][key] for key in ("x", "y", "w")] == [112, 107, 776]
-        assert elements[0]["style"]["align"] == "center"
+        assert [elements[0][key] for key in ("x", "y", "w")] == [56, 172, 888]
+        assert elements[0]["style"]["align"] == "left"
     assert analysis["mdComment"] == original
 
 
@@ -35,9 +35,9 @@ def test_long_showroom_md_wraps_within_panel_padding_without_rewriting():
     [element] = bodies("show", {"mdComment": original})
     assert element["text"] == original
     assert len(original) == 190
-    assert [element[key] for key in ("x", "y", "w", "h")] == [112, 107, 776, 160]
-    assert element["style"]["lineHeight"] == 40
-    assert element["style"]["align"] == "center"
+    assert [element[key] for key in ("x", "y", "w", "h")] == [56, 172, 888, 204]
+    assert element["style"]["lineHeight"] == 51
+    assert element["style"]["align"] == "left"
 
 
 @pytest.mark.parametrize("template_id", ["emo", "show"])

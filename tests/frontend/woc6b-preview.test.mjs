@@ -41,7 +41,7 @@ for (const source of ['details', 'wornCrop']) test(`WOC6B points picker samples 
   const samplePage = assemblePage({ storyboard: sampled, product, analysis: inputAnalysis }).filter(b => b.pageSectionKey === current.key);
   assert.equal(images(actualPage).length, 3); assert.equal(images(samplePage).length, 2);
   assert.deepEqual(blocks, before);
-  for (const [designId, width, height] of [['PT-PHOTO-CARD-01', 880, 1100], ['PT-TEXT-PHOTO-01', 920, 1150]]) {
+  for (const [designId, width, height] of [['PT-PHOTO-CARD-01', 888, 1110], ['PT-TEXT-PHOTO-01', 888, 1110]]) {
     const changed = changeTemplateSectionDesign(blocks, current.key, designId, { product });
     const actual = assemblePage({ storyboard: changed, product, analysis: inputAnalysis }).filter(b => b.pageSectionKey === current.key);
     const sample = assemblePage({ storyboard: sectionDesignPreviewSample(changed, current.key), product, analysis: inputAnalysis }).filter(b => b.pageSectionKey === current.key);

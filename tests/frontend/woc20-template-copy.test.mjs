@@ -14,66 +14,50 @@ const all = value => blocks(value).flatMap(block => block.elements);
 for (const tid of ['emo', 'show']) {
   test(`WOC20 ${tid} FAQ combines A heading, B aligned Q/A and C separation`, () => {
     const pending = input(`${tid}-faq-pending`), inside = blocks(pending)[0];
-    const label = inside.elements.find(el => el.copyRole === 'label');
-    const title = inside.elements.find(el => el.copyRole === 'title');
-    assert.deepEqual([label.text, label.y, label.w, label.style.size, label.h], ['Q&A', 68, 860, 32, 39]);
-    assert.deepEqual([title.y, title.style.size, title.style.weight, title.h, title.style.align], [117, 44, 600, 57, 'center']);
+    const label = inside.elements.find(el => el.copyRole === 'label'), title = inside.elements.find(el => el.copyRole === 'title');
+    const type = catalog.templates.find(t => t.id === tid);
+    assert.deepEqual([label.text, label.x, label.y, label.w, label.style.size], ['Q&A', 56, 0, 888, tid === 'show' ? 42 : 48]);
+    assert.equal(label.style.align, type.align);
+    assert.equal(title.style.size, tid === 'show' ? 46 : 48);
+    assert.equal(title.style.weight, tid === 'show' ? 700 : 600);
     for (let index = 0; index < 3; index++) {
-      const q = inside.elements.find(el => el.copyRole === `items.${index}.q`);
-      const a = inside.elements.find(el => el.copyRole === `items.${index}.a`);
+      const q = inside.elements.find(el => el.copyRole === `items.${index}.q`), a = inside.elements.find(el => el.copyRole === `items.${index}.a`);
       const bubble = inside.elements.find(el => el.type === 'shape' && el.groupId === q.groupId);
       const markers = inside.elements.filter(el => el.groupId === q.groupId && el.templateCopyDecoration);
       assert.deepEqual(markers.map(el => [el.text, el.w, el.x]), [['Q.', 34, q.x - 34], ['A.', 34, a.x - 34]]);
       assert.equal(q.x, a.x); assert.equal(q.w, a.w); assert.equal(q.w, bubble.w - 40 - 34);
       assert.ok(q.w <= 657);
-      assert.deepEqual([q.style.size, q.style.weight, q.style.color, q.style.lineHeight], [22, 400, catalog.templates.find(t => t.id === tid).colors.muted, 36]);
-      assert.deepEqual([a.style.size, a.style.weight, a.style.color, a.style.lineHeight], [26, 600, catalog.templates.find(t => t.id === tid).colors.ink, 42]);
+      for (const el of [q, a]) assert.deepEqual([el.style.size, el.style.weight, el.style.font], [32, 400, 'Pretendard']);
     }
     const plan = collectOverlayRegions(pending).find(plan => plan.avoidFaces);
-    assert.deepEqual(plan.region, { left: .07, top: 68 / 1250, right: .93, bottom: 174 / 1250 });
-    const outside = blocks(input(`${tid}-faq-outside`))[0];
-    assert.equal(outside.h - inside.h, 246);
-    assert.deepEqual(outside.elements.filter(el => ['label', 'title'].includes(el.copyRole)).map(el => [el.y, el.style.size, el.h]), [[120, 32, 39], [171, 37, 49]]);
-    assert.equal(outside.elements.find(el => el.type === 'image').y, 246);
+    assert.deepEqual(plan.region, { left: .07, top: 68 / 1250, right: .93, bottom: (68 + title.h) / 1250 });
+    const outside = blocks(input(`${tid}-faq-outside`))[0], photo = outside.elements.find(el => el.type === 'image');
+    assert.equal(outside.h - inside.h, tid === 'show' ? 206 : 209);
+    assert.equal(outside.elements.find(el => el.copyRole === 'label').y, 0);
+    assert.equal(photo.y, tid === 'show' ? 293 : 303);
     assert.ok(!outside.elements.some(el => el.type === 'shape' && el.opacity === .3));
     assert.equal(getBlockRenderHeight(outside, { forExport: true }), outside.h);
-  });
+});
 
   for (const count of [1, 3]) test(`WOC20 ${tid} ${count} colors uses the section title and actual swatches`, () => {
-    const value = input(`${tid}-colors-${count}`), elements = all(value);
+    const value = input(`${tid}-colors-${count}`), elements = all(value), type = catalog.templates.find(t => t.id === tid);
     const title = elements.find(el => el.copyRole === 'title');
     assert.equal(title.text, tid === 'emo' ? `${count}가지 색상` : `${count} COLOR${count === 1 ? '' : 'S'}`);
-    assert.equal(title.style.size, 37);
-    assert.equal(title.style.weight, tid === 'emo' ? 600 : 400);
-    assert.equal(title.style.font, tid === 'emo' ? 'Pretendard' : 'Cormorant');
-    assert.equal(title.style.color, catalog.templates.find(t => t.id === tid).colors.ink);
-    const row = elements.filter(el => el.type === 'shape' && el.shape === 'circle' && el.w === 37);
-    assert.equal(row.length, tid === 'emo' ? count : 0);
-    if (tid === 'emo') {
-      assert.deepEqual(row.map(el => el.fill), value.product.colors.map(color => catalog.swatchHex[color.swatchId]));
-      assert.equal(row[0].x + row.at(-1).x + 37, 1000);
-      assert.equal(row[0].y - title.y - title.h, 14);
-      assert.equal(elements.find(el => el.type === 'image').y - row[0].y - 37, 30);
-      assert.deepEqual(elements.filter(el => el.type === 'text' && el.y < elements.find(el => el.type === 'image').y).map(el => el.text), ['Color', `${count}가지 색상`]);
-    } else {
-      assert.equal(title.style.numeric, 'lining');
-      assert.equal(elements.some(el => el.copyRole === 'label'), false);
-    }
-  });
+    assert.deepEqual([title.x, title.w, title.style.size, title.style.align], [56, 888, tid === 'show' ? 42 : 48, type.align]);
+    assert.equal(title.style.font, type.fonts.labelEn.font);
+    const dots = elements.filter(el => el.shape === 'circle' && el.w === 26), names = elements.filter(el => /^colors\.\d+\.name$/.test(el.copyRole || ''));
+    assert.equal(dots.length, count); assert.equal(names.length, count);
+    assert.deepEqual(dots.map(el => el.fill), value.product.colors.map(color => catalog.swatchHex[color.swatchId]));
+    assert.ok(names.every(el => el.y < elements.find(el => el.type === 'image').y));
+});
 
-  test(`WOC20 ${tid} only published rotation sets keep direction captions`, () => {
-    const value = input(`${tid}-wear-sets`);
-    const captions = all(value).filter(el => el.copyRole?.startsWith('cap.'));
-    assert.ok(captions.some(el => el.text));
-    // Each photo's section is emitted in original order; captions follow those photos.
-    for (const block of blocks(value)) {
-      const photo = block.elements.find(el => el.type === 'image');
-      const card = value.storyboard.find(card => card.id === photo?.sourceBlockId);
-      for (const caption of block.elements.filter(el => el.copyRole?.startsWith('cap.')))
-        assert.equal(Boolean(caption.text), inferStoryboardSpaceSet(card.spaceGroupId)?.setType === 'horizon-rotation');
+  test(`WOC20 ${tid} removes detached direction captions from all wear sets`, () => {
+    for (const suffix of ['wear-sets', 'wear-loose']) {
+      const value = input(`${tid}-${suffix}`), elements = all(value);
+      assert.equal(elements.filter(el => el.copyRole?.startsWith('cap.')).length, 0);
+      assert.ok(elements.filter(el => el.type === 'image').every(el => el.x === 0 && el.w === 1000));
     }
-    assert.ok(all(input(`${tid}-wear-loose`)).filter(el => el.copyRole?.startsWith('cap.')).every(el => el.text === ''));
-  });
+});
 
   for (const lines of [0, 1, 2, 3]) test(`WOC20 ${tid} part-only descriptions accept ${lines} lines appropriately`, () => {
     const value = input(`${tid}-part-lines-${lines}`);
@@ -127,7 +111,7 @@ test('WOC20 completion replaces the pending FAQ with the taller measured block a
   const withoutElementIds = items => items.map(block => ({ ...block, elements: block.elements.map(({ id, ...el }) => el) }));
   assert.deepEqual(withoutElementIds(merged), withoutElementIds(final));
   const faq = merged.find(block => block.pageSectionKind === 'faq');
-  assert.equal(faq.h - assembled.find(block => block.pageSectionKind === 'faq').h, 246);
+  assert.equal(faq.h - assembled.find(block => block.pageSectionKind === 'faq').h, 209);
   assert.equal(getBlockRenderHeight(faq, { forExport: true }), faq.h);
 });
 
@@ -155,13 +139,13 @@ test('WOC20 editing FAQ copy while waiting still applies measured face separatio
   const final = assemblePage(finalInput);
   const merged = mergeServerBlocks(local, final).find(block => block.pageSectionKind === 'faq');
   assert.equal(merged.elements.find(el => el.copyRole === 'items.0.q').text, '셀러가 고친 질문이에요');
-  assert.equal(merged.elements.find(el => el.copyRole === 'label').y, 120);
-  assert.equal(merged.elements.find(el => el.copyRole === 'title').style.size, 37);
-  assert.equal(merged.elements.find(el => el.type === 'image').y, 246);
+  assert.equal(merged.elements.find(el => el.copyRole === 'label').y, 0);
+  assert.equal(merged.elements.find(el => el.copyRole === 'title').style.size, 48);
+  assert.equal(merged.elements.find(el => el.type === 'image').y, 303);
   assert.equal(merged.elements.some(el => el.opacity === .3), false);
-  assert.equal(merged.h, 1616);
-  assert.equal(getBlockRenderHeight(merged, { forExport: true }), 1616);
+  assert.equal(merged.h, 1673);
+  assert.equal(getBlockRenderHeight(merged, { forExport: true }), 1673);
   faq.elements.find(el => el.copyRole === 'title').y += 100;
   const manual = mergeServerBlocks(local, final).find(block => block.pageSectionKind === 'faq');
-  assert.equal(manual.elements.find(el => el.type === 'image').y, 0, 'seller-placed heading keeps the manual layout');
+  assert.equal(manual.elements.find(el => el.type === 'image').y, 94, 'seller-placed heading keeps the manual layout');
 });

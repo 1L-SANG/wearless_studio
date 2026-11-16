@@ -78,9 +78,9 @@ test("D216 generic saved shape paints render as gradient, translucent white and 
 });
 
 test("R1/R6 actual editor JSX renders circular swatches and list dots, including 1px light borders", () => {
-    assert.ok(dots.some((e) => e.w === 6));
-    assert.ok(dots.some((e) => e.w === 10 && e.fill === "#ffffff"));
-    assert.ok(dots.some((e) => e.w === 10 && e.fill === "#f3eee1"));
+    assert.ok(dots.some((e) => e.w === 40));
+    assert.ok(dots.some((e) => e.w === 26 && e.fill === "#ffffff"));
+    assert.ok(dots.some((e) => e.w === 26 && e.fill === "#f3eee1"));
     for (const dot of dots) {
         const markup = markupOf(dot);
         assert.match(markup, /class="el el-shape"/);

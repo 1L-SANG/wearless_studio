@@ -13,6 +13,7 @@ FONTS = {"Pretendard", "Cormorant", "Roboto Mono", "Cal Sans", "Gowun Dodum", "G
 FACT_PATHS = {"product.name", "product.colors[].name", "product.colors[].swatchId", "analysis.materials", "analysis.fit", "analysis.detailRecommendations.candidates[].label", "analysis.featureCopy", "analysis.partDescriptionCopy", "analysis.mdComment", "profiles.display_name", "mall_connections.shop_name"}
 COLORS = {"ink", "muted", "accentInk", "accentBg", "accentLine", "panel", "invertBg", "invertInk", "canvas", "onPhoto", "summaryBg", "pointBg", "framePaper", "frameInk"}
 STYLES = {"titleKo", "labelEn", "body", "small", "num"}
+TYPE_ROLES = ('label', 'productName', 'title', 'intro', 'body', 'small', 'colorName')
 LAYOUT_TYPES = {"text", "photo", "photoStack", "photoGrid", "photoFlow", "photoFrame", "overlay", "pointRows", "list", "factTable", "panel", "rule", "swatchRow"}
 CHOICE_LAYOUTS = {"wear": ("column", "twoColumn", "heroPair"), "color_product": ("column", "grid"), "points": ("column", "below")}
 HEX = re.compile(r"#[\da-f]{6}\Z", re.I)
@@ -100,6 +101,10 @@ def validate_catalog(catalog):
           and _aspect_ratio(frame_style.get("fallbackAspect"))
           and all(frame_style.get(key) in COLORS and isinstance(catalog.get("neutralColors", {}).get(frame_style[key]), str) and HEX.fullmatch(catalog["neutralColors"][frame_style[key]]) for key in ("paper", "ink")), "frame style")
     check(all(isinstance((catalog.get("swatchHex") or {}).get(key), str) and HEX.fullmatch(catalog["swatchHex"][key]) for key in catalog.get("swatchLabels") or {}), "swatch colors")
+    english = catalog.get('colorNameEnglish')
+    check(isinstance(english, dict) and bool(english)
+          and all(isinstance(name, str) and re.fullmatch(r'[가-힣]+', name)
+                  and isinstance(value, str) and re.fullmatch(r'[A-Z]+(?: [A-Z]+)*', value) for name, value in english.items()), 'Korean color English names')
     plate = catalog.get("firstTitlePlate") or {}
     def band_valid(value):
         return isinstance(value, list) and len(value) == 2 and all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in value) and 0 <= value[0] < value[1] <= 1
@@ -139,6 +144,8 @@ def validate_catalog(catalog):
         kind = kinds.get(design.get("kind")) or {}
         check(design.get("id") == key and bool(kind) and isinstance(design.get("layout"), list), f"design {key}")
         name = design.get("displayName")
+        if 'introDesignId' in design:
+            check(design.get('kind') == 'first' and designs.get(design['introDesignId'], {}).get('kind') == 'intro', f'opening intro {key}')
         check(isinstance(name, str) and bool(name.strip()) and len(name) <= 24, f"design displayName {key}")
         check(design.get("usage") in ("styling", "fit") if design.get("kind") == "wear" else design.get("usage") is None, f"design usage {key}")
         if "pickerHidden" in design:
@@ -196,8 +203,17 @@ def validate_catalog(catalog):
             if 'liningNumbers' in node:
                 check(node.get('type') == 'text' and isinstance(node['liningNumbers'], bool), f'lining numbers {key}')
             if node.get('type') == 'swatchRow':
-                check(design.get('kind') == 'color_product' and _positive(node.get('size'))
+                check(design.get('kind') in ('color_product', 'intro') and _positive(node.get('size'))
                       and isinstance(node.get('itemGap'), (int, float)) and math.isfinite(node['itemGap']) and node['itemGap'] >= 0, f'swatch row {key}')
+            if 'typographyRole' in node:
+                check(node.get('type') == 'text' and node['typographyRole'] in TYPE_ROLES, f'typography role {key}')
+            for prop in ('colorLabel', 'balancedRows', 'names'):
+                if prop in node:
+                    check(isinstance(node[prop], bool) and (node.get('type') == 'text' and node.get('copyRole') == 'colors.n.name' if prop == 'colorLabel' else
+                          node.get('type') == 'photoGrid' if prop == 'balancedRows' else node.get('type') == 'swatchRow' and design.get('kind') == 'color_product'), f'color layout {key}.{prop}')
+            for prop in ('rowGap', 'captionGap', 'labelWidth'):
+                if prop in node:
+                    check(isinstance(node[prop], (int, float)) and not isinstance(node[prop], bool) and math.isfinite(node[prop]) and node[prop] >= 0, f'layout spacing {key}.{prop}')
             check(node.get("type") in LAYOUT_TYPES, f"layout {key}.{node.get('type')}")
             if node.get("type") == "photoFrame":
                 count, gap = node.get("count"), node.get("gap")
@@ -318,20 +334,22 @@ def validate_catalog(catalog):
         for role in kind.get("requiredCopyRoles", []):
             check(role in roles, f"required copyRole {key}.{role}")
         for slot in kind.get("requiredPhotoSlots", []):
-            check(slot in photos, f"required photo {key}.{slot}")
+            check(slot in photos or '*' in photos, f"required photo {key}.{slot}")
         check((design.get("overflow") or {}).get("type") == "photoStack", f"overflow {key}")
     ids = set()
     for template in catalog.get("templates", []):
         tid = template.get("id")
         check(tid in ("emo", "show") and tid not in ids, f"template {tid}")
         ids.add(tid)
+        check(all(_positive((template.get('typography') or {}).get(key, {}).get(prop)) for key in TYPE_ROLES for prop in ('size', 'lineHeight')), f'template typography {tid}')
+        check(isinstance((template.get('colorNames') or {}).get('englishOnly'), bool) and all(_positive((template.get('colorNames') or {}).get(key)) for key in ('dotSize', 'dotGap', 'itemGap', 'rowGap')), f'color names {tid}')
         check(all(template.get("fonts", {}).get(key) for key in ("titleKo", "labelEn", "body")), f"required fonts {tid}")
         for ref in template.get("fonts", {}).values():
             check((ref or {}).get("font") in FONTS, f"font {tid}")
         for value in template.get("colors", {}).values():
             check(value is None or isinstance(value, str) and HEX.fullmatch(value), f"color {tid}")
         check(all(isinstance(template.get("colors", {}).get(key), str) and HEX.fullmatch(template["colors"][key]) for key in ("ink", "muted", "accentInk", "accentLine", "panel")), f"required colors {tid}")
-        check(tid == "show" or not template.get("colors", {}).get("invertBg"), f"invert skin {tid}")
+        check(bool(HEX.fullmatch(template.get("colors", {}).get("invertBg") or '')), f"invert skin {tid}")
         keys, counts = set(), {}
         for index, section in enumerate(template.get("sections", [])):
             key, kind_key = section.get("instanceKey"), section.get("kind")
@@ -483,7 +501,7 @@ def resolve_page_tokens(page_style=None, base_swatch_id=None, catalog=None):
 
 def section_tokens(tokens, section, catalog=None):
     catalog = catalog or CATALOG
-    if not (section.get("block") or {}).get("invert") or tokens["template"]["id"] != "show":
+    if not (section.get("block") or {}).get("invert"):
         return tokens
     colors = {**tokens["colors"], "ink": tokens["colors"]["invertInk"], "muted": catalog["neutralColors"]["invertMuted"], "accentInk": catalog["neutralColors"]["invertMuted"], "accentLine": catalog["neutralColors"]["invertLine"], "accentBg": tokens["colors"]["invertBg"], "panel": tokens["colors"]["invertBg"], "summaryBg": tokens["colors"]["invertBg"], "pointBg": tokens["colors"]["invertBg"]}
     return {**tokens, "colors": colors}

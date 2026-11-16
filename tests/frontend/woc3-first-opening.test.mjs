@@ -21,26 +21,23 @@ const input = (storyboard, p = product) => ({ storyboard, product: p, analysis,
 const opening = args => assemblePage(args).filter(block => block.pageSectionKind === 'first');
 const elements = blocks => blocks.flatMap(block => block.elements);
 
-test('E10 new showroom seed renders a single signature hero followed only by a small product name', () => {
+test('WOC23 showroom seed renders a single signature hero and moves its name into the board', () => {
   assert.equal(getTemplate('show').sections[0].designId, 'P01-SHOW-01');
   const seeded = assignGenerationExamples(board(), { product, gender: 'women', catalog: [], projectId: 'woc3-first' }).blocks;
   const first = seeded.filter(b => b.pageSectionKind === 'first');
-  assert.equal(first.length, 1); assert.equal(first[0].slotKey, 'first.hero');
-  assert.match(first[0].exampleId, /^sig_/); assert.equal(first[0].cutType, 'horizon');
-  assert.equal(first[0].shot, 'medium'); assert.equal(first[0].direction, 'front');
-  const out = elements(opening(input(seeded))), images = out.filter(el => el.type === 'image');
-  assert.equal(images.length, 1); assert.equal(images[0].w, 1000);
-  const text = out.filter(el => el.type === 'text');
-  assert.deepEqual(text.map(el => el.copyRole), ['name']);
-  assert.equal(text[0].text, product.name); assert.ok(text[0].y >= images[0].y + images[0].h);
-  assert.equal(text[0].style.size, 28); assert.equal(text[0].h, text[0].style.lineHeight);
+  assert.equal(first.length, 1); assert.match(first[0].exampleId, /^sig_/);
+  const out = elements(opening(input(seeded)));
+  assert.equal(out.filter(el => el.type === 'image').length, 1);
+  assert.equal(out.filter(el => el.type === 'text').length, 0);
+  const intro = assemblePage(input(seeded)).find(block => block.pageSectionKind === 'intro');
+  assert.equal(intro.elements.find(el => el.copyRole === 'name').text, product.name);
   assert.equal(validateStoryboardV4(seeded), seeded);
 });
 
-test('E10 a long product name still occupies one line and both assemblers agree exactly', () => {
+test('WOC23 a long product name stays in the intro board and both assemblers agree exactly', () => {
   const p = { ...product, name: '차분하게 떨어지는 실루엣과 편안한 착용감을 갖춘 매일 입기 좋은 데일리 셔츠' };
-  const args = input(board(), p), js = opening(args), name = elements(js).find(el => el.copyRole === 'name');
-  assert.ok(name && name.style.size <= 28); assert.equal(name.h, name.style.lineHeight);
+  const args = input(board(), p), js = assemblePage(args), name = elements(js.filter(block => block.pageSectionKind === 'intro')).find(el => el.copyRole === 'name');
+  assert.ok(name && name.style.size <= 54); assert.ok(name.h >= name.style.lineHeight);
   assert.equal(name.text, p.name);
   const py = spawnSync((process.env.PAGE_TEMPLATE_PYTHON || new URL('../../server/.venv/bin/python', import.meta.url).pathname), ['-c',
     "import sys,json;sys.path[:0]=['server','server/tests'];from page_template_cases import assemble_input;print(json.dumps(assemble_input(json.load(sys.stdin)),ensure_ascii=False))"],

@@ -82,7 +82,7 @@ def test_image_box_falls_back_when_dims_missing_or_invalid():
 def test_curated_wear_keeps_loose_photos_in_its_four_five_layout():
     block = _one_ai_block({"blockId": "blk3", "imageUrl": "u", "width": 848, "height": 1264}, "P02-D01")
     img = next(el for el in block["elements"] if el["type"] == "image")
-    assert (img["w"], img["h"]) == (888, 1110)
+    assert (img["w"], img["h"]) == (1000, 1250)
     assert img["sourceBlockId"] == "blk3"
 
 

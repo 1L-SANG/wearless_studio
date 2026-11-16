@@ -52,8 +52,9 @@ def test_fabric_heading_and_description_are_measured_independently(heading, desc
     value = case_input("show-2-point")
     with Image.new("RGB", (80, 100), heading) as image:
         image.paste(description, (0, 50, 80, 100))
-        colors = _overlay_text_metadata(_card(value, "fabric"), image, **_options(value))["overlayTextColors"]
-    assert colors == {"show.fabric:fabric.fabric:heading": expected[0], "show.fabric:fabric.fabric:description": expected[1]}
+        colors = _overlay_text_metadata(_card(value, "fabric"), image, **_options(value))
+    assert colors == {}
+    assert not any(plan["key"].startswith("show.fabric:") for plan in collect_input_regions(value))
 
 
 @pytest.mark.parametrize("kind,design_id", [
@@ -106,8 +107,7 @@ def test_sampling_supports_the_editors_explicit_crop_coordinates():
 @pytest.mark.parametrize("image", [None, b"invalid image", object()])
 def test_measurement_failure_defaults_each_fabric_group_to_white(image):
     value = case_input("show-2-point")
-    assert _overlay_text_metadata(_card(value, "fabric"), image, **_options(value)) == _metadata(value, {
-        "show.fabric:fabric.fabric:heading": "#ffffff", "show.fabric:fabric.fabric:description": "#ffffff"})
+    assert _overlay_text_metadata(_card(value, "fabric"), image, **_options(value)) == {}
 
 
 def test_invalid_image_bytes_keep_white_group_metadata_and_do_not_block_assembly():

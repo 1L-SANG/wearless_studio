@@ -80,6 +80,13 @@ def _color_name(color, catalog):
     return _string(color.get("name") or color.get("label") or catalog["swatchLabels"].get(color.get("swatchId")))
 
 
+def _color_english_name(color, catalog):
+    name = _string(color.get('name') or color.get('label')).strip()
+    if re.fullmatch(r'[A-Za-z][A-Za-z\s-]*', name):
+        return name.upper()
+    return catalog['colorNameEnglish'].get(re.sub(r'\s+', '', name), '')
+
+
 def _role_for(role, ctx):
     return re.sub(r"\.n(?=\.|$)", f".{ctx.index or 0}", _string(role)).replace("{direction}", (ctx.card or {}).get("direction") or "front")
 
@@ -206,6 +213,14 @@ def korean_count(count):
     return names[count] if 1 <= count <= 10 else _string(count)
 
 
+def balanced_photo_rows(count, max_columns=3):
+    if not count:
+        return []
+    rows = math.ceil(count / max_columns)
+    base, extra = divmod(count, rows)
+    return [base + (1 if index >= rows - extra else 0) for index in range(rows)]
+
+
 def _materials_text(analysis, product):
     values = []
     for item in analysis.get("materials") or product.get("materials") or []:
@@ -232,8 +247,7 @@ def _fact_text(role, ctx):
     if re.fullmatch(r"colors\.\d+\.name|colorName\.\d+", role):
         return _color_name(selected, catalog)
     if re.fullmatch(r"colors\.\d+\.en", role):
-        name = _color_name(selected, catalog)
-        return name if re.fullmatch(r"[A-Za-z][A-Za-z\s-]*", name) else ""
+        return _color_english_name(selected, catalog) if ctx.use_english_color_names else ''
     if role == "mix":
         return _materials_text(analysis, product)
     if role == "who":
@@ -267,7 +281,7 @@ def _content_for(node, ctx):
         raise ValueError(f"Unknown copyRole {ctx.kind['kind']}.{role}")
     text = ""
     if slot["source"] == "static":
-        text = node.get("default", "Fit" if role == "label" and ctx.section.get("usage") == "fit" else slot["default"])
+        text = node.get("default", "LOOKBOOK" if role == "label" and ctx.section.get("usage") == "fit" else slot["default"])
     elif slot["source"] == "fact":
         text = _fact_text(role, ctx)
     elif slot["source"] == "seller+ai" and _seller_comment(ctx):
@@ -284,6 +298,10 @@ def _content_for(node, ctx):
                 legacy = (next((item.get("desc") for item in ctx.analysis.get("featureCopy") or [] if isinstance(item, dict) and item.get("point") == name), None)
                           if ((ctx.card or {}).get("pointItem") or {}).get("kind") != "wornCrop" else None)
                 text = part or legacy or text
+    if node.get('colorLabel'):
+        english = _fact_text(re.sub(r'\.name$', '.en', role), ctx)
+        name = _string(text).strip()
+        text = (english or name) if ctx.tokens['template']['colorNames']['englishOnly'] else (english if name.upper() == english else f'{name} {english}') if english else name
     if getattr(ctx, "paragraph_role", None) == role:
         text = ctx.paragraph_text
     if ctx.kind['kind'] == 'wear' and re.fullmatch(r'cap\.(front|side|back)', role):
@@ -297,6 +315,16 @@ def _content_for(node, ctx):
     return _string(text), slot, role
 
 
+def _typography_for(node, ctx):
+    if not node.get('typographyRole') and not node.get('colorLabel'):
+        return {'size': node.get('size') or 25}
+    key = node.get('typographyRole') or 'colorName'
+    spec = ctx.tokens['template']['typography'][key]
+    if key == 'colorName' and not ctx.use_english_color_names:
+        return {**spec, 'trackingEm': ctx.tokens['fonts']['body']['trackingEm']}
+    return {**spec, 'weight': ctx.tokens['fonts']['titleKo']['weight']} if ctx.tokens['template']['id'] == 'emo' and key in ('title', 'productName') else spec
+
+
 def _render_text(node, x, y, width, ctx):
     text, slot, role = _content_for(node, ctx)
     if node.get("hideEmpty") and not text:
@@ -308,8 +336,10 @@ def _render_text(node, x, y, width, ctx):
     width -= prefix_width
     token = node.get("style") or (slot or {}).get("style") or "body"
     font_key = "body" if token == "small" else "labelEn" if token == "num" else token
+    typography = _typography_for(node, ctx)
     font = {**ctx.tokens["fonts"][font_key], **({"weight": 300} if node.get("weight") == "light" else {}),
-            **({"trackingEm": node["trackingEm"]} if node.get("trackingEm") is not None else {})}
+            **({"trackingEm": node["trackingEm"]} if node.get("trackingEm") is not None else {}),
+            **{key: typography[key] for key in ('weight', 'trackingEm') if key in typography}}
     metrics = ctx.catalog["textMetrics"]
     uppercase = (slot or {}).get("uppercase") or (font.get("uppercase") and (slot or {}).get("kind") != "fact")
     if uppercase:
@@ -318,8 +348,10 @@ def _render_text(node, x, y, width, ctx):
         text = f"{(ctx.index or 0) + 1}. {text}"
     if node.get("singleLine"):
         text = re.sub(r"\s+", " ", text).strip()
-    layout_width = max(1, width - (18 if node.get("swatchDot") else 0))
-    size = node.get("size") or 25
+    dot = ctx.tokens['template']['colorNames']
+    dot_space = dot['dotSize'] + dot['dotGap'] if node.get('swatchDot') else 0
+    layout_width = max(1, width - dot_space)
+    size = typography['size']
     fallback = (slot or {}).get("default") or ""
     display = text or (fallback.upper() if uppercase else fallback)
     if node.get("singleLine"):
@@ -327,7 +359,7 @@ def _render_text(node, x, y, width, ctx):
     title_wrap = node.get("titleWrap") if ctx.design_id in ("P01-D09", "P01-D09-G") and role == "name" else None
     if title_wrap:
         layout_width = min(layout_width, ctx.photo_width * title_wrap["photoWidthRatio"])
-        size, lines = _layout_product_title(display, layout_width, title_wrap, metrics, font.get("trackingEm") or 0)
+        size, lines = _layout_product_title(display, layout_width, {**title_wrap, 'sizes': [typography['size'], *title_wrap['sizes'][1:]]}, metrics, font.get("trackingEm") or 0)
         display = "\n".join(lines)
         if text:
             text = display
@@ -343,7 +375,7 @@ def _render_text(node, x, y, width, ctx):
         longest = max(1, *(_text_units(word, metrics) + len(word) * (font.get("trackingEm") or 0) * metrics["unitsPerEm"] for word in re.split(r"\s+", display)))
         size = min(size, max(1, math.floor(layout_width * ctx.catalog["textMetrics"]["unitsPerEm"] / longest)))
     factor = metrics["titleLineHeight"] if font_key == "titleKo" else metrics["labelLineHeight"] if font_key == "labelEn" else metrics["lineHeight"]
-    line_height = math.ceil(size * node["lineHeight"] if node.get("lineHeight") is not None else size * factor / metrics["unitsPerEm"])
+    line_height = math.ceil(size * (typography.get('lineHeight') or node.get('lineHeight') or factor / metrics['unitsPerEm']))
     color = node.get("color") or (slot or {}).get("color") or "ink"
     if not node.get("color") and font_key == "titleKo":
         color = "accentInk" if ctx.tokens["template"]["id"] != "show" and ctx.tokens["colorMode"] == "point" else "ink"
@@ -364,7 +396,7 @@ def _render_text(node, x, y, width, ctx):
         style["color"] = ctx.catalog["neutralColors"]["panelMuted"]
     height = estimate_text_height(text or display, layout_width, size, line_height, metrics, style["tracking"])
     element = {"type": "text", "x": x, "y": y, "w": width, "h": height, "text": text, "style": style}
-    if title_wrap or node.get("singleLine"):
+    if title_wrap or node.get('singleLine'):
         element["keepWords"] = True
     if auto_contrast:
         element["_overlayGroupKey"] = ctx.overlay_group_key
@@ -381,13 +413,13 @@ def _render_text(node, x, y, width, ctx):
         selected = colors[ctx.index or 0] if len(colors) > (ctx.index or 0) else {}
         fill = ctx.catalog["swatchHex"].get(selected.get("swatchId"))
         if fill:
-            text_w = measure_text_width(text, width - 18, size, metrics, style["tracking"])
-            group_w = text_w + 18
+            text_w = measure_text_width(text, width - dot_space, size, metrics, style["tracking"])
+            group_w = text_w + dot_space
             start = x + ((width - group_w) / 2 if style["align"] == "center" else width - group_w if style["align"] == "right" else 0)
-            element.update(x=start + 18, w=text_w)
+            element.update(x=start + dot_space, w=text_w)
             style["align"] = "left"
-            return _group_copy_elements([{"type": "shape", "shape": "circle", "x": start, "y": y + (line_height - 10) / 2,
-                     "w": 10, "h": 10, "fill": fill, "radius": 999,
+            return _group_copy_elements([{"type": "shape", "shape": "circle", "x": start, "y": y + (line_height - dot['dotSize']) / 2,
+                     "w": dot['dotSize'], "h": dot['dotSize'], "fill": fill, "radius": 999,
                      **({"stroke": ctx.tokens["colors"]["accentLine"], "strokeWidth": 1} if _light_swatch(fill) else {})}, element], ctx), height
     if node.get('prefix'):
         return [{'type': 'text', 'x': prefix_x, 'y': y, 'w': prefix_width, 'h': line_height,
@@ -458,7 +490,11 @@ def _select_cards(node, ctx):
     # keep their existing overflow behavior for photos without slot keys.
     if node.get("slot") == "*" and (node["type"] == "photoFlow" or node.get("includeLoose") or ctx.catalog["designs"][ctx.design_id].get("choiceAxes")):
         return ctx.photos
-    return [card for card in ctx.photos if _matches(_local_slot(card, ctx.section), node.get("slot") or "*")]
+    selected = [card for card in ctx.photos if _matches(_local_slot(card, ctx.section), node.get("slot") or "*")]
+    if ctx.kind['kind'] == 'color_product' and node.get('slot') == 'front':
+        order = {_string(color.get('id')): index for index, color in enumerate(ctx.product.get('colors') or [])}
+        selected.sort(key=lambda card: order.get(_string(card.get('colorId')), math.inf))
+    return selected
 
 
 def _natural_photo(node):
@@ -690,9 +726,11 @@ def _render_node(node, x, y, width, ctx):
         elements, h, _ = _render_photo(node, x, y, width, ctx)
         return elements, h
     if kind == 'swatchRow':
+        if node.get('names'):
+            return _render_color_legend(x, y, width, ctx)
         fills = [fill for color in ctx.product.get('colors') or [] if (fill := ctx.catalog['swatchHex'].get(color.get('swatchId')))]
         size, gap = node['size'], node['itemGap']
-        start = x + (width - len(fills) * size - max(0, len(fills) - 1) * gap) / 2
+        start = x + ((width - len(fills) * size - max(0, len(fills) - 1) * gap) / 2 if ctx.align == 'center' else 0)
         return [{'type': 'shape', 'shape': 'circle', 'x': start + index * (size + gap), 'y': y,
                  'w': size, 'h': size, 'fill': fill, 'radius': 999,
                  **({'stroke': ctx.tokens['colors']['accentLine'], 'strokeWidth': 1} if _light_swatch(fill) else {})}
@@ -788,6 +826,30 @@ def _render_node(node, x, y, width, ctx):
     raise ValueError(f"Unsupported nested layout {kind}")
 
 
+def _render_color_legend(x, y, width, ctx):
+    spec = ctx.tokens['template']['colorNames']
+    rows, row, row_width = [], [], 0
+    for index in range(len(ctx.product.get('colors') or [])):
+        elements, height = _render_text({'copyRole': 'colors.n.name', 'colorLabel': True, 'swatchDot': True, 'align': 'left'},
+                                       0, 0, width, _fork(ctx, card=None, index=index))
+        w = max(0, *(el['x'] + (measure_text_width(el['text'], el['w'], el['style']['size'], ctx.catalog['textMetrics'], el['style']['tracking'])
+                               if el['type'] == 'text' else el['w']) for el in elements))
+        if row and row_width + spec['itemGap'] + w > width:
+            rows.append((row, row_width))
+            row, row_width = [], 0
+        row.append((elements, height, row_width + (spec['itemGap'] if row else 0)))
+        row_width += (spec['itemGap'] if len(row) > 1 else 0) + w
+    if row:
+        rows.append((row, row_width))
+    result, cursor = [], y
+    for index, (items, row_width) in enumerate(rows):
+        start = x + ((width - row_width) / 2 if ctx.align == 'center' else 0)
+        for elements, _, offset in items:
+            result.extend({**el, 'x': start + offset + el['x'], 'y': cursor + el['y']} for el in elements)
+        cursor += max(height for _, height, _ in items) + (spec['rowGap'] if index + 1 < len(rows) else 0)
+    return result, cursor - y
+
+
 def _render_nodes(nodes, x, y, width, ctx):
     cursor, elements = y, []
     matching_rules = []
@@ -816,7 +878,7 @@ def _render_nodes(nodes, x, y, width, ctx):
 
 
 def _content_width(elements, x):
-    return max(0, *(el["x"] - x + (measure_text_width(el.get("text") or el.get("placeholder"), el["w"], el["style"]["size"], CATALOG["textMetrics"], el["style"]["tracking"]) if el["type"] == "text" else el["w"]) for el in elements))
+    return max(0, 0, *(el["x"] - x + (measure_text_width(el.get("text") or el.get("placeholder"), el["w"], el["style"]["size"], CATALOG["textMetrics"], el["style"]["tracking"]) if el["type"] == "text" else el["w"]) for el in elements))
 
 
 def _render_paragraphs(node, x, y, width, ctx):
@@ -842,13 +904,14 @@ def _render_fact_table(node, x, y, width, ctx):
     for index, (label, value) in enumerate(rows):
         stacked = node["layout"] == "stacked"
         align = (ctx.align if node.get("align") == "template" else node.get("align") or ctx.align) if stacked else "left"
-        lab, lh = _render_text({"literal": label.upper(), "style": "body", "size": _round((node.get("size") or 25) * .72), "color": "muted", "align": align},
-                               x, cursor, width if stacked else 150, ctx)
-        val, vh = _render_text({"literal": value, "style": "body", "size": node.get("size") or 25, "align": align},
-                               x + (0 if stacked else 150), cursor + (lh + 4 if stacked else 0), width if stacked else width - 150, ctx)
+        label_width = node.get('labelWidth') or 150
+        lab, lh = _render_text({"literal": label.upper(), "style": "small", 'typographyRole': 'small', "size": 28, "color": "muted", "align": align},
+                               x, cursor, width if stacked else label_width, ctx)
+        val, vh = _render_text({"literal": value, "style": "body", 'typographyRole': 'intro' if ctx.kind['kind'] == 'intro' else 'body', "size": node.get("size") or 25, "align": align},
+                               x + (0 if stacked else label_width), cursor + (lh + 4 if stacked else 0), width if stacked else width - label_width, ctx)
         for part, result in (("label", lab), ("value", val)):
             elements.extend({**el, "sourceBlockId": ctx.source_id, "copyRole": "facts", "textSlotVersion": 1, "factLabel": label, "factPart": part} for el in result)
-        cursor += (lh + 4 + vh if stacked else max(lh, vh)) + ((24 if stacked else 20) if index < len(rows) - 1 else 0)
+        cursor += (lh + 4 + vh if stacked else max(lh, vh)) + (node.get('rowGap', 24 if stacked else 20) if index < len(rows) - 1 else 0)
     if rows and node["layout"] == "columns":
         elements.append({"type": "shape", "shape": "rect", "x": x, "y": cursor, "w": width, "h": 1, "fill": ctx.tokens["colors"]["accentLine"], "radius": 0})
         cursor += 1
@@ -897,9 +960,12 @@ def _render_frame_fact(text, role, x, y, width, ctx):
     if not text:
         return [], 0
     frame = ctx.catalog["frameStyle"]
+    if role == 'name':
+        elements, height = _render_text({'literal': text, 'typographyRole': 'productName', 'style': 'titleKo', 'color': frame['ink']}, x, y, width, ctx)
+        return [{**el, 'sourceBlockId': ctx.source_id, 'copyRole': role, 'textSlotVersion': 1} for el in elements], height
     style = {"font": ctx.tokens["fonts"]["body"]["font"], "size": frame["textSize"], "weight": frame["textWeight"], "italic": False,
              "tracking": _round(frame["textTrackingEm"] * frame["textSize"] * 100) / 100, "lineHeight": frame["textLineHeight"],
-             "align": "center", "color": ctx.tokens["colors"][frame["ink"]]}
+             "align": ctx.align, "color": ctx.tokens["colors"][frame["ink"]]}
     height = estimate_text_height(text, width, style["size"], style["lineHeight"], ctx.catalog["textMetrics"], style["tracking"])
     return [{"type": "text", "x": x, "y": y, "w": width, "h": height, "text": text, "style": style,
              "sourceBlockId": ctx.source_id, "copyRole": role, "textSlotVersion": 1}], height
@@ -913,18 +979,20 @@ def _render_frame_band(selection, y, ctx):
     photo_x, photo_width = card_x + frame["paddingX"], frame["cardWidth"] - frame["paddingX"] * 2
     cursor = card_y + frame["paddingTop"]
     content, head_height = _render_frame_fact(_string(ctx.product.get("name")), "name", photo_x, cursor, photo_width, ctx)
-    cursor += head_height + (frame["photoTop"] if head_height else 0)
+    cursor += head_height
+    if ctx.shop_name:
+        if head_height:
+            cursor += frame['footerGap']
+        signature, signature_height = _render_frame_fact(ctx.shop_name, 'who', photo_x, cursor, photo_width, ctx)
+        content.extend(signature)
+        cursor += signature_height
+    if head_height or ctx.shop_name:
+        cursor += frame['photoTop']
     for index, card in enumerate(selection["frame"]):
         elements, height, _ = _render_photo({"type": "photo", "slot": "$current", "fit": "contain", "aspect": "source", "fallbackAspect": frame["fallbackAspect"]},
                                            photo_x, cursor, photo_width, _fork(ctx, card=card, index=ctx.photos.index(card)))
         content.extend(elements)
         cursor += height + (frame["photoGap"] if index + 1 < len(selection["frame"]) else 0)
-    shop_name = ctx.shop_name
-    if shop_name:
-        cursor += frame["footerGap"]
-        foot, foot_height = _render_frame_fact(shop_name, "who", photo_x, cursor, photo_width, ctx)
-        content.extend(foot)
-        cursor += foot_height
     card_height = cursor + frame["paddingBottom"] - card_y
     height = card_height + frame["bandPadding"] * 2
     # Reusing a backdrop does not consume a remaining original photograph.
@@ -958,8 +1026,8 @@ def _photo_flow_rows(node, cards):
 
 def _render_repeated(node, cards, ctx, x, y, width):
     if node["type"] in ("photoGrid", "photoFlow"):
-        columns = len(cards) if node["type"] == "photoFlow" else min(node["columns"], ctx.grid_card_count)
-        gap = node.get("gap") or 0
+        columns = len(cards) if node["type"] == "photoFlow" or node.get('balancedRows') else min(node["columns"], ctx.grid_card_count)
+        gap = ctx.tokens['template']['spacing']['photoGap'] if ctx.kind['kind'] == 'wear' else node.get("gap") or 0
         cell_w = math.floor((width - gap * (columns - 1)) / columns)
         start_x = x + ((width - (len(cards) * cell_w + gap * (len(cards) - 1))) / 2 if len(cards) < columns else 0)
         cells = []
@@ -968,9 +1036,9 @@ def _render_repeated(node, cards, ctx, x, y, width):
             item = _fork(ctx, card=card, index=color_index if node["type"] == "photoGrid" and ctx.kind["kind"] == "color_product" else getattr(ctx, "photo_indexes", {}).get((card or {}).get("id"), ctx.index + index), target_slot=node["slots"][ctx.index + index] if node.get("slots") else None)
             px = start_x + index * (cell_w + gap)
             photo, ph, _ = _render_photo({"type": "photo", "slot": "$current", "aspect": node.get("aspect")}, px, y, cell_w, item)
-            captions, ch = _render_nodes(node.get("captions"), px, y + ph + 16, cell_w, item)
+            captions, ch = _render_nodes(node.get("captions"), px, y + ph + node.get('captionGap', 16), cell_w, item)
             overlays = _render_groups(node.get("overlayGroups"), px, y, cell_w, ph, item, photo[0])
-            cells.append((photo + overlays + captions, ph + (16 + ch if ch else 0)))
+            cells.append((photo + overlays + captions, ph + (node.get('captionGap', 16) + ch if ch else 0)))
         return [el for elements, _ in cells for el in elements], max(0, *(h for _, h in cells))
     card = cards[0]
     if node["type"] == "photoStack":
@@ -1026,6 +1094,8 @@ def assemble_v4(storyboard, cut_results, copy_results, product, copywriting, *, 
     tokens = resolve_page_tokens(style, base_swatch_id if base_swatch_id is not None else base_color_of(product).get("swatchId"))
     if tokens["template"]["id"] != template_id:
         raise ValueError("Mixed page templates")
+    colors = product.get('colors') or []
+    use_english_color_names = bool(colors) and all(_color_english_name(color, catalog) for color in colors)
     runs, seen = [], set()
     for card in storyboard:
         key = card.get("pageSectionKey")
@@ -1041,11 +1111,13 @@ def assemble_v4(storyboard, cut_results, copy_results, product, copywriting, *, 
     cuts = {cut["blockId"]: cut for cut in cut_results or []}
     copies = {copy["blockId"]: {item["role"]: item["text"] for item in copy.get("texts") or []} for copy in copy_results or []}
     blocks = []
-    for run in runs:
+    opening = next((run[0] for run in runs if run[0].get('pageSectionKind') == 'first'), {})
+    linked_intro = catalog['designs'].get(opening.get('pageDesignId'), {}).get('introDesignId')
+    for run_index, run in enumerate(runs):
         first, key = run[0], run[0]["pageSectionKey"]
         kind = catalog["kinds"].get(first.get("pageSectionKind"))
         section = section_definition(tokens["template"], key, first.get("pageSectionKind"), first.get("pageSectionUsage"), first.get("pageDesignId"))
-        design_id = first.get("pageDesignId") or section.get("designId")
+        design_id = linked_intro if first.get('pageSectionKind') == 'intro' and linked_intro else first.get("pageDesignId") or section.get("designId")
         photos = point_photos_for_run(run, storyboard)
         if not photos and section.get("fallbackDesignId"):
             design_id = section["fallbackDesignId"]
@@ -1055,6 +1127,7 @@ def assemble_v4(storyboard, cut_results, copy_results, product, copywriting, *, 
         render_section = section if design.get("invert") is None else {**section, "block": {**section.get("block", {}), "invert": design["invert"]}}
         section_style = section_tokens(tokens, render_section)
         ctx = SimpleNamespace(catalog=catalog, storyboard=storyboard, product=product, analysis=analysis, profile=profile or {},
+                              use_english_color_names=use_english_color_names,
                               shop_name=shop_name.strip() if isinstance(shop_name, str) else "", copywriting=copywriting,
                               key=key, section=section, kind=kind, cuts=cuts, copy=copies.get(first["id"]) or {}, source_id=first["id"], base_color=base_color_of(product),
                               tokens=section_style, photos=photos, used=set(), failed_cuts=failed_cuts or {}, align=design.get("align") or tokens["template"]["align"],
@@ -1090,7 +1163,7 @@ def assemble_v4(storyboard, cut_results, copy_results, product, copywriting, *, 
                 rows = []
                 for group in selection["remainingGroups"]:
                     rows.extend([[card] for card in group] if node["pattern"] == "column" else [cards for _, cards in _photo_flow_rows({**node, "groupBy": "none"}, group)])
-                remainder_node = ({"type": "photoStack", "items": [{"type": "photo", "slot": "$current", "aspect": node["aspect"], "radius": 16}, *node["captions"]]}
+                remainder_node = ({"type": "photoStack", "items": [{"type": "photo", "slot": "$current", "aspect": node["aspect"]}, *node["captions"]]}
                                   if node["pattern"] == "column" else {**node, "type": "photoFlow"})
                 photo_indexes = {card["id"]: index for index, card in enumerate(ctx.photos)}
                 if rows:
@@ -1104,7 +1177,7 @@ def assemble_v4(storyboard, cut_results, copy_results, product, copywriting, *, 
                     y += height
                     if row_index + 1 < len(rows):
                         y += tokens["template"]["spacing"]["photoGap"]
-                if rows and node["pattern"] != "column":
+                if rows and node["pattern"] != "column" and kind['kind'] != 'wear':
                     y += node.get("gap") or 0
             elif node["type"] == "photoFlow":
                 rows = _photo_flow_rows(node, _select_cards(node, ctx))
@@ -1118,25 +1191,30 @@ def assemble_v4(storyboard, cut_results, copy_results, product, copywriting, *, 
                     y += height
                     if row_index + 1 < len(rows):
                         y += tokens["template"]["spacing"]["photoGap"]
-                if rows:
+                if rows and kind['kind'] != 'wear':
                     y += node.get("gap") or 0
             elif node["type"] in ("photoStack", "pointRows", "photoGrid"):
                 selected = _select_cards(node, ctx)
-                step = node["columns"] if node["type"] == "photoGrid" else 1
-                if any(el["type"] == "image" for el in elements):
+                step = node['columns'] if node['type'] == 'photoGrid' else 1
+                counts = balanced_photo_rows(len(selected), node['columns']) if node.get('balancedRows') else [step] * math.ceil(len(selected) / step)
+                if selected and any(el["type"] == "image" for el in elements):
+                    if kind['kind'] == 'wear' or kind['kind'] == 'color_product' and (design.get('choiceAxes') or {}).get('layout', {}).get('id') == 'column':
+                        y += tokens['template']['spacing']['photoGap']
                     flush()
-                for index in range(0, len(selected), step):
+                index = 0
+                for step in counts:
                     if index:
                         flush(0 if node.get("itemGap") is not None else None)
                     result, height = _render_repeated(node, selected[index:index + step], _fork(ctx, index=index, grid_card_count=len(selected)), pad, y, width)
                     elements.extend(result)
                     y += height
                     if index + step < len(selected):
-                        y += node["itemGap"] if node.get("itemGap") is not None else tokens["template"]["spacing"]["photoGap"]
-                if selected:
+                        y += node.get('rowGap', node.get('itemGap', tokens["template"]["spacing"]["photoGap"]))
+                    index += step
+                if selected and (node['type'] != 'photoGrid' or not node.get('balancedRows')):
                     y += node.get("gap") or 0
             else:
-                inset = (design.get("contentInset") or 0) if node["type"] in ("text", "factTable", "rule") else 0
+                inset = (design.get("contentInset") or 0) if node["type"] in ("text", "factTable", "rule", "swatchRow") else 0
                 result, height = _render_node(node, pad + inset, y, width - inset * 2, _fork(ctx, last_text_width=last_text_width))
                 elements.extend(result)
                 last = next((el for el in reversed(result) if el["type"] == "text"), None)
@@ -1145,14 +1223,19 @@ def assemble_v4(storyboard, cut_results, copy_results, product, copywriting, *, 
                 if height:
                     y += height + (node.get("gap") or 0)
         for card in [card for card in photos if card["id"] not in ctx.used]:
+            full_width_group = kind['kind'] in ('first', 'wear') or kind['kind'] == 'color_product' and (design.get('choiceAxes') or {}).get('layout', {}).get('id') == 'column'
+            if full_width_group and any(el['type'] == 'image' for el in elements):
+                y += tokens['template']['spacing']['photoGap']
             flush()
             result, height, _ = _render_photo({"type": "photo", "slot": "$current", "aspect": design["overflow"]["aspect"]}, pad, 0, width, _fork(ctx, card=card, index=part))
             elements.extend(result)
-            y = height + (design["overflow"].get("gap") or 0)
+            y = height + (0 if full_width_group else design["overflow"].get("gap") or 0)
         flush()
         if blocks and blocks[-1].get("pageSectionKey") == key:
             block = blocks[-1]
-            gap = tokens["template"]["spacing"]["sectionGap" if photos else "textSectionGap"]
+            next_card = runs[run_index + 1][0] if run_index + 1 < len(runs) else {}
+            adjacent_intro = kind['kind'] == 'first' and next_card.get('pageSectionKind') == 'intro' and (linked_intro or next_card.get('pageDesignId') in ('T06-D01', 'T06-COMMENT-01'))
+            gap = 0 if adjacent_intro else tokens["template"]["spacing"]["sectionGap" if photos else "textSectionGap"]
             if block["bg"].lower() != catalog["canvasColor"].lower():
                 block["elements"].append({"id": f"{block['id']}e{len(block['elements'])}", "type": "shape", "shape": "rect",
                                           "x": 0, "y": block["h"], "w": catalog["canvasWidth"], "h": gap,

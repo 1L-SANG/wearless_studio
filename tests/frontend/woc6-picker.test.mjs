@@ -148,7 +148,8 @@ test('WOC6B one eligible layout omits its group while daily decoration remains',
   const singleProduct = { ...product, colors: [product.colors[0]] }, singleBlocks = board(singleProduct);
   const color = sectionRuns(singleBlocks).find(item => item.kind === 'color_product');
   const singleHtml = render({ blocks: singleBlocks, runKey: color.key, catalogs: { ...catalogs, detailProduct: singleProduct } });
-  assert.doesNotMatch(singleHtml, /role="group"|aria-pressed=/);
+  assert.match(singleHtml, /role="group"/);
+  assert.equal((singleHtml.match(/data-layout-glyph=/g) || []).length, 2);
   assert.doesNotMatch(singleHtml, /완성 모습|data-design-illustration=|<image/);
 });
 
@@ -198,16 +199,16 @@ test('WOC12 static point choices preserve selection while assembled sections ret
     }
     assert.notDeepEqual(plain, card, 'flat choices retain distinct photo/text geometry');
     const elements = pages => pages.flatMap(page => page.elements);
-    assert.deepEqual(elements(plain).filter(element => element.type === 'image').map(element => [element.x, element.w, element.h]), Array.from({ length: 3 }, () => [40, 920, 1150]));
-    assert.deepEqual(elements(card).filter(element => element.type === 'image').map(element => [element.x, element.w, element.h]), Array.from({ length: 3 }, () => [60, 880, 1100]));
+    assert.deepEqual(elements(plain).filter(element => element.type === 'image').map(element => [element.x, element.w, element.h]), Array.from({ length: 3 }, () => [56, 888, 1110]));
+    assert.deepEqual(elements(card).filter(element => element.type === 'image').map(element => [element.x, element.w, element.h]), Array.from({ length: 3 }, () => [56, 888, 1110]));
     assert.ok(plain.every(page => page.bg === '#ffffff'));
     assert.ok(card.every(page => page.bg === tone.panel));
-    assert.ok(elements(card).some(element => element.type === 'shape' && element.fill === '#ffffff' && element.w === 880));
+    assert.ok(elements(card).some(element => element.type === 'shape' && element.fill === '#ffffff' && element.w === 888));
     const title = elements(plain).find(element => element.copyRole === 'items.0.name');
     const desc = elements(plain).find(element => element.copyRole === 'items.0.desc');
     const photo = elements(plain).find(element => element.type === 'image');
-    assert.equal(desc.y - title.y - title.h, 66);
-    assert.equal(photo.y - desc.y - desc.h, 24);
+    assert.equal(desc.y - title.y - title.h, 14);
+    assert.equal(photo.y - desc.y - desc.h, 32);
   } finally { h.close(); }
 });
 
@@ -220,12 +221,14 @@ test('WOC6 flat first choices retain paired ghost behavior and the first header 
     assert.equal(group(tree, '배치'), undefined);
     assert.equal(group(tree, '꾸밈'), undefined);
     assert.doesNotMatch(textOf(tree), /섹션 빼기/);
-    assert.equal(selectable(tree).length, 2);
+    assert.equal(selectable(tree).length, 3);
     selectable(tree).find(button => !button.props['aria-pressed']).props.onClick();
     assert.deepEqual(chosen, [['first', undefined, 'P01-SHOW-01']]);
     const next = changeTemplateSectionDesign(blocks, runKey, chosen[0][2], { product });
     assert.equal(next[0].pageDesignId, 'P01-SHOW-01-G');
-    assert.deepEqual(next.map(block => block.id), blocks.map(block => block.id));
+    const expectedOrder = [...blocks.filter(block => block.pageSectionKind === 'first'), ...blocks.filter(block => block.pageSectionKind === 'intro'),
+      ...blocks.filter(block => !['first', 'intro'].includes(block.pageSectionKind))];
+    assert.deepEqual(next.map(block => block.id), expectedOrder.map(block => block.id));
   } finally { h.close(); }
 });
 

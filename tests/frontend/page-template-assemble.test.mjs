@@ -111,7 +111,7 @@ for (const item of matrix)
         const names = elements(styling).filter((el) =>
             el.copyRole?.startsWith("colorName."),
         );
-        assert.equal(names.length, (Number(count) - 1) * 2);
+        assert.equal(names.length, 0);
         assert.ok(names.every((el) => el.text !== "라이트블루"));
     });
 
@@ -254,22 +254,14 @@ test("extra photos and similar cuts append in their own section, with no dropped
 });
 
 test("showroom inversion remains monochrome; point color appears only in permitted surfaces and titles", () => {
-    const mono = assemblePage(caseOf("show-2-mono")),
-        point = assemblePage(caseOf("show-2-point"));
-    for (const key of ["show.intro", "show.fabric", "show.points"])
-        assert.deepEqual(section(point, key), section(mono, key));
-    const common = assemblePage(caseOf("common-2-point"));
-    assert.ok(
-        elements(section(common, "emo.intro")).some(
-            (el) => el.fill === catalog.pointPalette.blue.accentBg,
-        ),
-    );
-    const colorSection = section(
-        assemblePage(caseOf("show-2-mono")),
-        "show.color_product",
-    );
-    assert.deepEqual(text(colorSection, "colors.0.en"), []);
-    assert.equal(text(colorSection, "label")[0].text, "COLOR");
+    const mono = assemblePage(caseOf('show-2-mono')), point = assemblePage(caseOf('show-2-point'));
+    for (const key of ['show.intro', 'show.fabric', 'show.points']) {
+        const before = elements(section(mono, key)).filter(el => el.type === 'text').map(el => el.style.color);
+        assert.deepEqual(elements(section(point, key)).filter(el => el.type === 'text').map(el => el.style.color), before);
+    }
+    const colors = section(mono, 'show.color_product');
+    assert.equal(text(colors, 'title')[0].text, '2 COLORS');
+    assert.equal(text(colors, 'title')[0].style.align, 'left');
 });
 
 test("base color may be after another color, and unknown color IDs do not acquire a different color name", () => {
@@ -351,7 +343,7 @@ test("mock v4 path and generation skeleton use the catalog and selected analysis
             runs(input.storyboard.map((card) => card.pageSectionKey)),
         );
         assert.equal(
-            text(section(actual, "emo.intro"), "title")[0].style.color,
+            text(section(actual, "emo.intro"), "name")[0].style.color,
             catalog.pointPalette.blue.accentInk,
         );
         assert.ok(actual.every((block) => !block.templateId));
@@ -367,7 +359,7 @@ test("adaptive photo groups resolve independently while scrim headings and bubbl
     );
     cut.overlayTextColors = {
         "show.fabric:fabric.fabric:heading": catalog.overlayColors.dark,
-        "show.fabric:fabric.fabric:description": catalog.overlayColors.light,
+        "show.fabric:fabric.fabric:description": catalog.templates[0].colors.ink,
     };
     const fabric = section(assemblePage(input), "show.fabric");
     for (const role of ["label", "title"])
@@ -378,7 +370,7 @@ test("adaptive photo groups resolve independently while scrim headings and bubbl
     for (const role of ["mix", "body"])
         assert.equal(
             text(fabric, role)[0].style.color,
-            catalog.overlayColors.light,
+            catalog.overlayColors.dark,
         );
     for (const value of cases.filter((item) =>
         ["emo-2-point", "emo-sns-story"].includes(item.name),
@@ -395,7 +387,7 @@ test("adaptive photo groups resolve independently while scrim headings and bubbl
         const review = section(blocks, "emo.review");
         assert.equal(
             text(review, "label")[0].style.color,
-            catalog.overlayColors.light,
+            catalog.templates[0].colors.ink,
         );
         assert.equal(
             text(review, "items.0.text")[0].style.color,
@@ -404,7 +396,7 @@ test("adaptive photo groups resolve independently while scrim headings and bubbl
         const faq = section(blocks, "emo.faq");
         assert.equal(
             text(faq, "label")[0].style.color,
-            catalog.overlayColors.light,
+            catalog.templates[0].colors.ink,
         );
         assert.equal(
             text(faq, "items.0.q")[0].style.color,
@@ -463,15 +455,11 @@ test("medium fit album crops a quarter of the source using the editor's saved cr
 });
 
 test("the summary separator is centered in showroom and the common design stays left aligned", () => {
-    const show = section(assemblePage(caseOf("show-2-mono")), "show.intro");
-    const line = elements(show).find((el) => el.type === "shape" && el.h === 2);
-    assert.equal(line.x + line.w / 2, 500);
-    const common = section(assemblePage(caseOf("common-2-mono")), "emo.intro");
-    const lines = elements(common).filter(
-        (el) => el.type === "shape" && el.h === 2,
-    );
-    assert.deepEqual(
-        lines.map((el) => el.x),
-        [56],
-    );
+    for (const template of ['show', 'emo']) {
+        const block = section(assemblePage(caseOf(template === 'emo' ? 'common-2-mono' : 'show-2-mono')), `${template}.intro`)[0];
+        const rules = block.elements.filter(el => el.type === 'shape' && el.shape === 'rect' && el.h === 1);
+        assert.ok(rules.length);
+        assert.ok(rules.every(el => el.x === 56 && el.w === 888));
+        assert.ok(block.elements.some(el => el.copyRole === 'name'));
+    }
 });

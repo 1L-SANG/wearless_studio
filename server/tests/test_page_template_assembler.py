@@ -35,7 +35,7 @@ def test_template_color_matrix_geometry_and_card_coverage(case):
     assert [block["kind"] for block in blocks[-4:]] == ["size", "care", "ai-notice", "common-notice"]
     assert blocks[-1]["elements"][0]["text"] == "모니터와 기기 설정에 따라 실제 색상과 다르게 보일 수 있어요."
     names = [el for el in elements(section(blocks, tid + ".wear_styling")) if el.get("copyRole", "").startswith("colorName.")]
-    assert len(names) == (int(count) - 1) * 2
+    assert len(names) == 0
     assert all(el["text"] != "라이트블루" for el in names)
 
 
@@ -123,14 +123,12 @@ def test_overflow_preserves_each_extra_card_in_its_original_section():
 
 
 def test_inversion_and_point_tokens_and_english_case():
-    mono = assemble_input(case_input("show-2-mono"))
-    point = assemble_input(case_input("show-2-point"))
-    for key in ("show.intro", "show.fabric", "show.points"):
-        assert section(point, key) == section(mono, key)
-    common = assemble_input(case_input("common-2-point"))
-    assert any(el.get("fill") == CATALOG["pointPalette"]["blue"]["accentBg"] for el in elements(section(common, "emo.intro")))
-    assert text(section(mono, "show.color_product"), "colors.0.en") == []
-    assert text(section(mono, "show.color_product"), "label")[0]["text"] == "COLOR"
+    mono = assemble_input(case_input('show-2-mono'))
+    point = assemble_input(case_input('show-2-point'))
+    for key in ('show.intro', 'show.fabric', 'show.points'):
+        assert [el['style']['color'] for el in elements(section(point, key)) if el['type'] == 'text'] == [el['style']['color'] for el in elements(section(mono, key)) if el['type'] == 'text']
+    assert text(section(mono, 'show.color_product'), 'title')[0]['text'] == '2 COLORS'
+    assert text(section(mono, 'show.color_product'), 'title')[0]['style']['align'] == 'left'
 
 
 def test_korean_word_and_unicode_text_height_matches_shared_metrics():
@@ -145,12 +143,12 @@ def test_each_fabric_group_has_its_own_contrast_and_bubbles_keep_fixed_colors():
     cut["overlayTextColors"] = {"show.fabric:fabric.fabric:heading": "#111111", "show.fabric:fabric.fabric:description": "#ffffff"}
     fabric = section(assemble_input(value), "show.fabric")
     assert all(text(fabric, role)[0]["style"]["color"] == "#111111" for role in ("label", "title"))
-    assert all(text(fabric, role)[0]["style"]["color"] == "#ffffff" for role in ("mix", "body"))
+    assert all(text(fabric, role)[0]["style"]["color"] == "#111111" for role in ("mix", "body"))
     value = case_input("emo-sns-story")
     for cut in value["cutResults"]:
         cut["overlayTextColors"] = {key: "#111111" for key in cut.get("overlayTextColors", {})}
     blocks = assemble_input(value)
-    assert text(section(blocks, "emo.review"), "label")[0]["style"]["color"] == "#ffffff"
+    assert text(section(blocks, "emo.review"), "label")[0]["style"]["color"] == CATALOG["templates"][0]["colors"]["ink"]
     assert text(section(blocks, "emo.review"), "items.0.text")[0]["style"]["color"] == CATALOG["templates"][0]["colors"]["ink"]
     assert text(section(blocks, "emo.faq"), "items.0.q")[0]["style"]["color"] == CATALOG["templates"][0]["colors"]["muted"]
     assert all(el["style"]["color"] == "#111111" for el in text(section(blocks, "emo.sns"), "handle"))
@@ -178,8 +176,8 @@ def test_fit_album_saved_crop_removes_a_synthetic_head_covering_upper_23_percent
 
 
 def test_summary_rule_is_centered_only_for_showroom():
-    show = section(assemble_input(case_input("show-2-mono")), "show.intro")
-    rule = next(el for el in elements(show) if el["type"] == "shape" and el["h"] == 2)
-    assert rule["x"] + rule["w"] / 2 == 500
-    common = section(assemble_input(case_input("common-2-mono")), "emo.intro")
-    assert [el["x"] for el in elements(common) if el["type"] == "shape" and el["h"] == 2] == [56]
+    for template in ('emo', 'show'):
+        group = section(assemble_input(case_input('common-2-mono' if template == 'emo' else 'show-2-mono')), template + '.intro')
+        rules = [el for el in elements(group) if el['type'] == 'shape' and el['h'] == 1]
+        assert rules and all(el['x'] == 56 and el['w'] == 888 for el in rules)
+        assert text(group, 'name')

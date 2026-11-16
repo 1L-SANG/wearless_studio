@@ -402,6 +402,63 @@ for (const templateId of ['emo', 'show']) {
         push(`review-${content}`, input);
     }
 }
+// WOC23 assembly-only cases. Extra saved color cards exercise row distribution
+// without changing the generation/photo-budget contract.
+fixture.cases = fixture.cases.filter(item => !item.name.startsWith('woc23-'));
+const colorNameCases = JSON.parse(readFileSync(new URL('../tests/fixtures/page_templates_color_names.json', import.meta.url))).cases;
+const colorProductCases = JSON.parse(readFileSync(new URL('../tests/fixtures/page_templates_color_products.json', import.meta.url))).cases;
+for (const templateId of ['emo', 'show']) {
+    const source = structuredClone(fixture.cases.find(item => item.name === `${templateId}-2-mono`).input);
+    for (const designId of ['T06-D01', 'T06-COMMENT-01']) {
+        const input = structuredClone(source);
+        input.storyboard = input.storyboard.filter(card => ['first', 'intro'].includes(card.pageSectionKind))
+            .map(card => ({ ...card, pageDesignId: card.pageSectionKind === 'first' ? designId === 'T06-COMMENT-01' ? 'P01-SHOW-COMMENT-01' : 'P01-SHOW-01' : designId }));
+        appendCase(`woc23-${templateId}-${designId}`, input);
+    }
+    for (const designId of ['P01-SHOW-01', 'P01-SHOW-COMMENT-01']) for (const ghost of [false, true]) for (const missing of [false, true]) {
+        const input = structuredClone(source);
+        input.storyboard = changeTemplateSectionDesign(input.storyboard, `${templateId}.first`, 'P01-D09', { product: input.product });
+        if (missing) input.storyboard = input.storyboard.filter(card => card.pageSectionKind !== 'intro');
+        if (ghost) {
+            const tile = stageAdditions(input.storyboard, `${templateId}.first`, { product: input.product, analysis: input.analysis }).find(item => item.id === 'firstGhost');
+            input.storyboard = addStageAddition(input.storyboard, `${templateId}.first`, tile, { product: input.product, analysis: input.analysis });
+        }
+        input.storyboard = changeTemplateSectionDesign(input.storyboard, `${templateId}.first`, designId, { product: input.product });
+        appendCase(`woc23-${templateId}-opening-order-${designId}-${ghost ? 'ghost' : 'photo'}-${missing ? 'added' : 'moved'}`, input);
+    }
+    const commentGhost = structuredClone(source);
+    commentGhost.storyboard = restoreSavedDesign(commentGhost.storyboard, `${templateId}.first`, 'P01-SHOW-COMMENT-01');
+    const ghost = stageAdditions(commentGhost.storyboard, `${templateId}.first`, { product: commentGhost.product, analysis: commentGhost.analysis }).find(item => item.id === 'firstGhost');
+    commentGhost.storyboard = addStageAddition(commentGhost.storyboard, `${templateId}.first`, ghost, { product: commentGhost.product, analysis: commentGhost.analysis });
+    appendCase(`woc23-${templateId}-comment-ghost`, commentGhost);
+    for (const designId of ['CP-COLUMN-01', 'CP-EMO-01']) for (const item of colorProductCases) {
+        const input = structuredClone(source);
+        input.product.colors = item.names.map((name, index) => ({ id: `color${index}`, name, swatchId: 'blue', isBase: index === 0 }));
+        const front = source.storyboard.find(card => card.pageSectionKind === 'color_product' && card.direction === 'front');
+        input.storyboard = (item.renderColorIndexes || item.names.map((_, index) => index)).map(index => ({ ...front,
+            id: `product-language-${index}`, colorId: `color${index}`, slotKey: `color_product.front.color${index}`, pageDesignId: designId }));
+        appendCase(`woc23-${templateId}-color-product-${designId}-${item.id}`, input);
+    }
+    for (const designId of ['CP-COLUMN-01', 'CP-EMO-01']) {
+        const input = structuredClone(source);
+        const cases = ['스카이블루', '차콜', '카키', '버건디', 'spaced-sky-blue', 'unknown-combination', 'unknown-plum', 'seller-english']
+            .map(id => colorNameCases.find(item => item.id === id));
+        input.product.colors = cases.map(({ name, label, swatchId }, index) => ({ id: `color${index}`, name, label, swatchId, isBase: index === 0 }));
+        const front = source.storyboard.find(card => card.pageSectionKind === 'color_product' && card.direction === 'front');
+        input.storyboard = input.product.colors.map((color, index) => ({ ...front, id: `color-name-${index}`, colorId: color.id,
+            slotKey: `color_product.front.${color.id}`, pageDesignId: designId }));
+        appendCase(`woc23-${templateId}-color-names-${designId}`, input);
+    }
+    for (const designId of ['CP-COLUMN-01', 'CP-EMO-01']) for (let count = 1; count <= 8; count += 1) {
+        const input = structuredClone(source);
+        const swatches = Object.keys(pageTemplatesCatalog.swatchLabels);
+        input.product.colors = swatches.slice(0, count).map((swatchId, index) => ({ id: `color${index}`, name: pageTemplatesCatalog.swatchLabels[swatchId], swatchId, isBase: index === 0 }));
+        const front = source.storyboard.find(card => card.pageSectionKind === 'color_product' && card.direction === 'front');
+        input.storyboard = input.product.colors.map((color, index) => ({ ...front, id: `saved-color-${index}`, colorId: color.id,
+            slotKey: `color_product.front.${color.id}`, pageDesignId: designId }));
+        appendCase(`woc23-${templateId}-${designId}-${count}`, input);
+    }
+}
 const outputs = fixture.cases.map(({ input }) => ({
     blocks: assemblePage(input),
     regions: collectOverlayRegions(input),

@@ -123,7 +123,7 @@ test('WOC12 visible design choices use static illustrations while single-option 
       if (!['intro', 'for_you'].includes(run.kind)) assert.equal(illustrations.length, thumbnailCount, run.key);
       assert.ok(illustrations.every(illustration => /viewBox="0 0 150 130"/.test(illustration) && /aria-hidden="true"/.test(illustration)), run.key);
       assert.equal((markup.match(/role="group" aria-label="디자인 선택"/g) || []).length, thumbnailCount ? 1 : 0, run.key);
-      if (singleColorAxis) assert.doesNotMatch(markup, /aria-pressed=|role="group"/);
+      if (singleColorAxis) assert.equal((markup.match(/data-layout-glyph=/g) || []).length, axes.layouts.length);
       if (run.kind === 'fabric') {
         assert.equal((markup.match(/aria-pressed="true"/g) || []).length, thumbnailCount ? 1 : 0, 'only an eligible choice group shows the active fallback');
       }

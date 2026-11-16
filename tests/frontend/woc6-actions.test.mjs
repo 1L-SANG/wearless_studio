@@ -27,7 +27,7 @@ const valid = blocks => { assert.equal(validateStoryboardV4(blocks), blocks); re
 
 for (const template of ['emo', 'show']) test(`WOC6 ${template} defaults and visible candidate sets are the approved list`, () => {
   const blocks = valid(board(template));
-  assert.deepEqual(ids(blocks, 'first'), template === 'emo' ? ['P01-D09', 'P01-SHOW-01'] : ['P01-SHOW-01', 'P01-D09']);
+  assert.deepEqual(ids(blocks, 'first'), template === 'emo' ? ['P01-D09', 'P01-SHOW-01', 'P01-SHOW-COMMENT-01'] : ['P01-SHOW-01', 'P01-D09', 'P01-SHOW-COMMENT-01']);
   assert.deepEqual(new Set(ids(blocks, 'fabric')), new Set(['T03-D01', 'T03-D06']));
   assert.deepEqual(new Set(ids(blocks, 'color_product')), new Set(['CP-COLUMN-01', 'CP-EMO-01']));
   assert.deepEqual(new Set(ids(blocks, 'points')), new Set(['PT-PHOTO-CARD-01', 'PT-TEXT-PHOTO-01']));
@@ -62,12 +62,12 @@ for (const usage of ['styling', 'fit']) test(`WOC6 ${usage} minimum photos refer
   }
 });
 
-test('WOC6 color grid needs at least two sale colors and back presence follows source photos', () => {
+test('WOC23 color grid also supports one sale color and back presence follows source photos', () => {
   for (const template of ['emo', 'show']) for (const count of [1, 2, 3]) for (const back of [false, true]) {
     const colors = Array.from({ length: count }, (_, i) => ({ ...product.colors[i % 2], id: `c${i}`, isBase: i === 0,
       images: [{ slot: 'Front', src: '/front.jpg' }, ...(i === 0 && back ? [{ slot: 'Back', src: '/back.jpg' }] : [])] }));
     const p = { ...product, colors }, blocks = valid(board(template, p)), run = runOf(blocks, 'color_product');
-    assert.equal(ids(blocks, 'color_product', undefined, p).length, count > 1 ? 2 : 1);
+    assert.equal(ids(blocks, 'color_product', undefined, p).length, 2);
     assert.equal(run.blocks.filter(b => b.direction === 'back').length, Number(back));
     assert.equal(sectionDesignPhotoCount(run, run.designId, blocks), count + Number(back));
   }

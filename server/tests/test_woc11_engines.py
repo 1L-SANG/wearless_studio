@@ -40,20 +40,20 @@ def test_woc11_reject_malformed_text_opt_ins(prop, value):
         validate_catalog(catalog)
 
 
-@pytest.mark.parametrize('design_id,size,weight,width,height', [(CARD, 35, 400, 880, 1100), (PLAIN, 37, 300, 920, 1150)])
+@pytest.mark.parametrize('design_id,size,weight,width,height', [(CARD, 32, 400, 888, 1110), (PLAIN, 32, 400, 888, 1110)])
 def test_woc11_loose_photo_and_two_line_copy_render(design_id, size, weight, width, height):
     value = point_input(design_id=design_id)
     elements = point_elements(value)
     desc = next(element for element in elements if element.get('copyRole') == 'items.0.desc')
     image = next(element for element in elements if element['type'] == 'image')
     assert (desc['style']['size'], desc['style']['weight']) == (size, weight)
-    assert '\n' in desc['text']
+    assert ('\n' in desc['text']) == (design_id == CARD)
     assert (image['w'], image['h']) == (width, height)
     assert image['h'] / image['crop']['ih'] == pytest.approx(5 / 6, abs=.001)
     assert image['crop']['oy'] > 0
 
 
-@pytest.mark.parametrize('saved,expected', [('', ''), ('옛 한 줄 문장', '옛 한 줄 문장'), ('첫 줄\n\n마지막 줄', ''), ('첫 줄\r\n둘째 줄', '첫 줄\n둘째 줄')])
+@pytest.mark.parametrize('saved,expected', [('', ''), ('옛 한 줄 문장', '옛 한 줄 문장'), ('첫 줄\n\n마지막 줄', ''), ('첫 줄\r\n둘째 줄', '첫 줄 둘째 줄')])
 def test_part_only_copy_accepts_one_or_two_lines_without_using_seller_copy(saved, expected):
     value = point_input()
     value['analysis']['partDescriptionCopy'][0]['desc'] = saved

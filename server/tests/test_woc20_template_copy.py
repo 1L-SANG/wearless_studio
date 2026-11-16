@@ -43,7 +43,7 @@ def test_face_positions_measure_all_faces_and_persist_the_shared_layout(monkeypa
     value['cutResults'][0].update(metadata)
     block = next(block for block in assemble_input(value) if block.get('pageSectionKind') == 'faq')
     photo = next(el for el in block['elements'] if el['type'] == 'image')
-    assert photo['y'] == (246 if expected == 'outside' else 0)
+    assert photo['y'] == (303 if expected == 'outside' else 94)
     assert any(el.get('opacity') == .3 for el in block['elements']) == (expected == 'overlay')
 
 
@@ -117,7 +117,7 @@ def test_duplicate_photo_alias_measures_faq_placement_on_the_generated_source(mo
 
 
 @pytest.mark.parametrize('boxes,expected_y', [
-    ([(420, 70, 140, 120)], 246), ([], 0), (None, 246),
+    ([(420, 70, 140, 120)], 303), ([], 94), (None, 303),
 ], ids=['face-in-heading', 'clear-heading', 'unreadable-upload'])
 def test_detail_job_places_faq_heading_on_uploaded_photo(monkeypatch, boxes, expected_y):
     value = case_input('emo-2-mono')
@@ -129,7 +129,7 @@ def test_detail_job_places_faq_heading_on_uploaded_photo(monkeypatch, boxes, exp
     faq.update(source='mine', cutType=None, ownImages=[url])
     pending = assemble_input({**value, 'storyboard': storyboard, 'cutResults': []})
     assert next(el for block in pending if block['pageSectionKind'] == 'faq'
-                for el in block['elements'] if el['type'] == 'image')['y'] == 0
+                for el in block['elements'] if el['type'] == 'image')['y'] == 94
 
     photo_bytes = BytesIO()
     with Image.new('RGB', (1250, 1000), 'white') as image:

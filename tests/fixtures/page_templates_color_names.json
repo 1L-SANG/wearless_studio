@@ -1,0 +1,378 @@
+{
+  "dictionaryCases": 43,
+  "cases": [
+    {
+      "id": "블랙",
+      "name": "블랙",
+      "swatchId": "blue",
+      "english": "BLACK"
+    },
+    {
+      "id": "화이트",
+      "name": "화이트",
+      "swatchId": "blue",
+      "english": "WHITE"
+    },
+    {
+      "id": "오프화이트",
+      "name": "오프화이트",
+      "swatchId": "blue",
+      "english": "OFF WHITE"
+    },
+    {
+      "id": "아이보리",
+      "name": "아이보리",
+      "swatchId": "blue",
+      "english": "IVORY"
+    },
+    {
+      "id": "크림",
+      "name": "크림",
+      "swatchId": "blue",
+      "english": "CREAM"
+    },
+    {
+      "id": "베이지",
+      "name": "베이지",
+      "swatchId": "blue",
+      "english": "BEIGE"
+    },
+    {
+      "id": "오트밀",
+      "name": "오트밀",
+      "swatchId": "blue",
+      "english": "OATMEAL"
+    },
+    {
+      "id": "그레이",
+      "name": "그레이",
+      "swatchId": "blue",
+      "english": "GRAY"
+    },
+    {
+      "id": "회색",
+      "name": "회색",
+      "swatchId": "blue",
+      "english": "GRAY"
+    },
+    {
+      "id": "라이트그레이",
+      "name": "라이트그레이",
+      "swatchId": "blue",
+      "english": "LIGHT GRAY"
+    },
+    {
+      "id": "다크그레이",
+      "name": "다크그레이",
+      "swatchId": "blue",
+      "english": "DARK GRAY"
+    },
+    {
+      "id": "차콜",
+      "name": "차콜",
+      "swatchId": "blue",
+      "english": "CHARCOAL"
+    },
+    {
+      "id": "멜란지",
+      "name": "멜란지",
+      "swatchId": "blue",
+      "english": "MELANGE"
+    },
+    {
+      "id": "네이비",
+      "name": "네이비",
+      "swatchId": "blue",
+      "english": "NAVY"
+    },
+    {
+      "id": "블루",
+      "name": "블루",
+      "swatchId": "blue",
+      "english": "BLUE"
+    },
+    {
+      "id": "스카이블루",
+      "name": "스카이블루",
+      "swatchId": "blue",
+      "english": "SKY BLUE"
+    },
+    {
+      "id": "소라",
+      "name": "소라",
+      "swatchId": "blue",
+      "english": "SKY BLUE"
+    },
+    {
+      "id": "민트",
+      "name": "민트",
+      "swatchId": "blue",
+      "english": "MINT"
+    },
+    {
+      "id": "카키",
+      "name": "카키",
+      "swatchId": "blue",
+      "english": "KHAKI"
+    },
+    {
+      "id": "올리브",
+      "name": "올리브",
+      "swatchId": "blue",
+      "english": "OLIVE"
+    },
+    {
+      "id": "그린",
+      "name": "그린",
+      "swatchId": "blue",
+      "english": "GREEN"
+    },
+    {
+      "id": "브라운",
+      "name": "브라운",
+      "swatchId": "blue",
+      "english": "BROWN"
+    },
+    {
+      "id": "카멜",
+      "name": "카멜",
+      "swatchId": "blue",
+      "english": "CAMEL"
+    },
+    {
+      "id": "모카",
+      "name": "모카",
+      "swatchId": "blue",
+      "english": "MOCHA"
+    },
+    {
+      "id": "버건디",
+      "name": "버건디",
+      "swatchId": "blue",
+      "english": "BURGUNDY"
+    },
+    {
+      "id": "와인",
+      "name": "와인",
+      "swatchId": "blue",
+      "english": "WINE"
+    },
+    {
+      "id": "레드",
+      "name": "레드",
+      "swatchId": "blue",
+      "english": "RED"
+    },
+    {
+      "id": "핑크",
+      "name": "핑크",
+      "swatchId": "blue",
+      "english": "PINK"
+    },
+    {
+      "id": "라벤더",
+      "name": "라벤더",
+      "swatchId": "blue",
+      "english": "LAVENDER"
+    },
+    {
+      "id": "퍼플",
+      "name": "퍼플",
+      "swatchId": "blue",
+      "english": "PURPLE"
+    },
+    {
+      "id": "옐로우",
+      "name": "옐로우",
+      "swatchId": "blue",
+      "english": "YELLOW"
+    },
+    {
+      "id": "머스타드",
+      "name": "머스타드",
+      "swatchId": "blue",
+      "english": "MUSTARD"
+    },
+    {
+      "id": "오렌지",
+      "name": "오렌지",
+      "swatchId": "blue",
+      "english": "ORANGE"
+    },
+    {
+      "id": "연청",
+      "name": "연청",
+      "swatchId": "blue",
+      "english": "LIGHT DENIM"
+    },
+    {
+      "id": "중청",
+      "name": "중청",
+      "swatchId": "blue",
+      "english": "MID DENIM"
+    },
+    {
+      "id": "진청",
+      "name": "진청",
+      "swatchId": "blue",
+      "english": "DARK DENIM"
+    },
+    {
+      "id": "흑청",
+      "name": "흑청",
+      "swatchId": "blue",
+      "english": "BLACK DENIM"
+    },
+    {
+      "id": "검정",
+      "name": "검정",
+      "swatchId": "blue",
+      "english": "BLACK"
+    },
+    {
+      "id": "검정색",
+      "name": "검정색",
+      "swatchId": "blue",
+      "english": "BLACK"
+    },
+    {
+      "id": "검은색",
+      "name": "검은색",
+      "swatchId": "blue",
+      "english": "BLACK"
+    },
+    {
+      "id": "흰색",
+      "name": "흰색",
+      "swatchId": "blue",
+      "english": "WHITE"
+    },
+    {
+      "id": "라이트블루",
+      "name": "라이트블루",
+      "swatchId": "blue",
+      "english": "LIGHT BLUE"
+    },
+    {
+      "id": "다크블루",
+      "name": "다크블루",
+      "swatchId": "blue",
+      "english": "DARK BLUE"
+    },
+    {
+      "id": "spaced-sky-blue",
+      "name": "  스카이 블루  ",
+      "swatchId": "blue",
+      "english": "SKY BLUE"
+    },
+    {
+      "id": "spaced-light-gray",
+      "name": " 라이트  그레이 ",
+      "swatchId": "gray",
+      "english": "LIGHT GRAY"
+    },
+    {
+      "id": "spaced-off-white",
+      "name": "오프 화이트",
+      "swatchId": "white",
+      "english": "OFF WHITE"
+    },
+    {
+      "id": "tabbed-dark-gray",
+      "name": "\t다크\t그레이\t",
+      "swatchId": "gray",
+      "english": "DARK GRAY"
+    },
+    {
+      "id": "unicode-spaces",
+      "name": "　스카이 블루　",
+      "swatchId": "blue",
+      "english": "SKY BLUE"
+    },
+    {
+      "id": "without-swatch",
+      "name": "소라",
+      "swatchId": null,
+      "english": "SKY BLUE"
+    },
+    {
+      "id": "label-name",
+      "label": "카키",
+      "swatchId": "green",
+      "expectedName": "카키",
+      "english": "KHAKI"
+    },
+    {
+      "id": "unknown-plum",
+      "name": "자두",
+      "swatchId": "red",
+      "english": ""
+    },
+    {
+      "id": "unknown-combination",
+      "name": "다크스카이블루",
+      "swatchId": "blue",
+      "english": ""
+    },
+    {
+      "id": "unknown-blue-gray",
+      "name": "블루그레이",
+      "swatchId": "gray",
+      "english": ""
+    },
+    {
+      "id": "unknown-khaki-green",
+      "name": "카키그린",
+      "swatchId": "green",
+      "english": ""
+    },
+    {
+      "id": "unknown-slash",
+      "name": "그레이/화이트",
+      "swatchId": "gray",
+      "english": ""
+    },
+    {
+      "id": "unknown-suffix",
+      "name": "스카이블루1",
+      "swatchId": "blue",
+      "english": ""
+    },
+    {
+      "id": "unknown-object-key",
+      "name": "__proto__",
+      "swatchId": "blue",
+      "english": ""
+    },
+    {
+      "id": "seller-english",
+      "name": "Dusty Blue",
+      "swatchId": "red",
+      "english": "DUSTY BLUE"
+    },
+    {
+      "id": "english-outer-spaces",
+      "name": "  sky blue  ",
+      "swatchId": "green",
+      "english": "SKY BLUE"
+    },
+    {
+      "id": "english-inner-spaces",
+      "name": "Dusty  Blue",
+      "swatchId": "red",
+      "english": "DUSTY  BLUE"
+    },
+    {
+      "id": "english-hyphen",
+      "name": "off-white",
+      "swatchId": "red",
+      "english": "OFF-WHITE"
+    },
+    {
+      "id": "no-seller-name",
+      "swatchId": "blue",
+      "expectedName": "블루",
+      "english": ""
+    }
+  ]
+}

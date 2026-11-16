@@ -54,13 +54,14 @@ def test_invalid_layout_extensions_are_rejected(field, value):
 
 
 def test_section_gaps_use_canvas_color_and_keep_photo_blocks():
-    for key in ('show.fabric', 'show.points'):
-        blocks = section(assemble_input(case_input('show-2-mono')), key)
-        gap = blocks[-1]['elements'][-1]
-        assert gap['pageSectionGap'] and gap['locked']
-        assert gap['fill'] == CATALOG['canvasColor']
-        assert gap['y'] + gap['h'] == blocks[-1]['h']
-        assert len(blocks) == len({e['sourceBlockId'] for e in elements(blocks) if e['type'] == 'image'})
+    value = case_input('show-2-mono')
+    value['storyboard'] = [{**card, 'pageDesignId': 'T06-COMMENT-01'} for card in value['storyboard'] if card['pageSectionKind'] == 'intro']
+    blocks = section(assemble_input(value), 'show.intro')
+    gap = blocks[-1]['elements'][-1]
+    assert gap['pageSectionGap'] and gap['locked']
+    assert gap['fill'] == CATALOG['canvasColor']
+    assert gap['y'] + gap['h'] == blocks[-1]['h']
+    assert len(blocks) == 1
 
 
 @pytest.mark.parametrize('name,design_id,node_type', [('common-fit-album-location-medium', 'T07-D06', 'photoStack'), ('emo-2-mono', 'PT-EMO-01', 'pointRows'), ('emo-2-mono', 'CP-EMO-01', 'photoGrid')])
@@ -77,7 +78,7 @@ def test_repeats_keep_their_trailing_gap(monkeypatch, name, design_id, node_type
     node['gap'] = 40
     after = assemble_input(case_input(name))
     get = lambda page: next(e for e in elements(page) if e.get('text') == 'after repeat')
-    assert get(after)['y'] - get(before)['y'] == 40
+    assert get(after)['y'] - get(before)['y'] == (0 if node.get('balancedRows') else 40)
     assert len(after) == len(before)
 
 
@@ -93,9 +94,9 @@ def test_fact_table_modes_without_an_invented_size(monkeypatch, layout):
     else:
         label = next(e for e in rows if e['factLabel'] == 'COLOR' and e['factPart'] == 'label')
         val = next(e for e in rows if e['factLabel'] == 'COLOR' and e['factPart'] == 'value')
-        assert label['style']['size'] == 18
+        assert label['style']['size'] == 28
         assert label['style']['align'] == ('left' if layout == 'columns' else 'center')
-        assert val['x'] - label['x'] == (150 if layout == 'columns' else 0)
+        assert val['x'] - label['x'] == (180 if layout == 'columns' else 0)
         assert val['y'] == (label['y'] if layout == 'columns' else label['y'] + label['h'] + 4)
 
 
@@ -147,7 +148,7 @@ def test_swatch_dots_hidden_english_and_optional_opening_intro():
         assert not text(captions, 'colors.0.en')
         for index in range(2):
             txt = text(captions, f'colors.{index}.name')[0]
-            dot = next(e for e in elements(captions) if e['type'] == 'shape' and e['w'] == 10 and e['x'] == txt['x'] - 18)
+            dot = next(e for e in elements(captions) if e['type'] == 'shape' and e['w'] == 26 and e['x'] == txt['x'] - 36)
             assert dot['fill'] == CATALOG['swatchHex'][value['product']['colors'][index]['swatchId']]
         if template != 'emo':
             assert not text(section(page, template + '.first'), 'intro')
@@ -177,21 +178,15 @@ def test_checkerboard_is_not_resized_into_an_average_gray():
 
 
 def test_different_text_lines_are_sampled_independently():
-    value = case_input('show-2-mono')
-    fabric = next(c for c in value['storyboard'] if c['pageSectionKind'] == 'fabric')
-    # All placements come from the actual layout, including its wrapping and alignment.
-    plans = collect_overlay_regions(value['storyboard'], value['cutResults'], value['copyResults'], value['product'], True, analysis=value['analysis'])
-    plan = next(p for p in plans if p['key'] == 'show.fabric:fabric.fabric:heading')
+    value = case_input('emo-2-mono')
+    plan = next(plan for plan in collect_overlay_regions(value['storyboard'], value['cutResults'], value['copyResults'], value['product'], True, analysis=value['analysis']) if plan['key'] == 'emo.first:first.hero:center')
     with Image.new('RGB', (1000, 1250), 'white') as image:
         draw = ImageDraw.Draw(image)
         for index, line in enumerate(plan['lines']):
             region = line['region']
-            bounds = (int(region['left'] * 1000), int(region['top'] * 1250), int(region['right'] * 1000) + 1, int(region['bottom'] * 1250) + 1)
-            draw.rectangle(bounds, fill='black' if index % 2 == 0 else 'white')
-        meta = overlay_text_metadata(fabric, image, product=value['product'], analysis=value['analysis'], storyboard=value['storyboard'], copy_results=value['copyResults'])
-    assert 'overlayTextPositions' not in meta
-    for index, line in enumerate(plan['lines']):
-        assert meta['overlayTextLines'][line['key']] == dict(color='#ffffff' if index % 2 == 0 else '#111111', shade=False)
+            draw.rectangle((int(region['left'] * 1000), int(region['top'] * 1250), int(region['right'] * 1000) + 1, int(region['bottom'] * 1250) + 1), fill='black' if index % 2 == 0 else 'white')
+        for index, line in enumerate(plan['lines']):
+            assert sample_overlay_style(image, {**plan, 'region': line['region']}) == dict(color='#ffffff' if index % 2 == 0 else '#111111', shade=False)
 
 
 def test_line_contrast_metadata_is_carried_into_saved_editor_elements():
@@ -225,7 +220,7 @@ def test_english_color_role_does_not_use_swatch_family(monkeypatch, name):
     grid = next(n for n in design['layout'] if n['type'] == 'photoGrid')
     grid['captions'].append(dict(type='text', copyRole='colors.n.en', size=20, hideEmpty=True))
     value = case_input('emo-2-mono');value['product']['colors'][0].update(name=name,swatchId='green')
-    assert [e['text'] for e in text(assemble_input(value),'colors.0.en')] == (['Mint'] if name == 'Mint' else [])
+    assert [e['text'] for e in text(assemble_input(value),'colors.0.en')] == ['MINT', 'MINT']
 
 
 @pytest.mark.parametrize('case', QUALITY['metricCases'], ids=lambda c: c['name'])
@@ -238,19 +233,21 @@ def test_r2_fixed_uppercase_and_tracking_metrics(case):
 
 @pytest.mark.parametrize('case', QUALITY['gridCases'], ids=lambda c: c['name'])
 def test_r4_fixed_grid_widths_and_remaining_row_placement(case):
-    import re
+    from app.agents.page_template_assembler import balanced_photo_rows
     value = case_input(case['name'])
     template = value['storyboard'][0]['pageSectionKey'].split('.')[0]
     blocks = section(assemble_input(value), template + '.color_product')
-    fronts = [e for e in elements(blocks) if e['type'] == 'image' and re.search(r'\.front\d*$', e['slotKey'])]
-    assert [e['w'] for e in fronts] == [case['cellW']] * len(case['xs'])
-    assert [e['x'] for e in fronts] == case['xs']
-    assert [e['sourceBlockId'] for e in fronts] == [c['id'] for c in value['storyboard'] if c.get('pageSectionKind') == 'color_product' and re.search(r'\.front\d*$', c.get('slotKey') or '')]
-    if (case['name'].endswith('3-mono') and not case['name'].startswith('common-')) or case['name'] == 'common-four-color-grid':
-        assert fronts[-1]['x'] + fronts[-1]['w'] / 2 == CATALOG['canvasWidth'] / 2
-    design_id = next(card['pageDesignId'] for card in value['storyboard'] if card['pageSectionKind'] == 'color_product')
-    columns = next(n['columns'] for n in CATALOG['designs'][design_id]['layout'] if n['type'] == 'photoGrid')
-    assert len([b for b in blocks if any(e in fronts for e in b['elements'])]) == (len(fronts) + columns - 1) // columns
+    photos = [el for el in elements(blocks) if el['type'] == 'image']
+    design = CATALOG['designs'][next(card['pageDesignId'] for card in value['storyboard'] if card['pageSectionKind'] == 'color_product')]
+    if (design.get('choiceAxes') or {}).get('layout', {}).get('id') == 'column':
+        assert all(el['x'] == 0 and el['w'] == 1000 for el in photos)
+    else:
+        offset = 0
+        for count in balanced_photo_rows(len(photos)):
+            width = (888 - 24 * (count - 1)) // count
+            assert [(el['x'], el['w']) for el in photos[offset:offset + count]] == [(56 + index * (width + 24), width) for index in range(count)]
+            offset += count
+    assert [el['sourceBlockId'] for el in photos] == [card['id'] for card in value['storyboard'] if card['pageSectionKind'] == 'color_product' and card['source'] != 'text']
 
 
 @pytest.mark.parametrize('template', ['emo', 'show'])
@@ -260,7 +257,7 @@ def test_r1_circular_swatches_and_light_color_borders(template, color_mode):
     value = case_input(template + '-light-swatches')
     value['pageStyle'] = {**value['analysis']['pageStyle'], 'templateId': template, 'colorMode': color_mode}
     page = assemble_input(value)
-    dots = [e for e in elements(section(page, template + '.color_product')) if e['type'] == 'shape' and e['w'] == e['h'] == 10]
+    dots = [e for e in elements(section(page, template + '.color_product')) if e['type'] == 'shape' and e['w'] == e['h'] == 26]
     assert len(dots) >= 3
     tokens = resolve_page_tokens(value['pageStyle'], value['product']['colors'][0]['swatchId'])
     for dot in dots:
@@ -273,47 +270,26 @@ def test_r1_circular_swatches_and_light_color_borders(template, color_mode):
 
 @pytest.mark.parametrize('template,widths', [('show', [91, 73, 73]), ('emo', [67, 55, 55])])
 def test_r2_fit_pills_stay_on_one_line_with_padding(template, widths):
-    value = case_input(template + '-2-mono')
-    rotation = next(card['spaceGroupId'] for card in case_input(f'woc20-{template}-wear-sets')['storyboard'] if card['pageSectionKey'] == template + '.wear_fit')
-    for card in value['storyboard']:
-        if card['pageSectionKey'] == template + '.wear_fit':
-            card['spaceGroupId'] = rotation
-    blocks = section(assemble_input(value), template + '.wear_fit')
-    captions = [e for e in elements(blocks) if e.get('copyRole', '').startswith('cap.')]
-    assert [e['text'] for e in captions] == (['FRONT', 'SIDE', 'BACK'] if template == 'show' else ['Front', 'Side', 'Back'])
-    assert [e['w'] for e in captions] == widths
-    for caption in captions:
-        assert caption['style']['size'] == 22
-        assert caption['h'] == caption['style']['lineHeight']
-        pill = next(e for e in elements(blocks) if e.get('shape') == 'rect' and e.get('radius') == 999 and e['x'] == caption['x'] - 18 and e['y'] == caption['y'] - 9)
-        assert pill['w'] == caption['w'] + 36
-        assert pill['h'] == caption['h'] + 18
-        assert measure_text_width(caption['text'], 1000, 22, tracking=caption['style']['tracking']) == caption['w']
+    blocks = section(assemble_input(case_input(template + '-2-mono')), template + '.wear_fit')
+    assert not any(el.get('copyRole', '').startswith('cap.') for el in elements(blocks))
+    assert all(el['x'] == 0 and el['w'] == 1000 for el in elements(blocks) if el['type'] == 'image')
+    assert text(blocks, 'label')[0]['text'].upper() == 'LOOKBOOK'
 
 
 def test_r3_showroom_facts_center_and_common_columns_stay_left():
     for template in ('show', 'emo'):
         fixture_name = 'show-2-mono' if template == 'show' else 'common-2-mono'
         facts = text(section(assemble_input(case_input(fixture_name)), template + '.intro'), 'facts')
-        assert len(facts) >= 6
-        for fact in facts:
-            assert fact['style']['align'] == ('center' if template == 'show' else 'left')
-            if template == 'show':
-                assert fact['x'] + fact['w'] / 2 == 500
+        assert len(facts) == 6
+        assert all(fact['style']['align'] == 'left' for fact in facts)
 
 
 def test_r6_showroom_summary_dots_follow_the_first_line_and_center_the_group():
-    import re
     els = elements(section(assemble_input(case_input('show-2-mono')), 'show.intro'))
-    summaries = [e for e in els if re.fullmatch(r'summary\.\d+', e.get('copyRole') or '')]
-    assert len(summaries) == 3
-    for txt in summaries:
-        first_line = wrap_text(txt['text'] or txt.get('placeholder'), txt['w'], txt['style']['size'], tracking=txt['style']['tracking'])[0]
-        text_w = measure_text_width(first_line, txt['w'], txt['style']['size'], tracking=txt['style']['tracking'])
-        text_start = txt['x'] + (txt['w'] - text_w) / 2
-        dot = next(e for e in els if e.get('shape') == 'circle' and e['w'] == 6 and e['x'] == text_start - 22 and e['y'] + 3 == txt['y'] + txt['style']['lineHeight'] / 2)
-        assert (dot['x'] + text_start + text_w) / 2 == 500
-        assert txt['style']['align'] == 'center'
+    assert not any(el.get('copyRole', '').startswith('summary.') for el in els)
+    assert next(el for el in els if el.get('copyRole') == 'name')['style']['size'] == 54
+    assert next(el for el in els if el.get('copyRole') == 'body')['style']['size'] == 30
+    assert len([el for el in els if el.get('factPart') == 'label']) == 3
 
 
 @pytest.mark.parametrize('template,height', [('emo', 8133), ('show', 9645)])

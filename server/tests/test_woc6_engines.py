@@ -33,7 +33,7 @@ def test_flow_keeps_five_plus_three_groups_and_global_caption_ids(monkeypatch, p
     assert [el['copyRole'] for block in blocks for el in block['elements'] if el.get('copyRole', '').startswith('colorName.')] == [f'colorName.{i}' for i in range(8)]
     assert [el['text'] for block in blocks for el in block['elements'] if el.get('copyRole', '').startswith('cap.')] == [''] * 8
     for block in blocks:
-        assert all(image['w'] == (880 if len(images([block])) == 1 else 428) for image in images([block]))
+        assert all(image['w'] == (880 if len(images([block])) == 1 else 440) for image in images([block]))
 
 
 def test_flow_never_merges_disjoint_groups_and_uses_loose_color_boundaries(monkeypatch):
@@ -86,5 +86,5 @@ def test_color_column_uses_source_color_index_for_name_and_swatch_after_front_re
     product = {'colors': [{'id': 'black', 'name': '블랙', 'swatchId': 'black', 'isBase': True}, {'id': 'white', 'name': '화이트', 'swatchId': 'white'}]}
     elements = [el for block in assemble_v4(board, [], [], product, True) if block.get('pageSectionKey') for el in block['elements']]
     captions = [el for el in elements if el.get('copyRole', '').endswith('.name')]
-    assert [(el['copyRole'], el['text']) for el in captions] == [('colors.1.name', '화이트'), ('colors.0.name', '블랙')]
-    assert [el['fill'] for el in elements if el.get('shape') == 'circle' and el['w'] == 10] == ['#ffffff', '#15141a']
+    assert [(el['copyRole'], el['text']) for el in captions] == [('colors.0.name', '블랙 BLACK'), ('colors.1.name', '화이트 WHITE')]
+    assert [el['fill'] for el in elements if el.get('shape') == 'circle' and el['w'] == 26] == ['#15141a', '#ffffff']

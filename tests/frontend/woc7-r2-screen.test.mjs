@@ -25,7 +25,7 @@ test('WOC9 pointer/focus keeps the selected tone; WOC12 design illustrations sta
     assert.deepEqual(h.DB.analysis.pageStyle, before);
   }
   const silver=()=>nodes(dialog()).filter(n=>n.type==='svg'&&n.props['data-design-illustration']).map(svg=>nodes(svg).filter(n=>n.type==='rect').map(n=>({x:n.props.x,y:n.props.y,width:n.props.width,height:n.props.height,fill:n.props.fill})));
-  const beforePictures=silver();assert.equal(beforePictures.length,2);
+  const beforePictures=silver();assert.equal(beforePictures.length,3);
   button(h.tree, '다음 페이지 색감').props.onClick(); h.render();
   assert.equal(bandFill(h.tree), '#edf4ff');
   assert.ok(tinted(outline()) > 0); assert.equal(tinted(dialog()), 0);assert.deepEqual(silver(),beforePictures);

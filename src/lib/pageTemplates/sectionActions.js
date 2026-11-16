@@ -1,7 +1,7 @@
 import { getTemplate, pageTemplatesCatalog, wearAdditionDefinition } from './catalog.js';
 import { analysisPageStyle } from './pageStyle.js';
 import { seedStoryboard, wornCropRegions } from './seed.js';
-import { sectionInsertionIndex, sectionRuns } from './sectionRuns.js';
+import { sectionInsertionIndex, sectionRuns, moveTemplateSection as moveRun } from './sectionRuns.js';
 import { sectionDesignChoices } from './designChoices.js';
 import { changeTemplateSectionDesign as changeRunDesign } from './sectionRuns.js';
 import { preferredWornCropSource, reconcileSectionDependencies, openingSourceProduct } from './sectionDependencies.js';
@@ -21,8 +21,18 @@ export { moveTemplateSection } from './sectionRuns.js';
 export function changeTemplateSectionDesign(blocks, key, designId, { product = {} } = {}) {
   const run = sectionRuns(blocks).find(run => run.key === key);
   if (!sectionDesignChoices(run, { storyboard: blocks, product }).some(design => design.id === designId)) return blocks;
-  const next = changeRunDesign(blocks, key, isPairedDesign(run.designId) ? pairedDesignId(designId) || designId : designId);
-  return next === blocks ? blocks : reconcileSectionDependencies(blocks, next, openingSourceProduct(run, product));
+  const selectedDesignId = isPairedDesign(run.designId) ? pairedDesignId(designId) || designId : designId;
+  let next = changeRunDesign(blocks, key, selectedDesignId);
+  if (next === blocks) return blocks;
+  const sourceProduct = openingSourceProduct(run, product);
+  next = reconcileSectionDependencies(blocks, next, sourceProduct);
+  if (run.kind !== 'first' || !pageTemplatesCatalog.designs[selectedDesignId].introDesignId) return next;
+  // Keep the stored list authoritative: save the linked intro beside its opening
+  // in this same board mutation, including when the hidden text run was removed.
+  if (!next.some(block => block.pageSectionKind === 'intro')) next = addTemplateSection(next, sourceProduct, {}, 'intro');
+  const runs = sectionRuns(next), intro = runs.find(item => item.kind === 'intro');
+  const following = runs[runs.findIndex(item => item.key === key) + 1];
+  return moveRun(next, intro.key, following?.key);
 }
 
 export const sectionMenuGroups = pageTemplatesCatalog.menuGroups.map(group => ({
