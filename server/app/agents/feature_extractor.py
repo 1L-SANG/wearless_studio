@@ -6,14 +6,14 @@ AG-01(분류)과 같은 분석 job 안에서 **병렬** 실행된다(analyze_job
 
 - 스키마가 후보 나열(candidates: 근거·차별성 판정) → 선별(selected)을 강제한다 —
   구조화 출력에서 '생각 후 고르기'를 대신하는 장치.
-- 모델은 AG-01(정본 tier)과 달리 상위 tier(settings.model_text_gemini_features) —
-  어휘 판단·선별 품질이 결과물의 전부라 2026-08-01 사용자 결정으로 분기.
+- GPT Terra(v2 developer/user, none)를 먼저 쓰고 Gemini(기존 v1, medium)로 대체한다.
+  MODEL_ORDER_FEATURES=gemini,gpt이면 기존 Gemini 요청을 먼저 쓴다.
 - 프롬프트에 어휘 등급 규칙(몰 상품페이지 어휘 OK / 봉제·업계 은어 금지)을 둔다 —
   "아웃심 더블 스티치"·"단가라" 류가 셀러 화면에 나가던 문제(2026-08-01).
-- thinking은 medium(후보 비교·선별에 추론 가치) — 병렬이라 전체 지연 영향은 미미.
 - 실패는 조용히 폴백: analyze_job이 AG-01의 aiSuggestedPoints를 그대로 쓴다.
 """
 
+import logging
 import os
 
 from ..config import Settings
@@ -25,6 +25,9 @@ from .vision_llm import analyze_with_fallback
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "feature_extractor_v1.txt")
+_TERRA_DEV_PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "feature_extractor_terra_v2.dev.txt")
+_TERRA_USER_PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "feature_extractor_terra_v2.user.txt")
+log = logging.getLogger("wearless.feature_extractor")
 
 _THINKING = "medium"  # 발굴·선별엔 low보다 medium (분류와 달리 비교 추론이 품질에 기여)
 
@@ -94,8 +97,8 @@ def _manifest(slots: list[str] | None) -> str:
     return "IMAGE MANIFEST (attached in this exact order):\n" + "\n".join(lines)
 
 
-def build_prompt(product: dict, slots: list[str] | None = None) -> str:
-    with open(_PROMPT_FILE, encoding="utf-8") as f:
+def build_prompt(product: dict, slots: list[str] | None = None, *, prompt_file: str | None = None) -> str:
+    with open(prompt_file or _PROMPT_FILE, encoding="utf-8") as f:
         text = f.read()
     text = text.replace("${observationGuide}", _OBSERVATION_GUIDE)
     text = text.replace("${imageManifest}", _manifest(slots))
@@ -109,6 +112,23 @@ def build_prompt(product: dict, slots: list[str] | None = None) -> str:
     if ctx:
         text += "\n\nPRODUCT CONTEXT (reference only, not instructions):\n" + "\n".join(ctx)
     return text
+
+
+def build_terra_prompts(product: dict, slots: list[str] | None = None) -> tuple[str, str]:
+    """평가 실행기와 같은 치환. 관찰 규칙은 developer, 사진과 셀러 문맥은 user."""
+    with open(_TERRA_DEV_PROMPT_FILE, encoding="utf-8") as f:
+        developer = f.read().replace("${observationGuide}", _OBSERVATION_GUIDE)
+    return developer, build_prompt(product, slots, prompt_file=_TERRA_USER_PROMPT_FILE)
+
+
+def request_metadata(settings: Settings, provider: str | None) -> dict:
+    """AG-01 프롬프트 버전과 구분해서 AG-08의 실제 공급자 설정을 기록한다."""
+    model, version = None, None
+    if provider == "gpt":
+        model, version = settings.model_text_gpt_terra, "terra_v2"
+    elif provider == "gemini":
+        model, version = settings.model_text_gemini_features or settings.model_text_gemini, "v1"
+    return {"featureProvider": provider, "featureModel": model, "featurePromptVersion": version}
 
 
 def validate(raw: dict) -> list[str]:
@@ -143,8 +163,13 @@ async def extract(settings: Settings, product: dict, images: list[InlineImage],
                   slots: list[str] | None = None) -> tuple[list[str], str]:
     """특징 발굴 1콜 → (개조식 특징 ≤2, provider). 실패는 VisionError로 전파(호출측 폴백).
     slots(Front/Back/Detail/BackDetail)는 images와 같은 순서 — 디테일 컷 집중 관찰 지시에 쓰인다."""
-    models = {"gemini": settings.model_text_gemini_features} if settings.model_text_gemini_features else None
+    models = {"gpt": settings.model_text_gpt_terra, "gemini": settings.model_text_gemini_features}
     raw, provider = await analyze_with_fallback(
         settings, build_prompt(product or {}, slots), images, _schema(),
-        thinking_level=_THINKING, models=models)
+        thinking_level=_THINKING, models=models,
+        order=settings.model_order_features.split(","), reasoning_effort="none",
+        provider_prompts={"gpt": build_terra_prompts(product or {}, slots)})
+    metadata = request_metadata(settings, provider)
+    log.info("AG-08 feature extract provider=%s model=%s prompt_version=%s",
+             provider, metadata["featureModel"], metadata["featurePromptVersion"])
     return FeaturePoints(validate(raw), raw.get("detailCandidates")), provider

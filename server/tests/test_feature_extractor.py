@@ -1,7 +1,8 @@
 """AG-08 selling-point-extractor 유닛 (순수 — validate·build_prompt·모델 tier 분기)."""
 
 import asyncio
-from types import SimpleNamespace
+
+from conftest import make_settings
 
 from app.agents import feature_extractor as fx
 
@@ -67,30 +68,30 @@ def test_extract_uses_feature_tier_model(monkeypatch):
     # AG-08만 상위 tier 로 분기 — 분류(AG-01)의 정본 모델을 쓰면 안 된다 (2026-08-01)
     seen = {}
 
-    async def fake(settings, prompt, images, schema, thinking_level=None, models=None):
+    async def fake(settings, prompt, images, schema, thinking_level=None, models=None, **kwargs):
         seen["models"] = models
         seen["thinking"] = thinking_level
         return {"candidates": [], "selected": ["로고 자수"]}, "gemini"
 
     monkeypatch.setattr(fx, "analyze_with_fallback", fake)
-    settings = SimpleNamespace(model_text_gemini_features="gemini-3.6-flash")
+    settings = make_settings(model_text_gemini_features="gemini-3.6-flash", model_order_features="gemini,gpt")
     points, provider = asyncio.run(fx.extract(settings, {}, []))
     assert points == ["로고 자수"] and provider == "gemini"
-    assert seen["models"] == {"gemini": "gemini-3.6-flash"}
+    assert seen["models"] == {"gpt": "gpt-6.1-terra", "gemini": "gemini-3.6-flash"}
     assert seen["thinking"] == "medium"
 
 
 def test_extract_without_feature_tier_falls_back_to_default_model(monkeypatch):
-    # 오버라이드 미설정이면 models=None → vision_llm 이 정본 모델을 쓴다
+    # Gemini 오버라이드 미설정이면 vision_llm 이 정본 모델을 쓴다
     seen = {}
 
-    async def fake(settings, prompt, images, schema, thinking_level=None, models=None):
+    async def fake(settings, prompt, images, schema, thinking_level=None, models=None, **kwargs):
         seen["models"] = models
         return {"candidates": [], "selected": []}, "gemini"
 
     monkeypatch.setattr(fx, "analyze_with_fallback", fake)
-    asyncio.run(fx.extract(SimpleNamespace(model_text_gemini_features=""), {}, []))
-    assert seen["models"] is None
+    asyncio.run(fx.extract(make_settings(model_text_gemini_features="", model_order_features="gemini,gpt"), {}, []))
+    assert seen["models"] == {"gpt": "gpt-6.1-terra", "gemini": ""}
 
 
 def test_schema_is_strict_compatible():
@@ -108,7 +109,7 @@ def test_extract_preserves_detail_metadata_in_existing_single_call(monkeypatch):
         return {"selected": ["골지 짜임"], "detailCandidates": raw_candidates}, "gemini"
 
     monkeypatch.setattr(fx, "analyze_with_fallback", fake)
-    points, provider = asyncio.run(fx.extract(SimpleNamespace(model_text_gemini_features=""), {}, []))
+    points, provider = asyncio.run(fx.extract(make_settings(model_order_features="gemini,gpt"), {}, []))
     assert points == ["골지 짜임"] and provider == "gemini"
     assert points.detail_candidates == raw_candidates
     assert len(calls) == 1

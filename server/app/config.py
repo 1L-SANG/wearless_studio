@@ -98,6 +98,8 @@ class Settings:
     # AG-08 특징 발굴만 상위 tier 로 분기 (2026-08-01 사용자 결정 — 마네킹 regenerate tier 분기와 같은 패턴).
     # 분류(AG-01)는 결정성·속도 우선이라 정본 tier 유지. 미설정이면 model_text_gemini 로 폴백.
     model_text_gemini_features: str = "gemini-3.7-flash"
+    # AG-08 전용 순서. gemini,gpt 한 값으로 기존 Flash medium 요청을 먼저 쓴다.
+    model_order_features: str = "gpt,gemini"
     # AG-01과 AG-08 문구의 같은 특징 여부만 판정하는 텍스트 전용 모델.
     model_text_gemini_merge: str = "gemini-3.8-flash"
     model_text_gpt_merge: str = "gpt-6-luna"
@@ -106,6 +108,7 @@ class Settings:
     model_text_gemini_similar: str = "gemini-3.8-flash"
     model_order_similar_plan: str = "gpt,gemini"
     model_text_gemini_outfit: str = "gemini-3.8-flash"
+    model_order_outfit: str = "gpt,gemini"
     outfit_timeout_seconds: float = 30.0
     outfit_props_timeout_seconds: float = 10.0
     outfit_recommendation_enabled: bool = False
@@ -754,6 +757,30 @@ def _model_order_similar_plan() -> str:
     return default
 
 
+def _model_order_outfit() -> str:
+    default = "gpt,gemini"
+    raw = os.getenv("MODEL_ORDER_OUTFIT")
+    if raw is None:
+        return default
+    value = ",".join(part.strip().lower() for part in raw.split(","))
+    if value in {default, "gemini,gpt"}:
+        return value
+    logger.warning("Invalid MODEL_ORDER_OUTFIT; using %s", default)
+    return default
+
+
+def _model_order_features() -> str:
+    default = "gpt,gemini"
+    raw = os.getenv("MODEL_ORDER_FEATURES")
+    if raw is None:
+        return default
+    value = ",".join(part.strip().lower() for part in raw.split(","))
+    if value in {default, "gemini,gpt"}:
+        return value
+    logger.warning("Invalid MODEL_ORDER_FEATURES; using %s", default)
+    return default
+
+
 def _model_order_points_merge() -> str:
     default = "gemini,gpt"
     raw = os.getenv("MODEL_ORDER_POINTS_MERGE")
@@ -935,12 +962,14 @@ def load_settings() -> Settings:
         model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.7-flash"),
         model_text_gemini_features=os.getenv(
             "MODEL_ROUTING_TEXT_GEMINI_FEATURES", "gemini-3.7-flash"),
+        model_order_features=_model_order_features(),
         model_text_gemini_merge=os.getenv("MODEL_ROUTING_TEXT_GEMINI_MERGE", "gemini-3.8-flash"),
         model_text_gpt_merge=(os.getenv("MODEL_ROUTING_TEXT_GPT_MERGE") or "").strip() or "gpt-6-luna",
         model_order_points_merge=_model_order_points_merge(),
         model_text_gemini_similar=(
             os.getenv("MODEL_ROUTING_TEXT_GEMINI_SIMILAR") or "gemini-3.8-flash"),
         model_order_similar_plan=_model_order_similar_plan(),
+        model_order_outfit=_model_order_outfit(),
         model_text_gemini_outfit="gemini-3.8-flash",
         outfit_recommendation_enabled=_flag("OUTFIT_RECOMMENDATION", "off", {"off", "on"}) == "on",
         outfit_props_ready=_flag("OUTFIT_PROPS_READY", "off", {"off", "on"}) == "on",

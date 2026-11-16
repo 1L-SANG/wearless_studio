@@ -326,7 +326,7 @@ async def run_analyze_job(app, job: dict) -> None:
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
                 project_id=project_id, clothing_type=clothing_type,
                 analysis_payload=analysis_payload, result={"data": result_data},
-                metadata={"provider": provider, "featureProvider": feature_provider,
+                metadata={"provider": provider, **feature_extractor.request_metadata(s, feature_provider),
                           "promptVersion": "v1",
                           # 판정 원문 보존처(match 도 포함) — 사후에 오탐률을 되짚을 때 유일한 근거.
                           **({"inputConsistency": consistency} if consistency else {})})

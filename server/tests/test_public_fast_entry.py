@@ -206,9 +206,10 @@ def test_features_vision_failure_is_retryable_502(client, agents):
     assert "private provider detail" not in response.text
 
 
-def test_features_gemini_failure_does_not_fall_back_to_gpt(client, monkeypatch):
+def test_features_rollback_gemini_failure_falls_back_to_terra(client, monkeypatch):
     settings = replace(client.app.state.settings, r2_secret_access_key=SECRET,
-                       analysis_model_order="gemini,gpt", analysis_timeout_seconds=17)
+                       analysis_model_order="gemini,gpt", model_order_features="gemini,gpt",
+                       analysis_timeout_seconds=17)
     client.app.state.settings = settings
     calls = []
 
@@ -224,9 +225,9 @@ def test_features_gemini_failure_does_not_fall_back_to_gpt(client, monkeypatch):
     monkeypatch.setitem(vision_llm._PROVIDERS, "gemini", (gemini, lambda s: s.model_text_gemini, lambda s: True))
     monkeypatch.setitem(vision_llm._PROVIDERS, "gpt", (gpt, lambda s: s.model_text, lambda s: True))
     response = post_features(client)
-    assert response.status_code == 502
-    assert response.json()["error"]["code"] == "feature_extraction_failed"
-    assert calls == ["gemini"]
+    assert response.status_code == 200
+    assert response.json()["data"]["points"]["items"] == ["단추 여밈"]
+    assert calls == ["gemini", "gpt"]
     assert settings.analysis_model_order == "gemini,gpt"
 
 
@@ -234,7 +235,7 @@ def test_features_gemini_failure_does_not_fall_back_to_gpt(client, monkeypatch):
 @pytest.mark.parametrize("path", ["public", "job"])
 def test_legacy_features_keep_configured_provider_order(client, monkeypatch, order, want_calls, path):
     settings = replace(client.app.state.settings, r2_secret_access_key=SECRET,
-                       analysis_model_order=order, input_consistency="off")
+                       analysis_model_order=order, model_order_features=order, input_consistency="off")
     client.app.state.settings = settings
     calls = []
 

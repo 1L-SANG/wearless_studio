@@ -204,7 +204,7 @@ def test_model_receives_small_tidy_thumbs_original_product_and_v2_schema(monkeyp
     call = AsyncMock(return_value={"sets": [model_set("bottom-00")]})
     monkeypatch.setattr(agent, "_call_gemini", call)
     pools = outfit.candidate_pools(catalog(), {"clothingType": "top"}, limit=6)
-    asyncio.run(agent.recommend(make_settings(), Images(), [(png((768, 1024), "blue"), "image/png")],
+    asyncio.run(agent.recommend(make_settings(gemini_api_key="mock"), Images(), [(png((768, 1024), "blue"), "image/png")],
         pools, context={"clothingType": "top"}, fixed={"slots": {}}))
     images = call.call_args.args[3]
     decoded = [Image.open(BytesIO(i.data)) for i in images]
@@ -244,6 +244,7 @@ def test_offline_dry_run_counts_actual_prepared_request_without_provider(monkeyp
     assert [r["image_count"] for r in rows] == [7, 13, 19, 7, 7, 7]
     assert [sum(r["candidates_per_role"].values()) for r in rows] == [6, 12, 18, 6, 6, 6]
     for measured in rows:
+        assert measured["prompt_version"] == ("outfit_props_v1" if measured["scenario"].startswith("props_") else "outfit_recommendation_v3")
         assert measured["product_image"] == {"width": 384, "height": 512}
         assert measured["candidate_image_sizes"] == [{"width": 256, "height": 256}]
         assert measured["prompt_chars"] == measured["user_prompt_chars"] + measured["system_prompt_chars"]
@@ -266,7 +267,7 @@ def test_dry_run_prompt_size_matches_live_mocked_boundary(monkeypatch):
     measured = asyncio.run(outfit_dry_run.measure_request(Images(), images, pools, context=context, fixed=fixed))
     call = AsyncMock(return_value={})
     monkeypatch.setattr(agent, "_call_gemini", call)
-    asyncio.run(agent.recommend(make_settings(), Images(), images, pools, context=context, fixed=fixed))
+    asyncio.run(agent.recommend(make_settings(gemini_api_key="mock"), Images(), images, pools, context=context, fixed=fixed))
     assert measured["user_prompt_chars"] == len(call.call_args.args[2])
     assert measured["system_prompt_chars"] == len(call.call_args.kwargs["system_prompt"])
     assert measured["image_count"] == len(call.call_args.args[3]) == 3

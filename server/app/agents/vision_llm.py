@@ -783,6 +783,7 @@ async def analyze_with_fallback(
     timeout_seconds: float | None = None,
     order: list[str] | None = None,
     reasoning_effort: str | None = None,
+    provider_prompts: dict[str, tuple[str | None, str]] | None = None,
 ) -> tuple[dict, str]:
     """순서대로 provider 시도 → (파싱된 raw dict, 사용한 provider). 전부 실패 시 VisionError.
 
@@ -794,7 +795,9 @@ async def analyze_with_fallback(
     require_complete_envelope=True는 정상 종료, 단일 후보, 비차단 응답만 인정한다.
     system_prompt는 opt-in privileged 정책이며 미지정 호출의 body와 옵션은 유지한다.
     order는 호출별 provider 순서이며 None이면 전역 순서를 따른다.
-    reasoning_effort는 지정한 경우에만 GPT에 전달한다."""
+    reasoning_effort는 지정한 경우에만 GPT에 전달한다.
+    provider_prompts는 opt-in (developer 지시, user 문구) 오버라이드다.
+    미지정 공급자는 기존 system_prompt와 prompt를 그대로 사용한다."""
     timeout = settings.analysis_timeout_seconds if timeout_seconds is None else timeout_seconds
     attempts: list[str] = []
     last_error: Exception | None = None
@@ -813,11 +816,12 @@ async def analyze_with_fallback(
         started = time.perf_counter()
         try:
             complete_kwargs = {"metadata": {}} if require_complete_envelope else {}
-            if system_prompt is not None:
-                complete_kwargs["system_prompt"] = system_prompt
+            provider_system, provider_prompt = (provider_prompts or {}).get(name, (system_prompt, prompt))
+            if provider_system is not None:
+                complete_kwargs["system_prompt"] = provider_system
             if name == "gpt" and reasoning_effort is not None:
                 complete_kwargs["reasoning_effort"] = reasoning_effort
-            raw = await call(settings, model, prompt, images, schema, timeout,
+            raw = await call(settings, model, provider_prompt, images, schema, timeout,
                              thinking_level=thinking_level, **complete_kwargs)
             _breaker.success(name, model)
             if attempts:
