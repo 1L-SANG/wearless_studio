@@ -1011,7 +1011,11 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                             "confirmed_prompt_input": confirmed_packet.prompt_input,
                         }
                         if confirmed_packet is not None
-                        else {}
+                        else (
+                            {"source_mirrored": True}
+                            if (cut_analysis or {}).get("sourceMirrored") is True
+                            else {}
+                        )
                     )
                     cut_qc = await cut_output_qc.verdict(
                         s,

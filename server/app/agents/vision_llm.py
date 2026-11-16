@@ -136,10 +136,15 @@ def qc_system_prompt(family: str, context=None) -> str:
                         or not all(value is True for value in marker.values())):
                     raise ValueError("invalid_qc_confirmed_product_authority")
                 product_authority = {"confirmedGptProductAuthority": dict(marker)}
+            mirror_authority = {}
+            if "genericProductMirrorAuthority" in context:
+                if profile != "generic_v1" or context["genericProductMirrorAuthority"] is not True:
+                    raise ValueError("invalid_qc_generic_product_mirror_authority")
+                mirror_authority["genericProductMirrorAuthority"] = True
             if "sourceMirrored" in context:
-                if not product_authority or context["sourceMirrored"] is not True:
+                if not (product_authority or mirror_authority) or context["sourceMirrored"] is not True:
                     raise ValueError("invalid_qc_confirmed_product_mirror_authority")
-                product_authority["sourceMirrored"] = True
+                mirror_authority["sourceMirrored"] = True
             presentation = {}
             if "productPresentation" in context:
                 if profile != "generic_v1":
@@ -171,7 +176,7 @@ def qc_system_prompt(family: str, context=None) -> str:
                 raise ValueError("missing_qc_reference_contract")
             safe = {"authorityProfile": profile, "attributeOwners": owners,
                     "referenceAllowedAttributes": sorted({_qc_choice(value, _QC_REFERENCE_ATTRIBUTES) for value in references}),
-                    **presentation, **product_authority}
+                    **presentation, **product_authority, **mirror_authority}
         elif family == "image":
             count = _qc_count(context["productCount"], minimum=0)
             roles = _qc_roles(context["imageRoles"], _QC_IMAGE_ROLES)
