@@ -781,6 +781,8 @@ async def analyze_with_fallback(
     require_complete_envelope: bool = False,
     system_prompt: str | None = None,
     timeout_seconds: float | None = None,
+    order: list[str] | None = None,
+    reasoning_effort: str | None = None,
 ) -> tuple[dict, str]:
     """순서대로 provider 시도 → (파싱된 raw dict, 사용한 provider). 전부 실패 시 VisionError.
 
@@ -790,11 +792,13 @@ async def analyze_with_fallback(
     models 는 provider 별 모델 오버라이드({'gemini': 'gemini-3.7-flash'}) — 에이전트별 tier
     분기용(AG-08). 미지정 provider 는 settings 의 정본 모델을 그대로 쓴다.
     require_complete_envelope=True는 정상 종료, 단일 후보, 비차단 응답만 인정한다.
-    system_prompt는 opt-in privileged 정책이며 미지정 호출의 body와 옵션은 유지한다."""
+    system_prompt는 opt-in privileged 정책이며 미지정 호출의 body와 옵션은 유지한다.
+    order는 호출별 provider 순서이며 None이면 전역 순서를 따른다.
+    reasoning_effort는 지정한 경우에만 GPT에 전달한다."""
     timeout = settings.analysis_timeout_seconds if timeout_seconds is None else timeout_seconds
     attempts: list[str] = []
     last_error: Exception | None = None
-    order = list(dict.fromkeys(_order(settings)))
+    order = list(dict.fromkeys(_order(settings) if order is None else order))
     available = {name for name in order if _PROVIDERS[name][2](settings)}
     for index, name in enumerate(order):
         if name not in available:
@@ -811,6 +815,8 @@ async def analyze_with_fallback(
             complete_kwargs = {"metadata": {}} if require_complete_envelope else {}
             if system_prompt is not None:
                 complete_kwargs["system_prompt"] = system_prompt
+            if name == "gpt" and reasoning_effort is not None:
+                complete_kwargs["reasoning_effort"] = reasoning_effort
             raw = await call(settings, model, prompt, images, schema, timeout,
                              thinking_level=thinking_level, **complete_kwargs)
             _breaker.success(name, model)

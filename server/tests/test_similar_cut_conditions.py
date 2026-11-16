@@ -276,7 +276,8 @@ def test_planner_corrects_condition_violation_once(monkeypatch, always_invalid):
     assert calls[1][1].startswith(calls[0][1] + "\n<correction>\n")
     assert calls[1][1].endswith("</correction>\n")
     assert calls[0][0].analysis_timeout_seconds == 60
-    assert calls[0][2] == {"models": {"gemini": "gemini-3.8-flash"},
+    assert calls[0][2] == {"models": {"gpt": "gpt-6.1-terra", "gemini": "gemini-3.8-flash"},
+                           "order": ["gpt", "gemini"], "reasoning_effort": "none",
                            "thinking_level": "low", "require_complete_envelope": True,
                            "timeout_seconds": 120}
 

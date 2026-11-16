@@ -3,8 +3,11 @@
 import os
 import math
 import pathlib
+import logging
 from dataclasses import dataclass
 from urllib.parse import urlsplit
+
+logger = logging.getLogger("wearless.config")
 
 
 @dataclass(frozen=True)
@@ -85,6 +88,8 @@ class Settings:
     openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 주 키
     openai_api_key_fallback: str | None = None  # 주 키 영구 실패 때 쓰는 오너 계정 키
     model_text: str = "gpt-5.4-mini"  # GPT 폴백 provider 의 text/vision 모델 (openai key 있을 때만)
+    # 코디·비슷한 컷 계획·특징 발굴·포인트 합치기가 공유하는 Terra 모델.
+    model_text_gpt_terra: str = "gpt-6.1-terra"
     # 옷 색 근거의 영역 관찰 전용. 공용 분석 순서와 무관하게 GPT를 직접 호출한다.
     model_garment_color_observer: str = "gpt-6.1-terra"
     # text tier 정본 모델 (2026-07-02 결정 — ai_agent_modules §1).
@@ -97,6 +102,7 @@ class Settings:
     model_text_gemini_merge: str = "gemini-3.8-flash"
     # 비슷한 컷 계획 전용. 공용 텍스트 모델을 쓰는 검수와 분리한다.
     model_text_gemini_similar: str = "gemini-3.8-flash"
+    model_order_similar_plan: str = "gpt,gemini"
     model_text_gemini_outfit: str = "gemini-3.8-flash"
     outfit_timeout_seconds: float = 30.0
     outfit_props_timeout_seconds: float = 10.0
@@ -734,6 +740,18 @@ def _mannequin_adjust_tier() -> str:
     return t if t in {"image_mannequin", "image_light", "image_high"} else ""
 
 
+def _model_order_similar_plan() -> str:
+    default = "gpt,gemini"
+    raw = os.getenv("MODEL_ORDER_SIMILAR_PLAN")
+    if raw is None:
+        return default
+    value = ",".join(part.strip().lower() for part in raw.split(","))
+    if value in {default, "gemini,gpt"}:
+        return value
+    logger.warning("Invalid MODEL_ORDER_SIMILAR_PLAN; using %s", default)
+    return default
+
+
 def _flag(env: str, default: str, allowed: set[str]) -> str:
     """검색 증강 flag — 허용값 밖이면 안전하게 default(대개 'off')로 폴백."""
     v = (os.getenv(env, default) or default).strip().lower()
@@ -897,6 +915,7 @@ def load_settings() -> Settings:
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         openai_api_key_fallback=os.getenv("OPENAI_API_KEY_FALLBACK") or None,
         model_text=os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),
+        model_text_gpt_terra=(os.getenv("MODEL_ROUTING_TEXT_GPT_TERRA") or "").strip() or "gpt-6.1-terra",
         model_garment_color_observer=(
             os.getenv("MODEL_GARMENT_COLOR_OBSERVER") or "").strip() or "gpt-6.1-terra",
         model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.7-flash"),
@@ -905,6 +924,7 @@ def load_settings() -> Settings:
         model_text_gemini_merge=os.getenv("MODEL_ROUTING_TEXT_GEMINI_MERGE", "gemini-3.8-flash"),
         model_text_gemini_similar=(
             os.getenv("MODEL_ROUTING_TEXT_GEMINI_SIMILAR") or "gemini-3.8-flash"),
+        model_order_similar_plan=_model_order_similar_plan(),
         model_text_gemini_outfit="gemini-3.8-flash",
         outfit_recommendation_enabled=_flag("OUTFIT_RECOMMENDATION", "off", {"off", "on"}) == "on",
         outfit_props_ready=_flag("OUTFIT_PROPS_READY", "off", {"off", "on"}) == "on",
