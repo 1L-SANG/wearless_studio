@@ -15,6 +15,7 @@ import copy
 import hashlib
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
@@ -310,6 +311,68 @@ class _CircuitBreaker:
 
 
 _breaker = _CircuitBreaker()
+
+
+_REJECTION_WINDOW_SECONDS = 600
+_REJECTION_THRESHOLD = 3
+_REJECTION_COOLDOWN_SECONDS = 1800
+_REJECTION_MAX_KEYS = 64
+_REJECTION_MAX_TIMESTAMPS = 50
+
+
+@dataclass
+class _RejectionState:
+    timestamps: list[float] = field(default_factory=list)
+    last_warning: float | None = None
+    suppressed: int = 0
+
+
+class _RejectionWatch:
+    def __init__(self, *, clock=time.monotonic):
+        self._clock = clock
+        self._states: dict[tuple[str, str, str], _RejectionState] = {}
+        self._lock = Lock()
+
+    def record(self, model, body, response):
+        gen = body.get("generationConfig", {})
+        schema_bytes = (json.dumps(gen["responseSchema"], sort_keys=True).encode("utf-8")
+                        if "responseSchema" in gen else None)
+        schema_hash = hashlib.sha256(schema_bytes).hexdigest()[:12] if schema_bytes is not None else "none"
+        key = ("gemini", model, schema_hash)
+        with self._lock:
+            now = self._clock()
+            if key not in self._states:
+                if len(self._states) >= _REJECTION_MAX_KEYS:
+                    del self._states[next(iter(self._states))]
+                self._states[key] = _RejectionState()
+            state = self._states[key]
+            state.timestamps = [at for at in state.timestamps if now - at <= _REJECTION_WINDOW_SECONDS]
+            state.timestamps.append(now)
+            state.timestamps = state.timestamps[-_REJECTION_MAX_TIMESTAMPS:]
+            if state.last_warning is not None and now - state.last_warning < _REJECTION_COOLDOWN_SECONDS:
+                state.suppressed += 1
+                return
+            if len(state.timestamps) < _REJECTION_THRESHOLD:
+                return
+            error_status = "unknown"
+            try:
+                status = response.json().get("error", {}).get("status")
+                if isinstance(status, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,39}", status):
+                    error_status = status
+            except (ValueError, AttributeError, TypeError):
+                pass
+            images = sum("inline_data" in part for content in body.get("contents", [])
+                         for part in content.get("parts", []))
+            logger.warning(
+                "vision_llm repeated rejection: provider=gemini model=%s status=400 error_status=%s "
+                "schema_hash=%s schema_bytes=%d images=%d count=%d window_seconds=%d suppressed=%d",
+                model, error_status, schema_hash, len(schema_bytes) if schema_bytes is not None else 0,
+                images, len(state.timestamps), _REJECTION_WINDOW_SECONDS, state.suppressed)
+            state.last_warning = now
+            state.suppressed = 0
+
+
+_rejection_watch = _RejectionWatch()
 
 
 def _retry_after_seconds(header):
@@ -691,6 +754,11 @@ async def _call_gemini(settings: Settings, model: str, prompt: str,
             _GEMINI_URL.format(model=model), json=body,
             headers={"x-goog-api-key": settings.gemini_api_key})
     if res.status_code != 200:
+        if res.status_code == 400:
+            try:
+                _rejection_watch.record(model, body, res)
+            except Exception:
+                logger.debug("vision_llm rejection watch failed")
         raise VisionError(f"Gemini {res.status_code}: {res.text[:300]}", status_code=res.status_code)
     return await run_cpu_bound(_parse_gemini_response, res, metadata, model)
 

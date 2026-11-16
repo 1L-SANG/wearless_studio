@@ -1,4 +1,7 @@
+import hashlib
 import json
+import logging
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 import pytest
@@ -465,3 +468,191 @@ def test_similar_schema_emits_state_before_choice_for_gemini():
     from app.agents import similar_cut
     converted = vision_llm._gemini_body("prompt", [], similar_cut._SCHEMA, "low")["generationConfig"]["responseSchema"]
     assert converted["propertyOrdering"][:2] == ["sourceState", "choice"]
+
+
+@pytest.fixture
+def rejection_watch(monkeypatch):
+    clock = [0.0]
+    watch = vision_llm._RejectionWatch(clock=lambda: clock[0])
+    monkeypatch.setattr(vision_llm, "_rejection_watch", watch)
+    return clock, watch
+
+
+@pytest.fixture
+def rejected_gemini(monkeypatch, rejection_watch):
+    response = FakeResp(400, {"error": {"status": "INVALID_ARGUMENT", "message": "private-response"}})
+    monkeypatch.setattr(vision_llm.httpx, "AsyncClient", fake_client_factory(lambda url: response))
+
+    def reject(schema=None, model="gemini-test"):
+        with pytest.raises(vision_llm.VisionError) as result:
+            run(vision_llm._call_gemini(
+                make_settings(gemini_api_key="private-api-key"), model, "private-prompt", _images(),
+                schema if schema is not None else {"type": "object"}, 5))
+        assert str(result.value) == f"Gemini 400: {response.text[:300]}"
+        assert result.value.status_code == 400
+
+    return reject
+
+
+def _rejection_warnings(caplog):
+    return [record.getMessage() for record in caplog.records
+            if record.levelno == logging.WARNING and record.name == "wearless.vision_llm"
+            and record.getMessage().startswith("vision_llm repeated rejection:")]
+
+
+def test_gemini_400_third_rejection_warns_with_only_safe_fields(rejected_gemini, caplog):
+    schema = {"type": "object", "properties": {"색": {"type": "string"}},
+              "additionalProperties": False}
+    for _ in range(3):
+        rejected_gemini(schema)
+    sent_schema = {"type": "OBJECT", "properties": {"색": {"type": "STRING"}}}
+    encoded = json.dumps(sent_schema, sort_keys=True).encode("utf-8")
+    assert _rejection_warnings(caplog) == [
+        "vision_llm repeated rejection: provider=gemini model=gemini-test status=400 "
+        f"error_status=INVALID_ARGUMENT schema_hash={hashlib.sha256(encoded).hexdigest()[:12]} "
+        f"schema_bytes={len(encoded)} images=1 count=3 window_seconds=600 suppressed=0"]
+    assert len(caplog.records) == 1
+    for private in ("private-api-key", "private-prompt", "private-response", "색", "iVBORw=="):
+        assert private not in caplog.text
+
+
+def test_gemini_400_cooldown_retains_suppressed_count(rejection_watch, rejected_gemini, caplog):
+    clock, _ = rejection_watch
+    for _ in range(3):
+        rejected_gemini()
+    for at in (1, 2, 1799):
+        clock[0] = at
+        rejected_gemini()
+    assert len(_rejection_warnings(caplog)) == 1
+    clock[0] = 1800
+    rejected_gemini()  # Cooldown expired, but only two rejections in the current window.
+    assert len(_rejection_warnings(caplog)) == 1
+    clock[0] = 1801
+    rejected_gemini()
+    assert len(_rejection_warnings(caplog)) == 2
+    assert _rejection_warnings(caplog)[1].endswith("count=3 window_seconds=600 suppressed=3")
+    clock[0] = 3601
+    for _ in range(3):
+        rejected_gemini()
+    assert _rejection_warnings(caplog)[2].endswith("suppressed=0")
+
+
+def test_gemini_400_schema_and_model_counts_are_separate(rejected_gemini, caplog):
+    for _ in range(2):
+        rejected_gemini({"type": "object"})
+        rejected_gemini({"type": "string"})
+        rejected_gemini({"type": "object"}, model="gemini-other")
+    assert not _rejection_warnings(caplog)
+
+
+def test_gemini_400_old_rejections_expire(rejection_watch, rejected_gemini, caplog):
+    clock, _ = rejection_watch
+    for at in (0, 601, 1202):
+        clock[0] = at
+        rejected_gemini()
+    assert not _rejection_warnings(caplog)
+
+
+@pytest.mark.parametrize("status", [429, 500])
+def test_other_gemini_errors_do_not_call_rejection_watch(monkeypatch, rejection_watch, status):
+    calls = []
+    monkeypatch.setattr(rejection_watch[1], "record", lambda *args: calls.append(args))
+    monkeypatch.setattr(vision_llm.httpx, "AsyncClient",
+                        fake_client_factory(lambda url: FakeResp(status, text="original-error")))
+    with pytest.raises(vision_llm.VisionError) as result:
+        run(vision_llm._call_gemini(make_settings(gemini_api_key="test"), "gemini-test",
+                                    "prompt", [], {}, 5))
+    assert str(result.value) == f"Gemini {status}: original-error"
+    assert result.value.status_code == status
+    assert calls == []
+
+
+def test_gemini_400_still_falls_back_without_opening_breaker(monkeypatch, rejection_watch, caplog):
+    calls = []
+
+    def handler(url):
+        calls.append(url)
+        return FakeResp(400, text="original-error") if "generativelanguage" in url else _gpt_ok()
+
+    monkeypatch.setattr(vision_llm.httpx, "AsyncClient", fake_client_factory(handler))
+    settings = make_settings(gemini_api_key="test", openai_api_key="test",
+                             analysis_model_order="gemini,gpt", ai_breaker_failures=1)
+    for _ in range(4):
+        assert run(_run(settings, None)) == (RAW, "gpt")
+    assert len(calls) == 8
+    assert vision_llm._breaker._states == {}
+    assert not vision_llm._breaker.should_skip("gemini", settings.model_text_gemini, has_next=True)
+    failures = [record.getMessage() for record in caplog.records
+                if record.getMessage().startswith("vision_llm provider failed:")]
+    assert len(failures) == 4
+    assert all(message.startswith(f"vision_llm provider failed: gemini model={settings.model_text_gemini} "
+                                 "VisionError(Gemini 400: original-error) after ")
+               and message.endswith(" images=1") for message in failures)
+
+
+def test_gemini_400_watch_failure_preserves_original_error(monkeypatch, rejection_watch, caplog):
+    def broken(*args):
+        raise RuntimeError("private-watch-exception")
+
+    monkeypatch.setattr(rejection_watch[1], "record", broken)
+    monkeypatch.setattr(vision_llm.httpx, "AsyncClient",
+                        fake_client_factory(lambda url: FakeResp(400, text="original-error")))
+    with caplog.at_level(logging.DEBUG, logger="wearless.vision_llm"):
+        with pytest.raises(vision_llm.VisionError) as result:
+            run(vision_llm._call_gemini(make_settings(gemini_api_key="test"), "gemini-test",
+                                        "prompt", [], {}, 5))
+    assert str(result.value) == "Gemini 400: original-error"
+    assert result.value.status_code == 400
+    assert any(record.levelno == logging.DEBUG and record.getMessage() == "vision_llm rejection watch failed"
+               for record in caplog.records)
+    assert "private-watch-exception" not in caplog.text
+
+
+@pytest.mark.parametrize("status,expected", [
+    ("INVALID_ARGUMENT", "INVALID_ARGUMENT"), ("A" * 40, "A" * 40),
+    ("A" * 41, "unknown"), ("invalid_argument", "unknown"),
+    ("INVALID\nARGUMENT", "unknown"), ("PRIVATE PROMPT", "unknown"),
+    ("오류A", "unknown"), (None, "unknown"), (400, "unknown"),
+])
+def test_rejection_error_status_is_bounded_and_safe(rejection_watch, caplog, status, expected):
+    watch = rejection_watch[1]
+    for _ in range(3):
+        watch.record("gemini-test", {}, FakeResp(400, {"error": {"status": status}}))
+    assert f"error_status={expected} schema_hash=none schema_bytes=0 images=0" in _rejection_warnings(caplog)[0]
+
+
+@pytest.mark.parametrize("payload,bad_json", [
+    ({}, False), ({"error": None}, False), (["not-an-object"], False), ({}, True),
+])
+def test_rejection_malformed_response_still_warns(rejection_watch, caplog, payload, bad_json):
+    for _ in range(3):
+        rejection_watch[1].record("gemini-test", {}, FakeResp(400, payload, bad_json=bad_json))
+    assert "error_status=unknown" in _rejection_warnings(caplog)[0]
+
+
+def test_rejection_watch_evicts_oldest_of_65_schema_keys(rejection_watch):
+    watch = rejection_watch[1]
+    keys = []
+    for index in range(65):
+        body = {"generationConfig": {"responseSchema": {"title": str(index)}}}
+        watch.record("gemini-test", body, FakeResp(400))
+        keys.append(next(reversed(watch._states)))
+    assert len(watch._states) == 64
+    assert keys[0] not in watch._states
+    assert list(watch._states) == keys[1:]
+
+
+def test_rejection_watch_sorts_schema_keys_and_bounds_concurrent_history(rejection_watch, caplog):
+    watch = rejection_watch[1]
+
+    def reject(index):
+        schema = {"type": "object", "properties": {}} if index % 2 else {"properties": {}, "type": "object"}
+        watch.record("gemini-test", {"generationConfig": {"responseSchema": schema}}, FakeResp(400))
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(reject, range(100)))
+    assert len(watch._states) == 1
+    state = next(iter(watch._states.values()))
+    assert len(state.timestamps) == 50
+    assert state.suppressed == 97
+    assert len(_rejection_warnings(caplog)) == 1
