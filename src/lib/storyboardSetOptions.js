@@ -2,6 +2,8 @@ import { isNeutralPageSwatch } from './pageTemplates/tokens.js';
 import { outerClosureRange } from './outerClosure.js';
 import { updateHorizonGroupBackground, horizonBackgroundMode } from './horizonBackground.js';
 import { inheritSimilarCutRecipes } from './storyboardSimilarCuts.js';
+import { inferStoryboardSpaceSet } from './storyboardSpaceSetCatalog.js';
+import { horizonBackgroundAvailability, effectiveHorizonBackgroundMode } from './horizonBackgroundAvailability.js';
 
 export function setPhotoGroupId(block, blocks = []) {
   const source = block?.similarSourceBlockId ? blocks.find(item => item.id === block.similarSourceBlockId) : block;
@@ -22,6 +24,14 @@ export function setOptionState(members = [], product = {}, frontClosure, colorOp
     chromatic: Boolean(chromatic), color: colorOpts.find(color => String(color.id) === String(colorId)),
     backgroundOn: worn.some(block => horizonBackgroundMode(block) === 'garment-tone'),
   };
+}
+
+export function setOptionDisplayState(members = [], product = {}, frontClosure, colorOpts = [], evidence) {
+  const state = setOptionState(members, product, frontClosure, colorOpts);
+  const set = inferStoryboardSpaceSet(members.find(block => block.cutType === 'horizon')?.spaceGroupId);
+  const availability = horizonBackgroundAvailability(members, product, evidence, set?.id);
+  return { ...state, backgroundOn: members.some(block => block.source === 'ai'
+    && effectiveHorizonBackgroundMode(block, availability) === 'garment-tone') };
 }
 
 export function updateSetOuterClosure(blocks, groupId, closed) {

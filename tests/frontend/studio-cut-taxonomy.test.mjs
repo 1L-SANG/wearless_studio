@@ -135,7 +135,7 @@ test('all show horizon-only slots accept minimal, reject ordinary styling and re
       assert.equal(reverted.cutType, 'horizon'); assert.equal(reverted.exampleId, null);
     }
   }
-  assert.equal(slotAllowsCutType({ allowedCutTypes: ['styling'] }, { cutType: 'styling', exampleId: minimal.id }), false);
+  assert.equal(slotAllowsCutType({ allowedCutTypes: ['styling'] }, { cutType: 'styling', exampleId: minimal.id }), true);
 });
 
 test('old saved minimal, horizon and empty blocks open without migration or new fields', () => {

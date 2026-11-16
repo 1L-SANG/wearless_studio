@@ -176,11 +176,12 @@ test('R5 actual screen locks set photos and followers, nudges the head and saves
 });
 
 test('R5 disabled framing uses focusable segments and a described popover reason',async()=>{
- const Segment=await loadStoryboardComponent('StoryboardChoiceControls.jsx','PhotoSegment');
+ const Segment=await loadStoryboardComponent('StoryboardChoiceControls.jsx','PhotoSegment',{useId:()=>':segment-test:'});
  const chosen=[];const tree=Segment({label:'구도',value:'medium',options:[{value:'full',label:'전신',disabled:true},{value:'medium',label:'하반신'}],onChange:value=>chosen.push(value)});
  const buttons=nodes(tree).filter(n=>n.type==='button');assert.equal(buttons.length,2);assert.equal(buttons[0].props['aria-disabled'],true);assert.ok(!buttons[0].props.disabled);
- assert.equal(buttons[0].props['aria-describedby'],'sb-choice-구도-full-reason');buttons[0].props.onClick();buttons[1].props.onClick();assert.deepEqual(chosen,['medium']);
- const reason=nodes(tree).find(n=>n.type?.name==='ChoiceReason');assert.equal(reason.props.reason,'이 조건은 아직 서비스에 공개되지 않았어요');
+ const reason=nodes(tree).find(n=>n.type?.name==='ChoiceReason');
+ assert.equal(buttons[0].props['aria-describedby'],reason.props.id);assert.doesNotMatch(reason.props.id,/\s/);buttons[0].props.onClick();buttons[1].props.onClick();assert.deepEqual(chosen,['medium']);
+ assert.equal(reason.props.reason,'이 조건은 아직 서비스에 공개되지 않았어요');
 });
 
 test('R5 followup a singleton stored set keeps ordinary editing and its old saved closure',async()=>{

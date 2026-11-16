@@ -26,6 +26,8 @@ def studio_style_for_set(members):
 
 
 def slot_allows_cut_type(recipe, block):
+    if block.get("cutType") in recipe["allowedCutTypes"]:
+        return True
     if block.get("cutType") == "styling" and is_minimal_example_id(block.get("exampleId")):
         return "horizon" in recipe["allowedCutTypes"]
-    return block.get("cutType") in recipe["allowedCutTypes"]
+    return False

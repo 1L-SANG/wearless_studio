@@ -60,13 +60,14 @@ export function StoryboardSpaceSetPanel({ mode, error, onChoose, gender, clothin
   const backgroundVisible = placedSet && studio && studioStyle === 'horizon' && optionState.chromatic;
   const outerVisible = placedSet && optionState.outerVisible && mode === 'replace';
   const horizonMembers = currentMembers.filter(member => member.cutType === 'horizon');
-  const backgroundOn = horizonMembers.length ? optionState.backgroundOn : backgroundDraft;
+  const backgroundSelected = horizonMembers.length ? optionState.backgroundOn : backgroundDraft;
   useEffect(() => { if (horizonMembers.length) setBackgroundDraft(optionState.backgroundOn); }, [target, optionState.backgroundOn]);
   // When browsing from a minimal set, check the same colors against a horizon
   // candidate. The choice is local until a horizon set is actually selected.
   const availability = horizonBackgroundAvailability(horizonMembers.length ? horizonMembers : currentMembers.map(member => ({ ...member, cutType: 'horizon' })),
     product, garmentColorEvidence, horizonMembers.length ? currentSet?.id : availableSets.find(set => matchesStudioStyle(set, 'horizon'))?.id);
   const backgroundUnavailable = availability.state === 'unavailable';
+  const backgroundOn = backgroundSelected && !backgroundUnavailable;
   const shown = { background: backgroundVisible && backgroundOn, outer: outerVisible && optionState.outerClosed };
   const explanation = shown[controls.explanation] ? controls.explanation : shown.outer ? 'outer' : shown.background ? 'background' : null;
   const changeOption = async kind => {
@@ -108,7 +109,7 @@ export function StoryboardSpaceSetPanel({ mode, error, onChoose, gender, clothin
       const placed = set.members.length - unplacedExampleIds.length;
       return <button type="button" key={set.id} disabled={busy || saving || full} aria-pressed={selected}
         className={`${styles.setChoice}${selected ? ` ${styles.chosen}` : ''}`} data-space-set={set.id} data-example-id={example.id}
-        aria-label={`${index + 1}번째 ${studio ? '스튜디오' : '장소'} 세트${full ? ', 자리가 부족해요' : ''}${unplacedExampleIds.length ? `, ${set.members.length}장 중 ${placed}장 놓임` : ''}`} onClick={() => onChoose(set, { backgroundMode: backgroundOn ? 'garment-tone' : 'reference' })}
+        aria-label={`${index + 1}번째 ${studio ? '스튜디오' : '장소'} 세트${full ? ', 자리가 부족해요' : ''}${unplacedExampleIds.length ? `, ${set.members.length}장 중 ${placed}장 놓임` : ''}`} onClick={() => onChoose(set, { backgroundMode: backgroundSelected ? 'garment-tone' : 'reference' })}
         draggable={!busy && !saving && Boolean(onExampleDrag)} onDragStart={event => {
           event.dataTransfer.effectAllowed = 'copy'; event.dataTransfer.setData('text/example-id', example.id); onExampleDrag?.(example.id);
         }} onDragEnd={() => onExampleDrag?.(null)}>

@@ -100,8 +100,8 @@ def test_show_horizon_only_slots_revert_ordinary_styling_and_ignore_client_tag(s
     assert result['contentRole'] == slot['contentRole']
 
 
-def test_styling_only_slot_cannot_accept_minimal():
-    assert not slot_allows_cut_type({'allowedCutTypes': ['styling']}, {'cutType': 'styling', 'exampleId': MINIMAL_ID})
+def test_styling_only_slot_accepts_legacy_minimal():
+    assert slot_allows_cut_type({'allowedCutTypes': ['styling']}, {'cutType': 'styling', 'exampleId': MINIMAL_ID})
     for example_id in ('unknown', None, [], {}):
         assert not is_minimal_example_id(example_id)
 

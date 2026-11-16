@@ -53,7 +53,8 @@ export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, sh
   const hasSetMode = mode === 'set' && sets.length > 0;
   const showingStacks = hasSetMode && !expandedSet;
   const otherCandidates = ownSet ? candidates.filter(example => !ownSet.members.some(member => member.exampleId === example.id)) : candidates;
-  const filtered = filterGalleryExamples(otherCandidates, { place: studioStyle === 'minimal' ? 'all' : place, shot: shotFilter });
+  const galleryPlace = cut === 'horizon' || studioStyle === 'minimal' ? 'all' : place;
+  const filtered = filterGalleryExamples(otherCandidates, { place: galleryPlace, shot: shotFilter });
   const shotVal = cut === 'product' ? shot : shotFilter;
   const sessionSeed = useMemo(() => gallerySeedFactory(), [gallerySeedFactory, cut, clothingType, gender, identityKind, place, shotVal, fullGalleryOpen]);
   const eligible = expandedSet ? filtered.filter(example => expandedSet.members.some(member => member.exampleId === example.id)) : filtered;
@@ -224,7 +225,7 @@ export function MoodGuide({ catalogs, cut, direction, sideStyle = null, shot, sh
     {cut === 'styling' && studioStyle !== 'minimal' && <PlaceTabs value={place} onChange={value => { setPlace(value); setExpandedSetId(null); }} />}
     {cut !== 'product' && <div className={`modal-actions ${styles.shotPills}`} aria-label="구도">
       {[['all', '전체'], ['full', '전신'], ['medium', clothingType === 'bottom' ? '하반신' : '상반신']].map(([value, label]) => <button type="button" key={value}
-        disabled={value !== 'all' && !filterGalleryExamples(otherCandidates, { place, shot: value }).length}
+        disabled={value !== 'all' && !filterGalleryExamples(otherCandidates, { place: galleryPlace, shot: value }).length}
         aria-pressed={shotFilter === value} className={shotFilter === value ? styles.shotOn : ''} onClick={() => setShotFilter(value)}>{label}</button>)}
     </div>}
     {expandedSet && <button type="button" className={styles.back} onClick={() => setExpandedSetId(null)}><Icon name="chevLeft" size={14} />전체 예시</button>}

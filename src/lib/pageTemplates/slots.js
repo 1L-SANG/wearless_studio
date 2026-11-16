@@ -2,10 +2,11 @@ import { getTemplate, sectionDefinition, pageTemplatesCatalog } from './catalog.
 import { isMinimalExampleId } from '../studioExamples.js';
 
 export function slotAllowsCutType(recipe, block) {
+  if (recipe.allowedCutTypes.includes(block?.cutType)) return true;
   if (block?.cutType === 'styling' && isMinimalExampleId(block.exampleId)) {
     return recipe.allowedCutTypes.includes('horizon');
   }
-  return recipe.allowedCutTypes.includes(block?.cutType);
+  return false;
 }
 
 const usageForRecipe = recipe => recipe?.cutType === 'horizon'

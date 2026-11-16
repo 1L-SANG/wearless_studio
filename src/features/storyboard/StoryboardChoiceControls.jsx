@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useId } from 'react';
 import { Icon } from '@/components/ui.jsx';
 import { PHOTO_PLACE_TABS, framingLabel } from '../../lib/pageTemplates/storyboardPhotoChoices.js';
 import styles from './StoryboardChoices.module.css';
@@ -22,10 +22,11 @@ export function ChoiceReason({ children, reason, id }) {
 }
 
 export function PhotoSegment({ options, value, onChange, label, disabled }) {
+  const instanceId = useId();
   return <div className={`modal-actions ${styles.segment}`} role="group" aria-label={label}>
-    {options.map(option => {
+    {options.map((option, index) => {
       const reason = option.disabled ? option.disabledReason || UNAVAILABLE : null;
-      const id = `sb-choice-${label}-${option.value}-reason`;
+      const id = `${instanceId}-${index}-reason`;
       return <ChoiceReason key={option.value} reason={reason} id={id}>
         <button type="button" aria-pressed={value === option.value} disabled={disabled}
           aria-disabled={option.disabled || undefined} aria-describedby={reason ? id : undefined}

@@ -16,7 +16,7 @@ import { StoryboardPreview } from './StoryboardPreview.jsx';
 import { StoryboardPaleSlot } from './StoryboardPaleSlot.jsx';
 import { stageAdditions } from '../../lib/pageTemplates/stageAdditions.js';
 import { pairedPhotoSlot } from '../../lib/pageTemplates/pairedDesigns.js';
-import { setPhotoGroupId, setOptionState } from '../../lib/storyboardSetOptions.js';
+import { setPhotoGroupId, setOptionDisplayState } from '../../lib/storyboardSetOptions.js';
 import { SetHeadMarks, SetCaptionTone } from './SetOptionMarks.jsx';
 import styles from './StoryboardLayout.module.css';
 
@@ -85,7 +85,7 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, tone
         </div> : <div className={styles.stageGroup} key={`${group.key}:${rowIndex}`} data-span={group.blocks.length}>
           {hasHeading && <div className={styles.groupHead}>
             {spaceHeading(group) && <><SetHeadMarks horizon={group.blocks[0].cutType === 'horizon'}
-              state={setOptionState(blocks.filter(block => block.spaceGroupId === group.blocks[0].spaceGroupId), catalogs.detailProduct, catalogs.frontClosure, colorOpts)} /><strong>{spaceSetDisplayName(inferStoryboardSpaceSet(group.blocks[0].spaceGroupId))}</strong><i />
+              state={setOptionDisplayState(blocks.filter(block => block.spaceGroupId === group.blocks[0].spaceGroupId), catalogs.detailProduct, catalogs.frontClosure, colorOpts, catalogs.garmentColorEvidence)} /><strong>{spaceSetDisplayName(inferStoryboardSpaceSet(group.blocks[0].spaceGroupId))}</strong><i />
               {group.last !== false && <button type="button" className={`${styles.pill}${setNudge?.groupId === group.blocks[0].spaceGroupId ? ` ${styles.setNudge}` : ''}`}
                 key={setNudge?.groupId === group.blocks[0].spaceGroupId ? setNudge.serial : 'set'}
                 data-set-change={group.blocks[0].spaceGroupId} data-set-nudge={setNudge?.groupId === group.blocks[0].spaceGroupId || undefined}
@@ -106,7 +106,7 @@ export function StoryboardStage({ run, number, blocks = [], page, catalogs, tone
               const lockedGroupId = setPhotoGroupId(byId.get(sourceId) || block, blocks);
               const captionColor = colorOpts.find(color => color.id === block.colorId);
               const captionTone = block.cutType === 'horizon' && block.spaceGroupId
-                && block.horizonBackgroundMode === 'garment-tone' && !lockedGroupId;
+                && !lockedGroupId && setOptionDisplayState([block], catalogs.detailProduct, catalogs.frontClosure, colorOpts, catalogs.garmentColorEvidence).backgroundOn;
               const selected = selectedGroupId ? block.spaceGroupId === selectedGroupId : selectedViewId ? block.position?.viewId === selectedViewId : selectedId === sourceId;
               const swapReason = positionSwapReason(block);
               const geometry = detailStageGeometry(block.position?.element);
