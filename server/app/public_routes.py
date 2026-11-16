@@ -448,6 +448,7 @@ async def public_points_merge(
 ):
     started = time.perf_counter()
     refine_count, new_count, outcome = 0, 0, "invalid_points_ticket"
+    merge_metadata = {}
     try:
         if not isinstance(body, dict):
             raise points_merge.PointsTicketError("points_ticket_invalid")
@@ -457,7 +458,7 @@ async def public_points_merge(
         late = points_merge.verify_ticket(body.get("featureTicket"), secret, points_merge.FEATURE_PURPOSE, run_id)
         _enforce_public_limit(request, authenticated_user, "merge")
         try:
-            decisions = await points_merge.merge_points(request.app.state.settings, early, late)
+            decisions = await points_merge.merge_points(request.app.state.settings, early, late, metadata=merge_metadata)
         except points_merge.PointsMergeError as exc:
             outcome = str(exc)
             raise HTTPException(status_code=503, detail={
@@ -475,6 +476,7 @@ async def public_points_merge(
         raise
     finally:
         logger.info(
-            "public points merge duration_ms=%d refine=%d new=%d result=%s",
+            "public points merge duration_ms=%d refine=%d new=%d result=%s provider=%s model=%s",
             round((time.perf_counter() - started) * 1000), refine_count, new_count, outcome,
+            merge_metadata.get("provider", "none"), merge_metadata.get("model", "none"),
         )

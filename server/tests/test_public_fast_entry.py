@@ -379,9 +379,10 @@ def test_merge_model_failures_and_invalid_numbers_are_retryable_503(client, agen
     assert response.json()["error"]["code"] == "points_merge_unavailable"
 
 
-def test_merge_success_and_logs_hide_phrase_and_ticket_content(client, agents, monkeypatch, caplog):
+@pytest.mark.parametrize("provider,model", [("gemini", "gemini-3.8-flash"), ("gpt", "gpt-6-luna")])
+def test_merge_success_and_logs_hide_phrase_and_ticket_content(client, agents, monkeypatch, caplog, provider, model):
     async def fake(*args, **kwargs):
-        return {"decisions": [{"late": 0, "action": "refine", "early": 0}]}, "gemini"
+        return {"decisions": [{"late": 0, "action": "refine", "early": 0}]}, provider
     monkeypatch.setattr(vision_llm, "analyze_with_fallback", fake)
     with caplog.at_level(logging.INFO, logger="wearless.public_analysis"):
         features = post_features(client)
@@ -392,6 +393,8 @@ def test_merge_success_and_logs_hide_phrase_and_ticket_content(client, agents, m
     assert sha256(RUN_ID.encode()).hexdigest()[:12] in log
     assert "attempt=1" in log and "provider=gemini" in log and "model=" in log
     assert "refine=1" in log and "new=0" in log
+    merge_log = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("public points merge "))
+    assert f"provider={provider} model={model}" in merge_log
     assert RUN_ID not in log and SECRET not in log and "골지" not in log
     assert features.json()["data"]["featureTicket"]["signature"] not in log
 
