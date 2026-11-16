@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import re
 import math
 from io import BytesIO
@@ -12,6 +13,8 @@ from PIL import Image
 from . import vision_llm
 from .prompts import _sanitize
 from .vision_llm import VisionError
+
+logger = logging.getLogger("wearless.similar_cut")
 
 _PROMPTS = Path(__file__).resolve().parents[2] / "prompts"
 _LIMITS = {"actionKey": 80, "actionSummary": 180, "instructions": 1600}
@@ -328,19 +331,25 @@ async def plan_next(settings, source_image, *, context, cut_type, changes, histo
                + "\n</input>\n<task>\nBased on the attached photograph and the input above, "
                "return the JSON plan.\n</task>")
     timeout = settings.background_ai_timeout_seconds
+    models = {
+        "gpt": getattr(settings, "model_text_gpt_terra", "gpt-6.1-terra"),
+        "gemini": getattr(settings, "model_text_gemini_similar", "gemini-3.8-flash"),
+    }
+    order = getattr(settings, "model_order_similar_plan", "gpt,gemini").split(",")
     # One corrective planning attempt. Generation never falls back to an unplanned edit.
     for attempt in range(2):
         try:
             raw, _provider = await asyncio.wait_for(
                 vision_llm.analyze_with_fallback(
                     settings, prompt, [source_image], _SCHEMA,
-                    models={"gemini": getattr(settings, "model_text_gemini_similar", "gemini-3.8-flash")},
+                    models=models, order=order, reasoning_effort="none",
                     thinking_level="low", require_complete_envelope=True,
                     timeout_seconds=timeout,
                 ), timeout=2 * timeout + 5,
             )
         except asyncio.TimeoutError as exc:
             raise VisionError("Similar-cut planning timed out") from exc
+        logger.info("similar_cut plan response: provider=%s model=%s", _provider, models.get(_provider, "unknown"))
         try:
             if not isinstance(raw, dict):
                 raise VisionError("Invalid similar-cut plan")
