@@ -98,6 +98,8 @@ class Settings:
     # AG-08 특징 발굴만 상위 tier 로 분기 (2026-08-01 사용자 결정 — 마네킹 regenerate tier 분기와 같은 패턴).
     # 분류(AG-01)는 결정성·속도 우선이라 정본 tier 유지. 미설정이면 model_text_gemini 로 폴백.
     model_text_gemini_features: str = "gemini-3.7-flash"
+    # AG-08 전용 순서. gemini,gpt 한 값으로 기존 Flash medium 요청을 먼저 쓴다.
+    model_order_features: str = "gpt,gemini"
     # AG-01과 AG-08 문구의 같은 특징 여부만 판정하는 텍스트 전용 모델.
     model_text_gemini_merge: str = "gemini-3.8-flash"
     # 비슷한 컷 계획 전용. 공용 텍스트 모델을 쓰는 검수와 분리한다.
@@ -752,6 +754,18 @@ def _model_order_similar_plan() -> str:
     return default
 
 
+def _model_order_features() -> str:
+    default = "gpt,gemini"
+    raw = os.getenv("MODEL_ORDER_FEATURES")
+    if raw is None:
+        return default
+    value = ",".join(part.strip().lower() for part in raw.split(","))
+    if value in {default, "gemini,gpt"}:
+        return value
+    logger.warning("Invalid MODEL_ORDER_FEATURES; using %s", default)
+    return default
+
+
 def _flag(env: str, default: str, allowed: set[str]) -> str:
     """검색 증강 flag — 허용값 밖이면 안전하게 default(대개 'off')로 폴백."""
     v = (os.getenv(env, default) or default).strip().lower()
@@ -921,6 +935,7 @@ def load_settings() -> Settings:
         model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.7-flash"),
         model_text_gemini_features=os.getenv(
             "MODEL_ROUTING_TEXT_GEMINI_FEATURES", "gemini-3.7-flash"),
+        model_order_features=_model_order_features(),
         model_text_gemini_merge=os.getenv("MODEL_ROUTING_TEXT_GEMINI_MERGE", "gemini-3.8-flash"),
         model_text_gemini_similar=(
             os.getenv("MODEL_ROUTING_TEXT_GEMINI_SIMILAR") or "gemini-3.8-flash"),

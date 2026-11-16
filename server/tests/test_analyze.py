@@ -1,6 +1,8 @@
 import asyncio
 import inspect
 
+import pytest
+
 import app.routes as routes
 from app import repo
 from app.agents import product_evidence_contract as pec
@@ -105,7 +107,11 @@ def test_analyze_spike_passes_only_loaded_photo_slots(client, make_token, monkey
     assert res.status_code == 200, res.text
 
 
-def test_run_analyze_job_success(monkeypatch):
+@pytest.mark.parametrize("feature_provider,feature_model,feature_version", [
+    ("gpt", "gpt-6.1-terra", "terra_v2"),
+    ("gemini", "gemini-3.7-flash", "v1"),
+])
+def test_run_analyze_job_success(monkeypatch, feature_provider, feature_model, feature_version):
     captured = {}
 
     async def fake_get_product(conn, pid):
@@ -136,7 +142,7 @@ def test_run_analyze_job_success(monkeypatch):
         return None
 
     async def fake_extract(settings, product, images, slots=None):
-        return ["왼쪽 가슴 로고 자수"], "gemini"  # AG-08 성공 → AG-01 points 교체
+        return ["왼쪽 가슴 로고 자수"], feature_provider  # AG-08 성공 → AG-01 points 교체
 
     monkeypatch.setattr(analyze_job.repo, "get_product", fake_get_product)
     monkeypatch.setattr(analyze_job.repo, "get_asset_for_user", fake_get_asset)
@@ -162,7 +168,9 @@ def test_run_analyze_job_success(monkeypatch):
     assert captured["analysis_payload"]["aiSuggestedPoints"] == ["왼쪽 가슴 로고 자수"]
     # #6: worker 가 provider metadata 를 finalize 로 넘겨야 jobs.metadata 에 저장됨
     assert captured["metadata"]["provider"] == "gpt"
-    assert captured["metadata"]["featureProvider"] == "gemini"
+    assert captured["metadata"]["featureProvider"] == feature_provider
+    assert captured["metadata"]["featureModel"] == feature_model
+    assert captured["metadata"]["featurePromptVersion"] == feature_version
     assert captured["metadata"]["promptVersion"] == "v1"
 
 

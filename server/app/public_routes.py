@@ -6,7 +6,6 @@ import logging
 import time
 from collections import deque
 from contextlib import asynccontextmanager
-from dataclasses import replace
 from hashlib import sha256
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, UploadFile
@@ -14,7 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
 from . import rate_limit, repo
-from .agents import product_evidence_contract, detail_recommendations, points_merge
+from .agents import product_evidence_contract, detail_recommendations, feature_extractor, points_merge
 from .agents.vision_llm import VisionError
 from .auth import optional_user
 from .client_ip import client_ip as _client_ip
@@ -401,20 +400,21 @@ async def public_analyze_features(
     attempt_number = int(attempt or "1")
     started = time.perf_counter()
     provider, model, point_status, detail_status = None, None, "empty", "unavailable"
+    prompt_version = None
     point_count, candidate_count, outcome = 0, 0, "failed"
     try:
         async with _public_slot(request, authenticated_user, _feature_semaphore, "feature"):
             source_images, product = await _read_analysis_inputs(images, slots, productContext)
             settings = request.app.state.settings
             try:
-                features = await extract_image_features(
-                    replace(settings, analysis_model_order="gemini"), source_images, product=product, slots=slots)
+                features = await extract_image_features(settings, source_images, product=product, slots=slots)
             except VisionError:
                 raise HTTPException(status_code=502, detail={
                     "code": "feature_extraction_failed", "message": "상품 특징 분석에 실패했어요. 다시 시도해 주세요.",
                 }) from None
         points, contract, provider = features["points"], features["contract"], features["provider"]
-        model = settings.model_text if provider == "gpt" else (settings.model_text_gemini_features or settings.model_text_gemini)
+        metadata = feature_extractor.request_metadata(settings, provider)
+        model, prompt_version = metadata["featureModel"], metadata["featurePromptVersion"]
         point_status, point_count = "ready" if points else "empty", len(points)
         detail_status, candidate_count = contract["status"], len(contract["candidates"])
         try:
@@ -433,9 +433,9 @@ async def public_analyze_features(
         raise
     finally:
         logger.info(
-            "public features duration_ms=%d points_status=%s points_count=%d detail_status=%s candidates=%d provider=%s model=%s attempt=%d run_hash=%s result=%s",
+            "public features duration_ms=%d points_status=%s points_count=%d detail_status=%s candidates=%d provider=%s model=%s prompt_version=%s attempt=%d run_hash=%s result=%s",
             round((time.perf_counter() - started) * 1000), point_status, point_count,
-            detail_status, candidate_count, provider, model, attempt_number,
+            detail_status, candidate_count, provider, model, prompt_version, attempt_number,
             sha256(runId.encode()).hexdigest()[:12], outcome,
         )
 

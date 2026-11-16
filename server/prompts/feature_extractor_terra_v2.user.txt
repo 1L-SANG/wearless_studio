@@ -1,0 +1,5 @@
+<images>
+${imageManifest}
+</images>
+
+Describe the one garment in the attached photos and return the JSON object.

@@ -336,6 +336,8 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 생각 수준은 medium 유지: 82벌 비교에서 low 로 낮추면 디테일 추천 위치 정확도가 92.5%에서 84%로
   # 떨어졌다(.scratch/opus55-wiring-20261011/REPORT.md 11절).
   MODEL_ROUTING_TEXT_GEMINI_FEATURES: gemini-3.8-flash
+  # AG-08은 Terra v2(none) 우선. gemini,gpt로 바꾸면 기존 Flash v1(medium) 우선으로 복귀.
+  MODEL_ORDER_FEATURES: gpt,gemini
   # 부가 분석(AG-08 특징 뽑기, 사진 일치 검사) 대기 상한. 넘기면 결과를 버리고 진행하는데, AG-08 을
   # 버리면 디테일컷 추천이 비어 콘티보드 자동 디테일컷이 0장이 되고 다시 만드는 경로가 없다.
   # 3.8-flash medium 실측 164회(2026-10-11): 중간 13.7초, 최대 27.5초, 12초 초과 77%, 30초 초과 0회.
