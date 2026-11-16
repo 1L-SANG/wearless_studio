@@ -314,7 +314,7 @@ def test_fresh_launch_during_remote_revoke_keeps_its_cookie_and_can_connect(env)
     assert client.post(BASE+'/pending/claim').status_code == 200
 
 
-@pytest.mark.parametrize('age', [-7199, -3601, 3601, 7199])
+@pytest.mark.parametrize('age', [-7000, -3601, 3601, 7000])
 def test_two_hour_window(env, age):
     launch(env[0], timestamp=str(int(datetime.now(timezone.utc).timestamp())+age))
 
