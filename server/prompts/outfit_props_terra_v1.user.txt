@@ -1,0 +1,9 @@
+<image_manifest>
+${imageManifest}
+</image_manifest>
+
+<product_data>
+${productDataJson}
+</product_data>
+
+Choose the picks for this product from these candidates.

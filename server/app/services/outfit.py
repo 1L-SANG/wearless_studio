@@ -444,8 +444,9 @@ def recommendation_key(settings, product, analysis, source_images, slots, items,
     metadata = [{key: item.get(key) for key in ("id", "name", "fit", "length", "clothing_type", "gender", "category", "color_group", "color_name",
                   "style_tags", "is_active", "is_custom", "image_asset_id", "image_key", "thumb_key", "image_meta", "sort_order")}
                 for item in sorted(items, key=lambda item: str(item.get("id")))]
-    return sha256(_canonical({"model": settings.model_text_gemini_outfit,
-        "promptVersion": outfit_recommender.PROMPT_VERSION, "candidatesPerRole": settings.outfit_candidates_per_role,
+    return sha256(_canonical({**outfit_recommender.request_identity(settings),
+        "modelOrder": settings.model_order_outfit, "providerRequests": outfit_recommender.request_routes(settings),
+        "candidatesPerRole": settings.outfit_candidates_per_role,
         "recommendationEnabled": settings.outfit_recommendation_enabled,
         "sources": _source_binding(source_images, slots), "context": product_context(product, analysis),
         "fixed": {role: entry for role, entry in selections["slots"].items() if entry["origin"] == "user"},
@@ -543,9 +544,11 @@ def prepare_recommendation(settings, r2, product, analysis, source_images, items
     pools = candidate_pools(items, context, selections)
     shortlists = candidate_pools(items, context, selections, limit=settings.outfit_candidates_per_role)
     has_front = slots is None or "Front" in slots
-    status = ("pending" if has_front and settings.gemini_api_key and settings.outfit_recommendation_enabled else "fallback") if any(clothing_pools(pools).values()) else "unavailable"
+    status = ("pending" if has_front and outfit_recommender.available_providers(settings) and settings.outfit_recommendation_enabled else "fallback") if any(clothing_pools(pools).values()) else "unavailable"
     recommendation = recommendation_display({"version": VERSION, "status": status,
-        "model": settings.model_text_gemini_outfit, "contextKey": key, "sets": fallback_sets(shortlists, selections),
+        **(outfit_recommender.request_identity(settings) if status == "pending" else
+           {"provider": None, "model": None, "promptVersion": None, "providerFallback": False}),
+        "contextKey": key, "sets": fallback_sets(shortlists, selections),
         **({"fallbackReady": True, "pendingSince": time.time()} if status == "pending" else {})}, pools, r2)
     for role in PROP_ROLES:
         key_for_role = props_key(settings, product, analysis, source_images, slots, items, role)
@@ -630,6 +633,11 @@ def start_recommendation(settings, r2, product, analysis, source_images, items, 
     cached = read_recommendation(key)
     if cached is not None:
         cached = refresh_board_urls(cached, items, r2)
+        if _discard_stale_props(cached["outfitRecommendation"], {
+                role: props_key(settings, product, analysis, source_images, slots, items, role)
+                for role in PROP_ROLES}):
+            cached["outfitRecommendation"] = recommendation_display(cached["outfitRecommendation"],
+                candidate_pools(items, product_context(product, analysis)), r2)
         clothing_type = product_context(product, analysis)["clothingType"]
         current = normalize_selections(analysis.get("outfitSelections"), clothing_type,
                                        legacy_match_items=analysis.get("matchClothing") or [])
@@ -642,11 +650,12 @@ def start_recommendation(settings, r2, product, analysis, source_images, items, 
     if fields["outfitRecommendation"]["status"] != "pending" or key in _inflight:
         return fields
     async def complete():
+        metadata = {"provider": None, "model": None, "promptVersion": None, "providerFallback": False}
         async def evaluate():
             return await _recommend_once(settings, r2, product_context(product, analysis),
                 normalize_selections(analysis.get("outfitSelections"), product_context(product, analysis)["clothingType"],
                     legacy_match_items=analysis.get("matchClothing") or []),
-                [source_images[slots.index("Front") if slots else 0]], items, key)
+                [source_images[slots.index("Front") if slots else 0]], items, key, metadata=metadata)
         async def bounded():
             if semaphore is None:
                 return await evaluate()
@@ -659,6 +668,7 @@ def start_recommendation(settings, r2, product, analysis, source_images, items, 
                 result = deepcopy(fields)
                 recommendation = result["outfitRecommendation"]
                 recommendation["status"] = "fallback"
+                recommendation.update(metadata)
                 recommendation.pop("fallbackReady", None)
                 recommendation.pop("pendingSince", None)
                 recommendation["roleStatus"] = {role: "fallback" if pool else "unavailable"
@@ -680,21 +690,25 @@ async def recommend(settings, r2, product, analysis, source_images, items, *, sl
     return fields
 
 
-async def _recommend_once(settings, r2, context, fixed, source_images, items, key):
+async def _recommend_once(settings, r2, context, fixed, source_images, items, key, *, metadata=None):
     all_pools = candidate_pools(items, context, fixed)
     pools = clothing_pools(candidate_pools(items, context, fixed, limit=settings.outfit_candidates_per_role))
     sets = fallback_sets(pools, fixed)
     status = "fallback"
+    metadata = metadata if metadata is not None else {}
+    def validate_response(raw):
+        return validate_sets(raw.get("sets") if isinstance(raw, dict) else None, pools, fixed,
+                             require_concept=True, enforce_fixed=True)
     try:
         raw = await asyncio.wait_for(outfit_recommender.recommend(settings, r2, source_images, pools,
-                    context=context, fixed=fixed), timeout=settings.outfit_timeout_seconds)
-        sets = validate_sets(raw.get("sets") if isinstance(raw, dict) else None, pools, fixed,
-                             require_concept=True, enforce_fixed=True)
+                    context=context, fixed=fixed, metadata=metadata, validate_response=validate_response),
+                    timeout=settings.outfit_timeout_seconds)
+        sets = validate_response(raw)
         status = "ready"
     except Exception as exc:
         log.warning("outfit visual recommendation fallback: %s", type(exc).__name__)
     recommendation = recommendation_display({"version": VERSION, "status": status,
-        "model": settings.model_text_gemini_outfit, "contextKey": key, "sets": sets}, all_pools, r2)
+        **outfit_recommender.request_identity(settings), **metadata, "contextKey": key, "sets": sets}, all_pools, r2)
     selections = initial_selections(fixed, recommendation, context["clothingType"])
     return {"outfitRecommendation": recommendation, **sync_legacy({"matchClothing": recommendation["candidates"].get(
             complementary_slot(context["clothingType"]), [])}, selections, items, r2)}
@@ -758,7 +772,8 @@ def props_key(settings, product, analysis, source_images, slots, items, role):
                 and not item.get("is_custom") and not item.get("owner_user_id")]
     base = recommendation_key(settings, product, analysis, source_images, slots, relevant, {"slots": {}})
     return sha256(_canonical({"productKey": base, "role": role,
-        "promptVersion": outfit_recommender.PROPS_PROMPT_VERSION})).hexdigest()
+        **outfit_recommender.request_identity(settings, props=True),
+        "providerRequests": outfit_recommender.request_routes(settings, props=True)})).hexdigest()
 
 
 def deterministic_picks(pool, role):
@@ -790,6 +805,20 @@ def copy_prop(target, source, role):
     for field in ("props", "propsContextKeys", "propsExpiresAt"):
         if role in (source.get(field) or {}):
             target.setdefault(field, {})[role] = deepcopy(source[field][role])
+
+
+def _discard_stale_props(recommendation, expected_keys):
+    """A retained base/handoff can contain props produced under another route."""
+    changed = False
+    for role, expected in expected_keys.items():
+        if (recommendation.get("propsContextKeys") or {}).get(role) == expected:
+            continue
+        for field in ("props", "propsContextKeys", "propsExpiresAt"):
+            entries = recommendation.get(field) or {}
+            if role in entries:
+                entries.pop(role)
+                changed = True
+    return changed
 
 
 def refreshed_props(recommendation):
@@ -826,6 +855,9 @@ def start_props(settings, r2, product, analysis, source_images, items, role, *, 
     if base:
         for other_role in PROP_ROLES:
             copy_prop(recommendation, base["outfitRecommendation"], other_role)
+    _discard_stale_props(recommendation, {
+        prop_role: props_key(settings, product, analysis, source_images, slots, items, prop_role)
+        for prop_role in PROP_ROLES})
     cached = read_recommendation(key)
     known = bool(cached or (recommendation.get("propsContextKeys") or {}).get(role) == key
                  and role in recommendation.get("props", {}))
@@ -837,7 +869,7 @@ def start_props(settings, r2, product, analysis, source_images, items, role, *, 
             recommendation["props"][role]["status"] = "fallback" if pool else "unavailable"
     else:
         picks = deterministic_picks(pool, role)
-        pending = bool(pool and settings.outfit_recommendation_enabled and settings.gemini_api_key
+        pending = bool(pool and settings.outfit_recommendation_enabled and outfit_recommender.available_providers(settings)
                        and (slots is None or "Front" in slots))
         recommendation.setdefault("props", {})[role] = {"status": "pending" if pending else "fallback" if pool else "unavailable", "picks": picks}
         recommendation.setdefault("propsContextKeys", {})[role] = key
@@ -857,9 +889,14 @@ def start_props(settings, r2, product, analysis, source_images, items, role, *, 
     async def complete():
         result = deepcopy(cache_fields)
         prop = result["outfitRecommendation"]["props"][role]
+        metadata = {}
+        def validate_response(raw):
+            outfit_recommender.display_reason(raw.get("reason") if isinstance(raw, dict) else None)
+            return validate_picks(raw.get("picks"), pool, role)
         async def evaluate():
             return await outfit_recommender.recommend_props(settings, r2,
-                [source_images[slots.index("Front") if slots else 0]], {role: pool}, context=context)
+                [source_images[slots.index("Front") if slots else 0]], {role: pool}, context=context,
+                metadata=metadata, validate_response=validate_response)
         async def bounded():
             if semaphore is None:
                 return await evaluate()
@@ -868,12 +905,12 @@ def start_props(settings, r2, product, analysis, source_images, items, role, *, 
         try:
             try:
                 raw = await asyncio.wait_for(bounded(), timeout=settings.outfit_props_timeout_seconds)
-                outfit_recommender.display_reason(raw.get("reason") if isinstance(raw, dict) else None)
-                prop["picks"] = validate_picks(raw.get("picks"), pool, role)
+                prop["picks"] = validate_response(raw)
                 prop["status"] = "ready"
             except Exception as exc:
                 log.warning("outfit props fallback: %s", type(exc).__name__)
                 prop["status"] = "fallback"
+            prop.update(metadata)
             _cache_result(key, result)
             return result
         finally:
