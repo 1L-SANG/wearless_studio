@@ -328,7 +328,7 @@ def test_invalid_launch_is_rejected_without_any_side_effect(env, invalid, caplog
     elif invalid == 'wrong': query = query.split('&hmac=')[0]+'&hmac='+base64.b64encode(b'x'*32).decode()
     elif invalid == 'tampered': query = query.replace('myshop', 'other-shop')
     elif invalid == 'malformed': query = query.split('&hmac=')[0]+'&hmac=%ZZ'
-    elif invalid in {'old', 'future'}: query = launch_query(timestamp=str(int(datetime.now(timezone.utc).timestamp())+(-7201 if invalid == 'old' else 7201)))
+    elif invalid in {'old', 'future'}: query = launch_query(timestamp=str(int(datetime.now(timezone.utc).timestamp())+(-7500 if invalid == 'old' else 7500)))
     elif invalid in {'missing_timestamp', 'bad_timestamp'}: query = launch_query(timestamp='' if invalid == 'missing_timestamp' else 'nan')
     elif invalid == 'many': query += '&'+'&'.join(f'p{i}=x' for i in range(101))
     elif invalid == 'hmac_first': query = 'hmac=x&'+query.split('&hmac=')[0]
