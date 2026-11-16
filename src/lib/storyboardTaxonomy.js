@@ -8,7 +8,8 @@
    현재 섹션·카드 위치·선택한 cutType/shot에 맞춰 자동으로 정한다.
    ============================================================= */
 
-import { photoSlotForBlock } from './pageTemplates/slots.js';
+import { photoSlotForBlock, slotAllowsCutType } from './pageTemplates/slots.js';
+import { isMinimalExampleId } from './studioExamples.js';
 
 export const STORYBOARD_TAXONOMY_VERSION = 4;
 
@@ -30,11 +31,27 @@ export const SECTION_TITLES = Object.freeze(Object.fromEntries(
   SECTION_ROLE_OPTIONS.map((option) => [option.value, option.label]),
 ));
 
-const CUT_TYPE_OPTIONS = Object.freeze([
-  Object.freeze({ value: 'styling', label: '스타일링컷' }),
+const STUDIO_STYLES = Object.freeze([
+  Object.freeze({ value: 'minimal', label: '미니멀컷' }),
   Object.freeze({ value: 'horizon', label: '호리존컷' }),
-  Object.freeze({ value: 'product', label: '제품컷' }),
 ]);
+
+// Display only. `horizon` is the existing top-level option's key, not a new stored cut type.
+export function cutTypeDisplay(cutType, exampleId = null, catalog = null) {
+  const studioStyle = cutType === 'horizon' ? (String(exampleId || '').startsWith('sig_') ? 'minimal' : 'horizon')
+    : cutType === 'styling' && isMinimalExampleId(exampleId, catalog) ? 'minimal' : null;
+  const value = studioStyle ? 'horizon' : cutType;
+  return {
+    value,
+    label: { styling: '스타일링컷', horizon: '스튜디오컷', product: '제품컷' }[value] || null,
+    studioStyle,
+    studioLabel: STUDIO_STYLES.find(option => option.value === studioStyle)?.label || null,
+    studioOptions: STUDIO_STYLES,
+  };
+}
+
+const CUT_TYPE_OPTIONS = Object.freeze(['styling', 'horizon', 'product'].map(value =>
+  Object.freeze({ value, label: cutTypeDisplay(value).label })));
 
 export const isSupportedCutType = (cutType) => CUT_TYPE_OPTIONS.some((option) => option.value === cutType);
 
@@ -274,7 +291,8 @@ export function normalizedRecipePatch(block, role) {
   const slot = photoSlotForBlock(block, { includeReuse: true });
   const recipe = slot?.recipe;
   let cutType = block?.cutType;
-  if (recipe && !recipe.allowedCutTypes.includes(cutType)) cutType = recipe.cutType;
+  const rejectedExample = recipe && !slotAllowsCutType(recipe, block);
+  if (rejectedExample) cutType = recipe.cutType;
   if (!isSupportedCutType(cutType)) cutType = contentTemplate(role).cutType;
   if (!cutType) return { contentRole: role || CONTENT_ROLES.CUSTOM, title: contentTitle(role) };
   const worn = cutType !== 'product';
@@ -282,11 +300,13 @@ export function normalizedRecipePatch(block, role) {
   if (recipe && !recipe.allowedShots.includes(shot)) shot = recipe.shot;
   if (!(worn ? WORN_SHOTS : new Set(['ghost', 'detail'])).has(shot)) shot = worn ? 'full' : 'ghost';
   const nextRole = [CONTENT_ROLES.HERO, CONTENT_ROLES.BENEFIT].includes(role) && worn ? role
-    : slot?.contentRole && (!recipe || recipe.allowedCutTypes.includes(cutType)) ? slot.contentRole
+    : slot?.contentRole ? slot.contentRole
       : cutType === 'product' ? (shot === 'detail' ? CONTENT_ROLES.DETAIL : CONTENT_ROLES.PRODUCT_OVERVIEW)
         : WORN_ROLE_BY_CUT_TYPE[cutType];
   return {
     cutType, shot, contentRole: nextRole, title: contentTitle(nextRole),
+    ...(rejectedExample ? { exampleId: null, exampleSelectionOrigin: null,
+      thumb: block.baseThumb || block.thumb, baseThumb: null, previewThumb: null } : {}),
     ...(Object.hasOwn(block || {}, 'productPresentation')
       ? { productPresentation: productPresentationOf({ ...block, cutType, shot }) } : {}),
     direction: (worn ? WORN_DIRECTIONS : PRODUCT_DIRECTIONS).has(block?.direction)

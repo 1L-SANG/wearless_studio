@@ -397,7 +397,7 @@ test('dress is women-only even when stale input still says men', () => {
   assert.match(httpAdapterSource, /return savedAnalysis/);
 });
 
-test('storyboard preserves family-specific group references across shot changes and remains atomically retryable', () => {
+test('storyboard preserves family-specific group references across shot changes and ordinary recipe selection remains atomic', () => {
   const shotHandler = storyboardSource.slice(
     storyboardSource.indexOf('const onShotChange ='),
     storyboardSource.indexOf('const commitPendingRecipe ='),
@@ -415,8 +415,8 @@ test('storyboard preserves family-specific group references across shot changes 
   );
   assert.doesNotMatch(selectedStatus, /selectedExample\.shot !== shotVal/);
   assert.match(storyboardSource, /await onAtomicChange\(changes, \{ pickerOwnsError: true \}\)/);
-  assert.match(storyboardSource, /retryAtomic: true,[^}]*undoLabel:/);
-  assert.match(storyboardSource, /latestBlocks\.current !== atomicRetry\.previous/);
+  assert.match(storyboardSource, /if \(!block \|\| lockedGroupId\) return null/);
+  assert.match(storyboardSource, /setBlocks\(previous\)/);
   // 2026-08-14: 첫 화면 프레임 슬롯의 복제본은 표식 없이 일반 컷 — stripHookFrameFields 경유.
 });
 

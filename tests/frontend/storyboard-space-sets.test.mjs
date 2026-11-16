@@ -484,6 +484,7 @@ test('a set-internal addzone preserves reservation order and reservation empties
     refScope: 'pose',
     spaceSetMemberOrder: 2,
     setSelectionOrigin: 'user',
+    outerClosureState: 'open',
   });
 
   const added = [...current, block('spare', {

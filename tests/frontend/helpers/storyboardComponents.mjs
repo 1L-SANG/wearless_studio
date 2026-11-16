@@ -1,24 +1,31 @@
 import { readFileSync } from 'node:fs';
 import { transformWithEsbuild } from 'vite';
 import React from 'react';
+import { cutTypeDisplay } from '../../../src/lib/storyboardTaxonomy.js';
+import { cutDisplaySelection, studioStyleOptions } from '../../../src/lib/cutDisplaySelection.js';
 import { storyboardPositions, storyboardPositionId, isHiddenStoryboardKind, positionSwapReason, storyboardPositionSwapReason } from '../../../src/lib/pageTemplates/storyboardPositions.js';
-import { wearUsageForBlock } from '../../../src/lib/pageTemplates/slots.js';
+import { wearUsageForBlock, photoSlotForBlock, templateSectionName } from '../../../src/lib/pageTemplates/slots.js';
 import { automaticSectionInsertionKey } from '../../../src/lib/pageTemplates/sectionPlacement.js';
 import { colorDisplayName } from '../../../src/lib/colorwayMatching.js';
 import { isTextOnlySection, visibleSectionRuns } from '../../../src/lib/pageTemplates/sectionRuns.js';
 import * as signature from '../../../src/lib/signatureCutPool.js';
+import { inferStoryboardSpaceSet } from '../../../src/lib/storyboardSpaceSetCatalog.js';
+import * as setOptions from '../../../src/lib/storyboardSetOptions.js';
+import { horizonBackgroundAvailability } from '../../../src/lib/horizonBackgroundAvailability.js';
 import * as photoChoices from '../../../src/lib/pageTemplates/storyboardPhotoChoices.js';
 import * as gallery from '../../../src/lib/pageTemplates/storyboardGallery.js';
 import { assembleStoryboardPreview, detailStageGeometry, detailNoticeLines } from '../../../src/features/storyboard/storyboardPreview.js';
 import { stageAdditions } from '../../../src/lib/pageTemplates/stageAdditions.js';
+import { unusedSpaceSetMembers } from '../../../src/lib/storyboardSpaceSets.js';
+import { withStageAdditions } from '../../../src/lib/pageTemplates/storyboardStage.js';
 import { pairedPhotoSlot, baseDesignId } from '../../../src/lib/pageTemplates/pairedDesigns.js';
 import { reconcileSectionDependencies } from '../../../src/lib/pageTemplates/sectionDependencies.js';
 import { baseColorOf, resolvePageTokens } from '../../../src/lib/pageTemplates/tokens.js';
 import { hasBackdropBlur, backdropEdgeTiles } from '../../../src/features/editor/editorImageBlur.js';
 import { sectionDesignAxes } from '../../../src/lib/pageTemplates/designAxes.js';
-const extraBindings = { storyboardPositions, storyboardPositionId, isHiddenStoryboardKind, positionSwapReason, storyboardPositionSwapReason,
-  wearUsageForBlock, automaticSectionInsertionKey, colorDisplayName, isTextOnlySection, visibleSectionRuns,
-  ...signature, ...gallery, ...photoChoices, assembleStoryboardPreview, detailStageGeometry, detailNoticeLines, stageAdditions, pairedPhotoSlot, reconcileSectionDependencies, baseColorOf, resolvePageTokens, sectionDesignAxes,
+const extraBindings = { inferStoryboardSpaceSet, unusedSpaceSetMembers, ...setOptions, horizonBackgroundAvailability, PhotoMosaic: 'photo-mosaic', PhotoSegment: 'photo-segment', ChoiceReason: 'choice-reason', ToneIcon: 'tone-icon', OuterLockIcon: 'outer-lock-icon', SetHeadMarks: 'set-head-marks', SetCaptionTone: 'set-caption-tone', cutTypeDisplay, cutDisplaySelection, studioStyleOptions, StudioStyleChips: 'studio-style-chips', storyboardPositions, storyboardPositionId, isHiddenStoryboardKind, positionSwapReason, storyboardPositionSwapReason,
+  wearUsageForBlock, photoSlotForBlock, templateSectionName, automaticSectionInsertionKey, colorDisplayName, isTextOnlySection, visibleSectionRuns,
+  ...signature, ...gallery, ...photoChoices, assembleStoryboardPreview, detailStageGeometry, detailNoticeLines, stageAdditions, withStageAdditions, pairedPhotoSlot, reconcileSectionDependencies, baseColorOf, resolvePageTokens, sectionDesignAxes,
   hasBackdropBlur,
   StoryboardPaleSlot: 'pale-slot', StoryboardStackPopup: 'stack-popup',
   ProductPresentationPicker: 'product-presentations', PhotoChoiceFilters: 'photo-filters', PhotoFraming: 'photo-framing', PhotoChoicePager: 'photo-pages', ExampleThumb: 'example-thumb' };

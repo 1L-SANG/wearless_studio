@@ -291,6 +291,7 @@ def validate_space_set_registry_document(
                     "exampleId": example_id,
                     "order": expected_order,
                     "cutType": cut_type,
+                    **({"studioStyle": "minimal"} if raw_member.get("studioStyle") == "minimal" else {}),
                     "shot": shot,
                     "direction": direction,
                     "gender": gender,
@@ -326,9 +327,12 @@ def validate_space_set_registry_document(
             != ["front", "side", "back"]
         ):
             raise ValueError("space_set_registry_rotation_invalid")
+        from .studio_examples import studio_style_for_set
+        studio_style = studio_style_for_set(members)
         sets[set_id] = {
             "setId": set_id,
             "setType": set_type,
+            **({"studioStyle": studio_style} if studio_style else {}),
             "gender": gender,
             "applicableClothingTypes": list(applicable),
             "setApplicableClothingTypes": list(set_applicable),

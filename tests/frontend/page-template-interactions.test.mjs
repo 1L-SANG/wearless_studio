@@ -51,7 +51,7 @@ function boardHarness() {
   const actions = evaluate(`
     ${slice('  const showUndo =', '  const clearUndoForSnapshot =')}
     ${slice('  const undoLatest =', '  const enterUndo =')}
-    ${slice('  const commitSectionRemoval =', '  async function retryAtomicSave()')}
+    ${slice('  const commitSectionRemoval =', '  const goToMannequin =')}
     return { addSection, removeSection, undoLatest, showUndo };
   `, scope);
   return { ...actions, opened, schedules, scope,

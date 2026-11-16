@@ -92,6 +92,22 @@ export function hasFullAndMediumMembers(set) {
     && set.members.some((member) => member.shot === 'medium');
 }
 
+export const colorList = product => product?.colors?.length ? product.colors : [{ id: 'col1', isBase: true }];
+
+export function spaceSetMembersForProduct(set, product) {
+  const members = set?.members || [];
+  if (set?.setType !== 'horizon-sequence') return members;
+  const ordered = [...members].sort((left, right) => left.order - right.order);
+  if (colorList(product).length < 3) return ordered;
+  const chosen = new Set(['full', 'medium'].map(shot => ordered.find(member => member.shot === shot && member.direction === 'front')
+    || ordered.find(member => member.shot === shot)).filter(Boolean));
+  for (const member of ordered) {
+    if (chosen.size >= 2) break;
+    chosen.add(member);
+  }
+  return ordered.filter(member => chosen.has(member));
+}
+
 export function entryStylingMembers(set) {
   const ordered = [...(set?.members || [])].sort((left, right) => left.order - right.order);
   if (ordered.length <= 2) return ordered;
@@ -117,13 +133,14 @@ export function pickEntrySets({
   projectId,
   stylingCount,
   identityKind = null,
+  preferSequenceFraming = false,
 }) {
   const seedProjectId = projectId || 'default';
   const count = Math.max(0, Number.isFinite(stylingCount) ? Math.floor(stylingCount) : 0);
   // 이 모델로 만들 수 없는 세트는 자동 구성 후보에서 뺀다(스튜디오 공간세트 = 가상 전용).
   const stylingPool = filterSpaceSetsForModel(
     storyboardSpaceSetsFor({ gender, clothingType }), identityKind,
-  ).filter((set) => set.setType === 'styling');
+  ).filter((set) => set.setType === 'styling' && set.studioStyle !== 'minimal');
   const stylingSets = [];
   const selectedIds = new Set();
   const selectedPlaces = new Set();
@@ -147,6 +164,8 @@ export function pickEntrySets({
   // 낱장 갤러리에서 다른 의류로 번지는 일 없이, 세트 자체만 전 의류에 배치될 수 있다.
   const horizonPool = filterSpaceSetsForModel(
     storyboardSpaceSetsFor({ gender, clothingType }), identityKind);
+  const sequencePool = horizonPool.filter(set => set.setType === 'horizon-sequence');
+  const preferredSequences = preferSequenceFraming ? sequencePool.filter(hasFullAndMediumMembers) : [];
   return {
     stylingSets,
     rotationSet: seededPick(
@@ -154,7 +173,7 @@ export function pickEntrySets({
       `${seedProjectId}:entry:rotation`,
     ),
     sequenceSet: seededPick(
-      horizonPool.filter((set) => set.setType === 'horizon-sequence'),
+      preferredSequences.length ? preferredSequences : sequencePool,
       `${seedProjectId}:entry:sequence`,
     ),
   };

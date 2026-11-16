@@ -2,6 +2,7 @@ import { spaceSetIdFromGroupId } from './storyboardSpaceSetCatalog.js';
 import { horizonBackgroundMode } from './horizonBackground.js';
 import { inheritSimilarCutRecipes } from './storyboardSimilarCuts.js';
 import { singleMemberSpaceSet } from './storyboardSetSelection.js';
+import { spaceSetMembersForProduct } from './storyboardEntryPlacement.js';
 
 const defaultBlock = (item) => item;
 
@@ -85,16 +86,25 @@ export function rekeySeparatedSpaceRuns(blocks, nextGroupId) {
     : block);
 }
 
-export function nextUnusedSpaceSetMember(set, blocks) {
-  if (!set?.members?.length) return null;
+export function unusedSpaceSetMembers(set, blocks) {
+  if (!set?.members?.length) return [];
   const usedExampleIds = new Set((blocks || []).map((block) => block.exampleId).filter(Boolean));
   const usedOrders = new Set((blocks || []).map((block) => block.spaceSetMemberOrder).filter(Number.isFinite));
   return [...set.members]
     .sort((left, right) => left.order - right.order)
-    .find((member) => (
+    .filter((member) => (
       !usedExampleIds.has(member.exampleId)
       && !usedOrders.has(member.order)
-    )) || null;
+    ));
+}
+
+export function nextUnusedSpaceSetMember(set, blocks) {
+  return unusedSpaceSetMembers(set, blocks)[0] || null;
+}
+
+export function nextUnusedSimilarSpaceSetMember(set, blocks, source) {
+  return unusedSpaceSetMembers(set, blocks).find(member => member.shot === source.shot && member.direction === source.direction
+    && (source.direction !== 'side' || !source.sideStyle || !member.sideStyle || source.sideStyle === member.sideStyle)) || null;
 }
 
 export function nextSpaceSetMemberReservation(set, blocks) {
@@ -109,6 +119,7 @@ export function nextSpaceSetMemberReservation(set, blocks) {
       refScope: member.cutType === 'horizon' ? 'all' : 'pose',
       spaceSetMemberOrder: member.order,
       setSelectionOrigin: host.setSelectionOrigin || 'user',
+      outerClosureState: host.outerClosureState || 'open',
       ...(member.cutType === 'horizon' ? { horizonBackgroundMode: horizonBackgroundMode(host) } : {}),
     },
   };
@@ -229,6 +240,7 @@ export function replaceSpaceSetRun(blocks, oldSpaceGroupId, set, options = {}) {
   const previousMembers = run.items.filter(block => !block.similarSourceBlockId);
   const members = createSpaceSetMembers(set, previousMembers[0], {
     ...options,
+    members: options.members ?? spaceSetMembersForProduct(set, options.product),
     previousMembers,
   });
   if (!members.length) return blocks;

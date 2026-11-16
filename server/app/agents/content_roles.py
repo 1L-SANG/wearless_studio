@@ -7,6 +7,7 @@ inferred defensively from ``cutType``; retired kind values are not interpreted.
 """
 
 from . import horizon_background, product_photography
+from .studio_examples import slot_allows_cut_type
 
 CONTENT_ROLES = (
     "hero",
@@ -435,7 +436,8 @@ def _canonicalize_v4_block(block):
         raise ValueError("invalid_storyboard_slot")
     recipe = (slot or {}).get("recipe") or {}
     cut_type = out.get("cutType")
-    if recipe and cut_type not in recipe["allowedCutTypes"]:
+    rejected_example = recipe and not slot_allows_cut_type(recipe, out)
+    if rejected_example:
         cut_type = recipe["cutType"]
     if cut_type not in ("styling", "horizon", "product"):
         raise ValueError("unknown_cut_type")
@@ -447,7 +449,7 @@ def _canonicalize_v4_block(block):
         shot = "full" if worn else "ghost"
     changed = cut_type != block.get("cutType") or shot != block.get("shot")
     out.update(cutType=cut_type, shot=shot)
-    if changed:
+    if changed or rejected_example:
         out.update(exampleId=None, exampleSelectionOrigin=None, thumb=block.get("baseThumb") or block.get("thumb"), baseThumb=None, previewThumb=None)
     direction = out.get("direction")
     if direction not in (_WORN_DIRECTIONS if worn else _PRODUCT_DIRECTIONS):

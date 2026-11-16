@@ -63,8 +63,9 @@ test('WOC9 equal carousel columns preserve the header edge and put dots beside l
 
 for (const [kind, usage] of [['first'], ['wear', 'styling'], ['wear', 'fit'], ['fabric'], ['color_product']]) {
   test(`WOC8 R2 ${kind}/${usage || ''} examples precede the separate garment color section`, () => {
-    const block = blocks.find(b => b.source === 'ai' && b.pageSectionKind === kind && (!usage || b.pageSectionUsage === usage));
-    assert.ok(block);
+    const grouped = blocks.find(b => b.source === 'ai' && b.pageSectionKind === kind && (!usage || b.pageSectionUsage === usage));
+    assert.ok(grouped);
+    const block = { ...grouped, spaceGroupId: null }; // R5 color editing remains on ordinary photos only.
     const html = render(PhotoPanel, { block, blocks, catalogs, clothingType: 'top', exampleGender: 'women', colorOpts: [], detailColorOpts: [], onChange() {} });
     const marker = kind === 'color_product' ? '섹션 촬영 방식' : kind === 'fabric' ? '예시 사진' : 'photoGallery';
     const gallery = html.indexOf(marker), color = html.indexOf('의류 색상 선택');

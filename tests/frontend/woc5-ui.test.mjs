@@ -118,11 +118,11 @@ test('WOC5 displayed first ghost has actual base-front source and no mode or col
   assert.doesNotMatch(missingFront, /<img/);
 });
 
-test('WOC5 signature cards display a small visible signature label', () => {
+test('R3 studio minimal signature cards display a small visible signature label', () => {
   const block = board()[0];
   const signature = signatureCardForBlock(block, { product, analysis, gender: 'women', projectId: 'woc5' });
   assert.ok(signature);
-  const html = render(Gallery, { block, catalogs, cut: block.cutType, shot: block.shot, clothingType: 'top', gender: 'women', signature });
+  const html = render(Gallery, { block, catalogs, cut: block.cutType, shot: block.shot, clothingType: 'top', gender: 'women', studioStyle: 'minimal', signature });
   assert.match(html, /<span[^>]*>시그니처<\/span>/);
 });
 

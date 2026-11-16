@@ -1,3 +1,4 @@
+import { cutDisplaySelection, studioStyleOptions } from '../../src/lib/cutDisplaySelection.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -47,7 +48,7 @@ test('real editor product-tab handler chooses explicit whole product when dress 
   const gates = source.slice(source.indexOf('  const hasSelectableExamples ='), source.indexOf('  // 콘티보드 settingsReset'));
   const handler = source.slice(source.indexOf('  const selectCutType ='), source.indexOf('  const selectExample ='));
   const chosen = {};
-  const dependencies = {
+  const dependencies = { cutDisplaySelection, studioStyleOptions, display: { value: 'styling' }, shot: 'full', exampleId: null,
     hasAvailableGenerationRecipe: generation.hasAvailableGenerationRecipe,
     hasSelectableGenerationExamples: generation.hasSelectableGenerationExamples, ALL_CUT_TYPE_OPTIONS,
     catalogs: { genExamples: [], productShotTypes: shots, shotTypes: [{ value: 'full' }, { value: 'medium' }] },

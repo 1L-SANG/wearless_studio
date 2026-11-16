@@ -17,7 +17,7 @@ test('매칭 의류는 단일 선택이다 — matchClothingMax=1 (PRD §6.8, �
 test('컷 종류 탭은 원본 기반 디테일 또는 발행 예시가 있는 종류를 제공한다', () => {
   const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
   assert.match(aiPanel, /const cutTypeOptions = ALL_CUT_TYPE_OPTIONS\.map/);
-  assert.match(aiPanel, /disabled: !shots\.some\(\(item\) => hasSelectableExamples\(option\.value, item\.value\)\)/);
+  assert.match(aiPanel, /!shots\.some\(\(item\) => hasSelectableExamples\(option\.value, item\.value\)\)/);
   assert.match(aiPanel, /<UnderlineTabs options=\{cutTypeOptions\}/);
   assert.deepEqual(ALL_CUT_TYPE_OPTIONS.map((option) => option.value), ['styling', 'horizon', 'product']);
 });

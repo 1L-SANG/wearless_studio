@@ -1,4 +1,5 @@
 import { preferExamples } from './pageTemplates/examplePreferences.js';
+import { isMinimalExample, isMinimalExampleId } from './studioExamples.js';
 import publicCombinationTable from '../../data/genexamples_public_combinations.json' with { type: 'json' };
 import { filterExamplesForModel } from './identityScope.js';
 import { exampleDirectionFamilyMatches, isSupportedCutType, poseExampleDirectionCompatible, productPresentationOf } from './storyboardTaxonomy.js';
@@ -157,6 +158,7 @@ function matchesMainSelection(example, options, flatCombinationPublished) {
   })
     && (example?.setOnly || flatCombinationPublished)
     && example?.cutType === cutType
+    && (cutType !== 'styling' || isMinimalExample(example) === (options.studioStyle === 'minimal'))
     && example?.shot === shot
     && (!spaceGroupId || (
       (cutType === 'horizon' || example.variants.includes('pose'))
@@ -268,6 +270,7 @@ function candidatesForBlock(block, catalog, product, gender, analysis, identityK
   // 이 모델로 만들 수 없는 예시는 후보에서 아예 뺀다(판정은 서버 규칙 표 — lib/identityScope.js).
   return filterExamplesForModel(selectGenerationExamples(catalog, {
     cutType: block.cutType,
+    studioStyle: isMinimalExampleId(block.exampleId, catalog) ? 'minimal' : null,
     shot: block.shot,
     clothingType: product?.clothingType,
     gender,

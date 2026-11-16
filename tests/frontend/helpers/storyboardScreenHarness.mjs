@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Real modules and callbacks, including api -> mockAdapter -> mock.saveAnalysis.
 // Only the React host/DOM boundary is inert; no browser or network image loads.
-export async function storyboardScreenHarness({ pairedFirst = false, lockSource = 'cut', savedStyle = {}, pauseLoad = false, withToast = false, viewportWidth = 1440, hasFrame = false, mallConnections = {} } = {}) {
+export async function storyboardScreenHarness({ pairedFirst = false, lockSource = 'cut', savedStyle = {}, pauseLoad = false, withToast = false, viewportWidth = 1440, hasFrame = false, mallConnections = {}, productPatch = {}, analysisPatch = {} } = {}) {
   const scrollCalls = [];
   const descriptors = new Map(['window', 'document', 'requestAnimationFrame', 'cancelAnimationFrame'].map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
   const host = () => ({ nodeType: 1, classList: { add() {}, remove() {}, contains: () => false },
@@ -33,6 +33,7 @@ export async function storyboardScreenHarness({ pairedFirst = false, lockSource 
   const { defaultPageStyle } = await vite.ssrLoadModule('/src/lib/pageTemplates/pageStyle.js');
   const { seedStoryboard } = await vite.ssrLoadModule('/src/lib/pageTemplates/seed.js');
   DB.analysis.pageStyle = { ...defaultPageStyle(), ...savedStyle }; DB.product.colors[0].swatchId = 'blue';
+  Object.assign(DB.product, productPatch); Object.assign(DB.analysis, analysisPatch);
   DB.storyboard = seedStoryboard(DB.product, DB.analysis);
   DB.mallConnections = mallConnections;
   DB.account.name = '공개하면 안 되는 회원 실명';
@@ -53,7 +54,7 @@ export async function storyboardScreenHarness({ pairedFirst = false, lockSource 
   let notifications;
   function CaptureNotifications() { notifications = useToast(); return null; }
   const currentDispatcher = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
-  let active, cursor = 0, dirty = true, tree, layout = [], effects = [], closed = false;
+  let active, cursor = 0, dirty = true, tree, layout = [], effects = [], closed = false, visited = new Set();
   const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
   const state = initial => {
     const owner = active, index = cursor++;
@@ -93,6 +94,7 @@ export async function storyboardScreenHarness({ pairedFirst = false, lockSource 
     }
     if (type?.$$typeof === Symbol.for('react.memo')) type = type.type;
     if (typeof type === 'function' || type?.$$typeof === Symbol.for('react.forward_ref')) {
+      visited.add(path);
       let owner = instances.get(path);
       if (!owner || owner.type !== type) { owner?.cleanups.forEach(fn => fn?.()); owner = { type, slots: [], cleanups: [] }; instances.set(path, owner); }
       const previous = currentDispatcher.current; active = owner; cursor = 0; currentDispatcher.current = dispatcher;
@@ -107,11 +109,16 @@ export async function storyboardScreenHarness({ pairedFirst = false, lockSource 
   const render = () => {
     let loops = 0;
     do {
-      dirty = false; layout = []; effects = [];
+      dirty = false; layout = []; effects = []; visited = new Set();
       const screen = React.createElement(Storyboard, withToast ? {} : { toastOverride: toast });
       tree = expand(React.createElement(QueryClientProvider, { client: queryClient },
         React.createElement(MemoryRouter, { initialEntries: ['/create/storyboard'] }, withToast
         ? React.createElement(ToastProvider, null, React.createElement(CaptureNotifications), screen) : screen)));
+      // A closed drawer (or a pending-recipe branch) unmounts its components.
+      // Retaining their hook slots would incorrectly reuse gallery browsing state on reopen.
+      for (const [path, owner] of instances) if (!visited.has(path)) {
+        owner.cleanups.forEach(fn => fn?.()); instances.delete(path);
+      }
       layout.splice(0).forEach(fn => fn()); effects.splice(0).forEach(fn => fn());
       if (++loops > 30) throw new Error('screen render did not settle');
     } while (dirty);

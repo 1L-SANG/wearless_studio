@@ -61,7 +61,7 @@ import { resolveStoryboardEntry } from '@/lib/pageTemplates/seed.js';
 import { analysisPageStyle, defaultPageStyle, validPageStyle } from '@/lib/pageTemplates/pageStyle.js';
 import { recordStoryboardEntryState, setStoryboardEntryNotice, storyboardEntryNotice } from '@/lib/pageTemplates/entryNotices.js';
 import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
-import { isSupportedCutType } from '@/lib/storyboardTaxonomy.js';
+import { isSupportedCutType, cutTypeDisplay } from '@/lib/storyboardTaxonomy.js';
 import { createDraftSlotMemory } from './draftSlotMemory.js';
 import { applyOutfitSet, complementaryOutfitSlot, mergeOutfitAnalysis, normalizeOutfitSelections, outfitSelectionsForTypeChange,
   outfitSlotsFor, syncOutfitLegacySelection } from '@/lib/outfitSelections.js';
@@ -1718,7 +1718,7 @@ export const api = {
     const isProduct = (source?.cutType || req.source?.cutType) === 'product';
     const isSimilar = isVary && req.variationMode === 'similar';
     const unsupported = () => Object.assign(new Error(isProduct
-      ? '제품컷은 새 이미지 추가에서 원본 사진을 골라 만들어요.' : '이 사진은 비슷한 컷만 만들 수 있어요.'), { code: 'vary_unsupported', status: 400 });
+      ? `${cutTypeDisplay('product').label}은 새 이미지 추가에서 원본 사진을 골라 만들어요.` : '이 사진은 비슷한 컷만 만들 수 있어요.'), { code: 'vary_unsupported', status: 400 });
     if (isVary && (('changes' in req && (!Array.isArray(req.changes) || req.changes.length))
       || ![undefined, null, 'similar'].includes(req.variationMode))) throw unsupported();
     if (isSimilar && isProduct) throw Object.assign(new Error('비슷한 컷은 착용 사진에서 만들 수 있어요.'), { code: 'similar_source_unsupported', status: 400 });

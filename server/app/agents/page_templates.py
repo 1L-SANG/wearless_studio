@@ -385,8 +385,10 @@ def get_template(template_id, catalog=None):
 
 
 def _usage_for_recipe(recipe):
+    from .studio_examples import is_minimal_example_id
     recipe = recipe or {}
-    if recipe.get('cutType') == 'horizon' or recipe.get('set') in ('sequence', 'rotation'):
+    if (recipe.get('cutType') == 'horizon' or recipe.get('set') in ('sequence', 'rotation')
+            or recipe.get('cutType') == 'styling' and is_minimal_example_id(recipe.get('exampleId'))):
         return 'fit'
     if recipe.get('cutType') == 'styling' or recipe.get('set') == 'styling':
         return 'styling'

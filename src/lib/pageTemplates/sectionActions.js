@@ -53,7 +53,7 @@ export function addTemplateSection(blocks, product, analysis, kind, usage, conte
     const used = new Set(blocks.map(block => block.exampleId).filter(Boolean));
     const example = context.example;
     const cut = example?.cutType || section.photoSlots[0]?.recipe.cutType;
-    const pool = sets.filter(set => cut === 'styling' ? set.setType === 'styling' : set.setType === 'horizon-sequence');
+    const pool = sets.filter(set => cut === 'styling' ? set.setType === 'styling' && set.studioStyle !== 'minimal' : set.setType === 'horizon-sequence');
     stylingSet = example ? sets.find(set => set.members.some(member => member.exampleId === example.id)) : null;
     if (!stylingSet && !example) stylingSet = [...pool].sort((a, b) => {
       const score = set => Number(new Set(set.members.map(member => member.shot)).size > 1) * 100

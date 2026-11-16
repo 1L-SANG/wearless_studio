@@ -1,3 +1,4 @@
+import { cutTypeDisplay } from '../../src/lib/storyboardTaxonomy.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -111,7 +112,7 @@ async function previousRequestButton(context, retry) {
   const start = panels.indexOf('  if (pendingGenerateRequest) {');
   const end = panels.indexOf('\n  return (\n    <div>', start);
   const { code } = await transformWithEsbuild(`function Pending(){${panels.slice(start, end)}}`, 'Pending.jsx', { jsx: 'transform' });
-  const args = { React, pendingGenerateRequest: context.generateSubmission.current.request,
+  const args = { cutTypeDisplay, React, pendingGenerateRequest: context.generateSubmission.current.request,
     generateSubmitting: false,
     onGenerate: () => assert.fail('현재 칸의 새 요청을 만들지 않는다'),
     onConfirmPendingGenerate: () => retry({ confirmPending: true }),

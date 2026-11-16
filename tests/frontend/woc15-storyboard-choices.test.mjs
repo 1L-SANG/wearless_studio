@@ -70,7 +70,7 @@ test('WOC15 every applicable styling example is reachable through a visible plac
   }
 });
 
-test('WOC15 styling studio examples resolve to indoor while horizon stays in studio', () => {
+test('WOC22 minimal examples keep indoor placement but only appear in their own gallery', () => {
   for (const [id, gender, clothingType] of [
     ['ex_styling_men_outer_full_06', 'men', 'outer'],
     ['ex_styling_men_outer_full_08', 'men', 'outer'],
@@ -80,7 +80,10 @@ test('WOC15 styling studio examples resolve to indoor while horizon stays in stu
     assert.ok(example, id);
     assert.equal(initialPhotoPlace(example), 'indoor', id);
     const choices = photoGalleryChoices(catalog, storyboardSpaceSetsFor({ gender, clothingType }), { gender, clothingType, place: 'indoor' });
-    assert.ok(choices.entries.flatMap(entry => entry.members || [entry.example]).some(item => item.id === id), id);
+    assert.ok(!choices.candidates.some(item => item.id === id), id);
+    const minimal = photoGalleryChoices(catalog, storyboardSpaceSetsFor({ gender, clothingType }),
+      { gender, clothingType, studioStyle: 'minimal', place: 'indoor' });
+    assert.ok(minimal.entries.flatMap(entry => entry.members || [entry.example]).some(item => item.id === id), id);
   }
   const horizon = photoGalleryChoices(catalog, storyboardSpaceSetsFor({ gender: 'women', clothingType: 'top' }),
     { cutTypes: ['horizon'], gender: 'women', clothingType: 'top', place: 'studio' });

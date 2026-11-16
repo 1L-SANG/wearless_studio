@@ -13,7 +13,7 @@ import { seedStoryboard } from '../../src/lib/pageTemplates/seed.js';
 import { defaultPageStyle } from '../../src/lib/pageTemplates/pageStyle.js';
 import { assemblePage } from '../../src/lib/pageTemplates/assemble.js';
 import { detailPageCreditCost } from '../../src/lib/limits.js';
-import { createSpaceSetMembers } from '../../src/lib/storyboardSpaceSets.js';
+import { createSpaceSetMembers, detachSpaceMembership } from '../../src/lib/storyboardSpaceSets.js';
 import { storyboardSpaceSetsFor, spaceSetGroupId } from '../../src/lib/storyboardSpaceSetCatalog.js';
 
 const cases = JSON.parse(readFileSync(new URL('../fixtures/page_templates_cases.json', import.meta.url))).cases;
@@ -104,7 +104,7 @@ test('daily pale member is next unused in this instance, inserts in place, and s
   assert.equal(stageAdditions(full, run.key, state).length, 0);
   const capped = Array.from({ length: 12 }, (_, i) => ({ ...members[i % 2], id: `cap-${i}` }));
   assert.equal(stageAdditions(capped, run.key, state).length, 0);
-  assert.equal(stageAdditions(members.map(b => ({ ...b, cutType: 'horizon', pageSectionUsage: 'fit' })), run.key, state).length, 0);
+  assert.equal(stageAdditions(members.map(b => ({ ...b, pageSectionUsage: 'fit' })), run.key, state).length, 1, 'wear usage does not block a location-set suggestion');
 });
 
 test('points fabric requires a real candidate, no fabric run, and available four-photo budget', () => {
@@ -185,9 +185,10 @@ test('daily member insertion stays inside the original group in both storage and
   const sets = storyboardSpaceSetsFor({ gender: 'women', clothingType: 'top' }).filter(s => s.setType === 'styling' && s.members.length >= 3).slice(0, 2);
   const groups = sets.map((set, i) => createSpaceSetMembers(set, run.blocks[0], { spaceGroupId: spaceSetGroupId(set.id, `group-${i}`), members: set.members.slice(0, 2),
     makeId: (_, j) => `member-${i}-${j}` }).map((b, j) => ({ ...b, slotKey: `wear_styling.wear${i * 2 + j + 1}` })));
-  state.blocks = [...state.blocks.slice(0, run.start), ...groups.flat(), ...state.blocks.slice(run.end)];
+  const lead = { ...detachSpaceMembership(run.blocks.find(block => block.source === 'ai')), id: 'standalone-lead', slotKey: 'wear_styling.wear0' };
+  state.blocks = [...state.blocks.slice(0, run.start), lead, ...groups.flat(), ...state.blocks.slice(run.end)];
   const next = checked(add(state, 'wear')), added = next.find(b => !state.blocks.some(old => old.id === b.id));
-  const expected = [groups[0][0].id, groups[0][1].id, added.id, ...groups[1].map(b => b.id)];
+  const expected = [lead.id, groups[0][0].id, groups[0][1].id, added.id, ...groups[1].map(b => b.id)];
   assert.deepEqual(runOf(next, 'wear').blocks.map(b => b.id), expected);
   const page = assemblePage({ storyboard: next, product: state.product, analysis: state.analysis });
   assert.deepEqual(page.filter(b => b.pageSectionKey === run.key).flatMap(b => b.elements).filter(e => e.type === 'image').map(e => e.sourceBlockId), expected);

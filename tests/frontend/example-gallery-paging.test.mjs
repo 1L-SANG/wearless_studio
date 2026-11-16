@@ -1,3 +1,4 @@
+import { cutTypeDisplay } from '../../src/lib/storyboardTaxonomy.js';
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -142,7 +143,7 @@ function galleryHarness(initialProps = {}) {
     if (!same(slots[index]?.deps, deps)) slots[index] = { deps, value: factory() };
     return slots[index].value;
   };
-  const dependencies = {
+  const dependencies = { cutTypeDisplay,
     ...generation, ...gallery, spaceSetDisplayName, StoryboardStackPopup: () => null,
     filterExamplesForModel, isSourceBasedDetailRecipe, poseExampleDirectionCompatible, filterSpaceSetsForModel, storyboardSpaceSetsFor, filterGalleryExamples, examplePlace, visiblePlaceTabs,
     useMemo, styles: new Proxy({}, { get: (_, key) => String(key) }), PlaceTabs: () => null,

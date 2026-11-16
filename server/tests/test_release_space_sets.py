@@ -151,6 +151,12 @@ def test_existing_released_rotation_scope_passes_catalog_pair_validation():
     registry = json.loads(release.DEFAULT_SERVER_REGISTRY_PATH.read_text(encoding="utf-8"))
     assert any(item.get("setApplicableClothingTypes") for item in frontend["sets"])
     release._validate_catalog_pair(frontend, registry, label="existing release")
+    untagged = deepcopy(frontend)
+    for group in untagged["sets"]:
+        for member in group["members"]:
+            member.pop("studioStyle", None)
+    with pytest.raises(RuntimeError, match="멤버 정의가 프론트·서버에서 다릅니다"):
+        release._validate_catalog_pair(untagged, registry, label="missing minimal tags")
     changed = deepcopy(frontend)
     rotation = next(item for item in changed["sets"] if item.get("setApplicableClothingTypes"))
     rotation["setApplicableClothingTypes"] = ["top"]

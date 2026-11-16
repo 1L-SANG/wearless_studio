@@ -3,24 +3,27 @@ import assert from 'node:assert/strict';
 import { renderToStaticMarkup } from 'react-dom/server';
 import React from 'react';
 import { hookHarness, loadStoryboardComponent, nodes, textOf } from './helpers/storyboardComponents.mjs';
+import { generationExampleImageSources } from '../../src/lib/generationExamples.js';
 import { spaceSetDisplayName } from '../../src/lib/spaceSetDisplayNames.js';
 import { inferStoryboardSpaceSet } from '../../src/lib/storyboardSpaceSetCatalog.js';
 import { examplePlace } from '../../src/lib/pageTemplates/storyboardGallery.js';
 async function panel(count, props = {}) {
   const h = hookHarness();
   const set = { id: 'set', name: '장소', setType: 'styling', members: Array.from({ length: count }, (_, i) => ({ exampleId: `e${i}`, thumb: `/photo-${i}.webp`, placeType: 'cafe' })) };
-  const Component = await loadStoryboardComponent('StoryboardSpaceSetPanel.jsx', 'StoryboardSpaceSetPanel', { ...h.hooks,
+  const PhotoMosaic = await loadStoryboardComponent('PhotoMosaic.jsx', 'PhotoMosaic', { useState: React.useState, generationExampleImageSources, ExampleThumb: ({example}) => React.createElement('img', {src:example.thumb,alt:''}) });
+  const Component = await loadStoryboardComponent('StoryboardSpaceSetPanel.jsx', 'StoryboardSpaceSetPanel', { ...h.hooks, PhotoMosaic,
     Icon: 'svg', filterSpaceSetsForModel: value => value, storyboardSpaceSetsFor: () => [set], inferStoryboardSpaceSet,
     examplePlace: () => ({ value: 'cafe' }), PlaceTabs: () => null, spaceSetDisplayName,
     ExampleThumb: ({example}) => React.createElement('img',{src:example.thumb,alt:''}) });
   const tree = h.render(Component, { mode: 'add', onChoose() {}, ...props });
   h.close(); return { tree, set };
 }
-for (const count of [3, 4, 5, 7]) test(`${count}-photo location set displays one unlabeled representative card`, async () => {
+for (const count of [3, 4, 5, 7]) test(`${count}-photo location set R5 displays every photo and the total count in one card`, async () => {
   const { tree } = await panel(count);
   const html = renderToStaticMarkup(tree);
-  assert.equal((html.match(/<img/g) || []).length, 1);
-  assert.ok(!textOf(tree).includes(`${count}장`));
+  assert.equal((html.match(/<img/g) || []).length, count);
+  assert.ok(textOf(tree).includes(`${count}컷`));
+  assert.ok(!textOf(tree).includes('+'));
 });
 test('choosing a set uses the complete set, without a photo-count selector', async () => {
   const chosen = [], { tree, set } = await panel(5, { onChoose: value => chosen.push(value) });

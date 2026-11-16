@@ -4266,7 +4266,8 @@
             "sha256": "4900010bbbaf4d9e8fa3fb520953ba5a07bf16ced9b9d3797b38c1954ee780cb",
             "width": 896
           },
-          "shot": "full"
+          "shot": "full",
+          "studioStyle": "minimal"
         },
         {
           "all": {
@@ -4287,7 +4288,8 @@
             "sha256": "8955c541c4c4fdbd6bbbd56589f4553704fd2d92b5b3db92c6b9957e1ad12a2f",
             "width": 896
           },
-          "shot": "medium"
+          "shot": "medium",
+          "studioStyle": "minimal"
         },
         {
           "all": {
@@ -4308,7 +4310,8 @@
             "sha256": "549191d9702c7f364e4912987757b3fc4d1a09a497ef15fd3fcc4535240c2aee",
             "width": 896
           },
-          "shot": "medium"
+          "shot": "medium",
+          "studioStyle": "minimal"
         }
       ],
       "name": "02 · 콘크리트 알코브",
@@ -4438,7 +4441,8 @@
             "sha256": "d5690f368a01841993e1b469339946cf31faae3c3c77c4beaa4ef28d82e303c5",
             "width": 896
           },
-          "shot": "full"
+          "shot": "full",
+          "studioStyle": "minimal"
         },
         {
           "all": {
@@ -4459,7 +4463,8 @@
             "sha256": "6af2bf128aa2dee7a9aa844c0dc75bfd5b54f7fe80245c8ec637f61058c9c841",
             "width": 896
           },
-          "shot": "medium"
+          "shot": "medium",
+          "studioStyle": "minimal"
         },
         {
           "all": {
@@ -4480,7 +4485,8 @@
             "sha256": "f112aa21016851952c68d8c3f913d38303ab47cb5a385116707bc51ed50163b9",
             "width": 896
           },
-          "shot": "medium"
+          "shot": "medium",
+          "studioStyle": "minimal"
         }
       ],
       "name": "04 · 창가 원룸",
@@ -5642,7 +5648,8 @@
             "sha256": "2a79ff9380da98de81c394ef2aeb1f5e5d0d15a15d61a4ea55ebe430695f61ed",
             "width": 896
           },
-          "shot": "full"
+          "shot": "full",
+          "studioStyle": "minimal"
         },
         {
           "all": {
@@ -5663,7 +5670,8 @@
             "sha256": "e48a608013bf37531955d60107d75641c66a07a7f4d75c78d18ab133c902d953",
             "width": 896
           },
-          "shot": "full"
+          "shot": "full",
+          "studioStyle": "minimal"
         },
         {
           "all": {
@@ -5684,7 +5692,8 @@
             "sha256": "d84814e89a557cdce7a6f588ec246edff41bebc8074c94ff6ef9082fef555cc2",
             "width": 896
           },
-          "shot": "medium"
+          "shot": "medium",
+          "studioStyle": "minimal"
         }
       ],
       "name": "05 · 카페·소형 매장",

@@ -18,6 +18,8 @@ import { detailTargetById } from '../../lib/detailRecommendations.js';
 import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Icon, Button, IconButton, Chips, EmptyState, UploadPendingTile } from '@/components/ui.jsx';
 import { UnderlineTabs, MoodGuide } from '@/features/storyboard/Storyboard.jsx';
+import { StudioStyleChips } from '../storyboard/StoryboardControls.jsx';
+import { cutDisplaySelection, studioStyleOptions } from '../../lib/cutDisplaySelection.js';
 import { isRealModelSelection } from '@/features/analysis/modelSelection.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { OBJECT_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
@@ -25,6 +27,7 @@ import {
   ALL_CUT_TYPE_OPTIONS,
   PRODUCT_PRESENTATION_OPTIONS,
   inferContentRole,
+  cutTypeDisplay,
 } from '@/lib/storyboardTaxonomy.js';
 import { hasAvailableGenerationRecipe, hasSelectableGenerationExamples } from '@/lib/generationExamples.js';
 import { BRAND_USE_CATEGORIES } from '@/lib/brandUseCategories.js';
@@ -280,6 +283,7 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
   const [matchIds, setMatchIds] = useState([]);
   const [matchOpen, setMatchOpen] = useState(false);
   const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
+  const display = cutTypeDisplay(cutType, exampleId, catalogs.genExamples);
   const galleryCutType = cutType;
   const galleryIsProduct = galleryCutType === 'product';
   const galleryShotOptions = galleryIsProduct ? catalogs.productShotTypes : catalogs.shotTypes;
@@ -338,22 +342,31 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
     ...(cut === 'product' && shotValue === 'ghost' ? { productPresentation: 'ghost' } : {}),
     appendSetOnly: cut !== 'product',
   });
+  const studioOptions = studioStyleOptions(catalogs.genExamples, {
+    shots: catalogs.shotTypes.map(option => option.value), clothingType, gender: modelGender,
+  });
   const cutTypeOptions = ALL_CUT_TYPE_OPTIONS.map((option) => {
     const shots = option.value === 'product' ? catalogs.productShotTypes : catalogs.shotTypes;
-    return { ...option, disabled: !shots.some((item) => hasSelectableExamples(option.value, item.value)) };
+    return { ...option, disabled: option.value === 'horizon'
+      ? studioOptions.every(item => item.disabled) : !shots.some((item) => hasSelectableExamples(option.value, item.value)) };
   });
   // 콘티보드 settingsReset(storyboardExampleSelection.js)과 같은 규칙 — 이전 레시피의
   // 매칭 의류·아우터 열림·내 레퍼런스가 새 레시피에 숨은 채 전송되지 않게 전면 리셋.
   const resetRecipeSettings = () => {
     setMatchIds([]); setMatchOpen(false); setOuterClosure('open'); setRefImages([]);
   };
-  const selectCutType = (value) => {
-    if (value === cutType) return;
+  const selectCutType = (groupValue, studioStyle = 'horizon') => {
+    if (groupValue === display.value && (groupValue !== 'horizon' || studioStyle === display.studioStyle)) return;
+    const value = groupValue === 'horizon' && studioStyle === 'minimal' ? 'styling' : groupValue;
     const nextShotOpts = value === 'product' ? catalogs.productShotTypes : catalogs.shotTypes;
     const preferred = NEW_CUT_DEFAULT_SHOT[value] || 'full';
     // 원본 기반 디테일을 포함해 실제로 사용 가능한 샷을 고른다.
-    const nextShot = hasSelectableExamples(value, preferred) ? preferred
-      : nextShotOpts.find((option) => hasSelectableExamples(value, option.value))?.value || preferred;
+    const selection = value !== 'product' ? cutDisplaySelection({ cutType, shot, exampleId },
+      { value: groupValue, studioStyle }, { catalog: catalogs.genExamples, preferredShot: preferred,
+        shots: nextShotOpts.map(option => option.value), clothingType, gender: modelGender }) : null;
+    if (studioStyle === 'minimal' && groupValue === 'horizon' && !selection) return;
+    const nextShot = selection?.shot || (hasSelectableExamples(value, preferred) ? preferred
+      : nextShotOpts.find((option) => hasSelectableExamples(value, option.value))?.value || preferred);
     setCutType(value); setShot(nextShot); setDetailTargetId(null);
     setProductPresentation(value === 'product' && nextShot === 'ghost'
       && !hasSelectableGenerationExamples(catalogs.genExamples, { cutType: value, shot: nextShot, clothingType, gender: modelGender })
@@ -364,7 +377,7 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
       const patch = productSourceColorPatch({ cutType: value, shot: nextShot, direction: 'front' }, product, nextColorId);
       setProductDirection(patch.direction || 'front');
     }
-    setExampleId(null);
+    setExampleId(selection?.exampleId || null);
     resetRecipeSettings();
   };
   const selectExample = (value) => {
@@ -387,8 +400,8 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
   if (pendingGenerateRequest) {
     const previous = pendingGenerateRequest;
     const colorLabel = [...colorOpts, ...detailColorOpts].find((option) => option.id === previous.colorId)?.label || '선택한 색상';
-    const cutLabel = ALL_CUT_TYPE_OPTIONS.find((option) => option.value === previous.cutType)?.label
-      || '이미지';
+    const previousDisplay = cutTypeDisplay(previous.cutType, previous.exampleId, catalogs.genExamples);
+    const cutLabel = [previousDisplay.label, previousDisplay.studioLabel].filter(Boolean).join(' · ') || '이미지';
     const shots = previous.cutType === 'product' ? catalogs.productShotTypes : catalogs.shotTypes;
     const shotLabel = (previous.cutType === 'product' && previous.shot === 'ghost'
       ? PRODUCT_PRESENTATION_OPTIONS.find((option) => option.value === previous.productPresentation)?.label : null)
@@ -409,7 +422,10 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
     <div>
       {/* 콘티보드와 같은 첫 선택 — 컷 종류(촬영 방식). 사진 목적은 inferContentRole 로 내부 결정 */}
       <div className="insp-sec"><label className="lbl">컷 종류</label>
-        <UnderlineTabs options={cutTypeOptions} value={cutType} onChange={selectCutType} />
+        <UnderlineTabs options={cutTypeOptions} value={display.value}
+          onChange={value => { if (value !== display.value) selectCutType(value); }} />
+        {display.value === 'horizon' && <StudioStyleChips options={studioOptions} value={display.studioStyle}
+          onChange={value => selectCutType('horizon', value)} />}
       </div>
 
       {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터 (B+C안, ADR-0004) */}

@@ -1,6 +1,7 @@
 import spaceSetRelease from '../data/storyboardSpaceSets.json' with { type: 'json' };
 import placeTypeTable from '../../data/storyboard_space_place_types.json' with { type: 'json' };
 import replacements from '../../data/storyboardSpaceSetReplacements.json' with { type: 'json' };
+import { studioStyleForSet } from './studioExamples.js';
 
 const ALL_CLOTHING_TYPES = Object.freeze(['top', 'bottom', 'outer', 'dress']);
 const SET_TYPES = new Set(['styling', 'horizon-rotation', 'horizon-sequence']);
@@ -60,6 +61,7 @@ function normalizedMember(member, index, setType) {
     exampleId,
     order: member.order,
     cutType: member.cutType,
+    ...(member.studioStyle === 'minimal' ? { studioStyle: 'minimal' } : {}),
     shot: member.shot,
     direction: member.direction,
     thumb,
@@ -154,11 +156,13 @@ function normalizedSet(set, index) {
     members.some((member) => !member)
     || new Set(members.map((member) => member.exampleId)).size !== members.length
   ) return null;
+  const studioStyle = studioStyleForSet(members);
   return Object.freeze({
     id,
     setId: id,
     name: text(set.name),
     setType,
+    ...(studioStyle ? { studioStyle } : {}),
     gender: set.gender,
     applicableClothingTypes: Object.freeze([...clothingTypes]),
     setApplicableClothingTypes: Object.freeze([...setClothingTypes]),
@@ -209,6 +213,7 @@ export const STORYBOARD_SPACE_SET_EXAMPLES = Object.freeze(
     .map((member) => Object.freeze({
       id: member.exampleId,
       cutType: member.cutType,
+      ...(member.studioStyle === 'minimal' ? { studioStyle: 'minimal' } : {}),
       shot: member.shot,
       direction: member.direction,
       gender: set.gender,
@@ -248,7 +253,7 @@ export function storyboardSpaceSetsFor({ gender = null, clothingType = null } = 
 export function distinctPlaceStylingSetsFor({ gender = null, clothingType = null } = {}) {
   const seenPlaceTypes = new Set();
   return storyboardSpaceSetsFor({ gender, clothingType }).filter((set) => {
-    if (set.setType !== 'styling' || seenPlaceTypes.has(set.placeType)) return false;
+    if (set.setType !== 'styling' || set.studioStyle === 'minimal' || seenPlaceTypes.has(set.placeType)) return false;
     seenPlaceTypes.add(set.placeType);
     return true;
   });

@@ -1,3 +1,4 @@
+import { cutDisplaySelection, studioStyleOptions } from '../../src/lib/cutDisplaySelection.js';
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -88,7 +89,7 @@ async function panelHarness(kind, clothingType = 'top', sourceProduct = product)
   const garmentProduct = { ...sourceProduct, clothingType };
   const garmentCatalogs = { ...catalogs, detailProduct: garmentProduct, frontClosure: { version: 1, kind: 'none', range: null },
     genExamples: clothingType === 'top' ? catalogs.genExamples : [] };
-  const scope = { React, ...taxonomy, ...examples, ...selection, ...details, ...photos, ...closure, ...garmentColors,
+  const scope = { cutDisplaySelection, studioStyleOptions, StudioStyleChips: 'studio-style-chips', React, ...taxonomy, ...examples, ...selection, ...details, ...photos, ...closure, ...garmentColors,
     useState: initial => { const index = cursor++; if (!(index in slots)) slots[index] = initial; return [slots[index], value => { slots[index] = typeof value === 'function' ? value(slots[index]) : value; }]; },
     useRef: initial => { const index = cursor++; return slots[index] ||= { current: initial }; }, useEffect() {},
     isRealModelSelection: () => false, BRAND_USE_CATEGORIES: [], WORN_CUT_TYPES: new Set(['styling', 'horizon', 'mirror']),

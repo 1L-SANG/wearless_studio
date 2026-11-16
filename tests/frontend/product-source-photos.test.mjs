@@ -1,3 +1,4 @@
+import { cutDisplaySelection, studioStyleOptions } from '../../src/lib/cutDisplaySelection.js';
 import { storyboardPhotoPanelHarness } from './helpers/storyboardPhotoPanelHarness.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -98,7 +99,7 @@ async function aiHarness() {
   const { code } = await transformWithEsbuild(body + '\nreturn AIPanel;', 'ai.jsx', { loader: 'jsx' });
   const module = await loadPhotos();
   const slots = []; let cursor = 0, request;
-  const scope = { React, ...taxonomy, ...examples, ...selection, ...details, ...module, ...garmentColors,
+  const scope = { cutDisplaySelection, studioStyleOptions, StudioStyleChips: 'studio-style-chips', React, ...taxonomy, ...examples, ...selection, ...details, ...module, ...garmentColors,
     useState: initial => { const index = cursor++; if (!(index in slots)) slots[index] = initial; return [slots[index], value => { slots[index] = typeof value === 'function' ? value(slots[index]) : value; }]; },
     useRef: value => { const index = cursor++; return slots[index] ||= { current: value }; },
     isRealModelSelection: () => false, BRAND_USE_CATEGORIES: [],

@@ -1,5 +1,6 @@
 import tags from '../../../server/app/data/example_tags.json' with { type: 'json' };
 import { STORYBOARD_SPACE_SETS } from '../storyboardSpaceSetCatalog.js';
+import { isMinimalExample } from '../studioExamples.js';
 
 export const PLACE_TABS = Object.freeze([
   { value: 'all', label: '전체' }, { value: 'cafe', label: '카페' }, { value: 'home', label: '집' },
@@ -42,8 +43,19 @@ export const usedGalleryExampleIds = (blocks, selectedId) => new Set((blocks || 
 export const filterGalleryExamples = (examples, { place = 'all', shot = 'all' } = {}) => examples.filter(example =>
   (place === 'all' || examplePlace(example).value === place) && (shot === 'all' || example.shot === shot));
 
+// Published standalone IDs encode source garment, framing, named variation and
+// shooting number. Only the direction token is removed; variants/revisions stay
+// distinct. Unknown formats remain single cards instead of guessing a session.
+export function studioExampleShootKey(example) {
+  if (example?.cutType !== 'horizon' && !isMinimalExample(example)) return null;
+  const match = String(example?.id || '').match(/^ex_(?<cut>horizon|styling)_(?<gender>men|women)_(?<garment>top|bottom|outer|dress)_(?<shot>full|medium)_(?:front|back|side|profile)(?:_(?:left|right))?(?<variant>(?:_[a-z][a-z0-9]*)*)_(?<number>\d+)(?<revision>(?:_[a-z0-9]+)*)$/);
+  if (!match || match.groups.cut !== example.cutType) return null;
+  const { cut, gender, garment, shot, variant, number, revision } = match.groups;
+  return `shoot:${cut}:${gender}:${garment}:${shot}:${variant}:${number}:${revision}`;
+}
+
 // These entries and their shuffle belong to the picker session, never to saved blocks.
-export function groupGalleryExamples(examples, sets, { selectedId, setsOnly = false, minimumSetMembers = 2 } = {}) {
+export function groupGalleryExamples(examples, sets, { selectedId, setsOnly = false, minimumSetMembers = 2, groupStudioShoots = false } = {}) {
   const byId = new Map(examples.map(example => [example.id, example]));
   const groups = new Map(), byMember = new Map();
   for (const set of sets) {
@@ -55,6 +67,23 @@ export function groupGalleryExamples(examples, sets, { selectedId, setsOnly = fa
     members.forEach(example => byMember.set(example.id, entry));
   }
   if (setsOnly) return [...groups.values()];
+  if (groupStudioShoots) {
+    const shoots = new Map();
+    for (const example of examples) {
+      if (byMember.has(example.id)) continue;
+      const key = studioExampleShootKey(example);
+      if (!key) continue;
+      if (!shoots.has(key)) shoots.set(key, []);
+      shoots.get(key).push(example);
+    }
+    for (const [id, members] of shoots) {
+      if (members.length < 2) continue;
+      const entry = { id, kind: 'stack', members,
+        example: members.find(example => example.id === selectedId)
+          || members.find(example => example.direction === 'front') || members[0] };
+      members.forEach(example => byMember.set(example.id, entry));
+    }
+  }
   const emitted = new Set();
   return examples.flatMap(example => {
     const group = byMember.get(example.id);

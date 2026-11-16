@@ -75,12 +75,12 @@ const examples = [photo('r2-cafe-full', 'cafe', 'full', 'hard'), photo('r2-home-
 const result = options => choices.photoGalleryChoices(examples, [], { gender: 'women', clothingType: 'top', ...options });
 const values = tabs => tabs?.map(tab => tab.value);
 
-test('R2-2 place availability uses garment, gender, framing and light while preserving cafe-first order', () => {
+test('R5 place availability uses garment, gender and framing without light filtering', () => {
   assert.deepEqual(values(result({ shot: 'all' }).tabs), ['cafe', 'home', 'building', 'park']);
   assert.deepEqual(values(result({ shot: 'full' }).tabs), ['cafe', 'park']);
   assert.deepEqual(values(result({ shot: 'medium' }).tabs), ['home', 'building']);
-  assert.deepEqual(values(result({ shot: 'all', light: 'soft' }).tabs), ['home', 'park']);
-  assert.deepEqual(values(result({ shot: 'all', light: 'hard' }).tabs), ['cafe', 'building']);
+  assert.deepEqual(values(result({ shot: 'all', light: 'soft' }).tabs), ['cafe', 'home', 'building', 'park']);
+  assert.deepEqual(values(result({ shot: 'all', light: 'hard' }).tabs), ['cafe', 'home', 'building', 'park']);
 });
 
 test('R2-2 resolves the current photo place when visible, otherwise the first visible place, and no place when empty', () => {
@@ -113,33 +113,30 @@ async function galleryHarness(props) {
   return { render: next => h.render(Component, { ...props, ...next }), close: h.close };
 }
 
-test('R2-2 framing changes replace an emptied tab and remember the replacement when more places become available', async () => {
+test('R5 framing availability keeps the current place and starts on its available framing', async () => {
   const h = await galleryHarness(propsFor(examples[0]));
   try {
     let tree = h.render(); filters(tree).onPlace('park'); tree = h.render(); assert.equal(filters(tree).place, 'park');
-    framing(tree).onChange('medium'); tree = h.render(); assert.equal(filters(tree).place, 'home');
-    assert.deepEqual(values(filters(tree).tabs), ['home', 'building']);
-    framing(tree).onChange('all'); tree = h.render(); assert.equal(filters(tree).place, 'home');
-    assert.equal(nodes(tree).filter(node => node.props?.['data-photo-choice'])[0].props['data-example-id'], signature.id);
+    assert.equal(framing(tree).options.find(option => option.value === 'medium').disabled, true);
+    filters(tree).onPlace('home'); tree = h.render(); assert.equal(filters(tree).place, 'home');
+    assert.equal(framing(tree).value, 'medium'); assert.equal(framing(tree).options.find(option => option.value === 'full').disabled, true);
+    assert.deepEqual(values(filters(tree).tabs), ['cafe', 'home', 'building', 'park']);
   } finally { h.close(); }
 });
 
-test('R2-2 light changes replace an emptied tab and keep the signature pinned', async () => {
+test('R5 styling exposes no light callback and never adds a signature', async () => {
   const h = await galleryHarness(propsFor(examples[0]));
   try {
-    let tree = h.render(); assert.equal(filters(tree).place, 'cafe');
-    filters(tree).onLight('soft'); tree = h.render(); assert.equal(filters(tree).place, 'park');
-    assert.deepEqual(values(filters(tree).tabs), ['park']);
-    filters(tree).onLight('all'); tree = h.render(); assert.equal(filters(tree).place, 'park');
-    assert.equal(nodes(tree).filter(node => node.props?.['data-photo-choice'])[0].props['data-example-id'], signature.id);
+    const tree = h.render(); assert.equal(filters(tree).onLight, undefined);
+    assert.ok(nodes(tree).filter(node => node.props?.['data-photo-choice']).every(node => node.props['data-example-id'] !== signature.id));
   } finally { h.close(); }
 });
 
-test('R2-2 all-empty conditions render no place tabs, the existing empty message and the pinned signature', () => {
+test('R3 all-empty styling conditions render no place tabs and the existing empty message without a signature', () => {
   const html = render(Gallery, { ...propsFor(null), catalogs: { genExamples: [] } });
   assert.doesNotMatch(html, />카페<\/button>|>집<\/button>|>공원<\/button>/);
   assert.match(html, /이 조건의 장소 사진을 준비 중이에요/);
-  assert.equal((html.match(/aria-label="시그니처 사진"/g) || []).length, 1);
+  assert.equal((html.match(/aria-label="시그니처 사진"/g) || []).length, 0);
 });
 
 for (const [name, example, expected] of [
@@ -149,7 +146,11 @@ for (const [name, example, expected] of [
 ]) test(`R2-3 ${name} opens the appropriate framing`, () => {
   assert.equal(choices.initialPhotoFraming(blockFor(example), example), expected);
   const props = propsFor(example), html = render(Gallery, { ...props, catalogs: { genExamples: example ? [...examples, example] : examples } });
-  assert.match(html, new RegExp(`aria-pressed="true"[^>]*>${expected === 'full' ? '전신' : '상반신'}`));
+  const initialPlace = choices.initialPhotoPlace(example, result({ shot: 'all' }).tabs);
+  const available = examples.filter(item => item.gender === 'women' && item.applicableClothingTypes.includes('top') && item.placeType === initialPlace);
+  const actual = available.some(item => item.shot === expected) ? expected : available[0]?.shot;
+  const selected = [...html.matchAll(/<button[^>]*aria-pressed="true"[\s\S]*?<\/button>/g)].map(match => match[0]);
+  assert.ok(selected.some(button => button.includes(`data-label="${actual === 'full' ? '전신' : '상반신'}"`)));
 });
 
 test('R2-3 the current full photo is present and checked on the first gallery render', () => {
@@ -157,7 +158,7 @@ test('R2-3 the current full photo is present and checked on the first gallery re
   assert.match(html, /aria-pressed="true"[^>]*data-example-id="r2-cafe-full"/);
 });
 
-test('R2-2 set replacement uses visible tabs too and moves when light removes the selected place', async () => {
+test('R5 set replacement uses visible place tabs without a light filter', async () => {
   const h = hookHarness();
   const sets = [examples[1], examples[2], examples[3]].map(example => ({ id: `set-${example.id}`, setType: 'styling',
     members: [{ ...example, exampleId: example.id }] }));
@@ -167,9 +168,9 @@ test('R2-2 set replacement uses visible tabs too and moves when light removes th
   const props = { mode: 'add', cutType: 'styling', gender: 'women', clothingType: 'top', onChoose() {} };
   try {
     let tree = h.render(Component, props); assert.deepEqual(values(filters(tree).tabs), ['home', 'building', 'park']);
-    assert.equal(filters(tree).place, 'home'); filters(tree).onLight('hard');
+    assert.equal(filters(tree).place, 'home'); assert.equal(filters(tree).onLight, undefined); filters(tree).onPlace('building');
     tree = h.render(Component, props); assert.equal(filters(tree).place, 'building');
-    assert.deepEqual(values(filters(tree).tabs), ['building']);
+    assert.deepEqual(values(filters(tree).tabs), ['home', 'building', 'park']);
     assert.ok(!textOf(tree).includes('준비 중'));
   } finally { h.close(); }
 });

@@ -7,14 +7,16 @@ import { reconcileSectionDependencies } from './sectionDependencies.js';
 import { wornCropRegions } from './seed.js';
 import { getTemplate, sectionDefinition } from './catalog.js';
 import { isProductSectionPhoto, productSectionState, changeProductSectionPresentation, inheritProductSectionPresentation } from './productPresentation.js';
+import { spaceSetMembersForProduct } from '../storyboardEntryPlacement.js';
 
-export function canReplaceStoryboardSet(blocks, groupId, set) {
+export function canReplaceStoryboardSet(blocks, groupId, set, product) {
   const current = blocks.filter(block => block.spaceGroupId === groupId);
   if (!current.length) return false;
-  const kept = new Set(current.filter(block => !block.similarSourceBlockId).slice(0, set.members.length).map(block => block.id));
+  const members = spaceSetMembersForProduct(set, product);
+  const kept = new Set(current.filter(block => !block.similarSourceBlockId).slice(0, members.length).map(block => block.id));
   const followers = current.filter(block => kept.has(block.similarSourceBlockId)).length;
   const outside = blocks.filter(block => block.pageSectionKey === current[0].pageSectionKey && block.source !== 'text' && block.spaceGroupId !== groupId).length;
-  return outside + set.members.length + followers <= 12;
+  return outside + members.length + followers <= 12;
 }
 
 export function patchStoryboardPhoto(blocks, id, changes, product = {}, { cutResults = [] } = {}) {

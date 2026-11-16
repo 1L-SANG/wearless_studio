@@ -1,6 +1,15 @@
 import { getTemplate, sectionDefinition, pageTemplatesCatalog } from './catalog.js';
+import { isMinimalExampleId } from '../studioExamples.js';
 
-const usageForRecipe = recipe => recipe?.cutType === 'horizon' || ['sequence', 'rotation'].includes(recipe?.set)
+export function slotAllowsCutType(recipe, block) {
+  if (block?.cutType === 'styling' && isMinimalExampleId(block.exampleId)) {
+    return recipe.allowedCutTypes.includes('horizon');
+  }
+  return recipe.allowedCutTypes.includes(block?.cutType);
+}
+
+const usageForRecipe = recipe => recipe?.cutType === 'horizon'
+  || recipe?.cutType === 'styling' && isMinimalExampleId(recipe.exampleId) || ['sequence', 'rotation'].includes(recipe?.set)
   ? 'fit' : recipe?.cutType === 'styling' || recipe?.set === 'styling' ? 'styling' : undefined;
 
 export function wearUsageForBlock(block, catalog = pageTemplatesCatalog) {

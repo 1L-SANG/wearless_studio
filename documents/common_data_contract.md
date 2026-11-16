@@ -541,7 +541,7 @@ Account { name: string, avatar: string, credits: number, plan: PlanTier }
 | ComposeMode | `basic` `extended` | 기본형/확장형 | 폐기(2026-11). 화면, API, 스토어, 카탈로그에서 지웠고 DB `projects.compose_mode` 컬럼만 남는다. 서버는 읽거나 돌려주지 않고 PATCH로 와도 무시한다(§2) |
 | **StoryboardSectionRole** | `hooking` `styling` `studio` `product` | 후킹/스타일링/스튜디오/의류 확인 | 템플릿 콘티에서는 `contentRole`에서 파생하는 내부값이다. 화면의 섹션은 `PageSectionKind`가 정한다. 에디터 블록 `kind`와 생성 문맥이 이 값을 읽는다 |
 | **ContentRole** | `hero` `benefit` `coordination` `fit` `productOverview` `detail` `custom` | 첫 장면/핵심 장점/코디 활용/핏 확인/제품 전체/디테일/직접 구성 | 콘티에서는 비노출 자동값. 템플릿 콘티는 카탈로그 사진 칸의 값을 쓰고, 칸이 없으면 컷·샷으로 파생한다. 첫 장의 첫 AI 착용 카드만 `hero`. 에디터 새 이미지 추가에서도 컷·샷에서 파생하는 내부값 (ADR-0026) |
-| **CutType** | `styling` `horizon` `product` | 스타일링컷/호리존컷/제품컷 | 생성 레시피 값. 콘티 사진 판은 사진 칸 recipe의 `allowedCutTypes` 안에서만 고르게 하며 내부 역할은 자동 결정 (ADR-0003·0004·0026) |
+| **CutType** | `styling` `horizon` `product` | 스타일링컷, 스튜디오컷(미니멀컷은 `styling`, 호리존컷은 `horizon`), 제품컷 | 생성 레시피 값. 화면 구분과 저장값이 일대일이 아니다. `styling`에 미니멀 꼬리표 생성예시(`exampleId`)를 고르면 화면은 스튜디오컷 안 미니멀컷이다. 콘티 사진 판은 사진 칸 recipe의 `allowedCutTypes` 안에서만 고르게 하며, `horizon`을 허용하는 칸은 미니멀컷도 받는다. 내부 역할은 자동 결정 (ADR-0003·0004·0026·0027) |
 | **BlockSource** | `ai` `mine` `text` | AI 생성/내 이미지/글 카드 | '내 이미지'는 컷 종류가 아님. `text`는 템플릿 콘티에서 섹션의 글 자리를 표시하는 블록이며 사진을 만들지 않는다(§3.4) |
 | AutoBlockKind | `size` `care` `ai-notice` `common-notice` | 사이즈/세탁/AI 생성 안내/공통 주의 | 앞 셋은 2026-06-09 결정 유지. `common-notice`는 템플릿 조립기가 맨 끝에 붙이는 한 줄 안내(카탈로그 `commonNotice`, 화면에 따라 색이 달라 보일 수 있다는 문구)이며 `info`가 없다 |
 | EditorInfoType | `materials` `options` `shipping_returns` `required_notice` `benefit_copy` `fit_copy` `model_info` `fabric_properties` `color_description` `brand_story` `faq` `reviews` `related_products` `promotion` `social` `header` `fit_guide` `size_matrix` | 에디터의 구매 정보·문구·선택 콘텐츠 | `kind='info'`일 때 사용. AutoBlockKind 4종과 겹치지 않음. ★ `header`(타이포 상품명 헤더)·`fit_guide`(핏 도식 비교)·`size_matrix`(키×몸무게 추천 사이즈)는 2026-07-29 상세페이지 분석에서 승격 (§3.5.1) |
@@ -1139,7 +1139,7 @@ partial?: {
 
 ### 콘티의 비슷한 컷 예약 (ADR-0016)
 
-후속 컷은 원본의 `spaceGroupId`와 `spaceVariation`, 배경 설정을 상속하고 같은 연속 세트의 장수에 포함한다. `spaceSetMemberOrder`는 없으며 예비 멤버를 쓰지 않는다. 원본이 세트 밖이면 후속 컷도 세트 밖이다. 세트 교체와 삭제는 원본 ID의 생존을 따르고, 원본의 세트 이탈 이동은 후속 컷을 함께 옮긴다. 후킹 프레임 슬롯 후보에서는 항상 제외한다.
+후속 컷은 원본의 `spaceGroupId`와 `spaceVariation`, 배경 설정을 상속하고 같은 연속 세트의 장수에 포함한다. 후속 컷 자체는 `spaceSetMemberOrder`가 없고 예비 멤버를 대신하지 않는다. 무대에 2장 이상 놓인 세트의 컷에서 비슷한 컷 추가를 누르면, 그 세트에 `shot`과 `direction`(옆이면 `sideStyle`까지)이 같은 안 쓴 멤버가 있을 때 후속 컷 대신 그 멤버를 일반 세트 블록(`similarSourceBlockId` 없음, `spaceSetMemberOrder` 있음)으로 원본과 기존 후속 컷 바로 뒤에 넣는다. 없으면 후속 컷을 예약한다(2026-11-16). 원본이 세트 밖이면 후속 컷도 세트 밖이다. 세트 교체와 삭제는 원본 ID의 생존을 따르고, 원본의 세트 이탈 이동은 후속 컷을 함께 옮긴다. 후킹 프레임 슬롯 후보에서는 항상 제외한다.
 
 후속 블록의 `similarSourceBlockId`는 같은 콘티의 일반 AI 착용 블록을 가리킨다. 생성예시 사진을 편집하지 않는다. 원본을 성공적으로 생성한 뒤 그 결과 사진으로 후속 컷을 만들며, 모두 최초 원본을 기준으로 한다. 후속 카드의 위치와 ID는 유지하고 상품·예시 설정은 원본에서 상속한다. 일반 복제의 동일 사진 재사용과 달리 후속 컷마다 새로운 사진을 생성·정산한다. 사용자 방향·포즈·표정 선택은 없다. 원본 삭제 시 후속 카드를 함께 삭제하며 되돌리기가 가능하다. 서버는 존재하지 않는 원본, 후속 컷을 원본으로 삼는 관계, 제품·디테일·내 사진 원본을 거절한다. 계획과 생성 실행은 서버 작업 소유이며 에디터 마운트·새로고침으로 새 호출을 만들지 않는다.
 

@@ -1,52 +1,55 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Icon } from '@/components/ui.jsx';
-import { PHOTO_PLACE_TABS, PHOTO_LIGHTS, framingLabel } from '../../lib/pageTemplates/storyboardPhotoChoices.js';
+import { PHOTO_PLACE_TABS, framingLabel } from '../../lib/pageTemplates/storyboardPhotoChoices.js';
 import styles from './StoryboardChoices.module.css';
 
-export function PhotoChoiceFilters({ tabs = PHOTO_PLACE_TABS, place, onPlace, light, onLight, studio = false, disabled = false }) {
-  const [open, setOpen] = useState(false), root = useRef(null), trigger = useRef(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const outside = event => { if (!root.current?.contains(event.target)) setOpen(false); };
-    document.addEventListener('pointerdown', outside);
-    return () => document.removeEventListener('pointerdown', outside);
-  }, [open]);
-  return <div className={styles.filters}>
-    {!studio && tabs.length > 0 && <div className={styles.places} role="group" aria-label="장소">
-      {tabs.map(tab => <button type="button" key={tab.value} disabled={disabled}
-        aria-pressed={place === tab.value} onClick={() => onPlace(tab.value)}>{tab.label}</button>)}
-    </div>}
-    <div className={styles.light} ref={root} onKeyDown={event => {
-      if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus(); }
-    }}>
-      <button ref={trigger} type="button" className={`${styles.lightButton}${light !== 'all' ? ` ${styles.lightActive}` : ''}`}
-        disabled={disabled} aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen(value => !value)}>
-        빛: {PHOTO_LIGHTS.find(item => item.value === light)?.label || '전체'}<Icon name="chevDown" size={12} />
-      </button>
-      {open && <div className={styles.lightMenu} role="menu" aria-label="빛">
-        {PHOTO_LIGHTS.map((option, index) => <button type="button" key={option.value} role="menuitemradio" aria-checked={light === option.value}
-          autoFocus={index === Math.max(0, PHOTO_LIGHTS.findIndex(item => item.value === light))}
-          onClick={() => { onLight(option.value); setOpen(false); trigger.current?.focus(); }}
-          onKeyDown={event => {
-            if (event.key === 'Tab') { setOpen(false); return; }
-            if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-            event.preventDefault(); const buttons = event.currentTarget.parentElement.querySelectorAll('button');
-            const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
-              : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
-            buttons[next].focus();
-          }}>{option.label}{light === option.value && <Icon name="check" size={12} />}</button>)}
-      </div>}
-    </div>
+const UNAVAILABLE = '이 조건은 아직 서비스에 공개되지 않았어요';
+export function PhotoChoiceFilters({ tabs = PHOTO_PLACE_TABS, place, onPlace, disabled = false }) {
+  return <div className={styles.places} role="group" aria-label="장소">
+    {tabs.map(tab => <button type="button" key={tab.value} disabled={disabled}
+      aria-pressed={place === tab.value} onClick={() => onPlace(tab.value)}>{tab.label}</button>)}
   </div>;
 }
 
-export function PhotoFraming({ value, onChange, clothingType, single, disabled }) {
-  return <div className={`modal-actions ${styles.framing}`} role="group" aria-label="구도">
-    {(single ? ['full', 'medium'] : ['all', 'full', 'medium']).map(shot => <button type="button" key={shot}
-      disabled={disabled} aria-pressed={value === shot} onClick={() => onChange(shot)}>
-      {shot === 'all' ? '모든 구도' : framingLabel(shot, clothingType)}
-    </button>)}
+export function ChoiceReason({ children, reason, id }) {
+  const tooltip = useRef(null);
+  const show = () => { if (reason && !tooltip.current?.matches?.(':popover-open')) tooltip.current?.showPopover?.(); };
+  const hide = () => { if (tooltip.current?.matches?.(':popover-open')) tooltip.current.hidePopover?.(); };
+  return <span className={styles.reasonWrap} onMouseEnter={show} onMouseLeave={event => { if (!event.currentTarget.contains(event.currentTarget.ownerDocument?.activeElement)) hide(); }} onFocusCapture={show}
+    onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget) && !event.currentTarget.matches(':hover')) hide(); }}>
+    {children}{reason && <span className={styles.reason} ref={tooltip} id={id} role="tooltip" popover="manual">{reason}</span>}
+  </span>;
+}
+
+export function PhotoSegment({ options, value, onChange, label, disabled }) {
+  return <div className={`modal-actions ${styles.segment}`} role="group" aria-label={label}>
+    {options.map(option => {
+      const reason = option.disabled ? option.disabledReason || UNAVAILABLE : null;
+      const id = `sb-choice-${label}-${option.value}-reason`;
+      return <ChoiceReason key={option.value} reason={reason} id={id}>
+        <button type="button" aria-pressed={value === option.value} disabled={disabled}
+          aria-disabled={option.disabled || undefined} aria-describedby={reason ? id : undefined}
+          onClick={() => { if (!option.disabled) onChange(option.value); }}>
+          {option.icon}<span data-label={option.label}>{option.label}</span>
+        </button>
+      </ChoiceReason>;
+    })}
   </div>;
+}
+
+function FramingIcon({ shot, bottom }) {
+  return <svg className={styles.framingIcon} viewBox="0 0 18 24" aria-hidden="true" fill="currentColor">
+    <rect x="1.75" y="1.75" width="14.5" height="20.5" rx="2.6" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    {shot === 'full' ? <><circle cx="9" cy="6.9" r="1.7" /><path d="M6.3 10.9a1.6 1.6 0 0 1 1.6-1.6h2.2a1.6 1.6 0 0 1 1.6 1.6v3.9H6.3zM6.8 14.4h2V19a1 1 0 0 1-2 0zM9.2 14.4h2V19a1 1 0 0 1-2 0z" /></>
+      : bottom ? <path d="M4.8 2.4h8.4v5.4H4.8zM4.8 7h3.8v10.6a1.9 1.9 0 0 1-3.8 0zM9.4 7h3.8v10.6a1.9 1.9 0 0 1-3.8 0z" />
+        : <><circle cx="9" cy="9.2" r="2.9" /><path d="M3.6 21.6v-2.7a5.4 5.4 0 0 1 10.8 0v2.7z" /></>}
+  </svg>;
+}
+
+export function PhotoFraming({ value, onChange, clothingType, disabled, options = [{ value: 'full' }, { value: 'medium' }] }) {
+  return <PhotoSegment label="구도" value={value} onChange={onChange} disabled={disabled}
+    options={options.map(option => ({ ...option, label: framingLabel(option.value, clothingType),
+      icon: <FramingIcon shot={option.value} bottom={clothingType === 'bottom'} /> }))} />;
 }
 
 export function PhotoChoicePager({ page, count, onChange }) {

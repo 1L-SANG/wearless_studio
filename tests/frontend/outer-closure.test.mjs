@@ -1,3 +1,4 @@
+import { cutDisplaySelection, studioStyleOptions } from '../../src/lib/cutDisplaySelection.js';
 import { readStoryboardSources } from './helpers/storyboardComponents.mjs';
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -330,7 +331,7 @@ test('actual AI form keeps hidden closure state in worn requests and sends null 
     if (!(slot in hooks)) hooks[slot] = initial;
     return [hooks[slot], (value) => { hooks[slot] = typeof value === 'function' ? value(hooks[slot]) : value; }];
   };
-  const context = {
+  const context = { cutDisplaySelection, studioStyleOptions, StudioStyleChips: 'studio-style-chips',
     React, useState, useRef: () => ({ current: null }), OuterClosureField: Field,
     ...await vite.ssrLoadModule('/src/lib/storyboardTaxonomy.js'),
     ...await vite.ssrLoadModule('/src/lib/storyboardExampleSelection.js'),

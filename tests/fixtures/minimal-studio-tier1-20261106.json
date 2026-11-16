@@ -1,0 +1,212 @@
+[
+  {
+    "key": "S08",
+    "name": "화분 옆 흰 벽",
+    "photos": [
+      {
+        "id": "ex_styling_men_outer_full_06",
+        "comingSetOf": null,
+        "status": "live"
+      },
+      {
+        "id": "coming-set08-2",
+        "comingSetOf": "ex_styling_men_outer_full_06",
+        "status": "coming"
+      },
+      {
+        "id": "coming-set08-3",
+        "comingSetOf": "ex_styling_men_outer_full_06",
+        "status": "coming"
+      }
+    ]
+  },
+  {
+    "key": "S23",
+    "name": "창가와 플로어 램프",
+    "photos": [
+      {
+        "id": "ex_styling_men_outer_full_08",
+        "comingSetOf": null,
+        "status": "live"
+      },
+      {
+        "id": "coming-set23-2",
+        "comingSetOf": "ex_styling_men_outer_full_08",
+        "status": "coming"
+      },
+      {
+        "id": "coming-set23-3",
+        "comingSetOf": "ex_styling_men_outer_full_08",
+        "status": "coming"
+      }
+    ]
+  },
+  {
+    "key": "S29",
+    "name": "검은 소파 앞",
+    "photos": [
+      {
+        "id": "ex_styling_men_outer_medium_08",
+        "comingSetOf": null,
+        "status": "live"
+      },
+      {
+        "id": "coming-set29-2",
+        "comingSetOf": "ex_styling_men_outer_medium_08",
+        "status": "coming"
+      },
+      {
+        "id": "coming-set29-3",
+        "comingSetOf": "ex_styling_men_outer_medium_08",
+        "status": "coming"
+      }
+    ]
+  },
+  {
+    "key": "S63",
+    "name": "벽 몰딩이 있는 밝은 방",
+    "photos": [
+      {
+        "id": "ex_styling_women_dress_medium_home_08",
+        "comingSetOf": null,
+        "status": "live"
+      },
+      {
+        "id": "coming-set63-2",
+        "comingSetOf": "ex_styling_women_dress_medium_home_08",
+        "status": "coming"
+      },
+      {
+        "id": "coming-set63-3",
+        "comingSetOf": "ex_styling_women_dress_medium_home_08",
+        "status": "coming"
+      }
+    ]
+  },
+  {
+    "key": "S64",
+    "name": "흰 패널 문 앞",
+    "photos": [
+      {
+        "id": "ex_styling_women_dress_full_home_08",
+        "comingSetOf": null,
+        "status": "live"
+      },
+      {
+        "id": "coming-set64-2",
+        "comingSetOf": "ex_styling_women_dress_full_home_08",
+        "status": "coming"
+      },
+      {
+        "id": "coming-set64-3",
+        "comingSetOf": "ex_styling_women_dress_full_home_08",
+        "status": "coming"
+      }
+    ]
+  },
+  {
+    "key": "S15",
+    "name": "벽난로가 있는 방",
+    "photos": [
+      {
+        "id": "ex_styling_women_dress_full_home_07",
+        "comingSetOf": null,
+        "status": "live"
+      },
+      {
+        "id": "coming-set15-2",
+        "comingSetOf": "ex_styling_women_dress_full_home_07",
+        "status": "coming"
+      },
+      {
+        "id": "coming-set15-3",
+        "comingSetOf": "ex_styling_women_dress_full_home_07",
+        "status": "coming"
+      }
+    ]
+  },
+  {
+    "key": "A35",
+    "name": "04 · 창가 원룸",
+    "photos": [
+      {
+        "id": "ss_set_04_men_top_indoor_window_room_anotheroffice_1881_01",
+        "comingSetOf": null,
+        "status": "live"
+      },
+      {
+        "id": "ss_set_04_men_top_indoor_window_room_anotheroffice_1881_02",
+        "comingSetOf": null,
+        "status": "live"
+      },
+      {
+        "id": "ss_set_04_men_top_indoor_window_room_anotheroffice_1881_03",
+        "comingSetOf": null,
+        "status": "live"
+      }
+    ]
+  },
+  {
+    "key": "A33",
+    "name": "02 · 콘크리트 알코브",
+    "photos": [
+      {
+        "id": "ss_set_02_men_top_indoor_concrete_byslim_28635_01",
+        "comingSetOf": null,
+        "status": "live"
+      },
+      {
+        "id": "ss_set_02_men_top_indoor_concrete_byslim_28635_02",
+        "comingSetOf": null,
+        "status": "live"
+      },
+      {
+        "id": "ss_set_02_men_top_indoor_concrete_byslim_28635_03",
+        "comingSetOf": null,
+        "status": "live"
+      }
+    ]
+  },
+  {
+    "key": "A49",
+    "name": "05 · 카페·소형 매장",
+    "photos": [
+      {
+        "id": "ss_set_05_cafe_01",
+        "comingSetOf": null,
+        "status": "live"
+      },
+      {
+        "id": "ss_set_05_cafe_02",
+        "comingSetOf": null,
+        "status": "live"
+      },
+      {
+        "id": "ss_set_05_cafe_03",
+        "comingSetOf": null,
+        "status": "live"
+      }
+    ]
+  },
+  {
+    "key": "S42",
+    "name": "원목 수납장 옆",
+    "photos": [
+      {
+        "id": "ex_styling_women_bottom_medium_snapshot_05",
+        "comingSetOf": null,
+        "status": "live"
+      },
+      {
+        "id": "coming-set42-2",
+        "comingSetOf": "ex_styling_women_bottom_medium_snapshot_05",
+        "status": "coming"
+      },
+      {
+        "id": "coming-set42-3",
+        "comingSetOf": "ex_styling_women_bottom_medium_snapshot_05",
+        "status": "coming"
+      }
+    ]
+  }
+]
