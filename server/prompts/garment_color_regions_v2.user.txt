@@ -1,0 +1,8 @@
+<product>
+Main sold garment category (hint from the product analysis, may be stale): ${clothingType}
+</product>
+
+<images>
+The attached images, in order. Return the sourceIndex shown here, not the image number.
+${sourceMap}
+</images>

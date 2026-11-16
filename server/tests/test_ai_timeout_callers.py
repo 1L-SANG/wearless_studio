@@ -65,6 +65,7 @@ def test_provider_timeout_follows_caller_policy(monkeypatch, name, expected, bac
 
     _, model_of, key_of = vision_llm._PROVIDERS["gemini"]
     monkeypatch.setitem(vision_llm._PROVIDERS, "gemini", (capture, model_of, key_of))
+    monkeypatch.setattr(vision_llm, "_call_gpt", capture)
     monkeypatch.setattr(mannequin_series_qc, "_call_gemini", capture)
     monkeypatch.setattr(garment_color_observer, "_observer_image", lambda *args: image)
     image = InlineImage("image/png", b"image")
