@@ -33,7 +33,10 @@ for (const templateId of ['emo', 'show']) test(`${templateId}: candidates preser
       validateStoryboardV4(next);
       if (run.kind === 'first') assert.equal(sectionDesignGenerationCount(run, design.id, original, product), 1);
       else assert.equal(images(next).length, count, `${run.key} ${design.id}`);
-      assert.deepEqual(next.map(block => block.id), original.map(block => block.id));
+      const expectedOrder = run.kind === 'first' && design.introDesignId
+        ? [...original.filter(block => block.pageSectionKind === 'first'), ...original.filter(block => block.pageSectionKind === 'intro'),
+          ...original.filter(block => !['first', 'intro'].includes(block.pageSectionKind))] : original;
+      assert.deepEqual(next.map(block => block.id), expectedOrder.map(block => block.id));
       assert.ok(next.filter(block => block.pageSectionKey === run.key).every(block => block.pageDesignId === design.id));
     }
   }

@@ -18,6 +18,19 @@ def copy(blocks, role):
     return next(el for el in elements(blocks) if el.get('copyRole') == role)
 
 
+@pytest.mark.parametrize('template', ['emo', 'show'])
+@pytest.mark.parametrize('design', ['P01-SHOW-01', 'P01-SHOW-COMMENT-01'])
+@pytest.mark.parametrize('photo', ['photo', 'ghost'])
+@pytest.mark.parametrize('intro', ['moved', 'added'])
+def test_selected_linked_opening_assembles_intro_immediately_after_saved_first_section(template, design, photo, intro):
+    value = case_input(f'woc23-{template}-opening-order-{design}-{photo}-{intro}')
+    saved_order = list(dict.fromkeys(card['pageSectionKey'] for card in value['storyboard']))
+    assert saved_order[:2] == [f'{template}.first', f'{template}.intro']
+    page = assemble_input(value)
+    assert list(dict.fromkeys(block['pageSectionKey'] for block in page if block.get('pageSectionKey'))) == saved_order
+    assert all(block['pageDesignId'] == CATALOG['designs'][design]['introDesignId'] for block in page if block.get('pageSectionKind') == 'intro')
+
+
 COLOR_PRODUCTS = json.loads((Path(__file__).parents[2] / 'tests/fixtures/page_templates_color_products.json').read_text())['cases']
 
 

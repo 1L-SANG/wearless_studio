@@ -415,6 +415,17 @@ for (const templateId of ['emo', 'show']) {
             .map(card => ({ ...card, pageDesignId: card.pageSectionKind === 'first' ? designId === 'T06-COMMENT-01' ? 'P01-SHOW-COMMENT-01' : 'P01-SHOW-01' : designId }));
         appendCase(`woc23-${templateId}-${designId}`, input);
     }
+    for (const designId of ['P01-SHOW-01', 'P01-SHOW-COMMENT-01']) for (const ghost of [false, true]) for (const missing of [false, true]) {
+        const input = structuredClone(source);
+        input.storyboard = changeTemplateSectionDesign(input.storyboard, `${templateId}.first`, 'P01-D09', { product: input.product });
+        if (missing) input.storyboard = input.storyboard.filter(card => card.pageSectionKind !== 'intro');
+        if (ghost) {
+            const tile = stageAdditions(input.storyboard, `${templateId}.first`, { product: input.product, analysis: input.analysis }).find(item => item.id === 'firstGhost');
+            input.storyboard = addStageAddition(input.storyboard, `${templateId}.first`, tile, { product: input.product, analysis: input.analysis });
+        }
+        input.storyboard = changeTemplateSectionDesign(input.storyboard, `${templateId}.first`, designId, { product: input.product });
+        appendCase(`woc23-${templateId}-opening-order-${designId}-${ghost ? 'ghost' : 'photo'}-${missing ? 'added' : 'moved'}`, input);
+    }
     const commentGhost = structuredClone(source);
     commentGhost.storyboard = restoreSavedDesign(commentGhost.storyboard, `${templateId}.first`, 'P01-SHOW-COMMENT-01');
     const ghost = stageAdditions(commentGhost.storyboard, `${templateId}.first`, { product: commentGhost.product, analysis: commentGhost.analysis }).find(item => item.id === 'firstGhost');

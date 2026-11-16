@@ -226,7 +226,9 @@ test('WOC6 flat first choices retain paired ghost behavior and the first header 
     assert.deepEqual(chosen, [['first', undefined, 'P01-SHOW-01']]);
     const next = changeTemplateSectionDesign(blocks, runKey, chosen[0][2], { product });
     assert.equal(next[0].pageDesignId, 'P01-SHOW-01-G');
-    assert.deepEqual(next.map(block => block.id), blocks.map(block => block.id));
+    const expectedOrder = [...blocks.filter(block => block.pageSectionKind === 'first'), ...blocks.filter(block => block.pageSectionKind === 'intro'),
+      ...blocks.filter(block => !['first', 'intro'].includes(block.pageSectionKind))];
+    assert.deepEqual(next.map(block => block.id), expectedOrder.map(block => block.id));
   } finally { h.close(); }
 });
 
