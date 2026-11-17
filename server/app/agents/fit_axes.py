@@ -438,6 +438,13 @@ def normalize_analysis_fit(analysis: dict | None) -> dict:
     if not isinstance(analysis, dict):
         return {}
     out = dict(analysis)
+    if "fitRead" in out:
+        from .fit_reader import normalize_fit_read
+        reading = normalize_fit_read(out["fitRead"])
+        if reading is None:
+            out.pop("fitRead")
+        else:
+            out["fitRead"] = reading
     if out.get("fit") == "tight":
         out["fit"] = "slim"
     profile = out.get("fitProfile")

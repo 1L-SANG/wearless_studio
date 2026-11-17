@@ -128,6 +128,8 @@ class Settings:
     # (정본=pro 복귀)이 된다. 하드 기본값을 박아두면 "지우면 되돌아간다"가 거짓말이 되고,
     # 품질 사고로 급히 되돌릴 때 아무 일도 일어나지 않는다.
     model_text_gemini_analysis: str = ""
+    model_text_gemini_fit_reader: str = ""  # 미설정이면 분석용 Gemini, 그 값도 없으면 정본 Gemini
+    fit_reader_mode: str = "on"  # off | on, 실패는 분석을 막지 않는다
     analysis_model_order: str = "gemini,gpt"  # 폴백 순서(기본=Gemini-first, 2026-07-02 결정). 'gpt,gemini' 등
     analysis_spike: str = "off"  # off | on — 동기 관측 하니스(임시). production 은 job
     # provider 1콜 상한(폴백 트리거). ALB idle timeout 과 **같으면 폴백이 무의미하다** —
@@ -989,6 +991,8 @@ def load_settings() -> Settings:
         outfit_timeout_seconds=min(30.0, max(1.0, float(os.getenv("OUTFIT_TIMEOUT_SECONDS", "30")))),
         # 기본값 없음(빈 문자열=정본 폴백) — env 를 지우는 것이 진짜 롤백이 되게 한다.
         model_text_gemini_analysis=os.getenv("MODEL_ROUTING_TEXT_GEMINI_ANALYSIS", ""),
+        model_text_gemini_fit_reader=(os.getenv("MODEL_ROUTING_TEXT_GEMINI_FIT_READER") or "").strip(),
+        fit_reader_mode=_flag("FIT_READER_MODE", "on", {"off", "on"}),
         analysis_model_order=os.getenv("ANALYSIS_MODEL_ORDER", "gemini,gpt"),
         analysis_spike=_flag("ANALYSIS_SPIKE", "off", {"off", "on"}),
         analysis_timeout_seconds=float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "30")),

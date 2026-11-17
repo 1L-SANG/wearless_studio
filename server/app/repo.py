@@ -1811,6 +1811,7 @@ def garment_color_input_identity(product: dict) -> tuple:
 # 재분석 때는 finalize가 전문을 교체하므로 낡은 판정이 남지 않는다.
 _SERVER_OWNED_ANALYSIS_KEYS = (
     "sourceMirrored",
+    "fitRead",
     "inputConsistency",
     "featureCopy",
     "partDescriptionCopy",
@@ -1881,6 +1882,12 @@ async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict, 
     옛 클라이언트의 전문 교체도 누락된 서버 키와 잠금을 보존하고 불변 근거를 보호한다.
     소유권은 라우트 선검증. 재분석 성공만 보호된 서버 근거까지 새 전문으로 교체한다.
     """
+    if "fitRead" in analysis:
+        from .agents.fit_reader import normalize_fit_read
+        reading = normalize_fit_read(analysis["fitRead"])
+        analysis = {key: value for key, value in analysis.items() if key != "fitRead"}
+        if reading is not None:
+            analysis["fitRead"] = reading
     analysis = {k: value for k, value in analysis.items()
                 if k not in ("locked", *_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS)
                 and not (merge and delete_nulls and value is None and k in _SERVER_OWNED_ANALYSIS_KEYS)}
