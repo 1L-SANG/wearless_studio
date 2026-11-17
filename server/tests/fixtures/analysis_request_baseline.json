@@ -1,0 +1,24 @@
+{
+  "sourceCommit": "436c618b81cc6c4321d120dbebc03486adb9ec7d",
+  "requests": {
+    "product:False:gpt": "6a2e0d7919802b2418e00bdc85a69614aef3757bacf207cfa784bd4da8a3857e",
+    "product:False:gemini": "1f2d0d42f2e941449d250c6a3045f358905dd6803f6a5666005b69197f024a71",
+    "product:True:gpt": "40108f3298bc58afde1ee61d6ff7b49154e3056ae03ec3df416c9bb67610dfa4",
+    "product:True:gemini": "7b096e0c0757cdbcb9306a10063665906a24868ff3fbe65573c20fb34e7073c8",
+    "evidence": "a39fe6e7f656d46a0d16951fc4febc508db7ebb842fb274836a3f019280fb400",
+    "features:gpt": "10a2c6f1d5d6c82a2d016fcd6a0368b90e2bd319d1f13ca26a298b45b9846073",
+    "features:gemini": "e0185b973a90ccf8198f96b1cb05efee990ab79d6b0186c7b3dd8519d85a98d6",
+    "consistency:Back:gpt": "a80ab007ebd0542b3a9b1594c6d8bd914b78dad3000e5c212a0c5163c0fb2ba1",
+    "consistency:Back:gemini": "0b5cf41c21e5efc96281c135ba4a417434cfabd4ef66fa3fd09f9a65e34d2c42",
+    "consistency:Detail:gpt": "cc270f4b752f71d03a590cfe6492adf2f303b75fc3bdf4ecfe853717839093ae",
+    "consistency:Detail:gemini": "021a98475b71c0648218e3d1936cbbc166c4a514ba330706b47ccf3b4d215e28",
+    "consistency:BackDetail:gpt": "c861880c88926b2adf17dc31e9beec11defb208a0a7049d16f25b5acb98ab53f",
+    "consistency:BackDetail:gemini": "c750b8dde15b1b8fd605103d1f6a36e2cfbce781e6f7478a74fc0c9a28299056",
+    "outfit:False:gpt": "435505e4f1cde7585e3f8699ce0f77768f352387796949c53e7f9470fba21a28",
+    "outfit:True:gpt": "05edce1b8592b2c1062c5923dc48a0ec6a1bfbd1c386d27ca14d3e21c7f54ada",
+    "outfit:False:gemini": "8c4d320541a28d033a43235a4d79702ae5984e06f52e476308eba8ac92a27f6c",
+    "outfit:True:gemini": "3816c93248093d07e70fdd8c2378f217936fa596edf6ba8d0dd28b2cbfcc62f4"
+  },
+  "evidence_module_sha256": "171ff6d1b0ac4b6aacb7203352d7675542db9b719e3ffc09088a9f978ede9edc",
+  "contractSha256": "9fe1a642e6c2fb04a261f2e2155b78bd500596d8a229c5305e671958f29c79bc"
+}

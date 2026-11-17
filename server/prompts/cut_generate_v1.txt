@@ -8,7 +8,7 @@ ${authorityPlanLine}
 GARMENT FIDELITY (highest priority — never violate):
 - The garment must be EXACTLY the one in the PRODUCT reference images: same color values,
   pattern placement, logos/text, stitching, hardware, length and silhouette.
-- If any instruction below conflicts with what the PRODUCT references show, the references win.
+${productAuthorityLine}
 - In worn cuts, MATCHING is the seller's chosen coordinating garment and must also be reproduced
   faithfully when attached: preserve its color, material, pattern, construction, hardware,
   silhouette, rise, length, leg/sleeve width, hem, and any visible lettering, numbers, graphics,
@@ -37,6 +37,7 @@ FRAMING: ${shotLine}
 ${directionLine}
 ${faceLine}
 ${poseLine}
+${contactRuleLine}
 ${exampleLine}
 ${exampleRepeatLine}
 ${outerClosureLine}
@@ -462,3 +463,45 @@ not frozen duplicates of a single moment.
 - OUTFIT INNER, MATCHING, OUTFIT FOOTWEAR, OUTFIT BAG and OUTFIT ACCESSORY images, when attached, are the identity authority for their exact roles. Preserve their actual type, shape, color, neckline and design as one coherent outfit. These selected references override neutral basics, example fixedInner or fixedFootwear and any mannequin inner where they differ.
 - The sold PRODUCT remains the hero. Never transfer clothing, shoes, bags or accessories from examples or mood images. For an unreferenced clothing or footwear role use the existing plain neutral basic; add no unreferenced bag or accessory.
 - Respect the requested crop. A shoe, bag or accessory that is outside the frame need not be forced into view.
+
+[[PRODUCT_AUTHORITY]]- If any instruction below conflicts with what the PRODUCT references show, the references win.
+
+[[PRODUCT_AUTHORITY:no_mannequin]]- If any instruction below conflicts with what the PRODUCT references show, the references win, except declared length and sleeve-length axes, which the seller confirmed and which win for that axis only. For fit, follow the seller-selected direction while preserving size clearly visible in the product photos.
+
+[[CONTACT:no_mannequin]]exact garment fidelity takes priority over matching joint coordinates. Re-perform the pose in the current outfit; do not copy it through the example's clothes. When the example's hand or arm touches clothing (a pocket, waistband, hem, collar or sleeve), keep the same arm role and hand position using a real part of the current outfit: a hand may go into a real pocket of the bottom garment even beneath the top's hem, with the hem draping naturally over the wrist; never create a pocket, opening or slit in the sold garment that its PRODUCT references do not show; if no real pocket exists at that spot, the hand rests on the outside of the clothing there. No pose may lift, tuck, bunch or fold the sold garment so that a declared FIT PROFILE axis looks different.
+
+[[DIR:back_no_mannequin]]Camera angle: from behind — the back of the garment is the subject. The model faces straight away from the camera and the head is turned fully away too: NO face visible at all — no eye, nose, mouth or cheek, not even a partial profile or a glance over the shoulder. Only the back of the head shows, with the hair exactly as the MODEL references show it.
+
+[[IDENTITY_REF:no_mannequin]]MODEL FACE IDENTITY CONTINUITY (images labeled MODEL, MODEL SHEET, or MODEL FACE):
+- All attached face-identity references depict the SAME one model. When MODEL and MODEL SHEET are
+  both present, they are complementary face views, not different people.
+- The person in the output MUST be recognizably that same individual: reproduce their facial
+  structure, skin tone and hair faithfully wherever those traits are naturally visible. Do not
+  beautify, de-age, restyle or average the identity into a generic model.
+- The current FACE HANDLING, DIRECTION and FRAMING remain authoritative. If they hide, turn away,
+  crop out or cover the face, KEEP the face hidden: never rotate the head, change the pose, or widen
+  the crop merely to reveal identity. Preserve continuity only through naturally visible cues.
+- Use these images for facial identity and hair ONLY. They have ZERO authority over height, head-to-body
+  ratio, shoulders, torso, waist, pelvis, arm or leg proportions. Never copy their clothing,
+  background, lighting, crop or pose — PRODUCT and MATCHING references remain the only garment truth.
+- Never blend this face with a face appearing in any MOOD reference.
+
+[[BODY_REF:no_mannequin]]MODEL FULL-BODY CONTINUITY (the image labeled MODEL FULL BODY):
+- MODEL FACE and MODEL FULL BODY depict the SAME selected model. Treat them as one atomic pair;
+  never blend the face of one person with the body of another.
+- This is the sole authority for the selected model's underlying build: height, head-to-body ratio,
+  shoulder width and slope, torso length and build, waist, pelvis and hip width, arm length and leg
+  length. Preserve those proportions in every full, medium, front, side, back and face-hidden cut.
+- Re-project the same underlying build through the current camera and pose. Natural perspective
+  foreshortening, weight shift and garment volume may change the visible outline; the person's build
+  itself must not become taller, shorter, broader, narrower or differently proportioned.
+- MODEL FULL BODY has ZERO authority over face identity, pose, framing, clothing, background or
+  lighting. Never copy its outfit. PRODUCT and MATCHING remain the only garment truth.
+- Together with MODEL FACE, this image owns the selected model's hair: length, color, texture and how it is worn. Keep that same hair in every direction and shot; in side and back views, where the face reference shows little of the hair, this image decides it. Never take a hairstyle from EXAMPLE REFERENCE or MOOD.
+- The person inside EXAMPLE REFERENCE or MOOD has ZERO authority over facial identity, hair or body build.
+  Use EXAMPLE only for the explicitly allowed directing attributes.
+
+[[HORIZON_ALL_POSE:no_mannequin]]- Preserve the complete example's body direction, action, large arm/leg roles,
+support side, weight distribution and head position/orientation. Do not reset asymmetry into a
+centered pose. Small hand/foot adjustments within
+the same pose and tiny visible-eye gaze changes are allowed; re-perform clothing contacts under the contact rule below. Never copy the example clothing/identity.

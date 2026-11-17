@@ -26,8 +26,8 @@ from .confirmed_gpt_prompt import (
     SellerUncertainty,
 )
 from .gemini_image import InlineImage
-from .fit_axes import build_fit_profile_block
-from .prompts import clean_text
+from .fit_axes import mannequin_fit_profile
+from .analysis_fit import build_analysis_fit_block, select_applied_fit_axes
 from . import product_evidence_contract
 from ..services import seller_evidence_grid
 
@@ -134,24 +134,16 @@ def _manifest(*, matching_attached: bool, outfit_roles: tuple[str, ...] = (),
 
 
 def _analysis_fit(analysis: dict | None) -> str | None:
-    """Use the generic path's fit sources, excluding length, sleeves and matching axes."""
+    """정책을 통과한 주상품 축만 고정 문단으로 전달한다. 코디 축은 제외한다."""
     analysis = analysis if isinstance(analysis, dict) else {}
     profile = analysis.get("fitProfile")
-    if isinstance(profile, dict):
-        axes = profile.get("axes")
-        axes = axes if isinstance(axes, dict) else {}
-        fit = axes.get("fit")
-        if "fit" not in axes and profile.get("source") == "auto":
-            # Selecting a complementary garment can create an auto profile with no main axes.
-            fit = analysis.get("fit")
-        block = build_fit_profile_block({
-            **profile,
-            "axes": {"fit": fit},
-            "version": 2,
-            "matchingFit": None,
-        })
-        return block.splitlines()[1].removeprefix("- ") if block else None
-    return clean_text(analysis.get("fit"), 200) or None
+    profile = profile if isinstance(profile, dict) else {}
+    reading = analysis.get("fitRead")
+    reading = reading if isinstance(reading, dict) else {}
+    return build_analysis_fit_block(
+        profile.get("category"), profile.get("gender"), select_applied_fit_axes(profile),
+        sleeve_type=reading.get("sleeveType"), front_hem=reading.get("frontHem"),
+    ) or None
 
 
 def _front_seller_facts(contract: dict) -> tuple[SellerFact, ...]:
@@ -238,6 +230,8 @@ def build_packet(
     extras = tuple((role, _image(value, role)) for role, value in outfit_images)
 
     mannequin = _image(mannequin_image, "mannequin") if mannequin_image is not None else None
+    if mannequin is not None and isinstance(analysis, dict) and isinstance(analysis.get("fitProfile"), dict):
+        analysis = {**analysis, "fitProfile": mannequin_fit_profile(analysis["fitProfile"])}
     face_sheet = _image(face_direction_sheet, "face_direction_sheet")
     body_sheet = _image(full_body_direction_sheet, "full_body_direction_sheet")
     example = _image(example_image, "service_example")
@@ -356,6 +350,8 @@ def build_packet(
         ),
         pose_semantics=directing.pose_semantics,
         sold_product_fit=_analysis_fit(analysis) if mannequin is None else None,
+        analysis_fit_profile=(analysis or {}).get("fitProfile") if mannequin is None else None,
+        fit_read=(analysis or {}).get("fitRead") if mannequin is None else None,
         source_mirrored=(mannequin is None and isinstance(analysis, dict)
                          and analysis.get("sourceMirrored") is True),
     )

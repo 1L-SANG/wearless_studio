@@ -89,7 +89,7 @@ def _run_detail_cut(
         worker_job(),
         [prepared],
         {"clothingType": "top"},
-        {"fitProfile": {"axes": {"fit": "regular"}}} if analysis is None else analysis,
+        {"fitProfile": {"category": "top", "gender": "women", "axes": {"fit": "regular"}, "axisSources": {"fit": "seller"}}} if analysis is None else analysis,
     ))
     captured.update(events=events, r2=r2, result=result)
     return captured
@@ -573,7 +573,7 @@ def _run_editor(monkeypatch, *, qc_mode, qc_error=False, cut_type="product", set
         }]}
 
     async def fake_analysis(conn, pid):
-        return {"fitProfile": {"axes": {"fit": "regular"}}}
+        return {"fitProfile": {"category": "top", "gender": "women", "axes": {"fit": "regular"}, "axisSources": {"fit": "seller"}}}
 
     async def fake_asset(conn, uid, asset_id):
         return {"id": asset_id, "r2_key": "product", "mime_type": "image/png"}

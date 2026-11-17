@@ -4,8 +4,37 @@
 실제 출력은 고정 promptEn 문구만 사용한다.
 """
 
-def analysis_for_selected_mannequin(analysis: dict, selected_cut: dict | None) -> dict:
+def mannequin_fit_profile(profile: dict | None) -> dict | None:
+    """운영 마네킹에는 옛 값과 셀러 선택·옛 기본값만 보낸다. 입력은 바꾸지 않는다."""
+    if not isinstance(profile, dict):
+        return profile
+    axes = profile.get("axes")
+    axes = axes if isinstance(axes, dict) else {}
+    sources = profile.get("axisSources")
+    sources = sources if isinstance(sources, dict) else {}
+    category, gender = profile.get("category"), profile.get("gender")
+    by_axis = FIT_AXES.get(category, {}) if isinstance(category, str) else {}
+    kept = {}
+    for axis, value in axes.items():
+        by_gender = by_axis.get(axis, {})
+        entries = by_gender.get(gender, ()) if isinstance(gender, str) else ()
+        all_entries = [entry for values in by_gender.values() for entry in values]
+        analysis_axis = bool(all_entries) and all(entry.get("scope") == "analysis" for entry in all_entries)
+        analysis_value = any(e["value"] == value and e.get("scope") == "analysis" for e in entries)
+        if analysis_axis or analysis_value or (axis != "fit" and sources.get(axis) in ("ai", "measure")):
+            continue
+        kept[axis] = value
+    if "axisSources" not in profile and kept == axes:
+        return profile
+    return {**{key: value for key, value in profile.items() if key != "axisSources"}, "axes": kept}
+
+
+def analysis_for_selected_mannequin(
+    analysis: dict, selected_cut: dict | None, *, has_mannequin: bool = True,
+) -> dict:
     """선택 컷의 핏 기록을 쓴다. 기록 없는 구버전 컷은 기존 분석을 유지한다."""
+    if not has_mannequin:
+        return analysis
     snapshot = selected_cut.get("fit_profile_snapshot") if isinstance(selected_cut, dict) else None
     if (
         not isinstance(snapshot, dict)
@@ -13,9 +42,31 @@ def analysis_for_selected_mannequin(analysis: dict, selected_cut: dict | None) -
         or "profile" not in snapshot
         or (snapshot.get("profile") is not None and not isinstance(snapshot.get("profile"), dict))
     ):
-        return analysis
+        profile = analysis.get("fitProfile")
+        filtered = mannequin_fit_profile(profile)
+        return analysis if filtered is profile else {**analysis, "fitProfile": filtered}
     # profile=null은 저장 키 삭제와 별개인 "사진 그대로" 기록이다.
-    return {**analysis, "fitProfile": snapshot.get("profile")}
+    return {**analysis, "fitProfile": mannequin_fit_profile(snapshot.get("profile"))}
+
+
+def profile_for_mannequin_selection_save(current_profile, incoming_profile, selected_cut):
+    """마네킹 버전 선택의 옛 프로필 재저장이 분석 원본의 출처와 새 값을 지우지 않게 한다."""
+    if not isinstance(current_profile, dict) or "axisSources" not in current_profile:
+        return incoming_profile
+    if isinstance(incoming_profile, dict) and "axisSources" in incoming_profile:
+        return incoming_profile
+    snapshot = selected_cut.get("fit_profile_snapshot") if isinstance(selected_cut, dict) else None
+    if not isinstance(snapshot, dict) or snapshot.get("version") != 1 or "profile" not in snapshot:
+        return incoming_profile
+    incoming = normalize_fit_profile(incoming_profile)
+    if incoming_profile is not None and incoming is None:
+        return incoming_profile
+    selected = snapshot["profile"]
+    if selected is not None and not isinstance(selected, dict):
+        return incoming_profile
+    if incoming == normalize_fit_profile(mannequin_fit_profile(selected)):
+        return current_profile
+    return incoming_profile
 
 
 def confirmed_copy_fit(analysis: dict) -> str | None:

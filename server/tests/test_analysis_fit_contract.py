@@ -98,14 +98,16 @@ def test_axis_sources_reject_unknown_sources_without_removing_unsure(raw_sources
     assert fit_axes.normalize_fit_profile(profile)["axisSources"] == expected
 
 
-def test_axis_sources_survive_analysis_migration_and_selected_cut_snapshot():
+def test_axis_sources_survive_analysis_migration_but_stay_out_of_mannequin_snapshots():
     profile = {"category": "top", "gender": "women", "axes": {"fit": "tight", "length": "crop_basic"},
                "axisSources": {"fit": "seller", "length": "measure"}, "version": 2}
     analysis = fit_axes.normalize_analysis_fit({"fitProfile": profile})
     assert analysis["fitProfile"]["axisSources"] == profile["axisSources"]
     selected = {"fit_profile_snapshot": {"version": 1, "profile": analysis["fitProfile"]}}
     restored = fit_axes.analysis_for_selected_mannequin({}, selected)
-    assert fit_axes.normalize_fit_profile(restored["fitProfile"])["axisSources"] == profile["axisSources"]
+    assert "axisSources" not in fit_axes.normalize_fit_profile(restored["fitProfile"])
+    assert restored["fitProfile"]["axes"] == {"fit": "slim"}
+    assert fit_axes.analysis_for_selected_mannequin(analysis, selected, has_mannequin=False) is analysis
 
 
 def test_catalog_additions_have_analysis_scope_and_fixed_legacy_prompt_text():

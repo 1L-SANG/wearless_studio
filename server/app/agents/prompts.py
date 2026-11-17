@@ -13,7 +13,7 @@ from typing import Any
 
 from ..config import Settings
 from . import knowledge as knowledge_kb
-from .fit_axes import build_fit_profile_block
+from .fit_axes import build_fit_profile_block, mannequin_fit_profile
 from .materials import material_guidance
 from .selling_points import canonicalize
 
@@ -110,6 +110,7 @@ def _product_block(
     seller_canon: str = "off",
     knowledge: str = "off",
     *,
+    photo_authority: bool = False,
     include_legacy_fit: bool = True,
     material_policy: str = "legacy",
     structure_from_photos: bool = False,
@@ -210,6 +211,11 @@ def _product_block(
                 "PRODUCT CONTEXT (seller-confirmed identity and fit metadata; "
                 "product photos govern color, fabric and finish):"
             )
+        elif photo_authority:
+            header = (
+                "PRODUCT CONTEXT (seller-confirmed product facts; use them to identify the garment and to keep its "
+                "color, fit, and any logo faithful. They describe what the PRODUCT references show and never override them):"
+            )
         context = f"{header}\n{body}"
     if normalized_block:  # PRODUCT CONTEXT 밖 별도 섹션 (FR-D1a)
         context = f"{context}\n\n{normalized_block}" if context else normalized_block
@@ -278,6 +284,7 @@ def render_mannequin_prompt(
     if leftover:
         raise ValueError(f"프롬프트 템플릿에 해결되지 않은 토큰: {sorted(set(leftover))}")
     fit_profile = ctx.fit_profile if ctx.fit_profile is not None else analysis.get("fitProfile")
+    fit_profile = mannequin_fit_profile(fit_profile)
     fit_block = build_fit_profile_block(fit_profile, ctx.adjusted_axes)
     product_block = _product_block(
         product,

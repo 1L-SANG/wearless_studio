@@ -12,6 +12,8 @@ from types import MappingProxyType
 from typing import Any, Literal, Mapping
 from . import horizon_background, product_photography
 from .outer_closure import STATES as _CLOSURES
+from .fit_axes import mannequin_fit_profile
+from .analysis_fit import select_applied_fit_axes
 
 
 RecipeFamily = Literal["styling", "horizon", "product"]
@@ -90,6 +92,7 @@ class CutPlan:
     signature_background: Mapping[str, Any] | None = None
     outfit_roles: tuple[str, ...] = ()
     product_presentation: str | None = None
+    has_mannequin: bool = True
 
     def uses_styling_all_location_recomposition(self) -> bool:
         """Whether ``all`` is a styling inspiration, not an exact location plate."""
@@ -196,6 +199,8 @@ class CutPlan:
             "recipe",
         ):
             attributes = sorted(grouped.get(owner, []))
+            if not self.has_mannequin and attributes and owner in ("modelFace", "modelFullBody"):
+                attributes = sorted((*attributes, "hair"))
             if attributes:
                 lines.append(f"{owner}: {', '.join(attributes)}")
         lines.extend((
@@ -204,10 +209,17 @@ class CutPlan:
              if self.product_presentation is not None else
              "Storyboard color/shot/face/model/matching/closure override the example; "
              "the selected example owns direction and pose."),
-            "Selected-model inputs own face and body proportions; the example person owns neither.",
-            "ProductTruth pixels own construction, length, material, pattern, hardware, "
-            "silhouette and garment text/logo. Seller name/category/sales/legacy-fit text owns "
-            "no geometry; only declared fitProfile axes may override mannequin pixels.",
+            ("Selected-model inputs own face and body proportions; the example person owns neither."
+             if self.has_mannequin else
+             "Selected-model inputs own face, hair and body proportions; the example person owns none of them."),
+            ("ProductTruth pixels own construction, length, material, pattern, hardware, "
+             "silhouette and garment text/logo. Seller name/category/sales/legacy-fit text owns "
+             "no geometry; only declared fitProfile axes may override mannequin pixels."
+             if self.has_mannequin else
+             "ProductTruth pixels own construction, material, pattern, hardware, silhouette and garment text/logo, "
+             "and all undeclared fit, length and sleeve-length geometry. Seller name/category/sales/legacy-fit text "
+             "owns no geometry; only declared length and sleeve-length axes override PRODUCT pixels for that axis only; "
+             "for fit, follow the seller-selected direction while preserving size clearly visible in the product photos."),
             "Reference owns only listed attributes; ignore all other reference pixels.",
         ))
         if self.uses_styling_all_location_recomposition():
@@ -236,7 +248,10 @@ def _normalized_clothing_type(value: str) -> str:
     return clothing_type
 
 
-def _declared_fit_axes(profile: Mapping[str, Any] | None) -> tuple[str, ...]:
+def _declared_fit_axes(profile: Mapping[str, Any] | None, *, has_mannequin: bool = True) -> tuple[str, ...]:
+    if not has_mannequin:
+        return tuple(axis for axis, value, source in select_applied_fit_axes(profile))
+    profile = mannequin_fit_profile(profile)
     if profile is None:
         return ()
     if not isinstance(profile, Mapping):
@@ -312,6 +327,7 @@ def compile_cut_plan(
     *,
     fit_profile: Mapping[str, Any] | None = None,
     outfit_roles: tuple[str, ...] = (),
+    has_mannequin: bool = True,
 ) -> CutPlan:
     """Compile a normalized cut spec into an unambiguous prompt contract.
 
@@ -364,7 +380,7 @@ def compile_cut_plan(
     effective_fit_profile = fit_profile
     if effective_fit_profile is None and spec.get("fitProfile") is not None:
         effective_fit_profile = spec.get("fitProfile")
-    declared_fit_axes = _declared_fit_axes(effective_fit_profile)
+    declared_fit_axes = _declared_fit_axes(effective_fit_profile, has_mannequin=has_mannequin)
 
     reference_attributes = list(_REFERENCE_ATTRIBUTES[reference_mode])
     if reference_mode == "all" and not reference_direction_compatible:
@@ -426,6 +442,7 @@ def compile_cut_plan(
     }
 
     return CutPlan(
+        has_mannequin=has_mannequin,
         outfit_roles=roles,
         product_presentation=product_presentation,
         clothing_type=normalized_clothing_type,

@@ -126,6 +126,6 @@ def test_selected_matching_photo_needs_no_matching_fit_without_mannequin(matchin
     ]
     assert "MATCHING is the seller's chosen coordinating garment and must also be reproduced" in prompt
     assert "silhouette, rise, length, leg/sleeve width, hem" in prompt
-    assert "- fit: regular outerwear fit with natural room for layering" in prompt
+    assert "OUTER FIT (" not in prompt  # 출처 없는 옛 레귤러 값은 사진에 맡긴다.
     assert "- matching " not in prompt
     assert "matchingFit" not in prompt

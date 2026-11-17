@@ -141,8 +141,9 @@ def build_declared_fit_block(fit_profile: dict | None) -> str:
     oversized to tight crop` 을 붙여 **무한 재생성 → 구제 출고(regenerate)** 로 끝났다.
     판정 기준을 사진이 아니라 **의도**로 옮겨야 한다.
     """
-    from .fit_axes import AXIS_OBSERVABLES
+    from .fit_axes import AXIS_OBSERVABLES, mannequin_fit_profile
 
+    fit_profile = mannequin_fit_profile(fit_profile)
     if not isinstance(fit_profile, dict):
         return ""
     category = fit_profile.get("category")

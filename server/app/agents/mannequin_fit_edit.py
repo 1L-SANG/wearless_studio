@@ -8,7 +8,7 @@
 
 import os
 
-from .fit_axes import AXIS_OBSERVABLES, FIT_AXES, _axis_entry
+from .fit_axes import AXIS_OBSERVABLES, FIT_AXES, _axis_entry, mannequin_fit_profile
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "mannequin_fit_edit_v2.txt")
@@ -43,6 +43,7 @@ def build_adjust_directives(profile: dict, adjusted_axes: tuple | list) -> str:
     선택된 값 = 이번 편집의 목표). 유효하지 않은 값은 조용히 제외 — 빈 문자열이면
     호출측이 편집 경로를 포기하고 재생성 경로로 폴백해야 한다.
     """
+    profile = mannequin_fit_profile(profile)
     category = profile.get("category")
     gender = profile.get("gender")
     axes = profile.get("axes") or {}

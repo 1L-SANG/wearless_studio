@@ -35,7 +35,8 @@ from .outer_closure import STATES as _OUTER_CLOSURE_STATES, DEFAULT
 from .directing_profile import render_directing_profile
 from .gemini_image import GeminiImageClient, InlineImage
 from .model_routing import resolve_model
-from .fit_axes import build_fit_profile_block
+from .fit_axes import build_fit_profile_block, mannequin_fit_profile
+from .analysis_fit import build_analysis_fit_block, select_applied_fit_axes
 from .prompts import _product_block, _sanitize, build_mirrored_source_block
 from . import face_angle_swap, face_identity, space_set_assets
 from .reference_mode import reference_scope
@@ -720,6 +721,7 @@ def render_cut_prompt(
     셀러가 라이선스료를 내고 "얼굴을 가려라"를 지시받는 자기모순이 된다.
     """
     sec = _sections(template)
+    has_mannequin = _MANNEQUIN_LABEL in image_manifest
     cut, shot = spec["cutType"], spec["shot"]
     presentation = product_photography.normalize(spec.get("productPresentation"), cut_type=cut, shot=shot)
     horizon_tone = cut == "horizon" and horizon_background.active(spec)
@@ -744,7 +746,7 @@ def render_cut_prompt(
     # 매니페스트에 실제 라벨이 있을 때만 지시한다. has_face 불리언만 믿으면
     # 가상모델을 실존·라이선스 인물로 오표기하거나, 첨부 없는 얼굴을 보라고 한다.
     identity_labels = (
-        _MODEL_LABEL, _MODEL_SHEET_LABEL, _MODEL_FACE_LABEL, _FACE_LABEL,
+        _MODEL_LABEL, _MODEL_SHEET_LABEL, _MODEL_FACE_LABEL, _MODEL_FACE_PRODUCT_LABEL, _FACE_LABEL,
     )
     has_identity_reference = not is_framed_signature and cut in _WORN_CUTS and any(
         label in image_manifest for label in identity_labels
@@ -752,6 +754,8 @@ def render_cut_prompt(
     has_body_reference = cut in _WORN_CUTS and (
         _MODEL_FULL_BODY_LABEL in image_manifest
         or _MODEL_FULL_BODY_HORIZON_LABEL in image_manifest
+        or _MODEL_FULL_BODY_PRODUCT_LABEL in image_manifest
+        or _MODEL_FULL_BODY_PRODUCT_HORIZON_LABEL in image_manifest
     )
     has_licensed_face_reference = _FACE_LABEL in image_manifest
     # 첨부 여부(has_face)와 별개로 이 컷이 얼굴을 담는 컷인지 다시 판정 — 첨부 판정과 동일 규칙.
@@ -760,6 +764,9 @@ def render_cut_prompt(
     )
 
     def need(key: str) -> str:
+        product_key = f"{key}_no_mannequin" if ":" in key else f"{key}:no_mannequin"
+        if not has_mannequin and product_key in sec:
+            key = product_key
         if key not in sec:
             raise ValueError(f"프롬프트 템플릿에 섹션이 없습니다: [[{key}]]")
         return sec[key]
@@ -944,7 +951,6 @@ def render_cut_prompt(
     outerwear_inner_line = ""
     actual_outfit_roles = tuple(role for role in ("inner", "footwear", "bag", "accessory")
                                 if f"OUTFIT {role.upper()}" in image_manifest) if cut in _WORN_CUTS else ()
-    has_mannequin = _MANNEQUIN_LABEL in image_manifest
     if _is_outer(clothing_type) and cut in _WORN_CUTS and "inner" not in actual_outfit_roles:
         if has_mannequin:
             outerwear_inner_line = need("OUTER_INNER")
@@ -987,6 +993,8 @@ def render_cut_prompt(
 
     text = (
         need("BASE")
+        .replace("${productAuthorityLine}", need("PRODUCT_AUTHORITY") if "PRODUCT_AUTHORITY" in sec else "")
+        .replace("${contactRuleLine}", need("CONTACT:no_mannequin") if not has_mannequin and cut in _WORN_CUTS else "")
         .replace("${cutLabel}", _CUT_LABELS[cut])
         .replace("${authorityPlanLine}", authority_plan_line or "")
         .replace(
@@ -1031,13 +1039,27 @@ def render_cut_prompt(
     fit_profile = analysis.get("fitProfile") if isinstance(analysis, dict) else None
     if not isinstance(fit_profile, dict):
         fit_profile = None
+    if has_mannequin:
+        fit_profile = mannequin_fit_profile(fit_profile)
     # 매칭 의류가 화면에 없으면(마네킹 참조도 MATCH 첨부도 없음) v1/v2 매칭 축 제거 —
     # 없는 옷의 핏을 지시하면 모델이 하의를 지어내는 원인이 된다(마네킹 워커와 동일 가드).
     if fit_profile and _MANNEQUIN_LABEL not in image_manifest and _MATCH_LABEL not in image_manifest:
         fit_profile = {
             k: v for k, v in fit_profile.items() if k not in ("matchCut", "matchingFit")
         }
-    fit_block = build_fit_profile_block(fit_profile)
+    if has_mannequin:
+        fit_block = build_fit_profile_block(fit_profile)
+    else:
+        reading = (analysis or {}).get("fitRead")
+        reading = reading if isinstance(reading, dict) else {}
+        fit_block = build_analysis_fit_block(
+            (fit_profile or {}).get("category"), (fit_profile or {}).get("gender"),
+            select_applied_fit_axes(fit_profile), sleeve_type=reading.get("sleeveType"), front_hem=reading.get("frontHem"),
+        )
+        # 코디 축은 별도 기능이다. 옛 고정 줄만 남기고 주상품 권한 꼬리는 덧붙이지 않는다.
+        matching_block = build_fit_profile_block({**fit_profile, "axes": {}}) if fit_profile else ""
+        matching_lines = [line for line in matching_block.splitlines() if line.startswith("- matching ")]
+        fit_block = "\n\n".join(part for part in (fit_block, "\n".join(matching_lines)) if part)
     body_block = build_body_profile_block(body_profile)
     # 머리는 착장 컷에서만 의미가 있다(product 컷은 사람이 없다). 값이 없으면 블록을 내지 않으므로
     # 기존 프롬프트는 바이트 단위로 동일하다.
@@ -1050,7 +1072,7 @@ def render_cut_prompt(
         build_face_shape_block(face_shape_profile)
         if spec["cutType"] in _WORN_CUTS and not is_framed_signature else ""
     )
-    block = _product_block(product, analysis or {}, include_legacy_fit=fit_profile is None)
+    block = _product_block(product, analysis or {}, include_legacy_fit=fit_profile is None, photo_authority=not has_mannequin)
     mirror_block = ""
     if (cut in _WORN_CUTS and (analysis or {}).get("sourceMirrored") is True
             and not has_mannequin and not face_pass):
@@ -1208,6 +1230,10 @@ _MODEL_FULL_BODY_LABEL = ("MODEL FULL BODY — use ONLY the body outline and pro
 #: 이 문자열을 알아야 한다. 문구만 바꾸고 판정을 놔두면 호리존 컷에서 체형 규칙이 통째로 빠진다.
 _MODEL_FULL_BODY_HORIZON_LABEL = _MODEL_FULL_BODY_LABEL.replace(
     "SPACE SET PLATE owns the location", "EXAMPLE REFERENCE owns the studio")
+
+_MODEL_FACE_PRODUCT_LABEL = 'MODEL FACE — facial identity and hair authority for the selected model ONLY: preserve facial identity, facial features and hair; ZERO authority over height, head-to-body ratio, shoulders, torso, waist, pelvis, limb proportions, body shape, pose, framing or clothing'
+_MODEL_FULL_BODY_PRODUCT_LABEL = "MODEL FULL BODY — use ONLY the body outline and proportions from this image: height, head-to-body ratio, shoulder width and slope, torso length and build, waist, pelvis and hip width, and arm and leg proportions. The subject is cut out on a flat grey field; that field is not a location. Do NOT copy its background, location, garments, shoes, pose, framing or camera distance; PRODUCT and MATCHING own the clothing and SPACE SET PLATE owns the location. ZERO authority over facial identity or facial features; together with MODEL FACE it owns the model's hair length, color and how it is worn"
+_MODEL_FULL_BODY_PRODUCT_HORIZON_LABEL = "MODEL FULL BODY — use ONLY the body outline and proportions from this image: height, head-to-body ratio, shoulder width and slope, torso length and build, waist, pelvis and hip width, and arm and leg proportions. The subject is cut out on a flat grey field; that field is not a location. Do NOT copy its background, location, garments, shoes, pose, framing or camera distance; PRODUCT and MATCHING own the clothing and EXAMPLE REFERENCE owns the studio. ZERO authority over facial identity or facial features; together with MODEL FACE it owns the model's hair length, color and how it is worn"
 _MATCH_LABEL = "MATCHING — the user-selected coordinating garment worn in the same outfit"
 _CUSTOM_MATCH_LABEL = (
     _MATCH_LABEL
@@ -1283,6 +1309,8 @@ def build_manifest(
         # 프롬프트는 바이트 단위로 안 바뀐다. 전신 근거가 실제로 붙는 조합(가상모델 face+full-body,
         # 실존 등록자 face+sheet+full-body)은 명시적인 FACE 역할을 쓴다.
         model_face_label = _MODEL_LABEL if (has_model_sheet and not has_model_full_body) else _MODEL_FACE_LABEL
+        if not has_mannequin and model_face_label == _MODEL_FACE_LABEL:
+            model_face_label = _MODEL_FACE_PRODUCT_LABEL
         lines.append(f"{i}. {model_face_label}")
         i += 1
     # 순서 = 자산 해석 순서(identity_source: face_front → grid_sedcard → body_front).
@@ -1294,6 +1322,8 @@ def build_manifest(
         body_label = _MODEL_FULL_BODY_LABEL
         if example_is_horizon and example_scope == "all" and not has_space_set_plate:
             body_label = _MODEL_FULL_BODY_HORIZON_LABEL
+        if not has_mannequin:
+            body_label = _MODEL_FULL_BODY_PRODUCT_HORIZON_LABEL if body_label == _MODEL_FULL_BODY_HORIZON_LABEL else _MODEL_FULL_BODY_PRODUCT_LABEL
         lines.append(f"{i}. {body_label}")
         i += 1
     for a in prod_assets:
@@ -1644,7 +1674,8 @@ def build_prompt(
         raise ValueError("unsupported_signature_recipe")
     spec = apply_reference_compatibility(spec)
     fit_profile = analysis.get("fitProfile") if isinstance(analysis, dict) else None
-    plan = compile_cut_plan(spec, clothing_type, fit_profile=fit_profile)
+    plan = compile_cut_plan(spec, clothing_type, fit_profile=fit_profile,
+                            has_mannequin=_MANNEQUIN_LABEL in (manifest or ""))
     authority_plan_line = render_prompt_contract(plan)
     if manifest is None:
         if spec["cutType"] == "product" and spec["shot"] == "detail":

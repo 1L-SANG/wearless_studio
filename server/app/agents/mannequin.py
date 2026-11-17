@@ -100,7 +100,8 @@ def has_fine_pattern(product: dict | None, analysis: dict | None) -> bool:
 def generation_spec(analysis: dict) -> dict | None:
     """단일 마네킹 생성 spec. fitProfile이 없거나 형태가 아니면 프로필 블록 없이 생성한다."""
     profile = (analysis or {}).get("fitProfile")
-    return profile if isinstance(profile, dict) else None
+    from .fit_axes import mannequin_fit_profile
+    return mannequin_fit_profile(profile) if isinstance(profile, dict) else None
 
 
 def effective_fit_profile(analysis: dict, has_match_image: bool) -> dict | None:

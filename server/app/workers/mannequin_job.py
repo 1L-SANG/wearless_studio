@@ -41,6 +41,7 @@ from ..agents.mannequin_fit_edit import (
     render_adjust_prompt,
 )
 from ..agents.gemini_image import GeminiError, InlineImage
+from ..agents.fit_axes import mannequin_fit_profile
 from ..agents.catalog_image import catalog_image
 from ..agents.model_routing import resolve_model
 from ..agents.prompts import (
@@ -78,12 +79,13 @@ async def _cancel_checkpoint(cancel_check=None) -> None:
 
 def _canonical_profile_hash(profile) -> str:
     """렌더러 입력 프로필의 canonical JSON(sort_keys·compact·null 포함) SHA-256 (fidelity D3)."""
-    payload = json.dumps(profile, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    payload = json.dumps(mannequin_fit_profile(profile), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _fit_profile_for_match_image(profile: dict | None, has_match_image: bool) -> dict | None:
     """화면에 매칭 의류가 없으면 v1/v2 매칭 축 지시를 모두 제거한다."""
+    profile = mannequin_fit_profile(profile)
     if not profile or has_match_image:
         return profile
     return {k: v for k, v in profile.items() if k not in ("matchCut", "matchingFit")}
@@ -2876,6 +2878,10 @@ async def run_mannequin_job(app, job: dict) -> None:
         # 워커가 최신 analysis 를 재독하면 잡 생성↔실행 사이의 저장 경합으로 다른 프로필이
         # 조용히 쓰일 수 있다(무음 유실). 키가 없는 legacy 잡과 malformed 스냅샷은 analysis 폴백.
         snap = (job.get("payload") or {}).get("fitProfileSnapshot")
+        analysis_fit_profile = (job.get("payload") or {}).get("analysisFitProfile")
+        if not isinstance(analysis_fit_profile, dict) or "axisSources" not in analysis_fit_profile:
+            current_profile = analysis.get("fitProfile")
+            analysis_fit_profile = current_profile if isinstance(current_profile, dict) and "axisSources" in current_profile else None
         snap_valid = _valid_fit_profile_snapshot(snap)
         if snap_valid:
             fit_profile = snap.get("profile")
@@ -3108,6 +3114,7 @@ async def run_mannequin_job(app, job: dict) -> None:
         charge = reserved
         await _cancel_checkpoint(_cancel_check)
         async with pool.connection() as conn:
+            analysis_profile_kwargs = {"analysis_fit_profile": analysis_fit_profile} if analysis_fit_profile is not None else {}
             out = await repo.finalize_mannequin_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
                 project_id=project_id, candidates=passed, reserved=reserved, charge=charge,
@@ -3115,7 +3122,7 @@ async def run_mannequin_job(app, job: dict) -> None:
                           "creditCostVersion": s.credit_cost_version,
                           "promptVersion": cut_generation_metadata["promptVersion"],
                           "gender": gender},
-                fit_profile_snapshot=persisted_fit_profile_snapshot)
+                fit_profile_snapshot=persisted_fit_profile_snapshot, **analysis_profile_kwargs)
             await conn.commit()
         if out is None:  # lease 상실(복구) → 결과 폐기 + 방금 저장한 R2 객체 best-effort 정리
             for c in passed:

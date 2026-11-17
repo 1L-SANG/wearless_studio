@@ -4540,8 +4540,23 @@ async def finalize_mannequin_success(
     charge: int,
     metadata: dict,
     fit_profile_snapshot: dict | None = None,
+    analysis_fit_profile: dict | None = None,
 ) -> dict | None:
     """성공 종결(원자·lease 펜스). None = lease 상실(복구·재클레임) → 아무것도 쓰지 않음."""
+    if fit_profile_snapshot is not None:
+        from .agents.fit_axes import mannequin_fit_profile
+        original_profile = fit_profile_snapshot.get("profile")
+        if analysis_fit_profile is None and isinstance(original_profile, dict) and "axisSources" in original_profile:
+            analysis_fit_profile = original_profile
+        fit_profile_snapshot = {**fit_profile_snapshot, "profile": mannequin_fit_profile(fit_profile_snapshot.get("profile"))}
+        if analysis_fit_profile is not None:
+            # 주상품의 분석 출처는 보존하고 코디 축은 실제 첨부로 검증된 스냅샷을 따른다.
+            matching_keys = ("matchCut", "matchingFit")
+            resolved_profile = fit_profile_snapshot.get("profile") or {}
+            analysis_fit_profile = {
+                **{key: value for key, value in analysis_fit_profile.items() if key not in matching_keys},
+                **{key: resolved_profile[key] for key in matching_keys if key in resolved_profile},
+            }
     async with conn.cursor() as cur:
         await cur.execute(
             "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
@@ -4598,7 +4613,7 @@ async def finalize_mannequin_success(
                 "values (%s, jsonb_build_object('fitProfile', %s::jsonb), false) "
                 "on conflict (project_id) do update set payload = "
                 "jsonb_set(analyses.payload, '{fitProfile}', excluded.payload->'fitProfile', true)",
-                (project_id, Json(fit_profile_snapshot.get("profile"))),
+                (project_id, Json(analysis_fit_profile if analysis_fit_profile is not None else fit_profile_snapshot.get("profile"))),
             )
     # 크레딧 확정 — 버킷 FIFO 차감(구독먼저→topup), 같은 tx·jobs 락 유지.
     # 멱등 = job.status(위 status='running' FOR UPDATE) → 재진입 없음. settle_key는 release 전용.

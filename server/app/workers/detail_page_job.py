@@ -211,9 +211,19 @@ def _runtime_outer_closure(block: dict, clothing_type: str, front_closure: dict,
     return block
 
 
-def _analysis_for_cut(block: dict, analysis: dict | None) -> dict | None:
+def _analysis_for_cut(
+    block: dict, analysis: dict | None, *, has_mannequin: bool = True,
+    no_mannequin_analysis: dict | None = None,
+) -> dict | None:
     """대체 매칭에 원래 매칭의 핏을 적용하지 않고 다른 컷의 분석은 보존한다."""
+    if not has_mannequin and no_mannequin_analysis is not None:
+        analysis = no_mannequin_analysis
     fit_profile = (analysis or {}).get("fitProfile")
+    if has_mannequin:
+        filtered = fit_axes.mannequin_fit_profile(fit_profile)
+        if filtered is not fit_profile:
+            analysis = {**analysis, "fitProfile": filtered}
+            fit_profile = filtered
     if isinstance(fit_profile, dict) and any(
         record.get("kind") == "matching_substituted" for record in block.get("_fallback", [])
     ):
@@ -466,7 +476,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     hair_profile=None, face_shape_profile=None, face_identity_spec=None,
                     angle_photos=None, selected_model_id=None, cut_checkpoints=None,
                     stored_outputs=None, similar_context=None, failed_cuts=None,
-                    generation_counts=None, template_context=None, color_context=None):
+                    generation_counts=None, template_context=None, color_context=None,
+                    no_mannequin_analysis=None):
     """준비된 블록별
     (block, images, manifest, has_face, product_images,
     space_set_plate, strict_space_scene_qc, unused_legacy_slot, confirmed_packet,
@@ -687,7 +698,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             color["plan"], color.get("target_asset"), color.get("target_image")) if color and color["plan"].target_color_id is not None else None
         if color:
             b = garment_color.render_spec(b, color["plan"])
-        cut_analysis = _analysis_for_cut(b, analysis)
+        cut_analysis = _analysis_for_cut(b, analysis, has_mannequin="MANNEQUIN" in manifest,
+                                         no_mannequin_analysis=no_mannequin_analysis)
         # 최신 main의 첫 화면 시그니처 컷은 자체 모델/폴백 계약을 가진다. AG-06 일반
         # 컷용 GPT 설정을 덮어씌우지 않고 원래 Settings를 써서 그 경계를 보존한다.
         generation_settings = (
@@ -996,6 +1008,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                         normalized_spec,
                         clothing_type,
                         fit_profile=(cut_analysis or {}).get("fitProfile"),
+                        has_mannequin="MANNEQUIN" in manifest,
                     )
                     qc_references = cut_output_qc.references_from_manifest(
                         manifest, qc_images
@@ -1630,14 +1643,14 @@ _INTERNAL_FAILURE_CODES = {"holder_starting", "holder_unavailable"}
 
 
 def _analysis_for_selected_mannequin(
-    analysis: dict, selected_cut: dict | None,
+    analysis: dict, selected_cut: dict | None, *, has_mannequin: bool = True,
 ) -> dict:
     """선택 컷의 기록된 핏을 상세 잡의 정본으로 쓴다.
 
     snapshot 자체가 없는 구버전 컷은 기존 analysis 폴백을 유지한다. profile=null은
     첫 생성 당시의 "사진 그대로"를 뜻하므로 fitProfile 키를 null로 명시한다.
     """
-    return fit_axes.analysis_for_selected_mannequin(analysis, selected_cut)
+    return fit_axes.analysis_for_selected_mannequin(analysis, selected_cut, has_mannequin=has_mannequin)
 
 
 async def run_detail_page_job(app, job: dict) -> None:
@@ -1739,8 +1752,9 @@ async def run_detail_page_job(app, job: dict) -> None:
                 cut for cut in mannequin_cuts
                 if f"{cut.get('candidate')}-{cut.get('version')}" == selected_mannequin_id
             ), None)
+            unprojected_fit_profile = analysis.get("fitProfile")
             analysis = _analysis_for_selected_mannequin(
-                analysis, selected_mannequin_cut
+                analysis, selected_mannequin_cut, has_mannequin=bool(selected_mannequin_id)
             )
             # contentRole가 사용자 선택의 정본이다. 저장 입력을 여기서도 방어적으로
             # 정규화해 매칭 첨부·컷·카피·조립이 모두 같은 역할/레시피를 읽게 한다.
@@ -2678,7 +2692,11 @@ async def run_detail_page_job(app, job: dict) -> None:
                         evidence_contract=analysis.get(
                             "confirmedGptProductEvidence"
                         ),
-                        analysis=analysis,
+                        analysis=_analysis_for_cut(
+                            cut_spec, analysis, has_mannequin=cut_mannequin_image is not None,
+                            no_mannequin_analysis=({**analysis, "fitProfile": unprojected_fit_profile}
+                                if isinstance(unprojected_fit_profile, dict) and "axisSources" in unprojected_fit_profile else None),
+                        ),
                     )
                 except Exception as e:
                     log.warning(
@@ -2772,6 +2790,9 @@ async def run_detail_page_job(app, job: dict) -> None:
         # body_profile 이 None 이면 키 자체를 생략한다 — _gen_cuts() 목(mock) 중
         # body_profile 인자를 모르는 strict-signature 스텁을 깨지 않는다(A4/A5와 동일 관례).
         _gen_cuts_kwargs = {}
+        if (isinstance(unprojected_fit_profile, dict) and "axisSources" in unprojected_fit_profile
+                and unprojected_fit_profile is not analysis.get("fitProfile")):
+            _gen_cuts_kwargs["no_mannequin_analysis"] = {**analysis, "fitProfile": unprojected_fit_profile}
         if any(block.get("similarSourceBlockId") is not None for block in ai_blocks):
             # An automatically generated product name can change on retry. It is not
             # source garment evidence and must not replace a saved follow-up action.

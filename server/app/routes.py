@@ -152,6 +152,7 @@ async def _fit_profile_snapshot(
     requested: dict | None,
     *,
     validate_matching_fit: bool = False,
+    include_analysis_profile: bool = False,
 ) -> dict:
     """잡 생성 시점 effective fitProfile 스냅샷 — 워커의 불변 입력 (fidelity 설계 D3).
 
@@ -162,9 +163,11 @@ async def _fit_profile_snapshot(
       클라이언트가 보낸 조정 목록은 신뢰하지 않는다. generate/바디 없는 regenerate 는 [].
     """
     analysis = await repo.get_analysis(conn, project_id) or {}
-    prev = fit_axes.normalize_fit_profile(analysis.get("fitProfile"))
+    original_profile = fit_axes.normalize_fit_profile(analysis.get("fitProfile"))
+    prev = fit_axes.mannequin_fit_profile(original_profile)
     if requested is not None:
-        profile = fit_axes.normalize_fit_profile(requested)
+        original_profile = fit_axes.normalize_fit_profile(requested)
+        profile = fit_axes.mannequin_fit_profile(original_profile)
         adjusted = fit_axes.adjusted_axes_between(prev, profile)
     else:
         profile, adjusted = prev, []
@@ -208,7 +211,10 @@ async def _fit_profile_snapshot(
         )
         if not has_match:
             profile = {k: v for k, v in profile.items() if k not in ("matchCut", "matchingFit")}
-    return {"version": 1, "profile": profile, "adjustedAxes": adjusted}
+    snapshot = {"version": 1, "profile": profile, "adjustedAxes": adjusted}
+    if include_analysis_profile and isinstance(original_profile, dict) and "axisSources" in original_profile:
+        snapshot["analysisProfile"] = original_profile
+    return snapshot
 
 
 def _bad_request(code: str, message: str, meta: dict | None = None) -> HTTPException:
@@ -252,6 +258,7 @@ def _mannequin_payload_matches(job: dict, requested_payload: dict) -> bool:
     return (
         existing.get("mode") == requested_payload.get("mode")
         and existing_snapshot == requested_snapshot
+        and existing.get("analysisFitProfile") == requested_payload.get("analysisFitProfile")
         and (existing.get("outfitSelectionsSnapshot") or {"version": 1, "slots": {}}) == (requested_payload.get("outfitSelectionsSnapshot") or {"version": 1, "slots": {}})
     )
 
@@ -1241,6 +1248,7 @@ async def save_analysis(
     """
     # 프론트 소유 shape를 유지하되 폐기된 레거시 핏 어휘는 신규 저장하지 않는다.
     analysis = fit_axes.normalize_analysis_fit(analysis)
+    fit_profile_only = set(analysis) == {"fitProfile"}
     # 지금 analysis.colors 를 읽는 코드는 없지만, 2026-08-17 사고의 플레이스홀더가 실제로 여기
     # 3건 저장됐다. 나중에 누가 이 필드를 읽기 시작할 때 오염을 물려받지 않게 입구에서 막는다.
     analysis = product_photos.sanitize_analysis_colors(analysis)
@@ -1282,8 +1290,19 @@ async def save_analysis(
             raise _bad_request("invalid_page_style", "페이지 스타일을 다시 골라 주세요.") from exc
     items = None
     async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
+        project = await repo.get_project(conn, user_id, project_id)
+        if project is None:
             raise _not_found()
+        incoming_profile = analysis.get("fitProfile")
+        selected_id = project.get("selected_mannequin_id") or project.get("selectedMannequinId")
+        if (fit_profile_only and selected_id and
+                (incoming_profile is None or isinstance(incoming_profile, dict) and "axisSources" not in incoming_profile)):
+            current_profile = (await repo.get_analysis(conn, project_id) or {}).get("fitProfile")
+            if isinstance(current_profile, dict) and "axisSources" in current_profile:
+                cuts = await repo.list_mannequin_cuts(conn, user_id, project_id)
+                selected = next((cut for cut in cuts if f"{cut.get('candidate')}-{cut.get('version')}" == selected_id), None)
+                analysis = {**analysis, "fitProfile": fit_axes.profile_for_mannequin_selection_save(
+                    current_profile, incoming_profile, selected)}
         if "pageStyle" in analysis:
             await repo.lock_page_style_project(conn, project_id)
             previous_style = (await repo.get_analysis(conn, project_id) or {}).get("pageStyle")
@@ -1611,7 +1630,7 @@ async def draft_feature_copy(
         cuts = await repo.list_mannequin_cuts(conn, user_id, project_id) if selected_id else []
         selected_cut = next((cut for cut in cuts
                              if f"{cut.get('candidate')}-{cut.get('version')}" == selected_id), None)
-        analysis = fit_axes.analysis_for_selected_mannequin(analysis, selected_cut)
+        analysis = fit_axes.analysis_for_selected_mannequin(analysis, selected_cut, has_mannequin=bool(selected_id))
     points = analysis.get("sellingPoints") or analysis.get("aiSuggestedPoints") or []
     items = await feature_copy.generate(s, points, product, analysis)
     if not items:
@@ -2791,7 +2810,7 @@ def _cut_to_api(c: dict) -> dict:
         # QC 점수 스냅샷. 재생성 경로는 jobs.result 봉투를 버리고 이 라우트를 재조회하므로,
         # 여기서 안 실으면 "생성 직후엔 보이다 재생성 후 사라지는" 비대칭이 생긴다.
         "qcScores": c.get("qc_scores"),
-        "fitProfile": fit_profile_snapshot.get("profile") if fit_profile_recorded else None,
+        "fitProfile": fit_axes.mannequin_fit_profile(fit_profile_snapshot.get("profile")) if fit_profile_recorded else None,
         "fitProfileRecorded": fit_profile_recorded,
     }
 
@@ -2918,9 +2937,12 @@ async def generate_mannequins(
         # blocking으로 직렬화되어 프로젝트당 active job 1개만 생성되고 나머지는 합류한다(§6).
         # 합류(created=False)는 게이트·예약 없이 기존 job 반환 → 동시 재시도/입력검증으로 막지 않음.
         # 합류 시 기존 job payload 가 정본 — 아래 스냅샷은 신규 job 에만 실린다.
-        snapshot = await _fit_profile_snapshot(conn, user_id, project_id, None)
+        snapshot = await _fit_profile_snapshot(conn, user_id, project_id, None, include_analysis_profile=True)
+        analysis_profile = snapshot.pop("analysisProfile", None)
         job_payload = {"mode": "generate", "fitProfileSnapshot": snapshot,
                        "outfitSelectionsSnapshot": outfit_snapshot}
+        if analysis_profile is not None:
+            job_payload["analysisFitProfile"] = analysis_profile
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
             payload=job_payload, idempotency_key=scoped_key,
@@ -3497,13 +3519,17 @@ async def regenerate_mannequins(
             project_id,
             body.get("fitProfile"),
             validate_matching_fit=True,
+            include_analysis_profile=True,
         )
+        analysis_profile = snapshot.pop("analysisProfile", None)
         job_payload = {
             "mode": "regenerate",
-            "fitProfile": body.get("fitProfile"),
+            "fitProfile": fit_axes.mannequin_fit_profile(body.get("fitProfile")),
             "fitProfileSnapshot": snapshot,
             "outfitSelectionsSnapshot": await _outfit_generation_snapshot(conn, user_id, project_id, settings=request.app.state.settings),
         }
+        if analysis_profile is not None:
+            job_payload["analysisFitProfile"] = analysis_profile
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
             payload=job_payload,

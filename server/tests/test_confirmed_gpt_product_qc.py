@@ -220,7 +220,8 @@ def test_actual_no_mannequin_packet_passes_qc_with_the_same_framing_and_fit(monk
 
     packet = _packet(monkeypatch, clothing_type=category,
                      analysis={"fitProfile": {"category": category, "gender": "women",
-                               "version": 2, "axes": {"fit": fit, "length": "crop", "sleeve": "cap"}}})
+                               "version": 2, "axes": {"fit": fit, "length": "crop", "sleeve": "cap"},
+                               "axisSources": {"fit": "ai"}}})
 
     async def analyze(*args, **kwargs):
         return _raw(), "fake"
@@ -234,7 +235,7 @@ def test_actual_no_mannequin_packet_passes_qc_with_the_same_framing_and_fit(monk
 
     assert result["passed"] is True
     assert result["contract"]["soldProductFit"] == packet.prompt_input.sold_product_fit
-    assert ("oversized volume" if fit == "over" else "a slim version") in result["contract"]["soldProductFit"]
+    assert ("Oversized fit:" if fit == "over" else "Slim fit:") in result["contract"]["soldProductFit"]
     assert "caps the shoulder" not in result["contract"]["soldProductFit"]
     if category == "outer":
         assert len(result["contract"]["soldProductFit"]) > 200

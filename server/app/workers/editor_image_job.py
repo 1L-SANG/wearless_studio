@@ -1302,6 +1302,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                         cut_generator.apply_reference_compatibility(cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)),
                         clothing_type,
                         fit_profile=(analysis or {}).get("fitProfile"),
+                        has_mannequin="MANNEQUIN" in manifest,
                     )
                     qc_references = cut_output_qc.references_from_manifest(
                         manifest, images
