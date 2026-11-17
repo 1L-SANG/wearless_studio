@@ -3,11 +3,15 @@ import { api } from '@/lib/api/index.js';
 import { applyOutfitSet, outfitRecommendationPatch, toggleOutfitOptional } from '@/lib/outfitSelections.js';
 import { initialRecommendationState, advanceRecommendationState, acceptLateRecommendation } from '@/lib/outfitPresentation.js';
 
+// Keep completion notices quiet across picker remounts and stale pending snapshots.
+// This is a session-only UI history; recommendation and selection storage stay unchanged.
+const completedContexts = new Set();
+
 // 이미 보인 폴백은 유지하고, 늦은 AI 후보와 세트는 명시 버튼을 누를 때 적용한다.
-export function useOutfitRecommendation({ analysis, projectId, product, onRecommendation, onChange }) {
+export function useOutfitRecommendation({ analysis, projectId, product, onRecommendation, onChange, onLateReady }) {
   const [state, setState] = useState(() => initialRecommendationState(analysis.outfitRecommendation, Date.now()));
-  const latest = useRef({ analysis, onRecommendation, onChange, state });
-  latest.current = { analysis, onRecommendation, onChange, state };
+  const latest = useRef({ analysis, onRecommendation, onChange, onLateReady, state });
+  latest.current = { analysis, onRecommendation, onChange, onLateReady, state };
   const delivery = useRef(null);
   const propsDelivery = useRef(null);
   const propsRequests = useRef(new Map());
@@ -82,6 +86,12 @@ export function useOutfitRecommendation({ analysis, projectId, product, onRecomm
       && fields.outfitRecommendation.contextKey === prior.recommendation?.contextKey;
     latest.current.state = next;
     setState(next);
+    const contextKey = fields.outfitRecommendation?.contextKey;
+    if (contextKey && ['ready', 'fallback', 'unavailable'].includes(fields.outfitRecommendation?.status)) {
+      const notify = prior.pending && next.lateRecommendation && !completedContexts.has(contextKey);
+      completedContexts.add(contextKey);
+      if (notify) current.onLateReady?.();
+    }
     const propsChanged = Object.entries(fields.outfitRecommendation?.props || {}).some(([role, value]) =>
       JSON.stringify(current.analysis.outfitRecommendation?.props?.[role]) !== JSON.stringify(value)
       || JSON.stringify(prior.recommendation?.props?.[role]) !== JSON.stringify(value));
@@ -154,14 +164,15 @@ export function useOutfitRecommendation({ analysis, projectId, product, onRecomm
     return () => { canceled = true; clearTimeout(timer); controller.abort(); };
   }, [projectId, analysis.outfitRecommendation?.contextKey, analysis.outfitRecommendation?.status, JSON.stringify(analysis.outfitRecommendation?.props)]);
   const acceptLate = () => {
-    if (!state.lateRecommendation) return;
-    const accepted = acceptLateRecommendation(state);
+    if (!latest.current.state.lateRecommendation) return;
+    const accepted = acceptLateRecommendation(latest.current.state);
     const delivered = delivery.current?.outfitRecommendation?.status === 'ready'
       && delivery.current.outfitRecommendation.contextKey === accepted.recommendation.contextKey ? delivery.current : {};
     const fields = { ...delivered, outfitRecommendation: accepted.recommendation };
     if (fields.outfitRecommendation?.contextKey !== latest.current.analysis.outfitRecommendation?.contextKey) return;
     const merged = { ...latest.current.analysis, ...fields };
     const patch = applyOutfitSet(merged, 0, { legacyProps: !latest.current.capabilities.props });
+    latest.current.state = accepted;
     setState(accepted);
     latest.current.onRecommendation?.((current) => ({ ...current, ...fields }));
     latest.current.onChange(latest.current.onRecommendation ? patch : { ...fields, ...patch });

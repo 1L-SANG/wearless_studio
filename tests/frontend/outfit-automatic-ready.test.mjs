@@ -20,7 +20,9 @@ for (const source of ['poll', 'props']) for (const parent of ['replace', 'change
     t.after(() => h.close());
     const { useOutfitRecommendation } = await h.load('/src/features/analysis/useOutfitRecommendation.js');
     const patches = [];
-    const props = { analysis: initial(), onChange(patch) { patches.push(patch); props.analysis = { ...props.analysis, ...patch }; } };
+    const notices = [];
+    const props = { analysis: initial(), onLateReady() { notices.push('ready'); },
+      onChange(patch) { patches.push(patch); props.analysis = { ...props.analysis, ...patch }; } };
     if (parent === 'replace') props.onRecommendation = fn => { props.analysis = fn(props.analysis); };
     h.render(useOutfitRecommendation, props);
     now = 1499;
@@ -29,6 +31,7 @@ for (const source of ['poll', 'props']) for (const parent of ['replace', 'change
     h.render(useOutfitRecommendation, props);
     const state = h.render(useOutfitRecommendation, props);
     assert.equal(state.skeleton, false);
+    assert.equal(state.pending, false);
     assert.equal(state.lateRecommendation, null);
     assert.deepEqual(props.analysis.outfitSelections.slots.bottom, choice('ready'));
     assert.deepEqual(props.analysis.outfitSelections.slots.footwear, choice('new-shoes'));
@@ -39,6 +42,7 @@ for (const source of ['poll', 'props']) for (const parent of ['replace', 'change
     assert.equal(selections.length, 1);
     assert.equal('outfitSetIndex' in selections[0], false, '서버 세트 재적용 대신 화면의 실제 선택을 저장한다');
     assert.deepEqual(selections[0].outfitSelections, props.analysis.outfitSelections);
+    assert.deepEqual(notices, [], '자동 적용은 알리지 않는다');
   });
 }
 
@@ -53,13 +57,14 @@ test('자동 세트 적용은 기존 origin user 선택과 비운 칸을 보존�
 });
 
 for (const scenario of ['deadline', 'late', 'edited-before-render', 'external-edit']) {
-  test(`${scenario} ready는 현재 선택을 보존하고 AI 코디 보기에 남긴다`, async t => {
+  test(`${scenario} ready는 현재 선택을 보존하고 AI 추천 첫 클릭을 기다린다`, async t => {
     let now = 0, resolve;
     t.mock.method(Date, 'now', () => now);
     const h = await outfitHarness({ getOutfitRecommendation: () => new Promise(done => { resolve = done; }) }); t.after(() => h.close());
     const { useOutfitRecommendation } = await h.load('/src/features/analysis/useOutfitRecommendation.js');
     const patches = [];
-    const props = { analysis: initial(), onRecommendation(fn) { props.analysis = fn(props.analysis); },
+    const notices = [];
+    const props = { analysis: initial(), onLateReady() { notices.push('ready'); }, onRecommendation(fn) { props.analysis = fn(props.analysis); },
       onChange(patch) { patches.push(patch); props.analysis = { ...props.analysis, ...patch }; } };
     const state = h.render(useOutfitRecommendation, props);
     now = scenario === 'deadline' ? 1500 : scenario === 'late' ? 2000 : 100;
@@ -75,6 +80,8 @@ for (const scenario of ['deadline', 'late', 'edited-before-render', 'external-ed
     assert.deepEqual(props.analysis.outfitSelections, selected);
     assert.equal(patches.length, 0);
     assert.equal(actual.lateRecommendation?.status, 'ready');
+    assert.equal(actual.pending, false, '늦은 결과가 오면 세트 추천 버튼 잠금을 푼다');
+    assert.deepEqual(notices, ['ready'], '직접 편집했으면 1.5초 전 ready도 명시적 적용을 알린다');
   });
 }
 
@@ -84,7 +91,8 @@ test('문맥 변경 렌더 뒤 effect 정리 전 온 옛 ready는 새 상품 선
   t.after(() => h.close());
   const { useOutfitRecommendation } = await h.load('/src/features/analysis/useOutfitRecommendation.js');
   const patches = [];
-  const props = { analysis: initial(), onRecommendation(fn) { props.analysis = fn(props.analysis); },
+  const notices = [];
+  const props = { analysis: initial(), onLateReady() { notices.push('ready'); }, onRecommendation(fn) { props.analysis = fn(props.analysis); },
     onChange(patch) { patches.push(patch); props.analysis = { ...props.analysis, ...patch }; } };
   h.render(useOutfitRecommendation, props);
   props.analysis = { ...initial(), outfitRecommendation: { ...initial().outfitRecommendation, contextKey: 'new-context' } };
@@ -95,5 +103,6 @@ test('문맥 변경 렌더 뒤 effect 정리 전 온 옛 ready는 새 상품 선
   resolve(ready()); await drain();
   assert.deepEqual(props.analysis, before);
   assert.equal(patches.length, 0);
+  assert.deepEqual(notices, [], '옛 문맥의 완료는 알리지 않는다');
   h.runtime.effects.splice(0).forEach(effect => effect());
 });

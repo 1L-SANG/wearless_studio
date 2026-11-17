@@ -30,12 +30,11 @@
 .list { min-width: 0; padding-bottom: 64px; }
 .listHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 48px; position: sticky; top: 60px; z-index: 4; background: transparent; box-shadow: 0 1px 0 var(--ring); margin: 0 -8px 8px; padding: 0 8px; }
 .stuckHead { background: var(--bg-1); }
-.recommend, .late { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 16px; border-radius: var(--r-pill); background: var(--bg-1); font-size: 14px; font-weight: 600; white-space: nowrap; }
+.recommend { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 16px; border-radius: var(--r-pill); background: var(--bg-1); font-size: 14px; font-weight: 600; white-space: nowrap; }
 .recommend { border: 2px solid transparent; background: linear-gradient(var(--bg-1), var(--bg-1)) padding-box, conic-gradient(from var(--sp-ang), var(--ring-flow-stops)) border-box; animation: recommendationSpin 10s linear infinite; }
 .recommend > span { padding-left: 10px; margin-left: 2px; min-width: 40px; box-shadow: -1px 0 0 var(--ring-strong); font-size: 12px; font-weight: 500; color: var(--fg-2); font-variant-numeric: tabular-nums; }
 .recommend:active { transform: scale(.98); }
 .recommend:disabled { animation-play-state: paused; }
-.late { border: 0; box-shadow: 0 0 0 1px var(--ring-strong); }
 .row { box-shadow: 0 -1px 0 var(--ring); scroll-margin-top: 116px; }
 .rowHeading { position: relative; }
 .rowButton { display: grid; grid-template-columns: 96px minmax(0, 1fr); column-gap: 16px; align-items: center; width: calc(100% + 16px); min-height: 136px; margin: 0 -8px; padding: 8px; border: 0; border-radius: 14px; background: transparent; text-align: left; }

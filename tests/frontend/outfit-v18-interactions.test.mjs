@@ -100,6 +100,7 @@ test('늦은 ready가 저장 응답으로 오면 이전 pending 폴링을 적용
   const ready = rec('ready'); ready.sets[0].slots.bottom = 'pants-2';
   props.analysis = { ...props.analysis, outfitRecommendation: ready };
   h.render(useOutfitRecommendation, props); let state = h.render(useOutfitRecommendation, props);
+  assert.equal(state.pending, false, '늦은 ready를 받을 때 AI 추천을 다시 사용할 수 있다');
   assert.equal(state.lateRecommendation.status, 'ready'); assert.equal(props.analysis.outfitSelections.slots.bottom.itemId, 'pants-1');
   state.acceptLate(); state = h.render(useOutfitRecommendation, props);
   assert.equal(props.analysis.outfitSelections.slots.bottom.itemId, 'pants-2'); assert.equal(state.recommendation.status, 'ready');
@@ -137,7 +138,9 @@ for (const terminal of ['ready', 'fallback']) test(`첫 1.5초 안에 고른 옷
   props.analysis = { ...props.analysis, outfitRecommendation: rec('pending') };
   h.render(useOutfitRecommendation, props); state = h.render(useOutfitRecommendation, props);
   assert.equal(state.recommendation.status, 'fallback', 'pending 저장 응답이 고르기 시작한 표시를 되돌리지 않는다');
+  assert.equal(state.pending, true, '직접 고르기 시작해도 세트 추천은 아직 진행 중이다');
   response = initial(terminal); now = 1000; await timers[1](); await drain(); state = h.render(useOutfitRecommendation, props);
   assert.equal(props.analysis.outfitSelections.slots.bottom.itemId, 'pants-2');
+  assert.equal(state.pending, false, 'ready와 실패 fallback 모두 대기를 끝낸다');
   if (terminal === 'ready') { assert.equal(state.lateRecommendation.status, 'ready'); assert.equal(replacements, 0); }
 });

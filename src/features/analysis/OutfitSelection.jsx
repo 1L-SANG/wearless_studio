@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
+import { useToast } from '@/components/ui.jsx';
 import { OUTFIT_SLOT_LABELS, complementaryOutfitSlot, outfitSlotsFor, setOutfitSelection, applyOutfitSet, toggleOutfitOptional, selectedOutfitIds, toggleOutfitAccessorySelection } from '@/lib/outfitSelections.js';
 import { filterOutfitItems, sortOutfitItems } from '@/lib/outfitPresentation.js';
 import { OutfitBoard } from './OutfitBoard.jsx';
@@ -19,11 +20,15 @@ export function OutfitSelection({ draftVisuals, analysis, onChange, onRecommenda
   const listRef = useRef(null);
   const rowRefs = useRef({});
   const moveFrame = useRef(0);
-  const recommendationState = useOutfitRecommendation({ analysis, projectId, product, onRecommendation, onChange });
+  const { push: pushToast } = useToast();
+  const recommendationState = useOutfitRecommendation({ analysis, projectId, product, onRecommendation, onChange,
+    onLateReady: () => pushToast('AI 코디가 준비됐어요. AI 추천을 눌러 확인해 보세요') });
   const recommendation = recommendationState.recommendation || analysis.outfitRecommendation;
   const current = { ...analysis, outfitRecommendation: recommendation };
   const complementary = complementaryOutfitSlot(analysis.clothingType);
   const setCount = recommendation?.sets?.length || 0;
+  const pending = recommendationState.pending;
+  const late = recommendationState.lateRecommendation;
   useEffect(() => () => cancelAnimationFrame(moveFrame.current), []);
   useEffect(() => {
     let frame;
@@ -131,13 +136,19 @@ export function OutfitSelection({ draftVisuals, analysis, onChange, onRecommenda
     <OutfitBoard draftVisuals={draftVisuals} analysis={current} product={product} projectId={projectId} onOpenRole={openRole} skeleton={recommendationState.skeleton} />
     <div className={styles.list} ref={listRef}>
       <div className={`${styles.listHead} ${stuck ? styles.stuckHead : ''}`}><h3>코디 구성</h3>
-        {recommendationState.lateRecommendation ? <button type="button" className={styles.late} onClick={recommendationState.acceptLate}><Sparkles size={16} />AI 코디 보기</button>
-          : setCount > 0 && <button type="button" className={styles.recommend} disabled={setCount < 2 || recommendationState.skeleton}
-            onClick={() => { const patch = applyOutfitSet(current, ((analysis.outfitSelections?.setIndex || 0) + 1) % setCount, { legacyProps: !recommendationState.capabilities.props }); if (patch) onChange(patch); }}>
-            <Sparkles size={16} />AI 추천<span>{Math.min((analysis.outfitSelections?.setIndex || 0) + 1, setCount)} / {setCount}</span>
+        {(pending || late || setCount > 0) && <button type="button" className={styles.recommend} disabled={pending || (!late && setCount < 2)}
+            aria-describedby={pending ? 'outfit-recommendation-pending' : undefined}
+            onClick={() => {
+              if (pending) return;
+              if (late) { recommendationState.acceptLate(); return; }
+              if (setCount < 2) return;
+              const patch = applyOutfitSet(current, ((analysis.outfitSelections?.setIndex || 0) + 1) % setCount, { legacyProps: !recommendationState.capabilities.props });
+              if (patch) onChange(patch);
+            }}>
+            <Sparkles size={16} />AI 추천{!pending && !late && <span>{Math.min((analysis.outfitSelections?.setIndex || 0) + 1, setCount)} / {setCount}</span>}
           </button>}
       </div>
-      {recommendationState.skeleton && <span className="sr-only" role="status">코디를 준비하고 있어요</span>}
+      {pending && <span id="outfit-recommendation-pending" className="sr-only" role="status">AI 코디를 준비하고 있어요</span>}
       {baseRoles.map(row)}
       {optionalRoles.length > 0 && <><h4 className={styles.optionalTitle}>소품<small>· 넣거나 뺄 수 있어요</small></h4><div className={styles.optionalRows}>{optionalRoles.map(row)}</div>
         {optionalRoles.includes(open) && enabledFor(open) && <section className={styles.optionalPanel} ref={(node) => { rowRefs.current[open] = node; }} data-open="true" aria-label={`${labelFor(open)} 고르기`}>{panel(open)}</section>}
