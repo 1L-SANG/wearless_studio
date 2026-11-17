@@ -1,4 +1,4 @@
-"""origin/main 분석 요청 기준값. 유료 호출과 테스트 실행 중 git 접근은 없다."""
+"""origin/main 기준, AG-08 GPT dev 승인 변경만 갱신. 유료 호출과 실행 중 git 접근은 없다."""
 
 import asyncio
 from hashlib import sha256
@@ -79,7 +79,7 @@ def observed_requests():
 
 
 @pytest.mark.parametrize("name,expected", json.loads(BASELINE_PATH.read_text())["requests"].items())
-def test_analysis_request_body_is_identical_to_main(observed_requests, name, expected):
+def test_analysis_request_body_matches_approved_baseline(observed_requests, name, expected):
     assert _digest(observed_requests[name]) == expected
 
 

@@ -64,11 +64,11 @@ def settings(**kwargs):
 
 
 @pytest.mark.parametrize("filename,expected", [
-    ("feature_extractor_terra_v2.dev.txt", "2b3cfa929727688c0e2a093c37ba7409d46a79f5f70c290ec897313f6bab2ff1"),
+    ("feature_extractor_terra_v2.dev.txt", "554b7f9e021536b3d50ef3181ad9d2673f63b7fc446cdedd3c0d2156190b9cbf"),
     ("feature_extractor_terra_v2.user.txt", "bf93f2b263fee5de56de2965c91115d8a5e0c9808588d895899c73eb2677fd5b"),
     ("feature_extractor_v1.txt", "298d454a200928d209bfccb36cd8b663a7864a83d9338f96af6a8c65c66e3b2b"),
 ])
-def test_prompt_files_match_owner_original_bytes(filename, expected):
+def test_prompt_files_match_approved_provider_bytes(filename, expected):
     assert sha256((PROMPTS / filename).read_bytes()).hexdigest() == expected
 
 

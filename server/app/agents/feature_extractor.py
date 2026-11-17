@@ -15,6 +15,7 @@ AG-01(분류)과 같은 분석 job 안에서 **병렬** 실행된다(analyze_job
 
 import logging
 import os
+import re
 
 from ..config import Settings
 from . import detail_recommendations
@@ -30,6 +31,7 @@ _TERRA_USER_PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "feature_extracto
 log = logging.getLogger("wearless.feature_extractor")
 
 _THINKING = "medium"  # 발굴·선별엔 low보다 medium (분류와 달리 비교 추론이 품질에 기여)
+_MAX_SUGGESTIONS = 5
 
 # ── 카테고리별 관찰 가이드 (운영자 큐레이션, 2026-07-13) ─────────────────────────
 # 근거: 상세페이지 레퍼런스 수집 코퍼스(reference/genexamples — 실제 몰 상품명 어휘:
@@ -151,12 +153,82 @@ def validate(raw: dict) -> list[str]:
     return out[:MAX_SELLING_POINTS]
 
 
+def _suggestion_point(value):
+    if not isinstance(value, str):
+        return ""
+    point = _sanitize(value)
+    return point if point and _is_keyword_phrase(point) else ""
+
+
+def _suggestion_evidence(value, *, model_style=False):
+    text = _sanitize(value) if isinstance(value, str) else ""
+    if model_style:
+        text = text.rstrip(".").rstrip()
+    if len(text) > 40 or (model_style and (not re.search(r"[가-힣]", text) or not text.endswith("요"))):
+        return ""
+    return text
+
+
+def _suggestion_overlaps(point, other):
+    compact, other_compact = point.replace(" ", ""), other.replace(" ", "")
+    return (compact in other_compact or other_compact in compact
+            or all(word in other_compact for word in point.split()))
+
+
+def select_feature_suggestions(raw, points, provider):
+    """GPT의 남은 차별 후보만 모델 순서대로 고른다. 칩 결과와 입력은 바꾸지 않는다."""
+    if provider != "gpt" or not isinstance(raw, dict):
+        return []
+    chips = [point for value in points if (point := _suggestion_point(value))]
+    candidates = []
+    for candidate in raw.get("candidates") or []:
+        if not isinstance(candidate, dict) or candidate.get("distinctive") is not True:
+            continue
+        point = _suggestion_point(candidate.get("point"))
+        if point:
+            candidates.append((point, _suggestion_evidence(candidate.get("visualEvidence"), model_style=True)))
+    matched = sum(any(_suggestion_overlaps(point, chip) for point, evidence in candidates) for chip in chips)
+    # 후보를 다시 쓴 칩은 글자로 찾을 수 없다. 연결 노트 §5.2대로 앞 후보에서 부족분을 뺀다.
+    missing = max(0, len(chips) - matched)
+    suggestions = []
+    for point, evidence in candidates:
+        if any(_suggestion_overlaps(point, chip) for chip in chips):
+            continue
+        if missing:
+            missing -= 1
+            continue
+        if any(_suggestion_overlaps(point, previous["point"]) or _suggestion_overlaps(previous["point"], point)
+               for previous in suggestions):
+            continue
+        suggestions.append({"point": point, "evidence": evidence})
+        if len(suggestions) == _MAX_SUGGESTIONS:
+            break
+    return suggestions
+
+
+def normalize_feature_suggestions(value):
+    """클라이언트 저장은 모양·길이와 기존 칩 가드만 확인한다. 말투·핏 이름은 거르지 않는다."""
+    if not isinstance(value, list):
+        return []
+    result = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        point = _suggestion_point(item.get("point"))
+        if point:
+            result.append({"point": point, "evidence": _suggestion_evidence(item.get("evidence"))})
+        if len(result) == _MAX_SUGGESTIONS:
+            break
+    return result
+
+
 class FeaturePoints(list):
     """Keep tuple/list callers compatible while carrying the AG-08 observations."""
 
-    def __init__(self, points, detail_candidates=None):
+    def __init__(self, points, detail_candidates=None, feature_suggestions=None):
         super().__init__(points)
         self.detail_candidates = detail_candidates
+        self.feature_suggestions = feature_suggestions or []
 
 
 async def extract(settings: Settings, product: dict, images: list[InlineImage],
@@ -172,4 +244,5 @@ async def extract(settings: Settings, product: dict, images: list[InlineImage],
     metadata = request_metadata(settings, provider)
     log.info("AG-08 feature extract provider=%s model=%s prompt_version=%s",
              provider, metadata["featureModel"], metadata["featurePromptVersion"])
-    return FeaturePoints(validate(raw), raw.get("detailCandidates")), provider
+    points = validate(raw)
+    return FeaturePoints(points, raw.get("detailCandidates"), select_feature_suggestions(raw, points, provider)), provider

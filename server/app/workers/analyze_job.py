@@ -133,6 +133,7 @@ async def analyze_core_image_bytes(
     elif fit_res is not None:
         fit_read, fit_provider = fit_res
     analysis_payload = distributed["analysis"]
+    analysis_payload["featureSuggestions"] = []
     analysis_payload.pop("fitRead", None)
     if fit_read is not None:
         analysis_payload["fitRead"] = fit_read
@@ -182,7 +183,8 @@ async def extract_image_features(settings, source_images, *, product=None, slots
     contract = detail_recommendations.build_contract(
         getattr(points, "detail_candidates", None), source_images, slots
     )
-    return {"points": points, "contract": contract, "provider": provider}
+    return {"points": points, "contract": contract, "provider": provider,
+            "featureSuggestions": feature_extractor.normalize_feature_suggestions(getattr(points, "feature_suggestions", []))}
 
 
 async def analyze_image_bytes(
@@ -217,12 +219,16 @@ async def analyze_image_bytes(
     if isinstance(feature_res, BaseException):
         log.warning("AG-08 feature extract failed: %r", feature_res)
         contract = detail_recommendations.build_contract(None, source_images, slots)
+        suggestions = []
     else:
         core["feature_provider"] = feature_res["provider"]
         if feature_res["points"]:
             core["analysis_payload"]["aiSuggestedPoints"] = feature_res["points"]
             core["result_data"]["aiSuggestedPoints"] = feature_res["points"]
         contract = feature_res["contract"]
+        suggestions = feature_res.get("featureSuggestions", [])
+    core["analysis_payload"]["featureSuggestions"] = suggestions
+    core["result_data"]["featureSuggestions"] = suggestions
     core["analysis_payload"][detail_recommendations.PERSISTED_KEY] = contract
     core["result_data"][detail_recommendations.PERSISTED_KEY] = detail_recommendations.public_summary(contract)
     return core

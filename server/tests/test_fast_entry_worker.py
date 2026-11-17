@@ -30,7 +30,7 @@ def test_core_only_limits_consistency_and_never_calls_ag08(monkeypatch):
     assert cancelled == ["consistency"]
 
 
-def test_legacy_result_shape_and_parallelism_survive_split(monkeypatch):
+def test_analysis_result_and_parallelism_include_empty_suggestions(monkeypatch):
     shrink_calls, prepared_calls = [], []
     analyst_started = asyncio.Event()
     feature_started = asyncio.Event()
@@ -58,8 +58,8 @@ def test_legacy_result_shape_and_parallelism_survive_split(monkeypatch):
     contract = dr.build_contract([candidate()], [(PNG, "image/png")], ["Front"])
     assert result == {
         "result_data": {"aiSuggestedPoints": ["단추 여밈"], "fit": "regular", "detailRecommendations": dr.public_summary(contract),
-                        "styleTags": ["daily"], "swatchSuggestions": [], "clothingType": "top", "measurements": []},
+                        "styleTags": ["daily"], "swatchSuggestions": [], "clothingType": "top", "measurements": [], "featureSuggestions": []},
         "analysis_payload": {"aiSuggestedPoints": ["단추 여밈"], "fit": "regular", "detailRecommendations": contract,
-                             "styleTags": ["daily"], "swatchSuggestions": []},
+                             "styleTags": ["daily"], "swatchSuggestions": [], "featureSuggestions": []},
         "clothing_type": "top", "provider": "gemini", "feature_provider": "gpt", "consistency": None, "bytes_out": 6,
     }

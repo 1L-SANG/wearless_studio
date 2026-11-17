@@ -116,7 +116,8 @@ def test_features_states_are_independent_and_tickets_are_valid(client, agents, p
     response = post_features(client, data={"runId": RUN_ID, "slots": "Front", "attempt": "2", "productContext": '{"name":"니트"}'})
     assert response.status_code == 200, response.text
     data = response.json()["data"]
-    assert set(data) == {"points", "detailRecommendations", "detailRecommendationsHandoff", "featureTicket"}
+    assert set(data) == {"points", "featureSuggestions", "detailRecommendations", "detailRecommendationsHandoff", "featureTicket"}
+    assert data["featureSuggestions"] == []
     assert data["points"] == {"status": point_status, "items": points}
     assert data["detailRecommendations"]["status"] == detail_status
     contract = dr.verify_handoff(data["detailRecommendationsHandoff"], SECRET)

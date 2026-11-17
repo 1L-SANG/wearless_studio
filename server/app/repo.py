@@ -1814,6 +1814,7 @@ _SERVER_OWNED_ANALYSIS_KEYS = (
     "fitRead",
     "inputConsistency",
     "featureCopy",
+    "featureSuggestions",
     "partDescriptionCopy",
     "confirmedGptProductEvidence",
     "detailRecommendations",
@@ -1888,6 +1889,12 @@ async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict, 
         analysis = {key: value for key, value in analysis.items() if key != "fitRead"}
         if reading is not None:
             analysis["fitRead"] = reading
+    if "featureSuggestions" in analysis:
+        from .agents.feature_extractor import normalize_feature_suggestions
+        suggestions = analysis["featureSuggestions"]
+        analysis = {key: value for key, value in analysis.items() if key != "featureSuggestions"}
+        if isinstance(suggestions, list):
+            analysis["featureSuggestions"] = normalize_feature_suggestions(suggestions)
     analysis = {k: value for k, value in analysis.items()
                 if k not in ("locked", *_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS)
                 and not (merge and delete_nulls and value is None and k in _SERVER_OWNED_ANALYSIS_KEYS)}
