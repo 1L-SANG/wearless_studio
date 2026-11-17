@@ -178,7 +178,7 @@ def test_detail_worker_uses_one_real_callback_and_saves_only_adopted_image(monke
             return report(target=value, value=value, observed="long" if route == "EDIT_STAGE1" else "semi_crop")
         return report(target=value, value=value, observed=value)
     edits = []
-    async def fake_repair(settings, gemini, b, product, source, *, qc_corrections):
+    async def fake_repair(settings, gemini, b, product, source, *, qc_corrections, **kwargs):
         edits.append((source.data, qc_corrections))
         return b"FIXED", "image/png"
     monkeypatch.setattr(dpj.cut_output_qc, "verdict", operating)

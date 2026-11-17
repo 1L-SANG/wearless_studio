@@ -61,6 +61,8 @@ class Settings:
     # AG-06 상세컷 전용 모델. 빈 값이면 image_high로 폴백해 기존 환경을 보존한다.
     # 마네킹·매칭·AG-07까지 공유하는 image_high를 바꾸지 않고 콘티 1·2차만 분리한다.
     model_detail_cut: str = ""
+    # 마네킹 없는 국소 편집은 1차 모델과 별개로 sunburst를 쓴다.
+    model_cut_repair: str = "gpt-image-2.5-sunburst"
     # 호리존 착장컷 전용. 빈 값이면 호출 경로의 상세컷/에디터 모델을 그대로 쓴다.
     # 스타일링은 model_detail_cut/model_editor_cut에 남겨 배경·포즈 정밀 경로만 분리한다.
     model_horizon_cut: str = ""
@@ -225,6 +227,9 @@ class Settings:
     # 2차가 개선되지 않으면 1차를 보존하며, QC/2차 호출 실패도 1차 출고를 막지 않는다.
     # 기본 off라 명시적으로 켠 환경에서만 추가 호출 비용이 발생한다.
     cut_output_qc_mode: str = "off"  # off | shadow | repair
+    cut_repair_pair_qc_mode: str = "off"  # off | shadow, 편집 후 비교 기록만
+    model_cut_repair_pair_qc: str = "gemini-3.8-flash"
+    cut_repair_pair_qc_timeout_seconds: float = 30.0
     # 마네킹 없는 컷의 칩 판독. 기본 off, 기록만은 shadow, 교정 1회는 repair.
     cut_fit_chip_qc_mode: str = "off"
     model_cut_fit_chip_qc_top_length: str = "gemini-3.1-pro-preview"
@@ -946,6 +951,7 @@ def load_settings() -> Settings:
         model_image_signature=os.getenv("MODEL_ROUTING_IMAGE_SIGNATURE", "gpt-image-2"),
         model_detail_cut=os.getenv("MODEL_ROUTING_DETAIL_CUT", ""),
         model_horizon_cut=os.getenv("MODEL_ROUTING_HORIZON_CUT", ""),
+        model_cut_repair=(os.getenv("MODEL_ROUTING_CUT_REPAIR") or "gpt-image-2.5-sunburst").strip() or "gpt-image-2.5-sunburst",
         model_product_detail=(os.getenv("MODEL_ROUTING_PRODUCT_DETAIL") or "").strip() or "gpt-image-2.5-sunburst",
         product_detail_image_quality=_flag("PRODUCT_DETAIL_IMAGE_QUALITY", "medium", {"medium", "high"}),
         model_detail_core=(os.getenv("MODEL_DETAIL_CORE") or "").strip() or "gpt-5.4-2026-03-05",
@@ -1066,6 +1072,9 @@ def load_settings() -> Settings:
             "MANNEQUIN_LOGO_IMAGE_SIZE", "off", {"off", "1k", "2k", "4k"}).upper(),
         cut_output_qc_mode=_flag(
             "CUT_OUTPUT_QC_MODE", "off", {"off", "shadow", "repair"}),
+        cut_repair_pair_qc_mode=_flag("CUT_REPAIR_PAIR_QC_MODE", "off", {"off", "shadow"}),
+        model_cut_repair_pair_qc=(os.getenv("MODEL_CUT_REPAIR_PAIR_QC") or "gemini-3.8-flash").strip() or "gemini-3.8-flash",
+        cut_repair_pair_qc_timeout_seconds=min(120.0, max(1.0, _int_env("CUT_REPAIR_PAIR_QC_TIMEOUT_SECONDS", 30))),
         cut_fit_chip_qc_mode=_flag("CUT_FIT_CHIP_QC_MODE", "off", {"off", "shadow", "repair"}),
         model_cut_fit_chip_qc_top_length=(os.getenv("MODEL_CUT_FIT_CHIP_QC_TOP_LENGTH") or "gemini-3.1-pro-preview").strip() or "gemini-3.1-pro-preview",
         model_cut_fit_chip_qc_other=(os.getenv("MODEL_CUT_FIT_CHIP_QC_OTHER") or "gemini-3.8-flash").strip() or "gemini-3.8-flash",

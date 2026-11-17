@@ -13,6 +13,7 @@ def resolve_model(settings: Settings, tier: str) -> str:
     mapping = {
         "image_light": settings.model_image_light,
         "image_high": settings.model_image_high,
+        "image_cut_repair": getattr(settings, "model_cut_repair", None),
         "image_mannequin": getattr(settings, "model_image_mannequin", None) or settings.model_image_high,
         # 시그니처 컷(첫 화면)만 별도 모델 — 구도·배경 문법이 달라 오너가 GPT-image 계열로 확정(2026-08-17).
         "image_signature": getattr(settings, "model_image_signature", None) or settings.model_image_high,

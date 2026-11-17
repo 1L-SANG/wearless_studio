@@ -30,7 +30,7 @@ from .prompts import clean_text
 from .vision_llm import VisionError, analyze_with_fallback, qc_system_prompt
 from . import horizon_background, product_photography
 from .outer_closure import STATES as _CLOSURES
-from .analysis_fit import build_analysis_fit_block, select_applied_fit_axes, LONG_SLEEVES
+from .analysis_fit import build_analysis_fit_block, select_applied_fit_axes, LONG_SLEEVES, FIT_VALUE_SENTENCES
 
 
 GATES = (
@@ -53,6 +53,7 @@ GATES = (
     "lightingShadowReflectionDrape",
 )
 STATUSES = ("PASS", "FAIL", "NA", "UNJUDGEABLE")
+POSE_PARTS = ("arms", "hands", "legs", "feet", "torso", "head", "gaze", "weight_support")
 OUTFIT_ROLES = ("inner", "footwear", "bag", "accessory")
 REFERENCE_ROLES = (
     "product", "mannequin", "modelFace", "modelBody", "matching", "example", "plate", *OUTFIT_ROLES,
@@ -464,7 +465,7 @@ def references_from_manifest(
     return references
 
 
-def qc_schema() -> dict:
+def qc_schema(*, repair_parts: bool = False) -> dict:
     """Strict structured-output schema; exact gate coverage is enforced again in ``validate``."""
 
     gate_item = {
@@ -477,7 +478,7 @@ def qc_schema() -> dict:
         },
         "required": ["gate", "status", "evidence"],
     }
-    return {
+    schema = {
         "type": "object",
         "additionalProperties": False,
         "properties": {
@@ -490,6 +491,10 @@ def qc_schema() -> dict:
         },
         "required": ["gates"],
     }
+    if repair_parts:
+        schema["properties"]["poseParts"] = {"type": "array", "items": {"type": "string", "enum": list(POSE_PARTS)}}
+        schema["required"].append("poseParts")
+    return schema
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -790,6 +795,14 @@ def build_prompt(
         contact_anchor = "asymmetry match the compiled contract. Do not fail this gate for crop alone. For product, judge front/back."
         template = template.replace(contact_anchor, contact_anchor +
             " Treat a contact re-performed on a real part of the current outfit, while preserving its arm role and hand position, as compliant.")
+        template = template.replace('Return one JSON object with exactly one top-level key, "gates". Its value is 17 objects with exactly:',
+            'Return one JSON object with exactly two top-level keys, "gates" and "poseParts". The value of "gates" is 17 objects with exactly:')
+        template += (
+            "\n\nREPAIR PART SELECTION: Also return poseParts, an array containing only affected parts from "
+            + ", ".join(POSE_PARTS) + ". Select parts only when framingDirectionFacePose or "
+            "anatomyPerspectiveAsymmetry is FAIL. Return an empty array otherwise. Do not put prose in poseParts. "
+            "The crop target comes from the compiled plan, never from a judge-written description."
+        )
     applicability = gate_applicability(contract)
     prompt = (
         template.replace(
@@ -943,6 +956,31 @@ def _correction_patch(
         "operations": operations,
         "truncated": len(blocking) > len(operations),
     }
+
+
+def repair_context(result: Mapping[str, Any] | None) -> dict:
+    """합격한 항목과 부위 enum만 편집에 전달한다. 심판 근거 글은 읽지 않는다."""
+    result = _mapping(result)
+    gates = _mapping(result.get("gates"))
+    raw_parts = _mapping(result.get("repairContext")).get("poseParts", [])
+    valid_parts = (isinstance(raw_parts, list) and all(isinstance(part, str) and part in POSE_PARTS for part in raw_parts))
+    pose_failed = any(_mapping(gates.get(gate)).get("status") == "FAIL"
+                      for gate in ("framingDirectionFacePose", "anatomyPerspectiveAsymmetry"))
+    parts = [part for part in POSE_PARTS if part in raw_parts] if valid_parts and pose_failed else []
+    return {"poseParts": parts, "passedGates": [gate for gate in GATES if _mapping(gates.get(gate)).get("status") == "PASS"]}
+
+
+def allowed_repair_instructions(result: Mapping[str, Any] | None = None) -> frozenset[str]:
+    """편집·비교 검사에 허용할 고정 문장 집합. 심판의 correctionPrompt는 쓰지 않는다."""
+    allowed = set(FIT_VALUE_SENTENCES.values())
+    for mapping in (_CORRECTIONS, _CONFIRMED_GPT_CORRECTIONS, _CONFIRMED_GPT_PRODUCT_CORRECTIONS,
+                    _SIGNATURE_FRAMING_CORRECTIONS, _HORIZON_TONE_CORRECTIONS):
+        allowed.update(mapping.values())
+    result = _mapping(result)
+    authority = result.get("authorityProfile", "generic_v1")
+    if authority in _AUTHORITY_PROFILES:
+        allowed.update(_correction_map_for(_mapping(result.get("contract")), authority).values())
+    return frozenset(allowed)
 
 
 def repair_route(result: Mapping[str, Any]) -> str:
@@ -1278,6 +1316,8 @@ async def verdict(
         raise VisionError("cut_output_qc: unknown authority profile")
     checked_references = _validate_references(references)
     contract = normalize_plan(plan)
+    repair_parts = (contract["recipeFamily"] in {"styling", "horizon"}
+                    and not any(reference.role == "mannequin" for reference in checked_references))
     if (authority_profile == "generic_v1" and contract["recipeFamily"] in {"styling", "horizon"}
             and not any(reference.role == "mannequin" for reference in checked_references)):
         contract = _analysis_fit_contract(contract, fit_profile if fit_profile is not None
@@ -1330,11 +1370,15 @@ async def verdict(
             recipeFamily=contract["recipeFamily"], productVariant=contract["productVariant"],
             shot=contract["storyboard"]["shot"], productPresentation=contract["productPresentation"])
     raw, provider = await analyze_with_fallback(
-        settings, prompt, images, qc_schema(), require_complete_envelope=True,
+        settings, prompt, images, qc_schema(repair_parts=repair_parts), require_complete_envelope=True,
         timeout_seconds=settings.background_ai_timeout_seconds,
         system_prompt=qc_system_prompt("cut", authority_context)
     )
-    result = validate(raw, applicable=applicable, forced=forced)
+    gate_raw = {key: value for key, value in raw.items() if key != "poseParts"} if repair_parts and isinstance(raw, dict) else raw
+    result = validate(gate_raw, applicable=applicable, forced=forced)
+    if repair_parts:
+        result["repairContext"] = {"poseParts": raw.get("poseParts", []) if isinstance(raw, dict) else []}
+        result["repairContext"] = repair_context(result)
     result.update({
         "provider": provider,
         "contract": contract,

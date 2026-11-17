@@ -1013,9 +1013,13 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     async def judge_operating(candidate):
                         return await cut_output_qc.verdict(s, chip_plan, chip_references, candidate, **chip_verdict_kwargs)
 
+                    chip_operating_outcome, chip_pair_outcome = {}, {}
+
                     async def make_chip_stage2(route, instructions):
                         if route == "EDIT_STAGE1":
-                            repair_kwargs = {"qc_corrections": instructions}
+                            repair_kwargs = {"qc_corrections": instructions, "has_mannequin": False,
+                                "example_image": next((reference.image for reference in chip_references if reference.role == "example"), None),
+                                "qc_result": chip_operating_outcome, "repair_qc_outcome": chip_pair_outcome}
                             if confirmed_packet is not None:
                                 repair_kwargs["confirmed_prompt_input"] = confirmed_packet.prompt_input
                             repair_outcome = {}
@@ -1036,7 +1040,10 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     chosen, cut_qc, chip_warnings = await cut_fit_chip_qc.check_and_repair(
                         s, (cut_analysis or {}).get("fitProfile"), chosen,
                         judge_operating=judge_operating, make_stage2=make_chip_stage2,
-                        operating_mode=s.cut_output_qc_mode, can_repair=not button_guard)
+                        operating_mode=s.cut_output_qc_mode, can_repair=not button_guard,
+                        operating_qc_outcome=chip_operating_outcome)
+                    if chip_pair_outcome.get("report") is not None:
+                        cut_qc = {**cut_qc, "repair": {**cut_qc.get("repair", {}), "editPairQc": chip_pair_outcome["report"]}}
                     cut_warnings.extend(chip_warnings)
                     img, mime = chosen.data, chosen.mime
                 except Exception as e:
@@ -1099,6 +1106,12 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                             try:
                                 if route == "EDIT_STAGE1":
                                     repair_kwargs = {"qc_corrections": instructions}
+                                    repair_pair_outcome = {}
+                                    # 상품컷(product)은 원래 마네킹이 없으니 기존 편집 그대로 둔다.
+                                    if "MANNEQUIN" not in manifest and b.get("cutType") in {"styling", "horizon"}:
+                                        repair_kwargs.update(has_mannequin=False, qc_result=cut_qc,
+                                            example_image=next((reference.image for reference in qc_references if reference.role == "example"), None),
+                                            repair_qc_outcome=repair_pair_outcome)
                                     if confirmed_packet is not None:
                                         repair_kwargs["confirmed_prompt_input"] = (
                                             confirmed_packet.prompt_input
@@ -1121,6 +1134,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                                         chosen,
                                         **repair_kwargs,
                                     )
+                                    if repair_pair_outcome.get("report") is not None:
+                                        repair["editPairQc"] = repair_pair_outcome["report"]
                                     _remember_outcome(repaired_img, repair_outcome)
                                 else:
                                     repaired_img, repaired_mime = await cut_generator.generate(

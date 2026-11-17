@@ -1722,10 +1722,14 @@ def build_qc_repair_prompt(
     qc_corrections: tuple[str, ...],
     *,
     confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
+    has_mannequin: bool = True,
+    has_example: bool = False,
+    qc_result: dict | None = None,
 ) -> str:
     """AG-06 국소 2차 보정 프롬프트.
 
-    입력은 1차 결과 한 장뿐이다. 정본을 다시 봐야 하는 실패는 이 함수를 쓰지 않고
+    마네킹 경로는 1차 결과 한 장, 없는 경로는 선택된 예시를 둘째 사진으로 쓴다.
+    정본을 다시 봐야 하는 실패는 이 함수를 쓰지 않고
     ``generate(..., qc_corrections=...)``로 원래 입력에서 재생성한다.
     """
 
@@ -1767,6 +1771,33 @@ def build_qc_repair_prompt(
         if is_signature_cut(spec)
         else ""
     )
+    if not has_mannequin:
+        from . import cut_output_qc
+        if any(instruction not in cut_output_qc.allowed_repair_instructions(qc_result) for instruction in qc_corrections):
+            raise ValueError("invalid_qc_corrections")
+        context = cut_output_qc.repair_context(qc_result)
+        if confirmed_prompt_input is not None:
+            crop_target = "Use the CONFIRMED EXAMPLE FRAMING LOCK exactly; do not reduce it to the coarse shot token."
+        elif signature_kind:
+            crop_target = "Use the SIGNATURE OPENING CUT framing contract exactly."
+        elif spec["shot"] == "full":
+            crop_target = "Show the full body from head through both complete feet with floor margin."
+        elif spec["shot"] == "medium":
+            crop_target = ("Frame from the waist through both feet; show no face." if _is_bottom(clothing_type)
+                           else "Frame from the head to hip, preserving the compiled face handling.")
+        else:
+            crop_target = "Keep the requested product-only framing and no visible person."
+        roles = ("Image 2 is EXAMPLE: use it for composition and pose only. Never copy its person, face, hair, clothing or footwear."
+                 if has_example else "Only Image 1 is attached. Preserve its composition and all untargeted pose facts.")
+        with open(os.path.join(_SERVER_DIR, "prompts", "cut_repair_product_v1.txt"), encoding="utf-8") as handle:
+            prompt = handle.read().rstrip("\n")
+        values = {"imageRoles": roles, "intent": intent, "framingLock": framing_lock, "signatureLock": signature_lock,
+                  "cropTarget": crop_target, "poseParts": ", ".join(context["poseParts"]) or "none selected",
+                  "corrections": "\n".join(f"- {instruction}" for instruction in qc_corrections),
+                  "passedGates": "\n".join(f"- {gate}" for gate in context["passedGates"]) or "- Preserve every untargeted visible fact."}
+        for key, value in values.items():
+            prompt = prompt.replace("${" + key + "}", value)
+        return prompt
     return (
         "You are the AG-06 second-stage fashion cut generator. Edit the single attached "
         "STAGE-1 output; do not reconstruct a different photograph.\n\n"
@@ -2105,24 +2136,31 @@ async def repair(
     face_identity_spec: face_identity.FaceIdentitySpec | None = None,
     face_pass_outcome: dict | None = None,
     face_pass_url_provider=None,
+    has_mannequin: bool = True,
+    example_image: InlineImage | None = None,
+    qc_result: dict | None = None,
+    repair_qc_outcome: dict | None = None,
 ) -> tuple[bytes, str]:
-    """AG-06 국소 2차 보정. 호출자가 고른 image_high 모델로 1차 결과만 편집한다.
+    """AG-06 국소 2차 보정. 마네킹은 기존 모델, 없는 경로는 sunburst와 선택 예시를 쓴다.
 
     편집은 얼굴까지 다시 그린다 — 그래서 generate() 와 같은 얼굴 패스 꼬리를 단다. 이게 없으면
     보정을 채택한 컷의 얼굴이 gpt-image 로 되돌아간다(2026-09-11 점검). 인자 세 개는 generate() 와 같은 뜻이고,
     호출자는 값이 있을 때만 넘긴다(face_identity_spec 이 없으면 기존과 바이트 단위로 같다)."""
 
-    model = _resolve_generation_model(settings, cut_spec)
+    model = (_resolve_generation_model(settings, cut_spec) if has_mannequin
+             else resolve_model(settings, "image_cut_repair"))
     prompt = build_qc_repair_prompt(
         cut_spec,
         product,
         qc_corrections,
         confirmed_prompt_input=confirmed_prompt_input,
+        has_mannequin=has_mannequin, has_example=not has_mannequin and example_image is not None,
+        qc_result=qc_result,
     )
     res = await gemini.generate_content_image(
         model,
         prompt,
-        [source_image],
+        [source_image] + ([example_image] if not has_mannequin and example_image is not None else []),
         _detail_image_size(settings),
         aspect_ratio=settings.mannequin_aspect_ratio,
     )
@@ -2135,4 +2173,13 @@ async def repair(
             image, mime = await face_identity.apply_face_pass(
                 settings, image, mime, identity, outcome=face_pass_outcome,
                 url_provider=face_pass_url_provider)
+    if not has_mannequin and getattr(settings, "cut_repair_pair_qc_mode", "off") == "shadow":
+        from . import cut_repair_pair_qc
+        try:
+            report = await cut_repair_pair_qc.verdict(settings, source_image, InlineImage(mime, image),
+                qc_corrections=qc_corrections, qc_result=qc_result)
+        except Exception:
+            report = {"version": 1, "mode": "shadow", "status": "UNAVAILABLE", "error": "comparison_unavailable"}
+        if repair_qc_outcome is not None and report is not None:
+            repair_qc_outcome["report"] = report
     return image, mime

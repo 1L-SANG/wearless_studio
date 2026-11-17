@@ -365,7 +365,7 @@ def test_prompt_preserves_reference_order_and_contains_no_source_plan_text():
     assert "fine lettering is unreadable in BOTH PRODUCT and candidate" in flat_prompt
     assert "do not FAIL solely for undecodable micro-strokes" in flat_prompt
     assert "Do not excuse candidate blur when PRODUCT is readable" in flat_prompt
-    assert "Its value is 17 objects" in flat_prompt
+    assert 'The value of "gates" is 17 objects' in flat_prompt
     assert "A requested medium rendered as full" in flat_prompt
     assert "intentionally head/eyes-cropped example rendered with the whole head visible" in flat_prompt
     assert "${" not in prompt
@@ -851,7 +851,7 @@ def test_verdict_orchestrates_labeled_references_then_generated(monkeypatch):
     assert [image.data for image in captured["images"]] == [
         b"PRODUCT", b"MODEL-FACE", b"MODEL-BODY", b"EXAMPLE", b"GENERATED",
     ]
-    assert captured["schema"] == qc.qc_schema()
+    assert captured["schema"] == qc.qc_schema(repair_parts=True)
     assert out["provider"] == "gemini"
     assert out["passed"] is True
 

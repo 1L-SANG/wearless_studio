@@ -261,7 +261,7 @@ def finalize(before, after=None, *, attempted=False, accepted=False):
 
 
 async def check_and_repair(settings, profile, initial, *, judge_operating, make_stage2,
-                           operating_mode, can_repair=True):
+                           operating_mode, can_repair=True, operating_qc_outcome=None):
     """기존 검사 비교와 모든 칩 거리 비교를 함께 통과한 보정본만 한 번 채택한다."""
     warnings, operating, stage2_chips = [], None, None
 
@@ -285,6 +285,9 @@ async def check_and_repair(settings, profile, initial, *, judge_operating, make_
         operating = await operating_verdict(initial)
     operating_route = (cut_output_qc.repair_route(operating) if operating is not None
                        and (operating_mode == "repair" or chip_route in action_routes) else "KEEP_STAGE1")
+    if operating_qc_outcome is not None:
+        operating_qc_outcome.clear()
+        operating_qc_outcome.update(operating or {})
     route = combine_routes(operating_route, chip_route)
     repair = {"attempted": False, "route": route, "accepted": False, "finalSource": "stage1"}
     chosen = initial

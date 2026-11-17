@@ -141,7 +141,7 @@ def test_confirmed_framing_crop_edits_stage1_with_exact_example_contract(monkeyp
 
     async def fake_repair(
         settings, gemini, cut_spec, product, source, *, qc_corrections,
-        confirmed_prompt_input,
+        confirmed_prompt_input, **kwargs,
     ):
         captured.update(
             source=source,
@@ -336,6 +336,7 @@ def test_detail_repair_mode_edits_stage1_for_local_failure(monkeypatch):
 
     async def fake_repair(
         settings, gemini, cut_spec, product, source, *, qc_corrections,
+        **kwargs,
     ):
         captured.update(
             model=settings.model_image_high,
