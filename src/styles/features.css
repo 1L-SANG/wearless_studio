@@ -440,7 +440,7 @@
 .mat-chip.draft.editing { box-shadow: 0 0 0 1.5px var(--fg-1); }
 .mat-chip.add-draft { padding: 6px 9px 6px 15px; }
 .mat-chip.done { cursor: pointer; transition: box-shadow .14s; }
-.mat-chip.done:hover { box-shadow: 0 0 0 1.5px var(--accent-blue); }
+.mat-chip.done:hover { box-shadow: 0 0 0 1.5px var(--accent-blue), var(--elev-soft); }
 .mat-chip .mc-name { width: 7em; }
 .mat-chip .mc-name::placeholder { color: var(--fg-3); font-weight: 400; }
 .mat-chip .mc-ratio { width: 3ch; text-align: right; -moz-appearance: textfield; }

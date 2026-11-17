@@ -53,7 +53,7 @@ test('셀러 초점은 불투명 토스 파랑으로 흰색 대비 3:1 이상이
   assert.equal(palette['--link'], 'var(--accent-blue)');
   assert.equal(palette['--focus'], 'var(--accent-blue)');
   assert.equal(palette['--accent-blue-soft'], 'color-mix(in srgb, var(--accent-blue) 7%, var(--bg-1))');
-  assert.equal(palette['--accent-blue-line'], 'color-mix(in srgb, var(--accent-blue) 50%, var(--bg-1))');
+  assert.equal(palette['--accent-blue-line'], 'color-mix(in srgb, var(--accent-blue) 84%, var(--fg-1))', '선택 테두리는 남색(2026-11-18)');
   const channels = [49, 130, 246].map((v) => v / 255).map((v) => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4);
   const luminance = channels.reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
   assert.ok(1.05 / (luminance + .05) >= 3);

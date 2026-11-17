@@ -3,7 +3,7 @@
 :root {
   --accent-blue: #3182F6;
   --accent-blue-soft: color-mix(in srgb, var(--accent-blue) 7%, var(--bg-1));
-  --accent-blue-line: color-mix(in srgb, var(--accent-blue) 50%, var(--bg-1));
+  --accent-blue-line: color-mix(in srgb, var(--accent-blue) 84%, var(--fg-1));
   --link: var(--accent-blue);
   --focus: var(--accent-blue);
   --ring-flow-1: var(--wl-sky);
