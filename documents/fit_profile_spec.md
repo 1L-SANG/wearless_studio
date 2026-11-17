@@ -95,3 +95,42 @@ FIT PROFILE (seller-declared; overrides any impression from the photos):
 - **워커 소비**: 스냅샷 키가 있으면 `profile:null`도 권위 입력(최신 analysis 재독 금지). 키 없는 legacy 잡만 analysis 폴백. version/shape 불량은 `invalid_fit_profile_snapshot`으로 명시 실패.
 - **블록 렌더**: 선언 축 = `- {axis}: {promptEn}. Observable target: {신체 랜드마크·가시성 문구}.` + "충돌 시에만 선언 축 우선" 문구. 셀러 조정 축은 `CHANGES FOR THIS GENERATION` 섹션으로 재강조(무조건 differ 금지). top/outer length 선언 시 untucked·밑단 완전 노출 강제(매칭 하의 tuck 가림 사고 대응).
 - **관측**: 각 Gemini 호출 직전 `step{status:prompt_rendered, profile_hash, prompt_hash, input_source}` 이벤트(원문 미포함, best-effort).
+
+## 분석 페이지 핏 칸 (2026-11-18, ADR-0028)
+
+마네킹 사진이 입력에 없는 컷에만 적용한다. 마네킹 사진이 있는 컷의 그림 지시문, 검사, 고치기는 이 절로 바뀌지 않는다.
+
+### 칸과 값
+
+- 옷마다 보이는 칸(정본 `server/app/agents/analysis_fit.py`의 `ANALYSIS_FIT_AXES`, 프론트 미러 `src/lib/fitZone.js`의 `fitZones`): 여자 상의는 핏, 기장, 소매 길이. 남자 상의와 아우터는 핏, 소매 길이. 원피스는 기장, 소매 길이. 치마와 바지는 기장.
+- 분석 페이지 전용 값은 카탈로그(`fit_axes.py`, `fitAxes.js`)에 `scope: "analysis"`로 더했다. 마네킹 화면과 마네킹 생성은 `mannequin_fit_profile`(서버), `mannequinFitProfile`(프론트)로 거른 프로필만 받는다.
+
+### 출처와 적용 규칙
+
+```js
+FitProfile.axisSources?: { [axis]: 'ai' | 'measure' | 'seller' | 'unsure' }
+```
+
+- `seller`는 직접 고른 값, `measure`는 실측으로 정한 값, `ai`는 AI가 확신하고 읽은 값, `unsure`나 없음은 "사진대로"다.
+- 그림 지시와 칩 검사에 넣는 조건은 `analysis_fit.py`의 `FIT_SOURCE_POLICY` 한 곳이 정한다. 기장과 소매 길이는 `seller`, `measure`, `ai`면 넣는다. 핏은 `seller`면 모든 값, `ai`면 슬림, 세미오버, 오버만 넣는다. 적용 축은 `select_applied_fit_axes(profile)`가 돌려준다.
+- 화면에는 출처 글자를 쓰지 않는다. 실측으로 정한 값에만 작은 "실측" 표시가 붙는다.
+
+### 핏 읽기
+
+```js
+Analysis.fitRead?: {
+  photoType: 'flat' | 'hanger' | 'worn',
+  sleeveType: 'sleeveless' | 'short' | 'long' | null,
+  topLength, hemLength, pantsLength, sleeve, frontHem: { value: string | null, confident: boolean },
+}
+```
+
+- 분석 때 다른 호출과 동시에 도는 Gemini flash 호출 하나가 만든다(`server/app/agents/fit_reader.py`, 지시문 `server/prompts/fit_reader_v1.txt`). 실패하거나 늦으면 `fitRead` 없이 분석이 끝난다. `FIT_READER_MODE=off`로 끈다.
+- 서버 소유 값이다. 저장과 조회 때 허용 값인지 검사한다. 긴팔 소매는 착용 사진이 아니면 확신하지 않고, 옷걸이 사진의 상의 기장도 확신하지 않는다.
+- 칸 채우기는 프론트가 한다(`fitZone.js`의 `fillAnalysisFitZones`). 순서는 셀러가 고른 값, 실측, AI가 확신한 값이다. 실측은 여자 상의 총장과 반팔 소매 길이에만 쓴다.
+
+### 그림 지시, 검사, 고치기
+
+- 그림 지시는 값마다 고정된 영어 문단이다(`build_analysis_fit_block`). 일반 경로는 `cut_generator.py`의 `fit_block` 자리, 정밀 경로는 `cut_generate_confirmed_gpt_product_v2.txt`의 `${fit_profile_block}` 자리에 들어간다.
+- 칩 검사는 `cut_fit_chip_qc.py`다. 결과 사진만 보고 칸을 고르게 하고 두 칸 이상 다르면 불합격이다(크롭은 한 칸도 불합격). 핏, 치마와 원피스 기장, 바지 기장은 기록만 한다. `CUT_FIT_CHIP_QC_MODE`는 `off`, `shadow`, `repair`이고 기본값은 `off`다.
+- 마네킹 없는 착용컷의 고치기는 예시 사진과 합격 항목 목록을 함께 주고 `MODEL_ROUTING_CUT_REPAIR` 모델을 쓴다. 고친 뒤 비교 검사(`CUT_REPAIR_PAIR_QC_MODE`)는 기록만 하고 기본값은 `off`다.
