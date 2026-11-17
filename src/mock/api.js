@@ -56,6 +56,7 @@ import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
 import { normalizeTargetGendersForClothingType } from '@/lib/productGender.js';
 import { createMeasurementFields } from '@/lib/measurementSchema.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
+import { mockFitRead } from './fitRead.js';
 import { mergeAnalysisPatch } from '@/lib/analysisPatch.js';
 import { resolveStoryboardEntry } from '@/lib/pageTemplates/seed.js';
 import { analysisPageStyle, defaultPageStyle, validPageStyle } from '@/lib/pageTemplates/pageStyle.js';
@@ -1017,6 +1018,7 @@ export const api = {
           targetGenders: a.targetGenders, styleTags: a.styleTags, current: a.matchClothing,
           productColor: productColorFrom(product, a) });
       }
+      a.fitRead = mockFitRead(a);
       a.swatchSuggestions = mockSwatchSuggestions(product || DB.product);
       a.frontClosure = { version: 1, kind: (product || DB.product).clothingType === 'outer' ? 'zipper' : 'unknown',
         range: 'graded', secondary: null, evidenceSlots: ['Front'], note: null };

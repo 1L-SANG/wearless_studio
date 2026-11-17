@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 
 import { fitZones, resolveSleeveType, sleeveReach, fitValueFromMeasurements, longSleeveFromMeasurements,
-  fillFitZones, fitZoneState, fitNote, ANALYSIS_FIT_AXES, FIT_SOURCE_POLICY } from '../../src/lib/fitZone.js';
+  fillFitZones, resetFitZone, fitZoneState, fitNote, ANALYSIS_FIT_AXES, FIT_SOURCE_POLICY } from '../../src/lib/fitZone.js';
+import { mannequinFitProfile } from '../../src/lib/fitAxes.js';
 
 const context = { clothingType: 'top', subCategory: 'tshirt', gender: 'women' };
 const profile = (axes = {}, axisSources = {}, category = 'top', gender = 'women') => ({ category, gender, axes, axisSources, source: 'auto', version: 2 });
@@ -245,4 +246,68 @@ test('fit notes match the seller text with the distinct male slim explanation', 
     assert.equal(fitNote('over', gender), '어깨가 확 내려오고 몸에서 떨어져 넉넉하게 떨어져요.');
   }
   assert.equal(fitNote('seller text', 'women'), '');
+});
+
+test('unreadable axes discard previously applied values but retain unsourced legacy defaults', () => {
+  for (const source of ['ai', 'measure', 'seller']) {
+    const input = profile({ length: 'basic', sleeve: 'wrist' }, { length: source, sleeve: source });
+    // 유효한 셀러 선택은 유지된다. 카탈로그 밖 값은 사진대로가 되어 제거된다.
+    if (source === 'seller') input.axes = { length: 'obsolete', sleeve: 'obsolete' };
+    const before = structuredClone(input);
+    const result = fillFitZones({ ...context, profile: input });
+    assert.deepEqual(result.axes, {});
+    assert.equal(result.axisSources.length, 'unsure');
+    assert.deepEqual(input, before);
+  }
+  const measured = fillFitZones({ ...context, measurements: { totalLength: 42 } });
+  assert.equal(fillFitZones({ ...context, profile: profile(measured.axes, measured.axisSources) }).axes.length, undefined);
+  for (const axisSources of [{}, { length: 'unsure' }]) {
+    assert.equal(fillFitZones({ ...context, profile: profile({ length: 'basic' }, axisSources) }).axes.length, 'basic');
+  }
+  for (const [clothingType, subCategory, category, fallback] of [
+    ['dress', 'midi_dress', 'dress', 'midi'], ['bottom', 'long_skirt', 'skirt', 'long'],
+  ]) {
+    const result = fillFitZones({ clothingType, subCategory, gender: 'women',
+      profile: profile({ length: 'floor' }, { length: 'ai' }, category) });
+    assert.equal(result.axes.length, fallback);
+    assert.equal(result.axisSources.length, 'unsure');
+  }
+});
+
+test('reset previews and applies measured, AI and photo-only fallbacks without mutating the input', () => {
+  const input = { ...context, profile: profile({ length: 'crop', sleeve: 'short' }, { length: 'seller', sleeve: 'seller' }) };
+  const before = structuredClone(input);
+  assert.deepEqual(resetFitZone('length', input), { axes: { sleeve: 'short' },
+    axisSources: { fit: 'unsure', length: 'unsure', sleeve: 'seller' } });
+  assert.equal(resetFitZone('length', { ...input, measurements: { totalLength: 45 } }).axes.length, 'semi_crop');
+  assert.equal(resetFitZone('length', { ...input, fitRead: read('basic', 'elbow') }).axisSources.length, 'ai');
+  assert.deepEqual(input, before);
+  const dress = { clothingType: 'dress', subCategory: 'mini_dress', gender: 'women',
+    profile: profile({ length: 'above_knee' }, { length: 'seller' }, 'dress') };
+  const reset = resetFitZone('length', dress);
+  assert.equal(reset.axes.length, 'mini');
+  assert.equal(fitZoneState(fitZones(dress)[0], { ...dress.profile, ...reset }).photoOnly, true);
+});
+
+test('mannequin receives only the legacy axes and keeps matching garments unchanged', () => {
+  const matchingFit = { clothingId: 'coat', fitCategory: 'outer', axes: { length: 'long' } };
+  const input = { ...profile({ fit: 'over', length: 'basic', sleeve: 'short' },
+    { fit: 'ai', length: 'measure', sleeve: 'seller' }), matchingFit };
+  const before = structuredClone(input);
+  const result = mannequinFitProfile(input);
+  assert.deepEqual(result.axes, { fit: 'over', sleeve: 'short' });
+  assert.equal('axisSources' in result, false);
+  assert.equal(result.matchingFit, matchingFit);
+  assert.deepEqual(input, before);
+  for (const [category, axes] of [['top', { length: 'slight_crop', sleeve: 'wrist' }],
+    ['outer', { sleeve: 'short' }], ['dress', { sleeve: 'elbow' }], ['pants', { length: 'ankle_cover' }]]) {
+    assert.deepEqual(mannequinFitProfile(profile(axes, Object.fromEntries(Object.keys(axes).map((key) => [key, 'seller'])), category)).axes, {});
+  }
+  for (const axisSources of [{}, { length: 'seller' }, { length: 'unsure' }]) {
+    assert.deepEqual(mannequinFitProfile(profile({ length: 'basic' }, axisSources)).axes, { length: 'basic' });
+  }
+  assert.deepEqual(mannequinFitProfile(profile({ sleeve: null }, { sleeve: 'unsure' }, 'outer')).axes, {});
+  const legacy = { category: 'top', gender: 'women', axes: { length: 'basic' }, source: 'auto' };
+  assert.equal(mannequinFitProfile(legacy), legacy);
+  assert.equal(mannequinFitProfile(null), null);
 });

@@ -1,5 +1,6 @@
 /* 분석 페이지 입었을 때 칸의 구성과 채우기. React와 저장 부수효과가 없는 순수 함수. */
-import { analysisAxesFor, fitProfileCategory, subcategoryLength } from './fitAxes.js';
+import { analysisAxesFor, fitProfileCategory, normalizeAnalysisFit, subcategoryLength } from './fitAxes.js';
+import { genderForClothingType } from './productGender.js';
 
 export const ANALYSIS_FIT_AXES = Object.freeze({
   top: { women: ['fit', 'length', 'sleeve'], men: ['fit', 'sleeve'] },
@@ -131,6 +132,13 @@ export function fitValueFromMeasurements(axis, { clothingType, subCategory, gend
   return null;
 }
 
+function clearAxisValue(axes, axis, category, subCategory) {
+  const length = axis === 'length' && ['skirt', 'dress'].includes(category)
+    ? subcategoryLength(subCategory) : null;
+  if (length) axes[axis] = length;
+  else delete axes[axis];
+}
+
 export function fillFitZones({ fitRead, fit, profile, ...context } = {}) {
   const category = fitProfileCategory(context.clothingType, context.subCategory);
   const gender = context.gender || 'women';
@@ -159,11 +167,59 @@ export function fillFitZones({ fitRead, fit, profile, ...context } = {}) {
       axes[axis] = aiValue;
       axisSources[axis] = 'ai';
     } else {
-      // 옛 기본값은 운영 마네킹이 계속 쓴다. 분석 화면은 출처를 보고 사진대로 표시한다.
+      // 새로 채웠던 값만 걷어내고, 출처 없는 운영 기본값은 마네킹을 위해 남긴다.
+      if (['ai', 'measure', 'seller'].includes(axisSources[axis])) {
+        clearAxisValue(axes, axis, category, context.subCategory);
+      }
       axisSources[axis] = 'unsure';
     }
   }
   return { axes, axisSources };
+}
+
+/** 셀러 선택을 풀고 같은 입력으로 다시 채운다. 화면은 이 결과로 되돌리기 문구도 정한다. */
+export function resetFitZone(axis, { profile, ...context } = {}) {
+  const axes = { ...profile?.axes };
+  const axisSources = { ...profile?.axisSources };
+  clearAxisValue(axes, axis, profile?.category, context.subCategory);
+  delete axisSources[axis];
+  return fillFitZones({ ...context, profile: { ...profile, axes, axisSources } });
+}
+
+export function analysisFitInput(analysis) {
+  const fitRead = analysis.featureRun?.coreReceived === false ? undefined : analysis.fitRead;
+  return {
+    clothingType: analysis.clothingType, subCategory: analysis.subCategory,
+    gender: genderForClothingType(analysis.clothingType, analysis.targetGenders),
+    measurements: analysis.measurementsUnknown ? [] : analysis.measurements,
+    fitRead, sleeveType: fitRead?.sleeveType,
+    fit: analysis.fit, profile: analysis.fitProfile,
+  };
+}
+
+/** 분석 수신과 편집이 같은 칸 채우기를 쓰고, 저장할 분석에 결과를 그대로 싣는다. */
+export function fillAnalysisFitZones(analysis) {
+  if (!analysis?.clothingType) return analysis;
+  const normalized = normalizeAnalysisFit(analysis);
+  const input = analysisFitInput(normalized);
+  const category = fitProfileCategory(input.clothingType, input.subCategory);
+  const previous = input.profile;
+  const profile = previous?.category === category && previous?.gender === input.gender
+    ? previous : { category, gender: input.gender, source: 'auto', version: 2 };
+  const fitProfile = { ...profile, ...fillFitZones({ ...input, profile }) };
+  if (JSON.stringify(fitProfile) === JSON.stringify(normalized.fitProfile)) return normalized;
+  return { ...normalized, fitProfile };
+}
+
+export function selectAnalysisFitZone(analysis, axis, value) {
+  const filled = fillAnalysisFitZones(analysis);
+  const profile = filled.fitProfile;
+  const zone = fitZones(analysisFitInput(filled)).find((entry) => entry.axis === axis);
+  if (!zone?.options.some((option) => option.value === value)) return filled;
+  return { ...filled, ...(axis === 'fit' ? { fit: value } : {}), fitProfile: {
+    ...profile, axes: { ...profile.axes, [axis]: value },
+    axisSources: { ...profile.axisSources, [axis]: 'seller' }, source: 'seller',
+  } };
 }
 
 export function fitZoneState(zone, profile) {

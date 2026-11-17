@@ -43,3 +43,5 @@
 @keyframes creditRoll { from { transform: translateY(80%); opacity: .3; } }
 @keyframes hintIn { from { transform: translateY(-4px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .creditAmount, .hint { animation: none; } }
+
+.analysis .subtitle { font-size: 14px; }

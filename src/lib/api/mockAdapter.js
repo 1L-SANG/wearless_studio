@@ -9,6 +9,7 @@ import { OUTER_CLOSURE_VALUES, outerClosureDisplayValue, outerClosureRange } fro
 import { isSupportedCutType } from '@/lib/storyboardTaxonomy.js';
 import { mockQuery, MOCK_TIDY_KNIT } from '@/mock/outfitV18Fixtures.js';
 import { normalizeProductPresentation } from '@/lib/storyboardTaxonomy.js';
+import { mockFitRead } from '@/mock/fitRead.js';
 
 // Mirrors ADR-0019's server recipe fields. UI-only canvas and preview fields stay out.
 const RECIPE_FIELDS = [
@@ -254,6 +255,7 @@ export const mockAdapter = {
   },
   async analyzeProduct(projectId, options = {}) {
     const result = await base.analyzeProduct(projectId, options);
+    result.fitRead ??= mockFitRead(result);
     if (options.parts !== 'core') return result;
     const { detailRecommendations: _details, detailRecommendationsHandoff: _handoff, ...core } = result;
     return { ...core, pointsTicket: { runId: options.runId, points: core.aiSuggestedPoints || [], signature: 'mock-points-ticket' } };

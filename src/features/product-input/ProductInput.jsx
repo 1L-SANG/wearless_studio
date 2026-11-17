@@ -75,7 +75,7 @@ import { Icon, Button, IconButton, ErrorState, Modal, UploadPendingTile, useToas
 import { useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { ProductInputHeading, ProductInputPlaceholder } from './ProductInputFrame.jsx';
 import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
-import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
+import { fillAnalysisFitZones as normalizeAnalysisFit } from '@/lib/fitZone.js';
 import {
   analysisResponseProductPatch,
   createTrailingPatchScheduler,
@@ -1629,7 +1629,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       persistedColorsRef.current = nextProduct.colors || [];
       setProduct(nextProduct);
       latestProductRef.current = nextProduct;
-      const coreAnalysis = mergeProductOwnedAnalysisFields(a, nextProduct);
+      const coreAnalysis = normalizeAnalysisFit(mergeProductOwnedAnalysisFields(a, nextProduct));
       setAnalysis(coreAnalysis);
       // 사진 묶음이 바뀌었을 수 있으므로 이전 판정의 확인 상태는 버린다.
       setInputConsistency(a.inputConsistency || null);
@@ -1692,8 +1692,6 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   // 입력 섹션: 상품명 + 이미지를 한 카드로
   const inputSection = <div className="merged-card">{nameCard}{images}</div>;
 
-  const wide = !mobile && phase !== 'input';
-
   // after AI analysis starts, the input collapses into a compact summary above the analysis
   const allImages = product.colors.flatMap((c) => c.images);
   const colorCount = product.colors.filter((c) => c.images.length).length;
@@ -1719,7 +1717,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
   );
 
   return (
-    <div className={`wizard${wide ? ' wide' : ''}${mobile ? ' pi-handoff' : ''}`}>
+    <div className={`wizard${mobile ? ' pi-handoff' : ''}`}>
       {/* 확정 대기는 '잠금 경고'가 아니라 '이미 시작된 페이지 전환'으로 보여준다(2026-08-14 사용자
           지적 — 흰 잠금 카드 → 콘티보드의 어두운 전환 오버레이가 연달아 떠 이질적이었다).
           도착 화면(ChromeLayout 의 storyboard-transition-overlay)과 같은 시각 언어라 확정→도착이

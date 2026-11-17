@@ -32,6 +32,7 @@ import {
 import { seedStoryboard } from '@/lib/pageTemplates/seed.js';
 import { colorDisplayName } from '@/lib/colorwayMatching.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
+import { mockFitRead } from './fitRead.js';
 import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 import { CONTENT_ROLES, SECTION_ROLES } from '@/lib/storyboardTaxonomy.js';
 
@@ -326,6 +327,7 @@ export function buildDraft() {
     measurementsUnknown: false,
     measurements: measurements(),
   };
+  analysis.fitRead = mockFitRead(analysis);
   const fitProfile = defaultFitProfile(product, analysis);
   project.fitProfile = copyFitProfile(fitProfile);
   analysis.fitProfile = copyFitProfile(fitProfile);

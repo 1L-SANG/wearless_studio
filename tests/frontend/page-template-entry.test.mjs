@@ -5,7 +5,7 @@ import { defaultPageStyle, selectTemplateStyle, validPageStyle } from '../../src
 import { outfitHarness, nodes, textOf, drain } from './helpers/outfitHarness.mjs';
 
 const source = readFileSync(new URL('../../src/features/analysis/AnalysisForm.jsx', import.meta.url), 'utf8');
-const helpers = source.slice(source.indexOf('  const persistSelectedPageStyle ='), source.indexOf('  const [ccDraft'));
+const helpers = source.slice(source.indexOf('  const persistSelectedPageStyle ='), source.indexOf('  const [measurementDraft'));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 function preparation(overrides = {}) {
   const events = [], style = defaultPageStyle();

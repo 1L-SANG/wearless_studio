@@ -54,25 +54,35 @@ test('목 특징 인계도 확정 뒤 저장되어 개발 흐름이 계속 이�
 test('HTTP analysis mapping preserves the fit profile and its axis sources', async (t) => {
   const fitProfile = { category: 'top', gender: 'women', axes: { length: 'slight_crop' },
     axisSources: { length: 'measure' }, source: 'auto', version: 2 };
-  capture(t, { data: { clothingType: 'top', fit: 'regular', fitProfile } });
+  const fitRead = { photoType: 'flat', sleeveType: 'long', topLength: { value: 'basic', confident: true },
+    sleeve: { value: 'wrist', confident: false } };
+  capture(t, { data: { clothingType: 'top', fit: 'regular', fitProfile, fitRead } });
   const result = await adapter.publicAnalyze({ colors: [] }, { photos: [{ slot: 'Front', blob: new Blob(['bytes'], { type: 'image/jpeg' }) }] });
   assert.deepEqual(result.fitProfile, fitProfile);
+  assert.deepEqual(result.fitRead, fitRead);
 });
 
 test('mock analysis save and reload preserve per-axis sources', async () => {
   const { mockAdapter } = await vite.ssrLoadModule('/src/lib/api/mockAdapter.js');
   const fitProfile = { category: 'top', gender: 'women', axes: { sleeve: 'back_of_hand' },
     axisSources: { sleeve: 'seller' }, source: 'seller', version: 2 };
-  await mockAdapter.saveAnalysis('mock-project', { fitProfile });
-  assert.deepEqual((await mockAdapter.getAnalysis('mock-project')).fitProfile, fitProfile);
+  const fitRead = { photoType: 'worn', sleeveType: 'long', sleeve: { value: 'wrist', confident: true } };
+  await mockAdapter.saveAnalysis('mock-project', { fitProfile, fitRead });
+  const result = await mockAdapter.getAnalysis('mock-project');
+  assert.deepEqual(result.fitProfile, fitProfile);
+  assert.deepEqual(result.fitRead, fitRead);
 });
 
 test('HTTP analysis save and reload retain the full per-axis source map', async (t) => {
   const fitProfile = { category: 'outer', gender: 'men', axes: { fit: 'over', sleeve: 'fingers' },
     axisSources: { fit: 'ai', sleeve: 'seller' }, source: 'seller', version: 2 };
-  const calls = capture(t, { clothingType: 'outer', targetGenders: ['men'], fitProfile });
-  const saved = await adapter.saveAnalysis('fit-source-project', { fitProfile });
-  assert.deepEqual(JSON.parse(calls[0].body), { fitProfile });
+  const fitRead = { photoType: 'flat', sleeveType: 'long', sleeve: { value: 'wrist', confident: false } };
+  const calls = capture(t, { clothingType: 'outer', targetGenders: ['men'], fitProfile, fitRead });
+  const saved = await adapter.saveAnalysis('fit-source-project', { fitProfile, fitRead });
+  assert.deepEqual(JSON.parse(calls[0].body), { fitProfile, fitRead });
   assert.deepEqual(saved.fitProfile, fitProfile);
-  assert.deepEqual((await adapter.getAnalysis('fit-source-project')).fitProfile, fitProfile);
+  assert.deepEqual(saved.fitRead, fitRead);
+  const result = await adapter.getAnalysis('fit-source-project');
+  assert.deepEqual(result.fitProfile, fitProfile);
+  assert.deepEqual(result.fitRead, fitRead);
 });

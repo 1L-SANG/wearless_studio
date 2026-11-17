@@ -439,6 +439,7 @@ function mergeAnalysisResult(ai) {
     targetGenders: ai.targetGenders ?? [],
     fit: ai.fit ?? null,
     fitProfile: ai.fitProfile ?? base.fitProfile,
+    ...(ai.fitRead ? { fitRead: ai.fitRead } : {}),
     materials: (ai.materials && ai.materials.length)
       ? ai.materials
       : [{ name: '면', ratio: 60 }, { name: '폴리에스터', ratio: 40 }],

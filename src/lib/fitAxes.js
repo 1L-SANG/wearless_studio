@@ -248,6 +248,19 @@ export function analysisAxesFor(category, gender) {
   );
 }
 
+/** 분석에서만 쓰는 값과 자동으로 읽은 축을 빼고 운영 마네킹의 기존 입력을 만든다. */
+export function mannequinFitProfile(profile) {
+  if (!profile?.axisSources) return profile;
+  const { axisSources, ...legacy } = profile;
+  const catalog = analysisAxesFor(profile.category, profile.gender);
+  const axes = Object.fromEntries(Object.entries(profile.axes || {}).filter(([axis, value]) => {
+    if (catalog[axis]?.every((entry) => entry.scope === 'analysis')) return false;
+    if (catalog[axis]?.find((entry) => entry.value === value)?.scope === 'analysis') return false;
+    return axis === 'fit' || !['ai', 'measure'].includes(axisSources[axis]);
+  }));
+  return { ...legacy, axes };
+}
+
 const LEGACY_TOP_LENGTH_VALUES = Object.freeze({
   crop_basic: 'semi_crop',
   basic_long: 'semi_long',

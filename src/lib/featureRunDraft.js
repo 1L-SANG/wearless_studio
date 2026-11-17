@@ -1,4 +1,5 @@
 import { api } from './api/index.js';
+import { fillAnalysisFitZones } from './fitZone.js';
 import { createFeatureRun, getActiveFeatureRun, setActiveFeatureRun, stripFeatureClientFields } from './featureRun.js';
 import { analysisPhotoKey, preparePublicAnalysis } from './api/publicAnalysisRequest.js';
 import { loadDraft, queueProductDraftSave, saveFeatureRunDraft, flushProductDraftSave, isDraftStorageUnavailable } from './draftStore.js';
@@ -100,7 +101,7 @@ export function createDraftFeatureRun({ product, analysis, readProduct, readAnal
       if (saved === 'unavailable') memoryOnly = true;
       if (!saved) throw new Error('다른 작업에서 입력 내용이 바뀌었어요. 다시 분석해 주세요.');
       product = withCurrentImages(nextProduct, readProduct?.() || product);
-      const analysis = await run.receiveCore(mergeProductOwnedAnalysisFields(core, nextProduct));
+      const analysis = await run.receiveCore(fillAnalysisFitZones(mergeProductOwnedAnalysisFields(core, nextProduct)));
       if (analysis && current()) {
         product = withCurrentImages(product, readProduct?.() || product);
         onProduct?.(product);

@@ -38,9 +38,11 @@ test('실행 조정자의 핵심 응답에 이전 상품 사진이 섞여도 현
   const storage = draftStoreFixture(t, draft);
   const colors = structuredClone(draft.product.colors);
   const originalBlob = draft.photos[0].blob;
+  const fitRead = { photoType: 'flat', sleeveType: 'long', topLength: { value: 'basic', confident: true },
+    sleeve: { value: 'wrist', confident: false } };
   replace(t, {
     analyzePublicFeatures: () => new Promise(() => {}),
-    analyzeProduct: async () => ({ suggestedName: '새 상품 분석', clothingType: 'top',
+    analyzeProduct: async () => ({ suggestedName: '새 상품 분석', clothingType: 'top', fit: 'over', fitRead,
       sellingPoints: ['이번 상품 특징'], aiSuggestedPoints: ['이번 상품 특징'], pointsTicket: 'p',
       colors: [{ id: 'base', images: [{ id: 'old-product-photo', slot: 'Front', src: '/old-product-photo' }] }] }),
   });
@@ -53,6 +55,9 @@ test('실행 조정자의 핵심 응답에 이전 상품 사진이 섞여도 현
   assert.deepEqual(storage.saved.product.colors, colors);
   assert.equal(storage.saved.photos[0].blob, originalBlob);
   assert.deepEqual(storage.saved.analysis.sellingPoints, ['이번 상품 특징']);
+  assert.deepEqual(storage.saved.analysis.fitRead, fitRead);
+  assert.deepEqual(storage.saved.analysis.fitProfile.axes, { fit: 'over', length: 'basic' });
+  assert.deepEqual(storage.saved.analysis.fitProfile.axisSources, { fit: 'ai', length: 'ai', sleeve: 'unsure' });
 });
 
 test('로그인 복귀 requested 승격은 기한 뒤 재요청을 기다리지 않고 끝내고 늦은 디테일만 한 번 승격한다', async (t) => {

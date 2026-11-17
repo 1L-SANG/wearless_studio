@@ -94,7 +94,7 @@ export function AnalysisStepFlow({ inline, analysis, product, children, afterAna
   };
   const photos = product?.colors?.flatMap((color) => color.images || []) || [];
   const info = [analysis.customCategory || analysis.subCategory, ...(analysis.materials || []).map((material) => material.name || material.material).filter(Boolean)].filter(Boolean).slice(0, 3).join(' · ');
-  return <div className={styles.flow} ref={rootRef} data-stage={stage} data-folded={folded}>
+  return <div className={`analysis-form ${styles.flow}`} ref={rootRef} data-stage={stage} data-folded={folded}>
     {!inline && <div className={`${styles.summary} surface`}><div className={styles.summaryRow}>
       <div className={styles.photoSlot}>{photos.slice(0, 3).map((photo) => <img key={photo.id || photo.src} src={photo.src} alt="상품 사진" />)}</div>
       <div className={styles.summaryText}><h2>{product?.name || '상품 이미지'}</h2><p>이미지 {photos.length}장 · 색상 {product?.colors?.length || 1}</p></div>
