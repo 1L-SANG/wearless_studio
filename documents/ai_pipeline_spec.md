@@ -190,6 +190,13 @@ MODEL_ROUTING_IMAGE_LIGHT=gemini-3.1-flash-image
 MODEL_ROUTING_TEXT_GEMINI=gemini-3.7-flash          # text tier 정본(Gemini). 2026-08-14 3.5 flash → 3.7 flash — 상세 pl1_analysis_agent_spec §2
 MODEL_ROUTING_TEXT_GEMINI_ANALYSIS=gemini-3.7-flash # AG-01 상품분석만 분기 (2026-08-14 실측 결정)
 MODEL_ROUTING_TEXT_GEMINI_FEATURES=gemini-3.7-flash # AG-08 특징 발굴만 분기. 2026-08-14 3.6 flash → 3.7 flash
+MODEL_ROUTING_TEXT_GPT_TERRA=gpt-6.1-terra         # 2026-11-17 코디, 비슷한 컷 계획, AG-08이 먼저 쓰는 GPT 모델(생각 수준 none)
+MODEL_ORDER_OUTFIT=gpt,gemini                       # 코디 세트와 소품. gemini,gpt면 Flash 먼저
+MODEL_ORDER_SIMILAR_PLAN=gpt,gemini                 # 비슷한 컷 계획. gemini,gpt면 Flash 먼저
+MODEL_ORDER_FEATURES=gpt,gemini                     # AG-08. GPT는 feature_extractor_terra_v2 프롬프트, Gemini는 기존 요청(생각 medium)
+MODEL_ROUTING_TEXT_GPT_MERGE=gpt-6-luna             # 포인트 합치기 대체 모델(생각 수준 none, 공급자마다 8초)
+MODEL_ORDER_POINTS_MERGE=gemini,gpt                 # 포인트 합치기. gemini면 Flash만
+MODEL_GARMENT_COLOR_OBSERVER=gpt-6.1-terra          # 옷 영역 찾기(배경색 맞추기), 생각 수준 none
 MODEL_ROUTING_TEXT=gpt-5.4-mini                     # GPT 폴백 provider 전용(OPENAI_API_KEY 있을 때만 시도)
 # ⚠️ 프로드(copilot/api/manifest.yml)는 MODEL_ROUTING_TEXT_GEMINI 를 gemini-3.1-pro-preview 로 덮어쓴다.
 #    정본이 게이팅 QC(IMAGE_QC·MANNEQUIN_AXIS_QC·BASE_FIDELITY_QC=enforce)까지 커버하기 때문 —
