@@ -143,6 +143,8 @@ OPENAI_API_KEY=   # detail_cut GPT Image 2 + OpenAI text 폴백
 
 **2026-10-15 조건 표 계획(ADR-0016 개정):** 계획은 전용 모델 설정 `MODEL_ROUTING_TEXT_GEMINI_SIMILAR`(기본 `gemini-3.8-flash`, low)로 원본 상태 장부를 먼저 채우고 서버 동작 표에서 조건이 맞는 자세·팔·손 동작 하나와 보조 시선을 고른다. 서버가 조건을 검사하고 그대로 둘 것 목록을 만든다. 생성 프롬프트는 `similar_cut_generate_v2.txt`이며 새 자세에 맞춰 옷 주름만 새로 그린다.
 
+**2026-11-17 모델 전환:** 계획은 `gpt-6.1-terra`(생각 수준 none)가 먼저, 실패하면 Gemini 설정으로 넘어간다(ADR-0016, `MODEL_ORDER_SIMILAR_PLAN`).
+
 | | |
 |---|---|
 | tier | `image_high` |
