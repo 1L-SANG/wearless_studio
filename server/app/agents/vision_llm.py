@@ -160,9 +160,11 @@ def qc_system_prompt(family: str, context=None) -> str:
             if not isinstance(raw_owners, dict) or not raw_owners:
                 raise ValueError("missing_qc_owners")
             owners = {}
+            declared_length = context.get("declaredLengthAuthority") is True
             for attribute, owner in raw_owners.items():
                 allowed = ({"storyboard"} if presentation and attribute in _QC_PRODUCT_PRESENTATION_ATTRIBUTES
                            else {"productTruth"} if product_authority and attribute == "color"
+                           else {"productTruth", "fitProfile"} if declared_length and attribute == "length"
                            else _QC_OWNER_CHOICES.get(attribute))
                 if allowed is not None:
                     owners[attribute] = _qc_choice(owner, allowed)
@@ -178,6 +180,8 @@ def qc_system_prompt(family: str, context=None) -> str:
             safe = {"authorityProfile": profile, "attributeOwners": owners,
                     "referenceAllowedAttributes": sorted({_qc_choice(value, _QC_REFERENCE_ATTRIBUTES) for value in references}),
                     **presentation, **product_authority, **mirror_authority}
+            if declared_length:
+                safe["declaredLengthAuthority"] = True
         elif family == "image":
             count = _qc_count(context["productCount"], minimum=0)
             roles = _qc_roles(context["imageRoles"], _QC_IMAGE_ROLES)

@@ -225,6 +225,11 @@ class Settings:
     # 2차가 개선되지 않으면 1차를 보존하며, QC/2차 호출 실패도 1차 출고를 막지 않는다.
     # 기본 off라 명시적으로 켠 환경에서만 추가 호출 비용이 발생한다.
     cut_output_qc_mode: str = "off"  # off | shadow | repair
+    # 마네킹 없는 컷의 칩 판독. 기본 off, 기록만은 shadow, 교정 1회는 repair.
+    cut_fit_chip_qc_mode: str = "off"
+    model_cut_fit_chip_qc_top_length: str = "gemini-3.1-pro-preview"
+    model_cut_fit_chip_qc_other: str = "gemini-3.8-flash"
+    cut_fit_chip_qc_timeout_seconds: float = 30.0
     page_output_qc_mode: str = "off"  # off | shadow
     # P1 축 인지 QC(선언 핏 축 반영 판정 + 실패 시 편집 교정 1회 — fidelity §G·§H).
     # off | shadow(판정·이벤트만) | enforce(편집 재시도 발화). enforce는 코드 레벨 가드
@@ -1061,6 +1066,10 @@ def load_settings() -> Settings:
             "MANNEQUIN_LOGO_IMAGE_SIZE", "off", {"off", "1k", "2k", "4k"}).upper(),
         cut_output_qc_mode=_flag(
             "CUT_OUTPUT_QC_MODE", "off", {"off", "shadow", "repair"}),
+        cut_fit_chip_qc_mode=_flag("CUT_FIT_CHIP_QC_MODE", "off", {"off", "shadow", "repair"}),
+        model_cut_fit_chip_qc_top_length=(os.getenv("MODEL_CUT_FIT_CHIP_QC_TOP_LENGTH") or "gemini-3.1-pro-preview").strip() or "gemini-3.1-pro-preview",
+        model_cut_fit_chip_qc_other=(os.getenv("MODEL_CUT_FIT_CHIP_QC_OTHER") or "gemini-3.8-flash").strip() or "gemini-3.8-flash",
+        cut_fit_chip_qc_timeout_seconds=min(120.0, max(1.0, _int_env("CUT_FIT_CHIP_QC_TIMEOUT_SECONDS", 30))),
         page_output_qc_mode=_flag("PAGE_OUTPUT_QC_MODE", "off", {"off", "shadow"}),
         mannequin_axis_qc=_flag("MANNEQUIN_AXIS_QC", "off", {"off", "shadow", "enforce"}),
         mannequin_base_fidelity_qc=_flag(

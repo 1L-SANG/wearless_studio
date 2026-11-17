@@ -18,10 +18,11 @@ _PRODUCT_AUTHORITY = {
 }
 
 
-def _request(*, selected_mannequin=False, sold_product_fit="regular fit"):
+def _request(*, selected_mannequin=False, sold_product_fit="regular fit", analysis_fit_profile=None):
     return SimpleNamespace(
         scope=SimpleNamespace(selected_mannequin=selected_mannequin),
         sold_product_fit=sold_product_fit,
+        analysis_fit_profile=analysis_fit_profile,
         outfit=SimpleNamespace(selected_roles=()),
     )
 
@@ -44,7 +45,9 @@ def test_confirmed_product_qc_uses_product_color_and_analysis_fit(monkeypatch):
     source = _plan(declaredFitAxes=["length", "sleeve", "fit"])
     source["attributeOwners"].update(length="productTruth", silhouette="productTruth",
                                      **{"fit.top": "fitProfile"})
-    contract = qc._confirmed_authority_contract(qc.normalize_plan(source), _request())
+    profile = {"category": "top", "gender": "women", "axes": {"fit": "regular", "length": "crop", "sleeve": "wrist"},
+               "axisSources": {"fit": "seller", "length": "seller", "sleeve": "seller"}}
+    contract = qc._confirmed_authority_contract(qc.normalize_plan(source), _request(analysis_fit_profile=profile))
     refs = [qc.LabeledReference("product", _img(b"PRODUCT"))]
 
     prompt = qc.build_prompt(contract, refs, authority_profile="confirmed_gpt_v1")
@@ -52,14 +55,15 @@ def test_confirmed_product_qc_uses_product_color_and_analysis_fit(monkeypatch):
     assert contract["attributeOwners"]["color"] == "productTruth"
     assert contract["attributeOwners"]["declaredFit"] == "fitProfile"
     assert contract["attributeOwners"]["silhouette"] == "productTruth"
-    assert contract["attributeOwners"]["length"] == "productTruth"
-    assert contract["soldProductFit"] == "regular fit"
-    assert contract["declaredFitAxisCount"] == 1
+    assert contract["attributeOwners"]["length"] == "fitProfile"
+    assert [axis["axis"] for axis in contract["declaredFitAxes"]] == ["fit", "length", "sleeve"]
+    assert contract["declaredFitAxisCount"] == 3
     assert contract["confirmedGptProductAuthority"] == _PRODUCT_AUTHORITY
     assert "confirmedGptMannequinAuthority" not in contract
     assert "PRODUCT images alone own" in prompt
     assert "garment-local color" in prompt
-    assert "soldProductFit" in prompt
+    assert "declaredFitAxes" in prompt
+    assert "soldProductFit" not in prompt
     assert "MANNEQUIN" not in prompt
 
 
@@ -196,16 +200,16 @@ def test_product_qc_verdict_repairs_from_product_with_existing_route(monkeypatch
         authority_profile="confirmed_gpt_v1", confirmed_prompt_input=_request(sold_product_fit=fit)))
 
     assert result["authorityProfile"] == "confirmed_gpt_v1"
-    assert result["contract"]["soldProductFit"] == fit
-    assert result["contract"]["declaredFitAxisCount"] == (1 if fit else 0)
-    assert ("declaredFit" in result["contract"]["attributeOwners"]) is bool(fit)
+    assert "soldProductFit" not in result["contract"]
+    assert result["contract"]["declaredFitAxisCount"] == 0
+    assert "declaredFit" not in result["contract"]["attributeOwners"]
     assert result["gates"]["recipeIntent"]["status"] == "PASS"
     assert qc.repair_route(result) == "REGENERATE_FROM_SCRATCH"
     instructions = qc.repair_instructions(result)
     assert len(instructions) == 4
     assert all("MANNEQUIN" not in instruction for instruction in instructions)
     assert all("PRODUCT" in instruction for instruction in instructions)
-    assert "analysis fit" in instructions[-1]
+    assert "declaredFitAxes" in instructions[-1]
     assert "MANNEQUIN" not in captured["prompt"]
     assert [image.data for image in captured["images"]] == [
         b"PRODUCT", b"MODEL-FACE", b"MODEL-BODY", b"EXAMPLE", b"OUTPUT"]
@@ -234,11 +238,11 @@ def test_actual_no_mannequin_packet_passes_qc_with_the_same_framing_and_fit(monk
         authority_profile="confirmed_gpt_v1", confirmed_prompt_input=packet.prompt_input))
 
     assert result["passed"] is True
-    assert result["contract"]["soldProductFit"] == packet.prompt_input.sold_product_fit
-    assert ("Oversized fit:" if fit == "over" else "Slim fit:") in result["contract"]["soldProductFit"]
-    assert "caps the shoulder" not in result["contract"]["soldProductFit"]
+    target = result["contract"]["declaredFitAxes"][0]
+    assert target == {"axis": "fit", "value": fit, "target": packet.prompt_input.sold_product_fit}
+    assert "caps the shoulder" not in target["target"]
     if category == "outer":
-        assert len(result["contract"]["soldProductFit"]) > 200
+        assert len(target["target"]) > 200
     assert result["contract"]["declaredFitAxisCount"] == 1
     assert result["contract"]["confirmedExampleFraming"]["shot"] == "medium"
     assert result["contract"]["confirmedGptProductAuthority"] == _PRODUCT_AUTHORITY

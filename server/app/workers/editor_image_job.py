@@ -21,6 +21,7 @@ from ..agents import (
     content_roles,
     cut_generator,
     cut_output_qc,
+    cut_fit_chip_qc,
     cut_plan,
     cut_variator,
     detail_recommendations,
@@ -1302,6 +1303,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                         cut_generator.apply_reference_compatibility(cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)),
                         clothing_type,
                         fit_profile=(analysis or {}).get("fitProfile"),
+                        fit_read=(analysis or {}).get("fitRead"),
                         has_mannequin="MANNEQUIN" in manifest,
                     )
                     qc_references = cut_output_qc.references_from_manifest(
@@ -1318,6 +1320,16 @@ async def run_editor_image_job(app, job: dict) -> None:
                         e,
                     )
                     example_warnings.append({"code": "cut_output_qc_unavailable"})
+            if cut_fit_chip_qc.enabled(s, (analysis or {}).get("fitProfile"),
+                                      has_mannequin="MANNEQUIN" in manifest, cut_type=cut_spec.get("cutType")):
+                try:
+                    chip_report = await cut_fit_chip_qc.verdict(s, (analysis or {}).get("fitProfile"), chosen,
+                                                              cut_type=cut_spec.get("cutType"), observe_only=True)
+                    if chip_report is not None:
+                        cut_qc_metadata = {**(cut_qc_metadata or {}), "fitChipQc": chip_report}
+                except Exception as e:
+                    log.warning("AG-06 editor chip QC unavailable job %s: %r — shadow only", job_id, e)
+                    example_warnings.append({"code": "cut_fit_chip_qc_unavailable"})
             if color_plan.mode == "base_then_color":
                 color_master_image = chosen
                 prior_outcome = dict(face_pass_outcome)

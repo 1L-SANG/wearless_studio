@@ -30,6 +30,7 @@ from ..agents import (
     cut_generator,
     cut_variator,
     cut_output_qc,
+    cut_fit_chip_qc,
     cut_plan,
     face_identity,
     fit_axes,
@@ -996,7 +997,52 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             cut_warnings = []
 
             cut_qc = None
-            if s.cut_output_qc_mode in {"shadow", "repair"}:
+            if cut_fit_chip_qc.enabled(s, (cut_analysis or {}).get("fitProfile"),
+                                      has_mannequin="MANNEQUIN" in manifest, cut_type=b.get("cutType")):
+                try:
+                    chip_plan = cut_plan.compile_cut_plan(
+                        cut_generator.apply_reference_compatibility(cut_generator.normalize_spec(b, clothing_type=clothing_type)),
+                        clothing_type, fit_profile=(cut_analysis or {}).get("fitProfile"),
+                        fit_read=(cut_analysis or {}).get("fitRead"), has_mannequin=False)
+                    chip_references = cut_output_qc.references_from_manifest(manifest, qc_images)
+                    chip_verdict_kwargs = ({"authority_profile": "confirmed_gpt_v1",
+                                            "confirmed_prompt_input": confirmed_packet.prompt_input}
+                                           if confirmed_packet is not None else
+                                           {"source_mirrored": True} if (cut_analysis or {}).get("sourceMirrored") is True else {})
+
+                    async def judge_operating(candidate):
+                        return await cut_output_qc.verdict(s, chip_plan, chip_references, candidate, **chip_verdict_kwargs)
+
+                    async def make_chip_stage2(route, instructions):
+                        if route == "EDIT_STAGE1":
+                            repair_kwargs = {"qc_corrections": instructions}
+                            if confirmed_packet is not None:
+                                repair_kwargs["confirmed_prompt_input"] = confirmed_packet.prompt_input
+                            repair_outcome = {}
+                            if "face_identity_spec" in generate_kwargs:
+                                repair_kwargs.update(face_identity_spec=generate_kwargs["face_identity_spec"],
+                                    face_pass_outcome=repair_outcome,
+                                    face_pass_url_provider=generate_kwargs.get("face_pass_url_provider"))
+                            repaired_img, repaired_mime = await cut_generator.repair(
+                                generation_settings, gemini, b, product, chosen, **repair_kwargs)
+                            _remember_outcome(repaired_img, repair_outcome)
+                        else:
+                            repaired_img, repaired_mime = await cut_generator.generate(
+                                generation_settings, gemini, b, product, images,
+                                **generate_kwargs, qc_corrections=instructions)
+                            _remember_outcome(repaired_img)
+                        return InlineImage(repaired_mime, repaired_img)
+
+                    chosen, cut_qc, chip_warnings = await cut_fit_chip_qc.check_and_repair(
+                        s, (cut_analysis or {}).get("fitProfile"), chosen,
+                        judge_operating=judge_operating, make_stage2=make_chip_stage2,
+                        operating_mode=s.cut_output_qc_mode, can_repair=not button_guard)
+                    cut_warnings.extend(chip_warnings)
+                    img, mime = chosen.data, chosen.mime
+                except Exception as e:
+                    log.warning("AG-06 chip QC unavailable job %s block %s: %r — keep stage1", job_id, b.get("id"), e)
+                    cut_warnings.append({"code": "cut_fit_chip_qc_unavailable"})
+            elif s.cut_output_qc_mode in {"shadow", "repair"}:
                 try:
                     normalized_spec = cut_generator.normalize_spec(
                         b, clothing_type=clothing_type
@@ -1008,6 +1054,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                         normalized_spec,
                         clothing_type,
                         fit_profile=(cut_analysis or {}).get("fitProfile"),
+                        fit_read=(cut_analysis or {}).get("fitRead"),
                         has_mannequin="MANNEQUIN" in manifest,
                     )
                     qc_references = cut_output_qc.references_from_manifest(

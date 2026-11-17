@@ -93,6 +93,8 @@ class CutPlan:
     outfit_roles: tuple[str, ...] = ()
     product_presentation: str | None = None
     has_mannequin: bool = True
+    analysis_fit_profile: Mapping[str, Any] | None = None
+    analysis_sleeve_type: str | None = None
 
     def uses_styling_all_location_recomposition(self) -> bool:
         """Whether ``all`` is a styling inspiration, not an exact location plate."""
@@ -326,6 +328,7 @@ def compile_cut_plan(
     clothing_type: str,
     *,
     fit_profile: Mapping[str, Any] | None = None,
+    fit_read: Mapping[str, Any] | None = None,
     outfit_roles: tuple[str, ...] = (),
     has_mannequin: bool = True,
 ) -> CutPlan:
@@ -443,6 +446,9 @@ def compile_cut_plan(
 
     return CutPlan(
         has_mannequin=has_mannequin,
+        analysis_fit_profile=fit_profile if not has_mannequin else None,
+        analysis_sleeve_type=("long" if not has_mannequin and isinstance(fit_read, Mapping)
+                              and fit_read.get("sleeveType") == "long" else None),
         outfit_roles=roles,
         product_presentation=product_presentation,
         clothing_type=normalized_clothing_type,

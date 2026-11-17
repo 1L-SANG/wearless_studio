@@ -30,6 +30,7 @@ from .prompts import clean_text
 from .vision_llm import VisionError, analyze_with_fallback, qc_system_prompt
 from . import horizon_background, product_photography
 from .outer_closure import STATES as _CLOSURES
+from .analysis_fit import build_analysis_fit_block, select_applied_fit_axes, LONG_SLEEVES
 
 
 GATES = (
@@ -151,23 +152,24 @@ _CONFIRMED_FIT_GATE = (
 )
 _CONFIRMED_PRODUCT_AUTHORITY = (
     "- PRODUCT images alone own the target garment's construction, material, pattern, hardware, garment\n"
-    "  text/logo and visibly judgeable garment-local color. The analysis fit value in soldProductFit and PRODUCT\n"
-    "  evidence own the sold-product fit, silhouette and drape; when soldProductFit is null, use PRODUCT evidence.\n"
+    "  text/logo and visibly judgeable garment-local color. Declared dimensions in declaredFitAxes follow their\n"
+    "  fixed targets; undeclared dimensions follow PRODUCT evidence. For fit, follow the declared direction while\n"
+    "  preserving clearly visible garment size in PRODUCT photos.\n"
     "  Seller-only uncertainty remains unresolved. The storyboard still owns direction, shot, face handling, model,\n"
     "  matching apparel, closure and any explicit pose; its base-color selection does not override PRODUCT pixels.\n"
     "  Scene light may naturally affect the garment; example colors or a global grade may not recolor it."
 )
 _CONFIRMED_PRODUCT_CONSTRUCTION_GATE = (
     "5. garmentConstruction — PRODUCT neckline, panels, sleeves, seams and permanent construction match; "
-    "PRODUCT evidence owns the visibly judgeable garment silhouette subject only to the declared analysis fit."
+    "declared dimensions in declaredFitAxes follow their fixed targets, while PRODUCT evidence owns undeclared dimensions."
 )
 _CONFIRMED_PRODUCT_COLOR_GATE = (
     "6. garmentColor — selected PRODUCT garment-local color is faithful where judgeable; natural scene light "
     "may affect the garment, but scene/example/global grade must not recolor it."
 )
 _CONFIRMED_PRODUCT_FIT_GATE = (
-    "11. fitClosureAllowedMutation — the analysis fit value in soldProductFit and PRODUCT evidence own the\n"
-    "   sold-product fit, silhouette and drape; when soldProductFit is null, use PRODUCT evidence. Closure equals\n"
+    "11. fitClosureAllowedMutation — declaredFitAxes own their declared dimensions; PRODUCT evidence owns\n"
+    "   undeclared dimensions. For fit, preserve clearly visible garment size in PRODUCT photos. Closure equals\n"
     "   storyboard intent; PRODUCT construction and matching-apparel boundaries remain unchanged."
 )
 _CONFIRMED_PRODUCT_AUTHORITY_MARKER = {
@@ -331,15 +333,15 @@ _CONFIRMED_GPT_PRODUCT_CORRECTIONS = MappingProxyType({
     **_CORRECTIONS,
     "garmentConstruction": (
         "Restore PRODUCT-evidenced neckline, panels, sleeves, seams, permanent construction "
-        "and visibly judgeable garment silhouette within the declared analysis fit."
+        "and undeclared dimensions; preserve the fixed declaredFitAxes targets."
     ),
     "garmentColor": (
         "Restore the PRODUCT garment-local color where judgeable, allowing natural scene light; "
         "do not borrow color from the example or a global grade."
     ),
     "fitClosureAllowedMutation": (
-        "Restore sold-product fit from the analysis fit value and PRODUCT evidence, or PRODUCT "
-        "evidence alone when no analysis fit is supplied; preserve PRODUCT construction and storyboard closure."
+        "Restore declaredFitAxes targets for declared dimensions; use PRODUCT evidence for undeclared "
+        "dimensions and clearly visible garment size. Preserve PRODUCT construction and storyboard closure."
     ),
 })
 
@@ -780,6 +782,14 @@ def build_prompt(
             raise VisionError("cut_output_qc: authority template drift")
         for old, new in replacements:
             template = template.replace(old, new)
+    if (contract.get("recipeFamily") in {"styling", "horizon"}
+            and not any(reference.role == "mannequin" for reference in references)):
+        if authority_profile == "generic_v1":
+            template = template.replace(_GENERIC_GARMENT_CONSTRUCTION_GATE,
+                _GENERIC_GARMENT_CONSTRUCTION_GATE + " Declared dimensions in declaredFitAxes follow their fixed targets; undeclared dimensions follow PRODUCT evidence.")
+        contact_anchor = "asymmetry match the compiled contract. Do not fail this gate for crop alone. For product, judge front/back."
+        template = template.replace(contact_anchor, contact_anchor +
+            " Treat a contact re-performed on a real part of the current outfit, while preserving its arm role and hand position, as compliant.")
     applicability = gate_applicability(contract)
     prompt = (
         template.replace(
@@ -831,6 +841,29 @@ def build_prompt(
     return prompt
 
 
+def _analysis_fit_contract(contract: Mapping[str, Any], profile: dict | None, *, sleeve_type=None) -> dict:
+    """출처 정책이 허용한 축과 고정 문장만 운영 검사 계약에 싣는다."""
+    selected = select_applied_fit_axes(profile)
+    profile = profile if isinstance(profile, dict) else {}
+    axes = profile.get("axes") if isinstance(profile.get("axes"), dict) else {}
+    targets = [{"axis": axis, "value": value, "target": build_analysis_fit_block(
+        profile.get("category"), profile.get("gender"), [(axis, value, source)],
+        sleeve_type="long" if sleeve_type == "long" or axes.get("sleeve") in LONG_SLEEVES else None,
+    )} for axis, value, source in selected]
+    owners = {key: value for key, value in _mapping(contract.get("attributeOwners")).items()
+              if not key.startswith("fit.") and key != "declaredFit"}
+    if owners.get("length") == "fitProfile":
+        owners["length"] = "productTruth"
+    for axis, value, source in selected:
+        owners["fit." + axis] = "fitProfile"
+        if axis == "length":
+            owners["length"] = "fitProfile"
+    if selected:
+        owners["declaredFit"] = "fitProfile"
+    return {**contract, "declaredFitAxes": targets, "declaredFitAxisCount": len(targets),
+            "attributeOwners": dict(sorted(owners.items()))}
+
+
 def _confirmed_authority_contract(
     contract: Mapping[str, Any], prompt_input: ConfirmedGptPromptInput,
 ) -> dict:
@@ -846,17 +879,13 @@ def _confirmed_authority_contract(
     aligned = dict(contract)
     owners = dict(_mapping(contract.get("attributeOwners")))
     if getattr(getattr(prompt_input, "scope", None), "selected_mannequin", True) is False:
+        aligned = _analysis_fit_contract(contract, getattr(prompt_input, "analysis_fit_profile", None),
+            sleeve_type=_mapping(getattr(prompt_input, "fit_read", None)).get("sleeveType"))
+        owners = dict(aligned["attributeOwners"])
         owners["color"] = "productTruth"
         for attribute in ("length", "silhouette"):
-            if attribute in owners:
+            if attribute in owners and not (attribute == "length" and owners[attribute] == "fitProfile"):
                 owners[attribute] = "productTruth"
-        fit = getattr(prompt_input, "sold_product_fit", None)
-        fit = fit if isinstance(fit, str) else None
-        aligned["soldProductFit"] = fit or None
-        aligned["declaredFitAxisCount"] = 1 if fit else 0
-        owners.pop("declaredFit", None)
-        if fit:
-            owners["declaredFit"] = "fitProfile"
         aligned["confirmedGptProductAuthority"] = dict(_CONFIRMED_PRODUCT_AUTHORITY_MARKER)
         if getattr(prompt_input, "source_mirrored", False) is True:
             aligned["sourceMirrored"] = True
@@ -1236,6 +1265,7 @@ async def verdict(
     authority_profile: str = "generic_v1",
     confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
     source_mirrored: bool = False,
+    fit_profile: dict | None = None,
 ) -> dict:
     """Judge one candidate; reference order is preserved and output is always attached last.
 
@@ -1248,6 +1278,11 @@ async def verdict(
         raise VisionError("cut_output_qc: unknown authority profile")
     checked_references = _validate_references(references)
     contract = normalize_plan(plan)
+    if (authority_profile == "generic_v1" and contract["recipeFamily"] in {"styling", "horizon"}
+            and not any(reference.role == "mannequin" for reference in checked_references)):
+        contract = _analysis_fit_contract(contract, fit_profile if fit_profile is not None
+                                          else getattr(plan, "analysis_fit_profile", None),
+                                          sleeve_type=getattr(plan, "analysis_sleeve_type", None))
     if authority_profile == "confirmed_gpt_v1":
         if confirmed_prompt_input is None:
             raise VisionError("cut_output_qc: confirmed framing contract required")
@@ -1279,6 +1314,10 @@ async def verdict(
         "attributeOwners": contract["attributeOwners"],
         "referenceAllowedAttributes": contract["referenceAllowedAttributes"],
     }
+    if (authority_context is not None
+            and not any(reference.role == "mannequin" for reference in checked_references)
+            and any(axis.get("axis") == "length" for axis in contract.get("declaredFitAxes", ()))):
+        authority_context["declaredLengthAuthority"] = True
     if authority_context is not None and _has_confirmed_product_authority(contract):
         authority_context["confirmedGptProductAuthority"] = contract["confirmedGptProductAuthority"]
         if contract.get("sourceMirrored") is True:
