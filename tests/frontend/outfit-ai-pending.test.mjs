@@ -17,28 +17,60 @@ const initial = (status = 'pending', count = 2) => ({ clothingType: 'top',
 const button = tree => nodes(tree).find(node => node.type === 'button' && textOf(node).startsWith('AI 추천'));
 
 async function setup(t, analysis = initial()) {
-  let now = 0, resolve;
-  const h = await outfitHarness({ getOutfitRecommendation: () => new Promise(done => { resolve = done; }) });
+  let now = 0;
+  const requests = [];
+  const h = await outfitHarness({ getOutfitRecommendation: (_projectId, { signal }) =>
+    new Promise((resolve, reject) => { requests.push({ resolve, reject, signal }); }) });
   t.after(() => h.close());
   const { OutfitSelection } = await h.load('/src/features/analysis/OutfitSelection.jsx');
   t.mock.method(Date, 'now', () => now);
   const timers = [];
   t.mock.method(globalThis, 'setTimeout', (fn, ms) => { timers.push({ fn, ms }); return timers.length; });
-  t.mock.method(globalThis, 'clearTimeout', () => {});
+  t.mock.method(globalThis, 'clearTimeout', id => { if (timers[id - 1]) timers[id - 1].fn = null; });
   t.mock.method(globalThis, 'requestAnimationFrame', () => 0);
   t.mock.method(globalThis, 'cancelAnimationFrame', () => {});
   const patches = [];
   const props = { analysis, onRecommendation(fn) { props.analysis = fn(props.analysis); },
     onChange(patch) { patches.push(patch); props.analysis = { ...props.analysis, ...patch }; } };
   const render = () => { h.render(OutfitSelection, props); return h.render(OutfitSelection, props); };
-  return { h, props, patches, render, setNow: value => { now = value; },
+  return { h, props, patches, render, requests, setNow: value => { now = value; },
     expire() { now = 1500; timers.find(timer => timer.ms === 1500).fn(); },
+    runTimer(ms) { timers.find(timer => timer.ms === ms && timer.fn)?.fn(); },
     async deliver(rec, source = 'poll') {
-      if (source === 'poll') { resolve({ outfitRecommendation: rec }); await drain(); }
+      if (source === 'poll') { requests.at(-1).resolve({ outfitRecommendation: rec }); await drain(); }
       else props.analysis = { ...props.analysis, outfitRecommendation: rec };
       return render();
     } };
 }
+
+test('35초 동안 조회가 끝나지 않으면 대체 세트를 넘길 수 있다', async t => {
+  const s = await setup(t); s.render(); s.expire(); s.render();
+  s.setNow(34_999);
+  assert.equal(button(s.render()).props.disabled, true);
+  s.setNow(35_000); s.runTimer(35_000);
+  let tree = s.render();
+  assert.equal(button(tree).props.disabled, false);
+  assert.equal(s.requests[0].signal.aborted, true, '시간이 지난 조회는 취소한다');
+  tree = await s.deliver(recommendation('pending'), 'props');
+  assert.equal(button(tree).props.disabled, false, '같은 추천의 이전 pending 응답으로 다시 잠기지 않는다');
+  button(tree).props.onClick();
+  assert.equal(s.props.analysis.outfitSelections.slots.bottom.itemId, 'pending-1');
+  assert.deepEqual(s.h.runtime.toasts, []);
+});
+
+test('만료된 추천 조회는 바로 대기를 풀고 재조회하지 않는다', async t => {
+  const s = await setup(t); s.render(); s.setNow(100);
+  s.requests[0].reject(Object.assign(new Error('만료된 추천 조회'), { code: 'invalid_analysis_handoff' }));
+  await drain();
+  let tree = s.render();
+  assert.equal(button(tree).props.disabled, false);
+  s.runTimer(1000); await drain();
+  assert.equal(s.requests.length, 1, '만료된 정보로 같은 상태를 다시 조회하지 않는다');
+  tree = s.render();
+  button(tree).props.onClick();
+  assert.equal(s.props.analysis.outfitSelections.slots.bottom.itemId, 'pending-1');
+  assert.deepEqual(s.h.runtime.toasts, []);
+});
 
 if (!globalThis.requestAnimationFrame) globalThis.requestAnimationFrame = () => 0;
 if (!globalThis.cancelAnimationFrame) globalThis.cancelAnimationFrame = () => {};
@@ -48,6 +80,7 @@ for (const count of [0, 1, 2]) test(`pending 세트 ${count}개: 뼈대 종료·
   let tree = s.render();
   assert.ok(button(tree), '세트가 없어도 추천 버튼을 표시한다');
   assert.equal(button(tree).props.disabled, true);
+  assert.equal(button(tree).props['data-pending'], true);
   assert.equal(textOf(button(tree)), 'AI 추천');
   s.expire(); tree = s.render();
   assert.equal(button(tree).props.disabled, true);
@@ -78,6 +111,7 @@ for (const source of ['poll', 'props']) test(`늦은 ${source} ready: 알림 한
   tree = await s.deliver(recommendation('ready'), source);
   assert.equal(s.props.analysis.outfitSelections.slots.bottom.itemId, 'manual');
   assert.equal(button(tree).props.disabled, false);
+  assert.equal(button(tree).props['data-pending'], undefined);
   assert.equal(textOf(button(tree)), 'AI 추천');
   assert.deepEqual(s.h.runtime.toasts, [[notice]]);
   for (let i = 0; i < 3; i++) tree = await s.deliver(recommendation('ready'), 'props');

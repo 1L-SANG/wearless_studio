@@ -137,6 +137,7 @@ export function OutfitSelection({ draftVisuals, analysis, onChange, onRecommenda
     <div className={styles.list} ref={listRef}>
       <div className={`${styles.listHead} ${stuck ? styles.stuckHead : ''}`}><h3>코디 구성</h3>
         {(pending || late || setCount > 0) && <button type="button" className={styles.recommend} disabled={pending || (!late && setCount < 2)}
+            data-pending={pending || undefined}
             aria-describedby={pending ? 'outfit-recommendation-pending' : undefined}
             onClick={() => {
               if (pending) return;

@@ -267,7 +267,7 @@ export function advanceRecommendationState(state, recommendation, now) {
   if (oldKey != null && nextKey != null && oldKey !== nextKey) return initialRecommendationState(next, now);
   const expired = now - state.enteredAt >= 1500;
   if (next?.status === 'pending') {
-    if (state.lateRecommendation || state.recommendation?.status === 'ready') return state;
+    if (state.waitExpired || state.lateRecommendation || state.recommendation?.status === 'ready') return state;
     return { ...state, recommendation: expired || !state.skeleton ? fallbackRecommendation(next) : next,
       pending: true, skeleton: state.skeleton && !expired };
   }

@@ -126,7 +126,7 @@ for (const changed of [false, true]) test(`내 옷 정리 완료는 ${changed ? 
 
 for (const terminal of ['ready', 'fallback']) test(`첫 1.5초 안에 고른 옷은 pending 왕복 뒤 ${terminal} 도착에도 유지한다`, async (t) => {
   let now = 0; t.mock.method(Date, 'now', () => now);
-  const timers = []; t.mock.method(globalThis, 'setTimeout', fn => { timers.push(fn); return timers.length; }); t.mock.method(globalThis, 'clearTimeout', () => {});
+  const timers = []; t.mock.method(globalThis, 'setTimeout', (fn, ms) => { timers.push({ fn, ms }); return timers.length; }); t.mock.method(globalThis, 'clearTimeout', () => {});
   let response = initial('pending'); const h = await outfitHarness({ getOutfitRecommendation: async () => response }); t.after(() => h.close());
   const { useOutfitRecommendation } = await h.load('/src/features/analysis/useOutfitRecommendation.js');
   timers.length = 0;
@@ -139,7 +139,7 @@ for (const terminal of ['ready', 'fallback']) test(`첫 1.5초 안에 고른 옷
   h.render(useOutfitRecommendation, props); state = h.render(useOutfitRecommendation, props);
   assert.equal(state.recommendation.status, 'fallback', 'pending 저장 응답이 고르기 시작한 표시를 되돌리지 않는다');
   assert.equal(state.pending, true, '직접 고르기 시작해도 세트 추천은 아직 진행 중이다');
-  response = initial(terminal); now = 1000; await timers[1](); await drain(); state = h.render(useOutfitRecommendation, props);
+  response = initial(terminal); now = 1000; await timers.find(timer => timer.ms === 1000).fn(); await drain(); state = h.render(useOutfitRecommendation, props);
   assert.equal(props.analysis.outfitSelections.slots.bottom.itemId, 'pants-2');
   assert.equal(state.pending, false, 'ready와 실패 fallback 모두 대기를 끝낸다');
   if (terminal === 'ready') { assert.equal(state.lateRecommendation.status, 'ready'); assert.equal(replacements, 0); }
