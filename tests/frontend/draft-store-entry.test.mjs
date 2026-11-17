@@ -6,6 +6,15 @@ import { draftStoreFixture, drainDraftTasks } from './helpers/draft-store-fixtur
 
 const product = (name) => ({ name, colors: [] });
 
+test('draft save and restore retain feature suggestions and photo evidence', async (t) => {
+  const storage = draftStoreFixture(t);
+  storage.cloneWrites();
+  const featureSuggestions = [{ point: '도톰한 짜임감', evidence: '굵은 골이 보여요' }];
+  await saveProductDraft(product('니트'), { sellingPoints: [], featureSuggestions });
+  assert.deepEqual(storage.saved.analysis.featureSuggestions, featureSuggestions);
+  assert.deepEqual((await loadDraft()).analysis.featureSuggestions, featureSuggestions);
+});
+
 test('draft save and restore preserve the full fit profile and per-axis sources', async (t) => {
   const storage = draftStoreFixture(t);
   storage.cloneWrites();

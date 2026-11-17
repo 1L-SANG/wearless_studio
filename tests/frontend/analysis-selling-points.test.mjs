@@ -1,9 +1,54 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { applySellingPointEdit } from '../../src/features/analysis/sellingPoints.js';
+import { applySellingPointEdit, sellingPointSuggestions } from '../../src/features/analysis/sellingPoints.js';
 
 const base = { sellingPoints: ['골지 짜임', '라운드넥'], aiSuggestedPoints: ['골지 짜임'] };
+
+const suggestions = [
+  { point: '드롭숄더 실루엣', evidence: '어깨선이 내려와 있어요' },
+  { point: '도톰한 짜임감', evidence: '굵은 골이 보여요' },
+];
+
+test('추천은 공백을 빼고 고른 특징을 비교하고 삭제·수정 뒤 다시 보여 준다', () => {
+  const input = { featureSuggestions: suggestions, sellingPoints: ['드롭 숄더실루엣'], clothingType: 'top' };
+  const before = structuredClone(input);
+  assert.deepEqual(sellingPointSuggestions(input), [suggestions[1]]);
+  assert.deepEqual(input, before);
+  assert.deepEqual(sellingPointSuggestions({ ...input, sellingPoints: [] }), suggestions);
+  const edited = applySellingPointEdit({ sellingPoints: [suggestions[0].point], aiSuggestedPoints: [], index: 0, text: '넓은 어깨선' });
+  assert.deepEqual(sellingPointSuggestions({ ...input, ...edited }), suggestions);
+});
+
+test('특징이 8개이거나 특징 뽑기가 도는 동안에는 추천을 숨긴다', () => {
+  assert.deepEqual(sellingPointSuggestions({ featureSuggestions: suggestions, sellingPoints: Array(8).fill('선택') }), []);
+  assert.deepEqual(sellingPointSuggestions({ featureSuggestions: suggestions, pending: true }), []);
+  assert.deepEqual(sellingPointSuggestions({}), []);
+  assert.deepEqual(sellingPointSuggestions({ featureSuggestions: [] }), []);
+});
+
+test('상의와 아우터만 띄어 쓴 핏 이름까지 추천에서 거른다', () => {
+  const names = ['슬림핏', '레귤러핏', '세미오버핏', '오버핏', '루즈핏', '박시핏', '오버사이즈', '오버 핏', '세미 오버 핏'];
+  for (const clothingType of ['top', 'outer']) {
+    for (const name of names) {
+      assert.deepEqual(sellingPointSuggestions({ clothingType,
+        featureSuggestions: [{ point: `${name} 실루엣`, evidence: '' }, ...suggestions] }), suggestions);
+    }
+  }
+  for (const [clothingType, subCategory] of [['bottom', 'jeans'], ['bottom', 'mini_skirt'], ['dress', 'mini_dress']]) {
+    const fit = { point: '슬림핏 실루엣', evidence: '몸선을 따라 붙어요' };
+    assert.deepEqual(sellingPointSuggestions({ clothingType, subCategory, featureSuggestions: [fit] }), [fit]);
+  }
+});
+
+test('고른 것과 핏 이름을 뺀 다음 원래 순서로 세 개만 남긴다', () => {
+  const remaining = [...suggestions, { point: '사선 절개', evidence: '' }];
+  const input = { clothingType: 'top', sellingPoints: ['라운드 넥'], featureSuggestions: [
+    { point: '라운드넥', evidence: '' }, { point: '오버 핏', evidence: '' }, ...remaining,
+  ] };
+  assert.deepEqual(sellingPointSuggestions(input), remaining);
+  assert.deepEqual(sellingPointSuggestions({ featureSuggestions: [...remaining, { point: '추가', evidence: '' }] }), remaining);
+});
 
 test('rewrites the chip and drops it from the AI ledger', () => {
   // AI 제안을 셀러가 고친 순간 'AI 제안' 표식도 원장에서 빠져야 한다

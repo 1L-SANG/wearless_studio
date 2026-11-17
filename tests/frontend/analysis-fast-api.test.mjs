@@ -17,6 +17,35 @@ function capture(t, data) {
   globalThis.fetch = async (url, options) => { calls.push({ url, ...options }); return response(data); };
   t.after(() => { globalThis.fetch = original; }); return calls;
 }
+test('HTTP one-shot analysis and feature responses retain featureSuggestions', async (t) => {
+  const featureSuggestions = [{ point: '드롭숄더 실루엣', evidence: '어깨선이 내려와 있어요' }];
+  const input = { product: { colors: [] }, photos: [{ slot: 'Front', blob: new Blob(['bytes'], { type: 'image/jpeg' }) }] };
+  capture(t, { data: { clothingType: 'top', featureSuggestions } });
+  assert.deepEqual((await adapter.publicAnalyze(input.product, input)).featureSuggestions, featureSuggestions);
+  assert.deepEqual((await adapter.analyzePublicFeatures({ ...input, runId: 'feature_run_123', attempt: 1 })).featureSuggestions, featureSuggestions);
+});
+
+test('HTTP save and reload retain featureSuggestions', async (t) => {
+  const featureSuggestions = [{ point: '드롭숄더 실루엣', evidence: '어깨선이 내려와 있어요' }];
+  const originalSession = supabase.auth.getSession;
+  t.after(() => { supabase.auth.getSession = originalSession; });
+  supabase.auth.getSession = async () => ({ data: { session: { access_token: 'fake' } } });
+  const calls = capture(t, { clothingType: 'top', featureSuggestions });
+  assert.deepEqual((await adapter.saveAnalysis('feature-project', { featureSuggestions })).featureSuggestions, featureSuggestions);
+  assert.deepEqual(JSON.parse(calls[0].body), { featureSuggestions });
+  assert.deepEqual((await adapter.getAnalysis('feature-project')).featureSuggestions, featureSuggestions);
+});
+
+test('mock core omits recommendations until the feature route returns them', async () => {
+  const { mockAdapter } = await vite.ssrLoadModule('/src/lib/api/mockAdapter.js');
+  const complete = await mockAdapter.analyzeProduct(null);
+  const core = await mockAdapter.analyzeProduct(null, { parts: 'core', runId: 'feature_mock_123' });
+  assert.equal(complete.featureSuggestions.length, 2);
+  assert.equal(Object.hasOwn(core, 'featureSuggestions'), false);
+  const result = await mockAdapter.analyzePublicFeatures({ runId: 'feature_mock_123' });
+  assert.deepEqual(result.featureSuggestions, complete.featureSuggestions);
+});
+
 test('합치기는 비회원도 JSON 증표를 보내고 decisions를 읽는다', async (t) => {
   const calls = capture(t, { data: { decisions: [{ late: 0, action: 'new', early: null }] } });
   const body = { runId: 'run_test_123', pointsTicket: { signature: 'core' }, featureTicket: { signature: 'feature' } };

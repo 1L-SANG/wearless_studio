@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { transformWithEsbuild } from 'vite';
-import { applySellingPointEdit, SELLING_POINTS_MAX } from '../../src/features/analysis/sellingPoints.js';
+import { applySellingPointEdit, SELLING_POINTS_MAX, sellingPointSuggestions } from '../../src/features/analysis/sellingPoints.js';
 import { isFeatureRunPending } from '../../src/lib/featureRun.js';
 const source = readFileSync(new URL('../../src/features/analysis/AnalysisForm.jsx', import.meta.url), 'utf8');
 const title = source.indexOf('className="sec-title">강조하고 싶은 특징');
 const fragment = source.slice(source.lastIndexOf('<div className="surface">', title), source.indexOf('{/* 2. materials */}', title)).trim();
-const { code } = await transformWithEsbuild(`const chips = () => (${fragment});`, 'Chips.jsx', { jsx: 'transform' });
+const suggestionSource = source.slice(source.indexOf('  const suggestions ='), source.indexOf('  const sections ='));
+const { code } = await transformWithEsbuild(`const chips = () => { ${suggestionSource} return (${fragment}); };`, 'Chips.jsx', { jsx: 'transform' });
 const find = (tree, predicate) => !tree || typeof tree !== 'object' ? null : predicate(tree) ? tree
   : (tree.props?.children || []).flat(Infinity).map((child) => find(child, predicate)).find(Boolean);
 for (const fast of [false, true]) test(`특징 삭제 버튼은 붙여넣은 보이지 않는 문구도 지운다, 빠른 진입 ${fast}`, () => {
@@ -15,7 +16,7 @@ for (const fast of [false, true]) test(`특징 삭제 버튼은 붙여넣은 보
   const a = { sellingPoints: ['\u200b'], aiSuggestedPoints: [], dismissedAiPoints: [] };
   const bindings = { React: { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }) },
     a, spEditIdx: null, spAdding: false, spDraft: '', highlightedPoints: [], aiSet: new Set(), SELLING_POINTS_MAX,
-    Icon: 'Icon', isAnalysisFastEntryEnabled: () => fast, isFeatureRunPending, applySellingPointEdit,
+    Icon: 'Icon', isAnalysisFastEntryEnabled: () => fast, isFeatureRunPending, applySellingPointEdit, sellingPointSuggestions,
     onChange: (value) => { patch = value; }, setSpAdding() {} };
   const chips = new Function(...Object.keys(bindings), `${code}; return chips;`)(...Object.values(bindings));
   const button = find(chips(), (node) => node.props.className === 'sp-chip-x');
@@ -27,11 +28,69 @@ test('빠른 진입의 AI 칩 삭제 버튼은 버린 문구 목록도 함께 �
   let patch; const a = { sellingPoints: ['AI 문구'], aiSuggestedPoints: ['AI 문구'], dismissedAiPoints: [] };
   const bindings = { React: { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }) },
     a, spEditIdx: null, spAdding: false, spDraft: '', highlightedPoints: [], aiSet: new Set(a.aiSuggestedPoints), SELLING_POINTS_MAX,
-    Icon: 'Icon', isAnalysisFastEntryEnabled: () => true, isFeatureRunPending, applySellingPointEdit,
+    Icon: 'Icon', isAnalysisFastEntryEnabled: () => true, isFeatureRunPending, applySellingPointEdit, sellingPointSuggestions,
     onChange: (value) => { patch = value; }, setSpAdding() {} };
   const chips = new Function(...Object.keys(bindings), `${code}; return chips;`)(...Object.values(bindings));
   find(chips(), (node) => node.props.className === 'sp-chip-x').props.onClick({ stopPropagation() {} });
   assert.deepEqual(patch.dismissedAiPoints, ['AI 문구']);
+});
+
+const allNodes = (tree) => Array.isArray(tree) ? tree.flatMap(allNodes) : !tree || typeof tree !== 'object'
+  ? [] : [tree, ...allNodes(tree.props?.children)];
+const textOf = (tree) => Array.isArray(tree) ? tree.map(textOf).join('') : tree == null || typeof tree === 'boolean'
+  ? '' : typeof tree === 'object' ? textOf(tree.props?.children) : String(tree);
+function suggestionChips(initial, fast = true) {
+  let a = { sellingPoints: [], aiSuggestedPoints: [], dismissedAiPoints: [], ...initial };
+  const patches = [];
+  const show = () => {
+    const bindings = { React: { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }) },
+      a, spEditIdx: null, spAdding: false, spDraft: '', highlightedPoints: [], aiSet: new Set(a.aiSuggestedPoints), SELLING_POINTS_MAX,
+      Icon: 'Icon', isAnalysisFastEntryEnabled: () => fast, isFeatureRunPending, sellingPointSuggestions,
+      onChange: (patch) => { patches.push(patch); a = { ...a, ...patch }; }, setSpAdding() {} };
+    return new Function(...Object.keys(bindings), `${code}; return chips();`)(...Object.values(bindings));
+  };
+  return { show, patches, get analysis() { return a; }, replace(patch) { a = { ...a, ...patch }; } };
+}
+const featureSuggestions = [
+  { point: '드롭숄더 실루엣', evidence: '어깨선이 내려와 있어요' },
+  { point: '도톰한 짜임감', evidence: '' },
+];
+
+test('추천 선택은 셀러 칩만 추가하고 지우면 추천으로 돌아온다', () => {
+  const h = suggestionChips({ clothingType: 'top', sellingPoints: ['라운드넥'], aiSuggestedPoints: ['라운드넥'], featureSuggestions });
+  let tree = h.show();
+  assert.ok(find(tree, (node) => node.props.className === 'sp4-field'));
+  assert.ok(find(tree, (node) => node.props.className === 'sp-chipwrap sp4-top'));
+  const buttons = allNodes(tree).filter((node) => node.props?.className === 'sp-sug');
+  assert.equal(buttons[0].props.title, featureSuggestions[0].evidence);
+  assert.equal(buttons[0].props['aria-label'], `${featureSuggestions[0].point} 넣기, ${featureSuggestions[0].evidence}`);
+  assert.equal(buttons[1].props.title, undefined);
+  assert.equal(buttons[1].props['aria-label'], featureSuggestions[1].point);
+  assert.equal(textOf(find(tree, (node) => node.props.className === 'sp-add')), '직접 쓰기');
+  buttons[0].props.onClick({ stopPropagation() {} });
+  assert.deepEqual(h.patches[0], { sellingPoints: ['라운드넥', featureSuggestions[0].point] });
+  assert.deepEqual(h.analysis.aiSuggestedPoints, ['라운드넥']);
+  tree = h.show();
+  assert.equal(allNodes(tree).filter((node) => node.props?.className === 'sp-sug').length, 1);
+  const picked = find(tree, (node) => node.props.className?.startsWith('sp-chip editable') && node.props.children.includes(featureSuggestions[0].point));
+  assert.ok(picked);
+  assert.equal(find(picked, (node) => node.props.className === 'sp-ai-tag'), undefined);
+  find(picked, (node) => node.props.className === 'sp-chip-x').props.onClick({ stopPropagation() {} });
+  assert.equal(allNodes(h.show()).filter((node) => node.props?.className === 'sp-sug').length, 2);
+  assert.deepEqual(h.analysis.dismissedAiPoints, []);
+});
+
+test('빠른 진입 진행 중에는 추천을 숨기고 8개가 차면 받침과 직접 쓰기를 모두 숨긴다', () => {
+  const h = suggestionChips({ featureSuggestions, featureRun: { stage: 'requested' } });
+  assert.equal(find(h.show(), (node) => node.props.className === 'sp4-tray'), undefined);
+  assert.ok(find(h.show(), (node) => node.props.role === 'status'));
+  h.replace({ featureRun: { stage: 'applied' } });
+  assert.ok(find(h.show(), (node) => node.props.className === 'sp4-tray'));
+  h.replace({ sellingPoints: Array.from({ length: 8 }, (_, index) => `특징 ${index}`) });
+  assert.equal(find(h.show(), (node) => node.props.className === 'sp4-tray'), undefined);
+  assert.equal(find(h.show(), (node) => node.props.className === 'sp-add'), undefined);
+  h.replace({ sellingPoints: [], featureSuggestions: [] });
+  assert.equal(find(h.show(), (node) => node.props.className === 'sp4-tray'), undefined);
 });
 
 function featureStatus(initial) {
@@ -39,7 +98,7 @@ function featureStatus(initial) {
   const frame = []; let cursor = 0, effects = [], a = initial;
   const bindings = { React: { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }) },
     spEditIdx: null, spAdding: false, spDraft: '', aiSet: new Set(), SELLING_POINTS_MAX, Icon: 'Icon',
-    isAnalysisFastEntryEnabled: () => true, isFeatureRunPending, applySellingPointEdit, onChange() {}, setSpAdding() {},
+    isAnalysisFastEntryEnabled: () => true, isFeatureRunPending, applySellingPointEdit, sellingPointSuggestions, onChange() {}, setSpAdding() {},
     getActiveFeatureRun: () => null,
     useState(initial) { const index = cursor++; if (!(index in frame)) frame[index] = initial;
       return [frame[index], (next) => { frame[index] = next; }]; },

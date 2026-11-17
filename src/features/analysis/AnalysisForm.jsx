@@ -37,7 +37,7 @@ import {
   isRealModelSelection,
   resolveSelectedModelId,
 } from './modelSelection.js';
-import { SELLING_POINTS_MAX, applySellingPointEdit } from './sellingPoints.js';
+import { SELLING_POINTS_MAX, applySellingPointEdit, sellingPointSuggestions } from './sellingPoints.js';
 import { PageTemplatePicker } from './PageTemplatePicker.jsx';
 import { analysisPageStyle, selectTemplateStyle, validPageStyle } from '../../lib/pageTemplates/pageStyle.js';
 import { OutfitSelection } from './OutfitSelection.jsx';
@@ -927,6 +927,9 @@ export function AnalysisForm({
     }));
   };
 
+  const suggestions = sellingPointSuggestions({ ...a,
+    pending: isAnalysisFastEntryEnabled() && isFeatureRunPending(a.featureRun) });
+
   const sections = (
     <>
       <BasicInformation analysis={a} catalogs={catalogs} subCats={subCats}
@@ -941,13 +944,14 @@ export function AnalysisForm({
       {/* 4. selling points — chips */}
       <div className="surface">
         <div className="sec-head"><div><div className="sec-title">강조하고 싶은 특징</div>
-          <div className="sec-sub">상세페이지에서 가장 강조될 핵심 포인트예요. 최대 {SELLING_POINTS_MAX}개까지 넣을 수 있어요.</div></div>
+          <div className="sec-sub">상세페이지에서 가장 강조될 핵심 포인트예요.</div></div>
           <span className="pill pill-soft">{a.sellingPoints.length}/{SELLING_POINTS_MAX}개</span></div>
         {isAnalysisFastEntryEnabled() && isFeatureRunPending(a.featureRun) && (
           <div className="sp-feature-status" role="status"><span className="sp-feature-progress" />AI가 특징을 더 자세히 보는 중</div>
         )}
         {highlightedPoints.length > 0 && <div className="sp-feature-status" role="status">더 정확한 특징으로 다듬었어요</div>}
-        <div className="sp-chipwrap">
+        <div className="sp4-field">
+        <div className="sp-chipwrap sp4-top">
           {/* 칩을 누르면 그 자리에서 문구를 고친다. Enter 확정(비우고 Enter = 삭제), Esc 취소,
               포커스 이탈은 고친 문구만 저장. 입력 폭은 .sp-draft-fit 이 글자 폭 그대로 잡는다 —
               글자 수 추정으로는 영문 대문자·이모지·전각문자에서 앞글자가 밀렸다(실측). */}
@@ -1018,9 +1022,20 @@ export function AnalysisForm({
                 </span>
               </span>
             ) : (
-              <button className="sp-add" onClick={() => setSpAdding(true)}><Icon name="plus" size={14} />추가하기</button>
+              <button className="sp-add" onClick={() => setSpAdding(true)}><Icon name="plus" size={14} />직접 쓰기</button>
             )
           )}
+        </div>
+        {suggestions.length > 0 && <div className="sp4-tray">
+          <span className="sp-sl">추천</span>
+          <div className="sp-sugs">{suggestions.map(({ point, evidence }) => (
+            <button type="button" className="sp-sug" key={point} title={evidence || undefined}
+              aria-label={evidence ? `${point} 넣기, ${evidence}` : point}
+              onClick={(event) => { event.stopPropagation(); onChange({ sellingPoints: [...a.sellingPoints, point] }); }}>
+              <Icon name="plus" size={14} /><span>{point}</span>
+            </button>
+          ))}</div>
+        </div>}
         </div>
       </div>
 

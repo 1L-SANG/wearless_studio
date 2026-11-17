@@ -83,6 +83,33 @@
 .analysis-form .af-cards .md-count { font-size: 12px; font-weight: 500; }
 .analysis-form .af-cards .sp-chip .sp-ai-tag { top: -9px; padding: 2px 7px; font-size: 11px; font-weight: 700; letter-spacing: 0; }
 .analysis-form .chip-input-pending { font-size: 12px; font-weight: 500; }
+
+/* 특징은 한 입력칸 안에 두고, 추천 받침의 옅은 바탕으로만 나눈다. */
+.analysis-form .sp4-field { position: relative; margin-top: 14px; overflow: hidden; border-radius: var(--r-6); background: var(--bg-1); }
+.analysis-form .sp4-field::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--ring-strong);
+  pointer-events: none; transition: box-shadow .15s; }
+.analysis-form .sp4-field:focus-within::after { box-shadow: inset 0 0 0 1.5px var(--fg-1); }
+.analysis-form .sp4-top { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 10px; padding: 20px 16px 16px; }
+.analysis-form .sp4-top .sp-chip { max-width: 100%; }
+.analysis-form .sp4-field .sp-chip:not(.draft) { border: 0; padding: 9px 9px 9px 17px; background: var(--bg-1);
+  box-shadow: var(--elev-card), 0 0 0 1.5px var(--accent-blue-line); animation: none; }
+.analysis-form .sp4-field .sp-chip.editable:hover { filter: brightness(.98); }
+.analysis-form .sp4-field .sp-chip.feature-refined { box-shadow: var(--elev-card), 0 0 0 1.5px var(--accent-blue-line), 0 0 0 3px var(--ring-strong); }
+.analysis-form .sp4-field .sp-ai-tag { box-shadow: 0 0 0 2px var(--bg-1); }
+.analysis-form .sp4-field .sp-add { border-color: var(--accent-blue-line); color: var(--fg-1); }
+.analysis-form .sp4-field .sp-add:hover { border-color: var(--accent-blue); }
+.analysis-form .sp4-tray { display: flex; align-items: flex-start; gap: 12px; padding: 12px 16px 14px;
+  background: color-mix(in srgb, var(--bg-2) 75%, var(--bg-1)); }
+.analysis-form .sp-sl { flex: none; padding-top: 9px; font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--fg-2); }
+.analysis-form .sp-sugs { display: flex; flex: 1; min-width: 0; flex-wrap: wrap; gap: 8px; }
+.analysis-form .sp-sug { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; max-width: 100%; padding: 0 15px 0 12px;
+  border: 0; border-radius: var(--r-pill); background: var(--bg-1); box-shadow: inset 0 0 0 1px var(--ring-strong); color: var(--fg-1);
+  font: 500 14px/1.4 var(--font-body); text-align: left; white-space: nowrap; cursor: pointer; transition: box-shadow .15s, transform .15s; }
+.analysis-form .sp-sug svg { flex: none; color: var(--fg-2); }
+.analysis-form .sp-sug:hover { box-shadow: inset 0 0 0 1px var(--fg-3); }
+.analysis-form .sp-sug:active { transform: scale(.97); }
+.analysis-form .sp-sug:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
 .analysis-form .af-template-picker legend { font-family: var(--font-display); font-size: 17px; font-weight: 700; letter-spacing: .2px; }
 .analysis-form .af-template-picker label > span:last-child > b { font-size: 14px; font-weight: 600; }
 .analysis-form .af-template-picker label > span:last-child > small,
@@ -103,6 +130,10 @@
   .analysis-form .af-cards .md-input::after { font-size: 16px; }
   .analysis-form .af-cards .measure-cell { max-width: 100%; }
   .analysis-form .af-cards .mfield { max-width: 100%; }
+  .analysis-form .sp4-tray { flex-direction: column; gap: 8px; }
+  .analysis-form .sp-sl { padding-top: 0; }
+  .analysis-form .sp-sugs { flex: initial; width: 100%; }
+  .analysis-form .sp-sug { padding-block: 10px; white-space: normal; text-wrap: balance; }
 }
 @media (max-width: 360px) {
   .analysis-form .g-panel[data-col] { padding-inline: 12px; }
@@ -111,4 +142,5 @@
 @media (prefers-reduced-motion: reduce) {
   .analysis-form .g-reveal, .analysis-form .g-panel, .analysis-form .t2.just .v { animation: none; }
   .analysis-form .t2, .analysis-form .t2-pill, .analysis-form .g-card { transition: none; }
+  .analysis-form .sp4-field::after, .analysis-form .sp-sug { transition: none; }
 }

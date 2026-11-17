@@ -257,7 +257,8 @@ export const mockAdapter = {
     const result = await base.analyzeProduct(projectId, options);
     result.fitRead ??= mockFitRead(result);
     if (options.parts !== 'core') return result;
-    const { detailRecommendations: _details, detailRecommendationsHandoff: _handoff, ...core } = result;
+    const { detailRecommendations: _details, detailRecommendationsHandoff: _handoff,
+      featureSuggestions: _suggestions, ...core } = result;
     return { ...core, pointsTicket: { runId: options.runId, points: core.aiSuggestedPoints || [], signature: 'mock-points-ticket' } };
   },
   async analyzePublicFeatures({ runId }) {
@@ -266,6 +267,7 @@ export const mockAdapter = {
     const points = ['부드러운 원단과 촘촘한 짜임', '단정한 라운드넥'];
     const details = { ...clone(DB.analysis.detailRecommendations || {}), version: 1, status: 'ready', candidates: clone(DB.analysis.detailRecommendations?.candidates || []) };
     return { points: { status: 'ready', items: points },
+      featureSuggestions: clone(DB.analysis.featureSuggestions || []),
       detailRecommendations: details,
       detailRecommendationsHandoff: { signature: 'mock-detail-handoff', contract: details },
       featureTicket: { runId, points, signature: 'mock-feature-ticket' } };

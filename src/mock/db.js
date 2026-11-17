@@ -320,6 +320,10 @@ export function buildDraft() {
     detailRecommendations: { version: 1, status: 'unavailable', candidates: [] },
     detailRecommendationsHandoff: null,
     aiSuggestedPoints: ['골지 짜임', '라운드넥'],
+    featureSuggestions: [
+      { point: '드롭숄더 실루엣', evidence: '어깨선이 팔 쪽으로 내려와 있어요' },
+      { point: '도톰한 짜임감', evidence: '골이 굵고 짜임이 두툼해 보여요' },
+    ],
     styleTags: ['basic', 'daily', 'clean'],
     selectedModelId: 'mA', stylingModelId: null,
     models, matchClothing: matchClothing.map((m) => ({ ...m })),
