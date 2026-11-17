@@ -6,6 +6,16 @@ import { draftStoreFixture, drainDraftTasks } from './helpers/draft-store-fixtur
 
 const product = (name) => ({ name, colors: [] });
 
+test('draft save and restore preserve the full fit profile and per-axis sources', async (t) => {
+  const storage = draftStoreFixture(t);
+  storage.cloneWrites();
+  const fitProfile = { category: 'dress', gender: 'women', axes: { length: 'floor', sleeve: 'fingers' },
+    axisSources: { length: 'ai', sleeve: 'seller' }, source: 'seller', version: 2 };
+  await saveProductDraft(product('원피스'), { fitProfile });
+  assert.deepEqual(storage.saved.analysis.fitProfile, fitProfile);
+  assert.deepEqual((await loadDraft()).analysis.fitProfile, fitProfile);
+});
+
 test('WOC16 saving, restoring and updating a product draft keep content without photo-volume state', async (t) => {
   const storage = draftStoreFixture(t), analysis = { sellingPoints: ['부드러운 촉감'] };
   await saveProductDraft(product('저장한 니트'), analysis, '2026-11-13T00:00:00Z');

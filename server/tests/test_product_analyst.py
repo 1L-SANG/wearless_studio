@@ -178,6 +178,9 @@ def test_initial_length_classification_uses_the_generation_axis_definitions():
     prompt = pa.build_prompt({})
     for category in ("skirt", "dress"):
         for option in FIT_AXES[category]["length"]["women"]:
+            if option.get("scope") == "analysis":
+                assert f"{option['value']}_{category}:" not in prompt
+                continue
             assert f"{option['value']}_{category}: {option['promptEn']}" in prompt
     assert "mini ends above the knee" not in prompt
     assert "toward the ankle or floor" not in prompt

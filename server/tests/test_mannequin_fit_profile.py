@@ -493,6 +493,8 @@ def test_renderer_has_observable_phrase_for_every_catalog_entry():
         for axis, by_gender in by_axis.items():
             for entries in by_gender.values():
                 for e in entries:
+                    if e.get("scope") == "analysis":
+                        continue
                     if (category, axis, e["value"]) not in AXIS_OBSERVABLES:
                         missing.append((category, axis, e["value"]))
     assert missing == []
@@ -551,12 +553,16 @@ def test_top_outer_length_observables_enforce_visibility():
     for category in ("top", "outer"):
         for entries in FIT_AXES[category]["length"].values():
             for e in entries:
+                if e.get("scope") == "analysis":
+                    continue
                 obs = AXIS_OBSERVABLES[(category, "length", e["value"])]
                 assert "untucked" in obs and ("visible" in obs or "unobscured" in obs or "covered" in obs)
     # pants/skirt/dress length 엔 untucked 개념이 없어야 함(음성 단언)
     for category in ("pants", "skirt", "dress"):
         for entries in FIT_AXES[category]["length"].values():
             for e in entries:
+                if e.get("scope") == "analysis":
+                    continue
                 assert "untucked" not in AXIS_OBSERVABLES[(category, "length", e["value"])]
 
 
@@ -847,7 +853,7 @@ def test_untuck_instruction_survives_undeclared_length_axis(f):
 
 def test_top_length_axis_mirrors_the_frontend_vocabulary():
     for gender in ("women", "men"):
-        entries = FIT_AXES["top"]["length"][gender]
+        entries = [e for e in FIT_AXES["top"]["length"][gender] if e.get("scope") != "analysis"]
         assert [e["value"] for e in entries] == ["crop", "semi_crop", "basic", "semi_long", "long"]
         assert [e["label"] for e in entries] == ["크롭", "세미크롭", "기본", "세미롱", "롱"]
         assert all(e["promptEn"] for e in entries)
@@ -877,7 +883,7 @@ def test_legacy_top_length_values_normalize_to_the_semi_names():
 
 def test_sleeve_axis_mirrors_the_frontend_vocabulary():
     for gender in ("women", "men"):
-        entries = FIT_AXES["top"]["sleeve"][gender]
+        entries = [e for e in FIT_AXES["top"]["sleeve"][gender] if e.get("scope") != "analysis"]
         assert [e["value"] for e in entries] == ["cap", "cap_short", "short", "elbow"]
         assert [e["label"] for e in entries] == ["캡", "캡~반팔", "반팔", "5부"]
         assert all(e["promptEn"] for e in entries)
@@ -895,8 +901,8 @@ def test_normalize_keeps_valid_sleeve_and_drops_unknown_values():
     )
     assert "sleeve" not in dropped["axes"]
 
-    # 소매 축은 상의 전용 — 아우터 프로필에 실려 와도 통과시키지 않는다
+    # 분석용 아우터 소매 축도 저장 검증을 통과한다. 마네킹 선택지는 별도로 유지한다.
     outer = normalize_fit_profile(
         {"category": "outer", "gender": "women", "axes": {"fit": "regular", "sleeve": "short"}}
     )
-    assert "sleeve" not in outer["axes"]
+    assert outer["axes"]["sleeve"] == "short"

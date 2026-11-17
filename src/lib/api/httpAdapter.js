@@ -438,6 +438,7 @@ function mergeAnalysisResult(ai) {
     subCategory: ai.subCategory ?? null,
     targetGenders: ai.targetGenders ?? [],
     fit: ai.fit ?? null,
+    fitProfile: ai.fitProfile ?? base.fitProfile,
     materials: (ai.materials && ai.materials.length)
       ? ai.materials
       : [{ name: '면', ratio: 60 }, { name: '폴리에스터', ratio: 40 }],
