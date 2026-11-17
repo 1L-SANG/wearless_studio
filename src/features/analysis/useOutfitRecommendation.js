@@ -3,11 +3,17 @@ import { api } from '@/lib/api/index.js';
 import { applyOutfitSet, outfitRecommendationPatch, toggleOutfitOptional } from '@/lib/outfitSelections.js';
 import { initialRecommendationState, advanceRecommendationState, acceptLateRecommendation } from '@/lib/outfitPresentation.js';
 
+// Keep completion notices quiet across picker remounts and stale pending snapshots.
+// This is a session-only UI history; recommendation and selection storage stay unchanged.
+const completedContexts = new Set();
+// Allow the server's 30-second limit plus time for the next status response.
+const RECOMMENDATION_WAIT_MS = 35_000;
+
 // 이미 보인 폴백은 유지하고, 늦은 AI 후보와 세트는 명시 버튼을 누를 때 적용한다.
-export function useOutfitRecommendation({ analysis, projectId, product, onRecommendation, onChange }) {
+export function useOutfitRecommendation({ analysis, projectId, product, onRecommendation, onChange, onLateReady }) {
   const [state, setState] = useState(() => initialRecommendationState(analysis.outfitRecommendation, Date.now()));
-  const latest = useRef({ analysis, onRecommendation, onChange, state });
-  latest.current = { analysis, onRecommendation, onChange, state };
+  const latest = useRef({ analysis, onRecommendation, onChange, onLateReady, state });
+  latest.current = { analysis, onRecommendation, onChange, onLateReady, state };
   const delivery = useRef(null);
   const propsDelivery = useRef(null);
   const propsRequests = useRef(new Map());
@@ -82,6 +88,12 @@ export function useOutfitRecommendation({ analysis, projectId, product, onRecomm
       && fields.outfitRecommendation.contextKey === prior.recommendation?.contextKey;
     latest.current.state = next;
     setState(next);
+    const contextKey = fields.outfitRecommendation?.contextKey;
+    if (contextKey && ['ready', 'fallback', 'unavailable'].includes(fields.outfitRecommendation?.status)) {
+      const notify = prior.pending && next.lateRecommendation && !completedContexts.has(contextKey);
+      completedContexts.add(contextKey);
+      if (notify) current.onLateReady?.();
+    }
     const propsChanged = Object.entries(fields.outfitRecommendation?.props || {}).some(([role, value]) =>
       JSON.stringify(current.analysis.outfitRecommendation?.props?.[role]) !== JSON.stringify(value)
       || JSON.stringify(prior.recommendation?.props?.[role]) !== JSON.stringify(value));
@@ -131,37 +143,58 @@ export function useOutfitRecommendation({ analysis, projectId, product, onRecomm
     return () => clearTimeout(timer);
   }, [state.skeleton, state.enteredAt]);
   useEffect(() => {
-    if (analysis.outfitRecommendation?.status !== 'pending'
+    const waitingForSets = analysis.outfitRecommendation?.status === 'pending' && latest.current.state.pending;
+    if (!waitingForSets
       && !Object.values(analysis.outfitRecommendation?.props || {}).some(value => value.status === 'pending')) return undefined;
-    let canceled = false; let timer;
+    let retryTimer;
     const contextKey = analysis.outfitRecommendation.contextKey;
     const controller = new AbortController();
+    const endWait = () => {
+      const { state: prior, analysis: current } = latest.current;
+      if (controller.signal.aborted || !prior.pending || current.outfitRecommendation?.contextKey !== contextKey) return;
+      const next = { ...prior, recommendation: { ...prior.recommendation, status: 'fallback' },
+        pending: false, skeleton: false, waitExpired: true };
+      latest.current.state = next;
+      setState(next);
+      clearTimeout(retryTimer);
+      controller.abort();
+    };
+    const deadline = waitingForSets
+      ? setTimeout(endWait, Math.max(0, RECOMMENDATION_WAIT_MS - (Date.now() - latest.current.state.enteredAt)))
+      : undefined;
     const poll = async () => {
       try {
         const fields = outfitRecommendationPatch(await api.getOutfitRecommendation(projectId, { handoff: latest.current.analysis.outfitRecommendationHandoff, signal: controller.signal }));
-        if (canceled || fields?.outfitRecommendation?.contextKey !== contextKey) return;
+        if (controller.signal.aborted || fields?.outfitRecommendation?.contextKey !== contextKey) return;
         delivery.current = fields;
         receiveRecommendation(fields, true);
         if (fields.outfitRecommendation?.status !== 'pending'
           && !Object.values(fields.outfitRecommendation?.props || {}).some(value => value.status === 'pending')) {
           return;
         }
-      } catch { if (canceled) return; }
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        if (error?.code === 'invalid_analysis_handoff') {
+          endWait();
+          return;
+        }
+      }
       const propsPending = Object.values(latest.current.analysis.outfitRecommendation?.props || {}).some(value => value.status === 'pending');
-      timer = setTimeout(poll, propsPending ? 500 : 1000);
+      retryTimer = setTimeout(poll, propsPending ? 500 : 1000);
     };
     void poll();
-    return () => { canceled = true; clearTimeout(timer); controller.abort(); };
-  }, [projectId, analysis.outfitRecommendation?.contextKey, analysis.outfitRecommendation?.status, JSON.stringify(analysis.outfitRecommendation?.props)]);
+    return () => { clearTimeout(deadline); clearTimeout(retryTimer); controller.abort(); };
+  }, [projectId, state.pending, analysis.outfitRecommendation?.contextKey, analysis.outfitRecommendation?.status, JSON.stringify(analysis.outfitRecommendation?.props)]);
   const acceptLate = () => {
-    if (!state.lateRecommendation) return;
-    const accepted = acceptLateRecommendation(state);
+    if (!latest.current.state.lateRecommendation) return;
+    const accepted = acceptLateRecommendation(latest.current.state);
     const delivered = delivery.current?.outfitRecommendation?.status === 'ready'
       && delivery.current.outfitRecommendation.contextKey === accepted.recommendation.contextKey ? delivery.current : {};
     const fields = { ...delivered, outfitRecommendation: accepted.recommendation };
     if (fields.outfitRecommendation?.contextKey !== latest.current.analysis.outfitRecommendation?.contextKey) return;
     const merged = { ...latest.current.analysis, ...fields };
     const patch = applyOutfitSet(merged, 0, { legacyProps: !latest.current.capabilities.props });
+    latest.current.state = accepted;
     setState(accepted);
     latest.current.onRecommendation?.((current) => ({ ...current, ...fields }));
     latest.current.onChange(latest.current.onRecommendation ? patch : { ...fields, ...patch });

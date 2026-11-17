@@ -11,6 +11,8 @@ export const drain = async () => { for (let i = 0; i < 20; i++) await Promise.re
 export async function outfitHarness(api = {}) {
   const key = `__outfit${Math.random().toString(36).slice(2)}`;
   const runtime = { api: { getOutfitCapabilities: () => ({ props: true, maxAccessories: 3 }), ...api }, slots: [], cleanups: [], effects: [], index: 0 };
+  runtime.toasts = [];
+  runtime.toast = { push: (...args) => runtime.toasts.push(args) };
   globalThis[key] = runtime;
   const access = `globalThis[${JSON.stringify(key)}]`;
   const server = await createServer({ configFile: false, logLevel: 'silent',
@@ -19,7 +21,7 @@ export async function outfitHarness(api = {}) {
     server: { middlewareMode: true, hmr: false, watch: null }, appType: 'custom', ssr: { noExternal: true },
     plugins: [{ name: 'outfit-behavior', enforce: 'pre',
       resolveId(id) {
-        if (['react', 'react-dom', 'lucide-react', '@/lib/api/index.js', '@/features/shell/shell.jsx'].includes(id)) return `\0outfit-${id}`;
+        if (['react', 'react-dom', 'lucide-react', '@/lib/api/index.js', '@/features/shell/shell.jsx', '@/components/ui.jsx'].includes(id)) return `\0outfit-${id}`;
         if (id.startsWith('@/')) return fileURLToPath(new URL(`../../../src/${id.slice(2)}`, import.meta.url));
       },
       load(id) {
@@ -35,12 +37,14 @@ export async function outfitHarness(api = {}) {
         if (id === '\0outfit-lucide-react') return "export const Plus='plus',X='x',ChevronRight='chev-right',UserRound='model-icon',Shirt='shirt',Footprints='shoe',ShoppingBag='bag',Gem='accessory',ChevronDown='chev-down',ChevronUp='chev-up',Sparkles='sparkles',Info='info',Search='search',ArrowRight='arrow-right';";
         if (id === '\0outfit-@/lib/api/index.js') return `export const api=${access}.api;export const isMockMode=true;`;
         if (id === '\0outfit-@/features/shell/shell.jsx') return "export const WizardCTA='wizard-cta';";
+        if (id === '\0outfit-@/components/ui.jsx') return `export const useToast=()=>${access}.toast;`;
       },
     }],
   });
   return { runtime,
     load: (path) => server.ssrLoadModule(path),
     render(fn, props, attachRefs) { runtime.index = 0; runtime.effects = []; const tree = fn(props); attachRefs?.(tree); runtime.effects.splice(0).forEach(effect => effect()); return tree; },
+    unmount() { runtime.cleanups.forEach(cleanup => cleanup?.()); runtime.slots = []; runtime.cleanups = []; runtime.effects = []; },
     async close() { runtime.cleanups.forEach(cleanup => cleanup?.()); await server.close(); delete globalThis[key]; },
   };
 }

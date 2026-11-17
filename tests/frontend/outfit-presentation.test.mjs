@@ -165,13 +165,16 @@ test('pending has at most 1500ms of skeleton before usable fallback', () => {
   const advance = helper('advanceRecommendationState');
   const start = initial(pending, 100);
   assert.equal(start.skeleton, true);
+  assert.equal(start.pending, true);
   assert.equal(advance(start, pending, 1599).skeleton, true);
   const fallback = advance(start, pending, 1600);
   assert.equal(fallback.skeleton, false);
   assert.equal(fallback.recommendation.status, 'fallback');
+  assert.equal(fallback.pending, true, '표시용 fallback과 실제 진행 중 상태를 구별한다');
   assert.equal(fallback.recommendation.sets[0].slots.bottom, 'fallback');
   assert.equal(pending.status, 'pending');
   assert.equal(initial(ready).skeleton, false);
+  assert.equal(initial(ready).pending, false);
   assert.equal(initial({ status: 'unavailable' }).skeleton, false);
 });
 
@@ -184,6 +187,7 @@ test('ready during skeleton appears immediately, while late ready waits for expl
   const late = advance(fallback, ready, 2500);
   assert.equal(late.recommendation.sets[0].slots.bottom, 'fallback');
   assert.equal(late.lateRecommendation, ready);
+  assert.equal(late.pending, false);
   const applied = accept(late);
   assert.equal(applied.recommendation, ready);
   assert.equal(applied.lateRecommendation, null);
@@ -198,6 +202,7 @@ test('a new recommendation context starts its own skeleton and removes stale lat
   const old = advance(advance(initial(pending), pending, 1500), ready, 2000);
   const next = advance(old, { ...pending, contextKey: 'b' }, 3000);
   assert.equal(next.skeleton, true);
+  assert.equal(next.pending, true);
   assert.equal(next.enteredAt, 3000);
   assert.equal(next.lateRecommendation, null);
   assert.equal(next.recommendation.contextKey, 'b');

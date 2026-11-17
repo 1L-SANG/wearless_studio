@@ -256,7 +256,7 @@ const fallbackRecommendation = recommendation => recommendation?.status === 'pen
   ? { ...recommendation, status: 'fallback' } : recommendation;
 
 export function initialRecommendationState(recommendation, now = 0) {
-  return { recommendation, lateRecommendation: null, skeleton: recommendation?.status === 'pending',
+  return { recommendation, lateRecommendation: null, pending: recommendation?.status === 'pending', skeleton: recommendation?.status === 'pending',
     enteredAt: Number.isFinite(now) ? now : 0 };
 }
 
@@ -267,16 +267,16 @@ export function advanceRecommendationState(state, recommendation, now) {
   if (oldKey != null && nextKey != null && oldKey !== nextKey) return initialRecommendationState(next, now);
   const expired = now - state.enteredAt >= 1500;
   if (next?.status === 'pending') {
-    if (state.lateRecommendation || state.recommendation?.status === 'ready') return state;
+    if (state.waitExpired || state.lateRecommendation || state.recommendation?.status === 'ready') return state;
     return { ...state, recommendation: expired || !state.skeleton ? fallbackRecommendation(next) : next,
-      skeleton: state.skeleton && !expired };
+      pending: true, skeleton: state.skeleton && !expired };
   }
   if (next?.status === 'ready' && (state.recommendation?.status === 'fallback'
     || (state.recommendation?.status === 'pending' && expired))) {
     return { ...state, recommendation: fallbackRecommendation(state.recommendation),
-      lateRecommendation: next, skeleton: false };
+      lateRecommendation: next, pending: false, skeleton: false };
   }
-  return { ...state, recommendation: next, lateRecommendation: null, skeleton: false };
+  return { ...state, recommendation: next, lateRecommendation: null, pending: false, skeleton: false };
 }
 
 /** Applying selected items is deliberately left to applyOutfitSet in the selection layer. */

@@ -7,6 +7,14 @@ import { renderToStaticMarkup } from 'react-dom/server';
 let vite, OutfitSelection;
 before(async () => {
   vite = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true, include: [] },
+    // Static markup has no app ToastProvider; notification behavior is exercised
+    // separately by outfit-ai-pending with the same toast.push boundary.
+    plugins: [{ name: 'outfit-toast-boundary', enforce: 'pre',
+      resolveId(id) {
+        if (id === '@/components/ui.jsx' || id === fileURLToPath(new URL('../../src/components/ui.jsx', import.meta.url))) return '\0outfit-toast';
+      },
+      load(id) { if (id === '\0outfit-toast') return 'export const useToast=()=>({push(){}});'; },
+    }],
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
     server: { middlewareMode: true, watch: null }, appType: 'custom', logLevel: 'silent' });
   ({ OutfitSelection } = await vite.ssrLoadModule('/src/features/analysis/OutfitSelection.jsx'));

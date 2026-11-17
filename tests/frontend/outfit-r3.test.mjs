@@ -166,7 +166,7 @@ for (const terminal of ['pending', 'ready', 'fallback']) for (const parent of ['
   });
 }
 
-test('늦은 ready는 내 옷을 유지하고 명시적으로 AI 코디를 적용할 때만 바꾼다', async (t) => {
+test('늦은 ready는 내 옷을 유지하고 AI 추천 첫 클릭으로 적용할 때만 바꾼다', async (t) => {
   let now = 0; t.mock.method(Date, 'now', () => now);
   const waiting = deferred(), changes = [];
   const h = await outfitHarness({ getOutfitRecommendation: () => waiting.promise }); t.after(() => h.close());
@@ -181,6 +181,7 @@ test('늦은 ready는 내 옷을 유지하고 명시적으로 AI 코디를 적�
   waiting.resolve({ ...stale, outfitRecommendation: { ...stale.outfitRecommendation, status: 'ready' } });
   await drain(); const state = h.render(useOutfitRecommendation, props);
   assert.equal(state.lateRecommendation.status, 'ready');
+  assert.equal(state.pending, false);
   assert.deepEqual(props.analysis.outfitSelections.slots.bottom, choice('custom', 'user'));
   assert.equal(changes.length, 0);
   state.acceptLate();
