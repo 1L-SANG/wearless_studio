@@ -37,7 +37,7 @@ from .gemini_image import GeminiImageClient, InlineImage
 from .model_routing import resolve_model
 from .fit_axes import build_fit_profile_block, mannequin_fit_profile
 from .analysis_fit import build_analysis_fit_block, select_applied_fit_axes
-from .prompts import _product_block, _sanitize, build_mirrored_source_block
+from .prompts import _product_block, _sanitize, build_mirrored_source_block, build_sold_garment_visible_block
 from . import face_angle_swap, face_identity, space_set_assets
 from .reference_mode import reference_scope
 from ..facemarket_physique import build_body_profile_block, build_face_shape_block, build_hair_block
@@ -1060,6 +1060,10 @@ def render_cut_prompt(
         matching_block = build_fit_profile_block({**fit_profile, "axes": {}}) if fit_profile else ""
         matching_lines = [line for line in matching_block.splitlines() if line.startswith("- matching ")]
         fit_block = "\n\n".join(part for part in (fit_block, "\n".join(matching_lines)) if part)
+    sold_garment_block = (
+        build_sold_garment_visible_block(product.get("clothing_type") or product.get("clothingType"))
+        if cut in _WORN_CUTS and not has_mannequin else ""
+    )
     body_block = build_body_profile_block(body_profile)
     # 머리는 착장 컷에서만 의미가 있다(product 컷은 사람이 없다). 값이 없으면 블록을 내지 않으므로
     # 기존 프롬프트는 바이트 단위로 동일하다.
@@ -1083,7 +1087,8 @@ def render_cut_prompt(
         )
     outfit_block = need("OUTFIT_REFS") if actual_outfit_roles else ""
     return "\n\n".join(
-        part for part in (text, directing_block, fit_block, body_block, hair_block, face_shape_block, block, mirror_block, outfit_block)
+        part for part in (text, directing_block, fit_block, sold_garment_block, body_block,
+                          hair_block, face_shape_block, block, mirror_block, outfit_block)
         if part
     )
 

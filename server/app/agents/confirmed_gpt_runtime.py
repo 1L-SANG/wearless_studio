@@ -187,7 +187,7 @@ def _front_seller_facts(contract: dict) -> tuple[SellerFact, ...]:
 def build_packet(
     spec: dict,
     *,
-    clothing_type: str,
+    clothing_type: str | None,
     identity_source: str,
     selected_model_id: str | None,
     effective_model_id: str | None,
@@ -302,7 +302,7 @@ def build_packet(
             example.data,
             shot=str(spec["shot"]),
             direction=str(spec["direction"]),
-            clothing_type=clothing_type,
+            clothing_type=clothing_type or "top",
         )
     except ConfirmedGptRuntimeError:
         raise
@@ -354,6 +354,7 @@ def build_packet(
         fit_read=(analysis or {}).get("fitRead") if mannequin is None else None,
         source_mirrored=(mannequin is None and isinstance(analysis, dict)
                          and analysis.get("sourceMirrored") is True),
+        clothing_type=clothing_type,
     )
     grid = InlineImage("image/png", grid_bytes)
     images = (*((mannequin,) if mannequin is not None else ()), face_sheet, body_sheet, grid,

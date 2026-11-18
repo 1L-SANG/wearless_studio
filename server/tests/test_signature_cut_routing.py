@@ -209,10 +209,10 @@ def test_signature_prompt_uses_the_face_pass_direction_only_for_face_pass_cuts()
     assert cut_generator.SIGNATURE_DIRECTION in virtual
     assert cut_generator.SIGNATURE_DIRECTION_FACE_PASS not in virtual
     assert hashlib.sha256(_restore_prior_authority_sentence(real).encode()).hexdigest() == (
-        "474fb7aad06835dbadcdd4a106349e657fdc2993ca332a1cf6722fc78b70d67a"
+        "7f23884d70b0ef8e0ea0339111d0e6cd8983739022c6a4ffaa273768ff6666d1"
     )
     assert hashlib.sha256(_restore_prior_authority_sentence(virtual).encode()).hexdigest() == (
-        "52fce1b91d49fd7b36f5127eb0dec7398e675c8ecc1d968ffce99b40e915df6b"
+        "3a642ebe78002714bd4baf750605b617b0eb33eb428de63ece3de57d90fc5fec"
     )
 
 
@@ -474,9 +474,9 @@ def test_non_signature_prompt_includes_no_mannequin_authority_and_contact():
     spec = {**_sig_spec(), "exampleId": "ex_horizon_men_top_full_front_02"}
     prompt = cut_generator.build_prompt(spec, _product(), face_pass=True)
     prompt = _restore_prior_authority_sentence(prompt)
-    assert len(prompt.encode()) == 7191
+    assert len(prompt.encode()) == 7493
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "ff541b8d48d2cd655f73242a58048ea95444a9738981b61c12363c6b5fdcf691"
+        "7d8c398c58cffbcf7b90be71c3466c4887d3b7dcec826a8f7dc7b6f305d48c3f"
     )
 
 

@@ -846,8 +846,11 @@ def build_prompt(
             raise VisionError("cut_output_qc: authority template drift")
         for old, new in replacements:
             template = template.replace(old, new)
-    if (contract.get("recipeFamily") in {"styling", "horizon"}
-            and not any(reference.role == "mannequin" for reference in references)):
+    worn_without_mannequin = (
+        contract.get("recipeFamily") in {"styling", "horizon"}
+        and not any(reference.role == "mannequin" for reference in references)
+    )
+    if worn_without_mannequin:
         has_declared_fit = bool(_declared_fit_axis_names(contract))
         if authority_profile == "generic_v1" and has_declared_fit:
             template = template.replace(_GENERIC_GARMENT_CONSTRUCTION_GATE, _CONFIRMED_PRODUCT_CONSTRUCTION_GATE)
@@ -916,6 +919,18 @@ def build_prompt(
             "Judge every naturally visible part. Keep the framing rather than demanding extra body "
             "area just to show a selected item. Unselected example bags/accessories remain forbidden."
         )
+    if worn_without_mannequin and any(reference.role == "product" for reference in references):
+        clothing_type = contract.get("clothingType")
+        if clothing_type in ("top", "outer"):
+            prompt += (
+                "\n\nFor gate 11, when the sold garment's hem is in frame, the sold garment tucked into the bottom, "
+                "or lengthened beyond PRODUCT evidence, FAILS unless a declared or record-only fit axis covers it."
+            )
+        elif clothing_type == "bottom":
+            prompt += (
+                "\n\nFor gate 11, a coordinating top tucked into the sold bottom is acceptable; "
+                "a top that covers the sold bottom's waistband or front construction FAILS."
+            )
     return prompt
 
 

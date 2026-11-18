@@ -1821,11 +1821,8 @@ async def run_detail_page_job(app, job: dict) -> None:
             # contentRole가 사용자 선택의 정본이다. 저장 입력을 여기서도 방어적으로
             # 정규화해 매칭 첨부·컷·카피·조립이 모두 같은 역할/레시피를 읽게 한다.
             storyboard = content_roles.canonicalize_storyboard(storyboard)
-            clothing_type = (
-                product.get("clothing_type")
-                or product.get("clothingType")
-                or "top"
-            )
+            sold_clothing_type = product.get("clothing_type") or product.get("clothingType")
+            clothing_type = sold_clothing_type or "top"
             outfit_snapshot = outfit_generation.from_payload(payload, analysis, clothing_type)
             space_set_bindings = space_set_assets.bind_storyboard_space_sets(
                 storyboard,
@@ -2736,7 +2733,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     confirmed_packet = confirmed_gpt_runtime.build_packet(
                         cut_generator.apply_reference_compatibility(
                             garment_color.render_spec(normalized, color_plan) if color_plan else normalized),
-                        clothing_type=clothing_type,
+                        clothing_type=sold_clothing_type,
                         identity_source=cut_source,
                         selected_model_id=block_model_id,
                         effective_model_id=eff_model_id,

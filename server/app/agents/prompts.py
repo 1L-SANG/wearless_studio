@@ -246,6 +246,23 @@ def build_mirrored_source_block(analysis: dict) -> str:
     )
 
 
+def build_sold_garment_visible_block(clothing_type: str | None) -> str:
+    clothing_type = str(clothing_type or "").strip().lower()
+    opening = "Where the sold garment meets another garment, the sold garment is never hidden:"
+    if clothing_type in ("top", "outer"):
+        return (
+            f"{opening} wear it outside the bottom with its whole hem visible, not tucked in. "
+            "Leaving it out never changes its length; the hem stays where the PRODUCT references put it. "
+            "A declared fit value that says otherwise takes precedence."
+        )
+    if clothing_type == "bottom":
+        return (
+            f"{opening} its waistband and front construction stay fully visible. "
+            "The coordinating top may be tucked in or end above the waistband, but must not cover them."
+        )
+    return ""
+
+
 def render_mannequin_prompt(
     template: str,
     ctx: MannequinPromptContext,
