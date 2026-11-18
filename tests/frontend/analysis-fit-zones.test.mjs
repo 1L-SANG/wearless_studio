@@ -5,7 +5,7 @@ import React from 'react';
 import { componentModule, hooks } from './helpers/reactHarness.mjs';
 import * as fit from '../../src/lib/fitZone.js';
 import { mockFitRead } from '../../src/mock/fitRead.js';
-import { axesFor, fitProfileCategory, mannequinFitProfile, subcategoryLength } from '../../src/lib/fitAxes.js';
+import { analysisAxesFor, axesFor, fitProfileCategory, mannequinFitProfile, subcategoryLength } from '../../src/lib/fitAxes.js';
 import { genderForClothingType } from '../../src/lib/productGender.js';
 import { matchingFitDefinition, matchingFitFromProfile, resolveMainMatchingItem } from '../../src/lib/matchingFit.js';
 
@@ -82,20 +82,50 @@ test('missing and pending fit reads show photo-only zones while keeping legacy h
   assert.equal(fit.fitZoneState(fit.fitZones(fit.analysisFitInput(dress))[0], dress.fitProfile).label, '사진대로');
 });
 
-test('the existing category editor retains its legacy hem initialization and per-axis sources', () => {
+function editCategory(a, subCategory) {
   const source = read('../../src/features/analysis/AnalysisForm.jsx');
   const body = source.slice(source.indexOf('  const fitOptsOf ='), source.indexOf('  // subCategory 는'));
-  const edit = (a) => new Function('a', 'axesFor', 'fitProfileCategory', 'subcategoryLength',
+  const edit = new Function('a', 'analysisAxesFor', 'axesFor', 'fitProfileCategory', 'subcategoryLength',
     'genderForClothingType', 'matchingFitFromProfile', 'matchingFitDefinition', 'resolveMainMatchingItem',
-    `${body}; return withFitProfile;`)(a, axesFor, fitProfileCategory, subcategoryLength,
+    `${body}; return withFitProfile;`)(a, analysisAxesFor, axesFor, fitProfileCategory, subcategoryLength,
     genderForClothingType, matchingFitFromProfile, matchingFitDefinition, resolveMainMatchingItem);
+  return edit({ subCategory });
+}
+
+test('the existing category editor retains its legacy hem initialization and per-axis sources', () => {
   const initial = fit.fillAnalysisFitZones({ ...base, fitRead });
-  const changed = edit(initial)({ subCategory: 'tshirt' });
+  const changed = editCategory(initial, 'tshirt');
   assert.deepEqual(changed.fitProfile.axisSources, initial.fitProfile.axisSources);
   const skirt = fit.fillAnalysisFitZones({ clothingType: 'bottom', subCategory: 'mini_skirt', targetGenders: ['women'] });
-  const midi = edit(skirt)({ subCategory: 'midi_skirt' });
+  const midi = editCategory(skirt, 'midi_skirt');
   assert.equal(midi.fitProfile.axes.length, 'midi');
   assert.equal(fit.fillAnalysisFitZones({ ...skirt, ...midi }).fitProfile.axisSources.length, 'unsure');
+});
+
+test('changing a T-shirt to a shirt preserves seller fit, measured length and AI sleeve through refilling', () => {
+  const initial = fit.fillAnalysisFitZones({ ...base, subCategory: 'tshirt', fit: 'regular',
+    measurements: [{ key: 'totalLength', value: 42 }],
+    fitRead: { ...fitRead, photoType: 'worn', sleeve: { value: 'wrist', confident: true } } });
+  const chosen = fit.selectAnalysisFitZone(initial, 'fit', 'over');
+  const patch = editCategory(chosen, 'shirt');
+  const saved = fit.fillAnalysisFitZones({ ...chosen, ...patch });
+  assert.equal(saved.fit, 'regular');
+  assert.deepEqual(saved.fitProfile.axes, { fit: 'over', length: 'semi_crop', sleeve: 'wrist' });
+  assert.deepEqual(saved.fitProfile.axisSources, { fit: 'seller', length: 'measure', sleeve: 'ai' });
+  assert.equal(mannequinFitProfile(saved.fitProfile, saved.subCategory), null);
+});
+
+test('dress and skirt subcategory changes preserve lengths selected or already read from the photos', () => {
+  for (const [clothingType, kind] of [['dress', 'dress'], ['bottom', 'skirt']]) {
+    const initial = fit.fillAnalysisFitZones({ ...base, clothingType, subCategory: `mini_${kind}`, fitRead });
+    for (const source of ['seller', 'ai']) {
+      const before = source === 'seller' ? fit.selectAnalysisFitZone(initial, 'length', 'above_knee') : initial;
+      const after = fit.fillAnalysisFitZones({ ...before, ...editCategory(before, `midi_${kind}`) });
+      assert.equal(after.fitProfile.axes.length, 'above_knee');
+      assert.equal(after.fitProfile.axisSources.length, source);
+      assert.deepEqual(mannequinFitProfile(after.fitProfile, after.subCategory)?.axes, { length: 'midi' });
+    }
+  }
 });
 
 async function basic(t, initial = { ...base, fitRead }) {

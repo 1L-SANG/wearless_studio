@@ -284,7 +284,7 @@ def render_mannequin_prompt(
     if leftover:
         raise ValueError(f"프롬프트 템플릿에 해결되지 않은 토큰: {sorted(set(leftover))}")
     fit_profile = ctx.fit_profile if ctx.fit_profile is not None else analysis.get("fitProfile")
-    fit_profile = mannequin_fit_profile(fit_profile)
+    fit_profile = mannequin_fit_profile(fit_profile, sub_category=analysis.get("subCategory"))
     fit_block = build_fit_profile_block(fit_profile, ctx.adjusted_axes)
     product_block = _product_block(
         product,

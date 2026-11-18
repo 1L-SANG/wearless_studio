@@ -249,16 +249,26 @@ export function analysisAxesFor(category, gender) {
 }
 
 /** 분석 출처가 있는 축과 분석 전용 값을 마네킹 입력에서 뺀다. */
-export function mannequinFitProfile(profile) {
+export function mannequinFitProfile(profile, subCategory) {
   if (!profile?.axisSources) return profile;
   const { axisSources, ...legacy } = profile;
   const catalog = analysisAxesFor(profile.category, profile.gender);
+  const hasLegacyHem = profile.gender === 'women' && ['skirt', 'dress'].includes(profile.category);
   const axes = Object.fromEntries(Object.entries(profile.axes || {}).filter(([axis, value]) => {
-    if (Object.hasOwn(axisSources, axis)) return false;
+    const unsureDefault = axis === 'length' && hasLegacyHem && axisSources[axis] === 'unsure'
+      && ['mini', 'midi', 'long'].includes(value);
+    if (Object.hasOwn(axisSources, axis) && !unsureDefault) return false;
     if (catalog[axis]?.every((entry) => entry.scope === 'analysis')) return false;
     return catalog[axis]?.find((entry) => entry.value === value)?.scope !== 'analysis';
   }));
+  if (hasLegacyHem && typeof subCategory === 'string' && subCategory.endsWith(`_${profile.category}`)
+    && (!Object.hasOwn(axes, 'length') || Object.hasOwn(axisSources, 'length'))) {
+    const length = subcategoryLength(subCategory);
+    if (length) axes.length = length;
+  }
   if (!Object.keys(axes).length && !legacy.matchingFit && !legacy.matchCut) return null;
+  if (hasLegacyHem && axes.length && Object.keys(axes).length === 1 && !legacy.matchingFit && !legacy.matchCut
+    && (!Object.hasOwn(profile.axes || {}, 'length') || Object.hasOwn(axisSources, 'length'))) legacy.source = 'auto';
   return { ...legacy, axes };
 }
 

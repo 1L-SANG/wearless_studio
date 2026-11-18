@@ -4,8 +4,11 @@
 실제 출력은 고정 promptEn 문구만 사용한다.
 """
 
-def mannequin_fit_profile(profile: dict | None) -> dict | None:
-    """분석 출처가 있는 축은 마네킹 입력에서 제외한다."""
+_LEGACY_HEMS = ("mini", "midi", "long")
+
+
+def mannequin_fit_profile(profile: dict | None, *, sub_category: str | None = None) -> dict | None:
+    """마네킹에는 분석 칩을 제외하고 기존 세부 카테고리 기장을 유지한다."""
     if not isinstance(profile, dict):
         return profile
     axes = profile.get("axes")
@@ -13,6 +16,7 @@ def mannequin_fit_profile(profile: dict | None) -> dict | None:
     sources = profile.get("axisSources")
     sources = sources if isinstance(sources, dict) else {}
     category, gender = profile.get("category"), profile.get("gender")
+    legacy_hem = gender == "women" and category in ("dress", "skirt")
     by_axis = FIT_AXES.get(category, {}) if isinstance(category, str) else {}
     kept = {}
     for axis, value in axes.items():
@@ -21,14 +25,24 @@ def mannequin_fit_profile(profile: dict | None) -> dict | None:
         all_entries = [entry for values in by_gender.values() for entry in values]
         analysis_axis = bool(all_entries) and all(entry.get("scope") == "analysis" for entry in all_entries)
         analysis_value = any(e["value"] == value and e.get("scope") == "analysis" for e in entries)
-        if axis in sources or analysis_axis or analysis_value:
+        unsure_default = axis == "length" and legacy_hem and sources.get(axis) == "unsure" and value in _LEGACY_HEMS
+        if (axis in sources and not unsure_default) or analysis_axis or analysis_value:
             continue
         kept[axis] = value
     if "axisSources" not in profile and kept == axes:
         return profile
-    if "axisSources" in profile and not (kept or profile.get("matchingFit") or profile.get("matchCut")):
+    projected = {key: value for key, value in profile.items() if key != "axisSources"}
+    if "axisSources" in profile:
+        legacy_length = "length" in axes and "length" not in sources
+        if legacy_hem and not legacy_length:
+            default = next((length for length in _LEGACY_HEMS if sub_category == f"{length}_{category}"), None)
+            if default:
+                kept["length"] = default
+            if set(kept) == {"length"} and not (profile.get("matchingFit") or profile.get("matchCut")):
+                projected["source"] = "auto"
+    if "axisSources" in profile and not (kept or projected.get("matchingFit") or projected.get("matchCut")):
         return None
-    return {**{key: value for key, value in profile.items() if key != "axisSources"}, "axes": kept}
+    return {**projected, "axes": kept}
 
 
 def analysis_for_selected_mannequin(
@@ -45,7 +59,7 @@ def analysis_for_selected_mannequin(
         or (snapshot.get("profile") is not None and not isinstance(snapshot.get("profile"), dict))
     ):
         profile = analysis.get("fitProfile")
-        filtered = mannequin_fit_profile(profile)
+        filtered = mannequin_fit_profile(profile, sub_category=analysis.get("subCategory"))
         return analysis if filtered is profile else {**analysis, "fitProfile": filtered}
     # profile=null은 저장 키 삭제와 별개인 "사진 그대로" 기록이다.
     return {**analysis, "fitProfile": mannequin_fit_profile(snapshot.get("profile"))}

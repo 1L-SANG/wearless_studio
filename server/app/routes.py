@@ -164,10 +164,11 @@ async def _fit_profile_snapshot(
     """
     analysis = await repo.get_analysis(conn, project_id) or {}
     original_profile = fit_axes.normalize_fit_profile(analysis.get("fitProfile"))
-    prev = fit_axes.mannequin_fit_profile(original_profile)
+    sub_category = analysis.get("subCategory")
+    prev = fit_axes.mannequin_fit_profile(original_profile, sub_category=sub_category)
     if requested is not None:
         original_profile = fit_axes.normalize_fit_profile(requested)
-        profile = fit_axes.mannequin_fit_profile(original_profile)
+        profile = fit_axes.mannequin_fit_profile(original_profile, sub_category=sub_category)
         adjusted = fit_axes.adjusted_axes_between(prev, profile)
     else:
         profile, adjusted = prev, []

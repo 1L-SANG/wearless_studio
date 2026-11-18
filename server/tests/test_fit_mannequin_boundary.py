@@ -123,6 +123,28 @@ def test_analysis_only_snapshot_and_mannequin_prompt_match_main(monkeypatch, sou
     assert render_mannequin_prompt(template, ctx, {}, fresh) == expected
 
 
+@pytest.mark.parametrize("category,subcategory,default,other", [
+    ("dress", "mini_dress", "mini", "above_knee"),
+    ("skirt", "midi_skirt", "midi", "knee"),
+])
+@pytest.mark.parametrize("source", ["unsure", "ai", "seller"])
+def test_mannequin_snapshot_and_prompt_use_the_original_subcategory_default(monkeypatch, category, subcategory, default, other, source):
+    legacy_profile = {"category": category, "gender": "women", "version": 2, "source": "auto",
+                      "axes": {"length": default}}
+    legacy = {"subCategory": subcategory, "fitProfile": legacy_profile}
+    analysis = {**legacy, "fitProfile": {**legacy_profile,
+        "axes": {"length": default if source == "unsure" else other}, "axisSources": {"length": source},
+        "source": "seller" if source == "seller" else "auto"}}
+    monkeypatch.setattr(routes.repo, "get_analysis", AsyncMock(return_value=analysis))
+    snapshot = asyncio.run(routes._fit_profile_snapshot(None, "u1", "p1", None))
+    assert snapshot == {"version": 1, "profile": legacy_profile, "adjustedAxes": []}
+    ctx = MannequinPromptContext(clothing_type=category, product_count=1, base_gender="women", image_manifest="1. Front product")
+    template = "Dress ${baseGender} in ${clothingType}.\n${imageManifest}"
+    assert mannequin.generation_spec(analysis) == legacy_profile
+    assert render_mannequin_prompt(template, ctx, {}, analysis) == render_mannequin_prompt(template, ctx, {}, legacy)
+    assert select_applied_fit_axes(analysis["fitProfile"]) == ([] if source == "unsure" else [("length", other, source)])
+
+
 @pytest.mark.parametrize("category,gender,value", [("outer", "women", None), ("outer", "men", "unknown"), ("dress", "men", "cap")])
 def test_entirely_analysis_scoped_axes_are_removed_even_without_a_known_value(category, gender, value):
     p = {"category": category, "gender": gender, "axes": {"sleeve": value}}

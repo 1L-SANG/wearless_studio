@@ -154,10 +154,13 @@ export function fillFitZones({ fitRead, fit, profile, ...context } = {}) {
   const sameScope = profile?.category === category && profile?.gender === gender;
   const axes = sameScope ? { ...profile.axes } : {};
   const axisSources = sameScope ? { ...profile.axisSources } : {};
+  const catalog = analysisAxesFor(category, gender);
   const sleeveType = resolveSleeveType(context.sleeveType ?? fitRead?.sleeveType, context.measurements);
   for (const zone of fitZones({ ...context, gender, sleeveType })) {
     const { axis, options } = zone;
-    if (axisSources[axis] === 'seller' && optionsFor(category, axis).some(({ value }) => value === axes[axis])) continue;
+    const validCurrent = catalog[axis]?.some(({ value }) => value === axes[axis])
+      && optionsFor(category, axis).some(({ value }) => value === axes[axis]);
+    if (axisSources[axis] === 'seller' && validCurrent) continue;
     const measured = fitValueFromMeasurements(axis, { ...context, gender, sleeveType });
     if (measured != null) {
       axes[axis] = measured;
@@ -172,7 +175,9 @@ export function fillFitZones({ fitRead, fit, profile, ...context } = {}) {
     let confident = axis === 'fit' || reading?.confident === true;
     if (category === 'top' && axis === 'length' && fitRead?.photoType === 'hanger') confident = false;
     if (axis === 'sleeve' && LONG_SLEEVE_OPTIONS.some(({ value }) => value === aiValue) && fitRead?.photoType !== 'worn') confident = false;
-    if (confident && options.some(({ value }) => value === aiValue)) {
+    // 세부 분류가 카드 목록을 좁혀도 같은 사진에서 확인한 기존 칩은 유지한다.
+    const sameReading = axisSources[axis] === 'ai' && validCurrent && axes[axis] === aiValue;
+    if (confident && (sameReading || options.some(({ value }) => value === aiValue))) {
       axes[axis] = aiValue;
       axisSources[axis] = 'ai';
     } else {

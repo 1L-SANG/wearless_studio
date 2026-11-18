@@ -233,7 +233,7 @@ for (const [index, step] of ['storyboard', 'mannequin', 'generating', 'failed'].
     updatedAt: new Date(Date.now() - (index + 1) * 3600000).toISOString() };
   draft.editorBlocks = [];
   if (step !== 'storyboard') {
-    draft.mannequins = [makeMannequinCut(0, draft.analysis.fitProfile)];
+    draft.mannequins = [makeMannequinCut(0, draft.analysis.fitProfile, draft.analysis.subCategory)];
     draft.project.selectedMannequinId = draft.mannequins[0].id;
     draft.project.latestJobs.mannequin = { id: `${id}-mannequin`, status: 'done', errorCode: null };
   }
@@ -253,12 +253,12 @@ const syncSelectedCut = (cutId) => {
   DB.mannequins = DB.mannequins.map((m) => ({ ...m, isSelected: !!selected && m.id === selected.id }));
   return selected;
 };
-function makeMannequinCut(version, fitProfile) { return {
+function makeMannequinCut(version, fitProfile, subCategory) { return {
   id: uid('mq'),
   version,
   imageUrl: Placeholder.photo(`mq${version}_${Date.now()}`, 'mannequin'),
   isSelected: true,
-  fitProfile: clone(mannequinFitProfile(fitProfile) ?? null),
+  fitProfile: clone(mannequinFitProfile(fitProfile, subCategory) ?? null),
   fitProfileRecorded: true,
   createdAt: new Date().toISOString(),
 }; }
@@ -1424,7 +1424,7 @@ export const api = {
       if (activeJob.cancelled) throw jobCancelledError();
       if (DB.project.id !== ownerId) return { data: { cuts: [] }, credits: DB.account.credits };
       if (!DB.mannequins.length) {
-        DB.mannequins.push(makeMannequinCut(0, DB.analysis.fitProfile));
+        DB.mannequins.push(makeMannequinCut(0, DB.analysis.fitProfile, DB.analysis.subCategory));
         syncSelectedCut(DB.mannequins[0].id);
       }
       touch();
@@ -1463,7 +1463,7 @@ export const api = {
       DB.analysis.fitProfile = clone(fitProfile);
     }
     const prevMax = DB.mannequins.reduce((max, cut) => Math.max(max, cut.version ?? -1), -1);
-    const next = makeMannequinCut(prevMax + 1, fitProfile ?? DB.analysis.fitProfile);
+    const next = makeMannequinCut(prevMax + 1, fitProfile ?? DB.analysis.fitProfile, DB.analysis.subCategory);
     DB.mannequins = DB.mannequins.map((m) => ({ ...m, isSelected: false }));
     DB.mannequins.push(next);
     syncSelectedCut(next.id);

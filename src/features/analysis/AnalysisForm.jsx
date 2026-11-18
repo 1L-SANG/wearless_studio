@@ -17,7 +17,7 @@ import { Icon, Button, Skeleton, ErrorState, Modal, useToast } from '@/component
 import { analysisWaitProgress } from '@/lib/smoothProgress.js';
 import { PageHead } from '@/features/shell/shell.jsx';
 import { AI_MODELS } from '@/features/analysis/aiModels.js';
-import { axesFor, fitProfileCategory, subcategoryLength } from '@/lib/fitAxes.js';
+import { analysisAxesFor, axesFor, fitProfileCategory, subcategoryLength } from '@/lib/fitAxes.js';
 import { fillAnalysisFitZones, selectAnalysisFitZone } from '@/lib/fitZone.js';
 import { BasicInformation } from './BasicInformation.jsx';
 import './AnalysisForm.css';
@@ -846,11 +846,15 @@ export function AnalysisForm({
     const sameProfileScope = prev?.category === cat && prev?.gender === gender;
     const axes = sameProfileScope ? { ...(prev.axes || {}) } : {}; // 카테고리·성별이 바뀌면 타 축 무효 → 리셋
     const axisSources = sameProfileScope ? { ...prev.axisSources } : {};
-    if (fit === null) { delete axes.fit; delete axisSources.fit; } else axes.fit = fit;
+    const catalog = analysisAxesFor(cat, gender);
+    const hasChosenAxis = (axis) => ['seller', 'measure', 'ai'].includes(axisSources[axis])
+      && catalog[axis]?.some(({ value }) => value === axes[axis]);
+    if (fit === null) { delete axes.fit; delete axisSources.fit; }
+    else if (!hasChosenAxis('fit')) { axes.fit = fit; delete axisSources.fit; }
     if (source === 'seller' && fit !== null) axisSources.fit = 'seller';
     if ('subCategory' in patch && (patch.subCategory !== a.subCategory || !sameProfileScope)) {
       const length = subcategoryLength(patch.subCategory);
-      if (length) { axes.length = length; delete axisSources.length; }
+      if (length && !hasChosenAxis('length')) { axes.length = length; delete axisSources.length; }
     }
     if (next.subCategory === 'leggings') {
       delete axes.cut;

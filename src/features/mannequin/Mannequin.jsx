@@ -86,7 +86,7 @@ function createFitProfileDraft(product, analysis, mainMatchingItem) {
   const gender = derivedGender(analysis, product);
   const axisDefs = analysis?.subCategory === 'leggings' ? {} : axesFor(category, gender);
   const existing = analysis?.fitProfile?.category === category && analysis?.fitProfile?.gender === gender
-    ? mannequinFitProfile(analysis.fitProfile)
+    ? mannequinFitProfile(analysis.fitProfile, analysis.subCategory)
     : null;
   const axes = Object.fromEntries(Object.keys(axisDefs).map((axis) => [axis, null]));
   Object.keys(axes).forEach((axis) => {
