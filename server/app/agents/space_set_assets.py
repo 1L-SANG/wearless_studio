@@ -38,9 +38,10 @@ _CUT_TYPES = ("styling", "horizon")
 _SET_TYPES = ("styling", "horizon-rotation", "horizon-sequence")
 _SHOTS = ("full", "medium")
 _DIRECTIONS = ("front", "side", "back")
+_SEPARATE_CLOTHING_TYPES = ("top", "bottom", "outer")
 _SET_SCOPE_BY_GENDER = {
     "women": ("top", "bottom", "outer", "dress"),
-    "men": ("top", "bottom", "outer"),
+    "men": _SEPARATE_CLOTHING_TYPES,
 }
 
 log = logging.getLogger("wearless.space_set_assets")
@@ -311,12 +312,12 @@ def validate_space_set_registry_document(
             example_ids.add(example_id)
         if len(applicable) > 1:
             shared_top_outer = set(applicable) == {"top", "outer"}
-            universal_rotation = (
+            shared_rotation = (
                 set_type == "horizon-rotation"
-                and tuple(applicable) == _SET_SCOPE_BY_GENDER[gender]
+                and tuple(applicable) in (_SET_SCOPE_BY_GENDER[gender], _SEPARATE_CLOTHING_TYPES)
             )
             if (
-                (not shared_top_outer and not universal_rotation)
+                (not shared_top_outer and not shared_rotation)
                 or any(member["shot"] != "full" for member in members)
             ):
                 raise ValueError("space_set_registry_applicability_invalid")

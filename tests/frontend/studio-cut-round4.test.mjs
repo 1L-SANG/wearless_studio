@@ -12,9 +12,9 @@ import { storyboardPhotoPanelHarness } from './helpers/storyboardPhotoPanelHarne
 
 const catalogs = { ...withStoryboardSpaceSetExamples({ genExamples: raw }),
   shotTypes: [{ value: 'full' }, { value: 'medium' }], productShotTypes: [{ value: 'ghost' }, { value: 'detail' }] };
-const choicesFor = (gender, extra = {}) => photoGalleryChoices(catalogs.genExamples,
-  storyboardSpaceSetsFor({ gender, clothingType: 'top' }),
-  { gender, clothingType: 'top', cutTypes: ['horizon'], studioStyle: 'horizon', shot: 'all', place: 'studio', ...extra });
+const choicesFor = (gender, { clothingType = 'top', ...extra } = {}) => photoGalleryChoices(catalogs.genExamples,
+  storyboardSpaceSetsFor({ gender, clothingType }),
+  { gender, clothingType, cutTypes: ['horizon'], studioStyle: 'horizon', shot: 'all', place: 'studio', ...extra });
 const blockFor = (example, extra = {}) => ({ id: 'selected', source: 'ai', taxonomyVersion: 4,
   pageSectionKey: 'show.first', pageSectionKind: 'first', pageDesignId: 'P01-SHOW-01', sectionId: 'first',
   slotKey: 'first.hero', contentRole: 'hero', cutType: example.cutType, shot: example.shot,
@@ -30,7 +30,7 @@ async function photoHarness(props) {
   return { render(next = {}) { current = { ...current, ...next }; h.render(Gallery, current); return h.render(Gallery, current); }, close: h.close };
 }
 
-for (const [gender, before, after] of [['men', 16, 8], ['women', 17, 9]]) {
+for (const [gender, before, after] of [['men', 16, 8], ['women', 16, 8]]) {
   test(`R4 ${gender} top studio gallery stacks same-shoot directions and preserves published location sets`, () => {
     const ungrouped = choicesFor(gender, { groupStudioShoots: false }).entries;
     const grouped = choicesFor(gender).entries;
@@ -74,7 +74,7 @@ test('R4 shoot cover is front unless the selected direction belongs to it; one-p
   const selected = choicesFor('men', { selectedId: backId }).entries.find(entry => entry.id === cover.id);
   assert.equal(selected.example.id, backId);
   const singletonId = 'ex_horizon_women_dress_medium_front_satin_01_v2';
-  const singleton = choicesFor('women').entries.find(entry => entry.example.id === singletonId);
+  const singleton = choicesFor('women', { clothingType: 'dress' }).entries.find(entry => entry.example.id === singletonId);
   assert.equal(singleton.kind, 'example'); assert.equal(singleton.members, undefined);
 });
 

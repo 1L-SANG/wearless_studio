@@ -1838,7 +1838,8 @@ def _validate_frontend_catalog(value: object, *, label: str) -> None:
         set_type = space_set.get("setType")
         gender = space_set.get("gender")
         applicable = space_set.get("applicableClothingTypes")
-        rotation_scope = ["top", "bottom", "outer", "dress"] if gender == "women" else ["top", "bottom", "outer"]
+        separate_clothing_types = ["top", "bottom", "outer"]
+        rotation_scope = [*separate_clothing_types, "dress"] if gender == "women" else separate_clothing_types
         if set_type not in _SET_TYPES:
             violations.append(f"sets[{set_index}]_set_type_invalid")
         if gender not in _GENDERS:
@@ -1853,7 +1854,7 @@ def _validate_frontend_catalog(value: object, *, label: str) -> None:
             or (
                 len(applicable) > 1
                 and set(applicable) != {"top", "outer"}
-                and not (set_type == "horizon-rotation" and applicable == rotation_scope)
+                and not (set_type == "horizon-rotation" and applicable in (rotation_scope, separate_clothing_types))
             )
         ):
             violations.append(f"sets[{set_index}]_applicability_invalid")

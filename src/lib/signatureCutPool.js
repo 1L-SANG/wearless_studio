@@ -92,7 +92,7 @@ function signatureContext(context) {
   } : normalized;
 }
 
-function isSkirtCategory({ subCategory, customCategory }) {
+export function isSkirtCategory({ subCategory, customCategory }) {
   const category = `${subCategory || ''} ${customCategory || ''}`.toLowerCase();
   return category.includes('skirt') || category.includes('스커트') || category.includes('치마');
 }

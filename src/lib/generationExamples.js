@@ -4,7 +4,7 @@ import publicCombinationTable from '../../data/genexamples_public_combinations.j
 import { filterExamplesForModel } from './identityScope.js';
 import { exampleDirectionFamilyMatches, isSupportedCutType, poseExampleDirectionCompatible, productPresentationOf } from './storyboardTaxonomy.js';
 import { isSourceBasedDetailRecipe } from './detailRecommendations.js';
-import { usesSignaturePool, pickSignatureCut, signatureExamplesForBlock } from './signatureCutPool.js';
+import { usesSignaturePool, pickSignatureCut, signatureExamplesForBlock, isSkirtCategory } from './signatureCutPool.js';
 import { singleMemberSpaceSet } from './storyboardSetSelection.js';
 import { inheritSimilarCutRecipes } from './storyboardSimilarCuts.js';
 import {
@@ -267,8 +267,11 @@ export function canRerollGenerationExample(block, { catalog, product, analysis, 
 function candidatesForBlock(block, catalog, product, gender, analysis, identityKind = null) {
   const signature = usesSignaturePool(block) && signatureExamplesForBlock(block, { product, analysis, gender });
   if (signature) return signature;
+  const preferBottomKind = product?.clothingType === 'bottom' && gender === 'women'
+    && block.cutType === 'styling' && !block.spaceGroupId
+    && (block.slotKey === 'first.hero' || block.slotKey?.endsWith('.background'));
   // 이 모델로 만들 수 없는 예시는 후보에서 아예 뺀다(판정은 서버 규칙 표 — lib/identityScope.js).
-  return filterExamplesForModel(selectGenerationExamples(catalog, {
+  const candidates = filterExamplesForModel(selectGenerationExamples(catalog, {
     cutType: block.cutType,
     studioStyle: isMinimalExampleId(block.exampleId, catalog) ? 'minimal' : null,
     shot: block.shot,
@@ -278,7 +281,12 @@ function candidatesForBlock(block, catalog, product, gender, analysis, identityK
     direction: block.direction,
     sideStyle: block.sideStyle ?? null,
     mixMoodBuckets: block.cutType === 'styling',
+    limit: preferBottomKind ? Infinity : undefined,
   }), identityKind, block);
+  if (!preferBottomKind) return candidates;
+  const bottomKind = isSkirtCategory(analysis ?? product) ? 'skirt' : 'pants';
+  const preferred = candidates.filter(example => example.bottomKind === bottomKind);
+  return preferred.length ? preferred : candidates;
 }
 
 function usageKey(block, product, gender) {

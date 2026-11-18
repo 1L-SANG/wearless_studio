@@ -13,9 +13,10 @@ const RELEASE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/;
 const EXAMPLE_ID = /^ss_[A-Za-z0-9_-]{1,197}$/;
 const GROUP_PREFIX = 'ssg1__';
 const GROUP_INSTANCE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/;
+const SEPARATE_CLOTHING_TYPES = Object.freeze(['top', 'bottom', 'outer']);
 const SET_SCOPE_BY_GENDER = Object.freeze({
   women: Object.freeze(['top', 'bottom', 'outer', 'dress']),
-  men: Object.freeze(['top', 'bottom', 'outer']),
+  men: SEPARATE_CLOTHING_TYPES,
 });
 
 export const STORYBOARD_SPACE_PLACE_TYPES = Object.freeze(
@@ -117,12 +118,13 @@ function normalizedSet(set, index) {
       && clothingTypes.includes('top')
       && clothingTypes.includes('outer')
     );
-    const universalRotation = (
+    const sharedRotation = (
       setType === 'horizon-rotation'
-      && clothingTypes.join(',') === SET_SCOPE_BY_GENDER[set.gender].join(',')
+      && [SET_SCOPE_BY_GENDER[set.gender], SEPARATE_CLOTHING_TYPES]
+        .some(scope => clothingTypes.join(',') === scope.join(','))
     );
     if (
-      (!sharedTopOuter && !universalRotation)
+      (!sharedTopOuter && !sharedRotation)
       || set.members.some((member) => member?.shot !== 'full')
     ) return null;
   }

@@ -147,6 +147,7 @@ def test_dev_generation_example_catalog_matches_server_registry_v2():
         entry = assets[item["id"]]
         assert item["thumb"].endswith(entry["thumb"])
         assert item["applicableClothingTypes"] == entry["applicableClothingTypes"]
+        assert item.get("bottomKind") == entry.get("bottomKind")
         assert item["cutType"] == entry["cutType"]
         assert item["shot"] == entry["shot"]
         assert item["gender"] == entry["gender"]
@@ -179,6 +180,13 @@ def test_horizon_catalog_uses_the_owner_confirmed_shared_clothing_scopes():
         )
         if change.get("excludeClothingTypes")
     }
+    verified_exclusions.update({
+        "ex_horizon_women_top_full_profile_02": {"dress"},
+        "ex_horizon_women_top_full_profile_right_02": {"dress"},
+        "ex_horizon_women_top_full_back_02": {"dress"},
+        "ex_horizon_women_top_medium_back_01": {"dress"},
+        "ex_horizon_women_dress_medium_front_satin_01_v2": {"top"},
+    })
 
     horizon = [item for item in catalog if item["cutType"] == "horizon"]
     assert horizon

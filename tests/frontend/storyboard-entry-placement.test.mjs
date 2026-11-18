@@ -16,7 +16,7 @@ for(const [gender,clothingType] of [['women','top'],['women','bottom'],['women',
  const seeded=seedStoryboard(product,a,{projectId:'entry'});
  const b=assignGenerationExamples(seeded,{catalog:[],product,gender,projectId:'entry'}).blocks;
  const sets=pickEntrySets({gender,clothingType,projectId:'entry',stylingCount:3});
- assert.ok(sets.rotationSet);
+ assert.equal(Boolean(sets.rotationSet),clothingType!=='dress');
  assert.ok(b.filter(b=>b.spaceGroupId).every(b=>spaceSetIdFromGroupId(b.spaceGroupId)&&b.exampleId&&b.refScope===(b.cutType==='horizon'?'all':'pose')));
  const album=b.filter(b=>b.pageSectionKey===`${templateId}.wear_styling`);assert.equal(album.length,6);
  assert.ok(album.every(b=>b.pageSectionUsage===(templateId==='show'?'fit':'styling')));

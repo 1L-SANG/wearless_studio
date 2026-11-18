@@ -786,6 +786,7 @@
     "applicableClothingTypes": [
       "bottom"
     ],
+    "bottomKind": "skirt",
     "clothingType": "bottom",
     "cutType": "styling",
     "detailSubject": null,
@@ -806,6 +807,7 @@
     "applicableClothingTypes": [
       "bottom"
     ],
+    "bottomKind": "skirt",
     "clothingType": "bottom",
     "cutType": "styling",
     "detailSubject": null,
@@ -826,6 +828,7 @@
     "applicableClothingTypes": [
       "bottom"
     ],
+    "bottomKind": "pants",
     "clothingType": "bottom",
     "cutType": "styling",
     "detailSubject": null,
@@ -846,6 +849,7 @@
     "applicableClothingTypes": [
       "bottom"
     ],
+    "bottomKind": "pants",
     "clothingType": "bottom",
     "cutType": "styling",
     "detailSubject": null,
@@ -866,6 +870,7 @@
     "applicableClothingTypes": [
       "bottom"
     ],
+    "bottomKind": "pants",
     "clothingType": "bottom",
     "cutType": "styling",
     "detailSubject": null,
@@ -886,6 +891,7 @@
     "applicableClothingTypes": [
       "bottom"
     ],
+    "bottomKind": "pants",
     "clothingType": "bottom",
     "cutType": "styling",
     "detailSubject": null,
@@ -906,6 +912,7 @@
     "applicableClothingTypes": [
       "bottom"
     ],
+    "bottomKind": "pants",
     "clothingType": "bottom",
     "cutType": "styling",
     "detailSubject": null,
@@ -926,6 +933,7 @@
     "applicableClothingTypes": [
       "bottom"
     ],
+    "bottomKind": "skirt",
     "clothingType": "bottom",
     "cutType": "styling",
     "detailSubject": null,
@@ -946,6 +954,7 @@
     "applicableClothingTypes": [
       "bottom"
     ],
+    "bottomKind": "skirt",
     "clothingType": "bottom",
     "cutType": "styling",
     "detailSubject": null,
@@ -966,6 +975,7 @@
     "applicableClothingTypes": [
       "bottom"
     ],
+    "bottomKind": "pants",
     "clothingType": "bottom",
     "cutType": "styling",
     "detailSubject": null,
@@ -987,6 +997,7 @@
     "applicableClothingTypes": [
       "bottom"
     ],
+    "bottomKind": "skirt",
     "clothingType": "bottom",
     "cutType": "styling",
     "detailSubject": null,
@@ -1639,8 +1650,7 @@
     "applicableClothingTypes": [
       "top",
       "bottom",
-      "outer",
-      "dress"
+      "outer"
     ],
     "clothingType": "top",
     "cutType": "horizon",
@@ -1683,8 +1693,7 @@
     "applicableClothingTypes": [
       "top",
       "bottom",
-      "outer",
-      "dress"
+      "outer"
     ],
     "clothingType": "top",
     "cutType": "horizon",
@@ -1706,8 +1715,7 @@
     "applicableClothingTypes": [
       "top",
       "bottom",
-      "outer",
-      "dress"
+      "outer"
     ],
     "clothingType": "top",
     "cutType": "horizon",
@@ -1728,8 +1736,7 @@
   {
     "applicableClothingTypes": [
       "top",
-      "outer",
-      "dress"
+      "outer"
     ],
     "clothingType": "top",
     "cutType": "horizon",
@@ -1996,7 +2003,6 @@
   },
   {
     "applicableClothingTypes": [
-      "top",
       "outer",
       "dress"
     ],
