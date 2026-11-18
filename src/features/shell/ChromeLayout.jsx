@@ -22,7 +22,7 @@ import {
 } from '@/features/mannequin/completionToastCore.js';
 import { onProductPhotoPromotionFailure } from '@/lib/productPhotoPromotion.js';
 import { removeSellerBootBackground, syncSellerGlowPhase } from './sellerGlow.js';
-import './StoryboardViewport.module.css';
+import './StoryboardViewport.css';
 
 const mannequinCuts = (envelope) => {
   if (Array.isArray(envelope)) return envelope;

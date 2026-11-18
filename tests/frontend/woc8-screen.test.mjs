@@ -34,8 +34,8 @@ for (const input of ['pointer', 'focus']) test(`WOC8 a real completion toast rer
 });
 
 test('WOC8 the disappearing job ribbon cannot move a stationary pointer outside the tone button', () => {
-  const css = readFileSync('src/features/shell/StoryboardViewport.module.css', 'utf8');
-  assert.match(css, /\.job-ribbon-stack\) \{[^}]*flex: 0 0 var\(--sb-job-strip-height\); height: var\(--sb-job-strip-height\)/);
+  const css = readFileSync('src/features/shell/StoryboardViewport.css', 'utf8');
+  assert.match(css, /\.job-ribbon-stack \{[^}]*flex: 0 0 var\(--sb-job-strip-height\); height: var\(--sb-job-strip-height\)/);
   // The reserved36px slot is identical for running/idle. Without the slot,
   // removing a36px ribbon moves a38px button beyond its stationary center.
   const beforeTop = 60 + 36 + 120, pointerY = beforeTop + 19;
