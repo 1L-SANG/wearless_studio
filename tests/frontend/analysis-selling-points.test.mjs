@@ -41,6 +41,52 @@ test('상의와 아우터만 띄어 쓴 핏 이름까지 추천에서 거른다'
   }
 });
 
+const suggestPoint = (analysis, point) => sellingPointSuggestions({ ...analysis, featureSuggestions: [{ point }] })
+  .map((suggestion) => suggestion.point);
+
+test('소매 길이 칸이 있을 때만 길이 표현을 거르고 모양과 장식은 남긴다', () => {
+  const top = { clothingType: 'top', targetGenders: ['women'] };
+  const sleeveless = { ...top, fitRead: { sleeveType: 'sleeveless' } };
+  const pants = { clothingType: 'bottom', subCategory: 'jeans' };
+  for (const point of ['짧은 캡소매', '반팔 소매', '긴팔 소매', '7부 소매', '소매 기장', '손등 덮는 소매']) {
+    assert.deepEqual(suggestPoint(top, point), [], point);
+    assert.deepEqual(suggestPoint(sleeveless, point), [point]);
+    assert.deepEqual(suggestPoint(pants, point), [point]);
+  }
+  for (const point of ['퍼프 소매', '소매 끝 밴딩', '소매 핀턱', '드롭숄더 소매', '소매 리본']) {
+    assert.deepEqual(suggestPoint(top, point), [point]);
+  }
+  assert.deepEqual(suggestPoint(top, '손 등 덮는 소 매'), []);
+});
+
+test('기장 칸이 있을 때만 옷 길이 표현을 거르고 밑단 모양과 장식은 남긴다', () => {
+  const pants = { clothingType: 'bottom', subCategory: 'jeans' };
+  const menTop = { clothingType: 'top', targetGenders: ['men'] };
+  const womenTop = { ...menTop, targetGenders: ['women'] };
+  const leggings = { ...pants, subCategory: 'leggings' };
+  for (const point of ['크롭 기장', '미니 기장', '롱 기장', '무릎 기장', '맥시 길이', '발목 기장']) {
+    assert.deepEqual(suggestPoint(womenTop, point), [], point);
+    assert.deepEqual(suggestPoint(pants, point), []);
+    assert.deepEqual(suggestPoint(menTop, point), [point]);
+    assert.deepEqual(suggestPoint(leggings, point), [point]);
+  }
+  for (const point of ['밑단 레이스', '언밸런스 밑단', '물결 밑단', '밑단 셔링']) {
+    assert.deepEqual(suggestPoint(pants, point), [point]);
+  }
+  assert.deepEqual(suggestPoint(womenTop, '크롭기장'), []);
+});
+
+test('플레어, 와이드, 부츠컷, A라인 실루엣은 옷 종류와 관계없이 추천에 남긴다', () => {
+  for (const [clothingType, subCategory] of [['top', 'tshirt'], ['outer', 'jacket'], ['dress', 'mini_dress'],
+    ['bottom', 'mini_skirt'], ['bottom', 'jeans']]) {
+    for (const targetGenders of [['women'], ['men']]) {
+      for (const point of ['플레어 실루엣', '와이드 실루엣', '부츠컷 실루엣', 'A라인']) {
+        assert.deepEqual(suggestPoint({ clothingType, subCategory, targetGenders }, point), [point]);
+      }
+    }
+  }
+});
+
 test('고른 것과 핏 이름을 뺀 다음 원래 순서로 세 개만 남긴다', () => {
   const remaining = [...suggestions, { point: '사선 절개', evidence: '' }];
   const input = { clothingType: 'top', sellingPoints: ['라운드 넥'], featureSuggestions: [

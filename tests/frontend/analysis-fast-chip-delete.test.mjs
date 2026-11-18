@@ -80,6 +80,17 @@ test('추천 선택은 셀러 칩만 추가하고 지우면 추천으로 돌아�
   assert.deepEqual(h.analysis.dismissedAiPoints, []);
 });
 
+test('대상 성별과 소매 유형에 따라 실제 추천에서 겹치는 문구를 뺀다', () => {
+  const h = suggestionChips({ clothingType: 'top', targetGenders: ['women'],
+    featureSuggestions: ['크롭 기장', '긴팔 소매', '플레어 실루엣'].map((point) => ({ point })) });
+  const shown = () => allNodes(h.show()).filter((node) => node.props?.className === 'sp-sug').map(textOf);
+  assert.deepEqual(shown(), ['플레어 실루엣']);
+  h.replace({ targetGenders: ['men'] });
+  assert.deepEqual(shown(), ['크롭 기장', '플레어 실루엣']);
+  h.replace({ fitRead: { sleeveType: 'sleeveless' } });
+  assert.deepEqual(shown(), ['크롭 기장', '긴팔 소매', '플레어 실루엣']);
+});
+
 test('빠른 진입 진행 중에는 추천을 숨기고 8개가 차면 받침과 직접 쓰기를 모두 숨긴다', () => {
   const h = suggestionChips({ featureSuggestions, featureRun: { stage: 'requested' } });
   assert.equal(find(h.show(), (node) => node.props.className === 'sp4-tray'), undefined);

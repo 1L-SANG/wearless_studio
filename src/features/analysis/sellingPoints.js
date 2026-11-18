@@ -1,7 +1,7 @@
 /* 강조 특징(sellingPoints) 칩 인라인 수정 — 순수 계산부.
    폼에서 분리한 이유는 modelSelection.js 와 같다: 커밋 규칙(삭제·중복·AI 표식)이
    화면 없이 검증되어야 한다. */
-import { fitProfileCategory } from '../../lib/fitAxes.js';
+import { analysisFitInput, fitZones } from '../../lib/fitZone.js';
 
 /* 칩 상한. 특징 포인트 블록이 담는 상한(FEATURE_ITEMS_MAX)과 맞춰 둔다 — 여기서 만든 문구가
    그 블록으로 흘러가므로, 칩이 더 적으면 뒤쪽 포인트는 설명 없이 남는다. */
@@ -11,22 +11,30 @@ export const SELLING_POINTS_MAX = 8;
    문구가 있는 것으로 저장되고, 중복 판정도 빗나간다. */
 const INVISIBLE = /[\u200B-\u200D\uFEFF\u2060]/g;
 
+const FIT_TERMS = /슬림핏|레귤러핏|세미오버핏|오버핏|루즈핏|박시핏|오버사이즈/;
+const SLEEVE_LENGTH_TERMS = /(?:짧은캡|짧은|긴|반팔|긴팔|[1-9]부)소매|소매(?:기장|길이)|(?:손등|손끝)을?덮는소매/;
+const GARMENT_LENGTH_TERMS = /(?:크롭|미니|미디|롱|맥시|(?:무릎|발목)(?:위|아래)?)(?:기장|길이)/;
+const TERMS_BY_AXIS = { fit: FIT_TERMS, sleeve: SLEEVE_LENGTH_TERMS, length: GARMENT_LENGTH_TERMS };
+
 /** 저장·비교용 정규화. 조합형(NFD)·완성형(NFC) 한글이 섞이면 눈에 같은 글자가 다른
  *  문자열이 되어 중복 칩이 생긴다 — 둘 다 NFC 로 모은다. */
 export function normalizeSellingPoint(value) {
   return String(value ?? '').replace(INVISIBLE, '').normalize('NFC').trim();
 }
 
-/** 현재 고른 특징과 상의·아우터의 핏 이름을 뺀 뒤 앞의 추천 세 개만 보여 준다. */
-export function sellingPointSuggestions({ featureSuggestions, sellingPoints = [], clothingType, subCategory, pending = false } = {}) {
+/** 현재 고른 특징과 화면의 핏 칸에 겹치는 말을 뺀 뒤 앞의 추천 세 개를 보여 준다. */
+export function sellingPointSuggestions(analysis = {}) {
+  const { featureSuggestions, sellingPoints = [], pending = false } = analysis;
   if (pending || sellingPoints.length >= SELLING_POINTS_MAX || !Array.isArray(featureSuggestions)) return [];
   const key = (value) => normalizeSellingPoint(value).replace(/\s/g, '');
   const picked = new Set(sellingPoints.map(key));
-  const filterFit = ['top', 'outer'].includes(fitProfileCategory(clothingType, subCategory));
+  const zones = fitZones(analysisFitInput(analysis));
   return featureSuggestions
     .map((item) => ({ point: normalizeSellingPoint(item?.point), evidence: String(item?.evidence ?? '').trim() }))
-    .filter(({ point }) => point && !picked.has(key(point))
-      && !(filterFit && /슬림핏|레귤러핏|세미오버핏|오버핏|루즈핏|박시핏|오버사이즈/.test(key(point))))
+    .filter(({ point }) => {
+      const pointKey = key(point);
+      return pointKey && !picked.has(pointKey) && !zones.some(({ axis }) => TERMS_BY_AXIS[axis]?.test(pointKey));
+    })
     .slice(0, 3);
 }
 
