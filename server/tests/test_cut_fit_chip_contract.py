@@ -9,6 +9,7 @@ import pytest
 
 from app.agents import analysis_fit, cut_fit_chip_qc as chip_qc, cut_output_qc as qc, cut_plan
 from app.agents.analysis_fit import FIT_CHECK_SCALES, FIT_VALUE_SENTENCES, select_applied_fit_axes
+from app.agents.vision_llm import _to_gemini_schema
 from conftest import make_settings
 from test_cut_output_qc import _img, _model_refs, _plan, _raw
 from test_confirmed_gpt_product_qc import _framing
@@ -85,15 +86,18 @@ def test_compiled_generic_plan_carries_values_to_qc_without_serializing_raw_prof
     assert policy["attributeOwners"]["length"] == "fitProfile"
 
 
-@pytest.mark.parametrize("authority", ["generic_v1", "confirmed_gpt_v1"])
-@pytest.mark.parametrize("category,axes,enforced", [
+_FIT_CHIP_CASES = [
     ("pants", {"length": "ankle"}, ()),
     ("skirt", {"length": "midi"}, ()),
     ("dress", {"length": "midi", "sleeve": "wrist"}, ("sleeve",)),
     ("top", {"fit": "over"}, ()),
     ("top", {"fit": "slim", "length": "slight_crop", "sleeve": "above_wrist"}, ("length", "sleeve")),
     ("outer", {"fit": "semi_over", "sleeve": "cap_short"}, ("sleeve",)),
-])
+]
+
+
+@pytest.mark.parametrize("authority", ["generic_v1", "confirmed_gpt_v1"])
+@pytest.mark.parametrize("category,axes,enforced", _FIT_CHIP_CASES)
 def test_operating_contract_only_sets_enforced_chip_targets(monkeypatch, authority, category, axes, enforced):
     p = profile(axes, dict.fromkeys(axes, "seller"), category=category)
     contract, prompt, schema, _ = _operating_verdict(monkeypatch, p, _raw(), authority)
@@ -105,11 +109,15 @@ def test_operating_contract_only_sets_enforced_chip_targets(monkeypatch, authori
     assert "cannot be a reason to fail any gate" in prompt
     assert "undeclared dimensions" in prompt
     assert "fixed targets" not in prompt
+    for number, gate in enumerate(qc.GATES, 1):
+        assert f"\n{number}. {gate} " in prompt
     for axis, value in axes.items():
         if axis not in enforced:
             assert FIT_VALUE_SENTENCES[category, axis, value] not in prompt
     review = schema["properties"]["declaredFitReview"]
-    assert review["properties"]["failures"]["items"]["properties"]["axes"]["items"]["enum"] == list(axes)
+    for axis in axes:
+        assert review["properties"][f"{axis}Gates"] == {"type": "array", "items": {"type": "integer"}}
+        assert f"{axis}Gates" in prompt
     if enforced:
         assert "two or more positions" in prompt
         assert "exactly one of the target and observed positions is crop" in prompt
@@ -124,6 +132,35 @@ def test_operating_contract_only_sets_enforced_chip_targets(monkeypatch, authori
             assert positions == sorted(positions)
     else:
         assert "observed" not in review["properties"]
+
+
+def _schema_nodes(node):
+    yield node
+    for child in node.get("properties", {}).values():
+        yield from _schema_nodes(child)
+    if "items" in node:
+        yield from _schema_nodes(node["items"])
+
+
+@pytest.mark.parametrize("category,axes", [(category, axes) for category, axes, _ in _FIT_CHIP_CASES])
+def test_declared_fit_schema_adds_at_most_seven_fields_twenty_enum_values_and_only_integer_arrays(category, axes):
+    p = profile(axes, dict.fromkeys(axes, "seller"), category=category)
+    contract = qc._analysis_fit_contract({"attributeOwners": {}}, p)
+    schema = qc.qc_schema(repair_parts=True, fit_contract=contract)
+    baseline = qc.qc_schema(repair_parts=True)
+    review = schema["properties"].pop("declaredFitReview")
+    schema["required"].remove("declaredFitReview")
+    # 칩이 있으면 gates 배열의 길이 제한을 뺀다(Gemini가 세 축을 400으로 거절해서, 2026-11-18 실측).
+    assert "minItems" not in schema["properties"]["gates"] and "maxItems" not in schema["properties"]["gates"]
+    del baseline["properties"]["gates"]["minItems"], baseline["properties"]["gates"]["maxItems"]
+    assert schema == baseline
+    for shape, integer_type in ((review, "integer"), (_to_gemini_schema(review), "INTEGER")):
+        nodes = list(_schema_nodes(shape))
+        assert all(node["items"] == {"type": integer_type}
+                   and "minItems" not in node and "maxItems" not in node
+                   for node in nodes if node["type"].lower() == "array")
+        assert 1 + sum(len(node.get("properties", {})) for node in nodes) <= 7
+        assert sum(len(node.get("enum", [])) for node in nodes) <= 20
 
 
 def _operating_verdict(monkeypatch, p, raw, authority="generic_v1", *, plan=None):
@@ -160,20 +197,22 @@ def _failed_gate(raw, gate):
 
 
 @pytest.mark.parametrize("authority", ["generic_v1", "confirmed_gpt_v1"])
-@pytest.mark.parametrize("gate,axes,has_other_cause,expected", [
-    ("fitClosureAllowedMutation", ["length"], False, "KEEP_STAGE1"),
-    ("garmentConstruction", ["length"], False, "KEEP_STAGE1"),
-    ("garmentTextLogo", ["length"], False, "KEEP_STAGE1"),
-    ("garmentTextLogo", ["length"], True, "REGENERATE_FROM_SCRATCH"),
-    ("garmentTextLogo", None, None, "REGENERATE_FROM_SCRATCH"),
-    ("fitClosureAllowedMutation", ["length", "sleeve"], False, "REGENERATE_FROM_SCRATCH"),
+@pytest.mark.parametrize("gate,review,expected", [
+    ("fitClosureAllowedMutation", {"lengthGates": [11]}, "KEEP_STAGE1"),
+    ("garmentConstruction", {"lengthGates": [5]}, "KEEP_STAGE1"),
+    ("garmentTextLogo", {"lengthGates": [9]}, "KEEP_STAGE1"),
+    ("modelBodyProportions", {"lengthGates": [13]}, "KEEP_STAGE1"),
+    ("garmentTextLogo", {"lengthGates": []}, "REGENERATE_FROM_SCRATCH"),
+    ("garmentTextLogo", None, "REGENERATE_FROM_SCRATCH"),
+    ("fitClosureAllowedMutation", {"lengthGates": [11], "sleeveGates": [11]}, "REGENERATE_FROM_SCRATCH"),
 ])
-def test_typed_fit_causes_do_not_block_for_record_only_axes(monkeypatch, authority, gate, axes, has_other_cause, expected):
+def test_typed_fit_causes_do_not_block_for_record_only_axes(monkeypatch, authority, gate, review, expected):
     p = profile({"length": "ankle"}, {"length": "seller"}, category="pants")
     raw = _raw()
     _failed_gate(raw, gate)
-    raw["declaredFitReview"] = {"failures": [] if axes is None else [
-        {"gate": gate, "axes": axes, "hasOtherCause": has_other_cause}]}
+    raw["gates"].reverse()  # Ordinals come from the prompt, independent of response order.
+    if review is not None:
+        raw["declaredFitReview"] = review
     _, _, _, result = _operating_verdict(monkeypatch, p, raw, authority)
     assert qc.repair_route(result) == expected
     assert list(result["gates"]) == list(qc.GATES)
@@ -192,7 +231,7 @@ def test_fit_review_only_overrides_a_valid_judge_attribution(monkeypatch, status
     raw = _raw()
     gate = "fitClosureAllowedMutation"
     next(row for row in raw["gates"] if row["gate"] == gate).update(status=status, evidence=evidence)
-    raw["declaredFitReview"] = {"failures": [{"gate": gate, "axes": ["length"], "hasOtherCause": False}]}
+    raw["declaredFitReview"] = {"lengthGates": [11]}
     plan = _plan()
     if missing_matching:
         plan["storyboard"]["matching"] = ["missing-match"]
@@ -219,29 +258,37 @@ def test_server_scores_enforced_observations_with_chip_distance(monkeypatch, tar
     if judge_fail:
         _failed_gate(raw, gate)
     raw["declaredFitReview"] = {
-        "failures": [{"gate": gate, "axes": ["length"], "hasOtherCause": False}] if judge_fail else [],
+        "lengthGates": [11] if judge_fail else [],
         "observed": {} if observed is None else {"length": observed},
     }
     _, _, _, result = _operating_verdict(monkeypatch, p, raw)
     assert qc.repair_route(result) == expected
 
 
-@pytest.mark.parametrize("cause", ["other_gate", "other_failure_in_gate", "missing", "unconfirmed_axis", "duplicate"])
+@pytest.mark.parametrize("cause", ["other_gate", "other_failure_in_gate", "missing", "unconfirmed_axis", "duplicate",
+                                  "out_of_range", "non_integer", "missing_axis_field"])
 def test_enforced_fit_failure_keeps_existing_route_when_any_cause_is_unverified(monkeypatch, cause):
     p = profile({"length": "basic", "sleeve": "wrist"}, {"length": "seller", "sleeve": "seller"})
     raw = _raw()
     gate = "fitClosureAllowedMutation"
     _failed_gate(raw, gate)
-    attribution = {"gate": gate, "axes": ["length"], "hasOtherCause": cause == "other_failure_in_gate"}
-    failures = [attribution]
+    review = {"lengthGates": [11], "sleeveGates": [], "observed": {"length": "long", "sleeve": "wrist"}}
     if cause == "other_gate":
         _failed_gate(raw, "garmentTextLogo")
+    if cause == "other_failure_in_gate":
+        review["lengthGates"] = []
     if cause == "unconfirmed_axis":
-        attribution["axes"].append("sleeve")
+        review["sleeveGates"] = [11]
     if cause == "duplicate":
-        failures.append(dict(attribution))
-    raw["declaredFitReview"] = {"failures": [] if cause == "missing" else failures,
-                                "observed": {"length": "long", "sleeve": "wrist"}}
+        review["lengthGates"] = [11, 11]
+    if cause == "out_of_range":
+        review["lengthGates"] = [11, 18]
+    if cause == "non_integer":
+        review["lengthGates"] = [11, True]
+    if cause == "missing_axis_field":
+        del review["sleeveGates"]
+    if cause != "missing":
+        raw["declaredFitReview"] = review
     _, _, _, result = _operating_verdict(monkeypatch, p, raw)
     assert qc.repair_route(result) == "REGENERATE_FROM_SCRATCH"
     assert FIT_VALUE_SENTENCES["top", "length", "basic"] not in qc.repair_instructions(result)
@@ -256,8 +303,8 @@ def test_verified_fit_axes_choose_one_route_and_each_fixed_sentence(monkeypatch,
     _failed_gate(raw, "garmentConstruction")
     _failed_gate(raw, "fitClosureAllowedMutation")
     raw["declaredFitReview"] = {
-        "failures": [{"gate": "garmentConstruction", "axes": ["length"], "hasOtherCause": False},
-                     {"gate": "fitClosureAllowedMutation", "axes": ["sleeve"], "hasOtherCause": False}],
+        "lengthGates": [5, 11],
+        "sleeveGates": [11],
         "observed": {"length": length_observed, "sleeve": "elbow"},
     }
     _, _, _, result = _operating_verdict(monkeypatch, profile(axes, dict.fromkeys(axes, "seller")), raw)
@@ -271,7 +318,7 @@ def test_non_chip_repairs_do_not_target_the_record_only_dimension(monkeypatch, a
     raw = _raw()
     for gate in ("garmentConstruction", "fitClosureAllowedMutation"):
         _failed_gate(raw, gate)
-    raw["declaredFitReview"] = {"failures": []}
+    raw["declaredFitReview"] = {"lengthGates": []}
     _, _, _, result = _operating_verdict(monkeypatch, p, raw, authority)
     instructions = qc.repair_instructions(result)
     assert len(instructions) == 2

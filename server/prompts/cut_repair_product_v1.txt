@@ -10,14 +10,15 @@ Do not zoom out or change the crop merely to repair an arm or hand.
 POSE PARTS TO ADJUST: ${poseParts}
 Adjust only the listed parts to resolve the named failures. Preserve the action, support side and pose meaning elsewhere. Use EXAMPLE only when it is attached, within the compiled framing target.
 
-INDEPENDENT QC CORRECTIONS:
+REQUIRED CHANGES (the output must visibly differ from Image 1 on each of these; each line states the target the corrected image must show, so redraw that part of the sold garment until it matches):
 ${corrections}
+A line that states a hem position or a sleeve end is a length change to the sold garment: move that hem or cuff to the stated body position, and redraw the skin, inner layer or bottom garment that becomes visible or covered as a result.
 
 KEEP FROM STAGE-1 (passed requirements; preserve each except an explicitly named target dimension):
 ${passedGates}
 
 PRESERVATION CONTRACT:
-- Change only the named failed axes. Freeze every other visible fact from Image 1.
+- Make every required change above in full; returning Image 1 unchanged on a required change fails. Freeze every other visible fact from Image 1.
 - Keep the same person, face, hair, exact garments, footwear, accessories, objects, place, light, color tone and capture character unless a fixed correction explicitly names that attribute.
 - Preserve garment text, logos, hardware, pattern, seams, texture, material and all untargeted fit and silhouette. Invent no pocket, opening, slit, second hem, item or design detail.
 - Output exactly one fully opaque photorealistic portrait 2:3 image, with no collage, caption, overlay or watermark.

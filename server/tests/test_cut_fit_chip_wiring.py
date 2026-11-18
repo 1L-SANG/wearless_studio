@@ -214,7 +214,7 @@ def test_detail_worker_uses_the_same_fit_repair_route_with_chips_on_or_off(monke
         if stage1:
             next(row for row in raw["gates"] if row["gate"] == gate)["status"] = "FAIL"
         raw["declaredFitReview"] = {
-            "failures": [{"gate": gate, "axes": [axis], "hasOtherCause": False}] if stage1 else [],
+            f"{axis}Gates": [11] if stage1 else [],
             "observed": {axis: observed if stage1 else target},
         }
         return raw, "fake"

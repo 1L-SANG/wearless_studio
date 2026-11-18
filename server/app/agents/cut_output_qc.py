@@ -471,6 +471,10 @@ def _declared_fit_axis_names(contract: Mapping[str, Any]) -> list[str]:
     return sorted(row["axis"] for key in ("declaredFitAxes", "recordOnlyFitAxes") for row in contract.get(key, ()))
 
 
+def _declared_fit_gate_fields(contract: Mapping[str, Any]) -> dict[str, str]:
+    return {f"{axis}Gates": axis for axis in _declared_fit_axis_names(contract)}
+
+
 def qc_schema(*, repair_parts: bool = False, fit_contract: Mapping[str, Any] | None = None) -> dict:
     """Strict structured-output schema; exact gate coverage is enforced again in ``validate``."""
 
@@ -500,18 +504,10 @@ def qc_schema(*, repair_parts: bool = False, fit_contract: Mapping[str, Any] | N
     if repair_parts:
         schema["properties"]["poseParts"] = {"type": "array", "items": {"type": "string", "enum": list(POSE_PARTS)}}
         schema["required"].append("poseParts")
-    axes = _declared_fit_axis_names(fit_contract or {})
-    if axes:
-        review = {"failures": {"type": "array", "maxItems": len(GATES), "items": {
-            "type": "object", "additionalProperties": False,
-            "properties": {
-                "gate": {"type": "string", "enum": list(GATES)},
-                "axes": {"type": "array", "minItems": 1, "maxItems": len(axes),
-                         "items": {"type": "string", "enum": axes}},
-                "hasOtherCause": {"type": "boolean"},
-            },
-            "required": ["gate", "axes", "hasOtherCause"],
-        }}}
+    gate_fields = _declared_fit_gate_fields(fit_contract or {})
+    if gate_fields:
+        # Keep Gemini's fit attribution grammar flat. Validate gate numbers and uniqueness locally.
+        review = {field: {"type": "array", "items": {"type": "integer"}} for field in gate_fields}
         observed = {row["axis"]: {"type": "string", "enum": list(cut_fit_chip_qc.SCALES[row["scale"]]["values"])}
                     for row in fit_contract["declaredFitAxes"]}
         if observed:
@@ -520,6 +516,9 @@ def qc_schema(*, repair_parts: bool = False, fit_contract: Mapping[str, Any] | N
         schema["properties"]["declaredFitReview"] = {"type": "object", "additionalProperties": False,
                                                     "properties": review, "required": list(review)}
         schema["required"].append("declaredFitReview")
+        # Gemini는 상의 세 축을 모두 받으면 "too many states"(400)로 거절한다(2026-11-18 실측).
+        # 항목 수는 validate가 다시 확인하므로 배열 길이 제한만 뺀다.
+        del schema["properties"]["gates"]["minItems"], schema["properties"]["gates"]["maxItems"]
     return schema
 
 
@@ -784,9 +783,12 @@ def _declared_fit_guidance(contract: Mapping[str, Any]) -> str:
         "recordOnlyFitAxes lists the seller's authorized fit direction. A difference on a record-only axis "
         "cannot be a reason to fail any gate or mark it UNJUDGEABLE, whether the candidate differs from the PRODUCT photo "
         "or falls short of or exceeds the selected value.",
-        "For each FAIL or UNJUDGEABLE involving a declared axis, return one entry in declaredFitReview.failures "
-        "for that gate and list every declared axis contributing to its status. Set hasOtherCause to true if any "
-        "independent reason also blocks the gate. Use an empty array if none apply.",
+        "In declaredFitReview, return these arrays of integers: " + ", ".join(_declared_fit_gate_fields(contract)) + ".",
+        f"Use the numbers 1 through {len(GATES)} printed beside the gate names in HARD GATES. "
+        "For a FAIL or UNJUDGEABLE caused solely by declared axes, put its number in the field for every axis "
+        "that contributes to that status. If an independent reason also blocks the gate, or the gate has no "
+        "declared-axis cause, omit its number from all fields. Use each number at most once per field and [] "
+        "for a field with no such gates.",
     ]
     if contract["declaredFitAxes"]:
         lines.extend([
@@ -1166,6 +1168,22 @@ def compare_repair(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict:
     }
 
 
+def _declared_fit_axes_by_gate(contract: Mapping[str, Any], review: Mapping[str, Any]) -> dict[str, set[str]]:
+    fields = _declared_fit_gate_fields(contract)
+    if set(review) - {"observed"} != fields.keys():
+        return {}
+    by_gate: dict[str, set[str]] = {}
+    for field, axis in fields.items():
+        numbers = review[field]
+        if (not isinstance(numbers, list) or len(numbers) > len(GATES)
+                or any(type(number) is not int or not 1 <= number <= len(GATES) for number in numbers)
+                or len(set(numbers)) != len(numbers)):
+            return {}
+        for number in numbers:
+            by_gate.setdefault(GATES[number - 1], set()).add(axis)
+    return by_gate
+
+
 def _apply_declared_fit_review(
     gates: dict[str, dict[str, str]], provider_blocking: set[str],
     contract: Mapping[str, Any], review: Mapping[str, Any],
@@ -1185,24 +1203,11 @@ def _apply_declared_fit_review(
         else:
             nonblocking_axes.add(axis)
 
-    failures = review.get("failures")
-    by_gate: dict[str, list[Mapping[str, Any]]] = {}
-    if isinstance(failures, list):
-        for row in failures:
-            gate = _mapping(row).get("gate")
-            if isinstance(gate, str) and gate in provider_blocking:
-                by_gate.setdefault(gate, []).append(row)
     fit_only_gates = set()
-    for gate, rows in by_gate.items():
-        if len(rows) != 1:
+    for gate, axes in _declared_fit_axes_by_gate(contract, review).items():
+        if gate not in provider_blocking:
             continue
-        row = rows[0]
-        axes = row.get("axes")
-        if (set(row) != {"gate", "axes", "hasOtherCause"} or row["hasOtherCause"] is not False
-                or not isinstance(axes, list) or not axes or not all(isinstance(axis, str) for axis in axes)
-                or len(set(axes)) != len(axes)):
-            continue
-        if all(axis in nonblocking_axes for axis in axes):
+        if axes <= nonblocking_axes:
             gates[gate] = {"status": "PASS", "evidence": "The reported fit differences do not fail the chip policy."}
         elif gates[gate]["status"] == "FAIL" and all(axis in failed_axes for axis in axes):
             fit_only_gates.add(gate)
