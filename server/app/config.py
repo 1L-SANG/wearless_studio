@@ -61,6 +61,8 @@ class Settings:
     # AG-06 상세컷 전용 모델. 빈 값이면 image_high로 폴백해 기존 환경을 보존한다.
     # 마네킹·매칭·AG-07까지 공유하는 image_high를 바꾸지 않고 콘티 1·2차만 분리한다.
     model_detail_cut: str = ""
+    # 마네킹 없는 국소 편집은 1차 모델과 별개로 sunburst를 쓴다.
+    model_cut_repair: str = "gpt-image-2.5-sunburst"
     # 호리존 착장컷 전용. 빈 값이면 호출 경로의 상세컷/에디터 모델을 그대로 쓴다.
     # 스타일링은 model_detail_cut/model_editor_cut에 남겨 배경·포즈 정밀 경로만 분리한다.
     model_horizon_cut: str = ""
@@ -126,6 +128,8 @@ class Settings:
     # (정본=pro 복귀)이 된다. 하드 기본값을 박아두면 "지우면 되돌아간다"가 거짓말이 되고,
     # 품질 사고로 급히 되돌릴 때 아무 일도 일어나지 않는다.
     model_text_gemini_analysis: str = ""
+    model_text_gemini_fit_reader: str = ""  # 미설정이면 분석용 Gemini, 그 값도 없으면 정본 Gemini
+    fit_reader_mode: str = "on"  # off | on, 실패는 분석을 막지 않는다
     analysis_model_order: str = "gemini,gpt"  # 폴백 순서(기본=Gemini-first, 2026-07-02 결정). 'gpt,gemini' 등
     analysis_spike: str = "off"  # off | on — 동기 관측 하니스(임시). production 은 job
     # provider 1콜 상한(폴백 트리거). ALB idle timeout 과 **같으면 폴백이 무의미하다** —
@@ -225,6 +229,14 @@ class Settings:
     # 2차가 개선되지 않으면 1차를 보존하며, QC/2차 호출 실패도 1차 출고를 막지 않는다.
     # 기본 off라 명시적으로 켠 환경에서만 추가 호출 비용이 발생한다.
     cut_output_qc_mode: str = "off"  # off | shadow | repair
+    cut_repair_pair_qc_mode: str = "off"  # off | shadow, 편집 후 비교 기록만
+    model_cut_repair_pair_qc: str = "gemini-3.8-flash"
+    cut_repair_pair_qc_timeout_seconds: float = 30.0
+    # 마네킹 없는 컷의 칩 판독. 기본 off, 기록만은 shadow, 교정 1회는 repair.
+    cut_fit_chip_qc_mode: str = "off"
+    model_cut_fit_chip_qc_top_length: str = "gemini-3.1-pro-preview"
+    model_cut_fit_chip_qc_other: str = "gemini-3.8-flash"
+    cut_fit_chip_qc_timeout_seconds: float = 30.0
     page_output_qc_mode: str = "off"  # off | shadow
     # P1 축 인지 QC(선언 핏 축 반영 판정 + 실패 시 편집 교정 1회 — fidelity §G·§H).
     # off | shadow(판정·이벤트만) | enforce(편집 재시도 발화). enforce는 코드 레벨 가드
@@ -941,6 +953,7 @@ def load_settings() -> Settings:
         model_image_signature=os.getenv("MODEL_ROUTING_IMAGE_SIGNATURE", "gpt-image-2"),
         model_detail_cut=os.getenv("MODEL_ROUTING_DETAIL_CUT", ""),
         model_horizon_cut=os.getenv("MODEL_ROUTING_HORIZON_CUT", ""),
+        model_cut_repair=(os.getenv("MODEL_ROUTING_CUT_REPAIR") or "gpt-image-2.5-sunburst").strip() or "gpt-image-2.5-sunburst",
         model_product_detail=(os.getenv("MODEL_ROUTING_PRODUCT_DETAIL") or "").strip() or "gpt-image-2.5-sunburst",
         product_detail_image_quality=_flag("PRODUCT_DETAIL_IMAGE_QUALITY", "medium", {"medium", "high"}),
         model_detail_core=(os.getenv("MODEL_DETAIL_CORE") or "").strip() or "gpt-5.4-2026-03-05",
@@ -978,6 +991,8 @@ def load_settings() -> Settings:
         outfit_timeout_seconds=min(30.0, max(1.0, float(os.getenv("OUTFIT_TIMEOUT_SECONDS", "30")))),
         # 기본값 없음(빈 문자열=정본 폴백) — env 를 지우는 것이 진짜 롤백이 되게 한다.
         model_text_gemini_analysis=os.getenv("MODEL_ROUTING_TEXT_GEMINI_ANALYSIS", ""),
+        model_text_gemini_fit_reader=(os.getenv("MODEL_ROUTING_TEXT_GEMINI_FIT_READER") or "").strip(),
+        fit_reader_mode=_flag("FIT_READER_MODE", "on", {"off", "on"}),
         analysis_model_order=os.getenv("ANALYSIS_MODEL_ORDER", "gemini,gpt"),
         analysis_spike=_flag("ANALYSIS_SPIKE", "off", {"off", "on"}),
         analysis_timeout_seconds=float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "30")),
@@ -1061,6 +1076,13 @@ def load_settings() -> Settings:
             "MANNEQUIN_LOGO_IMAGE_SIZE", "off", {"off", "1k", "2k", "4k"}).upper(),
         cut_output_qc_mode=_flag(
             "CUT_OUTPUT_QC_MODE", "off", {"off", "shadow", "repair"}),
+        cut_repair_pair_qc_mode=_flag("CUT_REPAIR_PAIR_QC_MODE", "off", {"off", "shadow"}),
+        model_cut_repair_pair_qc=(os.getenv("MODEL_CUT_REPAIR_PAIR_QC") or "gemini-3.8-flash").strip() or "gemini-3.8-flash",
+        cut_repair_pair_qc_timeout_seconds=min(120.0, max(1.0, _int_env("CUT_REPAIR_PAIR_QC_TIMEOUT_SECONDS", 30))),
+        cut_fit_chip_qc_mode=_flag("CUT_FIT_CHIP_QC_MODE", "off", {"off", "shadow", "repair"}),
+        model_cut_fit_chip_qc_top_length=(os.getenv("MODEL_CUT_FIT_CHIP_QC_TOP_LENGTH") or "gemini-3.1-pro-preview").strip() or "gemini-3.1-pro-preview",
+        model_cut_fit_chip_qc_other=(os.getenv("MODEL_CUT_FIT_CHIP_QC_OTHER") or "gemini-3.8-flash").strip() or "gemini-3.8-flash",
+        cut_fit_chip_qc_timeout_seconds=min(120.0, max(1.0, _int_env("CUT_FIT_CHIP_QC_TIMEOUT_SECONDS", 30))),
         page_output_qc_mode=_flag("PAGE_OUTPUT_QC_MODE", "off", {"off", "shadow"}),
         mannequin_axis_qc=_flag("MANNEQUIN_AXIS_QC", "off", {"off", "shadow", "enforce"}),
         mannequin_base_fidelity_qc=_flag(

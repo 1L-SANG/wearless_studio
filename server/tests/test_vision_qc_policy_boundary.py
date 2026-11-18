@@ -168,9 +168,11 @@ def test_three_qc_callers_send_policy_without_promoting_dynamic_contracts(monkey
         schema = body["response_format"]["json_schema"]["schema"]
         if "verdict" in schema["properties"]:
             raw = _paired_raw()
-        elif set(schema["properties"]) == {"gates"}:
+        elif set(schema["properties"]) in ({"gates"}, {"gates", "poseParts"}):
             gate_properties = schema["properties"]["gates"]["items"]["properties"]
             raw = _raw() if "gate" in gate_properties else primary_response(detail_output_qc, response(detail_output_qc))
+            if "poseParts" in schema["properties"]:
+                raw["poseParts"] = []
         else:
             raw = specialist_response(detail_output_qc, response(detail_output_qc))
         return gpt_response(raw)

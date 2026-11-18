@@ -420,6 +420,7 @@ async def public_analyze_features(
         try:
             data = {
                 "points": {"status": point_status, "items": list(points)},
+                "featureSuggestions": features.get("featureSuggestions", []),
                 detail_recommendations.PERSISTED_KEY: detail_recommendations.public_summary(contract),
                 detail_recommendations.HANDOFF_KEY: detail_recommendations.issue_handoff(contract, settings.r2_secret_access_key),
                 "featureTicket": points_merge.issue_ticket(points_merge.FEATURE_PURPOSE, runId, points, settings.r2_secret_access_key),

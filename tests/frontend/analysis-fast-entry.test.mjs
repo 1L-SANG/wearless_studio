@@ -87,6 +87,22 @@ test('칩 편집 중에는 적용을 미루고 닫은 뒤 최신 셀러 칩을 �
   await f.run.setEditing(false); await drain();
   assert.deepEqual(f.analysis.sellingPoints, ['셀러 핏', early[1], late[1]]);
 });
+test('추천은 특징 결과 적용 때 함께 저장하고 진행·편집 중에는 분석에 미리 넣지 않는다', async () => {
+  const response = deferred();
+  const f = fixture({ request: () => response.promise });
+  const featureSuggestions = [{ point: '드롭숄더 실루엣', evidence: '어깨선이 내려와 있어요' }];
+  await start(f); await core(f); await f.run.setEditing(true);
+  assert.equal(Object.hasOwn(f.analysis, 'featureSuggestions'), false);
+  response.resolve({ points: { status: 'ready', items: late }, featureTicket: 'feature', featureSuggestions,
+    detailRecommendations: { status: 'ready' }, detailRecommendationsHandoff: { signature: 'detail' } });
+  await drain();
+  assert.equal(f.run.getRecord().stage, 'decided');
+  assert.equal(Object.hasOwn(f.analysis, 'featureSuggestions'), false);
+  await f.run.setEditing(false); await drain();
+  assert.equal(f.run.getRecord().stage, 'applied');
+  assert.deepEqual(f.analysis.featureSuggestions, featureSuggestions);
+  assert.deepEqual(f.writes.at(-1).featureSuggestions, featureSuggestions);
+});
 test('회차나 사진이 바뀌면 결과를 로컬 저장 전에 버린다', async () => {
   const result = deferred(); const f = fixture({ request: () => result.promise });
   await start(f); await core(f); const writes = f.writes.length; f.invalidate(); result.resolve({ points: { status: 'ready', items: late } }); await drain();

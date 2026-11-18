@@ -17,6 +17,35 @@ function capture(t, data) {
   globalThis.fetch = async (url, options) => { calls.push({ url, ...options }); return response(data); };
   t.after(() => { globalThis.fetch = original; }); return calls;
 }
+test('HTTP one-shot analysis and feature responses retain featureSuggestions', async (t) => {
+  const featureSuggestions = [{ point: '드롭숄더 실루엣', evidence: '어깨선이 내려와 있어요' }];
+  const input = { product: { colors: [] }, photos: [{ slot: 'Front', blob: new Blob(['bytes'], { type: 'image/jpeg' }) }] };
+  capture(t, { data: { clothingType: 'top', featureSuggestions } });
+  assert.deepEqual((await adapter.publicAnalyze(input.product, input)).featureSuggestions, featureSuggestions);
+  assert.deepEqual((await adapter.analyzePublicFeatures({ ...input, runId: 'feature_run_123', attempt: 1 })).featureSuggestions, featureSuggestions);
+});
+
+test('HTTP save and reload retain featureSuggestions', async (t) => {
+  const featureSuggestions = [{ point: '드롭숄더 실루엣', evidence: '어깨선이 내려와 있어요' }];
+  const originalSession = supabase.auth.getSession;
+  t.after(() => { supabase.auth.getSession = originalSession; });
+  supabase.auth.getSession = async () => ({ data: { session: { access_token: 'fake' } } });
+  const calls = capture(t, { clothingType: 'top', featureSuggestions });
+  assert.deepEqual((await adapter.saveAnalysis('feature-project', { featureSuggestions })).featureSuggestions, featureSuggestions);
+  assert.deepEqual(JSON.parse(calls[0].body), { featureSuggestions });
+  assert.deepEqual((await adapter.getAnalysis('feature-project')).featureSuggestions, featureSuggestions);
+});
+
+test('mock core omits recommendations until the feature route returns them', async () => {
+  const { mockAdapter } = await vite.ssrLoadModule('/src/lib/api/mockAdapter.js');
+  const complete = await mockAdapter.analyzeProduct(null);
+  const core = await mockAdapter.analyzeProduct(null, { parts: 'core', runId: 'feature_mock_123' });
+  assert.equal(complete.featureSuggestions.length, 2);
+  assert.equal(Object.hasOwn(core, 'featureSuggestions'), false);
+  const result = await mockAdapter.analyzePublicFeatures({ runId: 'feature_mock_123' });
+  assert.deepEqual(result.featureSuggestions, complete.featureSuggestions);
+});
+
 test('합치기는 비회원도 JSON 증표를 보내고 decisions를 읽는다', async (t) => {
   const calls = capture(t, { data: { decisions: [{ late: 0, action: 'new', early: null }] } });
   const body = { runId: 'run_test_123', pointsTicket: { signature: 'core' }, featureTicket: { signature: 'feature' } };
@@ -49,4 +78,40 @@ test('목 특징 인계도 확정 뒤 저장되어 개발 흐름이 계속 이�
   await mockAdapter.promoteDetailRecommendations('mock-project', feature.detailRecommendationsHandoff);
   const saved = await mockAdapter.getAnalysis('mock-project');
   assert.equal(saved.detailRecommendations.status, 'ready');
+});
+
+test('HTTP analysis mapping preserves the fit profile and its axis sources', async (t) => {
+  const fitProfile = { category: 'top', gender: 'women', axes: { length: 'slight_crop' },
+    axisSources: { length: 'measure' }, source: 'auto', version: 2 };
+  const fitRead = { photoType: 'flat', sleeveType: 'long', topLength: { value: 'basic', confident: true },
+    sleeve: { value: 'wrist', confident: false } };
+  capture(t, { data: { clothingType: 'top', fit: 'regular', fitProfile, fitRead } });
+  const result = await adapter.publicAnalyze({ colors: [] }, { photos: [{ slot: 'Front', blob: new Blob(['bytes'], { type: 'image/jpeg' }) }] });
+  assert.deepEqual(result.fitProfile, fitProfile);
+  assert.deepEqual(result.fitRead, fitRead);
+});
+
+test('mock analysis save and reload preserve per-axis sources', async () => {
+  const { mockAdapter } = await vite.ssrLoadModule('/src/lib/api/mockAdapter.js');
+  const fitProfile = { category: 'top', gender: 'women', axes: { sleeve: 'back_of_hand' },
+    axisSources: { sleeve: 'seller' }, source: 'seller', version: 2 };
+  const fitRead = { photoType: 'worn', sleeveType: 'long', sleeve: { value: 'wrist', confident: true } };
+  await mockAdapter.saveAnalysis('mock-project', { fitProfile, fitRead });
+  const result = await mockAdapter.getAnalysis('mock-project');
+  assert.deepEqual(result.fitProfile, fitProfile);
+  assert.deepEqual(result.fitRead, fitRead);
+});
+
+test('HTTP analysis save and reload retain the full per-axis source map', async (t) => {
+  const fitProfile = { category: 'outer', gender: 'men', axes: { fit: 'over', sleeve: 'fingers' },
+    axisSources: { fit: 'ai', sleeve: 'seller' }, source: 'seller', version: 2 };
+  const fitRead = { photoType: 'flat', sleeveType: 'long', sleeve: { value: 'wrist', confident: false } };
+  const calls = capture(t, { clothingType: 'outer', targetGenders: ['men'], fitProfile, fitRead });
+  const saved = await adapter.saveAnalysis('fit-source-project', { fitProfile, fitRead });
+  assert.deepEqual(JSON.parse(calls[0].body), { fitProfile, fitRead });
+  assert.deepEqual(saved.fitProfile, fitProfile);
+  assert.deepEqual(saved.fitRead, fitRead);
+  const result = await adapter.getAnalysis('fit-source-project');
+  assert.deepEqual(result.fitProfile, fitProfile);
+  assert.deepEqual(result.fitRead, fitRead);
 });

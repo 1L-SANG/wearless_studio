@@ -89,7 +89,7 @@ def _run_detail_cut(
         worker_job(),
         [prepared],
         {"clothingType": "top"},
-        {"fitProfile": {"axes": {"fit": "regular"}}} if analysis is None else analysis,
+        {"fitProfile": {"category": "top", "gender": "women", "axes": {"fit": "regular"}, "axisSources": {"fit": "seller"}}} if analysis is None else analysis,
     ))
     captured.update(events=events, r2=r2, result=result)
     return captured
@@ -141,7 +141,7 @@ def test_confirmed_framing_crop_edits_stage1_with_exact_example_contract(monkeyp
 
     async def fake_repair(
         settings, gemini, cut_spec, product, source, *, qc_corrections,
-        confirmed_prompt_input,
+        confirmed_prompt_input, **kwargs,
     ):
         captured.update(
             source=source,
@@ -336,6 +336,7 @@ def test_detail_repair_mode_edits_stage1_for_local_failure(monkeypatch):
 
     async def fake_repair(
         settings, gemini, cut_spec, product, source, *, qc_corrections,
+        **kwargs,
     ):
         captured.update(
             model=settings.model_image_high,
@@ -573,7 +574,7 @@ def _run_editor(monkeypatch, *, qc_mode, qc_error=False, cut_type="product", set
         }]}
 
     async def fake_analysis(conn, pid):
-        return {"fitProfile": {"axes": {"fit": "regular"}}}
+        return {"fitProfile": {"category": "top", "gender": "women", "axes": {"fit": "regular"}, "axisSources": {"fit": "seller"}}}
 
     async def fake_asset(conn, uid, asset_id):
         return {"id": asset_id, "r2_key": "product", "mime_type": "image/png"}

@@ -55,7 +55,8 @@ def fit_context(product: dict | None, analysis: dict | None) -> dict:
     """
     product = product or {}
     analysis = analysis or {}
-    profile = analysis.get("fitProfile")
+    from .fit_axes import mannequin_fit_profile
+    profile = mannequin_fit_profile(analysis.get("fitProfile"))
     axes = profile.get("axes") if isinstance(profile, dict) else None
     ctx = {
         "clothingType": (product.get("clothing_type") or product.get("clothingType")

@@ -42,7 +42,7 @@ async function form(initial = '', onChange = () => {}, onNext = async () => {}) 
   const stateStart = source.indexOf('  const [mdCommentDraft,');
   const sectionStart = source.indexOf('      {/* MD 코멘트 */}');
   assert.ok(stateStart >= 0 && sectionStart >= 0, 'MD 코멘트 초안과 섹션이 있어야 한다');
-  const state = source.slice(stateStart, source.indexOf('  const [ccDraft,', stateStart));
+  const state = source.slice(stateStart, source.indexOf('  const [measurementDraft,', stateStart));
   const section = source.slice(sectionStart, source.indexOf('      {/* 5. model select', sectionStart));
   const confirm = source.slice(source.indexOf('  const confirmAnalysis ='), source.indexOf('  const [customMatchOpen,'));
   const placeholderDeclaration = source.match(/^const MD_COMMENT_PLACEHOLDER = .+;$/m)[0];

@@ -829,12 +829,13 @@ def test_build_prompt_injects_fit_profile_and_drops_legacy_fit():
     analysis = {"fit": "regular", "fitProfile": {
         "category": "top", "gender": "women",
         "axes": {"fit": "over", "length": None},
+        "axisSources": {"fit": "seller"},
     }}
     p = cg.build_prompt({"cutType": "styling", "direction": "front", "shot": "full"},
                         product, analysis=analysis)
-    assert "FIT PROFILE (declared target axes" in p
-    assert "- fit: oversized volume" in p
-    assert p.index("FIT PROFILE") < p.index("PRODUCT CONTEXT")
+    assert "TOP FIT (seller-selected;" in p
+    assert "Oversized fit:" in p
+    assert p.index("TOP FIT (") < p.index("PRODUCT CONTEXT")
     assert "- Fit: regular" not in p
 
 
@@ -876,7 +877,8 @@ def test_build_prompt_matching_fit_requires_bottom_on_screen(matching_profile, m
         [{"slot": "Front"}], has_mannequin=False, has_match=False, mood_count=0)
     p3 = cg.build_prompt(spec, product, analysis=analysis, manifest=neither)
     assert matching_line not in p3
-    assert "- fit:" in p3   # 나머지 축은 유지
+    assert "TOP FIT (" not in p3  # 출처 없는 주상품 값은 마네킹 없는 컷에 넣지 않는다.
+    assert "- fit:" in p1  # 마네킹이 있는 옛 블록은 그대로다.
 
 
 # ── FaceMarket 라이선스 얼굴 주입 (FM-31) ────────────────────────────────────

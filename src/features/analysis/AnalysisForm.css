@@ -1,0 +1,146 @@
+/* a4 시안의 기본 정보 타일과 분석 폼 글자 규칙. 다른 화면에는 적용하지 않는다. */
+.analysis-form .g-title { margin-bottom: 18px; }
+.analysis-form .g2-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.analysis-form .g2-row + .g2-row,
+.analysis-form .g2 .g-reveal + .g2-row { margin-top: 10px; }
+.analysis-form .t2 { display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 78px; padding: 12px 12px 12px 16px;
+  border: 0; border-radius: var(--r-6); background: var(--bg-1); color: var(--fg-1); font-family: var(--font-body);
+  text-align: left; cursor: pointer; box-shadow: 0 0 0 1px var(--ring-strong); transition: box-shadow .15s; }
+.analysis-form .t2:hover { box-shadow: 0 0 0 1px var(--fg-3), var(--elev-soft); }
+.analysis-form .t2.open { box-shadow: 0 0 0 1.5px var(--fg-1); }
+.analysis-form .t2 .tx { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
+.analysis-form .t2 .k { font-size: 13px; font-weight: 500; line-height: 1.3; color: var(--fg-2); }
+.analysis-form .t2 .vr { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.analysis-form .t2 .v { overflow: hidden; font-size: 15px; font-weight: 600; letter-spacing: -.005em; text-overflow: ellipsis; white-space: nowrap; }
+.analysis-form .t2.soft .v { color: var(--fg-2); font-weight: 500; }
+.analysis-form .t2.just .v { animation: analysis-g-just .5s cubic-bezier(.16, 1, .3, 1); }
+.analysis-form .t2-thumb { flex: none; width: 40px; height: 52px; border-radius: var(--r-4); object-fit: cover; box-shadow: 0 0 0 1px var(--ring); }
+.analysis-form .t2-pill { flex: none; display: inline-flex; align-items: center; height: 32px; padding: 0 13px; border-radius: var(--r-pill);
+  font-size: 13px; font-weight: 600; color: var(--fg-1); background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong);
+  transition: background-color .15s, color .15s, box-shadow .15s; }
+.analysis-form .t2:hover .t2-pill { box-shadow: 0 0 0 1px var(--fg-3); }
+.analysis-form .t2.open .t2-pill { background: var(--fg-1); color: var(--bg-1); box-shadow: none; }
+.analysis-form .g-tag { flex: none; padding: 4px 7px; border-radius: var(--r-pill); font-size: 12px; font-weight: 500; line-height: 1;
+  color: var(--fg-2); box-shadow: inset 0 0 0 1px var(--ring-strong); }
+.analysis-form :is(.t2, .g-card, .g-revert):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* Safari가 포인터로 열린 타일에 그리는 추가 초점 선을 겹치지 않게 한다. */
+.analysis-form .g2[data-pointer="true"] .t2:focus-visible { outline: none; }
+.analysis-form .g-reveal { display: grid; grid-template-rows: 1fr; animation: analysis-g-rows .34s cubic-bezier(.16, 1, .3, 1); }
+.analysis-form .g-reveal-in { min-height: 0; overflow: hidden; margin: 0 -8px; padding: 10px 8px; }
+.analysis-form .g-panel { --gap: 10px; --col: 0; --cols: 3; position: relative; margin-top: 4px; padding: 18px; border-radius: 14px;
+  background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong), var(--elev-soft); animation: analysis-g-fade .34s cubic-bezier(.16, 1, .3, 1); }
+.analysis-form .g-panel[data-col="1"] { --col: 1; }
+.analysis-form .g-panel[data-col="2"] { --col: 2; }
+.analysis-form .g-panel::before { content: ''; position: absolute; top: -7px; width: 13px; height: 13px; background: var(--bg-1);
+  box-shadow: -1px -1px 0 0 var(--ring-strong); transform: rotate(45deg);
+  left: calc(var(--col) * ((100% + var(--gap)) / var(--cols)) + ((100% - (var(--cols) - 1) * var(--gap)) / var(--cols)) / 2 - 6.5px); }
+.analysis-form .g-panel .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.analysis-form .g-panel .chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.analysis-form .g-panel .chip-input-wrap { max-width: 100%; margin-bottom: 6px; }
+.analysis-form .g-panel .chip-input { max-width: min(220px, 100%); }
+.analysis-form .g-note { margin: 12px 0 0; font-size: 14px; font-weight: 400; line-height: 1.5; color: var(--fg-2); }
+.analysis-form .g-group-label { margin: 14px 0 8px; font-size: 13px; font-weight: 500; color: var(--fg-2); }
+.analysis-form .g-group-label:first-child { margin-top: 0; }
+.analysis-form .g-cards { display: grid; gap: 12px; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.analysis-form .g-cards[data-count="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 640px; }
+.analysis-form .g-cards[data-count="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 340px; }
+.analysis-form .g-cards[data-count="6"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.analysis-form .g-card { position: relative; overflow: hidden; padding: 0; border: 0; border-radius: var(--r-5); background: var(--bg-1); color: var(--fg-1);
+  font-family: var(--font-body); text-align: left; cursor: pointer; box-shadow: 0 0 0 1px var(--ring); transition: box-shadow .15s, transform .15s; }
+.analysis-form .g-card:hover { box-shadow: 0 0 0 1px var(--ring-strong), var(--elev-lift); }
+.analysis-form .g-card:active { transform: scale(.985); }
+.analysis-form .g-card.on { box-shadow: 0 0 0 2px var(--fg-1); }
+.analysis-form .g-card.on::before,
+.analysis-form .g-card.on::after { content: ''; position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; border-radius: 50%; }
+.analysis-form .g-card.on::before { z-index: 1; background: var(--fg-1); }
+.analysis-form .g-card.on::after { z-index: 2; background: var(--bg-1);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / 12px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / 12px no-repeat; }
+.analysis-form .g-card img { display: block; width: 100%; object-fit: cover; background: var(--bg-2); }
+.analysis-form .g-cards.a-len img { aspect-ratio: 3 / 4; }
+.analysis-form .g-cards.a-sq img { aspect-ratio: 1 / 1; }
+.analysis-form .g-cards.a-tall img { aspect-ratio: 2 / 3; }
+.analysis-form .g-cards.a-skirt img { aspect-ratio: 3 / 5; }
+.analysis-form .g-card .fl { display: block; padding: 9px 10px 10px; font-size: 14px; font-weight: 500; line-height: 1.3; text-wrap: balance; }
+.analysis-form .g-card-nowrap { white-space: nowrap; }
+.analysis-form .g-card.on .fl { font-weight: 600; }
+.analysis-form .g-revert { display: block; margin: 12px 0 0 auto; padding: 4px 2px; border: 0; background: none; cursor: pointer;
+  font: 500 13px/1.4 var(--font-body); color: var(--fg-2); text-decoration: underline; text-underline-offset: 3px; }
+.analysis-form .g-revert:hover { color: var(--fg-1); }
+
+/* 구역 17/700, 입력 15/400, 칩과 설명 14, 이름 13, 표시 12, AI 꼬리표 11. */
+.analysis-form .af-cards .sec-sub { font-size: 14px; text-wrap: balance; }
+.analysis-form .af-cards .mat-chip .mc-val,
+.analysis-form .af-cards .mat-add,
+.analysis-form .af-cards .check-row { font-size: 14px; }
+.analysis-form .af-cards .mat-chip input { font-size: 15px; font-weight: 400; }
+.analysis-form .af-cards .measure-label { font-size: 13px; font-weight: 500; color: var(--fg-2); }
+.analysis-form .af-cards .mfield input { font-weight: 400; }
+.analysis-form .af-cards .md-field textarea { font-weight: 400; }
+.analysis-form .af-cards .sp-chip.draft,
+.analysis-form .af-cards .sp-chip.draft .sp-draft-input { font-size: 15px; font-weight: 400; }
+.analysis-form .af-cards .pill,
+.analysis-form .af-cards .md-count { font-size: 12px; font-weight: 500; }
+.analysis-form .af-cards .sp-chip .sp-ai-tag { top: -9px; padding: 2px 7px; font-size: 11px; font-weight: 700; letter-spacing: 0; }
+.analysis-form .chip-input-pending { font-size: 12px; font-weight: 500; }
+
+/* 특징은 한 입력칸 안에 두고, 추천 받침의 옅은 바탕으로만 나눈다. */
+.analysis-form .sp4-field { position: relative; margin-top: 14px; overflow: hidden; border-radius: var(--r-6); background: var(--bg-1); }
+.analysis-form .sp4-field::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--ring-strong);
+  pointer-events: none; transition: box-shadow .15s; }
+.analysis-form .sp4-field:focus-within::after { box-shadow: inset 0 0 0 1.5px var(--fg-1); }
+.analysis-form .sp4-top { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 10px; padding: 20px 16px 16px; }
+.analysis-form .sp4-top .sp-chip { max-width: 100%; }
+.analysis-form .sp4-field .sp-chip:not(.draft) { border: 0; padding: 9px 9px 9px 17px; background: var(--bg-1);
+  box-shadow: var(--elev-card), 0 0 0 1.5px var(--accent-blue-line); animation: none; }
+.analysis-form .sp4-field .sp-chip.editable:hover { filter: brightness(.98); }
+.analysis-form .sp4-field .sp-chip.feature-refined { box-shadow: var(--elev-card), 0 0 0 1.5px var(--accent-blue-line), 0 0 0 3px var(--ring-strong); }
+.analysis-form .sp4-field .sp-ai-tag { box-shadow: 0 0 0 2px var(--bg-1); }
+.analysis-form .sp4-field .sp-add { border-color: var(--accent-blue-line); color: var(--fg-1); }
+.analysis-form .sp4-field .sp-add:hover { border-color: var(--accent-blue); }
+.analysis-form .sp4-tray { display: flex; align-items: flex-start; gap: 12px; padding: 12px 16px 14px;
+  background: color-mix(in srgb, var(--bg-2) 75%, var(--bg-1)); }
+.analysis-form .sp-sl { flex: none; padding-top: 9px; font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--fg-2); }
+.analysis-form .sp-sugs { display: flex; flex: 1; min-width: 0; flex-wrap: wrap; gap: 8px; }
+.analysis-form .sp-sug { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; max-width: 100%; padding: 0 15px 0 12px;
+  border: 0; border-radius: var(--r-pill); background: var(--bg-1); box-shadow: inset 0 0 0 1px var(--ring-strong); color: var(--fg-1);
+  font: 500 14px/1.4 var(--font-body); text-align: left; white-space: nowrap; cursor: pointer; transition: box-shadow .15s, transform .15s; }
+.analysis-form .sp-sug svg { flex: none; color: var(--fg-2); }
+.analysis-form .sp-sug:hover { box-shadow: inset 0 0 0 1px var(--fg-3); }
+.analysis-form .sp-sug:active { transform: scale(.97); }
+.analysis-form .sp-sug:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.analysis-form .af-template-picker legend { font-family: var(--font-display); font-size: 17px; font-weight: 700; letter-spacing: .2px; }
+.analysis-form .af-template-picker label > span:last-child > b { font-size: 14px; font-weight: 600; }
+.analysis-form .af-template-picker label > span:last-child > small,
+.analysis-form .af-template-picker fieldset > p { font-size: 13px; font-weight: 400; }
+.analysis-form .af-template-picker .modal-actions .btn { font-size: 13px; }
+
+@keyframes analysis-g-just { from { opacity: 0; transform: translateY(3px); } }
+@keyframes analysis-g-rows { from { grid-template-rows: 0fr; } }
+@keyframes analysis-g-fade { from { opacity: 0; transform: translateY(-4px); } }
+@media (max-width: 640px) {
+  .analysis-form .g2-row { grid-template-columns: minmax(0, 1fr); }
+  .analysis-form .g-panel[data-col] { --col: 0; --cols: 1; }
+  .analysis-form .g-cards[data-count] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .analysis-form .af-cards input:not([type="checkbox"]),
+  .analysis-form .af-cards textarea,
+  .analysis-form .af-cards .sp-chip.draft,
+  .analysis-form .af-cards .sp-chip.draft .sp-draft-input,
+  .analysis-form .af-cards .md-input::after { font-size: 16px; }
+  .analysis-form .af-cards .measure-cell { max-width: 100%; }
+  .analysis-form .af-cards .mfield { max-width: 100%; }
+  .analysis-form .sp4-tray { flex-direction: column; gap: 8px; }
+  .analysis-form .sp-sl { padding-top: 0; }
+  .analysis-form .sp-sugs { flex: initial; width: 100%; }
+  .analysis-form .sp-sug { padding-block: 10px; white-space: normal; text-wrap: balance; }
+}
+@media (max-width: 360px) {
+  .analysis-form .g-panel[data-col] { padding-inline: 12px; }
+  .analysis-form .g-card .fl { padding-inline: 4px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .analysis-form .g-reveal, .analysis-form .g-panel, .analysis-form .t2.just .v { animation: none; }
+  .analysis-form .t2, .analysis-form .t2-pill, .analysis-form .g-card { transition: none; }
+  .analysis-form .sp4-field::after, .analysis-form .sp-sug { transition: none; }
+}

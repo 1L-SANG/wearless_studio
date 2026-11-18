@@ -103,6 +103,7 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
       decisions: record.decisions || [] });
     const { changedPoints, ...patch } = merged;
     const features = record.features;
+    patch.featureSuggestions = Array.isArray(features?.featureSuggestions) ? features.featureSuggestions : [];
     if (features?.detailRecommendations?.status === 'ready') {
       patch.detailRecommendations = features.detailRecommendations;
       patch.detailRecommendationsHandoff = features.detailRecommendationsHandoff;

@@ -49,6 +49,7 @@ ProjectSummary {                   // 보관함 카드 (구 LibraryItem)
 
 - `copywriting` `selectedMannequinId`는 **서버 동기화 대상 선택값**이다. 프론트는 Zustand에 작업 사본을 두고 변경 시 `patchProject`로 동기화한다 (→ `frontend_state_model.md`).
 - 콘티에 한 번 들어간 프로젝트는 입력(`/create/input`)이나 분석(`/create/analysis`) 주소로 가면 콘티로 돌려보내고 "콘티를 만든 뒤에는 분석으로 돌아갈 수 없어요"를 보여 준다. 생성이 끝났거나 에디터에 들어간 프로젝트는 기존 완료 안내(PRD §10.17)가 먼저다. 진입 표식은 브라우저 저장소(`sb-entered-<projectId>`)에만 두는 화면 상태이며 서버 필드가 아니다. 저장소를 쓸 수 없으면 막지 않는다(`src/lib/storyboardEntered.js`, `src/apps/seller/App.jsx`).
+- 분석 페이지에서 고른 핏, 기장, 소매 길이는 `analysis.fitProfile.axes`와 칸마다의 출처 `axisSources`로 저장한다. 마네킹 사진이 없는 컷의 그림 지시에만 쓰고, 규칙은 `fit_profile_spec.md`의 "분석 페이지 핏 칸" 절이 정본이다(ADR-0028).
 - 핏 설정은 `analysis.fitProfile`로 저장하고 이미지 반영은 재생성으로 처리한다. 재생성 횟수 제한은 없으며 적용 단가·무료 수정 정책은 PRD §12.2를 따른다.
 - `adjustCount`와 컷의 과거 조정 필드는 저장값 읽기 호환용이며 새 요청이나 제한 근거로 쓰지 않는다.
 
@@ -140,6 +141,7 @@ Analysis {
   materials: Material[]            // Material { name: string(자유 텍스트), ratio: number(%) }
   sellingPoints: string[]          // 자유 텍스트, max LIMITS.sellingPointMax(5)
   aiSuggestedPoints: string[]      // max LIMITS.aiSuggestedPointMax(2)
+  fitRead?: FitRead                // 분석의 핏 읽기 결과. 서버 소유. 모양과 규칙은 fit_profile_spec.md "분석 페이지 핏 칸" 절(ADR-0028)
   featureCopy?: { point: string, desc: string }[] // 판매 특징 설명. 구 상세 카드의 동일명 fallback도 유지한다.
   partDescriptionCopy?: { point: string, desc: string }[] // 실제 상세 부위 카드 설명. detailTarget 후보 label 또는 wornCrop.label과 일치시킨다.
   mdComment: string                // 셀러 직접 입력 선택 메모. 기본값 ''. 앞뒤 공백 제거 후 최대 300자

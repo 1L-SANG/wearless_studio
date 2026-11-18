@@ -225,6 +225,7 @@ def _render_subcategory_length_rules() -> str:
         f"  {option['value']}_{category}: {option['promptEn']}"
         for category in ("skirt", "dress")
         for option in FIT_AXES[category]["length"]["women"]
+        if option.get("scope") != "analysis"
     )
 
 

@@ -9,7 +9,7 @@ fidelity 캠페인(§G)·편집 재시도 스파이크(§H) 실증 기반. 선�
 import os
 
 from ..config import Settings
-from .fit_axes import AXIS_OBSERVABLES, FIT_AXES
+from .fit_axes import AXIS_OBSERVABLES, FIT_AXES, mannequin_fit_profile
 from .gemini_image import InlineImage
 from .prompts import clean_text
 from .vision_llm import VisionError, analyze_with_fallback
@@ -63,6 +63,7 @@ def declared_axis_spec(profile: dict | None) -> list[dict]:
     matchCut/matchingFit(최상위 키)·미선언 축은 제외. 관측 문구가 없는 (category,axis,value)는
     허용목록 밖이므로 버린다 — 판정 프롬프트에는 여기서 나온 고정 문구만 들어간다.
     """
+    profile = mannequin_fit_profile(profile)
     if not isinstance(profile, dict):
         return []
     category = profile.get("category")

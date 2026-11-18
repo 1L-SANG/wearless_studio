@@ -128,7 +128,7 @@ def test_front_styling_confirmed_cut_is_generated_and_variant_is_saved(monkeypat
         assert "SELECTED MANNEQUIN GARMENT-LOCAL COLOR AND FIT AUTHORITY:" in rendered
     else:
         assert "MANNEQUIN" not in rendered
-        assert prompt_input.sold_product_fit == "regular"
+        assert prompt_input.sold_product_fit is None
     assets = captured["finalize"]["cut_assets"]
     assert len(assets) == 1
     assert assets[0]["metadata"]["generation"]["confirmedGptVariant"] == (
@@ -158,7 +158,7 @@ def test_extra_color_uses_confirmed_base_render_before_color_application(monkeyp
     else:
         assert "MANNEQUIN" not in rendered
         assert "MANNEQUIN" not in prepared[2]
-        assert prompt_input.sold_product_fit == "regular"
+        assert prompt_input.sold_product_fit is None
     master, photograph, plan = captured["color"]
     assert master.data == b"fake-generated-cut"
     assert photograph.data == _png("blue")

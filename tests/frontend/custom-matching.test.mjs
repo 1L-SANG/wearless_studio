@@ -174,7 +174,10 @@ test('target-gender chips disable deselection, photo-volume options stay exclusi
   );
   assert.match(ui, /allowDeselect = true/);
   assert.match(ui, /v === value && allowDeselect \? null : v/);
-  assert.match(analysis, /<Chips options=\{genderOptions\} value=\{a.targetGenders\?\.\[0\] \|\| null\}[\s\S]*?allowDeselect=\{false\}/);
+  const basic = readFileSync(new URL('../../src/features/analysis/BasicInformation.jsx', import.meta.url), 'utf8');
+  assert.match(basic, /onGenderChange\(value\)/);
+  assert.match(basic, /type="button" role="radio"/);
+  assert.doesNotMatch(basic, /value === a.targetGenders.*\? null/);
   assert.match(analysis, /<PageTemplatePicker/);
   assert.doesNotMatch(analysis, /상세페이지 사진 양/);
   assert.match(analysis, /controllerRef\.current\.abort\(\)/);

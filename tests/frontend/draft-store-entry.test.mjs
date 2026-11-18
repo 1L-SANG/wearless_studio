@@ -6,6 +6,29 @@ import { draftStoreFixture, drainDraftTasks } from './helpers/draft-store-fixtur
 
 const product = (name) => ({ name, colors: [] });
 
+test('draft save and restore retain feature suggestions and photo evidence', async (t) => {
+  const storage = draftStoreFixture(t);
+  storage.cloneWrites();
+  const featureSuggestions = [{ point: '도톰한 짜임감', evidence: '굵은 골이 보여요' }];
+  await saveProductDraft(product('니트'), { sellingPoints: [], featureSuggestions });
+  assert.deepEqual(storage.saved.analysis.featureSuggestions, featureSuggestions);
+  assert.deepEqual((await loadDraft()).analysis.featureSuggestions, featureSuggestions);
+});
+
+test('draft save and restore preserve the full fit profile and per-axis sources', async (t) => {
+  const storage = draftStoreFixture(t);
+  storage.cloneWrites();
+  const fitProfile = { category: 'dress', gender: 'women', axes: { length: 'floor', sleeve: 'fingers' },
+    axisSources: { length: 'ai', sleeve: 'seller' }, source: 'seller', version: 2 };
+  const fitRead = { photoType: 'worn', sleeveType: 'long', hemLength: { value: 'floor', confident: true } };
+  await saveProductDraft(product('원피스'), { fitProfile, fitRead });
+  assert.deepEqual(storage.saved.analysis.fitProfile, fitProfile);
+  assert.deepEqual(storage.saved.analysis.fitRead, fitRead);
+  const restored = await loadDraft();
+  assert.deepEqual(restored.analysis.fitProfile, fitProfile);
+  assert.deepEqual(restored.analysis.fitRead, fitRead);
+});
+
 test('WOC16 saving, restoring and updating a product draft keep content without photo-volume state', async (t) => {
   const storage = draftStoreFixture(t), analysis = { sellingPoints: ['부드러운 촉감'] };
   await saveProductDraft(product('저장한 니트'), analysis, '2026-11-13T00:00:00Z');

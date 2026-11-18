@@ -79,15 +79,17 @@ def test_packet_accepts_two_to_three_seller_photo_and_binds_grid_hash(monkeypatc
         assert rendered.size == (948, 1390)
 
 
-def test_product_template_changes_only_authority_paragraphs():
+def test_product_template_changes_only_authority_hair_and_contact_paragraphs():
     old = prompt.load_confirmed_gpt_template().split("\n\n")
     new = prompt.load_confirmed_gpt_product_template().split("\n\n")
     assert len(old) == len(new)
     changed = [a.split(":", 1)[0] for a, b in zip(old, new, strict=True) if a != b]
-    assert len(changed) == 3
+    assert len(changed) == 5
     assert changed[0].startswith("HARD SELLER FACTS")
     assert changed[1].startswith("SELLER-ONLY UNCERTAINTIES")
     assert changed[2] == "SELECTED MANNEQUIN GARMENT-LOCAL COLOR AND FIT AUTHORITY"
+    assert changed[3] == "PRODUCT AND MODEL LOCK"
+    assert changed[4].startswith("BOUNDED POSE SEMANTICS")
     old_request = _top_request()
     new_request = replace(old_request,
         scope=replace(old_request.scope, selected_mannequin=False),
@@ -96,36 +98,36 @@ def test_product_template_changes_only_authority_paragraphs():
     new_rendered = prompt.compile_confirmed_gpt_prompt(new_request).split("\n\n")
     for old_paragraph, new_paragraph in zip(old_rendered, new_rendered, strict=True):
         if old_paragraph.startswith("PRODUCT AND MODEL LOCK"):
-            assert old_paragraph.replace("Fixed inner: none. ", "") == new_paragraph
-        elif old_paragraph.startswith(("BOUNDED POSE SEMANTICS",
-                                     "BOUNDED ADJACENT-PLACE", "CAPTURE RENDERING",
+            assert "hair in every direction" in new_paragraph
+            assert "Fixed inner: none." not in new_paragraph
+        elif old_paragraph.startswith(("BOUNDED ADJACENT-PLACE", "CAPTURE RENDERING",
                                      "CAMERA AND PRODUCT SAFETY", "CONDITIONAL POINT LIGHT",
                                      "PHYSICAL INTEGRATION", "Output exactly")):
             assert old_paragraph == new_paragraph
 
 
 @pytest.mark.parametrize("analysis, expected", [
-    ({"fit": "regular"}, "regular"),
+    ({"fit": "regular"}, None),
     ({"fit": "slim", "fitProfile": {"category": "top", "gender": "women", "version": 2,
-      "axes": {"fit": "over", "length": "crop", "sleeve": "cap"}}},
-     "fit: oversized volume, dropped shoulders, roomy chest and wide sleeves. Observable target: shoulder seam below the shoulder point and clear air around chest, waist, and sleeves."),
+      "axes": {"fit": "over", "length": "crop", "sleeve": "cap"}, "axisSources": {"fit": "ai"}}},
+     "Oversized fit:"),
     ({"fit": "slim", "fitProfile": {"category": "top", "gender": "women", "axes": {}}}, None),
     ({"fit": "semi_over", "fitProfile": {"category": "top", "gender": "women", "version": 2,
       "source": "auto", "axes": {}}},
-     "fit: semi-oversized, relaxed volume. Observable target: extra room at shoulder, chest, and sleeves, with a mildly dropped shoulder point."),
+     None),
     ({"fit": "semi_over", "fitProfile": {"category": "top", "gender": "women", "version": 2,
       "source": "auto", "axes": {"fit": None}}}, None),
     ({"fit": "semi_over", "fitProfile": {"category": "pants", "gender": "women", "version": 2,
       "source": "auto", "axes": {}}}, None),
     ({}, None),
 ])
-def test_analysis_fit_uses_generic_sources_without_new_length_or_sleeve_axes(monkeypatch, analysis, expected):
+def test_analysis_fit_uses_applied_sources_and_ignores_unconfirmed_axes(monkeypatch, analysis, expected):
     packet = _packet(monkeypatch, analysis=analysis)
-    assert packet.prompt_input.sold_product_fit == expected
+    assert packet.prompt_input.sold_product_fit is None if expected is None else expected in packet.prompt_input.sold_product_fit
     rendered = prompt.compile_confirmed_gpt_prompt(packet.prompt_input)
     assert "high waist" not in rendered
     assert "caps the shoulder" not in rendered
-    assert "No analysis fit is declared." in rendered if expected is None else expected in rendered
+    assert "TOP FIT (" not in rendered if expected is None else expected in rendered
 
 
 def test_old_packet_ignores_analysis_and_keeps_original_prompt(monkeypatch):

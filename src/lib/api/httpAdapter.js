@@ -438,10 +438,13 @@ function mergeAnalysisResult(ai) {
     subCategory: ai.subCategory ?? null,
     targetGenders: ai.targetGenders ?? [],
     fit: ai.fit ?? null,
+    fitProfile: ai.fitProfile ?? base.fitProfile,
+    ...(ai.fitRead ? { fitRead: ai.fitRead } : {}),
     materials: (ai.materials && ai.materials.length)
       ? ai.materials
       : [{ name: '면', ratio: 60 }, { name: '폴리에스터', ratio: 40 }],
     aiSuggestedPoints: ai.aiSuggestedPoints ?? [],
+    ...(Array.isArray(ai.featureSuggestions) ? { featureSuggestions: ai.featureSuggestions } : {}),
     ...(ai.pointsTicket ? { pointsTicket: ai.pointsTicket } : {}),
     suggestedName: ai.suggestedName ?? base.suggestedName,
     styleTags: ai.styleTags ?? [],

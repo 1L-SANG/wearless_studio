@@ -39,7 +39,7 @@ def test_worn_mirror_block_is_inserted_once_immediately_after_product_context(cu
 
     assert prompt.count(mirror) == 1
     assert prompt.count("MIRRORED SOURCE PHOTOS:") == 1
-    assert _product_block(_PRODUCT, analysis) + "\n\n" + mirror in prompt
+    assert _product_block(_PRODUCT, analysis, photo_authority=True) + "\n\n" + mirror in prompt
     assert prompt.replace("\n\n" + mirror, "", 1) == baseline
 
 

@@ -1811,8 +1811,10 @@ def garment_color_input_identity(product: dict) -> tuple:
 # 재분석 때는 finalize가 전문을 교체하므로 낡은 판정이 남지 않는다.
 _SERVER_OWNED_ANALYSIS_KEYS = (
     "sourceMirrored",
+    "fitRead",
     "inputConsistency",
     "featureCopy",
+    "featureSuggestions",
     "partDescriptionCopy",
     "confirmedGptProductEvidence",
     "detailRecommendations",
@@ -1881,6 +1883,18 @@ async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict, 
     옛 클라이언트의 전문 교체도 누락된 서버 키와 잠금을 보존하고 불변 근거를 보호한다.
     소유권은 라우트 선검증. 재분석 성공만 보호된 서버 근거까지 새 전문으로 교체한다.
     """
+    if "fitRead" in analysis:
+        from .agents.fit_reader import normalize_fit_read
+        reading = normalize_fit_read(analysis["fitRead"])
+        analysis = {key: value for key, value in analysis.items() if key != "fitRead"}
+        if reading is not None:
+            analysis["fitRead"] = reading
+    if "featureSuggestions" in analysis:
+        from .agents.feature_extractor import normalize_feature_suggestions
+        suggestions = analysis["featureSuggestions"]
+        analysis = {key: value for key, value in analysis.items() if key != "featureSuggestions"}
+        if isinstance(suggestions, list):
+            analysis["featureSuggestions"] = normalize_feature_suggestions(suggestions)
     analysis = {k: value for k, value in analysis.items()
                 if k not in ("locked", *_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS)
                 and not (merge and delete_nulls and value is None and k in _SERVER_OWNED_ANALYSIS_KEYS)}
@@ -1901,6 +1915,10 @@ async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict, 
             from jsonb_each(analyses.payload) previous
             where previous.key = any(%s::text[]) and not (excluded.payload ? previous.key)
         )"""
+    if "fitRead" in analysis:
+        # 공개 분석 초안은 최초 판독을 저장한다. 같은 행의 기존 판독은 경합 시에도 우선한다.
+        update = (f"({update}) || case when analyses.payload ? 'fitRead' then "
+                  "jsonb_build_object('fitRead', analyses.payload->'fitRead') else '{}'::jsonb end")
     async with conn.cursor() as cur:
         await cur.execute(
             "insert into analyses (project_id, payload) values (%s, %s) "
@@ -4540,8 +4558,23 @@ async def finalize_mannequin_success(
     charge: int,
     metadata: dict,
     fit_profile_snapshot: dict | None = None,
+    analysis_fit_profile: dict | None = None,
 ) -> dict | None:
     """성공 종결(원자·lease 펜스). None = lease 상실(복구·재클레임) → 아무것도 쓰지 않음."""
+    if fit_profile_snapshot is not None:
+        from .agents.fit_axes import mannequin_fit_profile
+        original_profile = fit_profile_snapshot.get("profile")
+        if analysis_fit_profile is None and isinstance(original_profile, dict) and "axisSources" in original_profile:
+            analysis_fit_profile = original_profile
+        fit_profile_snapshot = {**fit_profile_snapshot, "profile": mannequin_fit_profile(fit_profile_snapshot.get("profile"))}
+        if analysis_fit_profile is not None:
+            # 주상품의 분석 출처는 보존하고 코디 축은 실제 첨부로 검증된 스냅샷을 따른다.
+            matching_keys = ("matchCut", "matchingFit")
+            resolved_profile = fit_profile_snapshot.get("profile") or {}
+            analysis_fit_profile = {
+                **{key: value for key, value in analysis_fit_profile.items() if key not in matching_keys},
+                **{key: resolved_profile[key] for key in matching_keys if key in resolved_profile},
+            }
     async with conn.cursor() as cur:
         await cur.execute(
             "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
@@ -4598,7 +4631,7 @@ async def finalize_mannequin_success(
                 "values (%s, jsonb_build_object('fitProfile', %s::jsonb), false) "
                 "on conflict (project_id) do update set payload = "
                 "jsonb_set(analyses.payload, '{fitProfile}', excluded.payload->'fitProfile', true)",
-                (project_id, Json(fit_profile_snapshot.get("profile"))),
+                (project_id, Json(analysis_fit_profile if analysis_fit_profile is not None else fit_profile_snapshot.get("profile"))),
             )
     # 크레딧 확정 — 버킷 FIFO 차감(구독먼저→topup), 같은 tx·jobs 락 유지.
     # 멱등 = job.status(위 status='running' FOR UPDATE) → 재진입 없음. settle_key는 release 전용.

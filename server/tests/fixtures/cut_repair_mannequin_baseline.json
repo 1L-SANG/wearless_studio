@@ -1,0 +1,39 @@
+[
+  {
+    "confirmed": false,
+    "spec": {
+      "cutType": "horizon",
+      "shot": "medium",
+      "direction": "back",
+      "faceExposure": "hide"
+    },
+    "corrections": [
+      "Reframe the existing STAGE-1 photograph to the compiled shot, requested crop, subject scale, head boundary, and face exposure. Preserve all other pixels and do not reconstruct the scene."
+    ],
+    "prompt": "You are the AG-06 second-stage fashion cut generator. Edit the single attached STAGE-1 output; do not reconstruct a different photograph.\n\nCOMPILED CUT INTENT: recipe=horizon; shot=medium; direction=back; face=hide\n\nINDEPENDENT QC CORRECTIONS:\n- Reframe the existing STAGE-1 photograph to the compiled shot, requested crop, subject scale, head boundary, and face exposure. Preserve all other pixels and do not reconstruct the scene.\n\nPRESERVATION CONTRACT:\n- Change only the named failed axes. Freeze every other visible pixel-level fact.\n- Keep the same person and face, garment and matching garments, pose meaning, place, props, light, color tone, and capture character unless a correction explicitly names it.\n- Preserve all garment text, logos, hardware, pattern, seams, material, color, fit, and silhouette exactly as visible in STAGE-1. Add no new item or design detail.\n- Output exactly one fully opaque photorealistic portrait 2:3 image, with no collage, caption, overlay, or watermark."
+  },
+  {
+    "confirmed": false,
+    "spec": {
+      "cutType": "styling",
+      "shot": "full",
+      "direction": "front"
+    },
+    "corrections": [
+      "Reframe the existing STAGE-1 photograph to the compiled shot, requested crop, subject scale, head boundary, and face exposure. Preserve all other pixels and do not reconstruct the scene."
+    ],
+    "prompt": "You are the AG-06 second-stage fashion cut generator. Edit the single attached STAGE-1 output; do not reconstruct a different photograph.\n\nCOMPILED CUT INTENT: recipe=styling; shot=full; direction=front; face=same\n\nINDEPENDENT QC CORRECTIONS:\n- Reframe the existing STAGE-1 photograph to the compiled shot, requested crop, subject scale, head boundary, and face exposure. Preserve all other pixels and do not reconstruct the scene.\n\nPRESERVATION CONTRACT:\n- Change only the named failed axes. Freeze every other visible pixel-level fact.\n- Keep the same person and face, garment and matching garments, pose meaning, place, props, light, color tone, and capture character unless a correction explicitly names it.\n- Preserve all garment text, logos, hardware, pattern, seams, material, color, fit, and silhouette exactly as visible in STAGE-1. Add no new item or design detail.\n- Output exactly one fully opaque photorealistic portrait 2:3 image, with no collage, caption, overlay, or watermark."
+  },
+  {
+    "confirmed": true,
+    "spec": {
+      "cutType": "styling",
+      "shot": "medium",
+      "direction": "front"
+    },
+    "corrections": [
+      "Reframe the existing STAGE-1 photograph to the compiled shot, requested crop, subject scale, head boundary, and face exposure. Preserve all other pixels and do not reconstruct the scene."
+    ],
+    "prompt": "You are the AG-06 second-stage fashion cut generator. Edit the single attached STAGE-1 output; do not reconstruct a different photograph.\n\nCOMPILED CUT INTENT: recipe=styling; shot=medium; direction=front; face=same\n\nCONFIRMED EXAMPLE FRAMING LOCK:\n- requested framing: Show the complete head and the complete sold shirt through its hem, plus enough of the selected matching trousers to make the layer relationship unambiguous. This is an independently composed medium cut, not a crop of a full-body image.\n- face exposure/crop: visible; preserve the example's broad off-camera gaze behavior while using the selected model identity\n- rough framing: vertical medium styling cut from complete head through the sold shirt hem\n\nINDEPENDENT QC CORRECTIONS:\n- Reframe the existing STAGE-1 photograph to the compiled shot, requested crop, subject scale, head boundary, and face exposure. Preserve all other pixels and do not reconstruct the scene.\n\nPRESERVATION CONTRACT:\n- Change only the named failed axes. Freeze every other visible pixel-level fact.\n- Keep the same person and face, garment and matching garments, pose meaning, place, props, light, color tone, and capture character unless a correction explicitly names it.\n- Preserve all garment text, logos, hardware, pattern, seams, material, color, fit, and silhouette exactly as visible in STAGE-1. Add no new item or design detail.\n- Output exactly one fully opaque photorealistic portrait 2:3 image, with no collage, caption, overlay, or watermark."
+  }
+]

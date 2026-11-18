@@ -135,7 +135,9 @@ def test_verdict_propagates_vision_error_and_requires_declared_axes(monkeypatch)
 
 def test_edit_instruction_templates_cover_every_axis_family():
     for category, axes in FIT_AXES.items():
-        for axis in axes:
+        for axis, by_gender in axes.items():
+            if not any(e.get("scope") != "analysis" for entries in by_gender.values() for e in entries):
+                continue
             assert (category, axis) in fq._EDIT_TEMPLATES, f"템플릿 누락: {category}.{axis}"
 
 

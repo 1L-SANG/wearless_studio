@@ -60,6 +60,18 @@ test('마네킹 먼저 만든 기존 흐름은 상세페이지에서 컷 값만 
   assert.equal((await api.generateDetailPage(id)).credits, 841);
 });
 
+test('목 마네킹은 분석에서 다른 기장을 골라도 세부 카테고리 기본 기장을 기록한다', async () => {
+  for (const [category, subCategory, length, picked] of [
+    ['dress', 'mini_dress', 'mini', 'above_knee'], ['skirt', 'midi_skirt', 'midi', 'knee'],
+  ]) {
+    const id = await fresh({ preview: false });
+    await api.saveAnalysis(id, { subCategory, fitProfile: { category, gender: 'women', source: 'seller', version: 2,
+      axes: { length: picked }, axisSources: { length: 'seller' } } });
+    const { data: { cuts } } = await api.generateMannequins(id);
+    assert.deepEqual(cuts[0].fitProfile, { category, gender: 'women', source: 'auto', version: 2, axes: { length } });
+  }
+});
+
 test('대기와 실패와 취소 마네킹 작업도 모델 요금 중복을 막는다', async () => {
   for (const status of ['pending', 'running', 'error', 'cancelled', 'done']) {
     const id = await fresh();

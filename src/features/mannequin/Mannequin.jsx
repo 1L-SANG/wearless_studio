@@ -16,7 +16,7 @@ import {
   mannequinRegenerationCtaLabel,
   mannequinRegenerationQuote,
 } from '@/lib/limits.js';
-import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
+import { axesFor, fitProfileCategory, mannequinFitProfile } from '@/lib/fitAxes.js';
 import { fitExampleImage } from '@/lib/fitExampleImages.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
 import { assetFileUrl } from '@/lib/assetUrl.js';
@@ -86,7 +86,7 @@ function createFitProfileDraft(product, analysis, mainMatchingItem) {
   const gender = derivedGender(analysis, product);
   const axisDefs = analysis?.subCategory === 'leggings' ? {} : axesFor(category, gender);
   const existing = analysis?.fitProfile?.category === category && analysis?.fitProfile?.gender === gender
-    ? analysis.fitProfile
+    ? mannequinFitProfile(analysis.fitProfile, analysis.subCategory)
     : null;
   const axes = Object.fromEntries(Object.keys(axisDefs).map((axis) => [axis, null]));
   Object.keys(axes).forEach((axis) => {

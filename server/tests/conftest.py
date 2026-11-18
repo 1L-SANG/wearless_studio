@@ -198,6 +198,7 @@ def keypair():
 def make_settings(**overrides) -> Settings:
     base = dict(
         app_env="prod",
+        fit_reader_mode="off",  # 기존 분석 시험은 부가 유료 호출을 만들지 않는다. 핏 읽기 시험만 가짜 응답으로 켠다.
         detail_cut_stagger_ms=0,  # 테스트는 제출 간격 없이(실시간 sleep 방지) — 운영 기본은 3000
         detail_cut_retry_delay_seconds=0,  # 컷 재시도 대기도 테스트에서는 0 — 운영 기본은 2초
         supabase_url="https://example.supabase.co",

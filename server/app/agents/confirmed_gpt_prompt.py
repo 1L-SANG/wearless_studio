@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 
 from .prompts import build_mirrored_source_block
+from .analysis_fit import build_analysis_fit_block, select_applied_fit_axes
 
 
 _TEMPLATE = Path(__file__).resolve().parents[2] / "prompts" / "cut_generate_confirmed_gpt_v1.txt"
@@ -22,12 +23,17 @@ _TEMPLATE_SHA256 = "d06ff48fa1185efadbda85d2f543b2340577716e72be9b105d6e3b8e4071
 _OUTFIT_TEMPLATE = _TEMPLATE.with_name("cut_generate_confirmed_gpt_outfit_v2.txt")
 _OUTFIT_TEMPLATE_SHA256 = "76cf2babce4278341228e0abed704c57739278895395d5c3aa98ff5a886da33a"
 _PRODUCT_TEMPLATE = _TEMPLATE.with_name("cut_generate_confirmed_gpt_product_v2.txt")
-_PRODUCT_TEMPLATE_SHA256 = "f9895688b8276ebda9f1a53a4409a2f963350f7381f8d366fed766bfc743fd3f"
+_PRODUCT_TEMPLATE_SHA256 = "4195d3c013664ea975fb4322fa84a918de7345bce99aa6382eaacdd0d6881e13"
 _OUTFIT_ROLES = ("inner", "footwear", "bag", "accessory")
 _TOKEN_RE = re.compile(r"\$\{([a-z_]+)\}")
 _CODE_RE = re.compile(r"[a-z0-9_]+")
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _MAX_QC_CORRECTIONS = 5
+_FIT_UNCERTAINTY_PARTS = (
+    ("length", "LENGTH", "where the hem ends"),
+    ("sleeve", "SLEEVE LENGTH", "where the sleeve ends"),
+    ("fit", "FIT", "how loosely the garment sits"),
+)
 
 _JUDGEABILITY_REASONS = frozenset(
     {
@@ -191,6 +197,8 @@ class ConfirmedGptPromptInput:
     pose_semantics: PoseSemantics
     sold_product_fit: str | None = None
     source_mirrored: bool = False
+    analysis_fit_profile: dict | None = None
+    fit_read: dict | None = None
 
 
 @lru_cache(maxsize=1)
@@ -268,9 +276,14 @@ def _role_manifest(roles: tuple[InputRole, ...], *, matching_attached: bool,
     if not selected_mannequin:
         authorities = {**authorities, InputRole.SOLD_PRODUCT_LABELED_EVIDENCE_GRID: (
             "is final sold-product identity, color, construction, seam, closure, pattern-topology, "
-            "pattern-placement and permanent-detail pixel truth, and fit evidence together with "
-            "the seller-confirmed analysis fit; its labels, panel judgeability and HARD/UNCERTAIN "
+            "pattern-placement and permanent-detail pixel truth, except declared length and sleeve-length endpoints; "
+            "for fit, follow the seller-selected direction while preserving size clearly visible in the product photos. Its labels, panel judgeability and HARD/UNCERTAIN "
             "fact map limit what may be asserted or reconstructed"
+        ), InputRole.MODEL_FACE_DIRECTION_SHEET: (
+            "owns only the selected model's facial identity and hair across directions; it owns no pose, outfit, camera or scene"
+        ), InputRole.MODEL_FULL_BODY_DIRECTION_SHEET: (
+            "owns only the same selected model's stable height impression, body proportions and hair (length and how it is worn); "
+            "it owns no face, pose, direction, outfit, camera or scene"
         )}
     return "\n".join(
         f"{ordinal}. {role.value} — {authorities[role]}"
@@ -398,6 +411,28 @@ def _facts(
     return "\n".join(hard_lines), "\n".join(uncertain_lines)
 
 
+def _fit_uncertainty_notice(applied_axes) -> str:
+    """근거 항목은 그대로 두고 실제 적용된 칩 축의 고정 설명만 덧붙인다."""
+    axes = {axis for axis, value, source in applied_axes}
+    parts = [(name, description) for axis, name, description in _FIT_UNCERTAINTY_PARTS if axis in axes]
+    if not parts:
+        return ""
+
+    def joined(values, conjunction):
+        return values[0] if len(values) == 1 else ", ".join(values[:-1]) + f" {conjunction} " + values[-1]
+
+    names = joined([name for name, description in parts], "and")
+    descriptions = joined([description for name, description in parts], "or")
+    paragraphs, settle = ("paragraph", "settles") if len(parts) == 1 else ("paragraphs", "settle")
+    fit_clause = ""
+    if "fit" in axes:
+        fit_clause = "; " + ("for FIT, " if len(parts) > 1 else "") + "product photos remain the final authority for clearly visible garment size"
+    return (
+        f"The declared {names} {paragraphs} below {settle} any uncertainty listed above about {descriptions}; "
+        f"on those points follow the declared {paragraphs}{fit_clause}. Every other uncertainty stays as listed."
+    )
+
+
 def _outfit_lock(outfit: OutfitLock, *, selected_mannequin: bool = True) -> str:
     if not isinstance(outfit, OutfitLock) or not isinstance(outfit.matching_attached, bool):
         raise ConfirmedGptPromptError("confirmed_gpt_outfit_lock_required")
@@ -511,10 +546,14 @@ def compile_confirmed_gpt_prompt(
     template = load_confirmed_gpt_template()
     if not request.scope.selected_mannequin:
         template = load_confirmed_gpt_product_template()
-        values["sold_product_fit"] = (
-            _line(request.sold_product_fit, "sold_product_fit")
-            if request.sold_product_fit is not None else "No analysis fit is declared."
+        fit_profile = request.analysis_fit_profile if isinstance(request.analysis_fit_profile, dict) else {}
+        fit_read = request.fit_read if isinstance(request.fit_read, dict) else {}
+        applied_axes = select_applied_fit_axes(fit_profile)
+        fit_block = build_analysis_fit_block(
+            fit_profile.get("category"), fit_profile.get("gender"), applied_axes,
+            sleeve_type=fit_read.get("sleeveType"), front_hem=fit_read.get("frontHem"),
         )
+        values["fit_profile_block"] = _fit_uncertainty_notice(applied_axes) + "\n\n" + fit_block + "\n\n" if fit_block else ""
     rendered = _render(template, values)
     if not request.scope.selected_mannequin and request.source_mirrored is True:
         rendered += (

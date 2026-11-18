@@ -15,6 +15,7 @@ from .. import repo
 from ..services import outfit, outfit_jobs
 from ..agents import (
     feature_extractor,
+    fit_reader,
     input_consistency,
     product_analyst,
     product_evidence_contract,
@@ -44,6 +45,12 @@ async def _judge_input_consistency(settings, images, slots) -> dict | None:
     if not slots or slots[0] != "Front":
         return None
     return await input_consistency.judge(settings, images, slots)
+
+
+async def _read_fit(settings, images, slots):
+    if not fit_reader.enabled(settings):
+        return None
+    return await fit_reader.read(settings, images, slots=slots)
 
 
 def shrink_for_vision(data: bytes, mime: str) -> tuple[bytes, str]:
@@ -86,7 +93,7 @@ async def analyze_core_image_bytes(
     persist_confirmed_evidence: bool = False,
     _prepared=None,
 ) -> dict:
-    """AG-01과 사진 일치만 실행한다. 사진 일치에만 기존 보조 예산을 적용한다."""
+    """AG-01과 사진 일치·핏 읽기를 병렬 실행한다. 부가 호출은 기존 보조 예산을 쓴다."""
     product = product or {}
     slots = slots or ["Front", *(["Detail"] * max(0, len(source_images) - 1))]
 
@@ -102,11 +109,12 @@ async def analyze_core_image_bytes(
         }
     if on_prepared is not None:
         await on_prepared(sum(len(image.data) for image in images))
-    analyze_res, consistency_res = await asyncio.gather(
+    analyze_res, consistency_res, fit_res = await asyncio.gather(
         product_analyst.analyze(settings, analysis_product, images, slots=slots),
         asyncio.wait_for(
             _judge_input_consistency(settings, images, slots),
             timeout=settings.analysis_aux_timeout_seconds),
+        asyncio.wait_for(_read_fit(settings, images, slots), timeout=settings.analysis_aux_timeout_seconds),
         return_exceptions=True,
     )
     if isinstance(analyze_res, BaseException):
@@ -119,7 +127,16 @@ async def analyze_core_image_bytes(
     elif consistency_res:
         consistency = consistency_res
 
+    fit_read, fit_provider = None, None
+    if isinstance(fit_res, BaseException):
+        log.warning("FIT-READ failed: %r", fit_res)
+    elif fit_res is not None:
+        fit_read, fit_provider = fit_res
     analysis_payload = distributed["analysis"]
+    analysis_payload["featureSuggestions"] = []
+    analysis_payload.pop("fitRead", None)
+    if fit_read is not None:
+        analysis_payload["fitRead"] = fit_read
     # tags·swatch 기본 랭킹은 분석 완료 직후 match-candidates 요청과 재진입/새로고침 후
     # GET /analysis에서도 같은 값을 읽어야 한다. AG-01 distribute 단계에서는
     # intermediate이지만 서버 추천 입력으로 쓰이므로 저장 payload에 승격한다.
@@ -152,6 +169,7 @@ async def analyze_core_image_bytes(
         "clothing_type": clothing_type,
         "provider": provider,
         "feature_provider": None,
+        **({"fit_reader_provider": fit_provider} if fit_provider is not None else {}),
         "consistency": consistency,
         "bytes_out": sum(len(image.data) for image in images),
     }
@@ -165,7 +183,8 @@ async def extract_image_features(settings, source_images, *, product=None, slots
     contract = detail_recommendations.build_contract(
         getattr(points, "detail_candidates", None), source_images, slots
     )
-    return {"points": points, "contract": contract, "provider": provider}
+    return {"points": points, "contract": contract, "provider": provider,
+            "featureSuggestions": feature_extractor.normalize_feature_suggestions(getattr(points, "feature_suggestions", []))}
 
 
 async def analyze_image_bytes(
@@ -200,12 +219,16 @@ async def analyze_image_bytes(
     if isinstance(feature_res, BaseException):
         log.warning("AG-08 feature extract failed: %r", feature_res)
         contract = detail_recommendations.build_contract(None, source_images, slots)
+        suggestions = []
     else:
         core["feature_provider"] = feature_res["provider"]
         if feature_res["points"]:
             core["analysis_payload"]["aiSuggestedPoints"] = feature_res["points"]
             core["result_data"]["aiSuggestedPoints"] = feature_res["points"]
         contract = feature_res["contract"]
+        suggestions = feature_res.get("featureSuggestions", [])
+    core["analysis_payload"]["featureSuggestions"] = suggestions
+    core["result_data"]["featureSuggestions"] = suggestions
     core["analysis_payload"][detail_recommendations.PERSISTED_KEY] = contract
     core["result_data"][detail_recommendations.PERSISTED_KEY] = detail_recommendations.public_summary(contract)
     return core
@@ -327,6 +350,7 @@ async def run_analyze_job(app, job: dict) -> None:
                 project_id=project_id, clothing_type=clothing_type,
                 analysis_payload=analysis_payload, result={"data": result_data},
                 metadata={"provider": provider, **feature_extractor.request_metadata(s, feature_provider),
+                          **fit_reader.request_metadata(s, core.get("fit_reader_provider")),
                           "promptVersion": "v1",
                           # 판정 원문 보존처(match 도 포함) — 사후에 오탐률을 되짚을 때 유일한 근거.
                           **({"inputConsistency": consistency} if consistency else {})})

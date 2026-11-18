@@ -47,6 +47,8 @@ class _Cur:
                     assert "- %s::text[]" in self._sql
                     for key in options[0]:
                         self.owner.saved.pop(key, None)
+            if "case when analyses.payload ? 'fitRead'" in self._sql and "fitRead" in previous:
+                self.owner.saved["fitRead"] = previous["fitRead"]
             self.owner.stored = self.owner.saved
             return {"project_id": "p1", "payload": self.owner.saved, "locked": self.owner.locked}
         return {"payload": self.owner.stored} if self.owner.stored is not None else None

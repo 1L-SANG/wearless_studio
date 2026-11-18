@@ -209,10 +209,10 @@ def test_signature_prompt_uses_the_face_pass_direction_only_for_face_pass_cuts()
     assert cut_generator.SIGNATURE_DIRECTION in virtual
     assert cut_generator.SIGNATURE_DIRECTION_FACE_PASS not in virtual
     assert hashlib.sha256(_restore_prior_authority_sentence(real).encode()).hexdigest() == (
-        "99b066a1ff444813ccd0bb905c185954f03aaf8f37105756a4c7b85db9d7384e"
+        "474fb7aad06835dbadcdd4a106349e657fdc2993ca332a1cf6722fc78b70d67a"
     )
     assert hashlib.sha256(_restore_prior_authority_sentence(virtual).encode()).hexdigest() == (
-        "8dcacc558f0ec32eded8e0c2ec01a70f630917b869af1b4c9816334cafab4229"
+        "52fce1b91d49fd7b36f5127eb0dec7398e675c8ecc1d968ffce99b40e915df6b"
     )
 
 
@@ -470,13 +470,13 @@ def test_dress_signature_keeps_medium_without_generic_post_crop():
     assert request.spec["refScope"] == "all"
 
 
-def test_non_signature_prompt_changes_only_retired_authority_sentence():
+def test_non_signature_prompt_includes_no_mannequin_authority_and_contact():
     spec = {**_sig_spec(), "exampleId": "ex_horizon_men_top_full_front_02"}
     prompt = cut_generator.build_prompt(spec, _product(), face_pass=True)
     prompt = _restore_prior_authority_sentence(prompt)
-    assert len(prompt.encode()) == 5964
+    assert len(prompt.encode()) == 7191
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "3e804c37cb983ee280dcf1a5c0aa705bba8a65e37371375654b786fe0e6a8851"
+        "ff541b8d48d2cd655f73242a58048ea95444a9738981b61c12363c6b5fdcf691"
     )
 
 

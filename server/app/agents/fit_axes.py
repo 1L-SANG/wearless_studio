@@ -4,8 +4,53 @@
 실제 출력은 고정 promptEn 문구만 사용한다.
 """
 
-def analysis_for_selected_mannequin(analysis: dict, selected_cut: dict | None) -> dict:
+_LEGACY_HEMS = ("mini", "midi", "long")
+
+
+def mannequin_fit_profile(profile: dict | None, *, sub_category: str | None = None) -> dict | None:
+    """마네킹에는 분석 칩을 제외하고 기존 세부 카테고리 기장을 유지한다."""
+    if not isinstance(profile, dict):
+        return profile
+    axes = profile.get("axes")
+    axes = axes if isinstance(axes, dict) else {}
+    sources = profile.get("axisSources")
+    sources = sources if isinstance(sources, dict) else {}
+    category, gender = profile.get("category"), profile.get("gender")
+    legacy_hem = gender == "women" and category in ("dress", "skirt")
+    by_axis = FIT_AXES.get(category, {}) if isinstance(category, str) else {}
+    kept = {}
+    for axis, value in axes.items():
+        by_gender = by_axis.get(axis, {})
+        entries = by_gender.get(gender, ()) if isinstance(gender, str) else ()
+        all_entries = [entry for values in by_gender.values() for entry in values]
+        analysis_axis = bool(all_entries) and all(entry.get("scope") == "analysis" for entry in all_entries)
+        analysis_value = any(e["value"] == value and e.get("scope") == "analysis" for e in entries)
+        unsure_default = axis == "length" and legacy_hem and sources.get(axis) == "unsure" and value in _LEGACY_HEMS
+        if (axis in sources and not unsure_default) or analysis_axis or analysis_value:
+            continue
+        kept[axis] = value
+    if "axisSources" not in profile and kept == axes:
+        return profile
+    projected = {key: value for key, value in profile.items() if key != "axisSources"}
+    if "axisSources" in profile:
+        legacy_length = "length" in axes and "length" not in sources
+        if legacy_hem and not legacy_length:
+            default = next((length for length in _LEGACY_HEMS if sub_category == f"{length}_{category}"), None)
+            if default:
+                kept["length"] = default
+            if set(kept) == {"length"} and not (profile.get("matchingFit") or profile.get("matchCut")):
+                projected["source"] = "auto"
+    if "axisSources" in profile and not (kept or projected.get("matchingFit") or projected.get("matchCut")):
+        return None
+    return {**projected, "axes": kept}
+
+
+def analysis_for_selected_mannequin(
+    analysis: dict, selected_cut: dict | None, *, has_mannequin: bool = True,
+) -> dict:
     """선택 컷의 핏 기록을 쓴다. 기록 없는 구버전 컷은 기존 분석을 유지한다."""
+    if not has_mannequin:
+        return analysis
     snapshot = selected_cut.get("fit_profile_snapshot") if isinstance(selected_cut, dict) else None
     if (
         not isinstance(snapshot, dict)
@@ -13,9 +58,31 @@ def analysis_for_selected_mannequin(analysis: dict, selected_cut: dict | None) -
         or "profile" not in snapshot
         or (snapshot.get("profile") is not None and not isinstance(snapshot.get("profile"), dict))
     ):
-        return analysis
+        profile = analysis.get("fitProfile")
+        filtered = mannequin_fit_profile(profile, sub_category=analysis.get("subCategory"))
+        return analysis if filtered is profile else {**analysis, "fitProfile": filtered}
     # profile=null은 저장 키 삭제와 별개인 "사진 그대로" 기록이다.
-    return {**analysis, "fitProfile": snapshot.get("profile")}
+    return {**analysis, "fitProfile": mannequin_fit_profile(snapshot.get("profile"))}
+
+
+def profile_for_mannequin_selection_save(current_profile, incoming_profile, selected_cut):
+    """마네킹 버전 선택의 옛 프로필 재저장이 분석 원본의 출처와 새 값을 지우지 않게 한다."""
+    if not isinstance(current_profile, dict) or "axisSources" not in current_profile:
+        return incoming_profile
+    if isinstance(incoming_profile, dict) and "axisSources" in incoming_profile:
+        return incoming_profile
+    snapshot = selected_cut.get("fit_profile_snapshot") if isinstance(selected_cut, dict) else None
+    if not isinstance(snapshot, dict) or snapshot.get("version") != 1 or "profile" not in snapshot:
+        return incoming_profile
+    incoming = normalize_fit_profile(incoming_profile)
+    if incoming_profile is not None and incoming is None:
+        return incoming_profile
+    selected = snapshot["profile"]
+    if selected is not None and not isinstance(selected, dict):
+        return incoming_profile
+    if incoming == normalize_fit_profile(mannequin_fit_profile(selected)):
+        return current_profile
+    return incoming_profile
 
 
 def confirmed_copy_fit(analysis: dict) -> str | None:
@@ -48,6 +115,7 @@ FIT_AXES = {
         "length": {
             "women": [
                 {"value": "crop", "label": "크롭", "promptEn": "short cropped hem ending around the high waist"},
+                {"value": "slight_crop", "label": "살짝 크롭", "promptEn": "slightly cropped hem ending just above the waistband with only a narrow strip of bare stomach", "scope": "analysis"},
                 {"value": "semi_crop", "label": "세미크롭", "promptEn": "semi-cropped hem ending at the lower abdomen below the navel, longer than crop and shorter than standard hip length"},
                 {"value": "basic", "label": "기본", "promptEn": "standard hem ending around the hip line"},
                 {"value": "semi_long", "label": "세미롱", "promptEn": "semi-long hem extending just below the crotch to fully cover the front Y-zone, shorter than a longline or T-shirt dress"},
@@ -66,13 +134,23 @@ FIT_AXES = {
                 {"value": "cap", "label": "캡", "promptEn": "a cap-sleeve version of the same top; visibly re-tailor only its sleeves so each sleeve just caps the shoulder and ends high on the upper arm near the armpit, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
                 {"value": "cap_short", "label": "캡~반팔", "promptEn": "an extra-short-sleeve version of the same top; visibly re-tailor only its sleeves to end halfway between a cap sleeve and a standard short sleeve, covering the shoulder and only the uppermost portion of the upper arm, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
                 {"value": "short", "label": "반팔", "promptEn": "a short-sleeve version of the same top; visibly re-tailor only its sleeves to end around the mid-upper-arm above the elbow, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
+                {"value": "above_elbow", "label": "팔꿈치 위", "promptEn": "long short sleeves covering most of the upper arm and ending just above the bare elbow", "scope": "analysis"},
                 {"value": "elbow", "label": "5부", "promptEn": "an elbow-length-sleeve version of the same top; visibly re-tailor only its sleeves to end right at the elbow, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
+                {"value": "above_wrist", "label": "손목 위", "promptEn": "wrist-length sleeves with cuffs at the wrist and the whole back of the hand bare", "scope": "analysis"},
+                {"value": "wrist", "label": "손목", "promptEn": "wrist-length sleeves with cuffs at the wrist and the whole back of the hand bare", "scope": "analysis"},
+                {"value": "back_of_hand", "label": "손등 덮음", "promptEn": "long sleeves passing the wrist and covering the back of the hand to just before the knuckles, fingers visible", "scope": "analysis"},
+                {"value": "fingers", "label": "손끝 덮음", "promptEn": "extra-long sleeves covering the hand down to the fingers, with only the fingertips visible", "scope": "analysis"},
             ],
             "men": [
                 {"value": "cap", "label": "캡", "promptEn": "a cap-sleeve version of the same top; visibly re-tailor only its sleeves so each sleeve just caps the shoulder and ends high on the upper arm near the armpit, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
                 {"value": "cap_short", "label": "캡~반팔", "promptEn": "an extra-short-sleeve version of the same top; visibly re-tailor only its sleeves to end halfway between a cap sleeve and a standard short sleeve, covering the shoulder and only the uppermost portion of the upper arm, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
                 {"value": "short", "label": "반팔", "promptEn": "a short-sleeve version of the same top; visibly re-tailor only its sleeves to end around the mid-upper-arm above the elbow, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
+                {"value": "above_elbow", "label": "팔꿈치 위", "promptEn": "long short sleeves covering most of the upper arm and ending just above the bare elbow", "scope": "analysis"},
                 {"value": "elbow", "label": "5부", "promptEn": "an elbow-length-sleeve version of the same top; visibly re-tailor only its sleeves to end right at the elbow, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
+                {"value": "above_wrist", "label": "손목 위", "promptEn": "wrist-length sleeves with cuffs at the wrist and the whole back of the hand bare", "scope": "analysis"},
+                {"value": "wrist", "label": "손목", "promptEn": "wrist-length sleeves with cuffs at the wrist and the whole back of the hand bare", "scope": "analysis"},
+                {"value": "back_of_hand", "label": "손등 덮음", "promptEn": "long sleeves passing the wrist and covering the back of the hand to just before the knuckles, fingers visible", "scope": "analysis"},
+                {"value": "fingers", "label": "손끝 덮음", "promptEn": "extra-long sleeves covering the hand down to the fingers, with only the fingertips visible", "scope": "analysis"},
             ],
         },
     },
@@ -98,11 +176,13 @@ FIT_AXES = {
             "women": [
                 {"value": "above_ankle", "label": "발목 위", "promptEn": "hem ends just above the ankle bone, ankle visible"},
                 {"value": "ankle", "label": "발목", "promptEn": "hem ends at the ankle bone, no break"},
+                {"value": "ankle_cover", "label": "복숭아뼈 덮음", "promptEn": "hem covers the ankle bone and rests lightly on the top of the shoe with a small break", "scope": "analysis"},
                 {"value": "below_ankle", "label": "발목 덮음", "promptEn": "a lengthened version of the same trousers whose hem falls past the ankle and reaches the top of the foot; if the photographed garment stops at or above the ankle bone, re-tailor only its length proportions by extending the leg hems down over the instep; preserve the photographed leg width and fabric behavior, letting any folds follow body contact naturally without a prescribed fold count; if it already satisfies this hem position, preserve those proportions"},
             ],
             "men": [
                 {"value": "above_ankle", "label": "발목 위", "promptEn": "hem ends just above the ankle bone, ankle visible"},
                 {"value": "ankle", "label": "발목", "promptEn": "hem ends at the ankle bone, no break"},
+                {"value": "ankle_cover", "label": "복숭아뼈 덮음", "promptEn": "hem covers the ankle bone and rests lightly on the top of the shoe with a small break", "scope": "analysis"},
                 {"value": "below_ankle", "label": "발목 덮음", "promptEn": "a lengthened version of the same trousers whose hem falls past the ankle and reaches the top of the foot; if the photographed garment stops at or above the ankle bone, re-tailor only its length proportions by extending the leg hems down over the instep; preserve the photographed leg width and fabric behavior, letting any folds follow body contact naturally without a prescribed fold count; if it already satisfies this hem position, preserve those proportions"},
             ],
         },
@@ -111,8 +191,11 @@ FIT_AXES = {
         "length": {
             "women": [
                 {"value": "mini", "label": "미니", "promptEn": "short skirt hem ending above mid-thigh"},
+                {"value": "above_knee", "label": "무릎 위", "promptEn": "hem ends between mid-thigh and the top of the knee, knees bare", "scope": "analysis"},
+                {"value": "knee", "label": "무릎", "promptEn": "hem ends at the knee, covering or meeting the kneecap", "scope": "analysis"},
                 {"value": "midi", "label": "미디", "promptEn": "skirt hem falls between the knee and mid-calf"},
                 {"value": "long", "label": "롱", "promptEn": "long skirt hem reaching the lower calf to ankle"},
+                {"value": "floor", "label": "발목 덮음", "promptEn": "hem covers the ankles and reaches the tops of the feet", "scope": "analysis"},
             ],
             "men": [],
         },
@@ -129,8 +212,11 @@ FIT_AXES = {
         "length": {
             "women": [
                 {"value": "mini", "label": "미니", "promptEn": "short dress hem ending above mid-thigh"},
+                {"value": "above_knee", "label": "무릎 위", "promptEn": "hem ends between mid-thigh and the top of the knee, knees bare", "scope": "analysis"},
+                {"value": "knee", "label": "무릎", "promptEn": "hem ends at the knee, covering or meeting the kneecap", "scope": "analysis"},
                 {"value": "midi", "label": "미디", "promptEn": "dress hem falls between the knee and mid-calf"},
                 {"value": "long", "label": "롱", "promptEn": "long dress hem reaching the lower calf to ankle"},
+                {"value": "floor", "label": "발목 덮음", "promptEn": "hem covers the ankles and reaches the tops of the feet", "scope": "analysis"},
             ],
             "men": [],
         },
@@ -140,6 +226,20 @@ FIT_AXES = {
                 {"value": "a_line", "label": "A라인", "promptEn": "fitted upper body then widens steadily toward the hem"},
                 {"value": "fit_and_flare", "label": "핏앤플레어", "promptEn": "fitted bodice through the waist, skirt flares out from the waist"},
                 {"value": "mermaid", "label": "머메이드", "promptEn": "tight through hip and thigh, then flares out sharply near the hem"},
+            ],
+            "men": [],
+        },
+        "sleeve": {
+            "women": [
+                {"value": "cap", "label": "어깨만 덮음", "promptEn": "cap sleeves ending high on the upper arm near the armpit", "scope": "analysis"},
+                {"value": "cap_short", "label": "위팔 위쪽", "promptEn": "short sleeves ending between the upper third and middle of the upper arm, clearly above the elbow", "scope": "analysis"},
+                {"value": "short", "label": "위팔 중간", "promptEn": "short sleeves ending between the upper third and middle of the upper arm, clearly above the elbow", "scope": "analysis"},
+                {"value": "above_elbow", "label": "팔꿈치 위", "promptEn": "long short sleeves covering most of the upper arm and ending just above the bare elbow", "scope": "analysis"},
+                {"value": "elbow", "label": "팔꿈치", "promptEn": "elbow-length sleeves ending right at the elbow joint", "scope": "analysis"},
+                {"value": "above_wrist", "label": "손목 위", "promptEn": "wrist-length sleeves with cuffs at the wrist and the whole back of the hand bare", "scope": "analysis"},
+                {"value": "wrist", "label": "손목", "promptEn": "wrist-length sleeves with cuffs at the wrist and the whole back of the hand bare", "scope": "analysis"},
+                {"value": "back_of_hand", "label": "손등 덮음", "promptEn": "long sleeves passing the wrist and covering the back of the hand to just before the knuckles, fingers visible", "scope": "analysis"},
+                {"value": "fingers", "label": "손끝 덮음", "promptEn": "extra-long sleeves covering the hand down to the fingers, with only the fingertips visible", "scope": "analysis"},
             ],
             "men": [],
         },
@@ -169,6 +269,30 @@ FIT_AXES = {
                 {"value": "crop_short", "label": "크롭·숏", "promptEn": "a cropped version of the same outerwear ending at the waist or high hip; if the photographed garment is longer than this target, visibly re-tailor only its length proportions by proportionally shortening the front and back body panels; if it already satisfies this target, preserve those proportions"},
                 {"value": "basic", "label": "기본", "promptEn": "standard outerwear hem ending around the hip"},
                 {"value": "long", "label": "롱", "promptEn": "a lengthened version of the same outerwear whose hem extends to mid-thigh or lower; if the photographed garment ends above mid-thigh, visibly re-tailor only its length proportions by proportionally extending the front and back body panels downward past mid-thigh; if it already satisfies this target, preserve those proportions"},
+            ],
+        },
+        "sleeve": {
+            "women": [
+                {"value": "cap", "label": "어깨만 덮음", "promptEn": "cap sleeves ending high on the upper arm near the armpit", "scope": "analysis"},
+                {"value": "cap_short", "label": "위팔 위쪽", "promptEn": "short sleeves ending between the upper third and middle of the upper arm, clearly above the elbow", "scope": "analysis"},
+                {"value": "short", "label": "위팔 중간", "promptEn": "short sleeves ending between the upper third and middle of the upper arm, clearly above the elbow", "scope": "analysis"},
+                {"value": "above_elbow", "label": "팔꿈치 위", "promptEn": "long short sleeves covering most of the upper arm and ending just above the bare elbow", "scope": "analysis"},
+                {"value": "elbow", "label": "팔꿈치", "promptEn": "elbow-length sleeves ending right at the elbow joint", "scope": "analysis"},
+                {"value": "above_wrist", "label": "손목 위", "promptEn": "wrist-length sleeves with cuffs at the wrist and the whole back of the hand bare", "scope": "analysis"},
+                {"value": "wrist", "label": "손목", "promptEn": "wrist-length sleeves with cuffs at the wrist and the whole back of the hand bare", "scope": "analysis"},
+                {"value": "back_of_hand", "label": "손등 덮음", "promptEn": "long sleeves passing the wrist and covering the back of the hand to just before the knuckles, fingers visible", "scope": "analysis"},
+                {"value": "fingers", "label": "손끝 덮음", "promptEn": "extra-long sleeves covering the hand down to the fingers, with only the fingertips visible", "scope": "analysis"},
+            ],
+            "men": [
+                {"value": "cap", "label": "어깨만 덮음", "promptEn": "cap sleeves ending high on the upper arm near the armpit", "scope": "analysis"},
+                {"value": "cap_short", "label": "위팔 위쪽", "promptEn": "short sleeves ending between the upper third and middle of the upper arm, clearly above the elbow", "scope": "analysis"},
+                {"value": "short", "label": "위팔 중간", "promptEn": "short sleeves ending between the upper third and middle of the upper arm, clearly above the elbow", "scope": "analysis"},
+                {"value": "above_elbow", "label": "팔꿈치 위", "promptEn": "long short sleeves covering most of the upper arm and ending just above the bare elbow", "scope": "analysis"},
+                {"value": "elbow", "label": "팔꿈치", "promptEn": "elbow-length sleeves ending right at the elbow joint", "scope": "analysis"},
+                {"value": "above_wrist", "label": "손목 위", "promptEn": "wrist-length sleeves with cuffs at the wrist and the whole back of the hand bare", "scope": "analysis"},
+                {"value": "wrist", "label": "손목", "promptEn": "wrist-length sleeves with cuffs at the wrist and the whole back of the hand bare", "scope": "analysis"},
+                {"value": "back_of_hand", "label": "손등 덮음", "promptEn": "long sleeves passing the wrist and covering the back of the hand to just before the knuckles, fingers visible", "scope": "analysis"},
+                {"value": "fingers", "label": "손끝 덮음", "promptEn": "extra-long sleeves covering the hand down to the fingers, with only the fingertips visible", "scope": "analysis"},
             ],
         },
     },
@@ -273,6 +397,16 @@ def _normalize_matching_fit(raw, gender: str) -> dict | None:
     }
 
 
+def _normalize_axis_sources(profile: dict) -> dict:
+    category, gender = profile.get("category"), profile.get("gender")
+    catalog = FIT_AXES.get(category, {}) if isinstance(category, str) else {}
+    sources = profile.get("axisSources")
+    if not isinstance(sources, dict) or gender not in ("women", "men"):
+        return {}
+    return {axis: sources[axis] for axis, entries in catalog.items()
+            if entries.get(gender) and sources.get(axis) in ("ai", "measure", "seller", "unsure")}
+
+
 def normalize_fit_profile(profile: dict | None) -> dict | None:
     """카탈로그 allowlist 로 프로필을 정규화 — 스냅샷·diff·렌더러가 공유하는 단일 검증 경로.
 
@@ -307,6 +441,8 @@ def normalize_fit_profile(profile: dict | None) -> dict | None:
         "source": profile.get("source") if profile.get("source") in ("seller", "auto") else "auto",
         "version": version,
     }
+    if "axisSources" in profile:
+        out["axisSources"] = _normalize_axis_sources(profile)
     if version == 2:
         matching_fit = _normalize_matching_fit(profile.get("matchingFit"), gender)
         if matching_fit:
@@ -323,9 +459,19 @@ def normalize_analysis_fit(analysis: dict | None) -> dict:
     if not isinstance(analysis, dict):
         return {}
     out = dict(analysis)
+    if "fitRead" in out:
+        from .fit_reader import normalize_fit_read
+        reading = normalize_fit_read(out["fitRead"])
+        if reading is None:
+            out.pop("fitRead")
+        else:
+            out["fitRead"] = reading
     if out.get("fit") == "tight":
         out["fit"] = "slim"
     profile = out.get("fitProfile")
+    if isinstance(profile, dict) and "axisSources" in profile:
+        profile = {**profile, "axisSources": _normalize_axis_sources(profile)}
+        out["fitProfile"] = profile
     axes = profile.get("axes") if isinstance(profile, dict) else None
     if isinstance(axes, dict):
         next_axes = dict(axes)

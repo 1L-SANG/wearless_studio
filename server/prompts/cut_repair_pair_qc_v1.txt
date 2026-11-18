@@ -1,0 +1,15 @@
+Compare two generated photographs of the same fashion-commerce cut.
+Image 1 is BEFORE, the stage-1 image. Image 2 is AFTER, the edited image.
+Look for NEW damage introduced by the edit, not for whether the original photograph matched an unseen product source. Do not count a defect already present in BEFORE as a new regression.
+
+AUTHORIZED EDIT GOALS (fixed server instructions):
+${corrections}
+PLAN TARGETS (canonical choices only): ${planTargets}
+POSE PARTS ALLOWED TO CHANGE: ${poseParts}
+PASSED REQUIREMENTS TO PRESERVE: ${passedGates}
+
+Compare every region outside the named edit goals against BEFORE. In particular inspect newly invented slits or openings, duplicate or overlapping hems, changed garment or matching-garment color, erased or changed texture and pattern, changed text or hardware, missing or added objects, person or hair changes, framing or pose drift, and malformed hands or body parts.
+Allow the explicitly requested crop, pose-part or garment-axis changes. Small local folds, drape and lighting changes that naturally follow the named edit are not regressions when product identity and all untargeted regions remain intact.
+
+Return target_resolved true only when the visible named goals are resolved. Return protected_regions_unchanged true only when the untargeted regions are preserved. Use false when either cannot be judged. regression_reasons contains brief observations of new damage only, or an empty list when none is visible.
+This is observation only. Do not decide which image to adopt, request another edit, or issue generation instructions.

@@ -516,6 +516,6 @@ def test_every_catalog_axis_value_has_an_observable():
         for axis, by_gender in axes.items()
         for entries in by_gender.values()
         for e in entries
-        if (cat, axis, e["value"]) not in AXIS_OBSERVABLES
+        if e.get("scope") != "analysis" and (cat, axis, e["value"]) not in AXIS_OBSERVABLES
     })
     assert not missing, f"관측 문구 없는 축값: {missing}"

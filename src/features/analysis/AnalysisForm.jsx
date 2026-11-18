@@ -13,11 +13,14 @@ import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/index.js';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
-import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
+import { Icon, Button, Skeleton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { analysisWaitProgress } from '@/lib/smoothProgress.js';
 import { PageHead } from '@/features/shell/shell.jsx';
 import { AI_MODELS } from '@/features/analysis/aiModels.js';
-import { axesFor, fitProfileCategory, subcategoryLength } from '@/lib/fitAxes.js';
+import { analysisAxesFor, axesFor, fitProfileCategory, subcategoryLength } from '@/lib/fitAxes.js';
+import { fillAnalysisFitZones, selectAnalysisFitZone } from '@/lib/fitZone.js';
+import { BasicInformation } from './BasicInformation.jsx';
+import './AnalysisForm.css';
 import {
   genderForClothingType,
   normalizeTargetGendersForClothingType,
@@ -34,7 +37,7 @@ import {
   isRealModelSelection,
   resolveSelectedModelId,
 } from './modelSelection.js';
-import { SELLING_POINTS_MAX, applySellingPointEdit } from './sellingPoints.js';
+import { SELLING_POINTS_MAX, applySellingPointEdit, sellingPointSuggestions } from './sellingPoints.js';
 import { PageTemplatePicker } from './PageTemplatePicker.jsx';
 import { analysisPageStyle, selectTemplateStyle, validPageStyle } from '../../lib/pageTemplates/pageStyle.js';
 import { OutfitSelection } from './OutfitSelection.jsx';
@@ -43,9 +46,6 @@ import { outfitModelCredit } from '@/lib/outfitPresentation.js';
 import { useCustomOutfitUpload } from './useCustomOutfitUpload.js';
 import { complementaryOutfitSlot, mergeOutfitAnalysis, outfitSelectionsForTypeChange, setOutfitSelection,
   syncOutfitLegacySelection } from '@/lib/outfitSelections.js';
-// 글자 폭 추정(em) — 한글 ≈1em, 그 외 ≈0.55em. '직접 입력' pill이 다른 칩과 같은 크기로
-// 시작해 내용 길이만큼만 유동 확장되게 하는 계산 (2026-07-13 사용자 피드백).
-const chWidth = (s) => [...s].reduce((n, ch) => n + (/[가-힣]/.test(ch) ? 1 : 0.55), 0).toFixed(1);
 import {
   extensionModelFee,
   mannequinGenerationCtaLabel,
@@ -163,6 +163,11 @@ export function AnalysisSkeleton() {
             {[[64, 64, 72, 56], [60, 68, 56, 64], [52, 52], [64, 52, 72, 60]].map((ws, i) => fieldRow(ws, i))}
           </div>
         </div>
+        {/* 강조하고 싶은 특징 */}
+        <div className="surface">
+          {secHead(118, 230)}
+          {chipRow([90, 72, 124, 96, 108])}
+        </div>
         {/* 소재 */}
         <div className="surface">
           {secHead(50, 200)}
@@ -179,11 +184,6 @@ export function AnalysisSkeleton() {
               </div>
             ))}
           </div>
-        </div>
-        {/* 강조하고 싶은 특징 */}
-        <div className="surface">
-          {secHead(118, 230)}
-          {chipRow([90, 72, 124, 96, 108])}
         </div>
         <div className="surface">
           {secHead(80, 160)}
@@ -464,10 +464,19 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose, onUpl
 }
 
 export function AnalysisForm({
-  inline, analysis, catalogs, onChange, onNext, projectId = null, onAnalysisReplace, product,
+  inline, analysis, catalogs, onChange: onAnalysisChange, onNext, projectId = null, onAnalysisReplace, product,
   onBeforeConfirm, onConfirmingChange,
 }) {
-  const a = analysis;
+  const a = fillAnalysisFitZones(analysis);
+  const onChange = useCallback((patch) => {
+    const changesFit = ['clothingType', 'subCategory', 'targetGenders', 'fit', 'fitRead',
+      'fitProfile', 'measurements', 'measurementsUnknown'].some((key) => key in patch);
+    return onAnalysisChange(changesFit
+      ? { ...patch, fitProfile: fillAnalysisFitZones({ ...a, ...patch }).fitProfile } : patch);
+  }, [a, onAnalysisChange]);
+  useEffect(() => {
+    if (a.fitProfile !== analysis.fitProfile) onAnalysisChange({ fitProfile: a.fitProfile });
+  }, [a.fitProfile, analysis.fitProfile, onAnalysisChange]);
   const toast = useToast();
   const account = useAppStore((s) => s.account);
   const [confirming, setConfirming] = useState(false);
@@ -552,15 +561,10 @@ export function AnalysisForm({
     await commitMdComment();
     await persistSelectedPageStyle();
   };
-  const [ccDraft, setCcDraft] = useState(a.customCategory || '');   // 직접 입력 pill (blur 커밋)
   const [measurementDraft, setMeasurementDraft] = useState(() => ({
     clothingType: a.clothingType,
     values: Object.fromEntries((a.measurements || []).map((m) => [m.key, m.value == null ? '' : String(m.value)])),
   }));
-  // 직접 입력에 커서가 있는 동안 enum 칩 하이라이트를 지운다 — 커밋은 여전히 blur 시점이라
-  // 데이터는 안 바뀌고, 빈 채로 나가면 칩 선택이 그대로 돌아온다(오클릭 무해).
-  const [ccFocus, setCcFocus] = useState(false);
-  useEffect(() => { setCcDraft(a.customCategory || ''); }, [a.customCategory]);
   const [spAdding, setSpAdding] = useState(false);
   // 칩을 눌러 그 자리에서 문구를 고친다 (2026-08-03 사용자 결정) — AI가 뽑아준 특징도 손댈 수 있게.
   const [spEditIdx, setSpEditIdx] = useState(null);
@@ -784,6 +788,7 @@ export function AnalysisForm({
         category,
         gender,
         axes: sameProfileScope ? { ...(previousProfile.axes || {}) } : {},
+        ...(sameProfileScope && previousProfile.axisSources ? { axisSources: { ...previousProfile.axisSources } } : {}),
         source: previousProfile?.source || 'auto',
         version: 2,
         ...(matchingFit ? { matchingFit } : {}),
@@ -840,14 +845,22 @@ export function AnalysisForm({
     const gender = genderForClothingType(next.clothingType, next.targetGenders);
     const sameProfileScope = prev?.category === cat && prev?.gender === gender;
     const axes = sameProfileScope ? { ...(prev.axes || {}) } : {}; // 카테고리·성별이 바뀌면 타 축 무효 → 리셋
-    if (fit === null) delete axes.fit; else axes.fit = fit;
+    const axisSources = sameProfileScope ? { ...prev.axisSources } : {};
+    const catalog = analysisAxesFor(cat, gender);
+    const hasChosenAxis = (axis) => ['seller', 'measure', 'ai'].includes(axisSources[axis])
+      && catalog[axis]?.some(({ value }) => value === axes[axis]);
+    if (fit === null) { delete axes.fit; delete axisSources.fit; }
+    else if (!hasChosenAxis('fit')) { axes.fit = fit; delete axisSources.fit; }
+    if (source === 'seller' && fit !== null) axisSources.fit = 'seller';
     if ('subCategory' in patch && (patch.subCategory !== a.subCategory || !sameProfileScope)) {
       const length = subcategoryLength(patch.subCategory);
-      if (length) axes.length = length;
+      if (length && !hasChosenAxis('length')) { axes.length = length; delete axisSources.length; }
     }
     if (next.subCategory === 'leggings') {
       delete axes.cut;
       delete axes.length;
+      delete axisSources.length;
+      delete axisSources.cut;
     }
     const matchingFit = sameProfileScope
       ? matchingFitFromProfile(
@@ -856,7 +869,7 @@ export function AnalysisForm({
       )
       : null;
     return { ...patch, fit, fitProfile: {
-      category: cat, gender, axes,
+      category: cat, gender, axes, axisSources,
       source: src ?? prev?.source ?? 'auto', version: 2,
       ...(matchingFit ? { matchingFit } : {}),
     } };
@@ -909,141 +922,40 @@ export function AnalysisForm({
     }));
     setMeasure(key, value);
   };
-  const typeLabel = catalogs.clothingTypes.find((t) => t.value === a.clothingType)?.label;
-  const fitOpts = fitOptsOf(a).opts;
-  const genderOptions = a.clothingType === 'dress'
-    ? catalogs.genders.filter((option) => option.value === 'women')
-    : catalogs.genders;
+  const changeGender = (value) => {
+    const targetGenders = normalizeTargetGendersForClothingType(a.clothingType, value ? [value] : []);
+    const nextSubCats = subCategoriesFor(a.clothingType, targetGenders);
+    onChange(withFitProfile({ targetGenders,
+      // 성별에 없는 세부 카테고리는 다른 품목으로 자동 대체하지 않는다.
+      ...(a.subCategory && !nextSubCats.some((item) => item.value === a.subCategory) ? { subCategory: null } : {}),
+    }));
+  };
+
+  const suggestions = sellingPointSuggestions({ ...a,
+    pending: isAnalysisFastEntryEnabled() && isFeatureRunPending(a.featureRun) });
 
   const sections = (
     <>
-      {/* 1. basic info */}
-      <div className="surface">
-        <div className="sec-title" style={{ marginBottom: 20 }}>기본 정보</div>
-        <div className="basic-fields">
-          <div className="field-row"><label className="lbl">의류 종류</label>
-            <Chips options={catalogs.clothingTypes} value={a.clothingType} onChange={changeType} allowDeselect={false} /></div>
-          {/* 세부 카테고리 — enum 칩 + 같은 줄 끝의 '직접 입력' pill (2026-07-13 사용자 결정:
-              별도 줄이 아니라 칩처럼). enum 선택 ↔ 직접 입력은 배타: 칩을 고르면 custom을
-              비우고, custom을 쓰면 칩 해제. AI 추측(customCategory)이 있으면 pill에 채워짐.
-              저장은 blur/Enter 커밋, key로 분석 갱신 시 리셋(소재 인라인 편집 관례). */}
-          <div className="field-row"><label className="lbl">세부 카테고리</label>
-            <Chips options={subCats} value={ccFocus ? null : a.subCategory}
-              allowDeselect={false}
-              onChange={(v) => onChange(withFitProfile({ subCategory: v, customCategory: null }))}
-              trailing={
-                <span className="chip-input-wrap">
-                  <input
-                    className={`chip chip-input${ccFocus || (a.customCategory && !a.subCategory) ? ' on' : ''}`}
-                    value={ccDraft} maxLength={20} placeholder="직접 입력"
-                    style={{ width: `calc(${chWidth(ccDraft || '직접 입력')}em + 32px)` }}
-                    onChange={(e) => setCcDraft(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                    onFocus={() => setCcFocus(true)}
-                    onBlur={() => {
-                      setCcFocus(false);
-                      const v = ccDraft.trim();
-                      if (v === (a.customCategory || '')) return;
-                      onChange(withFitProfile(v ? { customCategory: v, subCategory: null } : { customCategory: null }));
-                    }} />
-                  {ccDraft.trim() !== (a.customCategory || '') && <span className="chip-input-pending">적용 전</span>}
-                </span>
-              } /></div>
-          <div className="field-row"><label className="lbl">대상 성별</label>
-            <Chips options={genderOptions} value={a.targetGenders?.[0] || null}
-              allowDeselect={false}
-              onChange={(v) => {
-                const targetGenders = normalizeTargetGendersForClothingType(
-                  a.clothingType,
-                  v ? [v] : [],
-                );
-                const nextSubCats = subCategoriesFor(a.clothingType, targetGenders);
-                onChange(withFitProfile({
-                  targetGenders,
-                  // 성별을 바꿔 지금 세부 카테고리가 그 성별에 없어지면 비운다. 다른 품목으로
-                  // 자동 대체하면 셀러가 고른 적 없는 종류로 상품이 바뀐다(오너 결정 2026-09-09).
-                  ...(a.subCategory && !nextSubCats.some((item) => item.value === a.subCategory)
-                    ? { subCategory: null }
-                    : {}),
-                }));
-              }} /></div>
-          {fitOpts.length > 0 && (
-            <div className="field-row"><label className="lbl">핏</label>
-              <Chips options={fitOpts} value={a.fit} onChange={(v) => onChange(withFitProfile({ fit: v }, 'seller'))} /></div>
-          )}
-        </div>
-      </div>
-
-      {/* 2. materials */}
-      <div className="surface">
-        <div className="sec-head"><div><div className="sec-title">소재</div><div className="sec-sub">혼용률을 입력해주세요. 합계 100%를 권장해요.</div></div></div>
-        <div className="material-chips">
-            {a.materials.map((m, i) => (
-              editMatIdx === i ? (
-                <span className="mat-chip draft editing" key={i}
-                  onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) { setEditMatIdx(null); if (!(m.name || '').trim() && !m.ratio) onChange({ materials: a.materials.filter((_, j) => j !== i) }); } }}>
-                  <input className="mc-name" autoFocus value={m.name}
-                    onChange={(e) => setMat(i, { name: e.target.value })}
-                    onKeyDown={(e) => { if (e.key === 'Enter') setEditMatIdx(null); }} />
-                  <span className="mc-div" />
-                  <input className="mc-ratio" type="number" inputMode="numeric" min="0" max="100" value={m.ratio || ''}
-                    onChange={(e) => setMat(i, { ratio: Number(e.target.value.replace(/[^0-9]/g, '').slice(0, 3)) || 0 })}
-                    onKeyDown={(e) => { if (e.key === 'Enter') setEditMatIdx(null); }} /><span className="mc-pct">%</span>
-                  <button className="mc-x" onMouseDown={(e) => e.preventDefault()} onClick={() => { setEditMatIdx(null); onChange({ materials: a.materials.filter((_, j) => j !== i) }); }}><Icon name="x" size={12} /></button>
-                </span>
-              ) : (
-                <span className="mat-chip done" key={i} role="button" tabIndex={0} title="클릭해서 수정"
-                  onClick={() => setEditMatIdx(i)} onKeyDown={(e) => { if (e.key === 'Enter') setEditMatIdx(i); }}>
-                  <span className="mc-text">{m.name || '소재'}</span>
-                  <span className="mc-div" />
-                  <span className="mc-val">{m.ratio || 0}%</span>
-                  <button className="mc-x" onClick={(e) => { e.stopPropagation(); onChange({ materials: a.materials.filter((_, j) => j !== i) }); }}><Icon name="x" size={12} /></button>
-                </span>
-              )
-            ))}
-            <button className="mat-add" onClick={() => { onChange({ materials: [...a.materials, { name: '', ratio: 0 }] }); setEditMatIdx(a.materials.length); }}>
-              <Icon name="plus" size={14} />소재 추가
-            </button>
-          </div>
-          {matOver && <p className="mat-warn"><Icon name="alertTri" size={14} />혼용률 합계가 100%를 넘었어요 (현재 {matTotal}%). 다시 확인해주세요.</p>}
-      </div>
-
-      {/* 3. measurements */}
-      <div className="surface">
-        <div style={{ marginBottom: 16 }}>
-          <div className="sec-title">실측 정보</div>
-          <div className="sec-sub">실측정보를 입력하면 상품의 사실성이 더욱 향상돼요. · {typeLabel}</div>
-        </div>
-        {!a.measurementsUnknown && (
-          <div className="measure-grid">
-            {visibleMeasurements.map((m) => (
-              <div className="measure-cell" key={m.key}>
-                <label className="lbl" style={{ fontWeight: 400, color: 'var(--fg-2)', fontSize: 12.5 }}>{(catalogs.measurementLabels || {})[m.key] || m.key}</label>
-                <div className="mfield"><input type="text" inputMode="decimal" pattern="[0-9]*[.]?[0-9]?" placeholder="0" value={measurementInputValue(m)}
-                  onKeyDown={(e) => { if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault(); }}
-                  onChange={(e) => editMeasurement(m.key, e.target.value)}
-                  onBlur={(e) => commitMeasurement(m.key, e.target.value)} /><span className="u">cm</span></div>
-              </div>
-            ))}
-          </div>
-        )}
-        <label className={`check-row${a.measurementsUnknown ? ' on' : ''}`} style={{ marginTop: a.measurementsUnknown ? 0 : 16 }}>
-          <input type="checkbox" checked={a.measurementsUnknown} onChange={(e) => onChange({ measurementsUnknown: e.target.checked })} />
-          <span className="check-box"><Icon name="check" size={12} /></span>
-          실측 모름
-        </label>
-      </div>
+      <BasicInformation analysis={a} catalogs={catalogs} subCats={subCats}
+        onTypeChange={changeType} onGenderChange={changeGender}
+        onCategoryChange={(patch) => onChange(withFitProfile(patch))}
+        onAxisChange={(axis, value) => {
+          const selected = selectAnalysisFitZone(a, axis, value);
+          onChange({ fitProfile: selected.fitProfile });
+        }}
+        onAxisReset={(reset) => onChange({ fitProfile: { ...a.fitProfile, ...reset } })} />
 
       {/* 4. selling points — chips */}
       <div className="surface">
         <div className="sec-head"><div><div className="sec-title">강조하고 싶은 특징</div>
-          <div className="sec-sub">상세페이지에서 가장 강조될 핵심 포인트예요. 최대 {SELLING_POINTS_MAX}개까지 넣을 수 있어요.</div></div>
+          <div className="sec-sub">상세페이지에서 가장 강조될 핵심 포인트예요.</div></div>
           <span className="pill pill-soft">{a.sellingPoints.length}/{SELLING_POINTS_MAX}개</span></div>
         {isAnalysisFastEntryEnabled() && isFeatureRunPending(a.featureRun) && (
           <div className="sp-feature-status" role="status"><span className="sp-feature-progress" />AI가 특징을 더 자세히 보는 중</div>
         )}
         {highlightedPoints.length > 0 && <div className="sp-feature-status" role="status">더 정확한 특징으로 다듬었어요</div>}
-        <div className="sp-chipwrap">
+        <div className="sp4-field">
+        <div className="sp-chipwrap sp4-top">
           {/* 칩을 누르면 그 자리에서 문구를 고친다. Enter 확정(비우고 Enter = 삭제), Esc 취소,
               포커스 이탈은 고친 문구만 저장. 입력 폭은 .sp-draft-fit 이 글자 폭 그대로 잡는다 —
               글자 수 추정으로는 영문 대문자·이모지·전각문자에서 앞글자가 밀렸다(실측). */}
@@ -1114,10 +1026,81 @@ export function AnalysisForm({
                 </span>
               </span>
             ) : (
-              <button className="sp-add" onClick={() => setSpAdding(true)}><Icon name="plus" size={14} />추가하기</button>
+              <button className="sp-add" onClick={() => setSpAdding(true)}><Icon name="plus" size={14} />직접 쓰기</button>
             )
           )}
         </div>
+        {suggestions.length > 0 && <div className="sp4-tray">
+          <span className="sp-sl">추천</span>
+          <div className="sp-sugs">{suggestions.map(({ point, evidence }) => (
+            <button type="button" className="sp-sug" key={point} title={evidence || undefined}
+              aria-label={evidence ? `${point} 넣기, ${evidence}` : point}
+              onClick={(event) => { event.stopPropagation(); onChange({ sellingPoints: [...a.sellingPoints, point] }); }}>
+              <Icon name="plus" size={14} /><span>{point}</span>
+            </button>
+          ))}</div>
+        </div>}
+        </div>
+      </div>
+
+      {/* 2. materials */}
+      <div className="surface">
+        <div className="sec-head"><div><div className="sec-title">소재</div><div className="sec-sub">혼용률을 입력해주세요. 합계 100%를 권장해요.</div></div></div>
+        <div className="material-chips">
+            {a.materials.map((m, i) => (
+              editMatIdx === i ? (
+                <span className="mat-chip draft editing" key={i}
+                  onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) { setEditMatIdx(null); if (!(m.name || '').trim() && !m.ratio) onChange({ materials: a.materials.filter((_, j) => j !== i) }); } }}>
+                  <input className="mc-name" autoFocus value={m.name}
+                    onChange={(e) => setMat(i, { name: e.target.value })}
+                    onKeyDown={(e) => { if (e.key === 'Enter') setEditMatIdx(null); }} />
+                  <span className="mc-div" />
+                  <input className="mc-ratio" type="number" inputMode="numeric" min="0" max="100" value={m.ratio || ''}
+                    onChange={(e) => setMat(i, { ratio: Number(e.target.value.replace(/[^0-9]/g, '').slice(0, 3)) || 0 })}
+                    onKeyDown={(e) => { if (e.key === 'Enter') setEditMatIdx(null); }} /><span className="mc-pct">%</span>
+                  <button className="mc-x" onMouseDown={(e) => e.preventDefault()} onClick={() => { setEditMatIdx(null); onChange({ materials: a.materials.filter((_, j) => j !== i) }); }}><Icon name="x" size={12} /></button>
+                </span>
+              ) : (
+                <span className="mat-chip done" key={i} role="button" tabIndex={0} title="클릭해서 수정"
+                  onClick={() => setEditMatIdx(i)} onKeyDown={(e) => { if (e.key === 'Enter') setEditMatIdx(i); }}>
+                  <span className="mc-text">{m.name || '소재'}</span>
+                  <span className="mc-div" />
+                  <span className="mc-val">{m.ratio || 0}%</span>
+                  <button className="mc-x" onClick={(e) => { e.stopPropagation(); onChange({ materials: a.materials.filter((_, j) => j !== i) }); }}><Icon name="x" size={12} /></button>
+                </span>
+              )
+            ))}
+            <button className="mat-add" onClick={() => { onChange({ materials: [...a.materials, { name: '', ratio: 0 }] }); setEditMatIdx(a.materials.length); }}>
+              <Icon name="plus" size={14} />소재 추가
+            </button>
+          </div>
+          {matOver && <p className="mat-warn"><Icon name="alertTri" size={14} />혼용률 합계가 100%를 넘었어요 (현재 {matTotal}%). 다시 확인해주세요.</p>}
+      </div>
+
+      {/* 3. measurements */}
+      <div className="surface">
+        <div style={{ marginBottom: 16 }}>
+          <div className="sec-title">실측 정보</div>
+          <div className="sec-sub">실측정보를 입력하면 상품의 사실성이 더욱 향상돼요.</div>
+        </div>
+        {!a.measurementsUnknown && (
+          <div className="measure-grid">
+            {visibleMeasurements.map((m) => (
+              <div className="measure-cell" key={m.key}>
+                <label className="lbl measure-label">{(catalogs.measurementLabels || {})[m.key] || m.key}</label>
+                <div className="mfield"><input type="text" inputMode="decimal" pattern="[0-9]*[.]?[0-9]?" placeholder="0" value={measurementInputValue(m)}
+                  onKeyDown={(e) => { if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault(); }}
+                  onChange={(e) => editMeasurement(m.key, e.target.value)}
+                  onBlur={(e) => commitMeasurement(m.key, e.target.value)} /><span className="u">cm</span></div>
+              </div>
+            ))}
+          </div>
+        )}
+        <label className={`check-row${a.measurementsUnknown ? ' on' : ''}`} style={{ marginTop: a.measurementsUnknown ? 0 : 16 }}>
+          <input type="checkbox" checked={a.measurementsUnknown} onChange={(e) => onChange({ measurementsUnknown: e.target.checked })} />
+          <span className="check-box"><Icon name="check" size={12} /></span>
+          실측 모름
+        </label>
       </div>
 
       {/* MD 코멘트 */}
