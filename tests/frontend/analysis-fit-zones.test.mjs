@@ -181,6 +181,49 @@ test('custom category still saves on blur and Enter, and seller reset uses the c
   assert.equal(h.all().some((node) => node.props?.className === 'g-revert'), false);
 });
 
+test('fit thumbnails follow the target gender and the fit panel keeps its text choices', async (t) => {
+  const h = await basic(t, { ...base, fit: 'slim', fitRead: { ...fitRead, photoType: 'worn',
+    sleeve: { value: 'wrist', confident: true } } });
+  const thumbnail = (name) => nodes(h.tile(name)).find((node) => node.props?.className === 't2-thumb')?.props.src;
+  const fitPanel = () => nodes(h.all().find((node) => node.props?.className === 'g-panel'));
+  assert.equal(thumbnail('핏'), '/fit-cards/fit_slim.jpg');
+  assert.equal(thumbnail('기장'), '/fit-cards/lenw_hip.jpg');
+  assert.equal(thumbnail('소매 길이'), '/fit-cards/long_wrist.jpg');
+  h.click(h.tile('핏'));
+  assert.equal(thumbnail('핏'), '/fit-cards/fit_slim.jpg');
+  assert.equal(fitPanel().some((node) => node.type === 'img'), false);
+  assert.equal(text(fitPanel().find((node) => node.props?.className === 'g-note')), '몸선을 따라 붙어 깔끔하고 단정해요.');
+
+  h.click(h.tile('대상 성별'));
+  h.click(h.all().find((node) => node.props?.role === 'radio' && text(node) === '남자'));
+  assert.equal(thumbnail('핏'), undefined);
+  assert.equal(h.tile('핏').props.children.filter(Boolean)[0].props.className, 'tx');
+  assert.match(h.tile('핏').props['aria-label'], /^핏 슬림,/);
+  assert.equal(thumbnail('소매 길이'), '/fit-cards/long_wrist.jpg');
+  h.click(h.tile('핏'));
+  assert.equal(thumbnail('핏'), undefined);
+  assert.equal(fitPanel().some((node) => node.type === 'img'), false);
+  assert.deepEqual(fitPanel().filter((node) => node.props?.role === 'radio').map(text), ['슬림', '레귤러', '세미오버', '오버']);
+  assert.equal(text(fitPanel().find((node) => node.props?.className === 'g-note')), '몸에 붙어 가슴과 팔 라인이 드러나요.');
+});
+
+test('measured long sleeves show the measurement badge until the seller selects a value', async (t) => {
+  const measurements = [{ key: 'shoulderWidth', value: 48, unit: 'cm' }, { key: 'sleeveLength', value: 64, unit: 'cm' }];
+  const h = await basic(t, { ...base, targetGenders: ['men'], measurements, fitRead: { ...fitRead, photoType: 'worn',
+    sleeve: { value: 'above_wrist', confident: true } } });
+  const badge = () => nodes(h.tile('소매 길이')).find((node) => node.props?.className === 'g-tag');
+  assert.equal(h.analysis().fitProfile.axes.sleeve, 'back_of_hand');
+  assert.equal(h.analysis().fitProfile.axisSources.sleeve, 'measure');
+  assert.equal(text(badge()), '실측');
+
+  h.click(h.tile('소매 길이'));
+  h.click(h.all().find((node) => node.props?.role === 'radio' && text(node) === '손목'));
+  const refilled = fit.fillAnalysisFitZones(h.analysis());
+  assert.equal(refilled.fitProfile.axes.sleeve, 'wrist');
+  assert.equal(refilled.fitProfile.axisSources.sleeve, 'seller');
+  assert.equal(badge(), undefined);
+});
+
 test('unknown sleeves show both labeled groups, photo-only tiles omit thumbnails and reset without a default', async (t) => {
   const h = await basic(t, { ...base });
   assert.equal(h.all().filter((node) => node.type === 'img').length, 1);

@@ -138,6 +138,7 @@ export function BasicInformation({ analysis: a, catalogs, subCats, onTypeChange,
         <div className="g2-row">
           {group.map((key) => {
             const state = stateFor(key);
+            const card = key === 'fit' && input.gender === 'men' ? null : state.card;
             const label = LABELS[key] || zones.find(({ axis }) => axis === key).label;
             const isOpen = active === key;
             return <button type="button" key={key} ref={(node) => { tiles.current[key] = node; }}
@@ -145,7 +146,7 @@ export function BasicInformation({ analysis: a, catalogs, subCats, onTypeChange,
               aria-expanded={isOpen} aria-controls={isOpen ? `${id}-panel-${key}` : undefined}
               aria-label={`${label} ${state.label}${state.showMeasurement ? ' 실측' : ''}, ${isOpen ? '닫기' : '변경'}`}
               onClick={() => { setJust(null); setOpen(isOpen ? null : key); }}>
-              {state.card && <img className="t2-thumb" src={`/fit-cards/${state.card}`} alt="" loading="lazy" />}
+              {card && <img className="t2-thumb" src={`/fit-cards/${card}`} alt="" loading="lazy" />}
               <span className="tx"><span className="k">{label}</span><span className="vr">
                 <span className="v">{state.label}</span>{state.showMeasurement && <span className="g-tag">실측</span>}
               </span></span>

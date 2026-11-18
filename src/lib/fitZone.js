@@ -109,8 +109,17 @@ export function fitZones({ clothingType, subCategory, gender = 'women', sleeveTy
     });
 }
 
-// 쇼핑몰 착용 사진으로 맞춘 기준이 나오면 채운다.
-export function longSleeveFromMeasurements(measurements) {
+const MEN_BACK_OF_HAND_MIN_CM = 88;
+const WOMEN_FINGERS_MIN_CM = 81.7;
+
+export function longSleeveFromMeasurements(measurements, gender) {
+  const shoulder = measurementNumber(measurements, 'shoulderWidth');
+  const sleeve = measurementNumber(measurements, 'sleeveLength');
+  if (shoulder == null || sleeve == null) return null;
+  // 화장이 경곗값과 같을 때 부동소수점 오차로 누락되지 않게 한다.
+  const centerBackLength = (shoulder / 2 + sleeve) * (1 + Number.EPSILON);
+  if (gender === 'men' && centerBackLength >= MEN_BACK_OF_HAND_MIN_CM) return 'back_of_hand';
+  if (gender === 'women' && centerBackLength >= WOMEN_FINGERS_MIN_CM) return 'fingers';
   return null;
 }
 
@@ -124,7 +133,7 @@ export function fitValueFromMeasurements(axis, { clothingType, subCategory, gend
   }
   if (axis === 'sleeve') {
     const sleeve = resolveSleeveType(sleeveType, measurements);
-    if (sleeve === 'long') return longSleeveFromMeasurements(measurements);
+    if (sleeve === 'long') return longSleeveFromMeasurements(measurements, gender);
     const reach = sleeveReach(measurements);
     if (sleeve !== 'short' || reach == null) return null;
     return reach < 12 ? 'cap' : reach < 18 ? 'cap_short' : reach < 26 ? 'short' : reach < 32 ? 'above_elbow' : 'elbow';

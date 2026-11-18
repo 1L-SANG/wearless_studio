@@ -132,15 +132,32 @@ test('short sleeve reach uses the signed shoulder correction and every boundary'
   assert.equal(fitValueFromMeasurements('sleeve', { ...context, sleeveType: 'short', measurements: { sleeveLength: 12, shoulderWidth: 35 } }), 'cap');
 });
 
-test('uncalibrated lengths and long sleeves never guess a measured chip', () => {
+test('long sleeve measurements fill only at the gender-specific thresholds', () => {
+  for (const [gender, shoulderWidth, sleeveLength, expected] of [
+    ['men', 48, 63.9, null],
+    ['men', 48, 64, 'back_of_hand'],
+    ['women', 45.8, 58.7, null],
+    ['women', 45.8, 58.8, 'fingers'],
+  ]) {
+    const measurements = { shoulderWidth, sleeveLength };
+    assert.equal(longSleeveFromMeasurements(measurements, gender), expected);
+    assert.equal(fitValueFromMeasurements('sleeve', { ...context, gender, measurements }), expected);
+  }
+  for (const gender of ['men', 'women']) {
+    for (const measurements of [{ shoulderWidth: 50 }, { sleeveLength: 90 }]) {
+      assert.equal(longSleeveFromMeasurements(measurements, gender), null);
+      assert.equal(fitValueFromMeasurements('sleeve', { ...context, gender, sleeveType: 'long', measurements }), null);
+    }
+  }
+});
+
+test('uncalibrated lengths and sleeveless garments never guess a measured chip', () => {
   const measurements = { totalLength: 120, sleeveLength: 60, shoulderWidth: 50 };
   for (const options of [{ ...context, gender: 'men' }, { clothingType: 'outer', gender: 'women' },
     { clothingType: 'dress', gender: 'women' }, { clothingType: 'bottom', subCategory: 'jeans', gender: 'men' },
     { clothingType: 'bottom', subCategory: 'long_skirt', gender: 'women' }]) {
     assert.equal(fitValueFromMeasurements('length', { ...options, measurements }), null);
   }
-  assert.equal(longSleeveFromMeasurements(measurements), null);
-  assert.equal(fitValueFromMeasurements('sleeve', { ...context, sleeveType: 'long', measurements }), null);
   assert.equal(fitValueFromMeasurements('sleeve', { ...context, sleeveType: 'sleeveless', measurements }), null);
 });
 
