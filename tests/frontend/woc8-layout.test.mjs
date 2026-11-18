@@ -43,7 +43,7 @@ test('WOC8 tools scroll in the expanded outside gutter and fall inside below40px
 });
 
 test('WOC8 desktop document is viewport-bound while the outline and stage retain independent scrollers', () => {
-  const shell = read('src/features/shell/StoryboardViewport.module.css');
+  const shell = read('src/features/shell/StoryboardViewport.css');
   assert.match(shell, /@media \(min-width: 1024px\)/);
   assert.match(shell, /data-storyboard-layout="true"/);
   assert.match(shell, /height: 100dvh/);
@@ -55,6 +55,13 @@ test('WOC8 desktop document is viewport-bound while the outline and stage retain
   assert.match(layout, /\.layout \{[^}]*min-height: 0/);
   assert.match(layout, /grid-template-rows: minmax\(0, 1fr\)/);
   assert.doesNotMatch(read('src/features/shell/StoryboardFooter.module.css'), /word-break:|overflow-wrap: anywhere/);
+});
+
+test('WOC8 viewport rules ship as plain CSS because production builds drop side-effect-only CSS module imports', () => {
+  const chrome = read('src/features/shell/ChromeLayout.jsx');
+  assert.match(chrome, /import '\.\/StoryboardViewport\.css';/);
+  assert.doesNotMatch(chrome, /import '[^']+\.module\.css';/);
+  assert.doesNotMatch(read('src/features/shell/StoryboardViewport.css'), /:global\(/);
 });
 
 test('WOC8 photo/design/add drawers all retain a complete clickable header outside their footprint', () => {
@@ -69,7 +76,7 @@ test('WOC8 photo/design/add drawers all retain a complete clickable header outsi
 });
 
 test('WOC8 completion keeps the progress slot and positions notifications above the footer and action', () => {
-  const shell = read('src/features/shell/StoryboardViewport.module.css');
+  const shell = read('src/features/shell/StoryboardViewport.css');
   assert.match(shell, /\.job-ribbon-stack[^}]*height: var\(--sb-job-strip-height\)/);
   assert.match(shell, /\.toast-host[^}]*--sb-footer-height[^}]*--sb-continue-height/);
   assert.match(shell, /top: auto/);
