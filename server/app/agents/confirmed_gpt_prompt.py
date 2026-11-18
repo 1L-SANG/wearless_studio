@@ -14,7 +14,7 @@ from hashlib import sha256
 from pathlib import Path
 import re
 
-from .prompts import build_mirrored_source_block
+from .prompts import build_mirrored_source_block, build_sold_garment_visible_block
 from .analysis_fit import build_analysis_fit_block, select_applied_fit_axes
 
 
@@ -199,6 +199,7 @@ class ConfirmedGptPromptInput:
     source_mirrored: bool = False
     analysis_fit_profile: dict | None = None
     fit_read: dict | None = None
+    clothing_type: str | None = None
 
 
 @lru_cache(maxsize=1)
@@ -554,6 +555,9 @@ def compile_confirmed_gpt_prompt(
             sleeve_type=fit_read.get("sleeveType"), front_hem=fit_read.get("frontHem"),
         )
         values["fit_profile_block"] = _fit_uncertainty_notice(applied_axes) + "\n\n" + fit_block + "\n\n" if fit_block else ""
+        sold_garment_block = build_sold_garment_visible_block(request.clothing_type)
+        if sold_garment_block:
+            values["fit_profile_block"] += sold_garment_block + "\n\n"
     rendered = _render(template, values)
     if not request.scope.selected_mannequin and request.source_mirrored is True:
         rendered += (
