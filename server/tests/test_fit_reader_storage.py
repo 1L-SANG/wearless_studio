@@ -1,4 +1,4 @@
-"""클라이언트의 핏 읽기도 검증하고 저장·조회·특징 갱신에서 보존한다."""
+"""서버 핏 판독을 저장·조회·특징 갱신에서 보존한다."""
 
 import asyncio
 import contextlib
@@ -22,15 +22,15 @@ def test_point_refresh_or_older_form_omission_keeps_the_existing_fit_read(merge)
     assert saved["aiSuggestedPoints"] == ["골지 짜임"]
 
 
-def test_repo_validates_client_readings_and_does_not_mutate_the_request():
+def test_repo_validates_first_fit_read_and_does_not_mutate_the_request():
     raw = reading("hanger")
     raw["frontHem"] = {"value": "SELLER ATTACK", "confident": True}
     before = deepcopy(raw)
-    saved = _save(None, {"fitRead": raw})
-    assert saved["fitRead"]["topLength"] == {"value": "basic", "confident": False}
-    assert saved["fitRead"]["sleeve"] == {"value": "wrist", "confident": False}
-    assert saved["fitRead"]["pantsLength"]["confident"] is False
-    assert saved["fitRead"]["frontHem"] == {"value": None, "confident": False}
+    saved = _save(None, {"fitRead": raw})["fitRead"]
+    assert saved["topLength"] == {"value": "basic", "confident": False}
+    assert saved["sleeve"] == {"value": "wrist", "confident": False}
+    assert saved["pantsLength"]["confident"] is False
+    assert saved["frontHem"] == {"value": None, "confident": False}
     assert raw == before
 
 
@@ -50,22 +50,29 @@ def test_analysis_normalizer_checks_the_dto_and_keeps_existing_profile_unchanged
     assert data == before
 
 
-def test_api_save_and_get_return_the_same_validated_fit_read(client, make_token, monkeypatch):
-    conn = _Conn()
+@pytest.mark.parametrize("url", ["/v1/projects/p1/analysis", "/v1/projects/p1/analysis?merge=1"])
+@pytest.mark.parametrize("initial", [None, reading()])
+def test_patch_preserves_existing_fit_read_and_sanitizes_axis_sources(client, make_token, monkeypatch, url, initial):
+    conn = _Conn({"fitRead": initial} if initial else None)
     @contextlib.asynccontextmanager
     async def get_conn(request):
         yield conn
     monkeypatch.setattr(routes, "get_conn", get_conn)
     monkeypatch.setattr(repo, "get_project", AsyncMock(return_value={"id": "p1"}))
     monkeypatch.setattr(repo, "get_product", AsyncMock(return_value={}))
-    response = client.patch("/v1/projects/p1/analysis", headers=auth_headers(make_token), json={"fitRead": reading("hanger")})
+    profile = {"category": "top", "gender": "women", "axes": {"length": "crop"},
+               "axisSources": {"length": "seller", "sleeve": "secret", "waist": "ai", "fit": "unsure"}}
+    response = client.patch(url, headers=auth_headers(make_token), json={"fitRead": reading("hanger"), "fitProfile": profile})
     assert response.status_code == 200, response.text
     fetched = client.get("/v1/projects/p1/analysis", headers=auth_headers(make_token))
     assert fetched.status_code == 200, fetched.text
-    actual = fetched.json()["fitRead"]
-    assert actual == conn.saved["fitRead"]
-    assert actual["topLength"] == {"value": "basic", "confident": False}
-    assert actual["frontHem"] == {"value": "curved", "confident": True}
+    assert conn.saved["fitRead"] == fetched.json()["fitRead"]
+    if initial:
+        assert conn.saved["fitRead"] == initial
+    else:
+        assert conn.saved["fitRead"]["photoType"] == "hanger"
+        assert conn.saved["fitRead"]["topLength"]["confident"] is False
+    assert conn.saved["fitProfile"]["axisSources"] == {"length": "seller", "fit": "unsure"}
 
 
 def test_existing_no_mannequin_consumers_accept_the_reader_dto(monkeypatch):

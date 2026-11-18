@@ -1915,6 +1915,10 @@ async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict, 
             from jsonb_each(analyses.payload) previous
             where previous.key = any(%s::text[]) and not (excluded.payload ? previous.key)
         )"""
+    if "fitRead" in analysis:
+        # 공개 분석 초안은 최초 판독을 저장한다. 같은 행의 기존 판독은 경합 시에도 우선한다.
+        update = (f"({update}) || case when analyses.payload ? 'fitRead' then "
+                  "jsonb_build_object('fitRead', analyses.payload->'fitRead') else '{}'::jsonb end")
     async with conn.cursor() as cur:
         await cur.execute(
             "insert into analyses (project_id, payload) values (%s, %s) "

@@ -105,8 +105,7 @@ def test_axis_sources_survive_analysis_migration_but_stay_out_of_mannequin_snaps
     assert analysis["fitProfile"]["axisSources"] == profile["axisSources"]
     selected = {"fit_profile_snapshot": {"version": 1, "profile": analysis["fitProfile"]}}
     restored = fit_axes.analysis_for_selected_mannequin({}, selected)
-    assert "axisSources" not in fit_axes.normalize_fit_profile(restored["fitProfile"])
-    assert restored["fitProfile"]["axes"] == {"fit": "slim"}
+    assert restored["fitProfile"] is None
     assert fit_axes.analysis_for_selected_mannequin(analysis, selected, has_mannequin=False) is analysis
 
 

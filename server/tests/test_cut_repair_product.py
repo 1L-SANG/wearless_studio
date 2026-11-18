@@ -54,12 +54,43 @@ def test_bottom_medium_crop_comes_from_the_plan_and_ignores_prose():
     assert "waist through both feet" in prompt and "ATTACK" not in prompt
 
 
-def test_chip_correction_is_the_exact_fixed_value_sentence():
-    sentence = FIT_VALUE_SENTENCES["top", "sleeve", "fingers"]
-    prompt = cg.build_qc_repair_prompt(SPEC, PRODUCT, (sentence,), has_mannequin=False)
-    assert sentence in prompt
+@pytest.mark.parametrize("axis,value,observed,command", [
+    ("length", "crop", "semi_crop", "Make the sold top shorter so that its untucked hem ends well above the waistband of the bottom and a wide band of bare stomach shows."),
+    ("length", "semi_long", "basic", "Make the sold top longer so that its untucked hem falls to crotch level and covers the waistband and the whole fly."),
+    ("sleeve", "fingers", "wrist", "Make the sleeves of the sold top longer so that each sleeve passes the wrist and covers the hand down to the fingers, leaving only the fingertips visible."),
+    ("sleeve", "wrist", "fingers", "Make the sleeves of the sold top shorter so that each relaxed cuff ends at the wrist and the whole back of the hand stays bare."),
+    ("sleeve", "fingers", None, "Change the sleeves of the sold top so that each sleeve passes the wrist and covers the hand down to the fingers, leaving only the fingertips visible."),
+])
+def test_chip_correction_uses_a_short_fixed_directional_command(axis, value, observed, command):
+    from app.agents.analysis_fit import FIT_CHECK_SCALES
+
+    _, target = FIT_CHECK_SCALES["top", axis, value]
+    sentence = FIT_VALUE_SENTENCES["top", axis, value]
+    qc_result = {"enforcedFitFailures": [{"axis": axis, "target": target, "observed": observed,
+                                         "delta": 999, "evidence": "JUDGE ATTACK"}]}
+    prompt = cg.build_qc_repair_prompt(SPEC, PRODUCT, (sentence,), has_mannequin=False,
+                                      has_example=True, qc_result=qc_result)
+    assert prompt.startswith(command + " Keep everything else exactly the same:")
+    assert command in qc.allowed_repair_instructions(qc_result)
+    assert all(value not in prompt for value in ("POSE PARTS", "KEEP FROM STAGE-1", "Image 2", "ATTACK"))
+
+
+def test_mixed_chip_and_pose_repair_keeps_existing_pose_and_passed_requirements():
+    qc_result = {**result(), "enforcedFitFailures": [{"axis": "sleeve", "target": "fingers", "observed": "wrist"}]}
+    corrections = (qc._CORRECTIONS["framingDirectionFacePose"], FIT_VALUE_SENTENCES["top", "sleeve", "fingers"])
+    prompt = cg.build_qc_repair_prompt(SPEC, PRODUCT, corrections, has_mannequin=False,
+                                      has_example=True, qc_result=qc_result)
+    assert prompt.startswith("Make the sleeves of the sold top longer")
+    assert "Image 2 is EXAMPLE" in prompt and "POSE PARTS TO ADJUST: arms, hands" in prompt
+    assert "FRAMING TARGET FROM CUT PLAN" in prompt and "KEEP FROM STAGE-1" in prompt
+    assert corrections[0] in prompt and corrections[1] not in prompt
+    assert "ATTACK" not in prompt
+
+
+@pytest.mark.parametrize("instruction", ["JUDGE ATTACK", "Make the sleeves of the sold top longer so that SELLER ATTACK."])
+def test_chip_edit_rejects_text_outside_the_allowlist(instruction):
     with pytest.raises(ValueError, match="invalid_qc_corrections"):
-        cg.build_qc_repair_prompt(SPEC, PRODUCT, ("JUDGE ATTACK",), has_mannequin=False)
+        cg.build_qc_repair_prompt(SPEC, PRODUCT, (instruction,), has_mannequin=False)
 
 
 @pytest.mark.parametrize("example", [None, InlineImage("image/png", b"EXAMPLE")])

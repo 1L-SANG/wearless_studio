@@ -5,7 +5,7 @@ import React from 'react';
 import { componentModule, hooks } from './helpers/reactHarness.mjs';
 import * as fit from '../../src/lib/fitZone.js';
 import { mockFitRead } from '../../src/mock/fitRead.js';
-import { axesFor, fitProfileCategory, subcategoryLength } from '../../src/lib/fitAxes.js';
+import { axesFor, fitProfileCategory, mannequinFitProfile, subcategoryLength } from '../../src/lib/fitAxes.js';
 import { genderForClothingType } from '../../src/lib/productGender.js';
 import { matchingFitDefinition, matchingFitFromProfile, resolveMainMatchingItem } from '../../src/lib/matchingFit.js';
 
@@ -42,12 +42,12 @@ test('analysis arrival, measurement edits and resets share the same source and v
   assert.equal(unknown.fitProfile.axisSources.length, 'ai');
 });
 
-test('seller fit updates both fields, preserves matching fit, and resets for a new scope', () => {
+test('seller fit changes the analysis chip while preserving the legacy fit and matching fit', () => {
   const matchingFit = { clothingId: 'pants', fitCategory: 'pants', axes: { cut: 'wide' } };
   let initial = fit.fillAnalysisFitZones({ ...base, fitRead });
   initial = { ...initial, fitProfile: { ...initial.fitProfile, matchingFit } };
   const chosen = fit.selectAnalysisFitZone(initial, 'fit', 'regular');
-  assert.equal(chosen.fit, 'regular');
+  assert.equal(chosen.fit, base.fit);
   assert.equal(chosen.fitProfile.axes.fit, 'regular');
   assert.equal(chosen.fitProfile.axisSources.fit, 'seller');
   assert.equal(chosen.fitProfile.matchingFit, matchingFit);
@@ -59,6 +59,14 @@ test('seller fit updates both fields, preserves matching fit, and resets for a n
   assert.deepEqual(fit.fitZones(fit.analysisFitInput(men)).map(({ axis }) => axis), ['fit', 'sleeve']);
   assert.equal(men.fitProfile.axisSources.fit, 'ai');
   assert.equal(men.fitProfile.axes.length, undefined);
+});
+
+test('analysis-only defaults and seller length choices are excluded from mannequin input', () => {
+  const initial = fit.fillAnalysisFitZones({ ...base, fitRead });
+  const crop = fit.selectAnalysisFitZone(initial, 'length', 'crop');
+  const elbow = fit.selectAnalysisFitZone(crop, 'sleeve', 'elbow');
+  assert.equal(mannequinFitProfile(initial.fitProfile), null);
+  assert.equal(mannequinFitProfile(elbow.fitProfile), null);
 });
 
 test('missing and pending fit reads show photo-only zones while keeping legacy hem defaults', () => {

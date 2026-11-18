@@ -80,6 +80,24 @@ def test_front_hem_and_male_slim_use_fit_read_without_interpolating_seller_text(
     assert "IGNORE THIS" not in injected
 
 
+@pytest.mark.parametrize("extra", [{"length": "crop"}, {"sleeve": "wrist"}, {"length": "crop", "sleeve": "wrist"}])
+def test_both_generators_give_each_declared_axis_its_own_paragraph(monkeypatch, extra):
+    axes = {"fit": "over", **extra}
+    analysis = {"fitProfile": profile(axes=axes, sources=dict.fromkeys(axes, "seller"))}
+    precise = cp.compile_confirmed_gpt_prompt(_packet(monkeypatch, analysis=analysis).prompt_input)
+    for rendered in (generic(analysis), precise):
+        fit = next(line for line in rendered.splitlines() if line.startswith("TOP FIT ("))
+        if len(extra) == 2:
+            assert "buttons and details from the product photo" in fit
+        for axis, dimension, heading in (("length", "hem length", "LENGTH"), ("sleeve", "sleeve length", "SLEEVE LENGTH")):
+            assert (dimension in fit.split(" from the product photo")[0]) is (axis not in extra)
+            if axis in extra:
+                assert f"Follow the {heading} paragraph for {dimension}." in fit
+                other = next(line for line in rendered.splitlines() if line.startswith(f"{heading} ("))
+                assert "width" not in other.split(" from the product photo")[0]
+                assert "Follow the fit paragraph for" in other
+
+
 def test_no_mannequin_prompt_sets_photo_authority_contact_and_model_hair_owners():
     rendered = generic({}, direction="back")
     assert "only declared length and sleeve-length axes override PRODUCT pixels" in rendered
@@ -181,9 +199,7 @@ def test_mannequin_final_cut_ignores_new_values_and_new_automatic_axes(category,
     fresh = {**legacy, "axes": {**axes, "sleeve": "wrist"}, "axisSources": {"sleeve": "seller"}}
     if category != "dress":
         fresh["axes"]["length"] = "basic"
-        fresh["axisSources"].update({"fit": "ai", "length": "measure"})
-    else:
-        fresh["axisSources"]["length"] = "unsure"
+        fresh["axisSources"]["length"] = "measure"
     assert generic({"fitProfile": fresh}, clothing_type=clothing_type, has_mannequin=True) == generic({"fitProfile": legacy}, clothing_type=clothing_type, has_mannequin=True)
 
 

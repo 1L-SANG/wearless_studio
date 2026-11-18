@@ -312,18 +312,19 @@ test('mannequin receives only the legacy axes and keeps matching garments unchan
     { fit: 'ai', length: 'measure', sleeve: 'seller' }), matchingFit };
   const before = structuredClone(input);
   const result = mannequinFitProfile(input);
-  assert.deepEqual(result.axes, { fit: 'over', sleeve: 'short' });
+  assert.deepEqual(result.axes, {});
   assert.equal('axisSources' in result, false);
   assert.equal(result.matchingFit, matchingFit);
   assert.deepEqual(input, before);
   for (const [category, axes] of [['top', { length: 'slight_crop', sleeve: 'wrist' }],
     ['outer', { sleeve: 'short' }], ['dress', { sleeve: 'elbow' }], ['pants', { length: 'ankle_cover' }]]) {
-    assert.deepEqual(mannequinFitProfile(profile(axes, Object.fromEntries(Object.keys(axes).map((key) => [key, 'seller'])), category)).axes, {});
+    assert.equal(mannequinFitProfile(profile(axes, Object.fromEntries(Object.keys(axes).map((key) => [key, 'seller'])), category)), null);
   }
-  for (const axisSources of [{}, { length: 'seller' }, { length: 'unsure' }]) {
-    assert.deepEqual(mannequinFitProfile(profile({ length: 'basic' }, axisSources)).axes, { length: 'basic' });
+  assert.deepEqual(mannequinFitProfile(profile({ length: 'basic' }, {})).axes, { length: 'basic' });
+  for (const axisSources of [{ length: 'seller' }, { length: 'unsure' }]) {
+    assert.equal(mannequinFitProfile(profile({ length: 'basic' }, axisSources)), null);
   }
-  assert.deepEqual(mannequinFitProfile(profile({ sleeve: null }, { sleeve: 'unsure' }, 'outer')).axes, {});
+  assert.equal(mannequinFitProfile(profile({ sleeve: null }, { sleeve: 'unsure' }, 'outer')), null);
   const legacy = { category: 'top', gender: 'women', axes: { length: 'basic' }, source: 'auto' };
   assert.equal(mannequinFitProfile(legacy), legacy);
   assert.equal(mannequinFitProfile(null), null);

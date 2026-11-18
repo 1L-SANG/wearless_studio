@@ -107,9 +107,10 @@ def test_either_comparison_can_reject_stage2(monkeypatch, regression):
         first["axes"].extend(report("fit", "over", "over", value="over", level="shadow")["axes"])
         second["axes"].extend(report("fit", "over", "slim", value="over", level="shadow")["axes"])
     output, result, warnings, events, calls = run_checks(monkeypatch, first, second, operating_after=operating_after)
-    assert len(calls) == 1 and output.data == b"stage1"
-    assert result["repair"]["accepted"] is False
-    assert result["fitChipQc"]["sellerCheck"] == {"required": True, "axes": ["top.length"]}
+    accepted = regression == "record_only_axis"
+    assert len(calls) == 1 and output.data == (b"stage2" if accepted else b"stage1")
+    assert result["repair"]["accepted"] is accepted
+    assert result["fitChipQc"]["sellerCheck"] == {"required": not accepted, "axes": [] if accepted else ["top.length"]}
 
 
 def test_second_failure_is_a_seller_signal_without_a_third_attempt(monkeypatch):
@@ -121,7 +122,7 @@ def test_second_failure_is_a_seller_signal_without_a_third_attempt(monkeypatch):
 @pytest.mark.parametrize("error", ["operating", "generation"])
 def test_unavailable_check_or_attempt_keeps_stage1_without_repeating_calls(monkeypatch, error):
     output, result, warnings, events, calls = run_checks(monkeypatch, error=error)
-    assert output.data == b"stage1" and len(calls) == 1
+    assert output.data == b"stage1" and len(calls) == (0 if error == "operating" else 1)
     assert events.count("operating:stage1") == 1
     assert result["repair"]["accepted"] is False
     assert warnings
@@ -226,7 +227,8 @@ def test_detail_worker_uses_the_same_fit_repair_route_with_chips_on_or_off(monke
     async def fake_repair(settings, gemini, b, product, source, *, qc_corrections, **kwargs):
         prompt = dpj.cut_generator.build_qc_repair_prompt(
             b, product, qc_corrections, has_mannequin=kwargs["has_mannequin"], qc_result=kwargs["qc_result"])
-        assert correction[0] in prompt
+        expected = "Make the sleeves of the sold top longer" if axis == "sleeve" else "Make the sold top shorter"
+        assert prompt.startswith(expected) and "Keep everything else exactly the same" in prompt
         edited.append((source.data, qc_corrections))
         return b"FIXED", "image/png"
 

@@ -30,7 +30,7 @@ from .confirmed_gpt_prompt import (
     confirmed_gpt_framing_contract,
 )
 from .cut_plan import compile_cut_plan, render_prompt_contract
-from . import horizon_background, product_photography, product_button_qc
+from . import cut_fit_chip_qc, horizon_background, product_photography, product_button_qc
 from .outer_closure import STATES as _OUTER_CLOSURE_STATES, DEFAULT
 from .directing_profile import render_directing_profile
 from .gemini_image import GeminiImageClient, InlineImage
@@ -1716,6 +1716,12 @@ def build_prompt(
     return prompt
 
 
+_KEEP_FIT_EDIT = (
+    "Keep everything else exactly the same: the model, face, hair, pose, hands, the rest of the garment, "
+    "the fabric texture and color, the matching garments, any bag or prop, the background, the lighting and the framing."
+)
+
+
 def build_qc_repair_prompt(
     cut_spec: dict,
     product: dict,
@@ -1728,7 +1734,7 @@ def build_qc_repair_prompt(
 ) -> str:
     """AG-06 국소 2차 보정 프롬프트.
 
-    마네킹 경로는 1차 결과 한 장, 없는 경로는 선택된 예시를 둘째 사진으로 쓴다.
+    마네킹과 칩 단독 편집은 1차 한 장을 쓰고, 다른 운영 교정에는 예시를 함께 쓸 수 있다.
     정본을 다시 봐야 하는 실패는 이 함수를 쓰지 않고
     ``generate(..., qc_corrections=...)``로 원래 입력에서 재생성한다.
     """
@@ -1775,6 +1781,11 @@ def build_qc_repair_prompt(
         from . import cut_output_qc
         if any(instruction not in cut_output_qc.allowed_repair_instructions(qc_result) for instruction in qc_corrections):
             raise ValueError("invalid_qc_corrections")
+        qc_corrections = cut_fit_chip_qc.fit_edit_instructions(qc_corrections, clothing_type, qc_result)
+        fit_commands = tuple(line for line in qc_corrections if line in cut_fit_chip_qc.FIT_EDIT_COMMANDS)
+        if len(fit_commands) == len(qc_corrections):
+            return " ".join((*fit_commands, _KEEP_FIT_EDIT))
+        qc_corrections = tuple(line for line in qc_corrections if line not in cut_fit_chip_qc.FIT_EDIT_COMMANDS)
         context = cut_output_qc.repair_context(qc_result)
         if confirmed_prompt_input is not None:
             crop_target = "Use the CONFIRMED EXAMPLE FRAMING LOCK exactly; do not reduce it to the coarse shot token."
@@ -1797,7 +1808,7 @@ def build_qc_repair_prompt(
                   "passedGates": "\n".join(f"- {gate}" for gate in context["passedGates"]) or "- Preserve every untargeted visible fact."}
         for key, value in values.items():
             prompt = prompt.replace("${" + key + "}", value)
-        return prompt
+        return "\n\n".join((*fit_commands, prompt))
     return (
         "You are the AG-06 second-stage fashion cut generator. Edit the single attached "
         "STAGE-1 output; do not reconstruct a different photograph.\n\n"
@@ -2141,7 +2152,7 @@ async def repair(
     qc_result: dict | None = None,
     repair_qc_outcome: dict | None = None,
 ) -> tuple[bytes, str]:
-    """AG-06 국소 2차 보정. 마네킹은 기존 모델, 없는 경로는 sunburst와 선택 예시를 쓴다.
+    """AG-06 국소 2차 보정. 마네킹 없는 경로는 sunburst를 쓰고 칩 단독 편집은 1차만 첨부한다.
 
     편집은 얼굴까지 다시 그린다 — 그래서 generate() 와 같은 얼굴 패스 꼬리를 단다. 이게 없으면
     보정을 채택한 컷의 얼굴이 gpt-image 로 되돌아간다(2026-09-11 점검). 인자 세 개는 generate() 와 같은 뜻이고,
@@ -2149,6 +2160,11 @@ async def repair(
 
     model = (_resolve_generation_model(settings, cut_spec) if has_mannequin
              else resolve_model(settings, "image_cut_repair"))
+    if not has_mannequin and qc_corrections and isinstance(qc_corrections, (tuple, list)):
+        clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+        qc_corrections = cut_fit_chip_qc.fit_edit_instructions(qc_corrections, clothing_type, qc_result)
+        if all(isinstance(line, str) and line in cut_fit_chip_qc.FIT_EDIT_COMMANDS for line in qc_corrections):
+            example_image = None
     prompt = build_qc_repair_prompt(
         cut_spec,
         product,

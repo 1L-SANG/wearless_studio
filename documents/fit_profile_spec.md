@@ -113,6 +113,10 @@ FitProfile.axisSources?: { [axis]: 'ai' | 'measure' | 'seller' | 'unsure' }
 
 - `seller`는 직접 고른 값, `measure`는 실측으로 정한 값, `ai`는 AI가 확신하고 읽은 값, `unsure`나 없음은 "사진대로"다.
 - 그림 지시와 칩 검사에 넣는 조건은 `analysis_fit.py`의 `FIT_SOURCE_POLICY` 한 곳이 정한다. 기장과 소매 길이는 `seller`, `measure`, `ai`면 넣는다. 핏은 `seller`면 모든 값, `ai`면 슬림, 세미오버, 오버만 넣는다. 적용 축은 `select_applied_fit_axes(profile)`가 돌려준다.
+- `axisSources`에 이름이 있는 축은 분석 페이지에서 정한 축이다. 이 축의 값은 출처가 `seller`여도 마네킹 생성, 마네킹 화면, 마네킹 사진이 붙는 컷으로 가지 않는다(`mannequin_fit_profile`, `mannequinFitProfile`이 뺀다). 뺀 뒤 축이 없으면 마네킹 쪽은 기존 `analysis.fit` 한 줄을 쓴다.
+- 저장할 때 `axisSources`는 그 옷의 축 이름과 허용 값만 남긴다. `fitRead`는 처음 저장된 뒤에는 클라이언트가 덮지 못한다.
+- 핏 문단과 기장, 소매 길이 문단이 같이 들어가면, 핏 문단은 그 길이를 상품 사진에서 가져오라고 하지 않고 해당 문단을 따르라고 적는다.
+- 운영 검사(`cut_output_qc`)도 칩 검사와 같은 기준을 쓴다. 소매와 상의 기장만 불합격 사유가 되고 두 칸 이상(크롭은 한 칸)일 때만 불합격이다. 핏, 치마와 원피스 기장, 바지 기장은 불합격 사유가 아니다. 소매와 줄이기는 편집, 늘리기는 다시 만들기다. 검사 응답 스키마를 바꾸면 머지 전에 `server/scripts/qc_schema_probe.py`로 Gemini가 받는지 확인한다.
 - 화면에는 출처 글자를 쓰지 않는다. 실측으로 정한 값에만 작은 "실측" 표시가 붙는다.
 
 ### 핏 읽기

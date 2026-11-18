@@ -55,7 +55,7 @@ import { sameEditorJson } from '@/lib/editorRevisionSync.js';
 import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
 import { normalizeTargetGendersForClothingType } from '@/lib/productGender.js';
 import { createMeasurementFields } from '@/lib/measurementSchema.js';
-import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
+import { mannequinFitProfile, normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import { mockFitRead } from './fitRead.js';
 import { mergeAnalysisPatch } from '@/lib/analysisPatch.js';
 import { resolveStoryboardEntry } from '@/lib/pageTemplates/seed.js';
@@ -258,7 +258,7 @@ function makeMannequinCut(version, fitProfile) { return {
   version,
   imageUrl: Placeholder.photo(`mq${version}_${Date.now()}`, 'mannequin'),
   isSelected: true,
-  fitProfile: fitProfile ? clone(fitProfile) : null,
+  fitProfile: clone(mannequinFitProfile(fitProfile) ?? null),
   fitProfileRecorded: true,
   createdAt: new Date().toISOString(),
 }; }

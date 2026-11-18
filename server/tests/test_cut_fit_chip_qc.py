@@ -196,6 +196,9 @@ def test_acceptance_checks_every_axis_and_rejects_newly_unjudgeable_axes():
     assert qc.compare_distances(before, report(observed="not_visible"))["accepted"] is False
     assert qc.compare_distances(before, None)["accepted"] is False
     assert qc.compare_distances(before, {"axes": []})["accepted"] is False
+    unknown = report(observed="not_visible")
+    assert qc.compare_distances(unknown, unknown) == {"accepted": False, "regressions": ["length"]}
+    assert qc.compare_distances(unknown, after)["accepted"] is True
 
 
 def test_unresolved_final_image_after_one_attempt_records_seller_axes():

@@ -5,7 +5,7 @@
 """
 
 def mannequin_fit_profile(profile: dict | None) -> dict | None:
-    """운영 마네킹에는 옛 값과 셀러 선택·옛 기본값만 보낸다. 입력은 바꾸지 않는다."""
+    """분석 출처가 있는 축은 마네킹 입력에서 제외한다."""
     if not isinstance(profile, dict):
         return profile
     axes = profile.get("axes")
@@ -21,11 +21,13 @@ def mannequin_fit_profile(profile: dict | None) -> dict | None:
         all_entries = [entry for values in by_gender.values() for entry in values]
         analysis_axis = bool(all_entries) and all(entry.get("scope") == "analysis" for entry in all_entries)
         analysis_value = any(e["value"] == value and e.get("scope") == "analysis" for e in entries)
-        if analysis_axis or analysis_value or (axis != "fit" and sources.get(axis) in ("ai", "measure")):
+        if axis in sources or analysis_axis or analysis_value:
             continue
         kept[axis] = value
     if "axisSources" not in profile and kept == axes:
         return profile
+    if "axisSources" in profile and not (kept or profile.get("matchingFit") or profile.get("matchCut")):
+        return None
     return {**{key: value for key, value in profile.items() if key != "axisSources"}, "axes": kept}
 
 
@@ -381,6 +383,16 @@ def _normalize_matching_fit(raw, gender: str) -> dict | None:
     }
 
 
+def _normalize_axis_sources(profile: dict) -> dict:
+    category, gender = profile.get("category"), profile.get("gender")
+    catalog = FIT_AXES.get(category, {}) if isinstance(category, str) else {}
+    sources = profile.get("axisSources")
+    if not isinstance(sources, dict) or gender not in ("women", "men"):
+        return {}
+    return {axis: sources[axis] for axis, entries in catalog.items()
+            if entries.get(gender) and sources.get(axis) in ("ai", "measure", "seller", "unsure")}
+
+
 def normalize_fit_profile(profile: dict | None) -> dict | None:
     """카탈로그 allowlist 로 프로필을 정규화 — 스냅샷·diff·렌더러가 공유하는 단일 검증 경로.
 
@@ -416,12 +428,7 @@ def normalize_fit_profile(profile: dict | None) -> dict | None:
         "version": version,
     }
     if "axisSources" in profile:
-        raw_sources = profile.get("axisSources")
-        raw_sources = raw_sources if isinstance(raw_sources, dict) else {}
-        out["axisSources"] = {
-            axis: raw_sources[axis] for axis in by_axis
-            if raw_sources.get(axis) in ("ai", "measure", "seller", "unsure")
-        }
+        out["axisSources"] = _normalize_axis_sources(profile)
     if version == 2:
         matching_fit = _normalize_matching_fit(profile.get("matchingFit"), gender)
         if matching_fit:
@@ -448,6 +455,9 @@ def normalize_analysis_fit(analysis: dict | None) -> dict:
     if out.get("fit") == "tight":
         out["fit"] = "slim"
     profile = out.get("fitProfile")
+    if isinstance(profile, dict) and "axisSources" in profile:
+        profile = {**profile, "axisSources": _normalize_axis_sources(profile)}
+        out["fitProfile"] = profile
     axes = profile.get("axes") if isinstance(profile, dict) else None
     if isinstance(axes, dict):
         next_axes = dict(axes)

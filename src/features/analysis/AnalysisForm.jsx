@@ -937,7 +937,7 @@ export function AnalysisForm({
         onCategoryChange={(patch) => onChange(withFitProfile(patch))}
         onAxisChange={(axis, value) => {
           const selected = selectAnalysisFitZone(a, axis, value);
-          onChange({ ...(axis === 'fit' ? { fit: selected.fit } : {}), fitProfile: selected.fitProfile });
+          onChange({ fitProfile: selected.fitProfile });
         }}
         onAxisReset={(reset) => onChange({ fitProfile: { ...a.fitProfile, ...reset } })} />
 

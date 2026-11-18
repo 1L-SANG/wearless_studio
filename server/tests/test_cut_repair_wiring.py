@@ -6,7 +6,6 @@ from types import SimpleNamespace
 import pytest
 
 from app.agents import cut_generator as cg, cut_repair_pair_qc as pair, cut_fit_chip_qc as chips
-from app.agents.analysis_fit import FIT_VALUE_SENTENCES
 from app.agents.gemini_image import InlineImage
 from app.workers import detail_page_job as dpj
 from conftest import fake_worker_app, make_settings, worker_job
@@ -14,7 +13,7 @@ from test_cut_output_qc_wiring import _RecordingR2, _qc_result
 from test_cut_fit_chip_qc import profile, report
 
 
-def run_cut(monkeypatch, *, chip_mode="off", pair_mode="shadow", mannequin=False, regenerate=False):
+def run_cut(monkeypatch, *, chip_mode="off", pair_mode="shadow", mannequin=False, regenerate=False, mixed=False):
     calls, comparisons, events = [], [], []
     class ImageClient:
         async def generate_content_image(self, model, prompt, images, size, **kwargs):
@@ -26,7 +25,7 @@ def run_cut(monkeypatch, *, chip_mode="off", pair_mode="shadow", mannequin=False
         return (b"STAGE1" if len(generated) == 1 else b"REGENERATED"), "image/png"
     async def operating(settings, plan, references, candidate, **kwargs):
         failure = "garmentConstruction" if regenerate else "framingCrop"
-        value = _qc_result(failure) if candidate.data == b"STAGE1" and chip_mode == "off" else _qc_result()
+        value = _qc_result(failure) if candidate.data == b"STAGE1" and (chip_mode == "off" or mixed) else _qc_result()
         value["gates"]["garmentColor"]["evidence"] = "JUDGE ATTACK"
         return value
     async def fake_pair(settings, prompt, images, schema, **kwargs):
@@ -66,15 +65,29 @@ def test_d4_regression_is_recorded_but_does_not_veto_adoption(monkeypatch, chip_
     assert r2.saved == [b"EDITED"]
     assert len(calls) == len(comparisons) == 1
     assert calls[0]["model"] == "gpt-image-2.5-sunburst"
-    assert [im.data for im in calls[0]["images"]] == [b"STAGE1", b"EXAMPLE"]
+    assert [im.data for im in calls[0]["images"]] == ([b"STAGE1"] if chip_mode == "repair" else [b"STAGE1", b"EXAMPLE"])
     assert [im.data for im in comparisons[0][1]] == [b"STAGE1", b"EDITED"]
     assert "ATTACK" not in calls[0]["prompt"] + comparisons[0][0]
     repair = result[3][0]["repair"]
     assert repair["accepted"] is True
     assert repair["editPairQc"]["protected_regions_unchanged"] is False
-    assert "garmentColor" in calls[0]["prompt"].split("KEEP FROM STAGE-1", 1)[1]
     if chip_mode == "repair":
-        assert FIT_VALUE_SENTENCES["top", "sleeve", "fingers"] in calls[0]["prompt"]
+        command = "Make the sleeves of the sold top longer so that each sleeve passes the wrist"
+        assert calls[0]["prompt"].startswith(command)
+        assert command in comparisons[0][0]
+        assert "KEEP FROM STAGE-1" not in calls[0]["prompt"]
+    else:
+        assert "garmentColor" in calls[0]["prompt"].split("KEEP FROM STAGE-1", 1)[1]
+
+
+def test_mixed_repair_keeps_example_and_operating_context(monkeypatch):
+    result, calls, comparisons, r2, _ = run_cut(monkeypatch, chip_mode="repair", mixed=True)
+    assert result[3][0]["repair"]["accepted"] is True and r2.saved == [b"EDITED"]
+    assert [im.data for im in calls[0]["images"]] == [b"STAGE1", b"EXAMPLE"]
+    assert calls[0]["prompt"].startswith("Make the sleeves of the sold top longer")
+    assert "FRAMING TARGET FROM CUT PLAN" in calls[0]["prompt"]
+    assert "KEEP FROM STAGE-1" in calls[0]["prompt"]
+    assert len(comparisons) == 1
 
 
 @pytest.mark.parametrize("case", ["off", "mannequin", "regenerate"])

@@ -265,6 +265,16 @@ def test_server_scores_enforced_observations_with_chip_distance(monkeypatch, tar
     assert qc.repair_route(result) == expected
 
 
+def test_record_only_fit_does_not_change_the_sleeve_edit_route(monkeypatch):
+    p = profile({"fit": "over", "sleeve": "wrist"}, {"fit": "seller", "sleeve": "seller"})
+    raw = _raw()
+    _failed_gate(raw, "fitClosureAllowedMutation")
+    raw["declaredFitReview"] = {"fitGates": [11], "sleeveGates": [11], "observed": {"sleeve": "elbow"}}
+    _, _, _, result = _operating_verdict(monkeypatch, p, raw)
+    assert qc.repair_route(result) == "EDIT_STAGE1"
+    assert qc.repair_instructions(result) == (FIT_VALUE_SENTENCES["top", "sleeve", "wrist"],)
+
+
 @pytest.mark.parametrize("cause", ["other_gate", "other_failure_in_gate", "missing", "unconfirmed_axis", "duplicate",
                                   "out_of_range", "non_integer", "missing_axis_field"])
 def test_enforced_fit_failure_keeps_existing_route_when_any_cause_is_unverified(monkeypatch, cause):

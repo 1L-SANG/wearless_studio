@@ -1040,6 +1040,7 @@ def repair_context(result: Mapping[str, Any] | None) -> dict:
 def allowed_repair_instructions(result: Mapping[str, Any] | None = None) -> frozenset[str]:
     """편집·비교 검사에 허용할 고정 문장 집합. 심판의 correctionPrompt는 쓰지 않는다."""
     allowed = set(FIT_VALUE_SENTENCES.values())
+    allowed.update(cut_fit_chip_qc.FIT_EDIT_COMMANDS)
     for mapping in (_CORRECTIONS, _CONFIRMED_GPT_CORRECTIONS, _CONFIRMED_GPT_PRODUCT_CORRECTIONS,
                     _SIGNATURE_FRAMING_CORRECTIONS, _HORIZON_TONE_CORRECTIONS):
         allowed.update(mapping.values())
@@ -1191,7 +1192,8 @@ def _apply_declared_fit_review(
     """Apply the chip rules and return confirmed mismatches when they account for every blocker."""
     observed = _mapping(review.get("observed"))
     failed_axes = {}
-    nonblocking_axes = {row["axis"] for row in contract.get("recordOnlyFitAxes", ())}
+    record_only_axes = {row["axis"] for row in contract.get("recordOnlyFitAxes", ())}
+    nonblocking_axes = record_only_axes.copy()
     for row in contract["declaredFitAxes"]:
         axis, scale, target = row["axis"], row["scale"], row["scaleTarget"]
         position = observed.get(axis)
@@ -1209,7 +1211,7 @@ def _apply_declared_fit_review(
             continue
         if axes <= nonblocking_axes:
             gates[gate] = {"status": "PASS", "evidence": "The reported fit differences do not fail the chip policy."}
-        elif gates[gate]["status"] == "FAIL" and all(axis in failed_axes for axis in axes):
+        elif gates[gate]["status"] == "FAIL" and axes - record_only_axes <= failed_axes.keys():
             fit_only_gates.add(gate)
 
     fit_gate = "fitClosureAllowedMutation"

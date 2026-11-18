@@ -225,7 +225,7 @@ export function selectAnalysisFitZone(analysis, axis, value) {
   const profile = filled.fitProfile;
   const zone = fitZones(analysisFitInput(filled)).find((entry) => entry.axis === axis);
   if (!zone?.options.some((option) => option.value === value)) return filled;
-  return { ...filled, ...(axis === 'fit' ? { fit: value } : {}), fitProfile: {
+  return { ...filled, fitProfile: {
     ...profile, axes: { ...profile.axes, [axis]: value },
     axisSources: { ...profile.axisSources, [axis]: 'seller' }, source: 'seller',
   } };

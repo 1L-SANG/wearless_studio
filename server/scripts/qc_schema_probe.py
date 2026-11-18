@@ -22,6 +22,10 @@ CASES = {
     'none': None,
     'top_all': profile('top', 'women', fit='over', length='crop', sleeve='fingers'),
     'top_sleeve': profile('top', 'men', sleeve='back_of_hand'),
+    'top_fit': profile('top', 'women', fit='over'),
+    'top_length': profile('top', 'women', length='crop'),
+    'top_fit_length': profile('top', 'women', fit='slim', length='crop'),
+    'top_length_sleeve': profile('top', 'women', length='crop', sleeve='fingers'),
     'outer': profile('outer', 'women', fit='over', sleeve='wrist'),
     'dress': profile('dress', 'women', length='knee', sleeve='cap'),
     'pants': profile('pants', 'women', length='ankle_cover'),
@@ -33,7 +37,7 @@ for name, prof in CASES.items():
     for model in ('gemini-3.1-pro-preview', 'gemini-3.8-flash'):
         body = v._gemini_body('Return a minimal valid object with every gate PASS.', [], schema, 'low')
         r = httpx.post(f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
-                       json=body, headers={'x-goog-api-key': S.gemini_api_key}, timeout=120)
+                       json=body, headers={'x-goog-api-key': S.gemini_api_key}, timeout=180)
         ok = r.status_code == 200
         bad += not ok
         print(name, model, r.status_code, '' if ok else r.json().get('error', {}).get('message', '')[:160], flush=True)

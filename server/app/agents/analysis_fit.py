@@ -138,6 +138,7 @@ def build_analysis_fit_block(
     selected = select_applied_fit_axes({"category": category, "gender": gender, "axes": axes, "axisSources": sources})
     if not selected:
         return ""
+    selected_axes = {axis for axis, _, _ in selected}
     long_sleeves = sleeve_type == "long" or axes.get("sleeve") in LONG_SLEEVES
     paragraphs = []
     for axis, value, source in selected:
@@ -147,11 +148,25 @@ def build_analysis_fit_block(
                 sentence = MALE_SLIM_SENTENCE
                 if long_sleeves:
                     sentence = sentence.replace("; the short sleeves grip the biceps.", ".")
+                elif "sleeve" in selected_axes:
+                    sentence = sentence.replace("the short sleeves grip the biceps", "the sleeves fit closely around the upper arms")
             head, tail = FIT_HEADS[category], FIT_TAIL
+            if "sleeve" in selected_axes:
+                tail = tail.replace(", sleeve length and hem length", " and hem length")
+                tail += " Follow the SLEEVE LENGTH paragraph for sleeve length."
+            if "length" in selected_axes:
+                tail = tail.replace(", sleeve length and hem length", " and sleeve length").replace(" and hem length", "")
+                tail += " Follow the LENGTH paragraph for hem length."
+            if {"length", "sleeve"} <= selected_axes:
+                tail = tail.replace("buttons, details from", "buttons and details from")
         elif axis == "sleeve":
             head, tail = SLEEVE_HEAD, SLEEVE_TAIL
+            if "fit" in selected_axes:
+                tail = tail.replace(", cuff and width", " and cuff") + " Follow the fit paragraph for sleeve width."
         else:
             head, tail = LENGTH_HEAD, LENGTH_TAILS[category]
+            if "fit" in selected_axes:
+                tail = tail.replace(" and width", "") + " Follow the fit paragraph for garment width."
         paragraphs.append(head + sentence + tail)
     if category == "top" and isinstance(front_hem, dict) and front_hem.get("confident") is True:
         value = front_hem.get("value")
