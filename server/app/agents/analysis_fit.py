@@ -21,6 +21,10 @@ FIT_SOURCE_POLICY = {
 LONG_SLEEVES = ("above_wrist", "wrist", "back_of_hand", "fingers")
 
 
+def is_enforced_fit_axis(category: str, axis: str) -> bool:
+    return axis == "sleeve" or (category == "top" and axis == "length")
+
+
 def select_applied_fit_axes(profile: dict | None) -> list[tuple[str, str, str]]:
     """이 컷의 그림 지시와 칩 검사에 넣을 (축, 값, 출처)를 카탈로그 순서로 돌려준다."""
     if not isinstance(profile, dict):

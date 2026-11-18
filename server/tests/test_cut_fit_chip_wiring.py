@@ -6,10 +6,10 @@ from copy import deepcopy
 import pytest
 
 from app.agents import cut_fit_chip_qc as chips
+from app.agents.analysis_fit import FIT_CHECK_SCALES, FIT_VALUE_SENTENCES
 from app.agents.gemini_image import InlineImage
 from app.workers import detail_page_job as dpj
 from conftest import make_settings
-from app.agents.analysis_fit import build_analysis_fit_block
 from test_cut_fit_chip_qc import profile, report
 from test_cut_output_qc_wiring import _qc_result, _run_detail_cut, _run_editor
 from test_cut_output_qc import _raw
@@ -195,6 +195,61 @@ def test_detail_worker_uses_one_real_callback_and_saves_only_adopted_image(monke
     assert len(run["generateKwargs"]) == (1 if route == "EDIT_STAGE1" else 2)
 
 
+@pytest.mark.parametrize("chip_mode", ["off", "repair"])
+@pytest.mark.parametrize("axis,value,observed,route", [
+    ("sleeve", "fingers", "elbow", "EDIT_STAGE1"),
+    ("length", "slight_crop", "semi_crop", "EDIT_STAGE1"),
+    ("length", "basic", "long", "EDIT_STAGE1"),
+    ("length", "semi_long", "semi_crop", "REGENERATE_FROM_SCRATCH"),
+])
+def test_detail_worker_uses_the_same_fit_repair_route_with_chips_on_or_off(monkeypatch, chip_mode, axis, value, observed, route):
+    _, target = FIT_CHECK_SCALES["top", axis, value]
+    gate = "fitClosureAllowedMutation"
+    correction = (FIT_VALUE_SENTENCES["top", axis, value],)
+    chip_inputs, edited = [], []
+
+    async def fake_judge(settings, prompt, images, schema, **kwargs):
+        stage1 = images[-1].data == b"INITIAL"
+        raw = _raw()
+        if stage1:
+            next(row for row in raw["gates"] if row["gate"] == gate)["status"] = "FAIL"
+        raw["declaredFitReview"] = {
+            "failures": [{"gate": gate, "axes": [axis], "hasOtherCause": False}] if stage1 else [],
+            "observed": {axis: observed if stage1 else target},
+        }
+        return raw, "fake"
+
+    async def fake_chip(settings, p, candidate, **kwargs):
+        chip_inputs.append(candidate.data)
+        return report(axis, target, observed if candidate.data == b"INITIAL" else target, value=value)
+
+    async def fake_repair(settings, gemini, b, product, source, *, qc_corrections, **kwargs):
+        prompt = dpj.cut_generator.build_qc_repair_prompt(
+            b, product, qc_corrections, has_mannequin=kwargs["has_mannequin"], qc_result=kwargs["qc_result"])
+        assert correction[0] in prompt
+        edited.append((source.data, qc_corrections))
+        return b"FIXED", "image/png"
+
+    monkeypatch.setattr(dpj.cut_output_qc, "analyze_with_fallback", fake_judge)
+    monkeypatch.setattr(chips, "verdict", fake_chip)
+    monkeypatch.setattr(dpj.cut_generator, "repair", fake_repair)
+    run = _run_detail_cut(monkeypatch, qc_mode="repair", generated_outputs=[b"INITIAL", b"FIXED"],
+        settings_overrides={"cut_fit_chip_qc_mode": chip_mode},
+        spec={"id": "worn", "cutType": "horizon", "shot": "full", "direction": "front", "faceExposure": "show"},
+        analysis={"fitProfile": profile(axes={axis: value}, sources={axis: "seller"})})
+
+    assert run["result"][3][0]["repair"]["route"] == route
+    assert run["result"][3][0]["repair"]["accepted"] is True
+    assert run["r2"].saved == [b"FIXED"]
+    assert chip_inputs == ([b"INITIAL", b"FIXED"] if chip_mode == "repair" else [])
+    if route == "EDIT_STAGE1":
+        assert edited == [(b"INITIAL", correction)]
+        assert len(run["generateKwargs"]) == 1
+    else:
+        assert edited == []
+        assert run["generateKwargs"][1]["qc_corrections"] == correction
+
+
 @pytest.mark.parametrize("operating_mode", ["off", "repair"])
 def test_editor_chip_checks_are_record_only_even_when_global_chip_mode_is_repair(monkeypatch, operating_mode):
     seen = []
@@ -213,7 +268,7 @@ def test_editor_chip_checks_are_record_only_even_when_global_chip_mode_is_repair
 
 
 @pytest.mark.parametrize("chip_mode", ["off", "shadow"])
-def test_generic_worker_keeps_long_sleeve_context_when_male_slim_has_no_sleeve_chip(monkeypatch, chip_mode):
+def test_generic_worker_records_male_slim_fit_and_keeps_generation_sleeve_context(monkeypatch, chip_mode):
     async def fake_judge(*args, **kwargs):
         return _raw(), "fake"
     async def fake_chip(*args, **kwargs):
@@ -224,5 +279,7 @@ def test_generic_worker_keeps_long_sleeve_context_when_male_slim_has_no_sleeve_c
     run = _run_detail_cut(monkeypatch, qc_mode="shadow", settings_overrides={"cut_fit_chip_qc_mode": chip_mode},
         spec={"id": "worn", "cutType": "horizon", "shot": "full", "direction": "front", "faceExposure": "show"},
         analysis={"fitProfile": p, "fitRead": {"sleeveType": "long"}})
-    expected = build_analysis_fit_block("top", "men", [("fit", "slim", "seller")], sleeve_type="long")
-    assert run["result"][3][0]["contract"]["declaredFitAxes"][0]["target"] == expected
+    contract = run["result"][3][0]["contract"]
+    assert contract["declaredFitAxes"] == []
+    assert contract["recordOnlyFitAxes"] == [{"axis": "fit", "value": "slim"}]
+    assert run["generateKwargs"][0]["analysis"]["fitRead"]["sleeveType"] == "long"

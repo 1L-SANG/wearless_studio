@@ -28,9 +28,9 @@ from .confirmed_gpt_prompt import (
 from .gemini_image import InlineImage
 from .prompts import clean_text
 from .vision_llm import VisionError, analyze_with_fallback, qc_system_prompt
-from . import horizon_background, product_photography
+from . import analysis_fit, cut_fit_chip_qc, horizon_background, product_photography
 from .outer_closure import STATES as _CLOSURES
-from .analysis_fit import build_analysis_fit_block, select_applied_fit_axes, LONG_SLEEVES, FIT_VALUE_SENTENCES
+from .analysis_fit import FIT_CHECK_SCALES, FIT_VALUE_SENTENCES, select_applied_fit_axes
 
 
 GATES = (
@@ -153,24 +153,23 @@ _CONFIRMED_FIT_GATE = (
 )
 _CONFIRMED_PRODUCT_AUTHORITY = (
     "- PRODUCT images alone own the target garment's construction, material, pattern, hardware, garment\n"
-    "  text/logo and visibly judgeable garment-local color. Declared dimensions in declaredFitAxes follow their\n"
-    "  fixed targets; undeclared dimensions follow PRODUCT evidence. For fit, follow the declared direction while\n"
-    "  preserving clearly visible garment size in PRODUCT photos.\n"
+    "  text/logo and visibly judgeable garment-local color. PRODUCT evidence owns undeclared dimensions,\n"
+    "  including clearly visible garment size for undeclared fit. Apply the declared fit rules below when present.\n"
     "  Seller-only uncertainty remains unresolved. The storyboard still owns direction, shot, face handling, model,\n"
     "  matching apparel, closure and any explicit pose; its base-color selection does not override PRODUCT pixels.\n"
     "  Scene light may naturally affect the garment; example colors or a global grade may not recolor it."
 )
 _CONFIRMED_PRODUCT_CONSTRUCTION_GATE = (
-    "5. garmentConstruction — PRODUCT neckline, panels, sleeves, seams and permanent construction match; "
-    "declared dimensions in declaredFitAxes follow their fixed targets, while PRODUCT evidence owns undeclared dimensions."
+    "5. garmentConstruction — PRODUCT neckline, panels, sleeve shape, cuffs, seams, permanent construction "
+    "and undeclared dimensions match. Apply any declared fit tolerances under gate 11."
 )
 _CONFIRMED_PRODUCT_COLOR_GATE = (
     "6. garmentColor — selected PRODUCT garment-local color is faithful where judgeable; natural scene light "
     "may affect the garment, but scene/example/global grade must not recolor it."
 )
 _CONFIRMED_PRODUCT_FIT_GATE = (
-    "11. fitClosureAllowedMutation — declaredFitAxes own their declared dimensions; PRODUCT evidence owns\n"
-    "   undeclared dimensions. For fit, preserve clearly visible garment size in PRODUCT photos. Closure equals\n"
+    "11. fitClosureAllowedMutation — apply the declared fit rules below when present. PRODUCT evidence owns\n"
+    "   undeclared dimensions, including clearly visible garment size for undeclared fit. Closure equals\n"
     "   storyboard intent; PRODUCT construction and matching-apparel boundaries remain unchanged."
 )
 _CONFIRMED_PRODUCT_AUTHORITY_MARKER = {
@@ -333,16 +332,16 @@ _CONFIRMED_GPT_CORRECTIONS = MappingProxyType({
 _CONFIRMED_GPT_PRODUCT_CORRECTIONS = MappingProxyType({
     **_CORRECTIONS,
     "garmentConstruction": (
-        "Restore PRODUCT-evidenced neckline, panels, sleeves, seams, permanent construction "
-        "and undeclared dimensions; preserve the fixed declaredFitAxes targets."
+        "Restore PRODUCT-evidenced neckline, panels, sleeve shape, cuffs, seams, permanent construction "
+        "and undeclared dimensions."
     ),
     "garmentColor": (
         "Restore the PRODUCT garment-local color where judgeable, allowing natural scene light; "
         "do not borrow color from the example or a global grade."
     ),
     "fitClosureAllowedMutation": (
-        "Restore declaredFitAxes targets for declared dimensions; use PRODUCT evidence for undeclared "
-        "dimensions and clearly visible garment size. Preserve PRODUCT construction and storyboard closure."
+        "Correct failed enforced fit targets only. Use PRODUCT evidence for undeclared dimensions "
+        "and construction. Match the storyboard closure."
     ),
 })
 
@@ -368,6 +367,9 @@ def _correction_map_for(
         and horizon_background.normalize_runtime(contract.get("horizonBackground"))
         else _CORRECTIONS
     )
+    if authority_profile == "generic_v1" and _declared_fit_axis_names(contract):
+        base = {**base, **{gate: _CONFIRMED_GPT_PRODUCT_CORRECTIONS[gate]
+                           for gate in ("garmentConstruction", "fitClosureAllowedMutation")}}
     if contract.get("outfitRoles"):
         base = {**base, "matchingGarmentIdentity": (
             "Restore each selected MATCHING and OUTFIT item from its own reference, including "
@@ -465,7 +467,11 @@ def references_from_manifest(
     return references
 
 
-def qc_schema(*, repair_parts: bool = False) -> dict:
+def _declared_fit_axis_names(contract: Mapping[str, Any]) -> list[str]:
+    return sorted(row["axis"] for key in ("declaredFitAxes", "recordOnlyFitAxes") for row in contract.get(key, ()))
+
+
+def qc_schema(*, repair_parts: bool = False, fit_contract: Mapping[str, Any] | None = None) -> dict:
     """Strict structured-output schema; exact gate coverage is enforced again in ``validate``."""
 
     gate_item = {
@@ -494,6 +500,26 @@ def qc_schema(*, repair_parts: bool = False) -> dict:
     if repair_parts:
         schema["properties"]["poseParts"] = {"type": "array", "items": {"type": "string", "enum": list(POSE_PARTS)}}
         schema["required"].append("poseParts")
+    axes = _declared_fit_axis_names(fit_contract or {})
+    if axes:
+        review = {"failures": {"type": "array", "maxItems": len(GATES), "items": {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "gate": {"type": "string", "enum": list(GATES)},
+                "axes": {"type": "array", "minItems": 1, "maxItems": len(axes),
+                         "items": {"type": "string", "enum": axes}},
+                "hasOtherCause": {"type": "boolean"},
+            },
+            "required": ["gate", "axes", "hasOtherCause"],
+        }}}
+        observed = {row["axis"]: {"type": "string", "enum": list(cut_fit_chip_qc.SCALES[row["scale"]]["values"])}
+                    for row in fit_contract["declaredFitAxes"]}
+        if observed:
+            review["observed"] = {"type": "object", "additionalProperties": False,
+                                  "properties": observed, "required": list(observed)}
+        schema["properties"]["declaredFitReview"] = {"type": "object", "additionalProperties": False,
+                                                    "properties": review, "required": list(review)}
+        schema["required"].append("declaredFitReview")
     return schema
 
 
@@ -751,6 +777,37 @@ def _reference_manifest(
     return "\n".join(lines)
 
 
+def _declared_fit_guidance(contract: Mapping[str, Any]) -> str:
+    lines = [
+        "DECLARED FIT RULES FOR THE MAIN PRODUCT",
+        "Undeclared dimensions follow PRODUCT evidence.",
+        "recordOnlyFitAxes lists the seller's authorized fit direction. A difference on a record-only axis "
+        "cannot be a reason to fail any gate or mark it UNJUDGEABLE, whether the candidate differs from the PRODUCT photo "
+        "or falls short of or exceeds the selected value.",
+        "For each FAIL or UNJUDGEABLE involving a declared axis, return one entry in declaredFitReview.failures "
+        "for that gate and list every declared axis contributing to its status. Set hasOtherCause to true if any "
+        "independent reason also blocks the gate. Use an empty array if none apply.",
+    ]
+    if contract["declaredFitAxes"]:
+        lines.extend([
+            "Only declaredFitAxes can fail for a declared dimension. Use the ordered positions below. "
+            "Fail the axis only if the observed position is two or more positions from scaleTarget, "
+            "or if exactly one of the target and observed positions is crop. One position of difference "
+            "passes unless the crop exception applies. A non-ordered observation does not establish an axis failure.",
+            "Return one declaredFitReview.observed value per enforced axis. Read the position from the candidate "
+            "itself using its body landmarks. Use the scale definitions even if the target wording suggests a finer distinction.",
+        ])
+    for row in contract["declaredFitAxes"]:
+        name = row["scale"]
+        scale = cut_fit_chip_qc.SCALES[name]
+        order = cut_fit_chip_qc.ORDERS[name]
+        lines.append(f"{row['axis']} ({name}, scaleTarget = {row['scaleTarget']}): {scale['what']}")
+        lines.extend(f"  {value} = {scale['values'][value]}" for value in order)
+        lines.append("  Non-ordered observations:")
+        lines.extend(f"  {value} = {definition}" for value, definition in scale["values"].items() if value not in order)
+    return "\n".join(lines)
+
+
 def build_prompt(
     contract: Mapping[str, Any],
     references: Sequence[LabeledReference],
@@ -789,20 +846,26 @@ def build_prompt(
             template = template.replace(old, new)
     if (contract.get("recipeFamily") in {"styling", "horizon"}
             and not any(reference.role == "mannequin" for reference in references)):
-        if authority_profile == "generic_v1":
-            template = template.replace(_GENERIC_GARMENT_CONSTRUCTION_GATE,
-                _GENERIC_GARMENT_CONSTRUCTION_GATE + " Declared dimensions in declaredFitAxes follow their fixed targets; undeclared dimensions follow PRODUCT evidence.")
+        has_declared_fit = bool(_declared_fit_axis_names(contract))
+        if authority_profile == "generic_v1" and has_declared_fit:
+            template = template.replace(_GENERIC_GARMENT_CONSTRUCTION_GATE, _CONFIRMED_PRODUCT_CONSTRUCTION_GATE)
+            template = template.replace("11. fitClosureAllowedMutation — only declared fit axes may change; closure matches",
+                "11. fitClosureAllowedMutation — apply the declared fit rules below; closure matches")
         contact_anchor = "asymmetry match the compiled contract. Do not fail this gate for crop alone. For product, judge front/back."
         template = template.replace(contact_anchor, contact_anchor +
             " Treat a contact re-performed on a real part of the current outfit, while preserving its arm role and hand position, as compliant.")
+        response_keys = ('exactly three top-level keys, "gates", "poseParts" and "declaredFitReview"' if has_declared_fit
+                         else 'exactly two top-level keys, "gates" and "poseParts"')
         template = template.replace('Return one JSON object with exactly one top-level key, "gates". Its value is 17 objects with exactly:',
-            'Return one JSON object with exactly two top-level keys, "gates" and "poseParts". The value of "gates" is 17 objects with exactly:')
+            f'Return one JSON object with {response_keys}. The value of "gates" is 17 objects with exactly:')
         template += (
             "\n\nREPAIR PART SELECTION: Also return poseParts, an array containing only affected parts from "
             + ", ".join(POSE_PARTS) + ". Select parts only when framingDirectionFacePose or "
             "anatomyPerspectiveAsymmetry is FAIL. Return an empty array otherwise. Do not put prose in poseParts. "
             "The crop target comes from the compiled plan, never from a judge-written description."
         )
+        if has_declared_fit:
+            template += "\n\n" + _declared_fit_guidance(contract)
     applicability = gate_applicability(contract)
     prompt = (
         template.replace(
@@ -854,26 +917,29 @@ def build_prompt(
     return prompt
 
 
-def _analysis_fit_contract(contract: Mapping[str, Any], profile: dict | None, *, sleeve_type=None) -> dict:
-    """출처 정책이 허용한 축과 고정 문장만 운영 검사 계약에 싣는다."""
+def _analysis_fit_contract(contract: Mapping[str, Any], profile: dict | None) -> dict:
+    """출처 정책이 허용한 축 중 칩 검사가 강제하는 축에만 목표를 준다."""
     selected = select_applied_fit_axes(profile)
-    profile = profile if isinstance(profile, dict) else {}
-    axes = profile.get("axes") if isinstance(profile.get("axes"), dict) else {}
-    targets = [{"axis": axis, "value": value, "target": build_analysis_fit_block(
-        profile.get("category"), profile.get("gender"), [(axis, value, source)],
-        sleeve_type="long" if sleeve_type == "long" or axes.get("sleeve") in LONG_SLEEVES else None,
-    )} for axis, value, source in selected]
+    targets, record_only = [], []
     owners = {key: value for key, value in _mapping(contract.get("attributeOwners")).items()
               if not key.startswith("fit.") and key != "declaredFit"}
     if owners.get("length") == "fitProfile":
         owners["length"] = "productTruth"
-    for axis, value, source in selected:
+    for axis, value, _ in selected:
+        category = profile["category"]
+        if analysis_fit.is_enforced_fit_axis(category, axis):
+            scale, scale_target = FIT_CHECK_SCALES[category, axis, value]
+            targets.append({"axis": axis, "value": value, "target": FIT_VALUE_SENTENCES[category, axis, value],
+                            "scale": scale, "scaleTarget": scale_target})
+        else:
+            record_only.append({"axis": axis, "value": value})
         owners["fit." + axis] = "fitProfile"
         if axis == "length":
             owners["length"] = "fitProfile"
     if selected:
         owners["declaredFit"] = "fitProfile"
-    return {**contract, "declaredFitAxes": targets, "declaredFitAxisCount": len(targets),
+    return {**contract, "declaredFitAxes": targets, "declaredFitAxisCount": len(selected),
+            **({"recordOnlyFitAxes": record_only} if record_only else {}),
             "attributeOwners": dict(sorted(owners.items()))}
 
 
@@ -892,8 +958,7 @@ def _confirmed_authority_contract(
     aligned = dict(contract)
     owners = dict(_mapping(contract.get("attributeOwners")))
     if getattr(getattr(prompt_input, "scope", None), "selected_mannequin", True) is False:
-        aligned = _analysis_fit_contract(contract, getattr(prompt_input, "analysis_fit_profile", None),
-            sleeve_type=_mapping(getattr(prompt_input, "fit_read", None)).get("sleeveType"))
+        aligned = _analysis_fit_contract(contract, getattr(prompt_input, "analysis_fit_profile", None))
         owners = dict(aligned["attributeOwners"])
         owners["color"] = "productTruth"
         for attribute in ("length", "silhouette"):
@@ -1002,6 +1067,10 @@ def repair_route(result: Mapping[str, Any]) -> str:
         for gate in blocking
     ):
         return "HOLD_STAGE1"
+    if fit_failures := result.get("enforcedFitFailures"):
+        routes = [cut_fit_chip_qc.axis_repair_route(row["axis"], row["target"], row["delta"])
+                  for row in fit_failures]
+        return "REGENERATE_FROM_SCRATCH" if "REGENERATE_FROM_SCRATCH" in routes else "EDIT_STAGE1"
     local_gates = (
         _CONFIRMED_EDIT_STAGE1_GATES
         if result.get("authorityProfile") == "confirmed_gpt_v1"
@@ -1052,6 +1121,12 @@ def repair_instructions(result: Mapping[str, Any]) -> tuple[str, ...]:
         instructions.append(correction_map[gate])
     if len(instructions) > MAX_CORRECTION_OPERATIONS:
         raise VisionError("cut_output_qc: too many correction operations")
+    if fit_failures := result.get("enforcedFitFailures"):
+        targets = {row["axis"]: row["target"] for row in contract.get("declaredFitAxes", ())}
+        fit_instructions = tuple(targets.get(row["axis"]) for row in fit_failures)
+        if any(sentence not in FIT_VALUE_SENTENCES.values() for sentence in fit_instructions):
+            raise VisionError("cut_output_qc: untrusted fit correction")
+        return fit_instructions
     return tuple(instructions)
 
 
@@ -1091,11 +1166,64 @@ def compare_repair(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict:
     }
 
 
+def _apply_declared_fit_review(
+    gates: dict[str, dict[str, str]], provider_blocking: set[str],
+    contract: Mapping[str, Any], review: Mapping[str, Any],
+) -> list[dict]:
+    """Apply the chip rules and return confirmed mismatches when they account for every blocker."""
+    observed = _mapping(review.get("observed"))
+    failed_axes = {}
+    nonblocking_axes = {row["axis"] for row in contract.get("recordOnlyFitAxes", ())}
+    for row in contract["declaredFitAxes"]:
+        axis, scale, target = row["axis"], row["scale"], row["scaleTarget"]
+        position = observed.get(axis)
+        if not isinstance(position, str) or position not in cut_fit_chip_qc.SCALES[scale]["values"]:
+            continue
+        distance = cut_fit_chip_qc.judge_distance(scale, target, position)
+        if distance["status"] == "FAIL":
+            failed_axes[axis] = {"axis": axis, "target": target, "observed": position, "delta": distance["delta"]}
+        else:
+            nonblocking_axes.add(axis)
+
+    failures = review.get("failures")
+    by_gate: dict[str, list[Mapping[str, Any]]] = {}
+    if isinstance(failures, list):
+        for row in failures:
+            gate = _mapping(row).get("gate")
+            if isinstance(gate, str) and gate in provider_blocking:
+                by_gate.setdefault(gate, []).append(row)
+    fit_only_gates = set()
+    for gate, rows in by_gate.items():
+        if len(rows) != 1:
+            continue
+        row = rows[0]
+        axes = row.get("axes")
+        if (set(row) != {"gate", "axes", "hasOtherCause"} or row["hasOtherCause"] is not False
+                or not isinstance(axes, list) or not axes or not all(isinstance(axis, str) for axis in axes)
+                or len(set(axes)) != len(axes)):
+            continue
+        if all(axis in nonblocking_axes for axis in axes):
+            gates[gate] = {"status": "PASS", "evidence": "The reported fit differences do not fail the chip policy."}
+        elif gates[gate]["status"] == "FAIL" and all(axis in failed_axes for axis in axes):
+            fit_only_gates.add(gate)
+
+    fit_gate = "fitClosureAllowedMutation"
+    if failed_axes and gates[fit_gate]["status"] == "PASS":
+        mismatches = [f"{row['axis']} observed {row['observed']}, target {row['target']}" for row in failed_axes.values()]
+        gates[fit_gate] = {"status": "FAIL", "evidence": "Enforced fit mismatch for " + " and ".join(mismatches) + "."}
+        fit_only_gates.add(fit_gate)
+
+    blocking = {gate for gate, row in gates.items() if row["status"] in {"FAIL", "UNJUDGEABLE"}}
+    return list(failed_axes.values()) if blocking <= fit_only_gates else []
+
+
 def validate(
     raw: Any,
     *,
     applicable: Mapping[str, bool] | None = None,
     forced: Mapping[str, Mapping[str, str]] | None = None,
+    fit_contract: Mapping[str, Any] | None = None,
+    declared_fit_review: Any = None,
 ) -> dict:
     """Validate exact coverage and fail closed on malformed or unjudgeable output.
 
@@ -1126,6 +1254,7 @@ def validate(
         malformed = True
 
     out: dict[str, dict[str, str]] = {}
+    provider_blocking: set[str] = set()
     for gate in GATES:
         if not applicable_map[gate]:
             out[gate] = {
@@ -1146,7 +1275,13 @@ def validate(
         if status not in STATUSES or status == "NA" or not evidence:
             status = "UNJUDGEABLE"
             evidence = evidence or "Judge evidence was missing or invalid for an applicable gate."
+        elif status in {"FAIL", "UNJUDGEABLE"}:
+            provider_blocking.add(gate)
         out[gate] = {"status": status, "evidence": evidence}
+
+    fit_failures = []
+    if not malformed and fit_contract and isinstance(declared_fit_review, Mapping):
+        fit_failures = _apply_declared_fit_review(out, provider_blocking, fit_contract, declared_fit_review)
 
     for gate, override in (forced or {}).items():
         if gate not in out:
@@ -1162,12 +1297,15 @@ def validate(
             "evidence": evidence or "Deterministic QC preflight could not validate this gate.",
         }
 
-    passed = all(result["status"] in {"PASS", "NA"} for result in out.values())
+    patch = _correction_patch(out)
+    passed = patch is None
     return {
         "verdict": "PASS" if passed else "FAIL",
         "passed": passed,
         "gates": out,
-        "correctionPatch": _correction_patch(out),
+        "correctionPatch": patch,
+        **({"enforcedFitFailures": fit_failures}
+           if fit_failures and patch and not set(patch["blockingGates"]).intersection(forced or {}) else {}),
     }
 
 
@@ -1318,11 +1456,9 @@ async def verdict(
     contract = normalize_plan(plan)
     repair_parts = (contract["recipeFamily"] in {"styling", "horizon"}
                     and not any(reference.role == "mannequin" for reference in checked_references))
-    if (authority_profile == "generic_v1" and contract["recipeFamily"] in {"styling", "horizon"}
-            and not any(reference.role == "mannequin" for reference in checked_references)):
-        contract = _analysis_fit_contract(contract, fit_profile if fit_profile is not None
-                                          else getattr(plan, "analysis_fit_profile", None),
-                                          sleeve_type=getattr(plan, "analysis_sleeve_type", None))
+    if authority_profile == "generic_v1" and repair_parts:
+        contract = _analysis_fit_contract(
+            contract, fit_profile if fit_profile is not None else getattr(plan, "analysis_fit_profile", None))
     if authority_profile == "confirmed_gpt_v1":
         if confirmed_prompt_input is None:
             raise VisionError("cut_output_qc: confirmed framing contract required")
@@ -1354,9 +1490,9 @@ async def verdict(
         "attributeOwners": contract["attributeOwners"],
         "referenceAllowedAttributes": contract["referenceAllowedAttributes"],
     }
-    if (authority_context is not None
-            and not any(reference.role == "mannequin" for reference in checked_references)
-            and any(axis.get("axis") == "length" for axis in contract.get("declaredFitAxes", ()))):
+    fit_contract = contract if repair_parts and _declared_fit_axis_names(contract) else None
+    if (authority_context is not None and fit_contract is not None
+            and contract["attributeOwners"].get("length") == "fitProfile"):
         authority_context["declaredLengthAuthority"] = True
     if authority_context is not None and _has_confirmed_product_authority(contract):
         authority_context["confirmedGptProductAuthority"] = contract["confirmedGptProductAuthority"]
@@ -1370,12 +1506,16 @@ async def verdict(
             recipeFamily=contract["recipeFamily"], productVariant=contract["productVariant"],
             shot=contract["storyboard"]["shot"], productPresentation=contract["productPresentation"])
     raw, provider = await analyze_with_fallback(
-        settings, prompt, images, qc_schema(repair_parts=repair_parts), require_complete_envelope=True,
+        settings, prompt, images, qc_schema(repair_parts=repair_parts, fit_contract=fit_contract), require_complete_envelope=True,
         timeout_seconds=settings.background_ai_timeout_seconds,
         system_prompt=qc_system_prompt("cut", authority_context)
     )
-    gate_raw = {key: value for key, value in raw.items() if key != "poseParts"} if repair_parts and isinstance(raw, dict) else raw
-    result = validate(gate_raw, applicable=applicable, forced=forced)
+    metadata_keys = {"poseParts"} if repair_parts else set()
+    if fit_contract is not None:
+        metadata_keys.add("declaredFitReview")
+    gate_raw = {key: value for key, value in raw.items() if key not in metadata_keys} if isinstance(raw, dict) else raw
+    result = validate(gate_raw, applicable=applicable, forced=forced, fit_contract=fit_contract,
+                      declared_fit_review=_mapping(raw).get("declaredFitReview"))
     if repair_parts:
         result["repairContext"] = {"poseParts": raw.get("poseParts", []) if isinstance(raw, dict) else []}
         result["repairContext"] = repair_context(result)

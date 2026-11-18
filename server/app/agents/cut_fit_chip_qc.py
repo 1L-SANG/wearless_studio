@@ -6,11 +6,11 @@ import time
 
 from PIL import Image
 
+from . import analysis_fit
 from .analysis_fit import FIT_CHECK_SCALES, FIT_VALUE_SENTENCES, select_applied_fit_axes
 from .gemini_image import InlineImage, run_cpu_bound
 from .prompts import clean_text
 from .vision_llm import VisionError, analyze_with_fallback
-from . import cut_output_qc
 
 
 SCALES = {'top_hem': {'what': 'Where the bottom edge of the OUTERMOST upper-body garment (the top, shirt, knit or '
@@ -178,7 +178,7 @@ async def verdict(settings, profile, candidate, *, has_mannequin=False, cut_type
         scale, target = FIT_CHECK_SCALES[category, axis, value]
         model = (settings.model_cut_fit_chip_qc_top_length if scale == "top_hem"
                  else settings.model_cut_fit_chip_qc_other)
-        level = mode if axis == "sleeve" or (category == "top" and axis == "length") else "shadow"
+        level = mode if analysis_fit.is_enforced_fit_axis(category, axis) else "shadow"
         rows.append({"axis": axis, "value": value, "scale": scale, "target": target,
                      "level": level, "model": model})
         groups.setdefault(model, []).append(scale)
@@ -202,15 +202,19 @@ async def verdict(settings, profile, candidate, *, has_mannequin=False, cut_type
     return {"version": 1, "mode": mode, "category": category, "axes": rows, "checks": checks}
 
 
+def axis_repair_route(axis: str, target: str | None, delta: int) -> str:
+    """Choose how to repair one enforced mismatch using its signed chip distance."""
+    if axis == "sleeve" or target == "crop" or delta >= 0:
+        return "EDIT_STAGE1"
+    return "REGENERATE_FROM_SCRATCH"
+
+
 def repair_route(report):
     routes = []
     for row in (report or {}).get("axes", ()):
         if row.get("status") != "FAIL" or row.get("level") != "repair":
             continue
-        if row["axis"] == "sleeve" or row.get("target") == "crop" or row.get("delta", 0) >= 0:
-            routes.append("EDIT_STAGE1")
-        else:
-            routes.append("REGENERATE_FROM_SCRATCH")
+        routes.append(axis_repair_route(row["axis"], row.get("target"), row.get("delta", 0)))
     return "REGENERATE_FROM_SCRATCH" if "REGENERATE_FROM_SCRATCH" in routes else "EDIT_STAGE1" if routes else "KEEP_STAGE1"
 
 
@@ -263,6 +267,8 @@ def finalize(before, after=None, *, attempted=False, accepted=False):
 async def check_and_repair(settings, profile, initial, *, judge_operating, make_stage2,
                            operating_mode, can_repair=True, operating_qc_outcome=None):
     """기존 검사 비교와 모든 칩 거리 비교를 함께 통과한 보정본만 한 번 채택한다."""
+    from . import cut_output_qc
+
     warnings, operating, stage2_chips = [], None, None
 
     async def operating_verdict(candidate):

@@ -56,7 +56,8 @@ def test_confirmed_product_qc_uses_product_color_and_analysis_fit(monkeypatch):
     assert contract["attributeOwners"]["declaredFit"] == "fitProfile"
     assert contract["attributeOwners"]["silhouette"] == "productTruth"
     assert contract["attributeOwners"]["length"] == "fitProfile"
-    assert [axis["axis"] for axis in contract["declaredFitAxes"]] == ["fit", "length", "sleeve"]
+    assert [axis["axis"] for axis in contract["declaredFitAxes"]] == ["length", "sleeve"]
+    assert contract["recordOnlyFitAxes"] == [{"axis": "fit", "value": "regular"}]
     assert contract["declaredFitAxisCount"] == 3
     assert contract["confirmedGptProductAuthority"] == _PRODUCT_AUTHORITY
     assert "confirmedGptMannequinAuthority" not in contract
@@ -209,7 +210,8 @@ def test_product_qc_verdict_repairs_from_product_with_existing_route(monkeypatch
     assert len(instructions) == 4
     assert all("MANNEQUIN" not in instruction for instruction in instructions)
     assert all("PRODUCT" in instruction for instruction in instructions)
-    assert "declaredFitAxes" in instructions[-1]
+    assert "undeclared dimensions" in instructions[-1]
+    assert "storyboard closure" in instructions[-1]
     assert "MANNEQUIN" not in captured["prompt"]
     assert [image.data for image in captured["images"]] == [
         b"PRODUCT", b"MODEL-FACE", b"MODEL-BODY", b"EXAMPLE", b"OUTPUT"]
@@ -238,11 +240,8 @@ def test_actual_no_mannequin_packet_passes_qc_with_the_same_framing_and_fit(monk
         authority_profile="confirmed_gpt_v1", confirmed_prompt_input=packet.prompt_input))
 
     assert result["passed"] is True
-    target = result["contract"]["declaredFitAxes"][0]
-    assert target == {"axis": "fit", "value": fit, "target": packet.prompt_input.sold_product_fit}
-    assert "caps the shoulder" not in target["target"]
-    if category == "outer":
-        assert len(target["target"]) > 200
+    assert result["contract"]["declaredFitAxes"] == []
+    assert result["contract"]["recordOnlyFitAxes"] == [{"axis": "fit", "value": fit}]
     assert result["contract"]["declaredFitAxisCount"] == 1
     assert result["contract"]["confirmedExampleFraming"]["shot"] == "medium"
     assert result["contract"]["confirmedGptProductAuthority"] == _PRODUCT_AUTHORITY
