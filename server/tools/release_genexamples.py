@@ -884,9 +884,9 @@ def _validate_catalog_document(value: object, *, label: str) -> list[dict]:
     for index, item in enumerate(value):
         if not isinstance(item, dict):
             raise RuntimeError(f"{label} {index}번 항목이 객체가 아닙니다: item_invalid")
-        if set(item) - {"bottomKind"} != _CATALOG_REQUIRED_FIELDS:
+        if set(item) != _CATALOG_REQUIRED_FIELDS:
             missing = sorted(_CATALOG_REQUIRED_FIELDS - set(item))
-            extra = sorted(set(item) - _CATALOG_REQUIRED_FIELDS - {"bottomKind"})
+            extra = sorted(set(item) - _CATALOG_REQUIRED_FIELDS)
             raise RuntimeError(
                 f"{label} {index}번 항목 필드가 계약과 다릅니다: "
                 f"missing={missing} extra={extra}"
@@ -897,8 +897,6 @@ def _validate_catalog_document(value: object, *, label: str) -> list[dict]:
         if example_id in seen:
             raise RuntimeError(f"{label} id 가 중복입니다: {example_id}")
         seen.add(example_id)
-        if "bottomKind" in item and item["bottomKind"] not in ("skirt", "pants"):
-            raise RuntimeError(f"{label} {example_id}.bottomKind 이 허용값이 아닙니다: bottom_kind_invalid")
         thumb = item["thumb"]
         if not isinstance(thumb, str) or not thumb.startswith("http"):
             raise RuntimeError(f"{label} {example_id} thumb 가 URL 이 아닙니다: thumb_invalid")
@@ -1008,14 +1006,11 @@ def _validate_catalog_registry_pair(
             raise RuntimeError(
                 f"{label} {example_id} thumb 가 레지스트리 baseUrl 과 다릅니다: base_mismatch"
             )
-        entry = registry["assets"][example_id]
-        registry_thumb = entry.get("thumb")
+        registry_thumb = registry["assets"][example_id].get("thumb")
         if registry_thumb != thumb:
             raise RuntimeError(
                 f"{label} {example_id} thumb 가 프론트·서버에서 다릅니다: url_mismatch"
             )
-        if item.get("bottomKind") != entry.get("bottomKind"):
-            raise RuntimeError(f"{label} {example_id} bottomKind 이 프론트·서버에서 다릅니다")
 
 
 def _validate_release_documents(

@@ -5,7 +5,6 @@ import { assignGenerationExamples } from '../../src/lib/generationExamples.js';
 import { seedStoryboard } from '../../src/lib/pageTemplates/seed.js';
 import { photoGalleryChoices, initialPhotoFraming } from '../../src/lib/pageTemplates/storyboardPhotoChoices.js';
 import { defaultPageStyle } from '../../src/lib/pageTemplates/pageStyle.js';
-import { signatureCutById } from '../../src/lib/signatureCutPool.js';
 import { storyboardSpaceSetsFor, withStoryboardSpaceSetExamples } from '../../src/lib/storyboardSpaceSetCatalog.js';
 import { stripStaleExampleSelections } from '../../src/lib/storyboardExampleStaleness.js';
 
@@ -62,27 +61,6 @@ test('women’s top gallery and showroom seed exclude the satin dress', () => {
   assert.ok(horizonGallery('dress').some(example => example.id === satinId));
   assert.ok(horizonGallery('top').every(example => example.id !== satinId));
   assert.ok(initialBlocks('top', 'show').every(block => block.exampleId !== satinId));
-});
-
-test('women’s bottom hero and background slots prefer the product’s bottom kind', () => {
-  for (const [category, kind] of [
-    [{ subCategory: 'midi_skirt' }, 'skirt'],
-    [{ customCategory: '플리츠 치마' }, 'skirt'],
-    [{ subCategory: 'slacks' }, 'pants'],
-  ]) {
-    for (const [templateId, expectedSlots] of [
-      ['emo', ['faq.background', 'first.hero', 'review.background']],
-      ['show', ['first.hero']],
-    ]) {
-      const picks = initialBlocks('bottom', templateId, category)
-        .filter(block => block.slotKey === 'first.hero' || block.slotKey?.endsWith('.background'));
-      assert.deepEqual(picks.map(block => block.slotKey).sort(), expectedSlots);
-      for (const block of picks) {
-        const example = byId.get(block.exampleId) || signatureCutById(block.exampleId);
-        assert.equal(example?.bottomKind, kind, `${templateId} ${block.slotKey}`);
-      }
-    }
-  }
 });
 
 test('stale picks clear independently', () => {

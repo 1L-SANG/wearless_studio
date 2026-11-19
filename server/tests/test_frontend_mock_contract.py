@@ -147,7 +147,6 @@ def test_dev_generation_example_catalog_matches_server_registry_v2():
         entry = assets[item["id"]]
         assert item["thumb"].endswith(entry["thumb"])
         assert item["applicableClothingTypes"] == entry["applicableClothingTypes"]
-        assert item.get("bottomKind") == entry.get("bottomKind")
         assert item["cutType"] == entry["cutType"]
         assert item["shot"] == entry["shot"]
         assert item["gender"] == entry["gender"]

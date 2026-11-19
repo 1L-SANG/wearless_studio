@@ -1003,7 +1003,6 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "bottomKind": "skirt",
       "cutType": "styling",
       "direction": "back",
       "gender": "women",
@@ -1015,7 +1014,6 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "bottomKind": "skirt",
       "confirmedGptDirectingV1": {
         "allSha256": "0d65165c30610018a711353ed636f4260b25a9b39c20ed0344e1135ee3e6e32b",
         "directionDescription": "front-family full-body standing view with slight torso turn",
@@ -1043,7 +1041,6 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "bottomKind": "pants",
       "confirmedGptDirectingV1": {
         "allSha256": "8dfd8178ba3ee87e8228334c28595cadeebe1ba5764a756a50a695d2672ec560",
         "directionDescription": "front-family full-body standing view with slight torso turn",
@@ -1071,7 +1068,6 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "bottomKind": "pants",
       "confirmedGptDirectingV1": {
         "allSha256": "bb30cddae7c889d06d2573e1bb85faef839ed7e2173b41e24fd8f90de3bd19f9",
         "directionDescription": "front-family full-body standing view with slight torso turn",
@@ -1099,7 +1095,6 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "bottomKind": "pants",
       "confirmedGptDirectingV1": {
         "allSha256": "f0ce5ee60a48d19c818ec1fc994ff62f62e0eef0fa74e3a9095006a1be613096",
         "directionDescription": "front-family full-body leaning view with crossed legs",
@@ -1127,7 +1122,6 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "bottomKind": "pants",
       "cutType": "styling",
       "direction": "back",
       "gender": "women",
@@ -1139,7 +1133,6 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "bottomKind": "pants",
       "confirmedGptDirectingV1": {
         "allSha256": "40342fe45030441475c5e9f08dbfa2d7186f48cdc94234e60534b8a88b950b67",
         "directionDescription": "front-family lower-body-focused medium view with slight turn",
@@ -1167,7 +1160,6 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "bottomKind": "skirt",
       "confirmedGptDirectingV1": {
         "allSha256": "1592ebf244c765670062d3cfa51faf4803fdd331e03dc40f4ab84c001a39bbd8",
         "directionDescription": "front-family lower-body-focused walking view",
@@ -1195,7 +1187,6 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "bottomKind": "skirt",
       "confirmedGptDirectingV1": {
         "allSha256": "6272a96ea00f68fa2062257d8fa30e321c80e4fd3ccee3a42d82828068269aa4",
         "directionDescription": "front-family seated lower-body-focused view",
@@ -1223,7 +1214,6 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "bottomKind": "pants",
       "confirmedGptDirectingV1": {
         "allSha256": "598b88b66ef305b42d3f09dd976b088f62b2a2df8d35ce61666f2e01ea27b966",
         "directionDescription": "front-family lower-body-focused standing view with slight turn",
@@ -1252,7 +1242,6 @@
       "applicableClothingTypes": [
         "bottom"
       ],
-      "bottomKind": "skirt",
       "confirmedGptDirectingV1": {
         "allSha256": "41d0d10d805d9c7a5c4c3a732ac4307d9b93e16d94ec0f20d952e91913cdeeb8",
         "directionDescription": "front-family lower-body-focused standing view",
