@@ -224,7 +224,6 @@
     "ex_horizon_women_dress_medium_front_satin_01_v2": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-medium-unified-01/all/ex_horizon_women_dress_medium_front_satin_01_v2.png",
       "applicableClothingTypes": [
-        "top",
         "outer",
         "dress"
       ],

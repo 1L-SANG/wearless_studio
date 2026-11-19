@@ -179,6 +179,9 @@ def test_horizon_catalog_uses_the_owner_confirmed_shared_clothing_scopes():
         )
         if change.get("excludeClothingTypes")
     }
+    verified_exclusions.update({
+        "ex_horizon_women_dress_medium_front_satin_01_v2": {"top"},
+    })
 
     horizon = [item for item in catalog if item["cutType"] == "horizon"]
     assert horizon

@@ -14,7 +14,8 @@ const photoPlaceValue = example => {
 export const initialPhotoPlace = (example, tabs = PHOTO_PLACE_TABS) => resolvePhotoPlace(photoPlaceValue(example), tabs);
 export const initialPhotoFraming = (block, example = null) => {
   if (String(example?.id || block?.exampleId || '').startsWith('sig_')) return 'medium';
-  return ['full', 'medium'].includes(example?.shot) ? example.shot : 'medium';
+  const shot = example?.shot ?? (isSinglePhotoSection(block) ? null : block?.shot);
+  return ['full', 'medium'].includes(shot) ? shot : 'medium';
 };
 export const framingLabel = (shot, clothingType) => shot === 'full' ? '전신' : clothingType === 'bottom' ? '하반신' : '상반신';
 
