@@ -4385,6 +4385,7 @@ export function Editor() {
             onChange={(next) => { setDlNotice(''); setDlSettings(next); }}
             onCancel={() => setDownload(false)}
             onDownload={runDownload}
+            onJumpToBlock={jumpTo}
           />
         </Modal>
       )}
@@ -4393,7 +4394,7 @@ export function Editor() {
         product={{ ...product, name: productName, analysis, materials: analysis?.materials, registrationGifNotice: gifImages.length > 0 }} blocks={blocks} assets={registrationAssets}
         malls={mallInfo} initialMall={registerMall} waitForSave={waitForMallSave} onSaveNotice={saveMallNotice}
         onSaveSizes={saveMallSizes} onPublish={publishForMalls} anchorRef={exportAnchorRef}
-        onConflict={reloadAfterEditorConflict} onClose={() => setRegisterMall(null)} />}
+        onConflict={reloadAfterEditorConflict} onClose={() => setRegisterMall(null)} onJumpToBlock={jumpTo} />}
 
       {backWarn && (
         <Modal onClose={() => setBackWarn(false)}>

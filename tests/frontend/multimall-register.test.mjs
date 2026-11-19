@@ -285,7 +285,7 @@ test('keyboard focus returns to menu and error summary opens the invalid field',
   const noticeHelpers = await import('../../src/features/editor/mallNotice.js');
   const { MallRegisterModal } = await componentModule('src/features/editor/MallRegisterModal.jsx', ['MallRegisterModal'], {
     ...helpers, ...noticeHelpers, ...runtime, useLocation: () => ({ pathname: '/editor/local', search: '', hash: '' }), useNavigate: () => () => {}, Link: 'a', Modal: ({ children }) => children, styles: {}, api: {}, clientEvents: { getAccountGeneration: () => 0 },
-    createMallRegisterSession: () => ({ restore: async () => null, getState: () => ({}) }), trapRegistrationFocus, Button: 'button', useAuth: () => ({ session: { user: { id: 'a' } } }),
+    createMallRegisterSession: () => ({ restore: async () => null, getState: () => ({}) }), trapRegistrationFocus, Button: 'button', DownloadChecklist: () => null, useAuth: () => ({ session: { user: { id: 'a' } } }),
   });
   runtime.render(MallRegisterModal, { projectId: 'p', blocks: [], product: {}, assets: [], anchorRef: { current: { focus: () => restored++ } } });
   const cleanups = runtime.flushEffects(); cleanups.forEach((cleanup) => cleanup?.()); assert.equal(restored, 1);

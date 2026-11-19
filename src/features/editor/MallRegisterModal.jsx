@@ -10,10 +10,11 @@ import { buildMallRegisterDraft, MALL_LABELS, normalizeMallRegisterDraft, openRe
   registrationActive, registrationSelection, trapRegistrationFocus, validateMallRegisterDraft } from './mallRegisterDraft.js';
 import { resolveMallNotice } from './mallNotice.js';
 import { createMallRegisterSession } from './mallRegisterSession.js';
+import { DownloadChecklist } from './DownloadChecklist.jsx';
 import styles from './MallRegisterModal.module.css';
 
 export function MallRegisterModal({ projectId, product, blocks, assets, malls, initialMall,
-  waitForSave, onSaveNotice, onSaveSizes, onPublish, onConflict, onClose, onRegistered, anchorRef }) {
+  waitForSave, onSaveNotice, onSaveSizes, onPublish, onConflict, onClose, onRegistered, onJumpToBlock, anchorRef }) {
   const location = useLocation(), navigate = useNavigate();
   const returnTo = `${location.pathname}${location.search}${location.hash}`;
   const rootRef = useRef(null), summaryRef = useRef(null), closeRef = useRef(null), controller = useRef(null);
@@ -202,6 +203,7 @@ export function MallRegisterModal({ projectId, product, blocks, assets, malls, i
     onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose?.(); } else trapRegistrationFocus(event); }}>
     <header className={styles.header}><h2 id="mall-register-title">{resultMode ? resultTitle : '확인하고 등록해요'}</h2><p>{resultMode ? product?.name || product?.productName : '판매가와 재고만 넣으면 돼요.'}</p></header>
     <div className={styles.body}>
+      {!resultMode && <DownloadChecklist blocks={blocks} busy={busy} onClose={onClose} onJumpToBlock={onJumpToBlock} />}
       {error && <div className={styles.errorSummary} role="alert" tabIndex={-1} ref={summaryRef}><p>{error}</p>
         {issues.map((issue, index) => <button key={index} type="button" className={styles.textButton} onClick={() => jump(issue)}>{issue.message}</button>)}
         {batch && <Button disabled={busy} onClick={() => resultAction('refresh')}>결과 다시 확인</Button>}

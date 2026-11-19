@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { componentModule, hooks } from './helpers/reactHarness.mjs';
 import { EXPORT_PRESETS, normalizeExportSettings } from '../../src/features/editor/editorExport.js';
 import { getAiDraftSectionNames, formatAiDraftSectionNames } from '../../src/features/editor/editorAiDrafts.js';
+import { downloadChecks } from '../../src/features/editor/editorDownloadWarnings.js';
 
 const { PUBLISH_PRESETS } = await componentModule('src/features/editor/detailPublish.js', ['PUBLISH_PRESETS'], { EXPORT_PRESETS });
 
@@ -14,6 +15,8 @@ const blocks = [{ id: 'b', name: '후기', pageSectionKind: 'review', elements: 
 const summary = { width: 860, height: 1000, fileCount: 1, approxBytes: 1000 };
 const result = { files: [{ index: 1, url: '/image.jpg' }], html: '<p>상세</p>' };
 const style = new Proxy({}, { get: (_, key) => String(key) });
+const { DownloadChecklist } = await componentModule('src/features/editor/DownloadChecklist.jsx',
+  ['DownloadChecklist'], { styles: style, downloadChecks });
 
 // These are the real modal JSX trees and click handlers, with React hook state retained between renders.
 async function mount(kind, extra = {}) {
@@ -24,7 +27,7 @@ async function mount(kind, extra = {}) {
     ['useAiDraftConfirmation', 'EditorAiDraftConfirmation'], bindings);
   const name = kind === 'download' ? 'EditorDownloadModal' : 'EditorPublishModal';
   const module = await componentModule(`src/features/editor/${name}.jsx`, [name], {
-    ...bindings, ...shared, EXPORT_PRESETS, normalizeExportSettings, PUBLISH_PRESETS, RadioCard: () => null,
+    ...bindings, ...shared, DownloadChecklist, EXPORT_PRESETS, normalizeExportSettings, PUBLISH_PRESETS, RadioCard: () => null,
   });
   let props = { blocks, settings: { preset: 'smartstore' }, summary, busy: false, error: '',
     result: null, previousCount: 0, onChange() {}, onCancel: () => calls.push('cancel'),
@@ -53,6 +56,22 @@ async function mount(kind, extra = {}) {
   };
   return { render, click, calls };
 }
+
+test('다운로드 창에서 AI 초안 확인 중에도 첫 빈 사진 블록으로 돌아갈 수 있다', async () => {
+  const jumps = [];
+  const modal = await mount('download', {
+    blocks: [...blocks,
+      { id: 'first-empty', elements: [{ type: 'image' }] },
+      { id: 'later-empty', elements: [{ type: 'image' }] },
+    ],
+    onJumpToBlock: (id) => jumps.push(id),
+  });
+  modal.render();
+  assert.match(modal.click('다운로드'), /후기에 AI 초안이 그대로 있어요/);
+  modal.click('보러 가기');
+  assert.deepEqual(modal.calls, ['cancel']);
+  assert.deepEqual(jumps, ['first-empty']);
+});
 
 for (const kind of ['download', 'publish']) {
   const action = kind === 'download' ? '다운로드' : '코드 만들기';
