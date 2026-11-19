@@ -73,6 +73,27 @@ test('다운로드 창에서 AI 초안 확인 중에도 첫 빈 사진 블록으
   assert.deepEqual(jumps, ['first-empty']);
 });
 
+test('코드 만들기 창의 확인 목록은 입력 화면에서만 보이고 닫은 뒤 첫 블록으로 이동한다', async () => {
+  const actions = [];
+  const photos = [
+    { id: 'first-empty', elements: [{ type: 'image' }] },
+    { id: 'later-empty', elements: [{ type: 'image' }] },
+  ];
+  const modal = await mount('publish', {
+    blocks: photos,
+    onCancel: () => actions.push('close'),
+    onJumpToBlock: (id) => actions.push(id),
+  });
+  const checklist = /받기 전에 확인해 주세요/;
+  assert.match(modal.render(), /붙여넣을 코드 만들기.*받기 전에 확인해 주세요.*빈 사진 자리 2곳.*이미지 크기/s);
+  assert.doesNotMatch(modal.render({ blocks: [] }), checklist);
+  assert.doesNotMatch(modal.render({ blocks: photos, result }), checklist);
+  assert.match(modal.render({ result: null, busy: true }), /<button[^>]*disabled[^>]*>보러 가기<\/button>/);
+  modal.render({ busy: false });
+  modal.click('보러 가기');
+  assert.deepEqual(actions, ['close', 'first-empty']);
+});
+
 for (const kind of ['download', 'publish']) {
   const action = kind === 'download' ? '다운로드' : '코드 만들기';
   const proceed = kind === 'download' ? '그대로 다운로드' : '그대로 만들기';

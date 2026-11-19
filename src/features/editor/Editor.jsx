@@ -4362,7 +4362,8 @@ export function Editor() {
             previousCount={pubResult?.previousCount ?? publicationInfo.count} realModelBlocked={realModelBlocked}
             onChange={setPubSettings} onCancel={() => { if (!pubBusy) setPublish(false); }} onPublish={runPublish}
             onCopyHtml={() => copyPublication(pubResult.html || buildPublicationHtml(pubResult.files, { productName, width: pubSummary.width }))}
-            onCopyUrls={() => copyPublication(buildPublicationUrlList(pubResult.files))} onDownloadZip={receivePublicationZip} />
+            onCopyUrls={() => copyPublication(buildPublicationUrlList(pubResult.files))} onDownloadZip={receivePublicationZip}
+            onJumpToBlock={jumpTo} />
         </Modal>
       )}
 
