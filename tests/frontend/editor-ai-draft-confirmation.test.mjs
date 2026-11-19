@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { componentModule, hooks } from './helpers/reactHarness.mjs';
 import { EXPORT_PRESETS, normalizeExportSettings } from '../../src/features/editor/editorExport.js';
 import { getAiDraftSectionNames, formatAiDraftSectionNames } from '../../src/features/editor/editorAiDrafts.js';
+import { downloadChecks } from '../../src/features/editor/editorDownloadWarnings.js';
 
 const { PUBLISH_PRESETS } = await componentModule('src/features/editor/detailPublish.js', ['PUBLISH_PRESETS'], { EXPORT_PRESETS });
 
@@ -14,6 +15,8 @@ const blocks = [{ id: 'b', name: '후기', pageSectionKind: 'review', elements: 
 const summary = { width: 860, height: 1000, fileCount: 1, approxBytes: 1000 };
 const result = { files: [{ index: 1, url: '/image.jpg' }], html: '<p>상세</p>' };
 const style = new Proxy({}, { get: (_, key) => String(key) });
+const { DownloadChecklist } = await componentModule('src/features/editor/DownloadChecklist.jsx',
+  ['DownloadChecklist'], { styles: style, downloadChecks });
 
 // These are the real modal JSX trees and click handlers, with React hook state retained between renders.
 async function mount(kind, extra = {}) {
@@ -24,7 +27,7 @@ async function mount(kind, extra = {}) {
     ['useAiDraftConfirmation', 'EditorAiDraftConfirmation'], bindings);
   const name = kind === 'download' ? 'EditorDownloadModal' : 'EditorPublishModal';
   const module = await componentModule(`src/features/editor/${name}.jsx`, [name], {
-    ...bindings, ...shared, EXPORT_PRESETS, normalizeExportSettings, PUBLISH_PRESETS, RadioCard: () => null,
+    ...bindings, ...shared, DownloadChecklist, EXPORT_PRESETS, normalizeExportSettings, PUBLISH_PRESETS, RadioCard: () => null,
   });
   let props = { blocks, settings: { preset: 'smartstore' }, summary, busy: false, error: '',
     result: null, previousCount: 0, onChange() {}, onCancel: () => calls.push('cancel'),
@@ -54,9 +57,54 @@ async function mount(kind, extra = {}) {
   return { render, click, calls };
 }
 
+test('다운로드 창에서 AI 초안 확인 중에도 첫 빈 사진 블록으로 돌아갈 수 있다', async () => {
+  const jumps = [];
+  const modal = await mount('download', {
+    blocks: [...blocks,
+      { id: 'first-empty', elements: [{ type: 'image' }] },
+      { id: 'later-empty', elements: [{ type: 'image' }] },
+    ],
+    onJumpToBlock: (id) => jumps.push(id),
+  });
+  modal.render();
+  assert.match(modal.click('다운로드'), /후기에 AI 초안이 그대로 있어요/);
+  modal.click('보러 가기');
+  assert.deepEqual(modal.calls, ['cancel']);
+  assert.deepEqual(jumps, ['first-empty']);
+});
+
+test('코드 만들기 창의 확인 목록은 입력 화면에서만 보이고 닫은 뒤 첫 블록으로 이동한다', async () => {
+  const actions = [];
+  const photos = [
+    { id: 'first-empty', elements: [{ type: 'image' }] },
+    { id: 'later-empty', elements: [{ type: 'image' }] },
+  ];
+  const modal = await mount('publish', {
+    blocks: photos,
+    onCancel: () => actions.push('close'),
+    onJumpToBlock: (id) => actions.push(id),
+  });
+  const checklist = /받기 전에 확인해 주세요/;
+  assert.match(modal.render(), /붙여넣을 코드 만들기.*받기 전에 확인해 주세요.*빈 사진 자리 2곳.*이미지 크기/s);
+  assert.doesNotMatch(modal.render({ blocks: [] }), checklist);
+  assert.doesNotMatch(modal.render({ blocks: photos, result }), checklist);
+  assert.match(modal.render({ result: null, busy: true }), /<button[^>]*disabled[^>]*>보러 가기<\/button>/);
+  modal.render({ busy: false });
+  modal.click('보러 가기');
+  assert.deepEqual(actions, ['close', 'first-empty']);
+});
+
 for (const kind of ['download', 'publish']) {
   const action = kind === 'download' ? '다운로드' : '코드 만들기';
   const proceed = kind === 'download' ? '그대로 다운로드' : '그대로 만들기';
+  test(`${kind}: 빈 사진 자리의 개별 AI 작업을 확인 목록에 표시한다`, async () => {
+    const modal = await mount(kind, {
+      blocks: [{ id: 'photos', elements: [{ id: 'slot', type: 'image' }] }],
+      canvasAiJobs: new Map([['slot', { blockId: 'photos', isSlot: true, status: 'busy' }]]),
+    });
+    assert.match(modal.render(), /아직 만드는 중인 컷 1장/);
+    assert.doesNotMatch(modal.render(), /빈 사진 자리/);
+  });
   test(`${kind}: 초안이 없으면 기존 동작과 문구를 유지한다`, async () => {
     const modal = await mount(kind, { blocks: [] });
     assert.doesNotMatch(modal.render(), /AI 초안|돌아가서 고치기|그대로 (다운로드|만들기)/);

@@ -6,6 +6,7 @@ import {
 import styles from './EditorDownloadModal.module.css';
 import { RadioCard } from './ExportRadioCard.jsx';
 import { EditorAiDraftConfirmation, useAiDraftConfirmation } from './EditorAiDraftConfirmation.jsx';
+import { DownloadChecklist } from './DownloadChecklist.jsx';
 
 const FORMAT_OPTIONS = [
   { id: 'jpeg', title: 'JPG', desc: '가볍게, 품질 90' },
@@ -31,6 +32,7 @@ function formatBytes(bytes) {
 
 export function EditorDownloadModal({
   blocks = [],
+  canvasAiJobs,
   settings: rawSettings,
   summary,
   notice,
@@ -40,6 +42,7 @@ export function EditorDownloadModal({
   onChange,
   onCancel,
   onDownload,
+  onJumpToBlock,
   gifCount = 0,
   onDownloadGifs,
 }) {
@@ -63,6 +66,8 @@ export function EditorDownloadModal({
         <h3 className={styles.title}>상세페이지 다운로드</h3>
         <p className={styles.subtitle}>쇼핑몰에 맞는 크기와 형식을 선택해 주세요.</p>
       </header>
+
+      <DownloadChecklist blocks={blocks} canvasAiJobs={canvasAiJobs} busy={busy} onClose={onCancel} onJumpToBlock={onJumpToBlock} />
 
       <div className={styles.groups}>
         <fieldset className={styles.group}>

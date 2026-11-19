@@ -66,29 +66,33 @@ const noticeBlock = () => buildInfoBlock('required_notice', defaultInfoFor('requ
 }));
 const buttons = (html) => [...html.matchAll(/<button\b[^>]*>.*?<\/button>/gs)].map(([button]) => button);
 
-test('빈 고시정보가 있어도 다운로드 창에 입력 안내를 띄우거나 문서를 바꾸지 않는다', () => {
+test('확인 목록을 이미지 설정 위에 순서대로 표시하고 다운로드할 수 있다', () => {
   const block = noticeBlock();
   const before = structuredClone(block);
-  const html = render(undefined, '', [block]);
-  assert.doesNotMatch(html, /고시정보 입력 필요|치수|제조자\(수입자\)|제조국|제조연월|품질보증기준|A\/S 책임자와 전화번호|그대로 받기/);
+  const html = render(undefined, '', [block, { id: 'photos', elements: [
+    { type: 'image', genPending: 'live' }, { type: 'image' }, { type: 'image', genFailed: true },
+  ] }]);
+  assert.match(html, /받기 전에 확인해 주세요.*그대로 받아도 돼요.*만들지 못한 컷 1장.*빈 사진 자리 1곳.*비어 있는 고시정보 6칸.*아직 만드는 중인 컷 1장.*이미지 크기/s);
+  assert.match(html, /치수 · 제조자\(수입자\) · 제조국 · 제조연월 · 품질보증기준 · A\/S 책임자와 전화번호/);
+  assert.match(html, /<li\b[^>]*><span[^>]*>아직 만드는 중인 컷 1장<span[^>]*>다 되면 자동으로 들어가요<\/span><\/span><\/li>/);
   const downloadButton = buttons(html).find((button) => button.endsWith('다운로드</button>'));
   assert.ok(downloadButton);
   assert.doesNotMatch(downloadButton, /\bdisabled/);
   assert.deepEqual(block, before, '다운로드 창이 고시 내용이나 저장 문서를 바꾸지 않는다');
 });
 
-test('고시정보 입력 여부와 관계없이 기본 다운로드 행동을 유지한다', () => {
+test('확인 항목을 모두 채우면 다운로드 창에 상자가 없다', () => {
   const block = noticeBlock();
   block.elements = block.elements.map((el) => el.text === '정보 입력 필요' ? { ...el, text: '셀러 입력값' } : el);
   const html = render(undefined, '', [block]);
-  assert.doesNotMatch(html, /고시정보 입력 필요/);
-  assert.doesNotMatch(html, /그대로 받기/);
+  assert.doesNotMatch(html, /받기 전에 확인할 것|받기 전에 확인해 주세요|그대로 받아도 돼요/);
   assert.match(html, />다운로드<\/button>/);
 });
 
-test('처리 중에는 다운로드와 취소와 옵션을 잠그고 준비 상태를 알린다', () => {
+test('처리 중에는 다운로드와 취소와 옵션과 블록 이동을 잠근다', () => {
   const html = render(undefined, '', [noticeBlock()], true);
-  assert.equal(buttons(html).length, 2);
+  assert.equal(buttons(html).length, 3);
+  assert.match(html, /<button[^>]*disabled[^>]*>채우기<\/button>/);
   for (const button of buttons(html)) assert.match(button, /\bdisabled/);
   for (const [input] of html.matchAll(/<input\b[^>]*>/g)) assert.match(input, /\bdisabled/);
   assert.match(html, /role="status"[^>]*aria-live="polite"/);

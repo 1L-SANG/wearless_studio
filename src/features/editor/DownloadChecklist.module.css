@@ -1,0 +1,98 @@
+.box {
+  --check-blue: color-mix(in srgb, var(--accent-blue) 78%, var(--fg-1));
+  margin-top: var(--sp-16);
+  padding: var(--sp-12) var(--sp-16);
+  border-radius: var(--r-5);
+  background: var(--accent-blue-soft);
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-4) var(--sp-8);
+  margin-bottom: var(--sp-8);
+}
+
+.title {
+  color: var(--check-blue);
+  font-size: 14px;
+  font-weight: 700;
+  text-wrap: balance;
+}
+
+.hint {
+  margin-inline-start: auto;
+  color: var(--fg-2);
+  font-size: 12px;
+  text-wrap: balance;
+}
+
+.list {
+  display: grid;
+  gap: var(--sp-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-12);
+  min-height: 28px;
+}
+
+.text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--sp-8);
+  min-width: 0;
+  color: var(--fg-1);
+  font-size: 14px;
+  font-weight: 600;
+  text-wrap: balance;
+}
+
+.sub {
+  color: var(--fg-2);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.muted .text {
+  color: var(--fg-2);
+  font-weight: 500;
+}
+
+.jump {
+  flex: none;
+  min-height: 28px;
+  padding: var(--sp-4) 0;
+  border: 0;
+  background: none;
+  color: var(--check-blue);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.jump:not(:disabled):hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.jump:focus-visible {
+  outline: 2px solid var(--check-blue);
+  outline-offset: 2px;
+  border-radius: var(--r-2);
+}
+
+.jump:disabled {
+  color: var(--fg-3);
+  cursor: default;
+}

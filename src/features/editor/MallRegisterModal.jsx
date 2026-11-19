@@ -10,15 +10,17 @@ import { buildMallRegisterDraft, MALL_LABELS, normalizeMallRegisterDraft, openRe
   registrationActive, registrationSelection, trapRegistrationFocus, validateMallRegisterDraft } from './mallRegisterDraft.js';
 import { resolveMallNotice } from './mallNotice.js';
 import { createMallRegisterSession } from './mallRegisterSession.js';
+import { DownloadChecklist } from './DownloadChecklist.jsx';
 import styles from './MallRegisterModal.module.css';
 
-export function MallRegisterModal({ projectId, product, blocks, assets, malls, initialMall,
-  waitForSave, onSaveNotice, onSaveSizes, onPublish, onConflict, onClose, onRegistered, anchorRef }) {
+export function MallRegisterModal({ projectId, product, blocks, canvasAiJobs, assets, malls, initialMall, resumeDraft,
+  waitForSave, onSaveNotice, onSaveSizes, onPublish, onConflict, onClose, onKeepDraft, onRegistered, onJumpToBlock, anchorRef }) {
   const location = useLocation(), navigate = useNavigate();
   const returnTo = `${location.pathname}${location.search}${location.hash}`;
   const rootRef = useRef(null), summaryRef = useRef(null), closeRef = useRef(null), controller = useRef(null);
   const displayedSources = useRef({}), lifecycle = useRef(0), scopeGuard = useRef(() => false);
   const alive = useRef(false), generation = useRef(0), locked = useRef(false), latest = useRef(null), draftRef = useRef(null);
+  const draftToRestore = useRef(resumeDraft);
   latest.current = { projectId, product, blocks, assets, malls, waitForSave, onSaveNotice, onSaveSizes, onPublish, onConflict, onRegistered };
   const [draft, setDraft] = useState(null), [preflight, setPreflight] = useState(null), [batch, setBatch] = useState(null);
   const [defaults, setDefaults] = useState({}), [catalogs, setCatalogs] = useState({}), [publication, setPublication] = useState(null);
@@ -98,10 +100,11 @@ export function MallRegisterModal({ projectId, product, blocks, assets, malls, i
         setPhase('restore'); setError('');
         const restored = await controller.current.restore(projectId);
         if (!current()) return;
-        if (restored) { setPhase('results'); return; }
+        if (restored) { draftToRestore.current = null; setPhase('results'); return; }
         const saved = await loadSources();
         if (!current()) return;
-        await prepare(buildMallRegisterDraft({ ...latest.current, defaults: saved, selectedMall: initialMall }));
+        await prepare(buildMallRegisterDraft({ ...latest.current, defaults: saved, selectedMall: initialMall, resumeDraft: draftToRestore.current }));
+        draftToRestore.current = null;
       } catch (failure) { if (current()) { report(failure); setPhase('input'); } }
     };
     void start();
@@ -198,10 +201,16 @@ export function MallRegisterModal({ projectId, product, blocks, assets, malls, i
     if (issue.action === 'fill_notice') { const details = rootRef.current?.querySelector('#mall-notice'); if (details) details.open = true; }
     openRegistrationIssue(rootRef.current, issue);
   };
+  const closeForChecklist = () => {
+    const draftToKeep = draftRef.current ?? draftToRestore.current;
+    if (draftToKeep) onKeepDraft?.(draftToKeep);
+    onClose();
+  };
   return <Modal onClose={onClose} wide><div className={styles.dialog} ref={rootRef} role="dialog" aria-modal="true" aria-labelledby="mall-register-title" tabIndex={-1}
     onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose?.(); } else trapRegistrationFocus(event); }}>
     <header className={styles.header}><h2 id="mall-register-title">{resultMode ? resultTitle : '확인하고 등록해요'}</h2><p>{resultMode ? product?.name || product?.productName : '판매가와 재고만 넣으면 돼요.'}</p></header>
     <div className={styles.body}>
+      {!resultMode && <DownloadChecklist blocks={blocks} canvasAiJobs={canvasAiJobs} busy={busy} onClose={closeForChecklist} onJumpToBlock={onJumpToBlock} />}
       {error && <div className={styles.errorSummary} role="alert" tabIndex={-1} ref={summaryRef}><p>{error}</p>
         {issues.map((issue, index) => <button key={index} type="button" className={styles.textButton} onClick={() => jump(issue)}>{issue.message}</button>)}
         {batch && <Button disabled={busy} onClick={() => resultAction('refresh')}>결과 다시 확인</Button>}

@@ -6,12 +6,17 @@ import { componentModule, hooks } from './helpers/reactHarness.mjs';
 import * as draftHelpers from '../../src/features/editor/mallRegisterDraft.js';
 import * as noticeHelpers from '../../src/features/editor/mallNotice.js';
 import { createMallRegisterSession } from '../../src/features/editor/mallRegisterSession.js';
+import { downloadChecks } from '../../src/features/editor/editorDownloadWarnings.js';
+import { buildInfoBlock } from '../../src/features/editor/presets/infoPresets.js';
+
+const { DownloadChecklist } = await componentModule('src/features/editor/DownloadChecklist.jsx',
+  ['DownloadChecklist'], { styles: {}, downloadChecks });
 const walk = (node) => [node, ...React.Children.toArray(node?.props?.children).flatMap(walk)];
 const delay = () => new Promise((resolve) => setTimeout(resolve, 5));
 async function harness(api) {
   const runtime = hooks(); const order = [];
   const { MallRegisterModal } = await componentModule('src/features/editor/MallRegisterModal.jsx', ['MallRegisterModal'], {
-    ...runtime, ...draftHelpers, ...noticeHelpers, createMallRegisterSession, api, styles: {}, clientEvents: { getAccountGeneration: () => 0 },
+    ...runtime, ...draftHelpers, ...noticeHelpers, createMallRegisterSession, DownloadChecklist, api, styles: {}, clientEvents: { getAccountGeneration: () => 0 },
     useLocation: () => ({ pathname: '/editor/local', search: '', hash: '' }), useNavigate: () => () => {}, Link: 'a', Modal: ({ children }) => children, Button: 'button', MallRegisterFields: 'fields', MallNoticeFields: 'notice', MallRegisterResults: 'results',
   });
   const props = { projectId: 'modal-project', blocks: [], product: { name: '셔츠' }, assets: [{ assetId: 'main', src: '/local.jpg' }], initialMall: 'cafe24',
@@ -38,9 +43,156 @@ test('registration modal restores history before saving and preparing the clicke
 test('registration modal restores unfinished results without saving or publishing', async () => {
   const view = { mall: 'cafe24', jobId: 'unknown', status: 'done', outcome: 'unknown', retryAction: 'verify' };
   const h = await harness({ listMallRegistrations: async () => ({ items: [view], recoveries: { cafe24: [view] } }) });
+  h.props.blocks = [{ id: 'empty', elements: [{ type: 'image' }] }];
   h.render(); const cleanups = h.runtime.flushEffects(); await delay(); assert.deepEqual(h.order, []);
   const tree = h.render(); assert.ok(walk(tree).some((node) => node.type === 'results'));
-  assert.match(h.html(), /등록 여부를 확인해 주세요/); cleanups.forEach((cleanup) => cleanup?.());
+  assert.match(h.html(), /등록 여부를 확인해 주세요/);
+  assert.doesNotMatch(h.html(), /받기 전에 확인해 주세요/);
+  cleanups.forEach((cleanup) => cleanup?.());
+});
+
+test('몰 등록 창은 확인할 항목이 없으면 상자를 표시하지 않는다', async () => {
+  const h = await harness({});
+  h.props.blocks = [{ id: 'filled', elements: [{ type: 'image', src: '/ready.jpg' }] }];
+  assert.doesNotMatch(h.html(), /받기 전에 확인할 것|받기 전에 확인해 주세요|그대로 받아도 돼요/);
+});
+
+test('몰 등록 준비 중에는 확인 목록의 이동을 잠그고, 준비가 끝나면 첫 블록으로 이동한다', async () => {
+  const h = await harness({
+    listMallRegistrations: async () => ({ items: [], recoveries: {} }),
+    getMallDefaults: async () => ({}),
+    getMallRegistrationCatalog: async () => ({ complete: true, categories: [] }),
+  });
+  const notice = buildInfoBlock('required_notice', { fields: [
+    { key: 'origin', label: '제조국', value: '' }, { key: 'sizes', label: '치수', value: '' },
+  ] });
+  h.props.blocks = [
+    { id: 'failed-first', elements: [{ id: 'failed-slot', type: 'image' }] },
+    notice,
+    { id: 'failed-later', elements: [{ type: 'image', genFailed: true }] },
+    { ...notice, id: 'notice-later' },
+  ];
+  h.props.canvasAiJobs = new Map([['failed-slot', { blockId: 'failed-first', isSlot: true, status: 'failed' }]]);
+  const actions = [];
+  h.props.onClose = () => actions.push('close');
+  h.props.onJumpToBlock = (id) => actions.push(id);
+  const checklistButtons = () => {
+    const checklist = walk(h.render()).find((node) => node.type === DownloadChecklist);
+    assert.ok(checklist);
+    return walk(DownloadChecklist(checklist.props)).filter((node) => node.type === 'button');
+  };
+
+  assert.match(h.html(), /받기 전에 확인해 주세요.*만들지 못한 컷 2장.*비어 있는 고시정보 2칸.*제조국 · 치수.*이전 등록을 확인하고 있어요/s);
+  const disabled = checklistButtons();
+  assert.equal(disabled.length, 2);
+  for (const button of disabled) {
+    assert.equal(button.props.disabled, true);
+    button.props.onClick();
+  }
+  assert.deepEqual(actions, []);
+
+  const cleanups = h.runtime.flushEffects();
+  await delay();
+  const [view, fill] = checklistButtons();
+  assert.equal(view.props.children, '보러 가기');
+  assert.equal(fill.props.children, '채우기');
+  for (const button of [view, fill]) {
+    assert.equal(button.props.disabled, false);
+    button.props.onClick();
+  }
+  assert.deepEqual(actions, ['close', 'failed-first', 'close', notice.id]);
+  cleanups.forEach((cleanup) => cleanup?.());
+});
+
+test('몰 등록의 확인 목록으로 이동한 초안을 복원하고 일반 취소로는 보관하지 않는다', async () => {
+  const jumps = [], checked = [];
+  let resumeDraft, closed = false;
+  const filledNotice = (value) => buildInfoBlock('required_notice', { fields: [{ key: 'origin', label: '제조국', value }] });
+  const open = async (blocks, revision) => {
+    const h = await harness({
+      listMallRegistrations: async () => ({ items: [], recoveries: {} }),
+      getMallDefaults: async () => ({}),
+      getMallRegistrationCatalog: async () => ({ complete: true, categories: [] }),
+      preflightMallRegistration: async (draft) => { checked.push(draft); return { items: [] }; },
+    });
+    closed = false;
+    Object.assign(h.props, {
+      blocks, resumeDraft, waitForSave: async () => revision,
+      onClose: () => { closed = true; },
+      onKeepDraft: (draft) => { resumeDraft = draft; },
+      onJumpToBlock: (id) => jumps.push(id),
+    });
+    // The editor hands the saved form to this opening once.
+    resumeDraft = undefined;
+    h.render();
+    const cleanups = h.runtime.flushEffects();
+    await delay();
+    return { ...h, unmount: () => cleanups.forEach((cleanup) => cleanup?.()) };
+  };
+  const fields = (h) => walk(h.render()).find((node) => node.type === 'fields').props;
+  const notice = filledNotice('');
+  const first = await open([notice], 2);
+  fields(first).onChange({ ...fields(first).draft, basePrice: '39000', defaultQuantity: '8' });
+  const checklist = walk(first.render()).find((node) => node.type === DownloadChecklist);
+  walk(DownloadChecklist(checklist.props)).find((node) => node.type === 'button').props.onClick();
+  assert.equal(closed, true);
+  assert.deepEqual(jumps, [notice.id]);
+  first.unmount();
+
+  const reopened = await open([filledNotice('한국')], 3);
+  assert.equal(fields(reopened).draft.basePrice, 39000);
+  assert.equal(fields(reopened).draft.defaultQuantity, 8);
+  assert.equal(checked.at(-1).editorRevision, 3);
+  assert.doesNotMatch(reopened.html(), /받기 전에 확인해 주세요/);
+  const resolution = walk(reopened.render()).find((node) => node.type === 'notice').props.resolution;
+  assert.equal(resolution.fields.find((field) => field.key === 'origin').value, '한국');
+
+  fields(reopened).onChange({ ...fields(reopened).draft, basePrice: '42000', defaultQuantity: '12' });
+  walk(reopened.render()).find((node) => node.type === 'button' && node.props.children === '취소').props.onClick();
+  assert.equal(closed, true);
+  assert.equal(resumeDraft, undefined);
+  reopened.unmount();
+  const fresh = await open([], 3);
+  assert.equal(fields(fresh).draft.basePrice, '');
+  assert.equal(fields(fresh).draft.defaultQuantity, 0);
+  fresh.unmount();
+});
+
+test('몰 등록을 다시 열어 준비가 실패해도 체크리스트로 이동할 때 복원한 초안을 보관한다', async () => {
+  const resumeDraft = { ...draftHelpers.buildMallRegisterDraft({
+    projectId: 'modal-project', product: { name: '셔츠' }, assets: [{ assetId: 'main' }], selectedMall: 'cafe24',
+  }), basePrice: '39000', defaultQuantity: '8' };
+
+  for (const stage of ['save', 'publish', 'preflight']) {
+    const fail = async () => { throw new Error(`${stage} failed`); };
+    const h = await harness({
+      listMallRegistrations: async () => ({ items: [], recoveries: {} }),
+      getMallDefaults: async () => ({}),
+      getMallRegistrationCatalog: async () => ({ complete: true, categories: [] }),
+      preflightMallRegistration: stage === 'preflight' ? fail : async () => ({ items: [] }),
+    });
+    const actions = [];
+    Object.assign(h.props, {
+      resumeDraft,
+      blocks: [{ id: 'empty', elements: [{ type: 'image' }] }],
+      onClose: () => actions.push('close'),
+      onKeepDraft: (draft) => actions.push(draft),
+      onJumpToBlock: (id) => actions.push(id),
+    });
+    if (stage === 'save') h.props.waitForSave = fail;
+    if (stage === 'publish') h.props.onPublish = fail;
+    h.render();
+    const cleanups = h.runtime.flushEffects();
+    await delay();
+    assert.match(h.html(), new RegExp(`${stage} failed`));
+
+    const checklist = walk(h.render()).find((node) => node.type === DownloadChecklist);
+    const view = walk(DownloadChecklist(checklist.props)).find((node) => node.type === 'button');
+    assert.equal(view.props.disabled, false);
+    view.props.onClick();
+    assert.deepEqual(actions, [resumeDraft, 'close', 'empty'], stage);
+    cleanups.forEach((cleanup) => cleanup?.());
+  }
 });
 
 test('unavailable zigzag connection is shown as preparing and stays disabled', async () => {
