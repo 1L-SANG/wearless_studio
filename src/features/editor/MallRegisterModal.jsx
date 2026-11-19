@@ -202,7 +202,8 @@ export function MallRegisterModal({ projectId, product, blocks, canvasAiJobs, as
     openRegistrationIssue(rootRef.current, issue);
   };
   const closeForChecklist = () => {
-    if (draftRef.current) onKeepDraft?.(draftRef.current);
+    const draftToKeep = draftRef.current ?? draftToRestore.current;
+    if (draftToKeep) onKeepDraft?.(draftToKeep);
     onClose();
   };
   return <Modal onClose={onClose} wide><div className={styles.dialog} ref={rootRef} role="dialog" aria-modal="true" aria-labelledby="mall-register-title" tabIndex={-1}

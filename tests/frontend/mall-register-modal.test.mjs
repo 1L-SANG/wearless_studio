@@ -158,6 +158,43 @@ test('몰 등록의 확인 목록으로 이동한 초안을 복원하고 일반 
   fresh.unmount();
 });
 
+test('몰 등록을 다시 열어 준비가 실패해도 체크리스트로 이동할 때 복원한 초안을 보관한다', async () => {
+  const resumeDraft = { ...draftHelpers.buildMallRegisterDraft({
+    projectId: 'modal-project', product: { name: '셔츠' }, assets: [{ assetId: 'main' }], selectedMall: 'cafe24',
+  }), basePrice: '39000', defaultQuantity: '8' };
+
+  for (const stage of ['save', 'publish', 'preflight']) {
+    const fail = async () => { throw new Error(`${stage} failed`); };
+    const h = await harness({
+      listMallRegistrations: async () => ({ items: [], recoveries: {} }),
+      getMallDefaults: async () => ({}),
+      getMallRegistrationCatalog: async () => ({ complete: true, categories: [] }),
+      preflightMallRegistration: stage === 'preflight' ? fail : async () => ({ items: [] }),
+    });
+    const actions = [];
+    Object.assign(h.props, {
+      resumeDraft,
+      blocks: [{ id: 'empty', elements: [{ type: 'image' }] }],
+      onClose: () => actions.push('close'),
+      onKeepDraft: (draft) => actions.push(draft),
+      onJumpToBlock: (id) => actions.push(id),
+    });
+    if (stage === 'save') h.props.waitForSave = fail;
+    if (stage === 'publish') h.props.onPublish = fail;
+    h.render();
+    const cleanups = h.runtime.flushEffects();
+    await delay();
+    assert.match(h.html(), new RegExp(`${stage} failed`));
+
+    const checklist = walk(h.render()).find((node) => node.type === DownloadChecklist);
+    const view = walk(DownloadChecklist(checklist.props)).find((node) => node.type === 'button');
+    assert.equal(view.props.disabled, false);
+    view.props.onClick();
+    assert.deepEqual(actions, [resumeDraft, 'close', 'empty'], stage);
+    cleanups.forEach((cleanup) => cleanup?.());
+  }
+});
+
 test('unavailable zigzag connection is shown as preparing and stays disabled', async () => {
   const h = await harness({
     listMallRegistrations: async () => ({ items: [], recoveries: {} }),

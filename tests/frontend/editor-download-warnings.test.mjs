@@ -12,6 +12,27 @@ test('고시정보 값을 개별 드래그해도 빈 항목명을 유지한다',
   assert.deepEqual(missingNoticeFields([block]), ['치수']);
 });
 
+test('고시정보 값이 항목명보다 왼쪽으로 이동해도 요소 순서로 판정한다', () => {
+  const block = buildInfoBlock('required_notice', { fields: [
+    { key: 'origin', label: '제조국', value: '' },
+    { key: 'sizes', label: '치수', value: 'FREE' },
+  ] });
+  const placeholder = block.elements.find((element) => element.text === '정보 입력 필요');
+  const cleared = block.elements.find((element) => element.text === 'FREE');
+  placeholder.x = 20;
+  cleared.x = 20;
+  cleared.y += 12;
+  cleared.text = '  ';
+  assert.deepEqual(missingNoticeFields([block]), ['제조국', '치수']);
+});
+
+test('요소 순서로 짝을 찾을 수 없으면 고시정보의 같은 행 좌표를 쓴다', () => {
+  const block = buildInfoBlock('required_notice', { fields: [{ key: 'origin', label: '제조국', value: '' }] });
+  const [heading, label, value] = block.elements;
+  block.elements = [heading, value, label];
+  assert.deepEqual(missingNoticeFields([block]), ['제조국']);
+});
+
 test('폼에서 모두 채운 고시정보와 고시 블록 없는 문서는 안내하지 않는다', () => {
   const block = buildInfoBlock('required_notice', { fields: [
     { key: 'sizes', label: '치수', value: 'FREE' },

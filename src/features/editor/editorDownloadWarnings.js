@@ -14,14 +14,17 @@ export function missingNoticeFields(blocks = []) {
     if (block?.kind !== 'info' || block.infoType !== 'required_notice') continue;
     const texts = (block.elements || []).filter((el) => el.type === 'text');
     const fieldLabels = new Set((block.info?.fields || NOTICE_FIELDS).map((field) => field.label));
+    let previousWasValue = false;
     for (const [index, value] of texts.entries()) {
+      // 드래그해도 순서는 유지된다. 앞 칸의 값이 항목명과 같을 때는 새 항목명으로 쓰지 않는다.
+      const previous = texts[index - 1];
+      const orderedLabel = !previousWasValue && fieldLabels.has(previous?.text) ? previous : null;
+      previousWasValue = Boolean(orderedLabel);
+
       const text = String(value.text ?? '').trim();
       if (!isVisible(value) || (text && text !== NEEDS_INPUT)) continue;
-      // 고시 표의 같은 행 왼쪽이 항목명이다. 레이어 순서가 바뀌어도 행은 유지된다.
-      const rowLabel = texts.find((el) => el !== value && el.y === value.y && el.x < value.x);
-      // 개별 드래그는 요소 순서를 바꾸지 않는다. 항목명인 경우에만 이전 글자를 사용한다.
-      const previous = texts[index - 1];
-      const label = rowLabel || (previous?.x < value.x && fieldLabels.has(previous.text) ? previous : null);
+      // 레이어 순서로 짝을 찾을 수 없으면 같은 행의 왼쪽 글자를 찾는다.
+      const label = orderedLabel || texts.find((el) => el.y === value.y && el.x < value.x);
       if (label) labels.add(String(label.text || '').trim() || '고시정보 항목');
     }
   }
