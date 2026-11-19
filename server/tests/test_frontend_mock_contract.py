@@ -181,10 +181,6 @@ def test_horizon_catalog_uses_the_owner_confirmed_shared_clothing_scopes():
         if change.get("excludeClothingTypes")
     }
     verified_exclusions.update({
-        "ex_horizon_women_top_full_profile_02": {"dress"},
-        "ex_horizon_women_top_full_profile_right_02": {"dress"},
-        "ex_horizon_women_top_full_back_02": {"dress"},
-        "ex_horizon_women_top_medium_back_01": {"dress"},
         "ex_horizon_women_dress_medium_front_satin_01_v2": {"top"},
     })
 

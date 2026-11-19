@@ -78,8 +78,7 @@ test('owner declarations gate frontend combinations', () => {
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'top', gender: 'women' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'medium', clothingType: 'bottom', gender: 'men' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'medium', clothingType: 'top', gender: 'women' }), true);
-  // 2026-11-19: 원피스에 맞는 호리존 전신 낱장은 없고 세트 멤버만 남는다.
-  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'dress', gender: 'women' }), false);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'dress', gender: 'women' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'top', gender: 'men' }), true);
   // 남성 원피스는 계약상 존재하지 않는다 — 풀샷을 열어도 이 조합은 계속 닫혀 있다.
   assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'dress', gender: 'men' }), false);

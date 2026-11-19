@@ -238,7 +238,8 @@
       "applicableClothingTypes": [
         "top",
         "bottom",
-        "outer"
+        "outer",
+        "dress"
       ],
       "cutType": "horizon",
       "direction": "back",
@@ -263,7 +264,8 @@
       "applicableClothingTypes": [
         "top",
         "bottom",
-        "outer"
+        "outer",
+        "dress"
       ],
       "cutType": "horizon",
       "direction": "side",
@@ -277,7 +279,8 @@
       "applicableClothingTypes": [
         "top",
         "bottom",
-        "outer"
+        "outer",
+        "dress"
       ],
       "cutType": "horizon",
       "direction": "side",
@@ -316,7 +319,8 @@
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/all/ex_horizon_women_top_medium_back_01.png",
       "applicableClothingTypes": [
         "top",
-        "outer"
+        "outer",
+        "dress"
       ],
       "cutType": "horizon",
       "direction": "back",

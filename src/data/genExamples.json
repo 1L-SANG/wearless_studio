@@ -1650,7 +1650,8 @@
     "applicableClothingTypes": [
       "top",
       "bottom",
-      "outer"
+      "outer",
+      "dress"
     ],
     "clothingType": "top",
     "cutType": "horizon",
@@ -1693,7 +1694,8 @@
     "applicableClothingTypes": [
       "top",
       "bottom",
-      "outer"
+      "outer",
+      "dress"
     ],
     "clothingType": "top",
     "cutType": "horizon",
@@ -1715,7 +1717,8 @@
     "applicableClothingTypes": [
       "top",
       "bottom",
-      "outer"
+      "outer",
+      "dress"
     ],
     "clothingType": "top",
     "cutType": "horizon",
@@ -1736,7 +1739,8 @@
   {
     "applicableClothingTypes": [
       "top",
-      "outer"
+      "outer",
+      "dress"
     ],
     "clothingType": "top",
     "cutType": "horizon",

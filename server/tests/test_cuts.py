@@ -364,10 +364,6 @@ def test_server_example_validation_rejects_id_applicability_cut_and_gender_but_a
 
 
 @pytest.mark.parametrize(("clothing_type", "example_id"), [
-    ("dress", "ex_horizon_women_top_full_profile_02"),
-    ("dress", "ex_horizon_women_top_full_profile_right_02"),
-    ("dress", "ex_horizon_women_top_full_back_02"),
-    ("dress", "ex_horizon_women_top_medium_back_01"),
     ("top", "ex_horizon_women_dress_medium_front_satin_01_v2"),
 ])
 def test_removed_examples_report_only_the_saved_selection(clothing_type, example_id):

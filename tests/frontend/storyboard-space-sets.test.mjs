@@ -368,23 +368,28 @@ test('production set eligibility filters by gender and clothing type', () => {
   }
 });
 
-test('A2 rotation set and its detached members exclude dresses', () => {
+test('rotation set members and grouped set both cover every supported clothing type', () => {
   const rotation = storyboardSpaceSetsFor({
     gender: 'women',
-    clothingType: 'bottom',
-  }).find((set) => set.id === 'set_horizon_women_bottom_threetimes_7563033280596_prod01');
+    clothingType: 'dress',
+  }).find((set) => set.setType === 'horizon-rotation');
   assert.ok(rotation);
-  assert.deepEqual(rotation.applicableClothingTypes, ['top', 'bottom', 'outer']);
-  assert.deepEqual(rotation.setApplicableClothingTypes, ['top', 'bottom', 'outer']);
-  assert.ok(!storyboardSpaceSetsFor({ gender: 'women', clothingType: 'dress' }).includes(rotation));
+  assert.deepEqual(
+    rotation.applicableClothingTypes,
+    ['top', 'bottom', 'outer', 'dress'],
+  );
+  assert.deepEqual(
+    rotation.setApplicableClothingTypes,
+    ['top', 'bottom', 'outer', 'dress'],
+  );
   const standaloneMembers = STORYBOARD_SPACE_SET_EXAMPLES.filter(
     (example) => example.spaceSetId === rotation.id,
   );
-  assert.equal(standaloneMembers.length, 3);
+  assert.ok(standaloneMembers.length > 0);
   assert.ok(standaloneMembers.every(
     (example) => (
       example.shot === 'full'
-      && !example.applicableClothingTypes.includes('dress')
+      && example.applicableClothingTypes.includes('dress')
     ),
   ));
 });

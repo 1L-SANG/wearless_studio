@@ -154,6 +154,12 @@
     {
       "cutType": "horizon",
       "shot": "full",
+      "clothingType": "dress",
+      "gender": "women"
+    },
+    {
+      "cutType": "horizon",
+      "shot": "full",
       "clothingType": "top",
       "gender": "men"
     },

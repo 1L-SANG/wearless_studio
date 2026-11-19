@@ -11,7 +11,7 @@ import { stripStaleExampleSelections } from '../../src/lib/storyboardExampleStal
 
 const { genExamples: catalog } = withStoryboardSpaceSetExamples({ genExamples: examples });
 const byId = new Map(catalog.map(example => [example.id, example]));
-const excludedDressIds = [
+const sharedTopIds = [
   'ex_horizon_women_top_full_profile_02',
   'ex_horizon_women_top_full_profile_right_02',
   'ex_horizon_women_top_full_back_02',
@@ -37,23 +37,22 @@ function horizonGallery(clothingType) {
     clothingType, gender, identityKind, shot: 'all', place: 'studio' }).candidates;
 }
 
-test('dress gallery and initial fit slots exclude the A2 rotation and four top examples', () => {
-  const excluded = id => id?.startsWith(rotationPrefix) || excludedDressIds.includes(id);
+// 2026-11-19 오너 결정: 원피스는 상의, 하의와 같이 쓰는 회전 세트와 상의 사진을 골라 쓴다.
+test('dress gallery keeps the shared rotation set and four top examples, and fit slots are filled', () => {
   const gallery = horizonGallery('dress');
-  assert.ok(gallery.some(example => example.setOnly && example.shot === 'full'));
-  assert.ok(gallery.every(example => !excluded(example.id)));
+  assert.ok(gallery.some(example => example.id?.startsWith(rotationPrefix)));
+  for (const id of sharedTopIds) assert.ok(gallery.some(example => example.id === id), id);
   for (const templateId of ['emo', 'show']) {
-    const blocks = initialBlocks('dress', templateId);
-    const fit = blocks.filter(block => /^wear_fit\.(front|side|back)$/.test(block.slotKey || ''));
+    const fit = initialBlocks('dress', templateId).filter(block => /^wear_fit\.(front|side|back)$/.test(block.slotKey || ''));
     assert.deepEqual(fit.map(block => block.direction), ['front', 'side', 'back']);
-    assert.ok(blocks.every(block => !excluded(block.exampleId)));
-    assert.ok(fit.every(block => !block.exampleId || byId.get(block.exampleId).applicableClothingTypes.includes('dress')));
+    assert.ok(fit.every(block => block.exampleId && byId.get(block.exampleId).applicableClothingTypes.includes('dress')));
   }
 });
 
-test('an empty dress fit slot opens its photo gallery at the slot’s own framing', () => {
+test('a cleared fit slot opens its photo gallery at the slot’s own framing', () => {
   for (const templateId of ['emo', 'show']) {
-    const fit = initialBlocks('dress', templateId).filter(block => /^wear_fit\.(front|side|back)$/.test(block.slotKey || '') && !block.exampleId);
+    const fit = initialBlocks('dress', templateId).filter(block => /^wear_fit\.(front|side|back)$/.test(block.slotKey || ''))
+      .map(block => ({ ...block, exampleId: null }));
     assert.ok(fit.length);
     assert.ok(fit.every(block => initialPhotoFraming(block, null) === block.shot));
   }
@@ -87,10 +86,10 @@ test('women’s bottom hero and background slots prefer the product’s bottom k
 });
 
 test('stale picks clear independently', () => {
-  const stale = { id: 'stale', source: 'ai', cutType: 'horizon', exampleId: excludedDressIds[0],
+  const stale = { id: 'stale', source: 'ai', cutType: 'horizon', exampleId: satinId,
     exampleSelectionOrigin: 'user', thumb: 'example', baseThumb: 'placeholder' };
-  const valid = { ...stale, id: 'valid', exampleId: satinId };
-  const repaired = stripStaleExampleSelections([stale, valid], catalog, { gender, clothingType: 'dress' });
+  const valid = { ...stale, id: 'valid', exampleId: sharedTopIds[0] };
+  const repaired = stripStaleExampleSelections([stale, valid], catalog, { gender, clothingType: 'top' });
   assert.equal(repaired[0].exampleId, null);
   assert.equal(repaired[0].thumb, 'placeholder');
   assert.equal(repaired[1], valid);

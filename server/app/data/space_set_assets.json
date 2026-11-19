@@ -6145,7 +6145,8 @@
       "applicableClothingTypes": [
         "top",
         "bottom",
-        "outer"
+        "outer",
+        "dress"
       ],
       "compositionLabel": "정면 · 사이드 · 뒷면",
       "gender": "women",
@@ -6227,7 +6228,8 @@
       "setApplicableClothingTypes": [
         "top",
         "bottom",
-        "outer"
+        "outer",
+        "dress"
       ],
       "setId": "set_horizon_women_bottom_threetimes_7563033280596_prod01",
       "setType": "horizon-rotation",
