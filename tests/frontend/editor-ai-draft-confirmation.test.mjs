@@ -97,6 +97,14 @@ test('코드 만들기 창의 확인 목록은 입력 화면에서만 보이고 
 for (const kind of ['download', 'publish']) {
   const action = kind === 'download' ? '다운로드' : '코드 만들기';
   const proceed = kind === 'download' ? '그대로 다운로드' : '그대로 만들기';
+  test(`${kind}: 빈 사진 자리의 개별 AI 작업을 확인 목록에 표시한다`, async () => {
+    const modal = await mount(kind, {
+      blocks: [{ id: 'photos', elements: [{ id: 'slot', type: 'image' }] }],
+      canvasAiJobs: new Map([['slot', { blockId: 'photos', isSlot: true, status: 'busy' }]]),
+    });
+    assert.match(modal.render(), /아직 만드는 중인 컷 1장/);
+    assert.doesNotMatch(modal.render(), /빈 사진 자리/);
+  });
   test(`${kind}: 초안이 없으면 기존 동작과 문구를 유지한다`, async () => {
     const modal = await mount(kind, { blocks: [] });
     assert.doesNotMatch(modal.render(), /AI 초안|돌아가서 고치기|그대로 (다운로드|만들기)/);

@@ -32,6 +32,7 @@ function formatBytes(bytes) {
 
 export function EditorDownloadModal({
   blocks = [],
+  canvasAiJobs,
   settings: rawSettings,
   summary,
   notice,
@@ -66,7 +67,7 @@ export function EditorDownloadModal({
         <p className={styles.subtitle}>쇼핑몰에 맞는 크기와 형식을 선택해 주세요.</p>
       </header>
 
-      <DownloadChecklist blocks={blocks} busy={busy} onClose={onCancel} onJumpToBlock={onJumpToBlock} />
+      <DownloadChecklist blocks={blocks} canvasAiJobs={canvasAiJobs} busy={busy} onClose={onCancel} onJumpToBlock={onJumpToBlock} />
 
       <div className={styles.groups}>
         <fieldset className={styles.group}>

@@ -8,8 +8,8 @@ const LABELS = {
   pending: (count) => `아직 만드는 중인 컷 ${count}장`,
 };
 
-export function DownloadChecklist({ blocks, busy, onClose, onJumpToBlock }) {
-  const items = downloadChecks(blocks);
+export function DownloadChecklist({ blocks, canvasAiJobs, busy, onClose, onJumpToBlock }) {
+  const items = downloadChecks(blocks, canvasAiJobs);
   if (!items.length) return null;
 
   const jump = (blockId) => {

@@ -6,13 +6,30 @@ const integer = (value, minimum = 0) => typeof value === 'number' && Number.isSa
 const numeric = (value) => typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value) : value;
 export const registrationActive = (view) => ['pending', 'running', 'queued'].includes(view?.status);
 
-export function buildMallRegisterDraft({ projectId, product = {}, blocks = [], assets = [], defaults = {}, selectedMall }) {
+export function buildMallRegisterDraft({ projectId, product = {}, blocks = [], assets = [], defaults = {}, selectedMall, resumeDraft }) {
   const sizes = blocks.find((block) => block.kind === 'size' || block.infoType === 'size_table')?.info?.rows?.map((row) => clean(row.label)).filter(Boolean) || ['FREE'];
   const images = [...new Set(assets.map((asset) => asset.assetId).filter(Boolean))];
-  return { projectId, publicationId: null, editorRevision: null, selectedMalls: selectedMall ? [selectedMall] : [],
+  const draft = { projectId, publicationId: null, editorRevision: null, selectedMalls: selectedMall ? [selectedMall] : [],
     productName: clean(product.name || product.productName), basePrice: '', defaultQuantity: 0,
     priceOverrides: {}, sizes: sizes.length ? sizes : ['FREE'], variantOverrides: [], mainAssetId: images[0] || null,
     additionalAssetIds: images.slice(1, 5), categories: {}, confirmedSourcesByMall: {}, salesOverrides: {} };
+  if (!resumeDraft) return draft;
+
+  const mainAssetId = images.includes(resumeDraft.mainAssetId) ? resumeDraft.mainAssetId : draft.mainAssetId;
+  const variantKeys = new Set(registrationVariants(product.colors || [], draft.sizes).map((variant) => variant.variantKey));
+  return {
+    ...draft,
+    selectedMalls: resumeDraft.selectedMalls,
+    productName: resumeDraft.productName,
+    basePrice: resumeDraft.basePrice,
+    defaultQuantity: resumeDraft.defaultQuantity,
+    priceOverrides: resumeDraft.priceOverrides,
+    variantOverrides: resumeDraft.variantOverrides.filter((variant) => variantKeys.has(variant.variantKey)),
+    mainAssetId,
+    additionalAssetIds: resumeDraft.additionalAssetIds.filter((id) => id !== mainAssetId && images.includes(id)),
+    categories: resumeDraft.categories,
+    salesOverrides: resumeDraft.salesOverrides,
+  };
 }
 
 export function normalizeMallRegisterDraft(draft) {

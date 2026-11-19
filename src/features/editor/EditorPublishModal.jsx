@@ -6,7 +6,7 @@ import styles from './EditorPublishModal.module.css';
 import { EditorAiDraftConfirmation, useAiDraftConfirmation } from './EditorAiDraftConfirmation.jsx';
 import { DownloadChecklist } from './DownloadChecklist.jsx';
 
-export function EditorPublishModal({ blocks = [], settings, summary, busy, progress, error, result, previousCount,
+export function EditorPublishModal({ blocks = [], canvasAiJobs, settings, summary, busy, progress, error, result, previousCount,
   realModelBlocked, onChange, onCancel, onPublish, onCopyHtml, onCopyUrls, onDownloadZip, onJumpToBlock }) {
   const draft = useAiDraftConfirmation(blocks, { publish: onPublish, zip: onDownloadZip });
   const done = Math.max(0, Math.min(progress?.done || 0, progress?.total || 0));
@@ -39,7 +39,7 @@ export function EditorPublishModal({ blocks = [], settings, summary, busy, progr
           <Button variant="ghost" onClick={onCancel}>닫기</Button>
         </div></footer>}
       </> : <>
-        <DownloadChecklist blocks={blocks} busy={busy} onClose={onCancel} onJumpToBlock={onJumpToBlock} />
+        <DownloadChecklist blocks={blocks} canvasAiJobs={canvasAiJobs} busy={busy} onClose={onCancel} onJumpToBlock={onJumpToBlock} />
         <div className={shared.groups}>
           <fieldset className={shared.group}>
             <legend>이미지 크기</legend>

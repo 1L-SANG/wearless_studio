@@ -67,11 +67,12 @@ test('몰 등록 준비 중에는 확인 목록의 이동을 잠그고, 준비�
     { key: 'origin', label: '제조국', value: '' }, { key: 'sizes', label: '치수', value: '' },
   ] });
   h.props.blocks = [
-    { id: 'failed-first', elements: [{ type: 'image', genPending: 'failed' }] },
+    { id: 'failed-first', elements: [{ id: 'failed-slot', type: 'image' }] },
     notice,
     { id: 'failed-later', elements: [{ type: 'image', genFailed: true }] },
     { ...notice, id: 'notice-later' },
   ];
+  h.props.canvasAiJobs = new Map([['failed-slot', { blockId: 'failed-first', isSlot: true, status: 'failed' }]]);
   const actions = [];
   h.props.onClose = () => actions.push('close');
   h.props.onJumpToBlock = (id) => actions.push(id);
@@ -101,6 +102,60 @@ test('몰 등록 준비 중에는 확인 목록의 이동을 잠그고, 준비�
   }
   assert.deepEqual(actions, ['close', 'failed-first', 'close', notice.id]);
   cleanups.forEach((cleanup) => cleanup?.());
+});
+
+test('몰 등록의 확인 목록으로 이동한 초안을 복원하고 일반 취소로는 보관하지 않는다', async () => {
+  const jumps = [], checked = [];
+  let resumeDraft, closed = false;
+  const filledNotice = (value) => buildInfoBlock('required_notice', { fields: [{ key: 'origin', label: '제조국', value }] });
+  const open = async (blocks, revision) => {
+    const h = await harness({
+      listMallRegistrations: async () => ({ items: [], recoveries: {} }),
+      getMallDefaults: async () => ({}),
+      getMallRegistrationCatalog: async () => ({ complete: true, categories: [] }),
+      preflightMallRegistration: async (draft) => { checked.push(draft); return { items: [] }; },
+    });
+    closed = false;
+    Object.assign(h.props, {
+      blocks, resumeDraft, waitForSave: async () => revision,
+      onClose: () => { closed = true; },
+      onKeepDraft: (draft) => { resumeDraft = draft; },
+      onJumpToBlock: (id) => jumps.push(id),
+    });
+    // The editor hands the saved form to this opening once.
+    resumeDraft = undefined;
+    h.render();
+    const cleanups = h.runtime.flushEffects();
+    await delay();
+    return { ...h, unmount: () => cleanups.forEach((cleanup) => cleanup?.()) };
+  };
+  const fields = (h) => walk(h.render()).find((node) => node.type === 'fields').props;
+  const notice = filledNotice('');
+  const first = await open([notice], 2);
+  fields(first).onChange({ ...fields(first).draft, basePrice: '39000', defaultQuantity: '8' });
+  const checklist = walk(first.render()).find((node) => node.type === DownloadChecklist);
+  walk(DownloadChecklist(checklist.props)).find((node) => node.type === 'button').props.onClick();
+  assert.equal(closed, true);
+  assert.deepEqual(jumps, [notice.id]);
+  first.unmount();
+
+  const reopened = await open([filledNotice('한국')], 3);
+  assert.equal(fields(reopened).draft.basePrice, 39000);
+  assert.equal(fields(reopened).draft.defaultQuantity, 8);
+  assert.equal(checked.at(-1).editorRevision, 3);
+  assert.doesNotMatch(reopened.html(), /받기 전에 확인해 주세요/);
+  const resolution = walk(reopened.render()).find((node) => node.type === 'notice').props.resolution;
+  assert.equal(resolution.fields.find((field) => field.key === 'origin').value, '한국');
+
+  fields(reopened).onChange({ ...fields(reopened).draft, basePrice: '42000', defaultQuantity: '12' });
+  walk(reopened.render()).find((node) => node.type === 'button' && node.props.children === '취소').props.onClick();
+  assert.equal(closed, true);
+  assert.equal(resumeDraft, undefined);
+  reopened.unmount();
+  const fresh = await open([], 3);
+  assert.equal(fields(fresh).draft.basePrice, '');
+  assert.equal(fields(fresh).draft.defaultQuantity, 0);
+  fresh.unmount();
 });
 
 test('unavailable zigzag connection is shown as preparing and stays disabled', async () => {

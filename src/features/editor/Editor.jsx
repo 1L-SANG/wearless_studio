@@ -1161,6 +1161,7 @@ export function Editor() {
   const [publish, setPublish] = useState(false);
   const exportModalOpen = download || publish;
   const [registerMall, setRegisterMall] = useState(null);
+  const mallChecklistDrafts = useRef(new Map());
   const mallSavedSource = useRef(null);
   const [pubBusy, setPubBusy] = useState(false);
   const [pubCapturing, setPubCapturing] = useState(false);
@@ -1277,6 +1278,7 @@ export function Editor() {
       && accountGeneration === clientEvents.getAccountGeneration();
     setPublish(false);
     setRegisterMall(null);
+    mallChecklistDrafts.current.clear();
     setPubBusy(false);
     setPubError('');
     setPubResult(null);
@@ -4008,7 +4010,12 @@ export function Editor() {
               publishEnabled: publicationInfo.scope === pubScope && !publicationInfo.disabled, gifCount: gifImages.length,
               onDownload: () => { setDlNotice(''); setDlError(''); setDownload(true); },
               onPublish: () => { setPubResult(null); setPubError(''); setPubProg(null); setPublish(true); },
-              onRegisterMall: (mall) => setRegisterMall(mall),
+              onRegisterMall: (mall) => {
+                const resumeDraft = mallChecklistDrafts.current.get(mall);
+                // 다시 열 때 초안을 넘기고, 이후 체크리스트로 나갈 때만 다시 보관한다.
+                mallChecklistDrafts.current.delete(mall);
+                setRegisterMall({ mall, resumeDraft, scope: pubScope });
+              },
               onConnect: () => navigate('/settings/malls', { state: { returnTo: location.pathname } }),
               onGifs: () => receiveGifs(),
             }).map((item) => item.id === 'paste' || ['cafe24', 'zigzag'].includes(item.id) && item.kind === 'action' && !item.disabled
@@ -4357,7 +4364,7 @@ export function Editor() {
 
       {publish && (
         <Modal onClose={() => { if (!pubBusy) setPublish(false); }} wide>
-          <EditorPublishModal blocks={blocks} settings={pubSettings} summary={pubSummary} busy={pubBusy}
+          <EditorPublishModal blocks={blocks} canvasAiJobs={canvasAi.jobs} settings={pubSettings} summary={pubSummary} busy={pubBusy}
             progress={pubProg} error={pubError} result={pubResult}
             previousCount={pubResult?.previousCount ?? publicationInfo.count} realModelBlocked={realModelBlocked}
             onChange={setPubSettings} onCancel={() => { if (!pubBusy) setPublish(false); }} onPublish={runPublish}
@@ -4375,6 +4382,7 @@ export function Editor() {
             active={Boolean(dlError && dlOriginalError)} error={dlOriginalError} projectId={projectId} />
           <EditorDownloadModal
             blocks={blocks}
+            canvasAiJobs={canvasAi.jobs}
             settings={dlSettings}
             gifCount={gifImages.length}
             onDownloadGifs={() => receiveGifs()}
@@ -4391,10 +4399,12 @@ export function Editor() {
         </Modal>
       )}
 
-      {registerMall && <MallRegisterModal key={pubScope} projectId={projectId}
+      {registerMall?.scope === pubScope && <MallRegisterModal key={pubScope} projectId={projectId}
         product={{ ...product, name: productName, analysis, materials: analysis?.materials, registrationGifNotice: gifImages.length > 0 }} blocks={blocks} assets={registrationAssets}
-        malls={mallInfo} initialMall={registerMall} waitForSave={waitForMallSave} onSaveNotice={saveMallNotice}
+        canvasAiJobs={canvasAi.jobs} malls={mallInfo} initialMall={registerMall.mall} resumeDraft={registerMall.resumeDraft}
+        waitForSave={waitForMallSave} onSaveNotice={saveMallNotice}
         onSaveSizes={saveMallSizes} onPublish={publishForMalls} anchorRef={exportAnchorRef}
+        onKeepDraft={(draft) => mallChecklistDrafts.current.set(registerMall.mall, draft)}
         onConflict={reloadAfterEditorConflict} onClose={() => setRegisterMall(null)} onJumpToBlock={jumpTo} />}
 
       {backWarn && (
