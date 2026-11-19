@@ -106,6 +106,19 @@ class Settings:
     model_text_gemini_merge: str = "gemini-3.8-flash"
     model_text_gpt_merge: str = "gpt-6-luna"
     model_order_points_merge: str = "gemini,gpt"
+    # 페이지 카피 전용. 모델 빈 값과 묶음별 빈 순서는 호출 지점에서 공용 값을 상속한다.
+    model_order_page_copy: str = "gemini,gpt"
+    model_routing_text_gemini_page_copy: str = ""
+    model_text_gpt_page_copy: str = ""
+    model_text_claude_page_copy: str = ""
+    model_order_page_copy_intro: str = ""
+    model_order_page_copy_points: str = ""
+    model_order_page_copy_fabric: str = ""
+    model_order_page_copy_voice: str = ""
+    model_order_page_copy_misc: str = ""
+    page_copy_routes: str = "gemini:gemini-4-argon,gemini:gemini-4-hydrogen"
+    page_copy_timeout_seconds: float = 90.0
+    page_copy_prompt_version: str = "v2"  # 에디터 판매 특징 경로는 별도로 v1 고정
     # 비슷한 컷 계획 전용. 공용 텍스트 모델을 쓰는 검수와 분리한다.
     model_text_gemini_similar: str = "gemini-3.8-flash"
     model_order_similar_plan: str = "gpt,gemini"
@@ -677,6 +690,10 @@ class Settings:
         return f"{uri.scheme}://{uri.netloc}"
 
     def __post_init__(self):
+        if self.page_copy_prompt_version not in {"v1", "v2"}:
+            raise ValueError("PAGE_COPY_PROMPT_VERSION 설정이 잘못됐어요.")
+        if not math.isfinite(self.page_copy_timeout_seconds) or self.page_copy_timeout_seconds <= 0:
+            raise ValueError("PAGE_COPY_TIMEOUT_SECONDS must be positive and finite")
         if (self.matching_cutout == "on"
                 or self.mannequin_tone_editor == "on"
                 or self.matching_flatlay_provider == "qwen"
@@ -805,6 +822,56 @@ def _model_order_points_merge() -> str:
     return default
 
 
+def _model_order_page_copy(group: str = "") -> str:
+    env = "MODEL_ORDER_PAGE_COPY" + (f"_{group.upper()}" if group else "")
+    default = "" if group else "gemini,gpt"
+    raw = os.getenv(env)
+    if raw is None or (group and not raw.strip()):
+        return default
+    parts = [part.strip().lower() for part in raw.split(",")]
+    if len(set(parts)) == len(parts) and all(part in {"gpt", "gemini", "claude"} for part in parts):
+        return ",".join(parts)
+    logger.warning("Invalid %s; using %s", env, default or "inherited MODEL_ORDER_PAGE_COPY")
+    return default
+
+
+def _page_copy_routes(legacy_order: str) -> str:
+    """New explicit routes win; legacy page-copy envs remain readable for migration."""
+    default = "gemini:gemini-4-argon,gemini:gemini-4-hydrogen"
+    legacy_names = ["MODEL_ORDER_PAGE_COPY", "MODEL_ROUTING_TEXT_GEMINI_PAGE_COPY",
+                    "MODEL_TEXT_GPT_PAGE_COPY", "MODEL_TEXT_CLAUDE_PAGE_COPY",
+                    *[f"MODEL_ORDER_PAGE_COPY_{g}" for g in ("INTRO", "POINTS", "FABRIC", "VOICE", "MISC")]]
+    present = [name for name in legacy_names if os.getenv(name, "").strip()]
+    raw = os.getenv("PAGE_COPY_ROUTES", "").strip()
+    if present:
+        logger.warning("Page-copy settings %s are deprecated; PAGE_COPY_ROUTES wins when set; group routes are ignored", ", ".join(present))
+    if raw:
+        routes = [part.strip().split(":", 1) for part in raw.split(",")]
+        if all(len(pair) == 2 and pair[0].strip().lower() in {"gemini", "gpt", "claude"} and pair[1].strip()
+               and not any(c.isspace() for c in pair[1].strip()) for pair in routes):
+            return ",".join(f"{p.strip().lower()}:{m.strip()}" for p,m in routes)
+        logger.warning("Invalid PAGE_COPY_ROUTES; using %s", default)
+        return default
+    if any(name in present for name in legacy_names[:4]):
+        models = {"gemini": os.getenv("MODEL_ROUTING_TEXT_GEMINI_PAGE_COPY", "").strip() or os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.7-flash"),
+                  "gpt": os.getenv("MODEL_TEXT_GPT_PAGE_COPY", "").strip() or os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),
+                  "claude": os.getenv("MODEL_TEXT_CLAUDE_PAGE_COPY", "").strip()}
+        routes = [f"{p}:{models[p]}" for p in legacy_order.split(",") if models[p]]
+        return ",".join(routes) or default
+    return default
+
+
+def _page_copy_timeout() -> float:
+    try:
+        value = float(os.getenv("PAGE_COPY_TIMEOUT_SECONDS", "90"))
+        if math.isfinite(value) and value > 0:
+            return value
+    except ValueError:
+        pass
+    logger.warning("Invalid PAGE_COPY_TIMEOUT_SECONDS; using 90")
+    return 90.0
+
+
 def _flag(env: str, default: str, allowed: set[str]) -> str:
     """검색 증강 flag — 허용값 밖이면 안전하게 default(대개 'off')로 폴백."""
     v = (os.getenv(env, default) or default).strip().lower()
@@ -911,6 +978,7 @@ def load_settings() -> Settings:
         if slot.strip()
     )
 
+    page_copy_legacy_order = _model_order_page_copy()
     return Settings(
         app_env=app_env,
         supabase_url=supabase_url,
@@ -979,6 +1047,18 @@ def load_settings() -> Settings:
         model_text_gemini_merge=os.getenv("MODEL_ROUTING_TEXT_GEMINI_MERGE", "gemini-3.8-flash"),
         model_text_gpt_merge=(os.getenv("MODEL_ROUTING_TEXT_GPT_MERGE") or "").strip() or "gpt-6-luna",
         model_order_points_merge=_model_order_points_merge(),
+        model_order_page_copy=page_copy_legacy_order,
+        model_routing_text_gemini_page_copy=os.getenv("MODEL_ROUTING_TEXT_GEMINI_PAGE_COPY", "").strip(),
+        model_text_gpt_page_copy=os.getenv("MODEL_TEXT_GPT_PAGE_COPY", "").strip(),
+        model_text_claude_page_copy=os.getenv("MODEL_TEXT_CLAUDE_PAGE_COPY", "").strip(),
+        model_order_page_copy_intro=_model_order_page_copy("intro"),
+        model_order_page_copy_points=_model_order_page_copy("points"),
+        model_order_page_copy_fabric=_model_order_page_copy("fabric"),
+        model_order_page_copy_voice=_model_order_page_copy("voice"),
+        model_order_page_copy_misc=_model_order_page_copy("misc"),
+        page_copy_routes=_page_copy_routes(page_copy_legacy_order),
+        page_copy_timeout_seconds=_page_copy_timeout(),
+        page_copy_prompt_version=_flag("PAGE_COPY_PROMPT_VERSION", "v2", {"v1", "v2"}),
         model_text_gemini_similar=(
             os.getenv("MODEL_ROUTING_TEXT_GEMINI_SIMILAR") or "gemini-3.8-flash"),
         model_order_similar_plan=_model_order_similar_plan(),

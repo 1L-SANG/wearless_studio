@@ -326,7 +326,7 @@ for (const designId of ['P01-D09', 'P01-D09-G']) for (const plated of [false, tr
     validateStoryboardV4(input.storyboard);
     fixture.cases.push({ name: `woc14-${designId}-${plated ? 'plate' : 'plain'}-${position}`, input });
 }
-// Seller MD copy has priority over generated copy and retains its original text.
+// Seller MD falls back verbatim when the polished section copy is unavailable.
 fixture.cases = fixture.cases.filter(item => !item.name.startsWith('woc17-'));
 for (const templateId of ['emo', 'show']) {
     const aiBody = 'AI 첫 문단\n\nAI 둘째 문단\nAI 셋째 문단\nAI 넷째 문단';
@@ -459,6 +459,41 @@ for (const templateId of ['emo', 'show']) {
         appendCase(`woc23-${templateId}-${designId}-${count}`, input);
     }
 }
+fixture.cases = fixture.cases.filter(item => !item.name.startsWith('copy-b-'));
+for (const templateId of ['emo', 'show']) {
+    const base = () => structuredClone(fixture.cases.find(item => item.name === `${templateId}-2-mono`).input);
+    for (const mode of ['polished-md', 'empty-md', 'stored-copy', 'explicit-empty-copy']) {
+        const input = base();
+        input.storyboard = input.storyboard.filter(card => card.pageSectionKind === 'intro');
+        const blockId = input.storyboard[0].id;
+        input.analysis.mdComment = mode === 'polished-md' ? '셀러가 쓴 원문' : '';
+        input.copyResults = mode === 'empty-md' ? [] : [{ blockId, texts: [{ role: 'body', text: '다듬은 첫 문장\n다듬은 둘째 문장' }] }];
+        if (mode.endsWith('copy')) {
+            input.analysis.pageCopy = { copyResults: input.copyResults, promptVersion: 'v2', model: 'fake', createdAt: '2026-11-19T00:00:00Z' };
+            input.copyResults = mode === 'stored-copy' ? null : [];
+        }
+        fixture.cases.push({ name: `copy-b-${templateId}-${mode}`, input });
+    }
+    for (const designId of ['I09-D06', 'I09-SCRIM-01']) {
+        const input = structuredClone(fixture.cases.find(item => item.name === 'emo-2-point').input);
+        input.storyboard = input.storyboard.filter(card => card.pageSectionKind === 'review')
+            .map(card => ({ ...card, pageSectionKey: `${templateId}.review`, pageDesignId: designId }));
+        input.pageStyle = { ...pageTemplatesCatalog.defaults, templateId, colorMode: 'point' };
+        input.copyResults = []; input.copywriting = false;
+        fixture.cases.push({ name: `copy-b-${templateId}-${designId}-static-stars`, input });
+    }
+}
+for (const origin of ['detail', 'seller', 'ai-suggestion']) {
+    const input = structuredClone(fixture.cases.find(item => item.name === 'emo-2-mono').input);
+    input.storyboard = input.storyboard.filter(card => card.pageSectionKind === 'points');
+    Object.assign(input.analysis, {
+        sellingPoints: origin === 'detail' ? [] : ['카라'],
+        aiSuggestedPoints: origin === 'ai-suggestion' ? ['카라'] : [],
+        partDescriptionCopy: [{ point: '카라', label: '쉬운 이름', desc: '부위 설명' }],
+    });
+    fixture.cases.push({ name: `copy-b-${origin}-label`, input });
+}
+
 const outputs = fixture.cases.map(({ input }) => ({
     blocks: assemblePage(input),
     regions: collectOverlayRegions(input),

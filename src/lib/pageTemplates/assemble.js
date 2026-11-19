@@ -1,9 +1,12 @@
+import latinMetrics from '../../../server/app/data/page_template_latin_metrics.json' with { type: 'json' };
+import { compactSectionTexts } from './copyItems.js';
 import { titlePlateBounds, titlePlateGroup } from './titlePlate.js';
 import {
     getTemplate,
     pageTemplatesCatalog,
     sectionDefinition,
     textSlotForRole,
+    walkLayout,
 } from "./catalog.js";
 import { baseColorOf, resolvePageTokens, sectionTokens } from "./tokens.js";
 import { buildAutoBlocks } from "./autoBlocks.js";
@@ -51,17 +54,29 @@ const roleFor = (role, ctx) =>
         .replace(/\.n(?=\.|$)/g, `.${ctx.index || 0}`)
         .replace("{direction}", ctx.card?.direction || "front");
 
+const latinLabelRole = role => role === 'label' || /^colors\.\d+\.(?:name|en)$|^colorName\.\d+$/.test(role || '');
+const metricsForElement = (el, metrics = pageTemplatesCatalog.textMetrics) => latinLabelRole(el.copyRole)
+    ? metricsForText(el.text || el.placeholder, el.style, metrics) : metrics;
+
+// Latin labels use the bundled font advances; Korean/body metrics stay intact.
+export function metricsForText(text, style, metrics = pageTemplatesCatalog.textMetrics) {
+    const key = `${style?.font}${style?.italic ? ':italic' : ''}`;
+    const row = latinMetrics.fonts[key] || latinMetrics.fonts[style?.font];
+    return row && /[A-Za-z]/.test(text || '') && /^[\x20-\x7e\s]+$/.test(text)
+        ? { ...metrics, glyphWidths: row.widths } : metrics;
+}
+
 export function textUnits(text, metrics = pageTemplatesCatalog.textMetrics) {
     return Array.from(text).reduce(
         (sum, char) =>
             sum +
-            (/\s/u.test(char)
+            (metrics.glyphWidths?.[char] ?? (/\s/u.test(char)
                 ? metrics.space
                 : /[A-Z]/u.test(char)
                   ? metrics.uppercaseAscii
                   : char.codePointAt(0) < 128
                     ? metrics.ascii
-                    : metrics.wide),
+                    : metrics.wide)),
         0,
     );
 }
@@ -126,7 +141,7 @@ export function measureTextWidth(
             Math.max(
                 0,
                 ...wrapText(text, width, size, metrics, tracking).map((line) =>
-                    textWidth(line, size, metrics, tracking),
+                    textWidth(line, size, metrics, tracking) + (metrics.glyphWidths ? 1 : 0),
                 ),
             ),
         ),
@@ -300,15 +315,26 @@ const samePanelSurface = (node, fill, surfaceColor) =>
     fill && fill.toLowerCase() === surfaceColor?.toLowerCase()
     && (node.fillOpacity ?? 1) === 1 && !node.shadow;
 
-function renderScrim(scrim, x, y, width, height, ctx) {
+function renderScrim(scrim, x, y, width, height, ctx, copyTop = Infinity) {
     if (!scrim) return [];
-    const h = height * (scrim.heightRatio ?? 1), color = paintColor(scrim.color, ctx);
-    return [{
-        type: "shape", shape: "rect", x, y: y + height - h, w: width, h, radius: 0,
-        ...(scrim.gradient
-            ? { fill: `linear-gradient(180deg, ${rgba(color, 0)} 0%, ${rgba(color, scrim.opacity)} 100%)` }
-            : { fill: color, opacity: scrim.opacity }),
-    }];
+    const color = paintColor(scrim.color, ctx);
+    let h = height * (scrim.heightRatio ?? 1), top = y + height - h;
+    if (scrim.midStop && Number.isFinite(copyTop)) {
+        top = Math.max(y, Math.min(top, copyTop - 32));
+        h = y + height - top;
+    }
+    const stops = [`${rgba(color, scrim.startOpacity ?? 0)} 0%`];
+    if (scrim.midStop) {
+        // Usually 30%; longer copy can begin higher. Reach readable opacity just
+        // above that first line while retaining a transparent fade at the top.
+        const offset = Math.min(scrim.midStop.offset, (copyTop - top - 1) / h);
+        const percent = Math.max(.1, Math.floor(offset * 10000) / 100);
+        stops.push(`${rgba(color, scrim.midStop.opacity)} ${percent}%`);
+    }
+    stops.push(`${rgba(color, scrim.opacity)} 100%`);
+    return [{ type: 'shape', shape: 'rect', x, y: top, w: width, h, radius: 0,
+        ...(scrim.gradient ? { fill: `linear-gradient(180deg, ${stops.join(', ')})` }
+            : { fill: color, opacity: scrim.opacity }) }];
 }
 const nativeCounts = [
     "",
@@ -399,6 +425,21 @@ const sellerComment = (ctx) => {
     return text.trim() ? text : "";
 };
 
+function pointDisplayName(role, ctx) {
+    const name = factText(role, ctx);
+    if (ctx.card?.pointItem?.kind === 'wornCrop') return name;
+    const aiOrigin = (ctx.analysis.aiSuggestedPoints || []).includes(name);
+    const candidate = ctx.card?.detailTargetId != null && (ctx.analysis.detailRecommendations?.candidates || [])
+        .some(item => string(item.id) === string(ctx.card.detailTargetId));
+    for (const [key, allowed] of [['partDescriptionCopy', candidate], ['featureCopy', aiOrigin]]) {
+        if (!allowed) continue;
+        const label = (ctx.analysis[key] || []).find(row => row?.point === name
+            && typeof row.label === 'string' && row.label.trim())?.label;
+        if (label) return label;
+    }
+    return name;
+}
+
 function contentFor(node, ctx) {
     if (node.literal != null)
         return {
@@ -415,7 +456,7 @@ function contentFor(node, ctx) {
             role: null,
         };
     const role = roleFor(node.copyRole, ctx),
-        slot = textSlotForRole(ctx.kind, role);
+        slot = textSlotForRole(ctx.kind, role, { templateId: ctx.tokens.template.id, sellerComment: sellerComment(ctx) });
     if (!slot) throw new Error(`Unknown copyRole ${ctx.kind.kind}.${role}`);
     let text = "";
     if (slot.source === "static")
@@ -424,9 +465,9 @@ function contentFor(node, ctx) {
             (role === "label" && ctx.section.usage === "fit"
                 ? "LOOKBOOK"
                 : slot.default);
-    else if (slot.source === "fact") text = factText(role, ctx);
+    else if (slot.source === "fact") text = /^items\.\d+\.name$/.test(role) ? pointDisplayName(role, ctx) : factText(role, ctx);
     else if (slot.source === "seller+ai" && sellerComment(ctx))
-        text = sellerComment(ctx);
+        text = ctx.copywriting && ctx.copyReady ? ctx.copy[role] || "" : sellerComment(ctx);
     else if (ctx.copywriting) {
         text = ctx.copy[role] || "";
         if (/^items\.\d+\.desc$/.test(role)) {
@@ -468,6 +509,9 @@ function typographyFor(node, ctx) {
 
 function renderText(node, x, y, width, ctx) {
     const content = contentFor(node, ctx);
+    const collapsed = !content.text.trim() && (ctx.designId === 'T01-D07' && content.role === 'title'
+        && contentFor({ copyRole: 'body' }, { ...ctx, paragraphRole: null }).text.trim()
+        || ctx.kind.kind === 'review' && /^items\.\d+\.who$/.test(content.role) && ctx.copywriting && ctx.copyReady);
     if (node.hideEmpty && !content.text) return { elements: [], h: 0 };
     if (
         node.onlyExtraColor &&
@@ -490,7 +534,8 @@ function renderText(node, x, y, width, ctx) {
         ...(node.trackingEm != null ? { trackingEm: node.trackingEm } : {}),
         ...(typography.weight != null ? { weight: typography.weight } : {}),
         ...(typography.trackingEm != null ? { trackingEm: typography.trackingEm } : {}) };
-    const metrics = ctx.catalog.textMetrics;
+    const metrics = latinLabelRole(content.role) || node.colorLabel
+        ? metricsForText(content.text || content.slot?.default, font, ctx.catalog.textMetrics) : ctx.catalog.textMetrics;
     const uppercase =
         content.slot?.uppercase ||
         (font.uppercase && content.slot?.kind !== "fact");
@@ -504,6 +549,7 @@ function renderText(node, x, y, width, ctx) {
     const fallback = content.slot?.default || "";
     let display = text || (uppercase ? fallback.toUpperCase() : fallback);
     if (node.singleLine) display = display.replace(/\s+/gu, " ").trim();
+    const fitWidth = Math.max(1, layoutWidth - (metrics.glyphWidths ? 1 : 0));
     const titleWrap =
         ["P01-D09", "P01-D09-G"].includes(ctx.designId) && content.role === "name" && node.titleWrap;
     if (titleWrap) {
@@ -532,8 +578,8 @@ function renderText(node, x, y, width, ctx) {
     } else if (display && node.singleLine) {
         const units = textUnits(display, metrics)
             + Array.from(display).length * (font.trackingEm || 0) * metrics.unitsPerEm;
-        size = Math.min(size, Math.max(1, Math.floor(layoutWidth * metrics.unitsPerEm / Math.max(1, units))));
-        while (size > 1 && textWidth(display, size, metrics, round((font.trackingEm || 0) * size * 100) / 100) > layoutWidth) size -= 1;
+        size = Math.min(size, Math.max(1, Math.floor(fitWidth * metrics.unitsPerEm / Math.max(1, units))));
+        while (size > 1 && textWidth(display, size, metrics, round((font.trackingEm || 0) * size * 100) / 100) > fitWidth) size -= 1;
     } else if (display) {
         const longest = Math.max(
             ...display
@@ -552,11 +598,16 @@ function renderText(node, x, y, width, ctx) {
             Math.max(
                 1,
                 Math.floor(
-                    (layoutWidth * ctx.catalog.textMetrics.unitsPerEm) /
+                    (fitWidth * ctx.catalog.textMetrics.unitsPerEm) /
                         longest,
                 ),
             ),
         );
+    }
+    if (metrics.glyphWidths && !titleWrap) {
+        while (size > 1 && display.split(/\s+/u).some(word => textWidth(word, size, metrics,
+            round((font.trackingEm || 0) * size * 100) / 100) > fitWidth)) size -= 1;
+        if (text) text = wrapText(text, fitWidth, size, metrics, round((font.trackingEm || 0) * size * 100) / 100).join('\n');
     }
     const factor =
         fontKey === "titleKo"
@@ -578,7 +629,7 @@ function renderText(node, x, y, width, ctx) {
         ctx.tokens.template.id === "guide"
     )
         color = ctx.kind.kind === "first" ? "accentInk" : "ink";
-    const bareOverlay = ctx.overlayGroupKey && !ctx.opaqueBackground;
+    const bareOverlay = ctx.overlayGroupKey && !ctx.opaqueBackground && !node.preserveColor;
     const autoContrast = bareOverlay && !ctx.fixedOverlayColor;
     const style = {
         font: font.font,
@@ -612,7 +663,9 @@ function renderText(node, x, y, width, ctx) {
         style.tracking,
     );
     const element = { type: "text", x, y, w: width, h, text, style };
-    if (titleWrap || node.singleLine) element.keepWords = true;
+    if (collapsed) element.hidden = true;
+    if (node.copyDecoration) element.templateCopyDecoration = text;
+    if (titleWrap || node.singleLine || metrics.glyphWidths) element.keepWords = true;
     if (autoContrast)
         element._overlayGroupKey = ctx.overlayGroupKey;
     if (content.role) {
@@ -621,10 +674,7 @@ function renderText(node, x, y, width, ctx) {
             copyRole: content.role,
             textSlotVersion: 1,
         });
-        if (!text)
-            element.placeholder =
-                (titleWrap ? display : node.default || content.slot.default) ||
-                "내용을 입력해 주세요";
+        element.placeholder = (titleWrap ? display : node.default || content.slot.default) || "내용을 입력해 주세요";
         if (
             content.slot.source === "aiDraft" ||
             (content.slot.source === "seller+ai" && !sellerComment(ctx))
@@ -683,7 +733,7 @@ function renderText(node, x, y, width, ctx) {
     }
     return { elements: node.prefix ? [{ type: 'text', x: prefixX, y, w: prefixWidth,
         h: lineHeight, text: node.prefix, style: { ...style, align: 'left' },
-        templateCopyDecoration: node.prefix }, element] : [element], h };
+        templateCopyDecoration: node.prefix }, element] : [element], h: collapsed ? 0 : h };
 }
 
 // Existing editor groupId keeps template decorations with their editable copy.
@@ -1027,6 +1077,15 @@ function renderNode(node, x, y, width, ctx) {
         return { elements: [], h: 0 };
     if (node.firstItemOnly && ctx.paragraphIndex > 0)
         return { elements: [], h: 0 };
+    if (node.hideWhenEmpty) {
+        const hidden = !contentFor({ copyRole: node.hideWhenEmpty }, ctx).text.trim();
+        const result = renderNode({ ...node, hideWhenEmpty: null }, x, y, width, ctx);
+        return { elements: result.elements.map(el => ({ ...el,
+            groupId: `template-intro-avatar:${ctx.sourceId}`, ...(hidden ? { hidden: true } : {}) })),
+        h: hidden ? 0 : result.h };
+    }
+    if (node.fullWidthWhenEmpty && !contentFor({ copyRole: node.fullWidthWhenEmpty }, ctx).text.trim())
+        node = { ...node, x: 0, w: width, maxW: width, hug: false };
     x += node.x || 0;
     const availableWidth = width - (node.x || 0);
     width = Math.min(
@@ -1088,8 +1147,12 @@ function renderNode(node, x, y, width, ctx) {
         };
         const children = (boxX, boxWidth) => {
             if (node.columns) {
-                const columns = node.columns.map((col) =>
-                    renderNodes(
+                const columns = node.columns.map((column) => {
+                    const col = column.fullWidthWhenEmpty && !contentFor({ copyRole: column.fullWidthWhenEmpty }, ctx).text.trim()
+                        ? { ...column, x: 0, w: boxWidth - 2 * padX,
+                            nodes: column.nodes.map(child => child.hideWhenEmpty
+                                ? { ...child, x: column.x, w: column.w } : child) } : column;
+                    return renderNodes(
                         col.nodes,
                         boxX + padX + col.x,
                         y + padY,
@@ -1098,8 +1161,8 @@ function renderNode(node, x, y, width, ctx) {
                             Math.min(col.w, boxWidth - 2 * padX - col.x),
                         ),
                         childCtx,
-                    ),
-                );
+                    );
+                });
                 return {
                     elements: columns.flatMap((col) => col.elements),
                     h: Math.max(0, ...columns.map((col) => col.h)),
@@ -1165,22 +1228,17 @@ function renderNode(node, x, y, width, ctx) {
         const heading = fallback ? renderNodes(fallback.nodes, x + fallback.padding, y + fallback.top,
             width - fallback.padding * 2, ctx) : { elements: [], h: 0 };
         const offset = fallback ? fallback.top + heading.h + fallback.gap : 0;
+        const groups = renderGroups(node.groups.filter(group => group !== outside), x, y + offset,
+            width, result.h, ctx, result.elements[0]);
+        const copyTop = Math.min(...groups.filter(el => el.type === 'text' && !el.hidden).map(el => el.y));
         return {
             ...result,
             h: result.h + offset,
             elements: [
                 ...heading.elements,
                 ...result.elements.map(el => ({ ...el, y: el.y + offset })),
-                ...renderScrim(outside ? null : node.scrim, x, y, width, result.h, ctx),
-                ...renderGroups(
-                    node.groups.filter(group => group !== outside),
-                    x,
-                    y + offset,
-                    width,
-                    result.h,
-                    ctx,
-                    result.elements[0],
-                ),
+                ...renderScrim(outside ? null : node.scrim, x, y, width, result.h, ctx, copyTop),
+                ...groups,
             ],
         };
     }
@@ -1195,7 +1253,7 @@ function renderNode(node, x, y, width, ctx) {
             .map(Number);
         const count = Math.min(
             node.maxCount || node.count,
-            Math.max(node.count, ...indexes.map((index) => index + 1)),
+            Math.max(ctx.copywriting && ctx.copyReady ? 0 : node.count, ...indexes.map((index) => index + 1)),
         );
         let cursor = y;
         const elements = [];
@@ -1308,7 +1366,7 @@ function renderColorLegend(x, y, width, ctx) {
         const result = renderText({ copyRole: 'colors.n.name', colorLabel: true, swatchDot: true, align: 'left' },
             0, 0, width, { ...ctx, card: null, index });
         const w = Math.max(0, ...result.elements.map(el => el.x + (el.type === 'text'
-            ? measureTextWidth(el.text, el.w, el.style.size, ctx.catalog.textMetrics, el.style.tracking) : el.w)));
+            ? measureTextWidth(el.text, el.w, el.style.size, metricsForElement(el, ctx.catalog.textMetrics), el.style.tracking) : el.w)));
         if (row.length && rowWidth + spec.itemGap + w > width) {
             rows.push({ items: row, w: rowWidth }); row = []; rowWidth = 0;
         }
@@ -1348,7 +1406,9 @@ function renderNodes(nodes, x, y, width, ctx) {
                 ctx.catalog.textMetrics,
                 last.style.tracking,
             );
-        if (!node.absolute && result.h) cursor += result.h + (node.gap || 0);
+        const emptyAuthor = ctx.kind.kind === 'review' && node.copyRole === 'items.n.text'
+            && ctx.copywriting && ctx.copyReady && !contentFor({ copyRole: 'items.n.who' }, ctx).text.trim();
+        if (!node.absolute && result.h) cursor += result.h + (emptyAuthor ? 0 : node.gap || 0);
     }
     // Resolve forward references too: the upper rule precedes the name, while
     // the lower rule follows colors. Both must use the name's longest line.
@@ -1373,14 +1433,14 @@ function renderNodes(nodes, x, y, width, ctx) {
     }
     return {
         elements,
-        h: Math.max(cursor - y, ...elements.map((el) => el.y + el.h - y), 0),
+        h: Math.max(cursor - y, ...elements.filter(el => !el.hidden).map((el) => el.y + el.h - y), 0),
     };
 }
 
 function contentWidth(elements, x) {
     return Math.max(
         0,
-        ...elements.map(
+        ...elements.filter(el => !el.hidden).map(
             (el) =>
                 el.x -
                 x +
@@ -1389,7 +1449,7 @@ function contentWidth(elements, x) {
                           el.text || el.placeholder,
                           el.w,
                           el.style.size,
-                          pageTemplatesCatalog.textMetrics,
+                          metricsForElement(el),
                           el.style.tracking,
                       )
                     : el.w),
@@ -1762,7 +1822,7 @@ export function pointPhotosForRun(run, storyboard) {
 export function assemblePage({
     storyboard = [],
     cutResults = [],
-    copyResults = [],
+    copyResults,
     product = {},
     analysis = {},
     pageStyle,
@@ -1775,6 +1835,7 @@ export function assemblePage({
     overlayRegions,
 } = {}) {
     const catalog = pageTemplatesCatalog;
+    copyResults ??= analysis.pageCopy?.copyResults || [];
     if (
         !storyboard.length ||
         storyboard.some((card) => card.taxonomyVersion !== 4)
@@ -1813,7 +1874,8 @@ export function assemblePage({
         copyResults.map((copy) => [
             copy.blockId,
             Object.fromEntries(
-                (copy.texts || []).map((text) => [text.role, text.text]),
+                compactSectionTexts(copy.texts, storyboard.find(card => card.id === copy.blockId)?.pageSectionKind)
+                    .map((text) => [text.role, text.text]),
             ),
         ]),
     );
@@ -1832,7 +1894,7 @@ export function assemblePage({
             first.pageDesignId,
         );
         let designId = first.pageSectionKind === 'intro' && linkedIntro ? linkedIntro : first.pageDesignId || section.designId;
-        const photos = pointPhotosForRun(run, storyboard);
+        let photos = pointPhotosForRun(run, storyboard);
         if (!photos.length && section.fallbackDesignId)
             designId = section.fallbackDesignId;
         const design = catalog.designs[designId];
@@ -1863,6 +1925,7 @@ export function assemblePage({
             kind,
             cuts,
             copy: copies[first.id] || {},
+            copyReady: Object.hasOwn(copies, first.id),
             sourceId: first.id,
             baseColor: baseColorOf(product),
             tokens: sectionStyle,
@@ -1879,6 +1942,22 @@ export function assemblePage({
                 ? tokens.colors.invertBg
                 : sectionStyle.colors[design.surface || "canvas"],
         };
+        if (kind.kind === 'points' && copywriting && ctx.copyReady) {
+            let description;
+            walkLayout(design.layout, node => { if (node.copyRole === 'items.n.desc') description ||= node; });
+            if (description) {
+                const kept = photos.map((card, index) => ({ card, index })).filter(({ card, index }) =>
+                    contentFor(description, { ...ctx, card, index }).text.trim());
+                const numbering = new Map(kept.map(({ index }, next) => [index, next]));
+                ctx.copy = Object.fromEntries(Object.entries(ctx.copy).flatMap(([role, text]) => {
+                    const match = role.match(/^items\.(\d+)(\..+)$/);
+                    return !match ? [[role, text]] : numbering.has(Number(match[1]))
+                        ? [[`items.${numbering.get(Number(match[1]))}${match[2]}`, text]] : [];
+                }));
+                photos = kept.map(({ card }) => card);
+                ctx.photos = photos;
+            }
+        }
         const pad = design.padding || 0,
             width = catalog.canvasWidth - pad * 2;
         let y = design.top || 0,
@@ -1892,7 +1971,7 @@ export function assemblePage({
                 ? tokens.template.spacing.sectionGap
                 : tokens.template.spacing.textSectionGap;
             const h =
-                Math.max(y, ...elements.map((el) => el.y + el.h)) +
+                Math.max(y, ...elements.filter(el => !el.hidden).map((el) => el.y + el.h)) +
                 bottom;
             blocks.push({
                 id,

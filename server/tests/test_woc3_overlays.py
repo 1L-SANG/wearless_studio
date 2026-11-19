@@ -4,7 +4,7 @@ import pytest
 from PIL import Image
 
 from app.agents.page_template_contrast import overlay_text_metadata
-from app.agents.page_templates import CATALOG, validate_catalog
+from app.agents.page_templates import CATALOG, base_color_of, resolve_page_tokens, validate_catalog
 from page_template_cases import assemble_input, case_input, collect_input_regions, elements
 
 
@@ -40,7 +40,15 @@ def test_base_one_photo_full_scrim_and_bottom_alternating_white_bubbles(kind):
     for index, bubble in enumerate(bubbles):
         assert bubble["fill"] == "#ffffff" and bubble["w"] <= 731
         assert bubble["x"] + bubble["w"] == 930 if index % 2 else bubble["x"] == 70
-        assert photos[0]["y"] + 625 < bubble["y"] and bubble["y"] + bubble["h"] <= photos[0]["y"] + 1162.5
+        heading = next(el for el in content if el.get("copyRole") == ("lead" if kind == "review" else "title"))
+        assert photos[0]["y"] < bubble["y"] and heading["y"] + heading["h"] <= bubble["y"]
+        assert bubble["y"] + bubble["h"] <= photos[0]["y"] + 1162.5
+        if index:
+            assert bubble["y"] > bubbles[index - 1]["y"] + bubbles[index - 1]["h"]
+        if kind == "review":
+            star = next(el for el in content if el.get("copyRole") == f"items.{index}.stars")
+            copy = next(el for el in content if el.get("copyRole") == f"items.{index}.text")
+            assert star["y"] >= bubble["y"] and star["y"] + star["h"] < copy["y"]
         assert bubble["boxShadow"] == "0px 3px 12px rgba(0, 0, 0, 0.18)"
     assert bubbles[-1]["y"] + bubbles[-1]["h"] == photos[0]["y"] + 1162.5
     assert next(el for el in content if el.get("copyRole") == "label")["style"]["color"] == CATALOG["templates"][0]["colors"]["ink"]
@@ -58,9 +66,16 @@ def test_gradient_alternative_uses_the_same_one_photo_with_white_copy(kind):
     content = section_elements(value)
     assert len([el for el in content if el["type"] == "image"]) == 1
     [scrim] = [el for el in content if el["type"] == "shape"]
-    assert [scrim[key] for key in ("x", "y", "w", "h")] == [0, next(el["y"] for el in content if el["type"] == "image") + 525, 1000, 725]
-    assert scrim["fill"] == "linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.72) 100%)"
-    assert all(el["style"]["color"] == "#ffffff" for el in content if el["type"] == "text" and el.get("copyRole") != "label")
+    assert [scrim[key] for key in ("x", "y", "w", "h")] == [0, next(el["y"] for el in content if el["type"] == "image") + (312.5 if kind == "review" else 525), 1000, 937.5 if kind == "review" else 725]
+    if kind == "review":
+        assert scrim["fill"].startswith("linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.56) ")
+        assert scrim["fill"].endswith(", rgba(0, 0, 0, 0.72) 100%)")
+    else:
+        assert scrim["fill"] == "linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.72) 100%)"
+    assert all(el["style"]["color"] == "#ffffff" for el in content if el["type"] == "text" and el.get("copyRole") != "label" and not el.get("copyRole", "").endswith(".stars"))
+    stars = [el for el in content if el.get("copyRole", "").endswith(".stars")]
+    assert len(stars) == (3 if kind == "review" else 0)
+    assert all(star["text"] == "★★★★★" and star["style"]["color"] == "#ffffff" for star in stars)
     assert collect_input_regions(value) == []
 
 

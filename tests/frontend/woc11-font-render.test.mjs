@@ -1,3 +1,4 @@
+import { applyExportLayout } from '../../src/features/editor/editorExport.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -154,7 +155,7 @@ test('WOC11 download clone carries 400/400 and actual bundled font bytes to the 
   }
   const block = new Element();
   rendered.forEach(node => block.appendChild(new Element(node.props.style, node.props.children)));
-  const scope = {
+  const scope = { applyExportLayout,
     document, EXPORT_WIDTH: 1000, PIXEL_RATIO: 2, CHROME_SELECTOR: '.editor-chrome', getPageFontEmbedCSS,
     replaceGifPosters() {}, preflightImages: async () => ({ softFailed: 0 }), bakeExportBackdrops, collectExportImageProbes,
     toSvg: async (clone, options) => {

@@ -1,3 +1,4 @@
+import { applyExportLayout } from '../../src/features/editor/editorExport.js';
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -111,7 +112,7 @@ test("WOQ6 actual editor text keeps the planned line breaks and prevents emergen
     assert.match(markup, /font-size:51px/);
     assert.match(markup, /width:700px/);
     assert.doesNotMatch(markup, /white-space:pre-wrap/);
-    assert.doesNotMatch(
+    assert.match(
         markupOf(block.elements.find((e) => e.copyRole === "label")),
         /el-keep-words/,
     );
@@ -169,7 +170,7 @@ test("R1 circles pass unchanged through the real download clone and capture func
             };
         },
     };
-    const scope = {
+    const scope = { applyExportLayout,
         document: {
             createElement: () => holder,
             body: {
@@ -249,7 +250,7 @@ test('WOC20 real download clone removes empty copy groups and uses the measured 
             if (query === selector) return children.filter(child => selector.split(',').some(css => child.markup.includes(css.slice(1))));
             return query === '.el' ? children.filter(child => !child.removed) : [];
         } };
-    const scope = { document: { createElement: () => ({ style: {}, appendChild() {}, remove() {} }), body: { appendChild() {} } },
+    const scope = { applyExportLayout, document: { createElement: () => ({ style: {}, appendChild() {}, remove() {} }), body: { appendChild() {} } },
         EXPORT_WIDTH: 1000, CHROME_SELECTOR: selector, replaceGifPosters() {}, preflightImages: async () => ({ softFailed: 0 }) };
     const prepare = new Function(...Object.keys(scope), `${code};return prepareClone;`)(...Object.values(scope));
     const result = await prepare({ cloneNode: () => clone });

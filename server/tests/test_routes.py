@@ -143,9 +143,10 @@ def test_feature_copy_draft_uses_seller_timeout(client, make_token, monkeypatch)
         ("save_analysis", {}),
     ):
         monkeypatch.setattr(routes.repo, name, AsyncMock(return_value=value))
-    items = [{"point": "빈티지한 워싱감", "desc": "물 빠진 듯한 색이 자연스럽게 번집니다."}]
-    complete = AsyncMock(return_value=({"items": items}, "spy"))
-    monkeypatch.setattr(routes.feature_copy, "complete_json", complete)
+    from app.agents import page_copy
+    items = [{"point": "빈티지한 워싱감", "desc": "물 빠진 듯한 색이 자연스럽게 번져요."}]
+    complete = AsyncMock(return_value={"featureCopy": items})
+    monkeypatch.setattr(page_copy, "generate_slots", complete)
 
     response = client.post("/v1/projects/p1/feature-copy:draft", headers=_auth(make_token))
 

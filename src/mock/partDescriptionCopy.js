@@ -45,10 +45,10 @@ export function withMockPartDescriptions(storyboard, analysis, copywriting) {
   }
   if (!labels.size) return analysis;
   const merged = new Map((analysis.partDescriptionCopy || [])
-    .filter(item => typeof item?.point === 'string' && item.desc).map(item => [item.point, item.desc]));
+    .filter(item => typeof item?.point === 'string' && item.desc).map(item => [item.point, { ...item }]));
   for (const label of labels) {
     const desc = PART_EXAMPLES.get(label);
-    if (desc) merged.set(label, desc);
+    if (desc) merged.set(label, { ...merged.get(label), point: label, desc });
   }
-  return { ...analysis, partDescriptionCopy: [...merged].map(([point, desc]) => ({ point, desc })) };
+  return { ...analysis, partDescriptionCopy: [...merged.values()] };
 }

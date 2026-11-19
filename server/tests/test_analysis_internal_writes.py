@@ -36,10 +36,11 @@ def test_detail_worker_only_saves_generated_copy_key(monkeypatch):
     monkeypatch.setattr(repo, "get_storyboard", AsyncMock(return_value=v4_blocks([])))
     monkeypatch.setattr(repo, "get_analysis", AsyncMock(return_value={
         "fit": "slim", "sellingPoints": ["카라"], "frontClosure": closure}))
-    monkeypatch.setattr(detail_page_job.page_part_copy, "generate", AsyncMock(return_value={"featureCopy": items}))
+    monkeypatch.setattr(detail_page_job.page_copy, "generate", AsyncMock(return_value={"featureCopy": items}))
     monkeypatch.setattr(detail_page_job, "_emit", AsyncMock())
-    monkeypatch.setattr(detail_page_job, "_gen_cuts", AsyncMock(side_effect=RuntimeError("stop after analysis save")))
+    monkeypatch.setattr(detail_page_job, "_gen_cuts", AsyncMock(return_value=([], [], 0, [], None, [])))
     monkeypatch.setattr(repo, "finalize_detail_page_failure", AsyncMock(return_value=True))
+    monkeypatch.setattr(repo, "finalize_detail_page_success", AsyncMock(return_value={"editor_blocks": [], "available": 1}))
     save = AsyncMock()
     monkeypatch.setattr(repo, "save_analysis", save)
     asyncio.run(detail_page_job.run_detail_page_job(

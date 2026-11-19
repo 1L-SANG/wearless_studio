@@ -209,7 +209,7 @@ test('existing featureCopy supplies card and below descriptions when photo copy 
     input.copyResults = input.storyboard.map(card => ({ blockId: card.id, texts: [{ role: 'headline', text: '사진 소제목' }] }));
     const text = assemblePage(input).flatMap(block => block.elements).filter(el => /^items\.\d+\.desc$/.test(el.copyRole));
     assert.deepEqual(text.map(el => el.text), ['단추 디테일을 확인할 수 있습니다.', '소매 마감을 확인할 수 있습니다.']);
-    assert.ok(text.every(el => !el.placeholder));
+    assert.ok(text.every(el => el.text.trim() && el.text !== el.placeholder));
     parityCases.push({ design: catalog.designs[id], input });
   }
 });

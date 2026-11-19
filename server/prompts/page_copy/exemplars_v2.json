@@ -1,0 +1,64 @@
+{
+  "_about": "칸 종류마다의 본보기. origin이 owner4면 오너가 1회차에서 4점을 준 글 그대로, shop이면 조사한 실제 쇼핑몰 글이다(줄바꿈과 느낌표, 이모지 같은 기호만 정리. 뜻과 낱말은 그대로). 우리가 쓴 글은 넣지 않는다(오너 11/19). 소개 제목과 궁금한 점 답(상의)은 맞는 실제 글이 없어 비워 두었다. 호출마다 지금 옷과 다른 옷 종류의 글만 뽑아 넣는다. 여기 있는 실제 몰 글은 맞히기 검사 묶음에서 뺀다.",
+  "exemplars": [
+    { "slot": "intro.body", "template": "show", "garment": "top", "text": "후드가 크게 나온 디자인입니다.\n굵은 끈으로 바꿔 포인트를 더했습니다.\n레깅스와 함께 입기 좋습니다.", "origin": "owner4" },
+    { "slot": "intro.body", "template": "show", "garment": "top", "text": "품을 넉넉하게 만든 후드 티셔츠입니다.\n굵은 끈으로 디테일을 더했습니다.\n레깅스에 편하게 매치하기 좋습니다.", "origin": "owner4" },
+    { "slot": "intro.body", "template": "emo", "garment": "bottom", "text": "데일리한 디자인, 컬러, 핏부터\n쫀쫀한 신축성으로 편안한 착용감을 더해\n매일매일 손이 가는 청바지", "origin": "shop" },
+    { "slot": "intro.body", "template": "emo", "garment": "bottom", "text": "사계절 꼭 필요한 면 속바지 소개해드려요\n너무 길지않은 3부 기장감과 신축성과 좋은\n면 스판 소재로 몸에 닿는 감촉이 부드럽고\n짱짱하게 몸을 잡아주어 편안하게\n착용하실 수 있는 아이템으로 추천드려요", "origin": "shop" },
+
+    { "slot": "part.desc", "template": "emo", "garment": "bottom", "text": "적당한 힘으로 늘어나는 밴딩이라\n허리에 부담 없이 편안하게 맞춰 입을 수 있어요.", "origin": "shop" },
+    { "slot": "part.desc", "template": "emo", "garment": "bottom", "text": "스커트 안쪽에 아주 부드러운 안감을 내장해\n피부에 닿는 느낌이 편안하고 활동하기 좋아요", "origin": "shop" },
+    { "slot": "part.desc", "template": "emo", "garment": "bottom", "text": "양 사이드에 수납이 가능한 포켓으로 실용성을 더했어요", "origin": "shop" },
+    { "slot": "part.desc", "template": "emo", "garment": "top", "text": "목선을 자연스럽게 드러내\n답답함 없이 깔끔하게", "origin": "shop" },
+    { "slot": "part.desc", "template": "emo", "garment": "top", "text": "힙을 가리는 여유로운 기장감으로\n넣어 입거나, 빼어 입기에", "origin": "shop" },
+    { "slot": "part.desc", "template": "emo", "garment": "outer", "text": "넉넉한 품과 소매로 상체를 편안하게 감싸주며\n힙을 가볍게 덮는 기장으로 부담 없이 걸치기 좋아요", "origin": "shop" },
+    { "slot": "part.desc", "template": "show", "garment": "bottom", "text": "여유있는 넉넉한 포켓으로 간편한 수납성", "origin": "shop" },
+    { "slot": "part.desc", "template": "show", "garment": "bottom", "text": "상의를 넣어 입기 좋은\n깔끔한 앞 허리선", "origin": "shop" },
+    { "slot": "part.desc", "template": "show", "garment": "bottom", "text": "걸음에 여유를 더해주는\n밑단 백슬릿", "origin": "shop" },
+    { "slot": "part.desc", "template": "show", "garment": "top", "text": "답답함 없는\n카라넥 디자인", "origin": "shop" },
+    { "slot": "part.desc", "template": "show", "garment": "top", "text": "레이어드하기 좋은 딥유넥 디자인", "origin": "shop" },
+    { "slot": "part.desc", "template": "show", "garment": "top", "text": "원하는 만큼 여닫아 핏을 조절하는 전면 버튼", "origin": "shop" },
+    { "slot": "part.desc", "template": "show", "garment": "outer", "text": "양 사이드에 포켓으로 소지품을 수납하기 좋은 실용적인 디자인", "origin": "shop" },
+
+    { "slot": "feature.desc", "template": "emo", "garment": "bottom", "text": "발등을 살포시 덮는 기장감으로 베이직하고 편안한 핏을 느낄 수 있어요", "origin": "shop" },
+    { "slot": "feature.desc", "template": "emo", "garment": "top", "text": "안쪽에는 캡이 내장되어 있어 따로 속옷을 갖춰 입지 않아도 편안합니다", "origin": "shop" },
+    { "slot": "feature.desc", "template": "emo", "garment": "outer", "text": "매끄러운 겉감에 포근함을 더해 쌀쌀한 날씨에도 편안하게 걸치기 좋아요", "origin": "shop" },
+    { "slot": "feature.desc", "template": "show", "garment": "top", "text": "상체에 맞게 길이 조절되는 어깨 스트랩", "origin": "shop" },
+    { "slot": "feature.desc", "template": "show", "garment": "bottom", "text": "앞모습은 깔끔하게, 뒤는 편안하게 잡아주는 하프밴딩", "origin": "shop" },
+    { "slot": "feature.desc", "template": "show", "garment": "outer", "text": "다양한 이너와 레이어드하기 좋은 높은 활용도", "origin": "shop" },
+
+    { "slot": "for_you", "template": "all", "garment": "bottom", "text": "출근할 때 입을 바지를 찾는 분", "origin": "owner4" },
+    { "slot": "for_you", "template": "all", "garment": "bottom", "text": "슬랙스는 좋은데 허리 조이는 건 싫은 분", "origin": "owner4" },
+    { "slot": "for_you", "template": "all", "garment": "bottom", "text": "블라우스와 입을 바지를 찾는 분", "origin": "owner4" },
+    { "slot": "for_you", "template": "all", "garment": "bottom", "text": "편하게 입을 출근룩을 찾는 분", "origin": "owner4" },
+    { "slot": "for_you", "template": "all", "garment": "top", "text": "집에서도, 가벼운 외출에도 편하게 입고 싶은 분", "origin": "shop" },
+    { "slot": "for_you", "template": "all", "garment": "top", "text": "어디에나 활용도 높은 니트를 찾으시는 분", "origin": "shop" },
+    { "slot": "for_you", "template": "all", "garment": "top", "text": "셔츠만 입기엔 쌀쌀한 간절기 코디가 고민인 분", "origin": "shop" },
+    { "slot": "for_you", "template": "all", "garment": "outer", "text": "유행에 구애없는 깔끔한 아우터를 찾고 계신 분", "origin": "shop" },
+
+    { "slot": "fabric.title", "template": "all", "garment": "top", "text": "도톰하고 부드러운 면", "origin": "owner4" },
+    { "slot": "fabric.title", "template": "all", "garment": "top", "text": "탄탄하고 부드러운 면", "origin": "owner4" },
+    { "slot": "fabric.title", "template": "all", "garment": "bottom", "text": "가볍고 잘 늘어나는 소재", "origin": "owner4" },
+    { "slot": "fabric.title", "template": "all", "garment": "bottom", "text": "가볍고 유연한 원단", "origin": "owner4" },
+
+    { "slot": "fabric.body", "template": "show", "garment": "top", "text": "살에 닿는 느낌이 순한 원단입니다.\n도톰하고 모양이 잘 잡힙니다.", "origin": "owner4" },
+    { "slot": "fabric.body", "template": "emo", "garment": "bottom", "text": "스판이 섞여 있어 가볍고 잘 늘어나요.", "origin": "owner4" },
+    { "slot": "fabric.body", "template": "emo", "garment": "top", "text": "맨살에 닿아도 까끌거림 없는 부드러움", "origin": "shop" },
+    { "slot": "fabric.body", "template": "all", "garment": "top", "text": "부드럽고 유연한 원사로 편안한 착용감", "origin": "shop" },
+
+    { "slot": "review.text", "template": "all", "garment": "bottom", "text": "만졌을 때 매끈하고 가벼워서 손이 자주 가는 바지입니다", "origin": "owner4" },
+    { "slot": "review.text", "template": "all", "garment": "bottom", "text": "출근용으로 샀는데 주말에도 입게 돼서 차콜도 고민 중", "origin": "owner4" },
+    { "slot": "review.text", "template": "all", "garment": "bottom", "text": "사이즈가 없어서 크게 샀는데 오히려 더 힙하게 입을 수 있어서 좋았어요. 허리 조절 돼서 좋아요", "origin": "shop" },
+    { "slot": "review.text", "template": "all", "garment": "top", "text": "베스트랑 셔츠 각각 활용해도 좋고, 세트로 입으면 확실히 더 예뻐요", "origin": "shop" },
+    { "slot": "review.text", "template": "all", "garment": "outer", "text": "봄에는 단독으로, 여름에는 걸쳐 입기 좋아요", "origin": "shop" },
+    { "slot": "review.text", "template": "all", "garment": "outer", "text": "늦봄부터 늦여름까지 잘 입고 다녔어요 최고", "origin": "shop" },
+    { "slot": "review.text", "template": "all", "garment": "top", "text": "출퇴근용으로 딱이네요", "origin": "shop" },
+
+    { "slot": "faq.q", "template": "all", "garment": "bottom", "text": "앉으면 많이 늘어나요?", "origin": "owner4" },
+    { "slot": "faq.q", "template": "all", "garment": "bottom", "text": "입으면 늘어나나요?", "origin": "owner4" },
+    { "slot": "faq.q", "template": "all", "garment": "bottom", "text": "무릎이 쉽게 나오지는 않을까요?", "origin": "shop" },
+
+    { "slot": "faq.a", "template": "emo", "garment": "bottom", "text": "스판이 들어 있어 앉을 때 잘 늘어나요.", "origin": "owner4" },
+    { "slot": "faq.a", "template": "emo", "garment": "bottom", "text": "찬물에 단독으로 빨거나 세탁망에 넣어 주세요.", "origin": "owner4" }
+  ]
+}

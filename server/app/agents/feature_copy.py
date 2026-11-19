@@ -1,17 +1,12 @@
-"""특징 포인트 설명 문구 — 부위·구조 어휘 사전 + LLM 폴백 (text tier).
+"""판매 특징 생성은 페이지 카피 규칙을 쓰고, 실패한 칸만 사전으로 보완한다.
 
-셀러가 강조특징 칩에 적은 표현을 **부위·구조** 사전에서 찾아 설명 한 줄을 붙인다.
-`selling_points.py` 와 달리 전체 exact 뒤 부분일치가 여러 부위를 가리키면 사전을 쓰지 않는다. 용도가
-다르다 — 그쪽은 이미지 프롬프트에 넣을 canonical 영문 큐(인젝션 방어)이고, 이쪽은
-셀러에게 보여줄 한국어 카피다. 사전을 공유하지 않는다.
-
-제목은 만들지 않는다. 셀러가 친 칩이 곧 제목이고, 여기서 만드는 건 설명 한 줄뿐이다.
-사전 문구는 칩이 확인한 구조를 중립적으로 설명하고 별도 위치나 시각 효과를 덧붙이지 않는다. 소재
-성능(통기성·보온·방수 등) 단정은 계약 AG-02 §단정 금지로 어느 경로로도 들어오지 않는다.
+기존 사전과 build_prompt, validate, complete_json 연결은 호환 경로로 유지한다.
+에디터 generate는 v1 feature 프롬프트와 공통 검사를 사용한다.
 """
 
 import logging
 import os
+import re
 
 from ..config import Settings
 from .fit_axes import confirmed_copy_fit
@@ -229,29 +224,112 @@ def validate(raw: dict, points: list) -> dict:
     return out
 
 
-async def generate(
+async def generate_legacy(
     settings: Settings, points: list, product: dict, analysis: dict,
     *, timeout_seconds: float | None = None,
 ) -> list:
-    """강조특징 → [{point, desc}]. 사전 히트는 즉시, 미스만 LLM 1콜.
-
-    카피는 게이트가 아니다 — LLM 실패는 삼키고 사전 히트만 돌려준다(호출측이 desc 빈칸 처리).
-    """
+    """기존 사전 우선 생성 계약의 호환 진입점."""
     cleaned = [p for p in (points or []) if isinstance(p, str) and p.strip()]
     hits = {p: lookup(p) for p in cleaned}
-    misses = [p for p, d in hits.items() if d is None]
+    misses = [p for p, desc in hits.items() if desc is None]
     if misses:
-        # try 는 build_prompt/validate 까지 통째로 감싼다 — 여기 버그도 카피 실패로 삼켜야
-        # 호출측(상세페이지 job)이 멈추지 않는다(카피는 게이트 아님). 대신 조용히 사라지지
-        # 않도록 로그를 남긴다.
         try:
             raw, _provider = await complete_json(
                 settings, build_prompt(misses, product, analysis), copy_schema(),
-                timeout_seconds=timeout_seconds)
+                timeout_seconds=timeout_seconds,
+            )
             hits.update(validate(raw, misses))
-        except Exception as e:  # VisionError 포함 — 카피는 게이트 아님
-            log.warning("feature copy generation failed: %r", e)
+        except Exception as exc:
+            log.warning("feature copy generation failed: %r", exc)
     return [{"point": p, "desc": hits[p]} for p in cleaned if hits.get(p)]
+
+
+async def generate(
+    settings: Settings, points: list, product: dict, analysis: dict,
+    *, timeout_seconds: float | None = None, storyboard=None, seed="", overrides=None, audit=None,
+) -> list:
+    """모든 칩을 먼저 생성하고, 누락된 칸만 검사를 통과한 사전 문구로 채운다."""
+    from . import page_copy
+
+    originals = {}
+    for point in points or []:
+        if isinstance(point, str) and point.strip():
+            originals.setdefault(point.strip(), point)
+    if not originals:
+        if audit is not None:audit.update(copyResults=[],partDescriptionCopy=[],featureCopy=[],log={"calls":[],"slots":[],"warnings":[]})
+        return []
+    analysis = analysis or {}
+    template = page_copy.template_of(storyboard or analysis.get("storyboard") or [], analysis)
+    slots = page_copy.feature_slots(list(originals), template)
+    # 에디터에서 이번에 더한 칩도 사실 묶음에 넣되 저장된 분석은 바꾸지 않는다.
+    highlights = analysis.get("sellingPoints") or analysis.get("aiSuggestedPoints") or []
+    inputs = {**analysis, "sellingPoints": list(dict.fromkeys(
+        [p.strip() for p in highlights if isinstance(p, str) and p.strip()] + list(originals)
+    ))}
+    try:
+        result = await page_copy.generate_slots(
+            settings, slots, product, inputs, seed=seed, timeout_seconds=timeout_seconds,
+            overrides=overrides, feature=True,
+        )
+    except (FileNotFoundError, ValueError, page_copy.CallLimitError):
+        # 잘못된 프롬프트 설정과 시험 예산 중단은 공급자 장애로 숨기지 않는다.
+        raise
+    except Exception as exc:
+        log.warning("feature copy generation failed: %r", exc)
+        result = {}
+    if audit is not None:audit.update(result)
+    if (overrides or {}).get("dry_run"):
+        return []
+    generated = {
+        item["point"]: item["desc"] for item in result.get("featureCopy", [])
+        if isinstance(item, dict) and isinstance(item.get("point"), str)
+        and isinstance(item.get("desc"), str) and item["point"] in originals
+    }
+    facts = page_copy.facts_bundle(product, inputs, slots)
+    plan = page_copy.plans(seed, slots, facts)
+    existing = {
+        re.sub(r"\s+", "", item["desc"]).rstrip(".!?")
+        for item in analysis.get("partDescriptionCopy") or []
+        if isinstance(item, dict) and isinstance(item.get("desc"), str)
+    }
+    required_empty = {row["slotId"] for row in result.get("log", {}).get("slots", [])
+                      if "missing_required" in row.get("reasons", [])}
+    out = []
+    for slot in slots:
+        point = slot["point"]
+        desc = generated.get(point, "")
+        if re.sub(r"\s+", "", desc).rstrip(".!?") in existing:
+            desc = ""
+        used_dictionary = False
+        if not desc:
+            if slot["id"] in required_empty:
+                continue
+            fallback = lookup(point)
+            if not fallback:
+                continue
+            desc = (re.sub(r"(?:을|를)(?: 가까이서)? 확인할 수 있습니다\.$", "", fallback)
+                    if template == "show" else fallback.replace("확인할 수 있습니다.", "확인할 수 있어요."))
+            checked = page_copy.validate({"featureCopy": [{"point": point, "desc": desc}]},
+                                         [slot], facts, plan)
+            desc = checked["accepted"].get(slot["id"], "")
+            used_dictionary = bool(desc)
+        if desc and re.sub(r"\s+", "", desc).rstrip(".!?") not in existing:
+            out.append({"point": originals[point], "desc": desc})
+            if used_dictionary and audit is not None:
+                rows=audit.setdefault("log",{}).setdefault("slots",[])
+                row=next((r for r in rows if r["slotId"]==slot["id"]),None)
+                if row is None:
+                    row={"slotId":slot["id"],"kind":"feature","role":"desc","target":"feature","group":"points"};rows.append(row)
+                row.update(text=desc,source="dictionary",passed=True,reasons=[])
+    if audit is not None:
+        audit["featureCopy"]=out
+        emitted={p.strip() for p in (item["point"] for item in out)}
+        for slot in slots:
+            if slot["point"] in emitted:continue
+            row=next((r for r in audit.get("log",{}).get("slots",[]) if r["slotId"]==slot["id"]),None)
+            if row and row.get("passed"):
+                row.update(passed=False,reasons=["editor_discarded"])
+    return out
 
 
 def merge_stored(stored, fresh: list) -> list:
@@ -264,8 +342,10 @@ def merge_stored(stored, fresh: list) -> list:
     merged = {}
     for c in (stored or []):
         if isinstance(c, dict) and isinstance(c.get("point"), str) and c.get("desc"):
-            merged[c["point"]] = c["desc"]
+            merged[c["point"]] = {"point": c["point"], "desc": c["desc"],
+                                   **({"label": c["label"]} if isinstance(c.get("label"), str) and c["label"] else {})}
     for c in (fresh or []):
         if isinstance(c, dict) and isinstance(c.get("point"), str) and c.get("desc"):
-            merged[c["point"]] = c["desc"]
-    return [{"point": p, "desc": d} for p, d in merged.items()]
+            merged[c["point"]] = {**merged.get(c["point"], {}), "point": c["point"], "desc": c["desc"],
+                                   **({"label": c["label"]} if isinstance(c.get("label"), str) and c["label"] else {})}
+    return list(merged.values())

@@ -1164,7 +1164,7 @@ export const api = {
     const changed = Object.fromEntries(Object.entries(patch).map(([key, value]) => [key, value === null ? null : normalized[key]]));
     if (_projectId) {
       for (const key of ['locked', 'confirmedGptProductEvidence', 'detailRecommendations', 'garmentColorEvidence']) delete changed[key];
-      for (const key of ['sourceMirrored', 'inputConsistency', 'featureCopy', 'partDescriptionCopy']) {
+      for (const key of ['sourceMirrored', 'inputConsistency', 'featureCopy', 'partDescriptionCopy', 'pageCopy']) {
         if (changed[key] === null) delete changed[key];
       }
     }

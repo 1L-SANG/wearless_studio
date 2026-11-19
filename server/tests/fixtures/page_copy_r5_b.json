@@ -1,0 +1,72 @@
+[
+  {
+    "source": "trial/r5/slots.jsonl",
+    "line": 9,
+    "case": "v2-02",
+    "arm": "one-terra",
+    "template": "emo",
+    "kind": "review",
+    "role": "items.0.text",
+    "text": "품이 넉넉한 오버핏이라 편하게 입기 좋아서 자주 손이 가요."
+  },
+  {
+    "source": "trial/r5/slots.jsonl",
+    "line": 10,
+    "case": "v2-02",
+    "arm": "one-terra",
+    "template": "emo",
+    "kind": "review",
+    "role": "items.1.text",
+    "text": "레깅스에 입고 동네 나갈 때 자주 입어요."
+  },
+  {
+    "source": "trial/r5/slots.jsonl",
+    "line": 11,
+    "case": "v2-02",
+    "arm": "one-terra",
+    "template": "emo",
+    "kind": "review",
+    "role": "items.2.text",
+    "text": "후드가 커서 좋더라."
+  },
+  {
+    "source": "trial/r5/slots.jsonl",
+    "line": 23,
+    "case": "v2-02",
+    "arm": "one-terra",
+    "template": "emo",
+    "kind": "faq",
+    "role": "items.0.a",
+    "text": "오버핏으로 넉넉해요. 상세 사이즈를 확인해 주세요."
+  },
+  {
+    "source": "trial/r5/slots.jsonl",
+    "line": 74,
+    "case": "v2-03",
+    "arm": "one-argon",
+    "template": "emo",
+    "kind": "faq",
+    "role": "items.0.a",
+    "text": "기본 레귤러핏이라 평소 입으시는 사이즈로 고르시고 상세 실측 표도 함께 확인해 주세요."
+  },
+  {
+    "source": "trial/r5/slots.jsonl",
+    "line": 103,
+    "case": "v2-03",
+    "arm": "one-terra",
+    "template": "emo",
+    "kind": "faq",
+    "role": "items.0.a",
+    "text": "레귤러핏이에요. 상세 사이즈표를 확인해 주세요."
+  },
+  {
+    "source": "trial/r5/slots.jsonl",
+    "line": 825,
+    "case": "v2-14",
+    "arm": "one-terra",
+    "template": "emo",
+    "kind": "intro",
+    "role": "body",
+    "text": "울 70이라 한겨울에도 따뜻하고 보풀이 안 생겨요. 무릎 아래까지 와서 바람도 막아 줘요"
+  }
+]

@@ -10,9 +10,15 @@ const rgbaPaint = value => {
   return match ? { color: `rgb(${match[1]}, ${match[2]}, ${match[3]})`, opacity: Number(match[4]) } : null;
 };
 const gradientPaint = fill => {
-  const match = fill?.match(/^linear-gradient\(180deg,\s*(rgba\([^)]+\)) 0%,\s*(rgba\([^)]+\)) 100%\)$/);
-  const stops = match && [rgbaPaint(match[1]), rgbaPaint(match[2])];
-  return stops?.every(Boolean) ? stops : null;
+  const match = fill?.match(/^linear-gradient\(180deg,\s*(.*)\)$/);
+  if (!match) return null;
+  const pattern = /(rgba\([^)]+\))\s+([\d.]+)%/g;
+  const parts = [...match[1].matchAll(pattern)];
+  if (match[1].replace(pattern, '').replace(/[\s,]/g, '')) return null;
+  const stops = parts.map(part => ({ ...rgbaPaint(part[1]), offset: Number(part[2]) }));
+  return stops.length >= 2 && stops[0].offset === 0 && stops.at(-1).offset === 100
+    && stops.every((stop, index) => stop.color && Number.isFinite(stop.offset) && stop.offset >= 0 && stop.offset <= 100
+      && (!index || stop.offset >= stops[index - 1].offset)) ? stops : null;
 };
 const shadowPaint = shadow => {
   const match = shadow?.match(/^(-?[\d.]+)px\s+(-?[\d.]+)px\s+([\d.]+)px\s+(rgba\([^)]+\))$/);
@@ -63,7 +69,7 @@ function PreviewElement({ element: el, wireframe, onScrim, photoPanel, emphasize
     return <g opacity={el.opacity ?? 1}>
       {(gradient || shadow) && <defs>
         {gradient && <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          {gradient.map((stop, index) => <stop key={index} offset={`${index * 100}%`}
+          {gradient.map((stop, index) => <stop key={index} offset={`${stop.offset}%`}
             stopColor={wireframe ? 'var(--sb-wire-scrim-end)' : stop.color} stopOpacity={stop.opacity} />)}
         </linearGradient>}
         {shadow && <filter id={shadowId} x="-50%" y="-100%" width="200%" height="300%">

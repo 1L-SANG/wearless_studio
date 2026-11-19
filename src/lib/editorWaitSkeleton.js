@@ -19,7 +19,7 @@ const autoBlockHeight = (elements) => Math.max(
 ) + 50;
 
 const copyTextPatch = (element, text) => {
-  if (element.paragraphIndex != null) {
+  if (element.paragraphIndex != null && !(element.copyRole === 'body' && !element.aiDraft)) {
     const parts = String(text).split(/\n+/).map(part => part.trim()).filter(Boolean);
     text = element.paragraphIndex === 2 ? parts.slice(2).join('\n') : parts[element.paragraphIndex] || '';
   }
@@ -27,10 +27,6 @@ const copyTextPatch = (element, text) => {
     ? { text, textSlotVersion: 1, h: captionHeight(text), style: { ...(element.style || {}), ...CAPTION_STYLE } }
     : { text };
 };
-
-const isSellerIntroBody = (block, element) => block.pageSectionKind === 'intro'
-  && element.copyRole === 'body' && !element.aiDraft
-  && typeof element.text === 'string' && Boolean(element.text.trim());
 
 const copyIdentity = element => `${element.copyRole}:${element.paragraphIndex ?? ''}:${element.factLabel || ''}:${element.factPart || ''}`;
 const templateSnapshot = element => structuredClone(Object.fromEntries(Object.entries(element).filter(([key]) => !key.startsWith('gen'))));
@@ -45,6 +41,7 @@ function untouchedTemplateBlock(block) {
   const baseline = block.genTemplateBaseline;
   if (!baseline || !sameValue(templateBlockSnapshot(block), baseline.block) || block.h !== baseline.h || block.elements.length !== baseline.elements.length) return false;
   return block.elements.every((element, index) => {
+    if (element.type === 'text' && element.copyRole && element.sourceBlockId && !Object.hasOwn(element, 'genAutoText')) return false;
     const expected = { ...baseline.elements[index] };
     if ('genAutoText' in element) Object.assign(expected, { text: element.genAutoText, style: element.genAutoStyle, ...element.genAutoGeometry });
     if ('genAutoSrc' in element) expected.src = element.genAutoSrc;
@@ -179,7 +176,6 @@ export function decorateGenBlocks(blocks, job, exThumbById) {
           } : {}) };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId) {
-        if (isSellerIntroBody(b, el)) return markAutoCopy(el);
         const t = (job.copy[el.sourceBlockId] || []).find((x) => x.role === el.copyRole)?.text;
         if (t) {
           copyChanged = true;
@@ -223,7 +219,6 @@ export function fillGenBlocks(blocks, job) {
             ...(info.sourceBlockId !== undefined ? { genFailSourceBlockId: info.sourceBlockId } : {}) } : {}) };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId && 'genAutoText' in el) {
-        if (isSellerIntroBody(b, el)) return el;
         const t = (job.copy[el.sourceBlockId] || []).find((x) => x.role === el.copyRole)?.text;
         if (t && t !== el.text && el.text === el.genAutoText) {
           copyChanged = true;
@@ -381,6 +376,197 @@ export function canSafelyMergeServerBlocks(blocks, serverBlocks) {
   });
 }
 
+const itemIndex = element => element.copyRole?.match(/^items\.(\d+)(?:\.|$)/)?.[1];
+const withoutGeneration = value => Object.fromEntries(Object.entries(value).filter(([key]) => !key.startsWith('gen')));
+const expectedElement = (block, element) => {
+  const base = block.genTemplateBaseline?.elements.find(row => row.id === element.id);
+  if (!base) return null;
+  return { ...base, ...('genAutoText' in element ? { text: element.genAutoText, style: element.genAutoStyle, ...element.genAutoGeometry } : {}),
+    ...('genAutoSrc' in element ? { src: element.genAutoSrc } : {}) };
+};
+const manuallyChanged = (block, element) => !sameValue(templateSnapshot(element), expectedElement(block, element));
+const contentKey = element => element.copyRole ? `copy:${element.copyRole.replace(/^items\.\d+/, 'items.n')}`
+  : element.type === 'image' ? `image:${element.slotKey || element.sourceBlockId}`
+    : `${element.type}:${element.templateCopyDecoration || element.shape || element.text || ''}`;
+
+function mergeSellerElement(incoming, current, expected) {
+  if (!current) return { ...incoming };
+  if (!expected) return withoutGeneration(current);
+  const result = { ...incoming, id: current.id };
+  const identity = new Set(['id', 'sourceBlockId', 'slotKey', 'copyRole', 'groupId']);
+  for (const key of new Set([...Object.keys(expected), ...Object.keys(current)])) {
+    if (key.startsWith('gen') || identity.has(key) || sameValue(current[key], expected[key])) continue;
+    if (key === 'style') {
+      result.style = { ...incoming.style };
+      for (const prop of new Set([...Object.keys(expected.style || {}), ...Object.keys(current.style || {})])) {
+        if (sameValue(current.style?.[prop], expected.style?.[prop])) continue;
+        if (Object.hasOwn(current.style || {}, prop)) result.style[prop] = current.style[prop];
+        else delete result.style[prop];
+      }
+    } else if ((key === 'x' || key === 'y') && Number.isFinite(current[key]) && Number.isFinite(expected[key])) {
+      result[key] = incoming[key] + current[key] - expected[key];
+    } else if (Object.hasOwn(current, key)) result[key] = current[key];
+    else delete result[key];
+  }
+  if (current.type === 'image' && current.slotCleared) result.src = null;
+  if (current.type === 'text' && current.copyRole && !Object.hasOwn(current, 'genAutoText')) {
+    result.text = current.text;
+    if (!Object.hasOwn(current, 'aiDraft')) delete result.aiDraft;
+  }
+  return result;
+}
+
+function mergeElementSet(incoming, current, baseline, block) {
+  const remaining = [...current], expected = [...baseline];
+  const output = [];
+  for (const element of incoming) {
+    const key = contentKey(element);
+    const index = remaining.findIndex(row => contentKey(row) === key);
+    const baseIndex = expected.findIndex(row => contentKey(row) === key);
+    const base = baseIndex >= 0 ? expected.splice(baseIndex, 1)[0] : null;
+    const local = index >= 0 ? remaining.splice(index, 1)[0] : null;
+    if (!local && base) continue; // A seller-deleted element must stay deleted.
+    output.push(mergeSellerElement(element, local, local ? expectedElement(block, local) || base : null));
+  }
+  output.push(...remaining.filter(element => manuallyChanged(block, element)).map(withoutGeneration));
+  return output;
+}
+
+function listGroups(elements) {
+  const grouped = new Map();
+  for (const element of elements) {
+    const index = itemIndex(element);
+    if (index != null && !grouped.has(index)) grouped.set(index, { index, id: element.groupId });
+  }
+  for (const group of grouped.values()) group.elements = elements.filter(element =>
+    itemIndex(element) === group.index || group.id && element.groupId === group.id);
+  return [...grouped.values()].sort((a, b) => Number(a.index) - Number(b.index));
+}
+const groupTop = group => Math.min(...group.elements.map(element => element.y));
+const groupBottom = group => Math.max(...group.elements.map(element => element.y + element.h));
+const renameItem = (element, index, groupId) => ({ ...element,
+  ...(itemIndex(element) != null ? { copyRole: element.copyRole.replace(/^items\.\d+/, `items.${index}`) } : {}),
+  ...(element.groupId && groupId ? { groupId } : {}),
+});
+
+function finishReconciledBlock(local, final, elements) {
+  const baseline = local.genTemplateBaseline;
+  const baseBottom = Math.max(0, ...final.elements.map(element => element.y + element.h));
+  const padding = Math.max(0, final.h - baseBottom);
+  const bottom = Math.max(0, ...elements.map(element => element.y + element.h));
+  const h = Math.max(final.h, bottom + padding) + (baseline && local.h !== baseline.h ? local.h - baseline.h : 0);
+  const block = mergeSellerElement({ ...final, h }, { ...withoutGeneration(local), h }, { ...baseline?.block, h, elements: local.elements });
+  return { ...withoutGeneration(block), id: local.id, elements, h };
+}
+
+// A single seller edit must not freeze the other empty loading cards. Final
+// geometry is authoritative; differences from each automatic baseline survive.
+function reconcileEditedList(local, final) {
+  const baseline = local.genTemplateBaseline?.elements;
+  if (!baseline) return null;
+  if (local.pageDesignId === FAQ_FACE_DESIGN && local.elements.some(element => {
+    if (!faqHeading(element) && element.type !== 'image') return false;
+    const expected = expectedElement(local, element);
+    return expected && ['x', 'y', 'w', 'rotate', 'crop'].some(key => !sameValue(element[key], expected[key]));
+  })) {
+    // A seller-positioned photo/heading keeps its original contrast composition.
+    // List removal still proceeds, but an outside-heading result cannot move it.
+    const oldPhoto = baseline.find(element => element.type === 'image');
+    const newPhoto = final.elements.find(element => element.type === 'image');
+    const shift = (newPhoto?.y || 0) - (oldPhoto?.y || 0);
+    const oldItems = new Set(listGroups(baseline).flatMap(group => group.elements));
+    const newItems = new Set(listGroups(final.elements).flatMap(group => group.elements));
+    final = { ...final, h: local.genTemplateBaseline.h, elements: [
+      ...baseline.filter(element => !oldItems.has(element)).map(element => {
+        const incoming = final.elements.find(row => contentKey(row) === contentKey(element));
+        return { ...element, ...(incoming && element.type === 'image' ? { src: incoming.src } : {}),
+          ...(incoming && element.copyRole ? { text: incoming.text } : {}) };
+      }),
+      ...final.elements.filter(element => newItems.has(element)).map(element => ({ ...element, y: element.y - shift })),
+    ] };
+  }
+  const groups = listGroups(local.elements), baseGroups = listGroups(baseline), finalGroups = listGroups(final.elements);
+  const groupElements = new Set(groups.flatMap(group => group.elements));
+  const baseElements = new Set(baseGroups.flatMap(group => group.elements));
+  const finalElements = new Set(finalGroups.flatMap(group => group.elements));
+  const outputGroups = [];
+  for (const incoming of finalGroups) {
+    const current = groups.find(group => group.index === incoming.index);
+    const base = baseGroups.find(group => group.index === incoming.index);
+    if (!current && base) continue;
+    outputGroups.push({ ...incoming, elements: mergeElementSet(incoming.elements, current?.elements || [], base?.elements || [], local) });
+  }
+  for (const current of groups) {
+    if (finalGroups.some(group => group.index === current.index) || !current.elements.some(element =>
+      element.type === 'text' && element.copyRole && !element.templateCopyDecoration
+      && !Object.hasOwn(element, 'genAutoText') && String(element.text || '').trim())) continue;
+    const base = baseGroups.find(group => group.index === current.index);
+    const donor = baseGroups[outputGroups.length] || base;
+    if (!donor) continue;
+    const elements = mergeElementSet(donor.elements, current.elements, base?.elements || [], local);
+    const previous = outputGroups.at(-1);
+    const gap = baseGroups.length > 1 ? Math.max(0, groupTop(baseGroups[1]) - groupBottom(baseGroups[0])) : 0;
+    const offset = previous ? Math.max(0, groupBottom(previous) + gap - Math.min(...elements.map(element => element.y))) : 0;
+    outputGroups.push({ ...donor, elements: elements.map(element => ({ ...element, y: element.y + offset })) });
+  }
+  const image = final.elements.find(element => element.type === 'image');
+  const anchor = finalGroups.length ? groupBottom(finalGroups.at(-1)) : baseGroups.length ? groupBottom(baseGroups.at(-1)) : 0;
+  const overflow = image && outputGroups.length ? Math.max(0, groupBottom(outputGroups.at(-1)) - anchor) : 0;
+  const nonList = mergeElementSet(final.elements.filter(element => !finalElements.has(element)),
+    local.elements.filter(element => !groupElements.has(element)), baseline.filter(element => !baseElements.has(element)), local);
+  const elements = [...nonList, ...outputGroups.flatMap((group, index) => group.elements.map(element => ({
+    ...renameItem(element, index, group.id), y: element.y - overflow,
+  })))];
+  return finishReconciledBlock(local, final, elements);
+}
+
+const pointPhoto = block => block.elements.find(element => element.type === 'image' && element.sourceBlockId);
+const pointPhotoKey = block => JSON.stringify([pointPhoto(block)?.sourceBlockId, pointPhoto(block)?.slotKey]);
+const pointCardElements = block => {
+  const first = block.elements.findIndex(element => itemIndex(element) != null
+    || element.type === 'image' && element.sourceBlockId);
+  if (first < 0) return [];
+  const photo = pointPhoto(block);
+  const background = photo && block.elements.findIndex(element => element.type === 'shape' && !element.groupId
+    && element.x <= photo.x && element.y <= photo.y && element.x + element.w >= photo.x + photo.w
+    && element.y + element.h >= photo.y + photo.h);
+  return block.elements.slice(background >= 0 ? Math.min(first, background) : first);
+};
+const pointHeaderElements = block => block.elements.filter(element => !pointCardElements(block).includes(element));
+
+function reconcileEditedPoints(localRun, finalRun) {
+  if (localRun.some(block => !block.genTemplateBaseline || block.elements.filter(element => element.type === 'image').length > 1)) return null;
+  const localHeader = localRun.find(block => pointHeaderElements(block).length) || localRun[0];
+  const finalHeader = finalRun.find(block => pointHeaderElements(block).length) || finalRun[0];
+  const cards = localRun.filter(block => pointPhoto(block)).filter(block => {
+    const incoming = finalRun.find(row => pointPhotoKey(row) === pointPhotoKey(block));
+    return incoming || pointCardElements(block).some(element => manuallyChanged(block, element));
+  });
+  if (!cards.length) return finalRun.map(block => {
+    const elements = mergeElementSet(block.elements, localHeader.elements, localHeader.genTemplateBaseline.elements, localHeader);
+    return finishReconciledBlock(localHeader, block, elements);
+  });
+  return cards.map((local, index) => {
+    const incoming = finalRun.find(block => pointPhotoKey(block) === pointPhotoKey(local));
+    const layout = incoming || local;
+    const baseline = { ...local, elements: local.genTemplateBaseline.elements };
+    const card = pointCardElements(layout);
+    const elements = incoming ? mergeElementSet(card, pointCardElements(local), pointCardElements(baseline), local)
+      : pointCardElements(local).map(withoutGeneration);
+    const header = index === 0 ? mergeElementSet(pointHeaderElements(finalHeader), pointHeaderElements(localHeader),
+      pointHeaderElements({ ...localHeader, elements: localHeader.genTemplateBaseline.elements }), localHeader) : [];
+    const originalTop = Math.min(...card.map(element => element.y));
+    const headingCard = pointCardElements(finalHeader);
+    const targetTop = index === 0 ? (headingCard.length ? Math.min(...headingCard.map(element => element.y)) : originalTop) : 0;
+    const shifted = elements.map(element => ({ ...renameItem(element, index), y: element.y + targetTop - originalTop,
+      ...(element.type === 'text' && !element.copyRole && /^\d{2}$/.test(element.text) ? { text: String(index + 1).padStart(2, '0') } : {}),
+    }));
+    // Match text by field only after its card has been matched by original photo.
+    const final = { ...layout, elements: [...header, ...shifted] };
+    return finishReconciledBlock(local, final, final.elements);
+  });
+}
+
 /** @param {Set<string>} [failedSourceIds] 서버가 못 만든 컷의 sourceBlockId — 그 자리는
     "그냥 빈 칸"이 아니라 '만들지 못함' 표식(genFailed)을 남긴다. 표식이 없으면 완료 순간
     실패 컷이 일반 빈 슬롯으로 둔갑해 셀러가 이유도, 과금 여부도 모른 채 넘어간다. */
@@ -422,6 +608,20 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
       }
     }
   }
+  const originalImages = (blocks || []).flatMap(block => block.elements || []).filter(element => element.type === 'image');
+  const finalizeImage = (element, original = element) => {
+    const { genPending, genExample, genAutoSrc, genFailed, genFailReason, genFailRetryable, genFailSourceBlockId, ...rest } = element;
+    // Completion revokes temporary previews that have no stable final result.
+    // Re-entry without a failure set retains the existing compatible behavior.
+    const tempPreview = Boolean(failedSourceIds) && Boolean(original.genAutoSrc) && original.src === original.genAutoSrc;
+    const src = rest.slotCleared ? null : (srcById[element.sourceBlockId] || (tempPreview ? null : rest.src) || null);
+    const failure = failurePatch({ ...original, ...element, src });
+    if (failure.genFailed) return { ...rest, src: null,
+      ...(original.genFailReason != null ? { genFailReason: original.genFailReason } : {}),
+      ...(typeof original.genFailRetryable === 'boolean' ? { genFailRetryable: original.genFailRetryable } : {}),
+      ...(original.genFailSourceBlockId !== undefined ? { genFailSourceBlockId: original.genFailSourceBlockId } : {}), ...failure };
+    return { ...rest, src };
+  };
   const templateRuns = new Map();
   for (const block of blocks || []) if (block.pageSectionKey && block.pageDesignId) {
     const run = templateRuns.get(block.pageSectionKey) || [];
@@ -430,7 +630,27 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
   const untouched = new Set([...templateRuns].filter(([key, run]) => run.every(untouchedTemplateBlock)
     && (serverBlocks || []).some(block => block.pageSectionKey === key)).map(([key]) => key));
   const emitted = new Set();
+  const reconciled = new Map();
+  for (const [key, run] of templateRuns) {
+    if (untouched.has(key)) continue;
+    const finalRun = (serverBlocks || []).filter(block => block.pageSectionKey === key);
+    if (!finalRun.length) continue;
+    if (run[0].pageSectionKind === 'points') {
+      const merged = reconcileEditedPoints(run, finalRun);
+      if (merged) reconciled.set(key, merged);
+    } else if (['faq', 'review', 'for_you'].includes(run[0].pageSectionKind) && run.length === 1 && finalRun.length === 1) {
+      const merged = reconcileEditedList(run[0], finalRun[0]);
+      if (merged) reconciled.set(key, [merged]);
+    }
+  }
   const out = (blocks || []).flatMap((b) => {
+    if (reconciled.has(b.pageSectionKey)) {
+      if (emitted.has(b.pageSectionKey)) return [];
+      emitted.add(b.pageSectionKey);
+      return reconciled.get(b.pageSectionKey).map(block => ({ ...block, elements: block.elements.map(element =>
+        element.type === 'image' ? finalizeImage(element, originalImages.find(original =>
+          original.sourceBlockId === element.sourceBlockId && original.slotKey === element.slotKey) || element) : element) }));
+    }
     if (untouched.has(b.pageSectionKey)) {
       if (emitted.has(b.pageSectionKey)) return [];
       emitted.add(b.pageSectionKey);
@@ -445,26 +665,7 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
       && block.elements.some(el => el.type === 'image' && el.y > 0) && block.elements.some(faqHeading));
     let copyChanged = false;
     const elements = (b.elements || []).map((el) => {
-      if (el.type === 'image' && el.sourceBlockId) {
-        const { genPending, genExample, genAutoSrc, genFailed, genFailReason, genFailRetryable, genFailSourceBlockId, ...rest } = el;
-        // 대기 중 자동으로 채운 미리보기(1h 서명 주소)는 임시다. 완료 병합(failedSourceIds 를
-        // 아는 호출)에서 서버 완성본에 그 컷이 없으면 저장본에 싣지 않는다 — 앞선 실패 잡의
-        // 미리보기가 한 시간 뒤 깨진 사진으로 남지 않게. 완료 결과가 이긴다(2026-09-26).
-        const tempPreview = Boolean(failedSourceIds) && Boolean(genAutoSrc) && rest.src === genAutoSrc;
-        // 셀러가 일부러 비운 자리는 되살리지 않는다 — 지운 사진이 완료 순간 말없이
-        // 돌아오면 "내가 지운 게 왜 있지"가 된다(2026-08-17 검증).
-        const src = rest.slotCleared ? null
-          : (srcById[el.sourceBlockId] || (tempPreview ? null : rest.src) || null);
-        // 실패 목록을 아는 호출(완료 병합)만 표식을 새로 판정한다. 목록 없이 부르는
-        // 재진입 병합은 이미 저장된 표식을 그대로 지킨다 — 안 그러면 다시 열 때마다
-        // '만들지 못했어요'가 평범한 빈 칸으로 둔갑한다(2026-08-17 리뷰).
-        const failure = failurePatch({ ...el, src });
-        if (failure.genFailed) return { ...rest, src: null,
-          ...(genFailReason != null ? { genFailReason } : {}),
-          ...(typeof genFailRetryable === 'boolean' ? { genFailRetryable } : {}),
-          ...(genFailSourceBlockId !== undefined ? { genFailSourceBlockId } : {}), ...failure };
-        return { ...rest, src };
-      }
+      if (el.type === 'image' && el.sourceBlockId) return finalizeImage(el);
       if (el.type === 'text' && el.copyRole && el.sourceBlockId) {
         const { genAutoText, genAutoStyle, genAutoGeometry, ...rest } = el;
         const serverCopy = copyById[el.sourceBlockId]?.[copyIdentity(el)];
@@ -489,7 +690,23 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
   });
   if (serverNotice) {
     const i = out.findIndex(noticeBlock);
-    if (i >= 0) out[i] = serverNotice; else out.push(serverNotice);
+    if (i >= 0) {
+      const id = out[i].id;
+      out[i] = { ...serverNotice, id, elements: serverNotice.elements.map((el, index) => ({ ...el, id: `${id}e${index}` })) };
+    } else out.push(serverNotice);
   }
-  return out;
+  // Reconciled cards retain editor selection IDs, while untouched server runs
+  // may have shifted ordinal IDs after compaction. Allocate only collisions.
+  const blockIds = new Set(), elementIds = new Set();
+  return out.map(block => {
+    let id = block.id;
+    while (blockIds.has(id)) id += ':final';
+    blockIds.add(id);
+    return { ...block, id, elements: block.elements.map(element => {
+      let elementId = element.id;
+      while (elementIds.has(elementId)) elementId += ':final';
+      elementIds.add(elementId);
+      return elementId === element.id ? element : { ...element, id: elementId };
+    }) };
+  });
 }

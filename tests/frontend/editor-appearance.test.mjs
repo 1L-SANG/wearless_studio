@@ -294,7 +294,7 @@ test('새 텍스트는 자동 관리 블록(정보·사이즈·세탁·AI 고지
   // 아래 빈 띠 대신 위쪽(80)에 둔다.
   assert.match(editorSource, /isAutoManagedBlock\(bs0\[idx\]\)/);
   assert.match(editorSource, /const bs0 = latestBlocks\.current \|\| blocks/);
-  assert.match(editorSource, /const roomBelow = \(block\.h \|\| 220\) - contentBottom/);
+  assert.match(editorSource, /const roomBelow = getBlockRenderHeight\(block\) - contentBottom/);
   assert.match(editorSource, /contentBottom > 0 && roomBelow >= 20 \? contentBottom \+ 32 : 80/);
   assert.match(infoPresetsSource, /export function isAutoManagedBlock/);
 });

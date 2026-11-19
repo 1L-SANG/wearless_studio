@@ -1816,6 +1816,7 @@ _SERVER_OWNED_ANALYSIS_KEYS = (
     "featureCopy",
     "featureSuggestions",
     "partDescriptionCopy",
+    "pageCopy",
     "confirmedGptProductEvidence",
     "detailRecommendations",
     "garmentColorEvidence",

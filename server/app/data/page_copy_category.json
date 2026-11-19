@@ -1,0 +1,160 @@
+{
+  "_about": "REPORT_CATEGORY.md의 13품목 요약에서 함께 입는 옷만 옮긴다. 종류 미지정, 상황, 장점, 상품 수는 제외한다.",
+  "rows": [
+    {
+      "name": "셔츠",
+      "lookup_words": [
+        "셔츠",
+        "shirt"
+      ],
+      "pairings": [
+        "가디건",
+        "데님",
+        "니트 베스트"
+      ]
+    },
+    {
+      "name": "블라우스",
+      "lookup_words": [
+        "블라우스",
+        "blouse"
+      ],
+      "pairings": [
+        "스커트",
+        "슬랙스",
+        "가디건"
+      ]
+    },
+    {
+      "name": "티셔츠",
+      "lookup_words": [
+        "티셔츠",
+        "tshirt",
+        "t-shirt"
+      ],
+      "pairings": [
+        "가디건"
+      ]
+    },
+    {
+      "name": "니트",
+      "lookup_words": [
+        "니트",
+        "스웨터",
+        "knit",
+        "sweater"
+      ],
+      "pairings": [
+        "슬리브리스",
+        "데님",
+        "셔츠"
+      ]
+    },
+    {
+      "name": "맨투맨·후드",
+      "lookup_words": [
+        "맨투맨",
+        "후드",
+        "sweatshirt",
+        "hoodie"
+      ],
+      "pairings": [
+        "데님",
+        "팬츠·조거 등",
+        "스커트"
+      ]
+    },
+    {
+      "name": "가디건",
+      "lookup_words": [
+        "가디건",
+        "cardigan"
+      ],
+      "pairings": [
+        "데님",
+        "스커트"
+      ]
+    },
+    {
+      "name": "재킷",
+      "lookup_words": [
+        "재킷",
+        "자켓",
+        "jacket"
+      ],
+      "pairings": [
+        "코트",
+        "니트"
+      ]
+    },
+    {
+      "name": "코트",
+      "lookup_words": [
+        "코트",
+        "coat"
+      ],
+      "pairings": [
+        "스커트",
+        "데님"
+      ]
+    },
+    {
+      "name": "패딩",
+      "lookup_words": [
+        "패딩",
+        "padding"
+      ],
+      "pairings": []
+    },
+    {
+      "name": "슬랙스",
+      "lookup_words": [
+        "슬랙스",
+        "slacks"
+      ],
+      "pairings": [
+        "동일 세트 상품",
+        "블라우스",
+        "셔츠"
+      ]
+    },
+    {
+      "name": "데님",
+      "lookup_words": [
+        "데님",
+        "청바지",
+        "jeans",
+        "denim"
+      ],
+      "pairings": [
+        "니트",
+        "티셔츠",
+        "블라우스"
+      ]
+    },
+    {
+      "name": "스커트",
+      "lookup_words": [
+        "스커트",
+        "치마",
+        "skirt"
+      ],
+      "pairings": [
+        "니트",
+        "블라우스",
+        "가디건"
+      ]
+    },
+    {
+      "name": "원피스",
+      "lookup_words": [
+        "원피스",
+        "dress"
+      ],
+      "pairings": [
+        "팬츠·조거 등",
+        "블라우스"
+      ]
+    }
+  ]
+}
