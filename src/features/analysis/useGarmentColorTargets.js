@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api/index.js';
+import { alphaBoundsFromPixels } from '@/lib/outfitImageBounds.js';
 import { ZERO_SLIDERS, createTonePreview, isZeroSliders, normalizeSliders, opaqueMedianSrgb8, sameSliders } from '@/lib/garmentColorTone.js';
 
 const PREVIEW_MAX_SIDE = 560;
@@ -18,13 +19,10 @@ async function decodePreview(src) {
   context.drawImage(bitmap, 0, 0, width, height);
   bitmap.close?.();
   const full = context.getImageData(0, 0, width, height);
-  // 보드와 비교 칸에 옷이 꽉 차게 투명한 여백을 잘라 낸다.
-  let left = width, top = height, right = -1, bottom = -1;
-  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
-    if (full.data[(y * width + x) * 4 + 3] < 8) continue;
-    if (x < left) left = x; if (x > right) right = x; if (y < top) top = y; if (y > bottom) bottom = y;
-  }
-  const imageData = right < 0 ? full : context.getImageData(left, top, right - left + 1, bottom - top + 1);
+  // 보드가 옷 그림 칸을 잡는 규칙(alphaBoundsFromPixels)과 같게 여백을 잘라 칸에 꽉 차게 한다.
+  const bounds = alphaBoundsFromPixels(full.data, width, height);
+  const imageData = bounds ? context.getImageData(Math.round(bounds.x * width), Math.round(bounds.y * height),
+    Math.max(1, Math.round(bounds.w * width)), Math.max(1, Math.round(bounds.h * height))) : full;
   return { preview: createTonePreview(imageData), median: opaqueMedianSrgb8(imageData) };
 }
 
