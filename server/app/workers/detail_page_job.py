@@ -2961,12 +2961,16 @@ async def run_detail_page_job(app, job: dict) -> None:
                         raise ValueError("corrected cut measurements unavailable")
                     return {"width": width, "height": height, **contrast}
 
-                staged_targets, color_target_report = await garment_color_target_finish.stage(
-                    app, job, sliders=color_target_sliders, fronts=color_target_fronts,
-                    block_colors=block_colors, assets=cut_assets, results=cut_results,
-                    clothing_type=clothing_type, sub_category=analysis.get("subCategory"),
-                    stored_outputs=stored_outputs, measure_contrast=measure_contrast,
-                )
+                async with pool.connection() as conn:
+                    renewed = await repo.renew_job_lease(conn, job_id, lease_token)
+                    await conn.commit()
+                if renewed:
+                    staged_targets, color_target_report = await garment_color_target_finish.stage(
+                        app, job, sliders=color_target_sliders, fronts=color_target_fronts,
+                        block_colors=block_colors, assets=cut_assets, results=cut_results,
+                        clothing_type=clothing_type, sub_category=analysis.get("subCategory"),
+                        stored_outputs=stored_outputs, measure_contrast=measure_contrast,
+                    )
             except Exception as exc:
                 log.warning("garment color target stage failed for job %s: %s", job_id, type(exc).__name__)
 

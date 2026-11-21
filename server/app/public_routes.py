@@ -325,6 +325,10 @@ async def garment_color_target_status(request: Request):
 
 
 async def _garment_color_form(request):
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type != "multipart/form-data":
+        raise _bad_request("invalid_input", "상품 사진과 옷 종류를 다시 확인해 주세요.")
+
     async def bounded_stream():
         total = 0
         async for chunk in request.stream():
@@ -351,6 +355,8 @@ async def _garment_color_form(request):
         data = await image.read(MAX_UPLOAD_BYTES + 1)
         if len(data) > MAX_UPLOAD_BYTES:
             raise _bad_request("file_too_large", "사진 한 장은 25MB보다 작아야 해요.")
+        if _detected_image_mime(data) is None:
+            raise _bad_request("invalid_image_content", "실제 이미지 파일만 올려주세요.")
         return data, clothing_type, sub_category
     finally:
         await form.close()

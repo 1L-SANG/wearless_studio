@@ -1,6 +1,6 @@
 import asyncio
 from io import BytesIO
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import numpy as np
 import pytest
@@ -70,8 +70,12 @@ def test_deep_shadows_keep_full_tone_and_different_chromaticity_is_protected():
     np.testing.assert_array_equal(result[2, 3:5], rgba[2, 3:5])
 
 
-@pytest.mark.parametrize("enabled,has_target,crash", [(False, True, False), (True, False, False), (True, True, True)])
-def test_worker_finishes_when_color_stage_is_disabled_empty_or_raises(monkeypatch, enabled, has_target, crash):
+@pytest.mark.parametrize(("enabled", "has_target", "owns_lease"), [
+    (False, True, True), (True, False, True), (True, True, False), (True, True, True),
+])
+def test_worker_checks_lease_before_color_stage_and_keeps_originals_on_stage_failure(
+    monkeypatch, enabled, has_target, owns_lease,
+):
     settings = make_settings(gemini_api_key="x", r2_bucket="b", garment_color_target_enabled=enabled)
     app = fake_worker_app(settings)
     product = {"name": "상품", "clothing_type": "top",
@@ -80,9 +84,16 @@ def test_worker_finishes_when_color_stage_is_disabled_empty_or_raises(monkeypatc
     analysis = {tone.SLIDERS_KEY: {"version": 1, "colors": {"c": SLIDERS if has_target else ZERO}}}
     original = {"asset_id": "cut", "key": "p"}
     results = [{"blockId": "p", "imageUrl": "/v1/assets/cut/file"}]
-    finalized = AsyncMock(return_value={"editor_blocks": [], "available": 0})
+    finalized = AsyncMock(return_value={"editor_blocks": [], "available": 0} if owns_lease else None)
     failed = AsyncMock()
-    stage = AsyncMock(side_effect=RuntimeError("segmentation unavailable") if crash else None)
+    renew = AsyncMock(return_value=owns_lease)
+    renewals_at_stage_start = []
+
+    async def fail_stage(*args, **kwargs):
+        renewals_at_stage_start.append(renew.await_count)
+        raise RuntimeError("segmentation unavailable")
+
+    stage = AsyncMock(side_effect=fail_stage)
     monkeypatch.setattr(worker.repo, "get_project", AsyncMock(return_value={}))
     monkeypatch.setattr(worker.repo, "get_product", AsyncMock(return_value=product))
     monkeypatch.setattr(worker.repo, "get_storyboard", AsyncMock(return_value=storyboard))
@@ -101,9 +112,17 @@ def test_worker_finishes_when_color_stage_is_disabled_empty_or_raises(monkeypatc
     monkeypatch.setattr(worker.repo, "finalize_detail_page_success", finalized)
     monkeypatch.setattr(worker.repo, "finalize_detail_page_failure", failed)
     monkeypatch.setattr(finish, "stage", stage)
-    asyncio.run(worker.run_detail_page_job(app, worker_job()))
-    assert stage.await_count == int(crash)
-    if crash:
+    monkeypatch.setattr(worker.repo, "renew_job_lease", renew)
+    job = worker_job()
+    asyncio.run(worker.run_detail_page_job(app, job))
+    if enabled and has_target:
+        renew.assert_awaited_once_with(ANY, job["id"], job["lease_token"])
+    else:
+        renew.assert_not_awaited()
+    should_stage = enabled and has_target and owns_lease
+    assert stage.await_count == int(should_stage)
+    if should_stage:
+        assert renewals_at_stage_start == [1]
         assert stage.await_args.kwargs["sliders"] == {"c": SLIDERS}
         assert stage.await_args.kwargs["fronts"] == {"c": "a"}
     finalized.assert_awaited_once()

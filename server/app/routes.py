@@ -1497,6 +1497,9 @@ async def project_garment_color_source(request: Request, project_id: str, user_i
         fronts = garment_color_target_sources.fronts_by_color(product)
         if color_id not in fronts:
             raise _not_found()
+        rate_limit.enforce(
+            getattr(request.app.state, "user_garment_color_source_limiter", None), rate_limit.user_key(user_id),
+        )
         analysis = await repo.get_analysis(conn, project_id)
         data = await garment_color_target_sources.read_front(
             conn, getattr(request.app.state, "r2", None), user_id=user_id,
