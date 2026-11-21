@@ -3,6 +3,7 @@ from io import BytesIO
 from unittest.mock import AsyncMock
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from app import public_routes, repo, routes
@@ -25,6 +26,19 @@ def test_status_and_disabled_source_routes(client, make_token):
     assert client.post(PROJECT_SOURCE, headers=auth_headers(make_token)).status_code == 404
     enable(client)
     assert client.get(STATUS).json() == {"enabled": True, "toneVersion": "garment-color-v1"}
+
+
+@pytest.mark.parametrize(("scope", "hourly", "daily"), [("public", 40, 120), ("user", 60, 200)])
+def test_color_source_limits_use_configured_hourly_and_daily_budgets(client, scope, hourly, daily):
+    limiter = getattr(client.app.state, f"{scope}_garment_color_source_limiter")
+    for request_index in range(daily):
+        now = (request_index // hourly) * 3601
+        assert limiter.allow("seller", now=now)
+        if (request_index + 1) % hourly == 0:
+            assert not limiter.allow("seller", now=now)
+    assert not limiter.allow("seller", now=now + 3601)
+    assert limiter.allow("another_seller", now=now)
+    assert limiter.allow("seller", now=24 * 3600 + 1)
 
 
 def test_public_source_rate_limits_before_segmentation(client, monkeypatch):
