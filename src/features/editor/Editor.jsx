@@ -26,6 +26,7 @@ import { selectFrameShopName } from '@/lib/frameShopName.js';
 import { storyboardShopOwner, storyboardShopQueryOptions } from '@/features/storyboard/storyboardShopName.js';
 import { useTitlePlatePreview } from './editorTitlePlatePreview.js';
 import { fitTitlePlateBlocks } from './editorTitlePlateFit.js';
+import { isIntroAvatarElement } from './editorIntroAvatar.js';
 import { hasTitlePlate } from '../../lib/pageTemplates/titlePlate.js';
 import { editedTextElement } from './editorTextEdit.js';
 import { useEditedTemplateContrast } from './useEditedTemplateContrast.js';
@@ -63,7 +64,7 @@ import { thumbUrl } from '@/lib/imageCdn.js';
 import { classifyEditorLoadError } from '@/features/editor/editorLoadError.js';
 import { MAX_WARDROBE_UPLOADS, WARDROBE_UPLOAD_CONCURRENCY, runWithConcurrency } from '@/features/editor/editorUpload.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
-import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockContentBottom, getBlockRenderHeight, getHiddenExportElementIds, getBlockExportElements, isEmptyTextElement, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
+import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockContentBottom, getBlockRenderHeight, getHiddenExportElementIds, getBlockExportElements, getBlockExportLayout, isEmptyTextElement, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import {
   buildExportSummary,
   exportBlockPng,
@@ -279,7 +280,7 @@ function ImageDropGuide({ scale, width, height, rotate = 0 }) {
 
 /* render-only element (selection + inline text edit). Position dragging enters the
    shared pointer engine; the single <Moveable> owns only resize/rotate controls. */
-function CanvasElement({ el, blockId, exportHidden = false, titlePlate = false, titlePlateElements, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onElementDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart, imageWidth = null, canvasAiJob, onCanvasAiCancel, onCanvasAiDismiss }) {
+function CanvasElement({ el, blockId, exportHidden = false, titlePlate = false, titlePlateElements, templateBlock, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onElementDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart, imageWidth = null, canvasAiJob, onCanvasAiCancel, onCanvasAiDismiss }) {
   /* imageWidth = 이 렌더가 실제로 필요한 이미지 폭(px). 미니 미리보기처럼 작게 그리는
      곳만 넘긴다 — 캔버스 본체와 전체화면 미리보기는 넘기지 않는다(그쪽이 내보내기 캡처
      원본이자 셀러 최종 확인 화면이라 원본 해상도를 지켜야 한다). */
@@ -425,7 +426,7 @@ function CanvasElement({ el, blockId, exportHidden = false, titlePlate = false, 
   // deps는 높이에 실제로 영향 주는 필드만 — onPatch(매 렌더 재생성)를 넣으면 마퀴·줌마다
   // 전 텍스트가 강제 리플로우를 밟는다.
   const hSyncArmed = useRef(false);
-  const previewTitlePlate = useTitlePlatePreview(el, titlePlateElements, ref, editing);
+  const previewTitlePlate = useTitlePlatePreview(el, titlePlateElements, ref, editing, templateBlock);
   const contrastElement = useEditedTemplateContrast(el, ref, { editing, preview, plated: titlePlate });
   const s0 = el.style || {};
   useLayoutEffect(() => {
@@ -453,9 +454,12 @@ function CanvasElement({ el, blockId, exportHidden = false, titlePlate = false, 
     focusEditableAtEnd(isSpeechBubbleElement(el) ? textRef.current : ref.current, fresh);
   }, [editing, el.hidden, el.id, el.shape, el.type, preview]);
 
-  if (el.hidden || preview && exportHidden) return null;
+  // Retain the conditional intro avatar in the editor DOM for the typing preview.
+  const retainedCopy = el.type === 'text' && el.copyRole && el.groupId?.startsWith('template-copy:');
+  if (el.hidden && (preview || !(isIntroAvatarElement(el) || retainedCopy)) || preview && exportHidden) return null;
 
   const base = {
+    display: el.hidden ? 'none' : undefined,
     left: el.x, top: el.y, width: el.w, height: el.h,
     transform: el.rotate ? `rotate(${el.rotate}deg)` : undefined, opacity: el.opacity ?? 1,
     pointerEvents: el.locked ? 'none' : undefined,
@@ -769,6 +773,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, pend
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
   const blockH = getBlockRenderHeight(block);
   const hiddenExportIds = getHiddenExportElementIds(block);
+  const exportLayout = getBlockExportLayout(block);
   const containsPendingHeading = block.elements.some(el => pendingHeadingIds?.has(el.id));
   // 블록은 요소 선택의 좌표계로 계속 활성 상태를 유지하되, 파란 선택 링과 높이 손잡이는
   // 블록 자체만 고른 경우에만 보인다. 다중 요소 선택을 부모 블록 선택처럼 보이게 하지 않는다.
@@ -847,6 +852,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, pend
     <div className={`canvas-block${blockSelected ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
       data-blockid={block.id}
       data-export-height={getBlockRenderHeight(block, { forExport: true })}
+      data-export-layout={Object.keys(exportLayout).length ? JSON.stringify(exportLayout) : undefined}
       /* 고른 뒤 전파를 멈춘다 — 캔버스 바닥의 onClick 이 매 클릭마다 선택을 지우므로,
          멈추지 않으면 누르는 동안만 잡혔다가 손을 떼는 순간 풀린다. */
       onClick={(e) => {
@@ -911,7 +917,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, pend
       <div className="block-clip">
         {block.elements.map((el) => (
           (crop && crop.elId === el.id) ? null : (
-            <CanvasElement key={el.id} el={pendingHeadingIds?.has(el.id) ? { ...el, locked: true } : el} exportHidden={hiddenExportIds.has(el.id)} blockId={block.id} titlePlate={hasTitlePlate(el, block.elements)} titlePlateElements={block.elements} scale={scale} preview={false}
+            <CanvasElement key={el.id} el={pendingHeadingIds?.has(el.id) ? { ...el, locked: true } : el} exportHidden={hiddenExportIds.has(el.id)} blockId={block.id} titlePlate={hasTitlePlate(el, block.elements)} titlePlateElements={block.elements} templateBlock={block} scale={scale} preview={false}
               selected={selEls && selEls.includes(el.id)} selectionCount={selEls?.length || 0} editing={editEl === el.id}
               onSelect={(e, additive) => onSelectEl(block.id, e, additive)}
               onSelectBlock={() => onSelectBlock(block.id)} onPickBelowText={pickBelowBlankText}
@@ -3147,7 +3153,7 @@ export function Editor() {
     // 블록 바닥까지 차 있으면(프레임 템플릿의 풀블리드 아트 등) 아래에 둘 자리가 없다는
     // 뜻이라 예전처럼 위쪽(80)에 둔다 — 블록 밖 빈 띠에 보이지 않는 글자를 만들지 않는다.
     const contentBottom = getBlockContentBottom(block);
-    const roomBelow = (block.h || 220) - contentBottom;
+    const roomBelow = getBlockRenderHeight(block) - contentBottom;
     const y = contentBottom > 0 && roomBelow >= 20 ? contentBottom + 32 : 80;
     const el = { ...buildTextPresetElement(preset), y };
     FRESH_TEXT_IDS.add(el.id);   // 첫 편집에서 기본 문구가 통째로 선택된다

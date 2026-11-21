@@ -532,7 +532,7 @@ def _to_claude_schema(node: dict) -> dict:
     return out
 
 
-def _claude_body(model, prompt, images, schema, effort, system_prompt, max_tokens, metadata=None):
+def _claude_body(model, prompt, images, schema, effort, system_prompt, max_tokens, metadata=None, thinking=None):
     content = [{"type": "text", "text": prompt}]
     sent_image_hashes = []
     for im in images:
@@ -547,6 +547,10 @@ def _claude_body(model, prompt, images, schema, effort, system_prompt, max_token
             "output_config": {"effort": effort, "format": {
                 "type": "json_schema", "schema": _to_claude_schema(schema)}},
             "messages": [{"role": "user", "content": content}]}
+    if thinking is not None:
+        if not isinstance(thinking, dict) or thinking.get("type") != "adaptive" or set(thinking) - {"type", "display"}:
+            raise ValueError("Invalid Claude adaptive thinking config")
+        body["thinking"] = copy.deepcopy(thinking)
     if system_prompt is not None:
         body["system"] = system_prompt
     if len(json.dumps(body, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()) > _CLAUDE_MAX_REQUEST_BYTES:
@@ -593,13 +597,14 @@ def _parse_claude_response(res, metadata, requested_model):
 
 async def _call_claude(settings: Settings, model: str, prompt: str,
                        images: list[InlineImage], schema: dict, timeout: float, *, effort,
-                       metadata=None, system_prompt=None, max_tokens=32000) -> dict:
+                       metadata=None, system_prompt=None, max_tokens=32000, thinking=None) -> dict:
     """QC-only Messages call; never joins the analysis provider fallback order."""
     key = getattr(settings, "anthropic_api_key", "")
     if not isinstance(key, str) or not key.strip():
         raise VisionError("ANTHROPIC_API_KEY 미설정", unknown_cause="configuration")
     try:
-        body = await run_cpu_bound(_claude_body, model, prompt, images, schema, effort, system_prompt, max_tokens, metadata)
+        args = (model, prompt, images, schema, effort, system_prompt, max_tokens, metadata)
+        body = await run_cpu_bound(_claude_body, *args, *(() if thinking is None else (thinking,)))
     except (ValueError, TypeError, OSError) as exc:
         raise VisionError("Claude 요청 입력이 잘못됐어요.", unknown_cause="invalid_input",
                           provider_error_type=f"local:{type(exc).__name__}") from exc
@@ -685,6 +690,8 @@ def _gemini_body(
     thinking_level: str,
     max_output_tokens=None,
     system_prompt: str | None = None,
+    thinking_budget=None,
+    thinking_config: dict | None = None,
 ) -> dict:
     parts: list = [{"text": prompt}]
     for im in images:
@@ -693,8 +700,19 @@ def _gemini_body(
         "responseMimeType": "application/json",
         "responseSchema": _to_gemini_schema(schema),
     }
-    if thinking_level != "off":
-        gen["thinkingConfig"] = {"thinkingLevel": thinking_level}
+    if thinking_config is not None:
+        if not isinstance(thinking_config, dict):
+            raise ValueError("Invalid Gemini thinking config")
+        # Provider-specific keys and values belong to caller configuration.
+        # An explicit empty mapping also replaces legacy/default thinking knobs.
+        gen["thinkingConfig"] = copy.deepcopy(thinking_config)
+    else:
+        if thinking_level != "off":
+            gen["thinkingConfig"] = {"thinkingLevel": thinking_level}
+        if thinking_budget is not None:
+            if type(thinking_budget) is not int or thinking_budget < 0:
+                raise ValueError("Invalid Gemini thinking budget")
+            gen["thinkingConfig"] = {"thinkingBudget": thinking_budget}
     if max_output_tokens is not None:
         if type(max_output_tokens) is not int or max_output_tokens <= 0:
             raise ValueError("Invalid Gemini output limit")
@@ -743,7 +761,8 @@ def _parse_gemini_response(res, metadata=None, requested_model=None) -> dict:
 async def _call_gemini(settings: Settings, model: str, prompt: str,
                        images: list[InlineImage], schema: dict, timeout: float,
                        thinking_level: str | None = None, *, max_output_tokens=None, metadata=None,
-                       system_prompt: str | None = None) -> dict:
+                       system_prompt: str | None = None, thinking_budget=None,
+                       thinking_config: dict | None = None) -> dict:
     """Gemini generateContent — responseSchema + responseMimeType json. 텍스트 파트 합쳐 파싱."""
     if not settings.gemini_api_key:
         raise VisionError("GEMINI_API_KEY 미설정")
@@ -752,7 +771,10 @@ async def _call_gemini(settings: Settings, model: str, prompt: str,
     #  2026-08-14 gemini-3.7-flash 로 교체하며 low/medium 둘 다 200 재확인).
     # 콜별 오버라이드(thinking_level 인자) > 전역 설정 — AG-08 특징 발굴은 medium (후보 선별).
     level = thinking_level or settings.analysis_thinking_level
-    body = await run_cpu_bound(_gemini_body, prompt, images, schema, level, max_output_tokens, system_prompt)
+    args = (prompt, images, schema, level, max_output_tokens, system_prompt)
+    extra = ((thinking_budget, thinking_config) if thinking_config is not None
+             else () if thinking_budget is None else (thinking_budget,))
+    body = await run_cpu_bound(_gemini_body, *args, *extra)
     async with httpx.AsyncClient(timeout=timeout) as client:
         res = await client.post(
             _GEMINI_URL.format(model=model), json=body,
@@ -788,6 +810,10 @@ async def analyze_with_fallback(
     order: list[str] | None = None,
     reasoning_effort: str | None = None,
     provider_prompts: dict[str, tuple[str | None, str]] | None = None,
+    metadata: dict | None = None,
+    max_output_tokens: int | None = None,
+    thinking_budget: int | None = None,
+    thinking_config: dict | None = None,
 ) -> tuple[dict, str]:
     """순서대로 provider 시도 → (파싱된 raw dict, 사용한 provider). 전부 실패 시 VisionError.
 
@@ -800,6 +826,7 @@ async def analyze_with_fallback(
     system_prompt는 opt-in privileged 정책이며 미지정 호출의 body와 옵션은 유지한다.
     order는 호출별 provider 순서이며 None이면 전역 순서를 따른다.
     reasoning_effort는 지정한 경우에만 GPT에 전달한다.
+    thinking_config는 Gemini thinkingConfig 원문이며 기존 level/budget보다 우선한다.
     provider_prompts는 opt-in (developer 지시, user 문구) 오버라이드다.
     미지정 공급자는 기존 system_prompt와 prompt를 그대로 사용한다."""
     timeout = settings.analysis_timeout_seconds if timeout_seconds is None else timeout_seconds
@@ -820,6 +847,14 @@ async def analyze_with_fallback(
         started = time.perf_counter()
         try:
             complete_kwargs = {"metadata": {}} if require_complete_envelope else {}
+            if metadata is not None:
+                complete_kwargs["metadata"] = metadata
+            if max_output_tokens is not None:
+                complete_kwargs["max_completion_tokens" if name == "gpt" else "max_output_tokens"] = max_output_tokens
+            if name == "gemini" and thinking_budget is not None:
+                complete_kwargs["thinking_budget"] = thinking_budget
+            if name == "gemini" and thinking_config is not None:
+                complete_kwargs["thinking_config"] = thinking_config
             provider_system, provider_prompt = (provider_prompts or {}).get(name, (system_prompt, prompt))
             if provider_system is not None:
                 complete_kwargs["system_prompt"] = provider_system

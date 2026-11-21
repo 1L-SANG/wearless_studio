@@ -46,9 +46,15 @@ def _role_pattern(role):
     return re.sub(r"\.\d+(?=\.|$)", ".n", str(role).replace("{direction}", "front"))
 
 
-def text_slot_for_role(kind, role):
+def text_slot_for_role(kind, role, *, template_id=None, seller_comment=""):
     pattern = _role_pattern(role)
-    return next((slot for slot in (kind or {}).get("textSlots", []) if slot["copyRole"] == pattern), None)
+    slot = next((slot for slot in (kind or {}).get("textSlots", []) if slot["copyRole"] == pattern), None)
+    if not slot:
+        return None
+    maximum = (slot.get("maxCharsByTemplate") or {}).get(template_id, slot.get("maxChars"))
+    if bounds := slot.get("maxCharsFromSeller"):
+        maximum = min(bounds["max"], max(bounds["min"], len(str(seller_comment or ""))))
+    return {**slot, "maxChars": maximum}
 
 
 def _validate_photo_slots(template_id, section, check):
@@ -136,6 +142,12 @@ def validate_catalog(catalog):
                 check(slot.get("factPath") in FACT_PATHS or (role == "notice" and slot.get("factPath") is None and slot.get("unavailable") is True), f"factPath {key}.{role}")
             if slot.get("source") in ("ai", "aiDraft", "seller+ai"):
                 check(_positive(slot.get("maxChars")), f"maxChars {key}.{role}")
+            if "maxCharsByTemplate" in slot:
+                overrides = slot["maxCharsByTemplate"]
+                check(isinstance(overrides, dict) and all(tid in ("emo", "show") and _positive(value) for tid, value in overrides.items()), f"maxCharsByTemplate {key}.{role}")
+            if "maxCharsFromSeller" in slot:
+                bounds = slot["maxCharsFromSeller"]
+                check(isinstance(bounds, dict) and _positive(bounds.get("min")) and _positive(bounds.get("max")) and bounds["max"] >= bounds["min"], f"maxCharsFromSeller {key}.{role}")
             count = slot.get("itemCount")
             if count:
                 check(_positive(count.get("default")) and count.get("max", 0) >= count["default"], f"itemCount {key}.{role}")
@@ -242,6 +254,10 @@ def validate_catalog(catalog):
                 check(node.get("type") == "overlay" and isinstance(paint, dict)
                       and isinstance(paint.get("color"), str) and (HEX.fullmatch(paint["color"]) or HEX.fullmatch(catalog["neutralColors"].get(paint["color"], ""))) and _opacity(paint.get("opacity"))
                       and (paint.get("heightRatio") is None or _positive(paint["heightRatio"]) and paint["heightRatio"] <= 1)
+                      and (paint.get("startOpacity") is None or _opacity(paint["startOpacity"]) and paint["startOpacity"] <= paint["opacity"])
+                      and (paint.get('midStop') is None or paint.get('gradient') and isinstance(paint['midStop'], dict)
+                           and _positive(paint['midStop'].get('offset')) and paint['midStop']['offset'] < 1
+                           and _opacity(paint['midStop'].get('opacity')) and (paint.get('startOpacity') or 0) <= paint['midStop']['opacity'] <= paint['opacity'])
                       and (paint.get("gradient") is None or isinstance(paint["gradient"], bool)), f"overlay scrim {key}")
             if node.get("fillOpacity") is not None:
                 check(node.get("type") in ("panel", "list") and _opacity(node["fillOpacity"]), f"fill opacity {key}")

@@ -178,6 +178,7 @@ test('frame footer requires an explicit trimmed shop name and never falls back t
 test('shop name does not replace the legacy profile initial or seller name', () => {
   const input = inputFor(1, 'COLUMN', 1);
   input.profile = { display_name: '김민지' }; input.shopName = '공개 상점';
+  input.analysis = { mdComment: '셀러가 소개하는 상품이에요.' };
   Object.assign(input.storyboard[0], { id: 'intro', source: 'text', pageSectionKey: 'emo.intro', pageSectionKind: 'intro', pageDesignId: 'T01-D07' });
   const all = section(input).flatMap(block => block.elements);
   assert.ok(all.some(el => el.type === 'text' && !el.copyRole && el.text === '김'));

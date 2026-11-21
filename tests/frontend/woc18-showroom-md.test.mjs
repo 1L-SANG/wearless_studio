@@ -21,14 +21,16 @@ function inputFor(templateId, mdComment = memo, body = 'AI 소개 본문') {
 }
 const introOf = page => page.find(block => block.pageSectionKind === 'intro');
 
-for (const templateId of ['emo', 'show']) test(`WOC18 actual ${templateId} default intro includes seller MD although hidden from the storyboard outline`, () => {
+for (const templateId of ['emo', 'show']) test(`WOC18 actual ${templateId} default intro includes polished seller MD although hidden from the storyboard outline`, () => {
   const input = inputFor(templateId);
   const source = input.storyboard.find(block => block.pageSectionKind === 'intro');
   assert.equal(source.pageDesignId, templateId === 'show' ? 'T06-D01' : 'T01-D07');
   assert.equal(visibleSectionRuns(input.storyboard).some(run => run.kind === 'intro'), false);
   const body = introOf(assemblePage(input)).elements.filter(element => element.copyRole === 'body');
   assert.equal(body.length, 1);
-  assert.equal(body[0].text, memo);
+  assert.equal(body[0].text, 'AI 소개 본문');
+  assert.equal(body[0].aiDraft, undefined);
+  assert.equal(input.analysis.mdComment, memo);
   assert.equal(body[0].sourceBlockId, source.id);
 });
 
@@ -36,7 +38,8 @@ test('WOC23 showroom specification board leads with the product name and seller 
   const block = introOf(assemblePage(inputFor('show')));
   const name = block.elements.find(el => el.copyRole === 'name'), body = block.elements.find(el => el.copyRole === 'body');
   assert.equal(name.text, product.name); assert.equal(name.style.size, 54); assert.equal(name.style.weight, 700);
-  assert.equal(body.style.size, 30); assert.equal(body.text, memo);
+  assert.equal(body.style.size, 30); assert.equal(body.text, 'AI 소개 본문');
+  assert.equal(body.aiDraft, undefined);
   assert.equal(block.bg, catalog.canvasColor);
   assert.deepEqual([name.x, name.w, name.style.align], [56, 888, 'left']);
   assert.equal(body.y, name.y + name.h + 40);

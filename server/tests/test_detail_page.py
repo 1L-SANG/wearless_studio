@@ -3034,9 +3034,10 @@ def test_run_detail_page_job_uses_page_parts_and_preserves_product_name(monkeypa
         captured["cut_spec"] = cut_spec
         return b"IMG", "image/png"
 
-    async def fake_parts(settings, points, parts, product_row, analysis_row, *, timeout_seconds=None):
-        captured["feature_points"] = points
-        captured["part_labels"] = parts
+    async def fake_parts(settings, storyboard, product_row, analysis_row, *, seed, timeout_seconds=None):
+        captured["feature_points"] = analysis_row["sellingPoints"]
+        captured["part_labels"] = [slot["point"] for slot in dpj.page_copy.slots_for_page(
+            storyboard, product_row, analysis_row) if slot["target"] == "part"]
         captured["feature_timeout"] = timeout_seconds
         return {"featureCopy": [{"point": "촉감", "desc": "특징 설명"}],
                 "partDescriptionCopy": [{"point": "목선", "desc": "목선 설명"}]}
@@ -3070,13 +3071,13 @@ def test_run_detail_page_job_uses_page_parts_and_preserves_product_name(monkeypa
 
     monkeypatch.setattr(dpj.detail_shot_runtime, "generate", checked_detail)
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
-    monkeypatch.setattr(dpj.page_part_copy, "generate", fake_parts)
+    monkeypatch.setattr(dpj.page_copy, "generate", fake_parts)
     monkeypatch.setattr(dpj.repo, "save_analysis", fake_save_analysis)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
-    asyncio.run(dpj.run_detail_page_job(_app(make_settings(r2_bucket="b")), _job(reserved=1)))  # ai 블록 1개 × 단가 1
+    asyncio.run(dpj.run_detail_page_job(_app(make_settings(r2_bucket="b", gemini_api_key="fake")), _job(reserved=1)))  # fake page provider
     assert captured["charge"] == 1
     assert captured["reserved"] == 1
     expected_name = "셀러가 지은 니트" if saved_name == "셀러가 지은 니트" else "골지 데일리 니트"
@@ -3086,7 +3087,7 @@ def test_run_detail_page_job_uses_page_parts_and_preserves_product_name(monkeypa
     assert captured["cut_spec"]["cutType"] == "product"
     assert captured["cut_spec"]["shot"] == "detail"
     assert captured["feature_points"] == ["촉감"]
-    assert captured["feature_timeout"] == 120
+    assert 0 < captured["feature_timeout"] <= 90
     assert captured["part_labels"] == ["목선"]
     assert captured["copy_patch"] == {
         "featureCopy": [{"point": "촉감", "desc": "특징 설명"}],
@@ -3209,9 +3210,9 @@ def test_striped_detail_page_never_publishes_uploaded_detail_photo(monkeypatch):
         captured["detail_calls"] += 1
         return dpj.InlineImage("image/png", b"POLISHED-DETAIL"), {"passed": True}
 
-    async def feature(settings, points, product_row, analysis_row, *, timeout_seconds=None):
-        captured["feature_calls"].append((points, product_row.get("name"), timeout_seconds))
-        return []
+    async def feature(settings, storyboard_rows, product_row, analysis_row, *, seed, timeout_seconds=None):
+        captured["feature_calls"].append((analysis_row.get("sellingPoints", []), product_row.get("name"), timeout_seconds))
+        return {}
 
     def assemble(storyboard_rows, cut_results, *args, **kwargs):
         captured["cut_results"] = cut_results
@@ -3230,7 +3231,7 @@ def test_striped_detail_page_never_publishes_uploaded_detail_photo(monkeypatch):
     monkeypatch.setattr(dpj.repo, "get_analysis", analysis)
     monkeypatch.setattr(dpj.repo, "get_asset_for_user", asset)
     monkeypatch.setattr(dpj.detail_shot_runtime, "generate", detail)
-    monkeypatch.setattr(feature_copy, "generate", feature)
+    monkeypatch.setattr(dpj.page_copy, "generate", feature)
     monkeypatch.setattr(dpj.page_assembler, "assemble", assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", finalize)
     monkeypatch.setattr(dpj, "_emit", emit)
@@ -3246,7 +3247,9 @@ def test_striped_detail_page_never_publishes_uploaded_detail_photo(monkeypatch):
     assert captured["cut_results"][0]["imageUrl"] != "/v1/assets/source-detail/file"
     assert len(captured["finalize"]["cut_assets"]) == 1
     assert captured["finalize"]["charge"] == 95
-    assert captured["feature_calls"] == [([], "잔스트라이프 셔츠", 120)]
+    assert len(captured["feature_calls"]) == 1
+    assert captured["feature_calls"][0][:2] == ([], "잔스트라이프 셔츠")
+    assert 0 < captured["feature_calls"][0][2] <= 90
     assert all(payload.get("status") != "cut_passthrough" for _, payload in captured["events"])
 
 

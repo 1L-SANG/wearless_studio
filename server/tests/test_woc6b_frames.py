@@ -15,9 +15,9 @@ def input_for(count=6, layout='COLUMN', frames=2):
             for i in range(count)]
 
 
-def render(board, cuts=None, profile=None, shop_name=None):
+def render(board, cuts=None, profile=None, shop_name=None, analysis=None):
     return [block for block in engine.assemble_v4(board, cuts or [], [], {'name': '코튼 니트', 'colors': [{'id': 'base', 'isBase': True}]},
-                                                True, profile=profile, shop_name=shop_name) if block.get('pageSectionKey')]
+                                                True, profile=profile, shop_name=shop_name, analysis=analysis) if block.get('pageSectionKey')]
 
 
 def images(blocks, backdrop=False):
@@ -91,7 +91,8 @@ def test_frame_footer_only_accepts_explicit_trimmed_shop_name(shop_name, expecte
 def test_shop_name_does_not_replace_legacy_profile_initial_or_seller_name():
     board = input_for(1, frames=1)
     board[0].update(id='intro', source='text', pageSectionKey='emo.intro', pageSectionKind='intro', pageDesignId='T01-D07')
-    elements = [el for block in render(board, profile={'display_name': '김민지'}, shop_name='공개 상점') for el in block['elements']]
+    elements = [el for block in render(board, profile={'display_name': '김민지'}, shop_name='공개 상점',
+                                      analysis={'mdComment': '셀러가 소개하는 상품이에요.'}) for el in block['elements']]
     assert any(el['type'] == 'text' and not el.get('copyRole') and el['text'] == '김' for el in elements)
     assert any(el.get('copyRole') == 'who' and el['text'] == '김민지' for el in elements)
     assert not any(el.get('text') == '공개 상점' for el in elements)

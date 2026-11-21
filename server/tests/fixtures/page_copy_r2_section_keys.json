@@ -1,0 +1,1691 @@
+[
+  {
+    "case": "v2-03",
+    "seed": 1873506401947116271,
+    "slots": [
+      {
+        "id": "S1:label",
+        "key": "S1",
+        "blockId": "emo.first.text",
+        "sectionKey": "emo.first",
+        "kind": "first",
+        "role": "label",
+        "template": "emo",
+        "designId": "P01-D09",
+        "fontRole": "label",
+        "fontSize": 48,
+        "width": 888,
+        "maxWidth": 888,
+        "tracking": 0.96,
+        "maxChars": 28,
+        "group": "misc",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S2:items.0.text",
+        "key": "S2",
+        "blockId": "emo.review.text",
+        "sectionKey": "emo.review",
+        "kind": "review",
+        "role": "items.0.text",
+        "template": "emo",
+        "designId": "I09-D06",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 139.0,
+        "maxWidth": 691,
+        "tracking": 0.0,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S2:items.1.text",
+        "key": "S2",
+        "blockId": "emo.review.text",
+        "sectionKey": "emo.review",
+        "kind": "review",
+        "role": "items.1.text",
+        "template": "emo",
+        "designId": "I09-D06",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 139.0,
+        "maxWidth": 691,
+        "tracking": 0.0,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S2:items.2.text",
+        "key": "S2",
+        "blockId": "emo.review.text",
+        "sectionKey": "emo.review",
+        "kind": "review",
+        "role": "items.2.text",
+        "template": "emo",
+        "designId": "I09-D06",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 139.0,
+        "maxWidth": 691,
+        "tracking": 0.0,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S3:title",
+        "key": "S3",
+        "blockId": "emo.intro.text",
+        "sectionKey": "emo.intro",
+        "kind": "intro",
+        "role": "title",
+        "template": "emo",
+        "designId": "T01-D07",
+        "fontRole": "title",
+        "fontSize": 48,
+        "width": 626,
+        "maxWidth": 717,
+        "tracking": -0.96,
+        "maxChars": 20,
+        "group": "intro",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S3:body",
+        "key": "S3",
+        "blockId": "emo.intro.text",
+        "sectionKey": "emo.intro",
+        "kind": "intro",
+        "role": "body",
+        "template": "emo",
+        "designId": "T01-D07",
+        "fontRole": "intro",
+        "fontSize": 32,
+        "width": 626,
+        "maxWidth": 717,
+        "tracking": 0.0,
+        "maxChars": 120,
+        "group": "intro",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S4:items.0.desc",
+        "key": "S4",
+        "blockId": "emo.points.text",
+        "sectionKey": "emo.points",
+        "kind": "points",
+        "role": "items.0.desc",
+        "template": "emo",
+        "designId": "PT-PHOTO-CARD-01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 788,
+        "maxWidth": 788,
+        "tracking": 0.0,
+        "maxChars": 40,
+        "group": "points",
+        "target": "part",
+        "point": "퍼프 소매",
+        "draft": false
+      },
+      {
+        "id": "S4:items.1.desc",
+        "key": "S4",
+        "blockId": "emo.points.text",
+        "sectionKey": "emo.points",
+        "kind": "points",
+        "role": "items.1.desc",
+        "template": "emo",
+        "designId": "PT-PHOTO-CARD-01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 788,
+        "maxWidth": 788,
+        "tracking": 0.0,
+        "maxChars": 40,
+        "group": "points",
+        "target": "part",
+        "point": "앞 핀턱",
+        "draft": false
+      },
+      {
+        "id": "S5:items.0",
+        "key": "S5",
+        "blockId": "emo.for_you.text",
+        "sectionKey": "emo.for_you",
+        "kind": "for_you",
+        "role": "items.0",
+        "template": "emo",
+        "designId": "T08-D01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 395,
+        "maxWidth": 700,
+        "tracking": 0.0,
+        "maxChars": 28,
+        "group": "misc",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S5:items.1",
+        "key": "S5",
+        "blockId": "emo.for_you.text",
+        "sectionKey": "emo.for_you",
+        "kind": "for_you",
+        "role": "items.1",
+        "template": "emo",
+        "designId": "T08-D01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 395,
+        "maxWidth": 700,
+        "tracking": 0.0,
+        "maxChars": 28,
+        "group": "misc",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S5:items.2",
+        "key": "S5",
+        "blockId": "emo.for_you.text",
+        "sectionKey": "emo.for_you",
+        "kind": "for_you",
+        "role": "items.2",
+        "template": "emo",
+        "designId": "T08-D01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 395,
+        "maxWidth": 700,
+        "tracking": 0.0,
+        "maxChars": 28,
+        "group": "misc",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S5:items.3",
+        "key": "S5",
+        "blockId": "emo.for_you.text",
+        "sectionKey": "emo.for_you",
+        "kind": "for_you",
+        "role": "items.3",
+        "template": "emo",
+        "designId": "T08-D01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 395,
+        "maxWidth": 700,
+        "tracking": 0.0,
+        "maxChars": 28,
+        "group": "misc",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S6:title",
+        "key": "S6",
+        "blockId": "emo.fabric.text",
+        "sectionKey": "emo.fabric",
+        "kind": "fabric",
+        "role": "title",
+        "template": "emo",
+        "designId": "T03-D01",
+        "fontRole": "title",
+        "fontSize": 48,
+        "width": 888,
+        "maxWidth": 888,
+        "tracking": -0.96,
+        "maxChars": 20,
+        "group": "fabric",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S6:body",
+        "key": "S6",
+        "blockId": "emo.fabric.text",
+        "sectionKey": "emo.fabric",
+        "kind": "fabric",
+        "role": "body",
+        "template": "emo",
+        "designId": "T03-D01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 428,
+        "maxWidth": 428,
+        "tracking": 0.0,
+        "maxChars": 60,
+        "group": "fabric",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S8:items.0.q",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.0.q",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": 0.0,
+        "maxChars": 20,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S8:items.0.a",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.0.a",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": -0.32,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S8:items.1.q",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.1.q",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": 0.0,
+        "maxChars": 20,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S8:items.1.a",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.1.a",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": -0.32,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S8:items.2.q",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.2.q",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": 0.0,
+        "maxChars": 20,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S8:items.2.a",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.2.a",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": -0.32,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "F0",
+        "key": "F",
+        "blockId": null,
+        "sectionKey": "emo.features",
+        "kind": "feature",
+        "role": "desc",
+        "template": "emo",
+        "designId": null,
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 888,
+        "maxWidth": 888,
+        "group": "points",
+        "target": "feature",
+        "point": "퍼프 소매",
+        "maxChars": 60,
+        "draft": false
+      },
+      {
+        "id": "F1",
+        "key": "F",
+        "blockId": null,
+        "sectionKey": "emo.features",
+        "kind": "feature",
+        "role": "desc",
+        "template": "emo",
+        "designId": null,
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 888,
+        "maxWidth": 888,
+        "group": "points",
+        "target": "feature",
+        "point": "앞 핀턱",
+        "maxChars": 60,
+        "draft": false
+      }
+    ],
+    "response": {
+      "sections": [
+        {
+          "key": "first",
+          "texts": [
+            {
+              "role": "label",
+              "text": "Pintuck Puff Blouse"
+            }
+          ]
+        },
+        {
+          "key": "review",
+          "texts": [
+            {
+              "role": "items.0.text",
+              "text": "스커트에 맞춰 입으니 단정하고 예뻐요"
+            },
+            {
+              "role": "items.1.text",
+              "text": "소매가 참 귀엽네요"
+            },
+            {
+              "role": "items.2.text",
+              "text": "너무 두껍지 않고 가벼워서 봄가을에 입기 딱 좋습니다"
+            }
+          ]
+        },
+        {
+          "key": "intro",
+          "texts": [
+            {
+              "role": "title",
+              "text": "팔뚝이 편한 단정한 블라우스"
+            },
+            {
+              "role": "body",
+              "text": "소매가 봉긋해서 팔뚝이 달라붙지 않아\n편하게 입기 좋은 핀턱 퍼프 블라우스예요"
+            }
+          ]
+        },
+        {
+          "key": "for_you",
+          "texts": [
+            {
+              "role": "items.0",
+              "text": "팔뚝에 옷이 달라붙는 게 신경 쓰이는 분"
+            },
+            {
+              "role": "items.1",
+              "text": "슬랙스에 받쳐 입을 출근용 상의를 찾는 분"
+            },
+            {
+              "role": "items.2",
+              "text": "밋밋한 기본 셔츠보다 가벼운 변화를 원하는 분"
+            },
+            {
+              "role": "items.3",
+              "text": "가디건 안에 단정하게 입을 옷이 필요한 분"
+            }
+          ]
+        },
+        {
+          "key": "fabric",
+          "texts": [
+            {
+              "role": "title",
+              "text": "부드럽고 매끈한 레이온 혼방"
+            },
+            {
+              "role": "body",
+              "text": "피부에 닿는 감촉이 까끌거리지 않고 가벼워서 하루 종일 입고 있어도 편안해요"
+            }
+          ]
+        },
+        {
+          "key": "faq",
+          "texts": [
+            {
+              "role": "items.0.q",
+              "text": "사이즈는 어떻게 고르면 될까요?"
+            },
+            {
+              "role": "items.0.a",
+              "text": "품이 적당한 레귤러핏이라 평소 사이즈로 고르시고 상세 실측표를 확인해 주세요"
+            },
+            {
+              "role": "items.1.q",
+              "text": "어느 계절에 입기 좋은가요?"
+            },
+            {
+              "role": "items.1.a",
+              "text": "가벼운 레이온 혼방 원단이라 봄가을에는 하나만 입고 쌀쌀할 땐 겉옷 안에 입기 좋아요"
+            },
+            {
+              "role": "items.2.q",
+              "text": "원단이 잘 늘어나는 편인가요?"
+            },
+            {
+              "role": "items.2.a",
+              "text": "스판이 없는 원단이라 늘어나진 않지만 품이 적당해서 움직이기 불편하지 않아요"
+            }
+          ]
+        }
+      ],
+      "partDescriptionCopy": [
+        {
+          "point": "퍼프 소매",
+          "desc": "어깨 쪽에 여유가 있어서\n팔을 움직일 때 조이지 않고 편해요"
+        },
+        {
+          "point": "앞 핀턱",
+          "desc": "가운데에 세로로 잔주름이 잡혀 있어서\n하나만 입어도 밋밋하지 않아요"
+        }
+      ],
+      "featureCopy": [
+        {
+          "point": "퍼프 소매",
+          "desc": "소매 통이 봉긋하게 살아 있어서 팔뚝이 부각되지 않고 귀여운 느낌을 줘요"
+        },
+        {
+          "point": "앞 핀턱",
+          "desc": "스커트나 바지에 넣어 입거나 가디건을 걸쳐도 앞모습이 단정해 보여요"
+        }
+      ]
+    }
+  },
+  {
+    "case": "v2-04",
+    "seed": 6555448894679483616,
+    "slots": [
+      {
+        "id": "S1:label",
+        "key": "S1",
+        "blockId": "emo.first.text",
+        "sectionKey": "emo.first",
+        "kind": "first",
+        "role": "label",
+        "template": "emo",
+        "designId": "P01-D09",
+        "fontRole": "label",
+        "fontSize": 48,
+        "width": 888,
+        "maxWidth": 888,
+        "tracking": 0.96,
+        "maxChars": 28,
+        "group": "misc",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S2:items.0.text",
+        "key": "S2",
+        "blockId": "emo.review.text",
+        "sectionKey": "emo.review",
+        "kind": "review",
+        "role": "items.0.text",
+        "template": "emo",
+        "designId": "I09-D06",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 139.0,
+        "maxWidth": 691,
+        "tracking": 0.0,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S2:items.1.text",
+        "key": "S2",
+        "blockId": "emo.review.text",
+        "sectionKey": "emo.review",
+        "kind": "review",
+        "role": "items.1.text",
+        "template": "emo",
+        "designId": "I09-D06",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 139.0,
+        "maxWidth": 691,
+        "tracking": 0.0,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S2:items.2.text",
+        "key": "S2",
+        "blockId": "emo.review.text",
+        "sectionKey": "emo.review",
+        "kind": "review",
+        "role": "items.2.text",
+        "template": "emo",
+        "designId": "I09-D06",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 139.0,
+        "maxWidth": 691,
+        "tracking": 0.0,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S3:title",
+        "key": "S3",
+        "blockId": "emo.intro.text",
+        "sectionKey": "emo.intro",
+        "kind": "intro",
+        "role": "title",
+        "template": "emo",
+        "designId": "T01-D07",
+        "fontRole": "title",
+        "fontSize": 48,
+        "width": 312,
+        "maxWidth": 717,
+        "tracking": -0.96,
+        "maxChars": 20,
+        "group": "intro",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S3:body",
+        "key": "S3",
+        "blockId": "emo.intro.text",
+        "sectionKey": "emo.intro",
+        "kind": "intro",
+        "role": "body",
+        "template": "emo",
+        "designId": "T01-D07",
+        "fontRole": "intro",
+        "fontSize": 32,
+        "width": 312,
+        "maxWidth": 717,
+        "tracking": 0.0,
+        "maxChars": 120,
+        "group": "intro",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S4:items.0.desc",
+        "key": "S4",
+        "blockId": "emo.points.text",
+        "sectionKey": "emo.points",
+        "kind": "points",
+        "role": "items.0.desc",
+        "template": "emo",
+        "designId": "PT-PHOTO-CARD-01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 788,
+        "maxWidth": 788,
+        "tracking": 0.0,
+        "maxChars": 40,
+        "group": "points",
+        "target": "part",
+        "point": "소맷단 단추",
+        "draft": false
+      },
+      {
+        "id": "S4:items.1.desc",
+        "key": "S4",
+        "blockId": "emo.points.text",
+        "sectionKey": "emo.points",
+        "kind": "points",
+        "role": "items.1.desc",
+        "template": "emo",
+        "designId": "PT-PHOTO-CARD-01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 788,
+        "maxWidth": 788,
+        "tracking": 0.0,
+        "maxChars": 40,
+        "group": "points",
+        "target": "part",
+        "point": "세로 줄무늬",
+        "draft": false
+      },
+      {
+        "id": "S5:items.0",
+        "key": "S5",
+        "blockId": "emo.for_you.text",
+        "sectionKey": "emo.for_you",
+        "kind": "for_you",
+        "role": "items.0",
+        "template": "emo",
+        "designId": "T08-D01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 395,
+        "maxWidth": 700,
+        "tracking": 0.0,
+        "maxChars": 28,
+        "group": "misc",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S5:items.1",
+        "key": "S5",
+        "blockId": "emo.for_you.text",
+        "sectionKey": "emo.for_you",
+        "kind": "for_you",
+        "role": "items.1",
+        "template": "emo",
+        "designId": "T08-D01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 395,
+        "maxWidth": 700,
+        "tracking": 0.0,
+        "maxChars": 28,
+        "group": "misc",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S5:items.2",
+        "key": "S5",
+        "blockId": "emo.for_you.text",
+        "sectionKey": "emo.for_you",
+        "kind": "for_you",
+        "role": "items.2",
+        "template": "emo",
+        "designId": "T08-D01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 395,
+        "maxWidth": 700,
+        "tracking": 0.0,
+        "maxChars": 28,
+        "group": "misc",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S5:items.3",
+        "key": "S5",
+        "blockId": "emo.for_you.text",
+        "sectionKey": "emo.for_you",
+        "kind": "for_you",
+        "role": "items.3",
+        "template": "emo",
+        "designId": "T08-D01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 395,
+        "maxWidth": 700,
+        "tracking": 0.0,
+        "maxChars": 28,
+        "group": "misc",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S6:title",
+        "key": "S6",
+        "blockId": "emo.fabric.text",
+        "sectionKey": "emo.fabric",
+        "kind": "fabric",
+        "role": "title",
+        "template": "emo",
+        "designId": "T03-D01",
+        "fontRole": "title",
+        "fontSize": 48,
+        "width": 888,
+        "maxWidth": 888,
+        "tracking": -0.96,
+        "maxChars": 20,
+        "group": "fabric",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S6:body",
+        "key": "S6",
+        "blockId": "emo.fabric.text",
+        "sectionKey": "emo.fabric",
+        "kind": "fabric",
+        "role": "body",
+        "template": "emo",
+        "designId": "T03-D01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 428,
+        "maxWidth": 428,
+        "tracking": 0.0,
+        "maxChars": 60,
+        "group": "fabric",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S8:items.0.q",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.0.q",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": 0.0,
+        "maxChars": 20,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S8:items.0.a",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.0.a",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": -0.32,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S8:items.1.q",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.1.q",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": 0.0,
+        "maxChars": 20,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S8:items.1.a",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.1.a",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": -0.32,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S8:items.2.q",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.2.q",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": 0.0,
+        "maxChars": 20,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S8:items.2.a",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.2.a",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": -0.32,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "F0",
+        "key": "F",
+        "blockId": null,
+        "sectionKey": "emo.features",
+        "kind": "feature",
+        "role": "desc",
+        "template": "emo",
+        "designId": null,
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 888,
+        "maxWidth": 888,
+        "group": "points",
+        "target": "feature",
+        "point": "소매 단추",
+        "maxChars": 60,
+        "draft": false
+      },
+      {
+        "id": "F1",
+        "key": "F",
+        "blockId": null,
+        "sectionKey": "emo.features",
+        "kind": "feature",
+        "role": "desc",
+        "template": "emo",
+        "designId": null,
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 888,
+        "maxWidth": 888,
+        "group": "points",
+        "target": "feature",
+        "point": "세로 스트라이프",
+        "maxChars": 60,
+        "draft": false
+      }
+    ],
+    "response": {
+      "sections": [
+        {
+          "key": "first",
+          "texts": [
+            {
+              "role": "label",
+              "text": "Stripe Shirt"
+            }
+          ]
+        },
+        {
+          "key": "review",
+          "texts": [
+            {
+              "role": "items.0.text",
+              "text": "잔잔한 파란 줄무늬가 깔끔해서 출근할 때 자주 입게 돼요"
+            },
+            {
+              "role": "items.1.text",
+              "text": "품이 여유로워 편함"
+            },
+            {
+              "role": "items.2.text",
+              "text": "맨살에 닿아도 부드러워서 입기 좋아요"
+            }
+          ]
+        },
+        {
+          "key": "intro",
+          "texts": [
+            {
+              "role": "title",
+              "text": "단정하고 여유로운 면 셔츠"
+            },
+            {
+              "role": "body",
+              "text": "여유 있는 세미 오버핏으로 편하게 입기 좋은 스트라이프 셔츠예요\n단독으로 입어도 깔끔하고 가디건이나 니트 조끼 안에 받쳐 입기도 좋아요\n청바지와 함께 데일리룩으로 가볍게 매치해 보세요"
+            }
+          ]
+        },
+        {
+          "key": "for_you",
+          "texts": [
+            {
+              "role": "items.0",
+              "text": "답답하게 조이지 않는 셔츠를 찾는 분"
+            },
+            {
+              "role": "items.1",
+              "text": "가디건이나 조끼 안에 받쳐 입을 옷이 필요한 분"
+            },
+            {
+              "role": "items.2",
+              "text": "청바지에 가볍게 걸칠 상의를 찾는 분"
+            },
+            {
+              "role": "items.3",
+              "text": "출근할 때 단정하게 입을 셔츠가 필요한 분"
+            }
+          ]
+        },
+        {
+          "key": "fabric",
+          "texts": [
+            {
+              "role": "title",
+              "text": "부드럽고 탄탄한 면 소재"
+            },
+            {
+              "role": "body",
+              "text": "피부에 거슬림 없이 닿아서 하루 종일 입고 있어도 편안해요"
+            }
+          ]
+        },
+        {
+          "key": "faq",
+          "texts": [
+            {
+              "role": "items.0.q",
+              "text": "품이 많이 넉넉한 편인가요?"
+            },
+            {
+              "role": "items.0.a",
+              "text": "세미 오버핏으로 여유 있게 나왔어요. 정확한 치수는 하단 사이즈표를 확인해 주세요."
+            },
+            {
+              "role": "items.2.q",
+              "text": "세탁은 어떻게 해야 하나요?"
+            },
+            {
+              "role": "items.2.a",
+              "text": "약간의 수축이 생길 수 있어서 찬물에 단독으로 빨고 건조기 사용은 피해주세요."
+            }
+          ]
+        }
+      ],
+      "partDescriptionCopy": [
+        {
+          "point": "소맷단 단추",
+          "desc": "소매 끝에 단추가 2개 있어서\n손목에 맞게 잠그기 좋아요"
+        },
+        {
+          "point": "세로 줄무늬",
+          "desc": "가는 파란 줄무늬가 들어가서\n단독으로 입어도 심심하지 않아요"
+        }
+      ],
+      "featureCopy": [
+        {
+          "point": "소매 단추",
+          "desc": "단추를 풀어 소매를 가볍게 걷어 올릴 때도 흘러내리지 않고 편해요"
+        }
+      ]
+    }
+  },
+  {
+    "case": "v2-08",
+    "seed": 7955134648703052475,
+    "slots": [
+      {
+        "id": "S1:label",
+        "key": "S1",
+        "blockId": "emo.first.text",
+        "sectionKey": "emo.first",
+        "kind": "first",
+        "role": "label",
+        "template": "emo",
+        "designId": "P01-D09",
+        "fontRole": "label",
+        "fontSize": 48,
+        "width": 888,
+        "maxWidth": 888,
+        "tracking": 0.96,
+        "maxChars": 28,
+        "group": "misc",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S2:items.0.text",
+        "key": "S2",
+        "blockId": "emo.review.text",
+        "sectionKey": "emo.review",
+        "kind": "review",
+        "role": "items.0.text",
+        "template": "emo",
+        "designId": "I09-D06",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 139.0,
+        "maxWidth": 691,
+        "tracking": 0.0,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S2:items.1.text",
+        "key": "S2",
+        "blockId": "emo.review.text",
+        "sectionKey": "emo.review",
+        "kind": "review",
+        "role": "items.1.text",
+        "template": "emo",
+        "designId": "I09-D06",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 139.0,
+        "maxWidth": 691,
+        "tracking": 0.0,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S2:items.2.text",
+        "key": "S2",
+        "blockId": "emo.review.text",
+        "sectionKey": "emo.review",
+        "kind": "review",
+        "role": "items.2.text",
+        "template": "emo",
+        "designId": "I09-D06",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 139.0,
+        "maxWidth": 691,
+        "tracking": 0.0,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S3:title",
+        "key": "S3",
+        "blockId": "emo.intro.text",
+        "sectionKey": "emo.intro",
+        "kind": "intro",
+        "role": "title",
+        "template": "emo",
+        "designId": "T01-D07",
+        "fontRole": "title",
+        "fontSize": 48,
+        "width": 637,
+        "maxWidth": 717,
+        "tracking": -0.96,
+        "maxChars": 20,
+        "group": "intro",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S3:body",
+        "key": "S3",
+        "blockId": "emo.intro.text",
+        "sectionKey": "emo.intro",
+        "kind": "intro",
+        "role": "body",
+        "template": "emo",
+        "designId": "T01-D07",
+        "fontRole": "intro",
+        "fontSize": 32,
+        "width": 637,
+        "maxWidth": 717,
+        "tracking": 0.0,
+        "maxChars": 120,
+        "group": "intro",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S4:items.0.desc",
+        "key": "S4",
+        "blockId": "emo.points.text",
+        "sectionKey": "emo.points",
+        "kind": "points",
+        "role": "items.0.desc",
+        "template": "emo",
+        "designId": "PT-PHOTO-CARD-01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 788,
+        "maxWidth": 788,
+        "tracking": 0.0,
+        "maxChars": 40,
+        "group": "points",
+        "target": "part",
+        "point": "가죽 패치 라벨",
+        "draft": false
+      },
+      {
+        "id": "S4:items.1.desc",
+        "key": "S4",
+        "blockId": "emo.points.text",
+        "sectionKey": "emo.points",
+        "kind": "points",
+        "role": "items.1.desc",
+        "template": "emo",
+        "designId": "PT-PHOTO-CARD-01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 788,
+        "maxWidth": 788,
+        "tracking": 0.0,
+        "maxChars": 40,
+        "group": "points",
+        "target": "part",
+        "point": "밑단 마감",
+        "draft": false
+      },
+      {
+        "id": "S5:items.0",
+        "key": "S5",
+        "blockId": "emo.for_you.text",
+        "sectionKey": "emo.for_you",
+        "kind": "for_you",
+        "role": "items.0",
+        "template": "emo",
+        "designId": "T08-D01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 395,
+        "maxWidth": 700,
+        "tracking": 0.0,
+        "maxChars": 28,
+        "group": "misc",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S5:items.1",
+        "key": "S5",
+        "blockId": "emo.for_you.text",
+        "sectionKey": "emo.for_you",
+        "kind": "for_you",
+        "role": "items.1",
+        "template": "emo",
+        "designId": "T08-D01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 395,
+        "maxWidth": 700,
+        "tracking": 0.0,
+        "maxChars": 28,
+        "group": "misc",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S5:items.2",
+        "key": "S5",
+        "blockId": "emo.for_you.text",
+        "sectionKey": "emo.for_you",
+        "kind": "for_you",
+        "role": "items.2",
+        "template": "emo",
+        "designId": "T08-D01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 395,
+        "maxWidth": 700,
+        "tracking": 0.0,
+        "maxChars": 28,
+        "group": "misc",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S5:items.3",
+        "key": "S5",
+        "blockId": "emo.for_you.text",
+        "sectionKey": "emo.for_you",
+        "kind": "for_you",
+        "role": "items.3",
+        "template": "emo",
+        "designId": "T08-D01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 395,
+        "maxWidth": 700,
+        "tracking": 0.0,
+        "maxChars": 28,
+        "group": "misc",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S6:title",
+        "key": "S6",
+        "blockId": "emo.fabric.text",
+        "sectionKey": "emo.fabric",
+        "kind": "fabric",
+        "role": "title",
+        "template": "emo",
+        "designId": "T03-D01",
+        "fontRole": "title",
+        "fontSize": 48,
+        "width": 888,
+        "maxWidth": 888,
+        "tracking": -0.96,
+        "maxChars": 20,
+        "group": "fabric",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S6:body",
+        "key": "S6",
+        "blockId": "emo.fabric.text",
+        "sectionKey": "emo.fabric",
+        "kind": "fabric",
+        "role": "body",
+        "template": "emo",
+        "designId": "T03-D01",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 428,
+        "maxWidth": 428,
+        "tracking": 0.0,
+        "maxChars": 60,
+        "group": "fabric",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S8:items.0.q",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.0.q",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": 0.0,
+        "maxChars": 20,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S8:items.0.a",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.0.a",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": -0.32,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S8:items.1.q",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.1.q",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": 0.0,
+        "maxChars": 20,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S8:items.1.a",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.1.a",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": -0.32,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "S8:items.2.q",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.2.q",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": 0.0,
+        "maxChars": 20,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": false
+      },
+      {
+        "id": "S8:items.2.a",
+        "key": "S8",
+        "blockId": "emo.faq.text",
+        "sectionKey": "emo.faq",
+        "kind": "faq",
+        "role": "items.2.a",
+        "template": "emo",
+        "designId": "T08-D07",
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 274.0,
+        "maxWidth": 657,
+        "tracking": -0.32,
+        "maxChars": 40,
+        "group": "voice",
+        "target": "section",
+        "point": null,
+        "draft": true
+      },
+      {
+        "id": "F0",
+        "key": "F",
+        "blockId": null,
+        "sectionKey": "emo.features",
+        "kind": "feature",
+        "role": "desc",
+        "template": "emo",
+        "designId": null,
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 888,
+        "maxWidth": 888,
+        "group": "points",
+        "target": "feature",
+        "point": "가죽 패치 라벨",
+        "maxChars": 60,
+        "draft": false
+      },
+      {
+        "id": "F1",
+        "key": "F",
+        "blockId": null,
+        "sectionKey": "emo.features",
+        "kind": "feature",
+        "role": "desc",
+        "template": "emo",
+        "designId": null,
+        "fontRole": "body",
+        "fontSize": 32,
+        "width": 888,
+        "maxWidth": 888,
+        "group": "points",
+        "target": "feature",
+        "point": "밑단 마감",
+        "maxChars": 60,
+        "draft": false
+      }
+    ],
+    "response": {
+      "sections": [
+        {
+          "key": "first",
+          "texts": [
+            {
+              "role": "label",
+              "text": "Straight Denim Pants"
+            }
+          ]
+        },
+        {
+          "key": "review",
+          "texts": [
+            {
+              "role": "items.0.text",
+              "text": "기본 흰 티셔츠나 니트랑 같이 입어도 다 잘 어울려요"
+            },
+            {
+              "role": "items.1.text",
+              "text": "일자 통이라서 움직일 때 참 편해요"
+            },
+            {
+              "role": "items.2.text",
+              "text": "연청 색감이 참 예쁨"
+            }
+          ]
+        },
+        {
+          "key": "intro",
+          "texts": [
+            {
+              "role": "title",
+              "text": "어디에나 잘 어울리는 일자 데님"
+            },
+            {
+              "role": "body",
+              "text": "허벅지부터 밑단까지 일자로 떨어지는 기본 데님이에요.\n워싱이 과하지 않아서 셔츠에도 맨투맨에도 무난하게 입기 좋아요."
+            }
+          ]
+        },
+        {
+          "key": "for_you",
+          "texts": [
+            {
+              "role": "items.0",
+              "text": "유행 타지 않는 기본 청바지를 찾는 분"
+            },
+            {
+              "role": "items.1",
+              "text": "출근할 때도 주말에도 편하게 입고 싶은 분"
+            },
+            {
+              "role": "items.2",
+              "text": "다리에 딱 붙는 바지가 불편하신 분"
+            },
+            {
+              "role": "items.3",
+              "text": "과한 워싱 없이 깔끔한 데님을 원하시는 분"
+            }
+          ]
+        },
+        {
+          "key": "fabric",
+          "texts": [
+            {
+              "role": "title",
+              "text": "탄탄하고 잘 늘어나는 데님"
+            },
+            {
+              "role": "body",
+              "text": "스판이 섞여 있어서 앉거나 움직일 때도 걸리는 느낌 없이 편해요."
+            }
+          ]
+        },
+        {
+          "key": "faq",
+          "texts": [
+            {
+              "role": "items.0.q",
+              "text": "밝은 색은 속옷이 비치나요?"
+            },
+            {
+              "role": "items.0.a",
+              "text": "두께감이 있는 데님 원단이라 밝은 연청 색상도 부담 없이 입으실 수 있어요."
+            },
+            {
+              "role": "items.1.q",
+              "text": "스판이 있어서 잘 늘어나나요?"
+            },
+            {
+              "role": "items.1.a",
+              "text": "스판이 조금 섞여 있어서 활동할 때 불편함 없이 편하게 늘어나요."
+            },
+            {
+              "role": "items.2.q",
+              "text": "세탁은 어떻게 해야 하나요?"
+            },
+            {
+              "role": "items.2.a",
+              "text": "물빠짐이 있을 수 있으니 뒤집어서 단독으로 세탁해 주세요."
+            }
+          ]
+        }
+      ],
+      "partDescriptionCopy": [
+        {
+          "point": "가죽 패치 라벨",
+          "desc": "허리에 갈색 패치가 있어서\n상의를 넣어 입어도 허전하지 않아요"
+        },
+        {
+          "point": "밑단 마감",
+          "desc": "밑단이 깔끔하게 접혀 있어서\n롤업해서 입기에도 좋아요"
+        }
+      ],
+      "featureCopy": []
+    }
+  }
+]

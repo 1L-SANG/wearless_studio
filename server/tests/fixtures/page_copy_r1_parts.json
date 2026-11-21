@@ -1,0 +1,883 @@
+{
+  "cases": {
+    "v2-02": {
+      "product": {
+        "name": "오버핏 후드 티셔츠",
+        "clothingType": "top",
+        "colors": [
+          {
+            "id": "base",
+            "name": "멜란지 그레이",
+            "isBase": true
+          },
+          {
+            "id": "c2",
+            "name": "블랙"
+          }
+        ]
+      },
+      "analysis": {
+        "fit": "over",
+        "mdComment": "후드 크게 나옴. 끈 굵은 걸로 바꿈. 레깅스에 입기 좋음",
+        "sellingPoints": [
+          "후드 스트링",
+          "캥거루 포켓"
+        ],
+        "materials": [
+          {
+            "name": "면",
+            "ratio": 100
+          }
+        ],
+        "detailRecommendations": {
+          "candidates": [
+            {
+              "id": "v2-02-d1",
+              "label": "후드 스트링",
+              "reason": "후드 양쪽으로 나온 굵은 끈과 쇠 팁",
+              "kind": "structure"
+            },
+            {
+              "id": "v2-02-d2",
+              "label": "캥거루 포켓",
+              "reason": "앞판 양쪽으로 손을 넣는 주머니",
+              "kind": "structure"
+            }
+          ]
+        },
+        "fabricStructure": "스웨트"
+      }
+    },
+    "v2-03": {
+      "product": {
+        "name": "핀턱 퍼프 블라우스",
+        "clothingType": "top",
+        "colors": [
+          {
+            "id": "base",
+            "name": "화이트",
+            "isBase": true
+          },
+          {
+            "id": "c2",
+            "name": "스카이블루"
+          },
+          {
+            "id": "c3",
+            "name": "베이지"
+          }
+        ]
+      },
+      "analysis": {
+        "fit": "regular",
+        "mdComment": "소매가 봉긋해서 팔뚝이 안 붙어요. 앞 핀턱 디테일 꼭 강조해 주세요! 사진은 화이트 위주로요",
+        "sellingPoints": [
+          "퍼프 소매",
+          "앞 핀턱"
+        ],
+        "materials": [
+          {
+            "name": "레이온",
+            "ratio": 70
+          },
+          {
+            "name": "폴리에스터",
+            "ratio": 30
+          }
+        ],
+        "detailRecommendations": {
+          "candidates": [
+            {
+              "id": "v2-03-d1",
+              "label": "퍼프 소매",
+              "reason": "어깨선에 주름을 잡아 부풀린 소매",
+              "kind": "structure"
+            },
+            {
+              "id": "v2-03-d2",
+              "label": "앞 핀턱",
+              "reason": "앞판 가운데 세로로 잡은 가는 주름 여섯 줄",
+              "kind": "structure"
+            }
+          ]
+        }
+      }
+    },
+    "v2-04": {
+      "product": {
+        "name": "스트라이프 셔츠",
+        "clothingType": "top",
+        "colors": [
+          {
+            "id": "base",
+            "name": "블루 스트라이프",
+            "isBase": true
+          }
+        ]
+      },
+      "analysis": {
+        "fit": "semi_over",
+        "mdComment": "",
+        "sellingPoints": [
+          "소매 단추",
+          "세로 스트라이프"
+        ],
+        "materials": [
+          {
+            "name": "면",
+            "ratio": 100
+          }
+        ],
+        "detailRecommendations": {
+          "candidates": [
+            {
+              "id": "v2-04-d1",
+              "label": "소맷단 단추",
+              "reason": "단추 두 개로 여미는 소맷단",
+              "kind": "structure"
+            },
+            {
+              "id": "v2-04-d2",
+              "label": "세로 줄무늬",
+              "reason": "가는 파란 줄이 세로로 이어지는 원단",
+              "kind": "structure"
+            }
+          ]
+        }
+      }
+    },
+    "v2-05": {
+      "product": {
+        "name": "브이넥 린넨 셔츠",
+        "clothingType": "top",
+        "colors": [
+          {
+            "id": "base",
+            "name": "오트밀",
+            "isBase": true
+          },
+          {
+            "id": "c2",
+            "name": "카키"
+          },
+          {
+            "id": "c3",
+            "name": "네이비"
+          },
+          {
+            "id": "c4",
+            "name": "화이트"
+          }
+        ]
+      },
+      "analysis": {
+        "fit": "regular",
+        "mdComment": "린넨이라 한여름에도 시원하고 땀이 금방 말라요. 구김도 자연스러워서 다림질 안 해도 돼요",
+        "sellingPoints": [
+          "브이넥",
+          "롤업 소매"
+        ],
+        "materials": [
+          {
+            "name": "린넨",
+            "ratio": 55
+          },
+          {
+            "name": "면",
+            "ratio": 45
+          }
+        ],
+        "detailRecommendations": {
+          "candidates": [
+            {
+              "id": "v2-05-d1",
+              "label": "브이넥",
+              "reason": "깃 없이 V자로 판 목선",
+              "kind": "structure"
+            },
+            {
+              "id": "v2-05-d2",
+              "label": "롤업 소매",
+              "reason": "소매를 걷어 고정하는 단추와 고리",
+              "kind": "structure"
+            }
+          ]
+        }
+      }
+    },
+    "v2-06": {
+      "product": {
+        "name": "핀턱 와이드 슬랙스",
+        "clothingType": "bottom",
+        "colors": [
+          {
+            "id": "base",
+            "name": "블랙",
+            "isBase": true
+          },
+          {
+            "id": "c2",
+            "name": "차콜"
+          },
+          {
+            "id": "c3",
+            "name": "베이지"
+          },
+          {
+            "id": "c4",
+            "name": "오트밀"
+          }
+        ]
+      },
+      "analysis": {
+        "fit": "over",
+        "mdComment": "이번 주만 1+1 특가!! 재입고 문의 폭주한 그 슬랙스예요. 핀턱이 깊게 잡혀서 다리가 곧게 떨어지고 뒷밴딩이라 허리가 편해요. 인스타 팔로우하면 쿠폰 드려요",
+        "sellingPoints": [
+          "앞 핀턱",
+          "뒷밴딩"
+        ],
+        "materials": [
+          {
+            "name": "폴리에스터",
+            "ratio": 68
+          },
+          {
+            "name": "레이온",
+            "ratio": 28
+          },
+          {
+            "name": "스판",
+            "ratio": 4
+          }
+        ],
+        "detailRecommendations": {
+          "candidates": [
+            {
+              "id": "v2-06-d1",
+              "label": "앞 핀턱",
+              "reason": "허리 아래로 깊게 잡은 주름 두 줄",
+              "kind": "structure"
+            },
+            {
+              "id": "v2-06-d2",
+              "label": "뒷밴딩",
+              "reason": "뒤 허리만 주름 잡힌 밴드",
+              "kind": "structure"
+            },
+            {
+              "id": "v2-06-d3",
+              "label": "사선 주머니",
+              "reason": "옆선을 따라 낸 주머니 입구",
+              "kind": "structure"
+            }
+          ]
+        }
+      }
+    },
+    "v2-08": {
+      "product": {
+        "name": "스트레이트 데님 팬츠",
+        "clothingType": "bottom",
+        "colors": [
+          {
+            "id": "base",
+            "name": "중청",
+            "isBase": true
+          },
+          {
+            "id": "c2",
+            "name": "연청"
+          },
+          {
+            "id": "c3",
+            "name": "흑청"
+          }
+        ]
+      },
+      "analysis": {
+        "fit": "regular",
+        "mdComment": "허벅지부터 밑단까지 일자로 떨어지는 기본 데님이에요. 워싱이 과하지 않아서 셔츠에도 맨투맨에도 무난하게 입혀요.",
+        "sellingPoints": [],
+        "materials": [
+          {
+            "name": "면",
+            "ratio": 98
+          },
+          {
+            "name": "스판",
+            "ratio": 2
+          }
+        ],
+        "detailRecommendations": {
+          "candidates": [
+            {
+              "id": "v2-08-d1",
+              "label": "가죽 패치 라벨",
+              "reason": "뒤 허리의 갈색 패치",
+              "kind": "structure"
+            },
+            {
+              "id": "v2-08-d2",
+              "label": "밑단 마감",
+              "reason": "한 번 접어 박은 밑단과 스티치",
+              "kind": "structure"
+            }
+          ]
+        },
+        "fabricStructure": "데님",
+        "aiSuggestedPoints": [
+          "가죽 패치 라벨",
+          "밑단 마감"
+        ]
+      }
+    }
+  },
+  "samples": [
+    {
+      "case": "v2-02",
+      "arm": "terra",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "양쪽 끈 끝의 쇠 팁 마감"
+    },
+    {
+      "case": "v2-02",
+      "arm": "terra",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "앞판 양쪽으로 손을 넣는 주머니"
+    },
+    {
+      "case": "v2-02",
+      "arm": "flash",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "쇠 팁으로 마감한 굵은 끈"
+    },
+    {
+      "case": "v2-02",
+      "arm": "flash",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "양손을 넣기 편한 앞판 포켓"
+    },
+    {
+      "case": "v2-02",
+      "arm": "sonnet",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "쇠 팁을 단 굵은 후드 끈"
+    },
+    {
+      "case": "v2-02",
+      "arm": "sonnet",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "앞판 양옆으로 손을 넣는 구조"
+    },
+    {
+      "case": "v2-02",
+      "arm": "opus",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "쇠 팁으로 끝을 마감한 굵은 끈"
+    },
+    {
+      "case": "v2-02",
+      "arm": "opus",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "앞판 양쪽에서 손이 들어가는 구조"
+    },
+    {
+      "case": "v2-02",
+      "arm": "pro",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "굵은 끈과 쇠 팁으로 마감한 디테일"
+    },
+    {
+      "case": "v2-02",
+      "arm": "pro",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "양손을 가볍게 넣기 좋은 앞판 주머니"
+    },
+    {
+      "case": "v2-03",
+      "arm": "terra",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "어깨선에 주름을 잡아 부풀린 형태"
+    },
+    {
+      "case": "v2-03",
+      "arm": "terra",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "앞판 가운데 6줄로 잡은 가는 주름"
+    },
+    {
+      "case": "v2-03",
+      "arm": "flash",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "어깨 주름으로 부풀린 소매 실루엣"
+    },
+    {
+      "case": "v2-03",
+      "arm": "flash",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "앞판 중앙을 정돈하는 세로 주름 여섯 줄"
+    },
+    {
+      "case": "v2-03",
+      "arm": "sonnet",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "어깨선에 주름을 잡은 봉긋한 소매"
+    },
+    {
+      "case": "v2-03",
+      "arm": "sonnet",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "앞판 중앙 세로 주름 여섯 줄"
+    },
+    {
+      "case": "v2-03",
+      "arm": "opus",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "어깨선에 주름을 잡아 봉긋하게 부풀린 형태"
+    },
+    {
+      "case": "v2-03",
+      "arm": "opus",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "앞판 가운데 세로로 잡은 가는 주름 여섯 줄"
+    },
+    {
+      "case": "v2-03",
+      "arm": "pro",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "어깨선에 주름을 잡아 부풀린 형태"
+    },
+    {
+      "case": "v2-03",
+      "arm": "pro",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "앞판에 세로로 잡은 여섯 줄 주름"
+    },
+    {
+      "case": "v2-04",
+      "arm": "terra",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "단추 2개로 여미는 마감"
+    },
+    {
+      "case": "v2-04",
+      "arm": "terra",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "가는 파란 줄이 이어지는 원단"
+    },
+    {
+      "case": "v2-04",
+      "arm": "flash",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "단추 두 개로 조절하는 소맷단"
+    },
+    {
+      "case": "v2-04",
+      "arm": "flash",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "가는 파란 줄이 세로로 이어지는 원단"
+    },
+    {
+      "case": "v2-04",
+      "arm": "sonnet",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "단추 두 개로 여미는 소맷단"
+    },
+    {
+      "case": "v2-04",
+      "arm": "sonnet",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "가는 파란 줄이 이어지는 원단"
+    },
+    {
+      "case": "v2-04",
+      "arm": "opus",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "두 개의 단추로 여미는 소맷단"
+    },
+    {
+      "case": "v2-04",
+      "arm": "opus",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "가는 파란 줄이 세로로 이어지는 원단"
+    },
+    {
+      "case": "v2-04",
+      "arm": "pro",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "단추 두 개로 여미는 소맷단"
+    },
+    {
+      "case": "v2-04",
+      "arm": "pro",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "가는 파란 줄이 이어지는 원단"
+    },
+    {
+      "case": "v2-05",
+      "arm": "terra",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "깃 없이 V자로 판 목선"
+    },
+    {
+      "case": "v2-05",
+      "arm": "terra",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "걷은 소매를 고정하는 단추와 고리"
+    },
+    {
+      "case": "v2-05",
+      "arm": "flash",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "깃 없이 V자로 판 목선 디자인"
+    },
+    {
+      "case": "v2-05",
+      "arm": "flash",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "단추와 고리로 깔끔히 고정하는 소매"
+    },
+    {
+      "case": "v2-05",
+      "arm": "sonnet",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "깃 없이 V자로 판 목선"
+    },
+    {
+      "case": "v2-05",
+      "arm": "sonnet",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "단추와 고리로 고정하는 소매"
+    },
+    {
+      "case": "v2-05",
+      "arm": "opus",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "깃 없이 V자로 판 목선"
+    },
+    {
+      "case": "v2-05",
+      "arm": "opus",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "걷어 올린 소매를 잡아 주는 단추와 고리"
+    },
+    {
+      "case": "v2-05",
+      "arm": "pro",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "깃 없이 브이(V)자로 파인 네크라인"
+    },
+    {
+      "case": "v2-05",
+      "arm": "pro",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "소매를 말아 올린 뒤 고정하는 단추"
+    },
+    {
+      "case": "v2-06",
+      "arm": "terra",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "허리 아래 깊게 잡힌 주름 두 줄"
+    },
+    {
+      "case": "v2-06",
+      "arm": "terra",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "뒤 허리에만 주름 잡힌 밴드"
+    },
+    {
+      "case": "v2-06",
+      "arm": "terra",
+      "slotId": "S7:items.2.desc",
+      "role": "items.2.desc",
+      "text": "옆선을 따라 낸 주머니 입구"
+    },
+    {
+      "case": "v2-06",
+      "arm": "flash",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "허리 아래로 깊게 잡은 두 줄 주름"
+    },
+    {
+      "case": "v2-06",
+      "arm": "flash",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "뒤 허리 라인에만 주름 잡은 밴드"
+    },
+    {
+      "case": "v2-06",
+      "arm": "flash",
+      "slotId": "S7:items.2.desc",
+      "role": "items.2.desc",
+      "text": "옆선을 따라 낸 깔끔한 입구"
+    },
+    {
+      "case": "v2-06",
+      "arm": "sonnet",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "허리 아래로 깊게 잡은 주름 두 줄"
+    },
+    {
+      "case": "v2-06",
+      "arm": "sonnet",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "뒤 허리만 주름 잡힌 밴드"
+    },
+    {
+      "case": "v2-06",
+      "arm": "sonnet",
+      "slotId": "S7:items.2.desc",
+      "role": "items.2.desc",
+      "text": "옆선을 따라 낸 주머니 입구"
+    },
+    {
+      "case": "v2-06",
+      "arm": "opus",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "허리 아래로 깊게 잡은 두 줄 주름"
+    },
+    {
+      "case": "v2-06",
+      "arm": "opus",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "뒤 허리에만 주름을 잡은 밴드"
+    },
+    {
+      "case": "v2-06",
+      "arm": "opus",
+      "slotId": "S7:items.2.desc",
+      "role": "items.2.desc",
+      "text": "옆선을 따라 비스듬히 낸 주머니 입구"
+    },
+    {
+      "case": "v2-06",
+      "arm": "pro",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "허리 아래로 깊게 잡은 두 줄 주름"
+    },
+    {
+      "case": "v2-06",
+      "arm": "pro",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "뒤 허리에만 주름을 잡은 밴드"
+    },
+    {
+      "case": "v2-06",
+      "arm": "pro",
+      "slotId": "S7:items.2.desc",
+      "role": "items.2.desc",
+      "text": "옆선을 따라 낸 주머니 입구"
+    },
+    {
+      "case": "v2-08",
+      "arm": "terra",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "뒤 허리에 자리한 갈색 패치"
+    },
+    {
+      "case": "v2-08",
+      "arm": "terra",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "한 번 접어 박은 스티치 마감"
+    },
+    {
+      "case": "v2-08",
+      "arm": "flash",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "뒤 허리에 덧댄 갈색 패치"
+    },
+    {
+      "case": "v2-08",
+      "arm": "flash",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "한 번 접어 박은 스티치 마감"
+    },
+    {
+      "case": "v2-08",
+      "arm": "sonnet",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "뒤 허리에 붙인 갈색 패치"
+    },
+    {
+      "case": "v2-08",
+      "arm": "sonnet",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "한 번 접어 박은 밑단 스티치"
+    },
+    {
+      "case": "v2-08",
+      "arm": "opus",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "뒤 허리에 단 갈색 패치"
+    },
+    {
+      "case": "v2-08",
+      "arm": "opus",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "한 번 접어 스티치로 박은 밑단"
+    },
+    {
+      "case": "v2-08",
+      "arm": "pro",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "뒤 허리에 더한 갈색 패치"
+    },
+    {
+      "case": "v2-08",
+      "arm": "pro",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "한 번 접어 스티치로 박은 밑단"
+    },
+    {
+      "case": "v2-02",
+      "arm": "luna",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "굵은 끈과 쇠 팁으로 마감"
+    },
+    {
+      "case": "v2-02",
+      "arm": "luna",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "앞판 양쪽으로 손을 넣는 포켓"
+    },
+    {
+      "case": "v2-03",
+      "arm": "luna",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "어깨선 주름으로 부풀린 소매"
+    },
+    {
+      "case": "v2-03",
+      "arm": "luna",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "앞판 중앙에 세로로 잡은 가는 주름 여섯 줄"
+    },
+    {
+      "case": "v2-04",
+      "arm": "luna",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "단추 두 개로 여미는 소맷단"
+    },
+    {
+      "case": "v2-04",
+      "arm": "luna",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "가는 파란 줄이 세로로 이어지는 원단"
+    },
+    {
+      "case": "v2-05",
+      "arm": "luna",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "깃 없이 V자로 판 목선"
+    },
+    {
+      "case": "v2-05",
+      "arm": "luna",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "소매를 걷어 고정하는 단추와 고리"
+    },
+    {
+      "case": "v2-06",
+      "arm": "luna",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "허리 아래 깊게 잡은 두 줄 주름"
+    },
+    {
+      "case": "v2-06",
+      "arm": "luna",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "뒤 허리에만 주름 잡힌 밴드"
+    },
+    {
+      "case": "v2-06",
+      "arm": "luna",
+      "slotId": "S7:items.2.desc",
+      "role": "items.2.desc",
+      "text": "옆선을 따라 난 주머니 입구"
+    },
+    {
+      "case": "v2-08",
+      "arm": "luna",
+      "slotId": "S7:items.0.desc",
+      "role": "items.0.desc",
+      "text": "뒤 허리의 갈색 패치 라벨"
+    },
+    {
+      "case": "v2-08",
+      "arm": "luna",
+      "slotId": "S7:items.1.desc",
+      "role": "items.1.desc",
+      "text": "한 번 접어 박은 밑단과 스티치"
+    }
+  ]
+}

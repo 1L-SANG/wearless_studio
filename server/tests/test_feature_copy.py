@@ -5,6 +5,9 @@ import pytest
 from app import repo
 from app.agents import feature_copy as fc
 from conftest import make_settings
+from page_copy_test_support import page_copy_prompt_dir
+
+pytestmark = pytest.mark.usefixtures("page_copy_prompt_dir")
 
 
 def run(coro):
@@ -146,38 +149,42 @@ def test_build_prompt_lists_only_the_points_it_is_given():
     assert highlights.strip() == "- 빈티지한 워싱감"
 
 
-def test_generate_sends_only_dictionary_misses_to_the_model(monkeypatch):
-    seen = []
+def test_generate_sends_all_points_to_model_before_dictionary_fallback():
+    requests = []
 
-    async def spy(_settings, prompt, _schema, *, timeout_seconds=None):
-        assert timeout_seconds is None
-        seen.append(prompt)
-        return ({"items": [{"point": "빈티지한 워싱감", "desc": "물 빠진 듯한 색이 자연스럽게 번집니다."}]}, "spy")
+    async def fake(request, timeout):
+        requests.append(request)
+        return {"response": {"sections": [], "partDescriptionCopy": [], "featureCopy": [
+            {"point": "앞 지퍼 여밈", "desc": "지퍼를 열고 닫아 입어요"},
+            {"point": "어깨 셔링 퍼프 소매", "desc": "어깨에 잡힌 주름이 소매로 이어져요"},
+        ]}, "usage": {}}
 
-    monkeypatch.setattr(fc, "complete_json", spy)
-    out = run(fc.generate(make_settings(), ["하이웨이스트", "빈티지한 워싱감"], {}, {}))
-    assert len(seen) == 1
-    highlights = seen[0].split("HIGHLIGHTS:")[1]
-    assert "빈티지한 워싱감" in highlights
-    assert "하이웨이스트" not in highlights
+    points = ["앞 지퍼 여밈", "어깨 셔링 퍼프 소매"]
+    out = run(fc.generate(make_settings(), points, {}, {}, overrides={"caller": fake}))
+    assert len(requests) == 1
+    assert [slot["point"] for slot in requests[0]["slots"]] == points
+    assert requests[0]["system_prompt"] and requests[0]["prompt"]
+    assert not any("{{"+key+"}}" in requests[0]["system_prompt"]+requests[0]["prompt"]
+                   for key in ("rules", "facts", "plans", "examples", "slots"))
     assert out == [
-        {"point": "하이웨이스트", "desc": "하이웨이스트 디테일을 확인할 수 있습니다."},
-        {"point": "빈티지한 워싱감", "desc": "물 빠진 듯한 색이 자연스럽게 번집니다."},
+        {"point": "앞 지퍼 여밈", "desc": "지퍼를 열고 닫아 입어요"},
+        {"point": "어깨 셔링 퍼프 소매", "desc": "어깨에 잡힌 주름이 소매로 이어져요"},
     ]
 
 
 @pytest.mark.parametrize("timeout", [None, 120, 7.5, 0])
 def test_generate_forwards_optional_timeout(monkeypatch, timeout):
+    from app.agents import page_copy
     seen = []
 
-    async def spy(_settings, _prompt, _schema, *, timeout_seconds=None):
-        seen.append(timeout_seconds)
-        return ({"items": []}, "spy")
+    async def spy(settings, slots, product, analysis, *, seed, timeout_seconds, overrides=None, feature=False):
+        seen.append((timeout_seconds, seed, overrides, feature))
+        return {"featureCopy": []}
 
-    monkeypatch.setattr(fc, "complete_json", spy)
-    run(fc.generate(make_settings(), ["빈티지한 워싱감"], {}, {}, timeout_seconds=timeout))
-
-    assert seen == [timeout]
+    monkeypatch.setattr(page_copy, "generate_slots", spy, raising=False)
+    run(fc.generate(make_settings(), ["빈티지한 워싱감"], {}, {}, timeout_seconds=timeout,
+                    seed="editor-seed", overrides={"provider": "gemini"}))
+    assert seen == [(timeout, "editor-seed", {"provider": "gemini"}, True)]
 
 
 def test_validate_keeps_matching_points_only():
@@ -223,28 +230,121 @@ def test_validate_drops_hype_and_overlong_desc():
     assert fc.validate(raw, ["a", "b"]) == {}
 
 
-def test_generate_uses_dictionary_without_calling_the_model(monkeypatch):
-    # generate 가 예외를 삼키므로(카피는 게이트 아님) 여기서 raise 하면 테스트가
-    # 통과해 버린다 — 호출 여부는 스파이로 센다.
-    called = []
+@pytest.mark.parametrize("template,expected", [
+    ("emo", "지퍼 여밈 디테일을 확인할 수 있어요."),
+    ("show", "지퍼 여밈 디테일"),
+])
+def test_generate_dictionary_fallback_follows_template_after_model_failure(template, expected):
+    calls = []
 
-    async def spy(*_args, **_kwargs):
-        called.append(1)
-        return ({"items": []}, "spy")
-
-    monkeypatch.setattr(fc, "complete_json", spy)
-    out = run(fc.generate(make_settings(), ["하이웨이스트"], {}, {}))
-    assert out == [{"point": "하이웨이스트", "desc": "하이웨이스트 디테일을 확인할 수 있습니다."}]
-    assert called == [], "사전 히트만 있으면 LLM 을 부르지 않는다"
-
-
-def test_generate_survives_model_failure(monkeypatch):
-    async def boom(*_args, **_kwargs):
+    async def failure(request, timeout):
+        calls.append(request)
         raise RuntimeError("provider down")
 
-    monkeypatch.setattr(fc, "complete_json", boom)
-    out = run(fc.generate(make_settings(), ["하이웨이스트", "설명 못 만들 표현"], {}, {}))
-    assert out == [{"point": "하이웨이스트", "desc": "하이웨이스트 디테일을 확인할 수 있습니다."}]
+    out = run(fc.generate(make_settings(), ["앞 지퍼 여밈", "설명 못 만들 표현"], {},
+                          {"pageStyle": {"templateId": template}}, overrides={"caller": failure}))
+    assert calls
+    assert out == [{"point": "앞 지퍼 여밈", "desc": expected}]
+
+
+def test_generate_fills_only_missing_output_from_dictionary():
+    async def fake(request, timeout):
+        return {"response": {"featureCopy": [{"point": "앞 지퍼 여밈", "desc": "지퍼를 열고 닫아 입어요"}]}, "usage": {}}
+
+    out = run(fc.generate(make_settings(), ["앞 지퍼 여밈", "오픈 카라"], {}, {}, overrides={"caller": fake}))
+    assert out == [
+        {"point": "앞 지퍼 여밈", "desc": "지퍼를 열고 닫아 입어요"},
+        {"point": "오픈 카라", "desc": "열린 형태의 카라를 확인할 수 있어요."},
+    ]
+
+
+def test_generate_rejects_model_claim_before_using_dictionary():
+    async def fake(request, timeout):
+        return {"response": {"featureCopy": [{"point": "앞 지퍼 여밈", "desc": "방수 기능이 있어요"}]}, "usage": {}}
+
+    assert run(fc.generate(make_settings(), ["앞 지퍼 여밈"], {}, {}, overrides={"caller": fake})) == [
+        {"point": "앞 지퍼 여밈", "desc": "지퍼 여밈 디테일을 확인할 수 있어요."},
+    ]
+
+
+def test_generate_replaces_model_copy_that_repeats_a_part_description():
+    async def fake(request, timeout):
+        return {"response": {"featureCopy": [{"point": "앞 지퍼 여밈", "desc": "지퍼를 열고 닫아 입어요"}]}, "usage": {}}
+
+    analysis = {"partDescriptionCopy": [{"point": "지퍼", "desc": "지퍼를 열고 닫아 입어요"}]}
+    assert run(fc.generate(make_settings(), ["앞 지퍼 여밈"], {}, analysis, overrides={"caller": fake})) == [
+        {"point": "앞 지퍼 여밈", "desc": "지퍼 여밈 디테일을 확인할 수 있어요."},
+    ]
+
+
+def test_generate_validates_dictionary_fallback_and_avoids_part_description_repeat(monkeypatch):
+    async def empty(request, timeout):
+        return {"response": {}, "usage": {}}
+
+    monkeypatch.setattr(fc, "lookup", lambda point: "방수 기능을 확인할 수 있습니다.")
+    assert run(fc.generate(make_settings(), ["앞 지퍼 여밈"], {}, {}, overrides={"caller": empty})) == []
+    monkeypatch.setattr(fc, "lookup", lambda point: "지퍼 여밈 디테일을 확인할 수 있습니다.")
+    analysis = {"partDescriptionCopy": [{"point": "지퍼", "desc": "지퍼 여밈 디테일을 확인할 수 있어요."}]}
+    assert run(fc.generate(make_settings(), ["앞 지퍼 여밈"], {}, analysis, overrides={"caller": empty})) == []
+
+
+@pytest.mark.parametrize("analysis,storyboard", [
+    ({}, [{"pageSectionKey": "show.points"}]),
+    ({"storyboard": [{"pageSectionKey": "show.points"}]}, None),
+    ({"pageStyle": {"templateId": "show"}}, [{"pageSectionKey": "emo.points"}]),
+])
+def test_generate_resolves_template_from_page_style_or_storyboard(analysis, storyboard):
+    requests = []
+    async def fake(request, timeout):
+        requests.append(request)
+        return {"response": {"featureCopy": [{"point": "오픈 카라", "desc": "단추 없이 열린 카라"}]}, "usage": {}}
+
+    assert run(fc.generate(make_settings(), ["오픈 카라"], {}, analysis, storyboard=storyboard,
+                           overrides={"caller": fake})) == [{"point": "오픈 카라", "desc": "단추 없이 열린 카라"}]
+    assert all(slot["template"] == "show" for slot in requests[0]["slots"])
+
+
+def test_generate_preserves_raw_point_keys_and_does_not_mutate_analysis():
+    from copy import deepcopy
+    analysis = {"sellingPoints": ["오픈 카라"], "mdComment": "카라를 강조해 주세요"}
+    before = deepcopy(analysis)
+    async def fake(request, timeout):
+        return {"response": {"featureCopy": [{"point": "어깨 셔링 퍼프 소매", "desc": "어깨에 잡힌 주름이 소매로 이어져요"}]}, "usage": {}}
+
+    point = "  어깨 셔링 퍼프 소매  "
+    assert run(fc.generate(make_settings(), [point], {}, analysis, overrides={"caller": fake})) == [
+        {"point": point, "desc": "어깨에 잡힌 주름이 소매로 이어져요"},
+    ]
+    assert analysis == before
+
+
+def test_generate_empty_points_do_not_call_model(monkeypatch):
+    from app.agents import page_copy
+    calls = []
+    async def spy(*args, **kwargs):
+        calls.append(1)
+        return {"featureCopy": []}
+    monkeypatch.setattr(page_copy, "generate_slots", spy, raising=False)
+    assert run(fc.generate(make_settings(), [None, "", "  "], {}, {})) == []
+    assert calls == []
+
+
+def test_generate_does_not_swallow_hard_call_limit(monkeypatch):
+    from app.agents import page_copy
+    async def stop(*args, **kwargs):
+        raise page_copy.CallLimitError("max calls")
+    monkeypatch.setattr(page_copy, "generate_slots", stop, raising=False)
+    with pytest.raises(page_copy.CallLimitError, match="max calls"):
+        run(fc.generate(make_settings(), ["앞 지퍼 여밈"], {}, {}))
+
+
+def test_generate_missing_feature_prompt_is_an_error(tmp_path, monkeypatch):
+    from app.agents import page_copy
+    monkeypatch.setattr(page_copy, "PROMPT_DIR", tmp_path)
+    async def unused(request, timeout):
+        pytest.fail("missing prompt must fail before dispatch")
+    with pytest.raises(FileNotFoundError):
+        run(fc.generate(make_settings(), ["앞 지퍼 여밈"], {}, {}, overrides={"caller": unused}))
 
 
 def test_feature_copy_is_preserved_across_analysis_merges():

@@ -1,4 +1,5 @@
 import pytest
+from app.agents.page_copy_checks import clean_seller_text
 
 from app.agents.page_template_assembler import assemble_v4
 
@@ -7,21 +8,23 @@ SELLER = "  Cotton 셔츠를 추천해요.  \n\n  두 번째 줄\n세 번째 줄
 AI = "AI 첫 줄\n\nAI 둘째 줄\nAI 셋째 줄\nAI 넷째 줄"
 
 
-def bodies(template_id, analysis, body=AI):
+def bodies(template_id, analysis, body=AI, *, copywriting=True):
     storyboard = [{"id": "intro", "taxonomyVersion": 4, "source": "text", "sectionId": "intro",
                    "pageSectionKey": f"{template_id}.intro", "pageSectionKind": "intro",
                    "pageDesignId": "T06-D01" if template_id == "show" else "T01-D07", "slotKey": None}]
-    blocks = assemble_v4(storyboard, [], [{"blockId": "intro", "texts": [{"role": "body", "text": body}]}],
-                         {"name": "코튼 셔츠", "colors": []}, True, analysis=analysis)
+    copy_results = [{"blockId": "intro", "texts": [{"role": "body", "text": body}]}] if body else []
+    blocks = assemble_v4(storyboard, [], copy_results,
+                         {"name": "코튼 셔츠", "colors": []}, copywriting, analysis=analysis)
     return [element for block in blocks for element in block["elements"] if element.get("copyRole") == "body"]
 
 
 @pytest.mark.parametrize("template_id", ["emo", "show"])
 @pytest.mark.parametrize("original", [SELLER, "앞줄\r\n\r\n뒤쪽  \t줄\r\n"])
-def test_seller_md_priority_preserves_exact_original(template_id, original):
+@pytest.mark.parametrize("mode", ["missing", "disabled"])
+def test_seller_md_fallback_cleans_display_and_preserves_saved_original(template_id, original, mode):
     analysis = {"mdComment": original}
-    elements = bodies(template_id, analysis)
-    assert [element["text"] for element in elements] == [original]
+    elements = bodies(template_id, analysis, body="" if mode == "missing" else AI, copywriting=mode != "disabled")
+    assert [element["text"] for element in elements] == [clean_seller_text(original)]
     assert not elements[0].get("aiDraft")
     assert elements[0].get("paragraphCount") == (1 if template_id == "emo" else None)
     if template_id == "show":
@@ -32,7 +35,7 @@ def test_seller_md_priority_preserves_exact_original(template_id, original):
 
 def test_long_showroom_md_wraps_within_panel_padding_without_rewriting():
     original = "Cotton " * 27 + "!"
-    [element] = bodies("show", {"mdComment": original})
+    [element] = bodies("show", {"mdComment": original}, body="")
     assert element["text"] == original
     assert len(original) == 190
     assert [element[key] for key in ("x", "y", "w", "h")] == [56, 172, 888, 204]

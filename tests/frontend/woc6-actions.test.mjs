@@ -124,6 +124,6 @@ test('WOC6 supplied section-lead descriptions fill every part card in shared fix
     const descriptions = assemblePage(input).filter(b => b.pageSectionKind === 'points').flatMap(b => b.elements)
       .filter(e => /^items\.\d+\.desc$/.test(e.copyRole || ''));
     assert.deepEqual(descriptions.map(e => e.text), ['목선 마감', '여밈 마감', '소맷단 마감']);
-    assert.ok(descriptions.every(e => !e.placeholder));
+    assert.ok(descriptions.every(e => e.text.trim() && e.text !== e.placeholder));
   }
 });

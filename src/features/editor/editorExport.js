@@ -277,6 +277,20 @@ export function exportNodeHeight(node) {
   return Math.max(1, offsetHeight - editorHeight + exportHeight);
 }
 
+// The same pure projection drives preview elements and the cloned canvas.
+// These DOM attributes are transient; no new editor-save fields are introduced.
+export function applyExportLayout(node) {
+  if (!node?.dataset?.exportLayout) return;
+  const layout = JSON.parse(node.dataset.exportLayout);
+  for (const element of node.querySelectorAll('[data-elid]')) {
+    const patch = layout[element.dataset.elid];
+    if (!patch) continue;
+    for (const [key, style] of [['x', 'left'], ['y', 'top'], ['w', 'width'], ['h', 'height']]) {
+      if (Number.isFinite(patch[key])) element.style[style] = `${patch[key]}px`;
+    }
+  }
+}
+
 // 파일명 — 상품명에서 파일시스템 금지문자만 걷어낸다. 빈 값은 '상세페이지'.
 export function exportFileName(productName, suffix) {
   const base = String(productName || '').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -351,6 +365,7 @@ async function prepareClone(blockNode, imageCache = new Map()) {
   // 카드 그림자·간격은 화면용 — 결과물에 회색 이음새를 남긴다(이어보기 모드와 불일치, 리뷰 반영).
   clone.style.boxShadow = 'none';
   clone.style.margin = '0';
+  applyExportLayout(clone);
   clone.querySelectorAll(CHROME_SELECTOR).forEach((n) => n.remove());
   const exportHeight = Number(clone.dataset.exportHeight);
   if (Number.isFinite(exportHeight) && exportHeight > 0) clone.style.height = `${exportHeight}px`;

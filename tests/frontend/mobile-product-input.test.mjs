@@ -21,6 +21,7 @@ import { mannequinGenerationTotal, normalizePlanTier } from '../../src/lib/limit
 import { mannequinGenerationCreditShortfall } from '../../src/lib/creditPreflight.js';
 import { confirmDraftPhotos } from '../../src/lib/draftPhotoConfirmation.js';
 import { defaultPageStyle, validPageStyle } from '../../src/lib/pageTemplates/pageStyle.js';
+import { productNameAfterAnalysis, sellerProductName } from '../../src/lib/productNameSource.js';
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 const clean = (source) => source.replace(/^import [\s\S]*?;\n/gm, '').replace(/^export default .*;$/gm, '').replace(/^export /gm, '');
@@ -105,6 +106,7 @@ function harness({ mobile = true, analysis = null, fastEntry = false, analyze = 
   slot.settleVisualPreparations ||= async () => {};
   slot.getVisualHandoff ||= () => ({});
   const bindings = {
+    productNameAfterAnalysis, sellerProductName,
     isMannequinStageEnabled: () => true,
     baseProductPhoto,
     mergeOutfitSaveResponse, outfitContextKey, syncOutfitLegacySelection,

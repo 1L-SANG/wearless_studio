@@ -1,0 +1,42 @@
+[
+  {
+    "source": "trial/r2_first/slots.jsonl",
+    "line": 96,
+    "case": "v2-06",
+    "arm": "one-hydrogen",
+    "template": "emo",
+    "kind": "review",
+    "role": "items.2.text",
+    "text": "주머니가 있어 편함"
+  },
+  {
+    "source": "trial/r2_first/slots.jsonl",
+    "line": 165,
+    "case": "v2-06",
+    "arm": "two-flash-argon",
+    "template": "emo",
+    "kind": "review",
+    "role": "items.2.text",
+    "text": "밴딩이라 편함"
+  },
+  {
+    "source": "trial/r2_rest/slots.jsonl",
+    "line": 113,
+    "case": "v2-02",
+    "arm": "one-argon",
+    "template": "emo",
+    "kind": "review",
+    "role": "items.1.text",
+    "text": "주말에 레깅스 입고 동네 나갈 때 자주 입음"
+  },
+  {
+    "source": "trial/r2_rest/slots.jsonl",
+    "line": 202,
+    "case": "v2-02",
+    "arm": "two-flash-opus",
+    "template": "emo",
+    "kind": "review",
+    "role": "items.2.text",
+    "text": "모자 끈이 도톰함"
+  }
+]

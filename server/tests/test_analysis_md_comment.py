@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app import repo, routes
-from app.agents import feature_copy, page_part_copy, prompts, selling_points
+from app.agents import feature_copy, prompts, selling_points
 from app.workers.detail_page_job import _fallback_product_name
 from conftest import auth_headers
 from test_analysis_server_owned_fields import _Conn
@@ -100,7 +100,6 @@ ANALYSIS = {"sellingPoints": ["라운드넥"], "aiSuggestedPoints": ["라운드�
 
 
 @pytest.mark.parametrize("builder", [
-    lambda analysis: page_part_copy.build_prompt(analysis["sellingPoints"], ["목선"], PRODUCT, analysis),
     lambda analysis: feature_copy.build_prompt(analysis["sellingPoints"], PRODUCT, analysis),
     lambda analysis: _fallback_product_name(PRODUCT, analysis),
 ])
@@ -132,6 +131,7 @@ def test_legacy_generation_modules_do_not_read_md_comment():
         # WO1: the v4 catalog declares this fact path, and the v4 assembler uses
         # seller text verbatim when copywriting is off. Legacy AI inputs stay
         # protected by this check and the behavioral prompt tests above.
-        if path.name in {"page_templates.py", "page_template_assembler.py"}:
+        # Copy v2 intentionally edits seller prose; it is not a legacy image input.
+        if path.name in {"page_templates.py", "page_template_assembler.py", "page_copy.py"}:
             continue
         assert "mdComment" not in path.read_text(), path.name
