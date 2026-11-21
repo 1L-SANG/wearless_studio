@@ -1,13 +1,13 @@
 import asyncio
 from io import BytesIO
-from unittest.mock import ANY, AsyncMock
+from unittest.mock import ANY, AsyncMock, Mock
 
 import numpy as np
 import pytest
 from PIL import Image
 
 from app.services import garment_color_target as tone, garment_color_target_finish as finish
-from app.services.garment_color_consistency import linear_to_oklab
+from app.services.garment_color_consistency import _oklab_to_linear, linear_to_oklab
 from app.workers import detail_page_job as worker
 from conftest import fake_worker_app, make_settings, worker_job
 from storyboard_v4_cases import v4_blocks
@@ -16,22 +16,125 @@ ZERO = tone.ZERO_SLIDERS
 SLIDERS = {**ZERO, "lightness": 50}
 
 
-def test_solver_changes_only_selected_axes_and_caps_both_distances():
-    median = tone.srgb8_to_linear([100, 100, 100])
-    params, capped = finish.solve(median, np.array([1, 1, 1]), SLIDERS)
+def test_solver_keeps_both_caps_after_limiting_seller_movement():
+    median = np.full(3, .8)
+    sliders = {**ZERO, "lightness": 100}
+    target = tone.tone_linear(median, **sliders)
+    params, capped, seller_shift, move = finish.solve(median, median, target, sliders)
     assert capped
     assert params["lightness"] > 0
     assert params["chroma"] == params["warmth"] == 0
+    assert move[0] == pytest.approx(seller_shift[0])
     lab_delta = linear_to_oklab(tone.tone_linear(median, **params)) - linear_to_oklab(median)
     assert lab_delta[0] == pytest.approx(.10)
 
-    params, capped = finish.solve(median, np.array([.8, .25, .025]), {**ZERO, "chroma": 50})
+    median = np.array([0., 1., 0.])
+    sliders = {**ZERO, "chroma": -100}
+    target = tone.tone_linear(median, **sliders)
+    params, capped, seller_shift, move = finish.solve(median, median, target, sliders)
     assert capped
     assert params["lightness"] == 0
-    assert params["warmth"] != 0
+    np.testing.assert_allclose(move[1:], seller_shift[1:])
     lab_delta = linear_to_oklab(tone.tone_linear(median, **params)) - linear_to_oklab(median)
     assert np.linalg.norm(lab_delta[1:]) == pytest.approx(.08)
     assert abs(lab_delta[0]) <= .10
+
+
+def test_brightening_does_not_darken_an_already_brighter_cut():
+    source = np.full(3, .4)
+    median = np.full(3, .6)
+    sliders = {**ZERO, "lightness": 15}
+    target = tone.tone_linear(source, **sliders)
+    params, capped, seller_shift, move = finish.solve(median, source, target, sliders)
+    assert seller_shift[0] > 0
+    np.testing.assert_array_equal(move, np.zeros(3))
+    assert params is None and not capped
+
+
+@pytest.mark.parametrize(("lightness", "median_value"), [(10, .1), (-10, .7)])
+def test_large_original_gap_does_not_amplify_small_seller_change(lightness, median_value):
+    source = np.full(3, .4)
+    median = np.full(3, median_value)
+    sliders = {**ZERO, "lightness": lightness}
+    target = tone.tone_linear(source, **sliders)
+    params, capped, seller_shift, move = finish.solve(median, source, target, sliders)
+    assert abs(move[0]) == pytest.approx(abs(seller_shift[0]))
+    assert np.sign(move[0]) == np.sign(lightness)
+    assert not capped
+    assert params["chroma"] == params["warmth"] == 0
+    actual_move = linear_to_oklab(tone.tone_linear(median, **params)) - linear_to_oklab(median)
+    np.testing.assert_allclose(actual_move, move, atol=1e-9)
+
+
+def test_solver_applies_only_the_half_the_cut_has_not_reached():
+    source = np.full(3, .4)
+    target = tone.tone_linear(source, **SLIDERS)
+    median = _oklab_to_linear((linear_to_oklab(source) + linear_to_oklab(target)) / 2)
+    params, capped, seller_shift, move = finish.solve(median, source, target, SLIDERS)
+    assert move[0] == pytest.approx(seller_shift[0] / 2)
+    assert not capped
+    actual_move = linear_to_oklab(tone.tone_linear(median, **params)) - linear_to_oklab(median)
+    np.testing.assert_allclose(actual_move, move, atol=1e-9)
+
+
+def test_chroma_adjustment_leaves_perpendicular_hue_difference_out_of_move():
+    source = tone.srgb8_to_linear([130, 80, 180])
+    sliders = {**ZERO, "chroma": 40}
+    target = tone.tone_linear(source, **sliders)
+    target_lab = linear_to_oklab(target)
+    shift = target_lab - linear_to_oklab(source)
+    ab = shift[1:]
+    perpendicular = np.array([-ab[1], ab[0]]) / np.linalg.norm(ab)
+    median_lab = target_lab - np.array([.02, *(ab / 2 + .04 * perpendicular)])
+    median = _oklab_to_linear(median_lab)
+
+    params, capped, seller_shift, move = finish.solve(median, source, target, sliders)
+    assert not capped and params["lightness"] == 0
+    np.testing.assert_allclose(seller_shift, shift, atol=1e-9)
+    assert move[0] == 0
+    np.testing.assert_allclose(move[1:], ab / 2, atol=1e-9)
+    assert move[1:] @ perpendicular == pytest.approx(0, abs=1e-9)
+    corrected_lab = linear_to_oklab(tone.tone_linear(median, **params))
+    assert np.linalg.norm(corrected_lab - (median_lab + move)) < .002
+
+
+def test_neutral_source_has_no_direction_when_only_chroma_is_changed():
+    source = np.full(3, .4)
+    median = tone.srgb8_to_linear([60, 140, 200])
+    sliders = {**ZERO, "chroma": 100}
+    target = tone.tone_linear(source, **sliders)
+    params, capped, _, move = finish.solve(median, source, target, sliders)
+    np.testing.assert_array_equal(move, np.zeros(3))
+    assert params is None and not capped
+
+
+def test_stage_reports_no_change_and_skips_render_for_subthreshold_move(monkeypatch):
+    app = fake_worker_app(make_settings(garment_color_target_enabled=True))
+    sliders = {**ZERO, "lightness": 1}
+    sample = np.full(3, 100.)
+    source = tone.srgb8_to_linear(sample)
+    measure = AsyncMock(return_value=(None, sample, None, None))
+    render = Mock(return_value=(None, sample.tolist()))
+    monkeypatch.setattr(finish.sources, "read_front", AsyncMock(return_value=b"front"))
+    monkeypatch.setattr(finish.sources, "measure", measure)
+    monkeypatch.setattr(finish, "_measure_cut", AsyncMock(return_value=((b"cut", None, None, sample), None)))
+    monkeypatch.setattr(finish, "render", render)
+    pending, report = asyncio.run(finish.stage(
+        app, worker_job(), sliders={"c": sliders}, fronts={"c": "a"}, block_colors={"b": "c"},
+        assets=[{"asset_id": "cut"}], results=[{"blockId": "b", "imageUrl": "/v1/assets/cut/file"}],
+        clothing_type="top", sub_category=None, stored_outputs=[],
+    ))
+    assert not pending
+    render.assert_not_called()
+    measure.assert_awaited_once()
+    assert report["c"]["cuts"]["b"] == {
+        "status": "skipped", "reason": "no_change", "beforeSrgb": sample.tolist(), "afterSrgb": sample.tolist(),
+    }
+    expected_shift = linear_to_oklab(tone.tone_linear(source, **sliders)) - linear_to_oklab(source)
+    assert 0 < np.linalg.norm(report["c"]["move"]) < .002
+    np.testing.assert_allclose(report["c"]["sellerShift"], expected_shift)
+    np.testing.assert_allclose(report["c"]["move"], [expected_shift[0], 0, 0])
+    assert report["c"]["params"] is None and not report["c"]["capped"]
 
 
 def test_render_preserves_outside_bytes_and_relative_light_between_cuts():
@@ -197,6 +300,11 @@ def test_stage_updates_aliases_and_keeps_failed_internal_assets_off_page(monkeyp
         measure_contrast=contrast,
     ))
     assert sorted(segments) == sorted([(images["worn"], True, False), (images["detail"], False, True)])
+    finish.sources.measure.assert_awaited_once()
+    source = tone.srgb8_to_linear([190] * 3)
+    expected_shift = linear_to_oklab(tone.tone_linear(source, **SLIDERS)) - linear_to_oklab(source)
+    np.testing.assert_allclose(report["base"]["sellerShift"], expected_shift)
+    np.testing.assert_allclose(report["base"]["move"], [expected_shift[0], 0, 0])
     assert pending["worn"].asset["metadata"]["colorTarget"]["params"] == report["base"]["params"]
     assert pending["detail"].asset["metadata"]["colorTarget"]["params"] == report["base"]["params"]
     saved = []
