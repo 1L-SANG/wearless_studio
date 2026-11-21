@@ -19,7 +19,7 @@ const { code: ribbonCode } = await transformWithEsbuild(ribbon, 'Ribbon.jsx', { 
 const incomplete = { requested: 2, completed: ['cut1'], failed: ['cut2'], retained: ['cut1'], expired: false };
 
 function failureViews(job, overrides = {}) {
-  const bindings = { ClientErrorCapture: () => null, genFinalizeOriginalError: null, React, dpJob: job, projectId: 'p', genActive: false, genFinalizeError: null,
+  const bindings = { ClientErrorCapture: () => null, genFinalizeOriginalError: null, React, dpJob: job, projectId: 'p', genActive: false, genFinalizeError: null, genLocked: false,
     incompleteMessage, retryOfIncomplete, retryReuseHint, genNotif: 'denied',
     genMergedRef: { current: false }, genActiveRef: { current: false }, setGenActive() {},
     useAppStore: Object.assign((select) => select({ detailPageJob: job }), { getState: () => ({}) }),
@@ -106,4 +106,13 @@ for (const [status, detail] of [['error', '크레딧은 차감되지 않았어�
   const api = new Function('detailJobs', 'projectDrafts', 'ewSim', `return ({${getJobSource}});`)(new Map(),
     new Map([['p', { project: { latestJobs: { detailPage: { id: 'j', status } } } }]]), null);
   assert.equal((await api.getJob('j')).errorMessage, detail);
+});
+
+test('연달아 실패해 서버가 막은 동안은 실패 띠에서 다시 만들기를 숨긴다', () => {
+  const job = { projectId: 'p', jobId: 'j', status: 'error', errorMessage: '잠시 문제가 생겼어요.', incomplete: null };
+  const locked = renderToStaticMarkup(React.createElement(failureViews(job, { genLocked: true }).Band));
+  assert.doesNotMatch(locked, /다시 만들기/);
+  assert.match(locked, /나중에 하기/);
+  const open = renderToStaticMarkup(React.createElement(failureViews(job).Band));
+  assert.match(open, /다시 만들기/);
 });

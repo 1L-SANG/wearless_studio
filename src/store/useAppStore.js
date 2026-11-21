@@ -110,6 +110,7 @@ const initialMannequinJob = () => ({
   projectId: null,
   progress: 0,
   errorMessage: '',
+  retryLockedUntil: null, // 연달아 실패해 서버가 다시 만들기를 막은 끝 시각(ISO). 그 전엔 다시 만들기를 숨긴다.
   startedAt: 0,   // 진행바 앵커 — 리본이 언마운트됐다 돌아와도 처음부터 다시 기지 않게
 });
 
@@ -502,7 +503,8 @@ export const useAppStore = create((set, get) => ({
       status: running ? 'running' : 'error', startedAt: Date.now(),
       errorMessage: running ? '' : latest.status === 'cancelled'
         ? '다시 만들 수 있어요.' : '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.',
-      errorCode: latest.status === 'cancelled' ? 'job_cancelled' : latest.errorCode || null };
+      errorCode: latest.status === 'cancelled' ? 'job_cancelled' : latest.errorCode || null,
+      retryLockedUntil: running ? null : latest.retryLockedUntil || null };
     set({ detailPageJob: job });
     if (running) saveDetailPageJobMarker(job);
   },
@@ -596,12 +598,20 @@ export const useAppStore = create((set, get) => ({
         // 보관함의 공통 리본도 에디터와 같은 만료 판정과 문구를 사용한다.
         errorMessage: incompleteMessage(failurePatch.incomplete, failureMessage),
         errorCode: job.status === 'cancelled' ? 'job_cancelled' : job.result?.errorCode || job.errorCode || null,
+        retryLockedUntil: job.retryLockedUntil || null,
         error: jobFailure(job),
         ...failurePatch,
       });
       void get().loadAccount({ force: true }).catch(() => {});
     } catch (e) {
       if (!alive()) return;
+      // 연달아 두 번 실패해 서버가 잠시 막은 경우(409 generation_retry_locked). 새 잡도 과금도 없다.
+      if (e?.code === 'generation_retry_locked') {
+        patch({ status: 'error', slow: false, error: e, errorCode: e.code, errorMessage: e.message || '',
+          retryLockedUntil: e.meta?.retryAt || new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          cuts: {}, live: [] });
+        return;
+      }
       // 장면⑤ — 얼굴 라이선스 차단(409): 블로킹 패널로 명확히 멈춘다(재생성 재차단 신호)
       if (e?.status === 409) {
         patch({ status: 'blocked', error: e, errorMessage: e.message || '이 모델의 얼굴 라이선스를 사용할 수 없어요.' });
