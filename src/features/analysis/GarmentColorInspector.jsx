@@ -90,8 +90,9 @@ export function useGarmentColorInspector({ garment, cardRef }) {
   useEffect(() => () => unshift(), [unshift]);
   // 좁은 창 서랍은 모달이다. 뒤의 앱 전체(상단 메뉴 포함)를 inert로 두고 닫을 때 푼다. 판은 body 포털이라 영향받지 않는다.
   useEffect(() => {
+    if (!open || !drawer) return undefined;
     const root = document.getElementById('root');
-    if (!open || !drawer || !root) return undefined;
+    if (!root) return undefined;
     root.inert = true;
     return () => { root.inert = false; };
   }, [open, drawer]);
