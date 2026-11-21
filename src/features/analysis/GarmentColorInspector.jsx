@@ -25,6 +25,7 @@ export function useGarmentColorInspector({ garment, cardRef }) {
   const panelRef = useRef(null);
   const opener = useRef(null);
   const shifted = useRef(null);
+  const releaseInert = useRef(null);
   const baseId = garment.colors[0]?.colorId || null;
 
   const unshift = useCallback(() => {
@@ -43,12 +44,9 @@ export function useGarmentColorInspector({ garment, cardRef }) {
     garment.flush();
     setOpen(false); setPosition(null); unshift();
     setCurrentId(null);
-    if (returnFocus) {
-      // 서랍이 앱을 inert로 막아 둔 채면 초점이 옮겨지지 않는다. 막기를 먼저 풀고 돌려준다.
-      const root = document.getElementById('root');
-      if (root) root.inert = false;
-      (opener.current || rowRef.current)?.focus({ preventScroll: true });
-    }
+    // 서랍이 건 막기만 먼저 푼다(다른 화면이 건 막기는 건드리지 않는다). 막힌 채면 초점이 옮겨지지 않는다.
+    releaseInert.current?.();
+    if (returnFocus) (opener.current || rowRef.current)?.focus({ preventScroll: true });
   }, [open, garment, unshift]);
 
   const openPanel = useCallback((from) => {
@@ -98,8 +96,10 @@ export function useGarmentColorInspector({ garment, cardRef }) {
     if (!open || !drawer) return undefined;
     const root = document.getElementById('root');
     if (!root) return undefined;
+    const before = root.inert;
     root.inert = true;
-    return () => { root.inert = false; };
+    releaseInert.current = () => { releaseInert.current = null; root.inert = before; };
+    return () => releaseInert.current?.();
   }, [open, drawer]);
 
   const current = garment.colors.find((color) => color.colorId === (currentId || baseId)) || null;
