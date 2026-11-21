@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, ChevronsLeftRight, LoaderCircle } from 'lucide-react';
-import { ZERO_SLIDERS, hexOf, isZeroSliders, sameSliders, sliderTrack, toneSrgb8 } from '@/lib/garmentColorTone.js';
+import { SLIDER_SNAP, ZERO_SLIDERS, hexOf, isZeroSliders, sameSliders, sliderTrack, toneSrgb8 } from '@/lib/garmentColorTone.js';
 import styles from './GarmentColorPanel.module.css';
 
 const SLIDERS = [
@@ -69,7 +69,7 @@ function Compare({ source, sliders }) {
   </>;
 }
 
-export function GarmentColorPanel({ panelRef, colors, currentId, onSelect, onRetry, sources, onSliders, onDone, drawer, style }) {
+export function GarmentColorPanel({ panelRef, colors, currentId, onSelect, onRetry, sources, onSliders, onCommit, onDone, drawer, style }) {
   const current = colors.find((color) => color.colorId === currentId) || colors[0];
   const source = current ? sources[current.colorId] : null;
   const sliders = current?.sliders || ZERO_SLIDERS;
@@ -79,7 +79,9 @@ export function GarmentColorPanel({ panelRef, colors, currentId, onSelect, onRet
   const state = unavailable ? 'unavailable' : failed ? 'error' : processing ? 'processing' : 'ready';
   const base = colorSourceSrgb(current, source);
   const chips = useRef(null);
+  const dragging = useRef(false);
   const pick = (colorId) => onSelect(colorId);
+  const reset = <button type="button" disabled={processing || isZeroSliders(sliders)} onClick={() => onSliders(current.colorId, ZERO_SLIDERS, { immediate: true })}>원래대로</button>;
   return <aside ref={panelRef} id="garment-color-panel" className={`${styles.panel} ${drawer ? styles.drawer : styles.push}`} style={style} data-state={state}
     tabIndex={-1} aria-labelledby="garment-color-title" role={drawer ? 'dialog' : undefined} aria-modal={drawer ? true : undefined}>
     <div className={styles.head}>
@@ -110,11 +112,13 @@ export function GarmentColorPanel({ panelRef, colors, currentId, onSelect, onRet
     {state === 'unavailable' || state === 'error'
       ? current?.photo && <img className={styles.photo} src={current.photo} alt="올린 원본 사진" />
       : <Compare source={source} sliders={sliders} />}
+    {(state === 'unavailable' || state === 'error') && !isZeroSliders(sliders) && <div className={styles.adjustHead}>
+      <p className={styles.savedNote}>전에 맞춘 색이 저장돼 있어요.</p><div className={styles.tools}>{reset}</div></div>}
     {state !== 'unavailable' && state !== 'error' && <>
       <div className={styles.adjustHead}><h3>색 조절</h3>
         <div className={styles.tools}>
           <button type="button" disabled={processing || !current?.auto} onClick={() => onSliders(current.colorId, current.auto, { immediate: true })}>AI 자동</button>
-          <button type="button" disabled={processing || isZeroSliders(sliders)} onClick={() => onSliders(current.colorId, ZERO_SLIDERS, { immediate: true })}>원래대로</button>
+          {reset}
         </div>
       </div>
       {!processing && !current?.auto && <p className={styles.note} aria-live="polite">배경으로 조명을 알 수 없어 AI 자동을 쓸 수 없어요.</p>}
@@ -123,7 +127,14 @@ export function GarmentColorPanel({ panelRef, colors, currentId, onSelect, onRet
           <span className={styles.sliderName}>{name}</span>
           <input type="range" min={-100} max={100} step={1} value={sliders[key]} aria-label={label} disabled={processing}
             style={base ? { '--track': sliderTrack(base, sliders, key) } : undefined}
-            onChange={(event) => onSliders(current.colorId, { ...sliders, [key]: Number(event.target.value) })}
+            onPointerDown={() => { dragging.current = true; }}
+            onPointerUp={() => { dragging.current = false; onCommit?.(); }} onPointerCancel={() => { dragging.current = false; onCommit?.(); }}
+            onKeyUp={() => onCommit?.()} onBlur={() => onCommit?.()}
+            onChange={(event) => {
+              // 끌 때만 0 근처를 원본에 붙인다. 방향키 1칸 이동은 그대로 둔다.
+              const value = Number(event.target.value);
+              onSliders(current.colorId, { ...sliders, [key]: dragging.current && Math.abs(value) <= SLIDER_SNAP ? 0 : value });
+            }}
             onDoubleClick={() => { if (sliders[key]) onSliders(current.colorId, { ...sliders, [key]: 0 }, { immediate: true }); }} />
         </label>)}
       </div>

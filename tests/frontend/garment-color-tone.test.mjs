@@ -17,9 +17,9 @@ test('색 연산이 서버 대조 예시와 같다(명세 §2)', async (t) => {
   }
 });
 
-test('슬라이더는 정수 -100~100이고 ±3 안은 0으로 붙는다', () => {
-  assert.equal(clampSlider(2.6), 0);
-  assert.equal(clampSlider(-3), 0);
+test('슬라이더 값은 정수 -100~100으로 맞추고 작은 값도 지킨다(0 붙이기는 끌 때만 화면이 한다)', () => {
+  assert.equal(clampSlider(2.6), 3);
+  assert.equal(clampSlider(-1), -1);
   assert.equal(clampSlider(4), 4);
   assert.equal(clampSlider(240), 100);
   assert.equal(clampSlider('x'), 0);

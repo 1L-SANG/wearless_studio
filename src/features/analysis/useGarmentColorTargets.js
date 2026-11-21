@@ -43,8 +43,9 @@ export function useGarmentColorTargets({ projectId, product, analysis, onChange 
 
   useEffect(() => {
     let alive = true;
-    statusRequest ||= Promise.resolve().then(() => api.getGarmentColorStatus()).catch(() => ({ enabled: false }));
-    statusRequest.then((status) => { if (alive) setEnabled(!!status?.enabled); });
+    statusRequest ||= Promise.resolve().then(() => api.getGarmentColorStatus());
+    // 조회가 실패하면 기억하지 않는다. 다음에 코디 단계에 들어올 때 다시 묻는다.
+    statusRequest.then((status) => { if (alive) setEnabled(!!status?.enabled); }, () => { statusRequest = null; });
     return () => { alive = false; };
   }, []);
 

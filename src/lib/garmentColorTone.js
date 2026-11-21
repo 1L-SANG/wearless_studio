@@ -33,7 +33,6 @@ export const linearToSrgb8 = (c) => {
 
 export function clampSlider(value) {
   const v = Math.round(Number(value) || 0);
-  if (Math.abs(v) <= SLIDER_SNAP) return 0;
   return Math.max(-SLIDER_RANGE, Math.min(SLIDER_RANGE, v));
 }
 

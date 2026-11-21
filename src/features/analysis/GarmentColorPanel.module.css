@@ -11,7 +11,7 @@
 /* 좁은 창: 오른쪽에서 덮는 서랍 */
 .drawer { position: fixed; top: 60px; right: 0; bottom: 0; z-index: 60; width: min(344px, 100vw); overflow-y: auto; overscroll-behavior: contain; box-shadow: var(--elev-lift); animation: drawerIn 240ms cubic-bezier(.2, 0, 0, 1); }
 @keyframes drawerIn { from { transform: translateX(100%); } }
-.scrim { position: fixed; inset: 60px 0 0 0; z-index: 55; background: color-mix(in srgb, var(--fg-1) 18%, transparent); border: 0; padding: 0; }
+.scrim { position: fixed; inset: 0; z-index: 55; background: color-mix(in srgb, var(--fg-1) 18%, transparent); border: 0; padding: 0; }
 
 .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .head h2 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: -.01em; text-wrap: balance; }
@@ -67,3 +67,4 @@
 .rowValue .dot { width: 14px; height: 14px; }
 .rowChange { color: var(--fg-1); font-weight: 600; }
 .message .retry { flex: none; margin-left: auto; height: 28px; padding: 0 12px; border: 0; border-radius: var(--r-pill); background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.savedNote { margin: 0; font-size: 13px; color: var(--fg-2); text-wrap: balance; }

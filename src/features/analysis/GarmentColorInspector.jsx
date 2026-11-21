@@ -88,12 +88,19 @@ export function useGarmentColorInspector({ garment, cardRef }) {
     return () => { document.removeEventListener('keydown', onKey); window.removeEventListener('resize', onResize); };
   }, [open, drawer, close]);
   useEffect(() => () => unshift(), [unshift]);
+  // 좁은 창 서랍은 모달이다. 뒤의 앱 전체(상단 메뉴 포함)를 inert로 두고 닫을 때 푼다. 판은 body 포털이라 영향받지 않는다.
+  useEffect(() => {
+    const root = document.getElementById('root');
+    if (!open || !drawer || !root) return undefined;
+    root.inert = true;
+    return () => { root.inert = false; };
+  }, [open, drawer]);
 
   const current = garment.colors.find((color) => color.colorId === (currentId || baseId)) || null;
   const panel = open && garment.colors.length > 0 ? createPortal(<>
     {drawer && <button type="button" className={styles.scrim} aria-label="색 맞추기 닫기" onClick={() => close()} />}
     <GarmentColorPanel panelRef={panelRef} colors={garment.colors} currentId={current?.colorId} onSelect={(colorId) => { setCurrentId(colorId); garment.prepare(colorId); }} onRetry={garment.prepare} sources={garment.sources}
-      onSliders={garment.setSliders} onDone={() => close()} drawer={drawer}
+      onSliders={garment.setSliders} onCommit={garment.flush} onDone={() => close()} drawer={drawer}
       style={!drawer && position ? { top: position.top, left: position.left } : undefined} />
   </>, document.body) : null;
 
