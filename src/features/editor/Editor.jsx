@@ -10,7 +10,7 @@ import { templateSectionName } from '@/lib/pageTemplates/slots.js';
    model + patchElById. Everything else (blocks, panels, mini-preview,
    layers, undo/redo, frames, download/preview) keeps prototype logic.
    ============================================================= */
-import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
+import { memo, useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -64,13 +64,14 @@ import { thumbUrl } from '@/lib/imageCdn.js';
 import { classifyEditorLoadError } from '@/features/editor/editorLoadError.js';
 import { MAX_WARDROBE_UPLOADS, WARDROBE_UPLOAD_CONCURRENCY, runWithConcurrency } from '@/features/editor/editorUpload.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
-import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockContentBottom, getBlockRenderHeight, getHiddenExportElementIds, getBlockExportElements, getBlockExportLayout, isEmptyTextElement, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
+import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockContentBottom, getBlockRenderHeight, getHiddenExportElementIds, getBlockExportElements, getBlockExportLayout, isExportBlankBlock, isEmptyTextElement, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import {
   buildExportSummary,
   exportBlockPng,
   downloadEditorPhoto,
-  exportNodeHeight,
+  exportNodeBlock,
   exportStorefrontDownload,
+  exportWidth,
   readExportSettings,
   writeExportSettings,
 } from '@/features/editor/editorExport.js';
@@ -853,6 +854,8 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, pend
       data-blockid={block.id}
       data-export-height={getBlockRenderHeight(block, { forExport: true })}
       data-export-layout={Object.keys(exportLayout).length ? JSON.stringify(exportLayout) : undefined}
+      data-export-section={block.pageSectionKey}
+      data-export-blank={isExportBlankBlock(block) ? 'true' : undefined}
       /* 고른 뒤 전파를 멈춘다 — 캔버스 바닥의 onClick 이 매 클릭마다 선택을 지우므로,
          멈추지 않으면 누르는 동안만 잡혔다가 손을 떼는 순간 풀린다. */
       onClick={(e) => {
@@ -1009,6 +1012,16 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, pend
 // 미니 미리보기 실폭 ≈135 CSS px × DPR2 = 270 → 320 하나로 고정한다. 요소마다 계산하면
 // CDN 캐시 키가 폭마다 갈라져 캐시 미스가 폭증한다.
 const MINI_IMAGE_WIDTH = 320;
+const BlockPreviewElements = memo(function BlockPreviewElements({ block, imageWidth }) {
+  return getBlockExportElements(block).map((el) => (
+    <CanvasElement key={el.id} el={el} titlePlate={hasTitlePlate(el, block.elements)} preview imageWidth={imageWidth} />
+  ));
+});
+
+function renderDownloadPreviewBlock(block) {
+  return <BlockPreviewElements block={block} imageWidth={480} />;
+}
+
 function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
   const [dragId, setDragId] = useState(null);
   const [lineAt, setLineAt] = useState(null);
@@ -1036,9 +1049,7 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
                   글자·표·도형이 캔버스와 동일하게 보인다 (CanvasElement preview 재사용, hidden 자동 제외) */}
               <div style={{ position: 'absolute', top: 0, left: 0, width: 1000, height: blockH,
                 transform: `scale(${(thumbW || 140) / 1000})`, transformOrigin: 'top left', pointerEvents: 'none' }}>
-                {getBlockExportElements(b).map((el) => (
-                  <CanvasElement key={el.id} el={el} titlePlate={hasTitlePlate(el, b.elements)} preview imageWidth={MINI_IMAGE_WIDTH} selected={false} onSelect={() => {}} onEdit={() => {}} />
-                ))}
+                <BlockPreviewElements block={b} imageWidth={MINI_IMAGE_WIDTH} />
               </div>
             </div>
           </div>
@@ -1322,8 +1333,8 @@ export function Editor() {
   const [genNotif, setGenNotif] = useState(
     typeof Notification !== 'undefined' ? Notification.permission : 'unsupported');
   const [dlSettings, setDlSettings] = useState(() => readExportSettings());
-  const [dlNotice, setDlNotice] = useState('');
-  const [dlBlockHeights, setDlBlockHeights] = useState([]);
+  const [dlFileName, setDlFileName] = useState('');
+  const [dlBlockMeasurements, setDlBlockMeasurements] = useState(null);
   useEffect(() => {
     writeExportSettings(undefined, dlSettings);
   }, [dlSettings]);
@@ -1419,26 +1430,26 @@ export function Editor() {
   useLayoutEffect(() => {
     if (!download && !publish) return;
     const nodes = [...(canvasRef.current?.querySelectorAll('.canvas-block') || [])];
-    setDlBlockHeights(nodes.map(exportNodeHeight));
+    setDlBlockMeasurements({ blocks, measured: nodes.map(exportNodeBlock) });
   }, [download, publish, blocks]);
-  const dlEstimatedHeights = useMemo(() => {
-    if (dlBlockHeights.length) return dlBlockHeights;
-    // .canvas-block 은 세로 padding 50px씩을 갖는다. DOM 측정 전 첫 모달 프레임의 폴백이다.
-    return (blocks || []).map((block) => getBlockRenderHeight(block, { forExport: true }) + 100);
-  }, [blocks, dlBlockHeights]);
+  const dlMeasuredBlocks = useMemo(() => {
+    if (dlBlockMeasurements && dlBlockMeasurements.blocks === blocks && dlBlockMeasurements.measured.length === blocks?.length) {
+      return dlBlockMeasurements.measured;
+    }
+    // 첫 프레임에는 .canvas-block의 border-box에 적용되는 콘텐츠 높이를 쓴다.
+    return (blocks || []).map((block) => ({
+      height: Math.round(getBlockRenderHeight(block, { forExport: true })),
+      pageSectionKey: block.pageSectionKey,
+      blank: isExportBlankBlock(block),
+    }));
+  }, [blocks, dlBlockMeasurements]);
   const dlSummary = useMemo(
-    () => buildExportSummary(dlEstimatedHeights, dlSettings),
-    [dlEstimatedHeights, dlSettings],
+    () => buildExportSummary(dlMeasuredBlocks, dlSettings),
+    [dlMeasuredBlocks, dlSettings],
   );
-  const pubSummary = useMemo(() => buildExportSummary(dlEstimatedHeights, {
+  const pubSummary = useMemo(() => buildExportSummary(dlMeasuredBlocks, {
     ...pubSettings, format: 'jpeg', delivery: 'split',
-  }), [dlEstimatedHeights, pubSettings]);
-  useEffect(() => {
-    if (!download || dlBusy || dlSettings.delivery !== 'single' || !dlSummary.fallbackReason) return;
-    setDlSettings((current) => ({ ...current, delivery: 'split' }));
-    setDlNotice(dlSummary.fallbackReason);
-  }, [download, dlBusy, dlSettings.delivery, dlSummary.fallbackReason]);
-
+  }), [dlMeasuredBlocks, pubSettings]);
   useEffect(() => {
     if (
       pendingSlot
@@ -2399,9 +2410,15 @@ export function Editor() {
       toast.push(error.message || 'GIF를 받지 못했어요. 다시 시도해 주세요', { icon: 'x' });
     } finally { setDlBusy(false); }
   };
+  const openDownload = () => {
+    if (exportWidth(dlSettings) === null) setDlSettings(readExportSettings());
+    setDlFileName(productName);
+    setDlError('');
+    setDownload(true);
+  };
   const runDownload = async () => {
     const accountGeneration = clientEvents.getAccountGeneration();
-    if (dlBusy || pubCaptureRef.current) return;
+    if (dlBusy || pubCaptureRef.current || exportWidth(dlSettings) === null) return;
     const nodes = [...(canvasRef.current?.querySelectorAll('.canvas-block') || [])];
     if (!nodes.length) { setDlError('저장할 블록이 없어요. 상세페이지에 블록을 추가해 주세요.'); return; }
     setDlError('');
@@ -2411,7 +2428,7 @@ export function Editor() {
     const onProgress = (done, total, stage = 'capture') => setDlProg({ done: done + 1, total, stage });
     try {
       const result = await exportStorefrontDownload(
-        nodes, productName, onProgress, dlSettings, { ...provenanceOpts(), gifImages },
+        nodes, dlFileName, onProgress, dlSettings, { ...provenanceOpts(), gifImages },
       );
       setDownload(false);
       finishExport(result.delivery === 'split'
@@ -4011,10 +4028,10 @@ export function Editor() {
             onClose={() => setExportMenuOpen(false)} anchorRef={exportAnchorRef}
             disabled={genActive || pubBusy || dlBusy || pubCapturing}
             label={genActive && !genFailed ? '생성 중…' : '다운로드'}
-            onDownload={() => { setDlNotice(''); setDlError(''); setDownload(true); }}
+            onDownload={openDownload}
             items={buildExportMenuItems({ malls: mallInfo || { disabled: true },
               publishEnabled: publicationInfo.scope === pubScope && !publicationInfo.disabled, gifCount: gifImages.length,
-              onDownload: () => { setDlNotice(''); setDlError(''); setDownload(true); },
+              onDownload: openDownload,
               onPublish: () => { setPubResult(null); setPubError(''); setPubProg(null); setPublish(true); },
               onRegisterMall: (mall) => {
                 const resumeDraft = mallChecklistDrafts.current.get(mall);
@@ -4388,16 +4405,20 @@ export function Editor() {
             active={Boolean(dlError && dlOriginalError)} error={dlOriginalError} projectId={projectId} />
           <EditorDownloadModal
             blocks={blocks}
+            blockMeasurements={dlMeasuredBlocks}
+            renderPreviewBlock={renderDownloadPreviewBlock}
+            productName={productName}
+            fileName={dlFileName}
             canvasAiJobs={canvasAi.jobs}
             settings={dlSettings}
             gifCount={gifImages.length}
             onDownloadGifs={() => receiveGifs()}
             summary={dlSummary}
-            notice={dlNotice}
             busy={dlBusy}
             progress={dlProg}
             error={dlError}
-            onChange={(next) => { setDlNotice(''); setDlSettings(next); }}
+            onChange={setDlSettings}
+            onFileNameChange={setDlFileName}
             onCancel={() => setDownload(false)}
             onDownload={runDownload}
             onJumpToBlock={jumpTo}

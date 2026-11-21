@@ -3,16 +3,17 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { componentModule, hooks } from './helpers/reactHarness.mjs';
-import { EXPORT_PRESETS, normalizeExportSettings } from '../../src/features/editor/editorExport.js';
+import * as editorExport from '../../src/features/editor/editorExport.js';
+import { colorWithOpacity } from '../../src/features/editor/editorLibrary.js';
 import { getAiDraftSectionNames, formatAiDraftSectionNames } from '../../src/features/editor/editorAiDrafts.js';
 import { downloadChecks } from '../../src/features/editor/editorDownloadWarnings.js';
 
-const { PUBLISH_PRESETS } = await componentModule('src/features/editor/detailPublish.js', ['PUBLISH_PRESETS'], { EXPORT_PRESETS });
+const { PUBLISH_PRESETS } = await componentModule('src/features/editor/detailPublish.js', ['PUBLISH_PRESETS'], editorExport);
 
 const blocks = [{ id: 'b', name: '후기', pageSectionKind: 'review', elements: [
   { id: 't', type: 'text', text: 'AI 후기', aiDraft: true },
 ] }];
-const summary = { width: 860, height: 1000, fileCount: 1, approxBytes: 1000 };
+const summary = editorExport.buildExportSummary([1000, 1000, 1000], editorExport.DEFAULT_EXPORT_SETTINGS);
 const result = { files: [{ index: 1, url: '/image.jpg' }], html: '<p>상세</p>' };
 const style = new Proxy({}, { get: (_, key) => String(key) });
 const { DownloadChecklist } = await componentModule('src/features/editor/DownloadChecklist.jsx',
@@ -27,7 +28,8 @@ async function mount(kind, extra = {}) {
     ['useAiDraftConfirmation', 'EditorAiDraftConfirmation'], bindings);
   const name = kind === 'download' ? 'EditorDownloadModal' : 'EditorPublishModal';
   const module = await componentModule(`src/features/editor/${name}.jsx`, [name], {
-    ...bindings, ...shared, DownloadChecklist, EXPORT_PRESETS, normalizeExportSettings, PUBLISH_PRESETS, RadioCard: () => null,
+    ...bindings, ...shared, ...editorExport, DownloadChecklist, PUBLISH_PRESETS, colorWithOpacity,
+    useId: () => 'test-field', RadioCard: () => null,
   });
   let props = { blocks, settings: { preset: 'smartstore' }, summary, busy: false, error: '',
     result: null, previousCount: 0, onChange() {}, onCancel: () => calls.push('cancel'),

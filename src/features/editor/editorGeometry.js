@@ -1,4 +1,5 @@
 import { pageTemplatesCatalog } from '../../lib/pageTemplates/catalog.js';
+import { hasImageSource } from './editorImageSource.js';
 
 /** 시스템 요소를 뺀 콘텐츠의 아래 끝. 새 텍스트를 "기존 콘텐츠 아래"에 붙일 때도 쓴다. */
 export function getBlockContentBottom(block) {
@@ -78,6 +79,11 @@ export function getBlockExportLayout(block) {
     const changed = Object.fromEntries(['x', 'y', 'w', 'h'].filter(key => el[key] !== original?.[key]).map(key => [key, el[key]]));
     return Object.keys(changed).length ? [[el.id, changed]] : [];
   }));
+}
+
+export function isExportBlankBlock(block) {
+  return !getBlockExportElements(block).some((element) => !element.hidden
+    && (element.type !== 'image' || hasImageSource(element)));
 }
 
 function exportContentBottom(block) {

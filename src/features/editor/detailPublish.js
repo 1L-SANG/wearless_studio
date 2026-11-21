@@ -3,7 +3,8 @@ import { getPageFontEmbedCSS } from './editorExportFonts.js';
 import { EXPORT_PRESETS, MAX_SPLIT_HEIGHT, MAX_JPEG_BYTES, captureBlockCanvasSlices, renderStorefrontFiles } from './editorExport.js';
 import { publicationFetch } from '../../lib/api/detailPublications.js';
 
-export const PUBLISH_PRESETS = Object.freeze(EXPORT_PRESETS.filter((preset) => !preset.original));
+const PUBLISH_PRESET_IDS = new Set(['smartstore', 'coupang', 'high']);
+export const PUBLISH_PRESETS = Object.freeze(EXPORT_PRESETS.filter((preset) => PUBLISH_PRESET_IDS.has(preset.id)));
 const FAILURE = '지금은 올리지 못했어요. 대신 ZIP으로 받아 두세요';
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 
@@ -64,7 +65,9 @@ export async function publishDetailPage(blockNodes, { projectId, productName, pr
     let captureBlock = deps.captureBlock;
     if (!deps.renderStorefrontFiles && !captureBlock) {
       const fontEmbedCSS = await getPageFontEmbedCSS(blockNodes);
-      captureBlock = (node, ratio) => captureBlockCanvasSlices(node, ratio, fontEmbedCSS, MAX_SPLIT_HEIGHT, imageCache);
+      captureBlock = (node, ratio, _index, plannedSlices) => captureBlockCanvasSlices(
+        node, ratio, fontEmbedCSS, MAX_SPLIT_HEIGHT, imageCache, undefined, plannedSlices,
+      );
     }
     const rendered = await render(blockNodes, { preset: selected.id, format: 'jpeg', delivery: 'split' }, {
       ...deps, captureBlock,

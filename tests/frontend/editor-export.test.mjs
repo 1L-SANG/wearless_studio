@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import JSZip from 'jszip';
 
 import {
   DEFAULT_EXPORT_SETTINGS,
@@ -13,14 +14,14 @@ import {
   exportScaleForPreset,
   findUniformCutRow,
   fitPixelRatio,
-  groupScaledBlockHeights,
   isAssetBytesUrl,
+  normalizeExportSettings,
+  packageStorefrontZip,
   publicationKindForSingle,
   readExportSettings,
   renderStorefrontFiles,
   singlePageSizeWarning,
   singlePageFallbackReason,
-  splitCanvasRanges,
   splitOversizeJpegRanges,
   stitchLayout,
   toBytesUrl,
@@ -95,7 +96,7 @@ test('원본 PNG도 큰 블록을 안전한 파일 수로 안내하고 폭 2000�
 
 test('원본 PNG는 2배율·무손실 형식으로 기존 블록 경계를 유지한다', async () => {
   const encoded = [];
-  const result = await renderStorefrontFiles([{ h: 100 }, { h: 150 }],
+  const result = await renderStorefrontFiles([{ h: 400 }, { h: 450 }],
     { preset: 'original', delivery: 'split' }, {
       measureBlock: node => node.h,
       captureBlock: async (node, ratio) => {
@@ -111,13 +112,13 @@ test('원본 PNG는 2배율·무손실 형식으로 기존 블록 경계를 유�
     });
   assert.equal(result.files.length, 2);
   assert.deepEqual(encoded, [
-    { width: 2000, height: 200, mime: 'image/png', quality: undefined },
-    { width: 2000, height: 300, mime: 'image/png', quality: undefined },
+    { width: 2000, height: 800, mime: 'image/png', quality: undefined },
+    { width: 2000, height: 900, mime: 'image/png', quality: undefined },
   ]);
 });
 
 test('긴 원본 PNG 조각은 새 축소 캔버스 없이 모든 행을 순서대로 인코딩한다', async () => {
-  const heights = [8388, 8388, 3224];
+  const heights = [6667, 6667, 6666];
   let offset = 0;
   const slices = heights.map(height => {
     const canvas = { width: 2000, height, rows: Array.from({ length: height }, (_, index) => offset + index) };
@@ -143,25 +144,30 @@ test('쇼핑몰 폭 프리셋은 1,000px 설계 캔버스의 정확한 배율을
   assert.deepEqual(EXPORT_PRESETS.map(({ id, width }) => [id, width]), [
     ['smartstore', 860],
     ['coupang', 780],
+    ['cafe24', 800],
     ['high', 1290],
     ['original', 2000],
+    ['custom', undefined],
   ]);
   assert.equal(exportScaleForPreset('smartstore'), 0.86);
   assert.equal(exportScaleForPreset('coupang'), 0.78);
   assert.equal(exportScaleForPreset('high'), 1.29);
   assert.equal(exportScaleForPreset('original'), 2);
+  assert.equal(exportScaleForPreset('cafe24'), 0.8);
+  assert.equal(exportScaleForPreset('custom', 925), 0.925);
 });
 
-test('나눠 받기는 연속 블록을 3,000px 이하로 묶고 긴 블록은 내부 분할한다', () => {
-  assert.deepEqual(groupScaledBlockHeights([1000, 2000, 4000], 0.86), [2580, 3000, 440]);
-  assert.deepEqual(groupScaledBlockHeights([3500, 1000], 0.78), [2730, 780]);
-  assert.ok(groupScaledBlockHeights([8000], 1.29).every((height) => height <= 3000));
-});
-
-test('파일명은 영문 detail과 숫자만 쓰고 순서 자릿수를 맞춘다', () => {
-  assert.equal(detailFileName(0, 3, 'jpeg'), 'detail_01.jpg');
-  assert.equal(detailFileName(1, 3, 'png'), 'detail_02.png');
-  assert.equal(detailFileName(99, 120, 'jpeg'), 'detail_100.jpg');
+test('조각 이름은 카페24일 때 detail을 쓰고 10장과 100장에서 자릿수를 맞춘다', async () => {
+  assert.equal(detailFileName(0, 10, 'jpeg', '셔츠', 'cafe24'), 'detail_01.jpg');
+  assert.equal(detailFileName(0, 10, 'jpeg', '셔츠', 'custom'), '셔츠_01.jpg');
+  assert.equal(detailFileName(9, 10, 'jpeg', '셔츠', 'custom'), '셔츠_10.jpg');
+  assert.equal(detailFileName(0, 100, 'png', '셔츠', 'original'), '셔츠_001.png');
+  assert.equal(detailFileName(99, 100, 'png', '셔츠', 'original'), '셔츠_100.png');
+  for (const [preset, name] of [['cafe24', 'detail_01.jpg'], ['smartstore', '셔츠_01.jpg']]) {
+    const { blob } = await packageStorefrontZip([new Blob(['image'])], 'jpeg', { preset, fileName: ' 셔츠? ' });
+    const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+    assert.deepEqual(Object.keys(zip.files), [name]);
+  }
 });
 
 test('한 장 받기는 20,000px 또는 브라우저 캔버스 한도를 넘으면 이유를 돌려준다', () => {
@@ -200,10 +206,42 @@ test('localStorage 객체 자체를 읽을 때 예외가 나도 에디터 렌더
   }
 });
 
+test('직접 입력은 유효한 정수 폭만 저장하고 잘못된 이전 저장값은 안전하게 복원한다', async () => {
+  const data = new Map();
+  const storage = { getItem: key => data.get(key), setItem: (key, value) => data.set(key, value) };
+  const custom = { ...DEFAULT_EXPORT_SETTINGS, preset: 'custom' };
+  for (const width of [640, 2000]) {
+    assert.equal(writeExportSettings(storage, { ...custom, customWidth: width, fileName: '임시 이름' }), true);
+    assert.deepEqual(readExportSettings(storage), { ...custom, customWidth: width });
+  }
+  for (const width of [639, 2001, 640.5, '900', undefined]) {
+    const invalid = { ...custom, customWidth: width };
+    assert.equal(normalizeExportSettings(invalid).customWidth, undefined);
+    assert.equal(writeExportSettings(storage, invalid), false);
+    assert.equal(readExportSettings(storage).customWidth, 2000);
+    assert.equal(buildExportSummary([1000], invalid), null);
+    await assert.rejects(renderStorefrontFiles([], invalid), /640~2,000px/);
+    assert.deepEqual(readExportSettings({ getItem: () => JSON.stringify(invalid) }), DEFAULT_EXPORT_SETTINGS);
+  }
+  assert.equal(readExportSettings({ getItem: () => '{"preset":"cafe24"}' }).preset, 'cafe24');
+});
+
+test('직접 입력 폭으로 총 높이와 용량을 계산하고 통 이미지 한도는 실제 폭으로 확인한다', () => {
+  const settings = { preset: 'custom', customWidth: 900, format: 'jpeg', delivery: 'split' };
+  const summary = buildExportSummary([1000, 2000, 4000], settings);
+  assert.equal(summary.width, 900);
+  assert.equal(summary.height, 6300);
+  assert.equal(summary.approxBytes, 1360800);
+  assert.deepEqual(summary.pieceHeights, [900, 1800, 1800, 1800]);
+  const fallback = buildExportSummary([5000], { ...settings, customWidth: 2000, delivery: 'single' });
+  assert.match(fallback.fallbackReason, /브라우저/);
+  assert.equal(fallback.fileCount, 4);
+});
+
 test('요약은 최종 폭과 총 세로, 예상 파일 수와 용량을 표시할 값을 만든다', () => {
   const split = buildExportSummary([1000, 2000, 4000], DEFAULT_EXPORT_SETTINGS);
   assert.deepEqual({ width: split.width, height: split.height, fileCount: split.fileCount }, {
-    width: 860, height: 6020, fileCount: 3,
+    width: 860, height: 6020, fileCount: 4,
   });
   assert.equal(split.maxPieceHeight, 3000);
   assert.ok(split.approxBytes > 0);
@@ -234,20 +272,8 @@ test('긴 블록은 3,000px 가까이의 가로 단색 여백 줄에서 자른�
     const at = (2850 * width + x) * 4;
     data.set([248, 248, 248, 255], at);
   }
-  const canvas = {
-    width,
-    height,
-    getContext: () => ({
-      getImageData: (_x, y, w, h) => ({
-        data: data.slice(y * w * 4, (y + h) * w * 4), width: w, height: h,
-      }),
-    }),
-  };
   assert.equal(findUniformCutRow(data.slice(0, 3000 * width * 4), width, 3000), 2850);
-  const ranges = splitCanvasRanges(canvas);
-  assert.equal(ranges[0].height, 2850);
-  assert.equal(ranges.reduce((sum, range) => sum + range.height, 0), height);
-  assert.ok(ranges.every((range) => range.height <= 3000));
+  assert.equal(findUniformCutRow(data.slice(0, 3000 * width * 4), width, 3000, { searchWindow: 100 }), 3000);
 });
 
 test('긴 블록에 단색 여백 줄이 없으면 정확히 3,000px에서 자른다', () => {
@@ -317,7 +343,9 @@ test('실제 나눠 받기 렌더러도 블록을 묶고 긴 블록을 이어지
     { preset: 'smartstore', format: 'jpeg', delivery: 'split' },
     {
       maxHeight: 30,
-      captureBlock: async (height) => ({ canvas: fakeCanvas(860, height), softFailed: 0 }),
+      captureBlock: async (_height, _ratio, _index, planned) => ({
+        canvases: planned.map(({ height }) => fakeCanvas(860, height)), softFailed: 0,
+      }),
       measureBlock: (height) => height / 0.86,
       createCanvas: fakeCanvas,
       encodeCanvas: async (canvas, mime, quality) => ({
@@ -326,7 +354,7 @@ test('실제 나눠 받기 렌더러도 블록을 묶고 긴 블록을 이어지
       releaseCanvas: () => {},
     },
   );
-  assert.deepEqual(rendered.files.map((file) => file.height), [30, 30, 10]);
+  assert.deepEqual(rendered.files.map((file) => file.height), [30, 20, 20]);
   assert.ok(rendered.files.every((file) => file.type === 'image/jpeg' && file.quality === 0.9));
   assert.equal(rendered.softFailed, 0);
 });
@@ -365,6 +393,26 @@ test('아주 긴 단일 블록은 큰 중간 캔버스 없이 3,000px 캡처 조
   assert.equal(rendered.height, 18000);
 });
 
+test('긴 블록의 내부 절단은 조각 수를 늘리지 않는 범위에서 앞당길 수 있다', async () => {
+  const heights = [6500, 500];
+  const settings = { preset: 'custom', customWidth: 1000, format: 'png', delivery: 'split' };
+  const summary = buildExportSummary(heights, settings);
+  const rendered = await renderStorefrontFiles(heights, settings, {
+    measureBlock: (height) => height,
+    captureBlock: async (height, ratio, index, planned) => {
+      assert.equal(ratio, 1);
+      if (index === 0) assert.equal(planned[0].cutSlack, 833);
+      const parts = index === 0 ? [1917, 2417, 2166] : [height];
+      return { canvases: parts.map((part) => fakeCanvas(1000, part)), softFailed: 0 };
+    },
+    createCanvas: fakeCanvas,
+    encodeCanvas: async (canvas) => ({ height: canvas.height }),
+    releaseCanvas() {},
+  });
+  assert.deepEqual(summary.pieceHeights, [2167, 2167, 2666]);
+  assert.deepEqual(rendered.files.map((file) => file.height), [1917, 2417, 2666]);
+});
+
 test('인코딩이 실패해도 한 장과 나눠 받기 캔버스 버퍼를 모두 해제한다', async () => {
   for (const delivery of ['single', 'split']) {
     const created = [];
@@ -398,6 +446,11 @@ test('exportFileName: 금지문자 제거·빈 값 기본, 캡처 폭 계약 고
   assert.equal(exportFileName('a/b:c*d?e"f<g>h|i'), 'a b c d e f g h i.png');
   assert.equal(exportFileName(''), '상세페이지.png');
   assert.equal(exportFileName('니트', '블록01'), '니트_블록01.png');
+  assert.equal(exportFileName('  첫\t  번째\u007f 이름... '), '첫 번째 이름.png');
+  assert.equal(exportFileName('한글'.normalize('NFD')), '한글.png');
+  assert.equal(exportFileName('...'), '상세페이지.png');
+  assert.equal(exportFileName('😀'.repeat(61)), `${'😀'.repeat(60)}.png`);
+  assert.equal(exportFileName(' cOm9. ', '블록1'), 'cOm9_상세_블록1.png');
   assert.equal(EXPORT_WIDTH, 1000); // .ed-canvas 설계 폭과 같아야 한다 (features.css .ed-canvas)
 });
 
