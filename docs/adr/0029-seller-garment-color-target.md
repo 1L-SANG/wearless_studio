@@ -27,6 +27,6 @@
 
 ## 결과
 
-- 새 서버 키 `analysis.garmentColorTargets`와 전용 API 4개, 상세 생성 끝 단계, 스위치 `GARMENT_COLOR_TARGET_ENABLED`(기본 꺼짐).
+- 새 상품은 코디 단계까지 서버 프로젝트가 없으므로 셀러 입력은 분석의 클라이언트 키 `analysis.garmentColorSliders`에 두고 확정 때 함께 옮긴다. 미리보기용 누끼는 원본 API(손님용 공개, 프로젝트용)가 만들어 돌려주고 저장하지 않는다. 목표 색은 생성 때 서버가 다시 잰다. 스위치 `GARMENT_COLOR_TARGET_ENABLED`(기본 꺼짐).
 - 비용은 셀러가 색을 정한 색상에만 든다. 15컷 페이지 약 0.15달러.
 - ADR-0025(추가 색상 색 입히기)와 ADR-0028(핏 칩)은 그대로다. 이 결정은 그 뒤에 붙는다.

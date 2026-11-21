@@ -1,7 +1,7 @@
 # 셀러가 정한 옷 색 반영 명세 (garment-color-v1)
 
 - 날짜: 2026-11-21
-- 상태: 1차 구현 정본. 결정 근거는 ADR-0029.
+- 상태: 1차 구현 정본(11/21 고침: 코디 단계에는 서버 프로젝트가 없어 셀러 입력은 분석 키, 미리보기 누끼는 원본 API). 결정 근거는 ADR-0029.
 - 범위: 코디보드에서 셀러가 실물 옷 색을 맞추고, 상세페이지 생성이 끝난 뒤 그 색을 옷 부분에만 반영한다. 에디터에서 다시 맞추기는 2차다.
 
 ## 1. 한 줄 규칙
@@ -31,18 +31,20 @@
 
 셀러 슬라이더 범위는 정수 −100~100이다. 화면은 |값| ≤ 3을 0으로 붙인다. 슬라이더 끝값은 사진에 안전하게 옮길 수 있는 한도(4절 상한)에 맞춘 것이다.
 
-## 3. 목표 색 T
+## 3. 원본 누끼와 목표 색 T
 
-- **원본 누끼:** 색상마다 그 색상의 첫 Front 원본 사진에서 판매 의류만 오려낸 투명 PNG(`source`)를 만든다. 옷 영역은 기존 SAM 3 옷 윤곽(`tone_mask`, `garment_color_tune`과 같은 프롬프트와 코디 겹침 빼기)을 쓴다. 기준 색상의 기존 누끼가 준비돼 있으면 재사용해도 된다.
-- **원본 색 S:** `source`에서 알파 200 이상 픽셀의 sRGB 8비트 채널별 중앙값 `S8`, `S = linear(S8)`.
-- **목표 색:** `T = tone(S, sliders)`. 슬라이더가 모두 0이면 목표가 없다.
-- **AI 자동:** 그 색상의 원본 사진(배경 포함)으로 기존 조명 추정(`qwen_flatlay._color_target`의 색 방향만, 밝기는 쓰지 않음)을 돌려 목표 a, b를 얻고, `lightness = 0`에서 `chroma`, `warmth` 정수 격자를 훑어 `tone(S, ·)`의 Oklab a, b가 목표에 가장 가까운 값을 `auto`로 저장한다. 조명을 추정하지 못하면 `auto = null`(화면에서 버튼이 꺼진다).
+새 상품은 코디 단계까지 서버 프로젝트가 없다(확정 버튼에서 프로젝트를 만든다). 그래서 코디 단계의 미리보기 재료는 프로젝트와 무관하게 만들고, 셀러 입력(슬라이더)만 분석에 저장한다. 목표 색은 생성할 때 서버가 다시 계산한다.
+
+- **원본 누끼:** 색상의 첫 Front 원본 사진에서 판매 의류만 오려낸 투명 PNG. 옷 영역은 기존 SAM 3 옷 윤곽(`tone_mask`, `garment_color_tune`과 같은 프롬프트)을 쓴다. 6절 원본 API가 만들어 돌려주고 서버에 저장하지 않는다. 화면은 세션 동안 사진별로 기억한다.
+- **원본 색 S:** 누끼에서 알파 200 이상 픽셀의 sRGB 8비트 채널별 중앙값 `S8`, `S = linear(S8)`. 화면 미리보기와 생성 때 서버 계산이 같은 규칙을 쓴다.
+- **목표 색:** `T = tone(S, sliders)`. 생성 잡이 끝 단계에서 그 색상의 Front 원본으로 S를 다시 재서 계산한다(색상당 SAM 3 1회). 슬라이더가 모두 0이면 목표가 없다.
+- **AI 자동:** 원본 API가 그 사진(배경 포함)으로 기존 조명 추정(`qwen_flatlay._color_target`의 색 방향만, 밝기는 쓰지 않음)을 돌려 목표 a, b를 얻고, `lightness = 0`에서 `chroma`, `warmth` 정수 격자를 훑어 `tone(S, ·)`의 Oklab a, b가 목표에 가장 가까운 값을 `auto`로 돌려준다. 조명을 추정하지 못하면 `auto = null`(화면에서 버튼이 꺼진다).
 
 ## 4. 끝 단계 (생성 뒤 반영)
 
 상세페이지 생성 잡에서 모든 컷 생성이 끝난 뒤(`asyncio.gather` 뒤), 결과 저장(`finalize_detail_page_success`) 전에 한 번 돈다.
 
-1. 잡을 시작할 때 읽은 분석의 `garmentColorTargets`에서 목표가 있는 색상만 고른다. 없으면 이 단계는 아무것도 하지 않는다(비용 0).
+1. 잡을 시작할 때 읽은 분석의 `garmentColorSliders`에서 0이 아닌 색상만 고른다. 없으면 이 단계는 아무것도 하지 않는다(비용 0). 고른 색상마다 Front 원본으로 S를 재서 `T = tone(S, sliders)`를 만든다(3절).
 2. 그 색상의 판매 의류가 보이는 모든 결과 컷(착용컷, 스튜디오컷, 제품 단독컷, 디테일컷)을 모은다. 실존 모델 얼굴이 들어간 컷은 외부 서비스에 보내지 않는 규칙 때문에 `skipped: real_model`로 둔다.
 3. 컷마다 옷 윤곽 `m_i`를 따고(코디 겹침 빼기 포함) 가운데 색 `M_i`(3절과 같은 채널별 중앙값)를 잰다. 윤곽 실패 컷은 건너뛴다.
 4. `M = 채널별 중앙값(M_i)`. 셀러가 움직인 축만 푼다. 밝기를 움직였으면 `lightness`, 진하기나 따뜻함을 움직였으면 `chroma`와 `warmth`. 움직이지 않은 축은 0으로 고정한다. `tone(M, q)`가 T에 가장 가까운 실수 `q`를 찾는다(밝기는 Oklab L, 색은 Oklab a, b로 잰다).
@@ -56,68 +58,53 @@
 
 ## 5. 저장 계약
 
-`analysis.garmentColorTargets`는 서버 소유이고 클라이언트의 분석 PATCH로 만들거나 바꿀 수 없다(`_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS`). 전용 API만 쓴다. DB 마이그레이션은 없다.
+셀러 입력은 분석의 클라이언트 소유 키 `analysis.garmentColorSliders`에 둔다. 손님 초안에서도 같은 키로 저장되고 확정 때 분석과 함께 프로젝트로 옮겨진다. DB 마이그레이션은 없다.
 
 ```json
 {
-  "toneVersion": "garment-color-v1",
+  "version": 1,
   "colors": {
-    "<colorId>": {
-      "sourceAssetId": "uuid",
-      "sourceInput": "원본 Front 자산 id와 바이트 해시",
-      "sourceSrgb": [226, 217, 196],
-      "auto": { "chroma": -8, "lightness": 0, "warmth": -30 },
-      "sliders": { "chroma": 0, "lightness": 0, "warmth": 0 },
-      "targetLinear": [0.75, 0.69, 0.55],
-      "updatedAt": "2026-11-21T00:00:00Z"
-    }
+    "<colorId>": { "chroma": 0, "lightness": -24, "warmth": 18 }
   }
 }
 ```
 
-- 그 색상의 Front 원본이 바뀌면 그 색상 항목을 지운다(`garmentColorEvidence`와 같은 무효화 지점). 색상이 삭제돼도 지운다.
-- 재분석(`finalize_analyze_success`)은 이 키를 보존한다.
+- 서버는 분석 저장 때 검증한다. 값은 정수 −100~100, 모두 0인 색상과 상품에 없는 colorId는 빼고 저장한다. 모양이 틀리면 키를 지운다(분석 저장 전체를 실패시키지 않는다).
+- 목표 색이나 원본 색을 클라이언트가 보내도 서버는 쓰지 않는다(생성 때 다시 잰다).
+- 재분석은 이 키를 보존한다.
 - 상세 생성 잡은 시작할 때의 값을 쓴다. 생성 중에 바꾼 값은 다음 생성부터 반영된다.
 
 ## 6. API
 
-모두 로그인과 프로젝트 소유 확인을 거친다. 스위치 `GARMENT_COLOR_TARGET_ENABLED`(기본 꺼짐)가 꺼져 있으면 GET은 `{"enabled": false, "colors": []}`, 나머지는 404다.
+스위치 `GARMENT_COLOR_TARGET_ENABLED`(기본 꺼짐)가 꺼져 있으면 아래 원본 API는 404, 상태 API는 `{"enabled": false}`이고, 생성 끝 단계도 돌지 않는다.
 
-### GET `/v1/projects/{projectId}/garment-color-targets`
+### GET `/v1/public/garment-color-targets/status`
 
-외부 호출 없이 저장값만 읽는다.
+로그인 없이 부른다. `{"enabled": true, "toneVersion": "garment-color-v1"}`. 화면은 `enabled`일 때만 "내 상품" 줄을 보여 준다.
+
+### POST `/v1/public/garment-color-source`
+
+로그인 없이 부른다(손님 초안). multipart: `image`(그 색상의 Front 사진 파일), `clothingType`, `subCategory`(선택). 공개 분석과 같은 방식의 요청 수 제한을 둔다.
+
+### POST `/v1/projects/{projectId}/garment-color-source`
+
+로그인과 프로젝트 소유 확인. 본문 `{"colorId": "..."}`. 서버가 그 색상의 첫 Front 자산을 읽는다. 없는 색상 404.
+
+두 원본 API의 응답은 같다.
 
 ```json
 {
-  "enabled": true,
-  "toneVersion": "garment-color-v1",
-  "colors": [
-    {
-      "colorId": "c1", "name": "아이보리", "isBase": true,
-      "status": "unprepared",
-      "reason": null,
-      "sourceSrgb": null,
-      "auto": null,
-      "sliders": { "chroma": 0, "lightness": 0, "warmth": 0 }
-    }
-  ]
+  "status": "ready",
+  "reason": null,
+  "cutoutPng": "data:image/png;base64,....",
+  "sourceSrgb": [226, 217, 196],
+  "auto": { "chroma": -8, "lightness": 0, "warmth": -36 }
 }
 ```
 
-- `colors` 순서는 기준 색상이 먼저, 나머지는 상품의 색상 순서다. Front 원본이 없는 색상은 `status: "unavailable"`, `reason: "no_front_photo"`.
-- `status`: `unprepared`(아직 누끼 안 만듦), `ready`, `unavailable`(`reason`: `no_front_photo`, `mask_failed`, `invalid_image`).
-
-### POST `/v1/projects/{projectId}/garment-color-targets:prepare`
-
-`unprepared` 색상의 누끼, 원본 색, AI 자동 값을 만든다. 색상끼리 병렬, 동기 응답, 같은 입력이면 다시 만들지 않는다. 응답은 GET과 같다. 색상 하나의 실패는 그 색상만 `unavailable`이 된다. 비용은 색상마다 SAM 3 호출 1~2회.
-
-### PUT `/v1/projects/{projectId}/garment-color-targets/{colorId}`
-
-본문 `{"sliders": {"chroma": int, "lightness": int, "warmth": int}}`. 정수 −100~100이 아니면 422, 없는 색상 404, `ready`가 아니면 409. 서버가 T를 계산해 저장하고 그 색상 한 개를 GET의 `colors[]` 원소 모양으로 돌려준다. 모두 0이면 목표를 지운다(`targetLinear: null`).
-
-### GET `/v1/projects/{projectId}/garment-color-targets/{colorId}/source`
-
-`ready` 색상의 누끼 PNG 바이트. 화면이 캔버스로 픽셀을 읽으므로 인증 fetch로 받는 바이트 응답이다(톤 에디터 source와 같은 방식).
+- `cutoutPng`는 긴 변 640px 이하로 줄이고 투명 여백을 잘라 낸 누끼다.
+- 옷을 못 찾으면 `{"status": "unavailable", "reason": "mask_failed"|"invalid_image", "cutoutPng": null, "sourceSrgb": null, "auto": null}`(200).
+- 비용은 호출마다 SAM 3 1~2회다.
 
 ## 7. 기록
 
@@ -126,7 +113,7 @@
 
 ## 8. 비용
 
-셀러가 색을 정한 색상에만 든다. 코디보드에서 판을 열 때 색상마다 SAM 3 1~2회(약 0.005~0.01달러), 생성 뒤 컷마다 SAM 3 약 2회(약 0.01달러). 15컷 페이지 약 0.15달러. 손대지 않으면 0이다.
+코디보드에서 판을 열고 색상을 볼 때 색상마다 SAM 3 1~2회(약 0.005~0.01달러). 생성 뒤에는 셀러가 색을 정한 색상에만 색상당 원본 1회와 컷마다 약 2회(약 0.01달러). 15컷 페이지 약 0.15달러. 손대지 않으면 생성 뒤 비용은 0이다.
 
 ## 9. 알려진 한계
 
