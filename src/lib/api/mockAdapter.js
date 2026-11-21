@@ -181,6 +181,19 @@ function editPlan(projectId, body) {
 
 export const mockAdapter = {
   ...base,
+  // 내 옷 색 맞추기 목 (documents/garment_color_target_spec.md §6). ?colorTarget=off|unavailable|noauto 로 상태를 본다.
+  async getGarmentColorStatus() {
+    return { enabled: mockQuery().get('colorTarget') !== 'off', toneVersion: 'garment-color-v1' };
+  },
+  async getGarmentColorSource(_projectId, { colorId } = {}) {
+    await new Promise((resolve) => setTimeout(resolve, Number(mockQuery().get('colorTargetDelay') ?? 900)));
+    const colors = DB.product?.colors || [];
+    const index = colors.findIndex((color) => color.id === colorId);
+    const scenario = mockQuery().get('colorTarget');
+    if (scenario === 'unavailable' && colors[index]?.isBase) return { status: 'unavailable', reason: 'mask_failed', cutoutPng: null, sourceSrgb: null, auto: null };
+    return { status: 'ready', reason: null, cutoutPng: MOCK_TIDY_KNIT, sourceSrgb: null,
+      auto: scenario === 'noauto' || index === 2 ? null : { chroma: -8, lightness: 0, warmth: -36 } };
+  },
   async pollJob(jobId, { onProgress, intervalMs = 1200, timeoutMs = 90000 } = {}) {
     const start = Date.now();
     for (;;) {

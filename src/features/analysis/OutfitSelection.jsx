@@ -7,6 +7,8 @@ import { OutfitBoard } from './OutfitBoard.jsx';
 import { OutfitColorChips, OutfitMore, OutfitRoleIcon, OutfitTile, OutfitUploadTile, outfitImage, outfitName } from './OutfitCatalog.jsx';
 import { OutfitDrawer } from './OutfitDrawer.jsx';
 import { useOutfitRecommendation } from './useOutfitRecommendation.js';
+import { useGarmentColorTargets } from './useGarmentColorTargets.js';
+import { GarmentColorRow, useGarmentColorInspector } from './GarmentColorInspector.jsx';
 import styles from './OutfitSelection.module.css';
 
 export function OutfitSelection({ draftVisuals, analysis, onChange, onRecommendation, projectId = null, product, models = [], modelCredit = () => '무료', onUpload, onDeleteCustom, deletingCustom, customUpload }) {
@@ -21,6 +23,9 @@ export function OutfitSelection({ draftVisuals, analysis, onChange, onRecommenda
   const rowRefs = useRef({});
   const moveFrame = useRef(0);
   const { push: pushToast } = useToast();
+  const cardRef = useRef(null);
+  const garment = useGarmentColorTargets({ projectId, product, analysis, onChange });
+  const colorInspector = useGarmentColorInspector({ garment, cardRef });
   const recommendationState = useOutfitRecommendation({ analysis, projectId, product, onRecommendation, onChange,
     onLateReady: () => pushToast('AI 코디가 준비됐어요. AI 추천을 눌러 확인해 보세요') });
   const recommendation = recommendationState.recommendation || analysis.outfitRecommendation;
@@ -39,6 +44,7 @@ export function OutfitSelection({ draftVisuals, analysis, onChange, onRecommenda
   }, []);
   useEffect(() => { setOpen(null); setDrawer(null); setColors({}); }, [analysis.clothingType]);
   const openRole = (role) => {
+    colorInspector.close(false);
     setOpen((prior) => prior === role ? null : role);
     cancelAnimationFrame(moveFrame.current);
     moveFrame.current = requestAnimationFrame(() => {
@@ -132,8 +138,8 @@ export function OutfitSelection({ draftVisuals, analysis, onChange, onRecommenda
       {expanded && !optional && panel(role)}
     </section>;
   };
-  return <div className={`${styles.outfit} merged-card`}>
-    <OutfitBoard draftVisuals={draftVisuals} analysis={current} product={product} projectId={projectId} onOpenRole={openRole} skeleton={recommendationState.skeleton} />
+  return <div ref={cardRef} className={`${styles.outfit} merged-card`}>
+    <OutfitBoard draftVisuals={draftVisuals} analysis={current} product={product} projectId={projectId} onOpenRole={openRole} skeleton={recommendationState.skeleton} productColor={colorInspector.board} />
     <div className={styles.list} ref={listRef}>
       <div className={`${styles.listHead} ${stuck ? styles.stuckHead : ''}`}><h3>코디 구성</h3>
         {(pending || late || setCount > 0) && <button type="button" className={styles.recommend} disabled={pending || (!late && setCount < 2)}
@@ -150,6 +156,7 @@ export function OutfitSelection({ draftVisuals, analysis, onChange, onRecommenda
           </button>}
       </div>
       {pending && <span id="outfit-recommendation-pending" className="sr-only" role="status">AI 코디를 준비하고 있어요</span>}
+      <GarmentColorRow garment={garment} inspector={colorInspector} product={product} />
       {baseRoles.map(row)}
       {optionalRoles.length > 0 && <><h4 className={styles.optionalTitle}>소품<small>· 넣거나 뺄 수 있어요</small></h4><div className={styles.optionalRows}>{optionalRoles.map(row)}</div>
         {optionalRoles.includes(open) && enabledFor(open) && <section className={styles.optionalPanel} ref={(node) => { rowRefs.current[open] = node; }} data-open="true" aria-label={`${labelFor(open)} 고르기`}>{panel(open)}</section>}
@@ -157,5 +164,6 @@ export function OutfitSelection({ draftVisuals, analysis, onChange, onRecommenda
     </div>
     {drawer && <OutfitDrawer key={drawer} role={drawer} label={labelFor(drawer)} items={itemsFor(drawer)} selectedId={selectedFor(drawer)} selectedIds={selectedOutfitIds(analysis.outfitSelections, drawer)} selectionHint={drawer === 'accessory' ? selectionHint : ''} onSelect={(id) => select(drawer, id)}
       onClose={() => setDrawer(null)} modelCredit={modelCredit} onUpload={drawer === complementary && onUpload ? (event) => { setDrawer(null); onUpload(event); } : undefined} />}
+    {colorInspector.panel}
   </div>;
 }
