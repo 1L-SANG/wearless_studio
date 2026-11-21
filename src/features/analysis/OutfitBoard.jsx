@@ -84,7 +84,9 @@ export function OutfitBoard({ draftVisuals, analysis, product, projectId, onOpen
   };
   const kind = analysis.clothingType || 'top';
   const productMeasurement = measurementFor(productSrc);
-  const layout = buildOutfitBoardLayout({ clothingType: kind, product: { slot: 'product', src: productSrc, name: product?.name || '내 상품', cm: garmentDisplayLength(analysis, kind), ar: imageBoundsAspectRatio(productMeasurement, (productMeasurement !== undefined && originalRatio(productSrc)) || shownVisuals?.front?.width / shownVisuals?.front?.height || (kind === 'bottom' ? .52 : .85)) }, items: { ...selected, footwear: selected.footwear?.id ? selected.footwear : null,
+  // 맞춘 색 누끼를 그릴 때는 그 누끼의 가로세로 비율로 칸을 잡는다(다른 비율 칸에 맞춰 줄이면 길이 비율이 틀어진다).
+  const tonePreview = productColor?.source?.preview;
+  const layout = buildOutfitBoardLayout({ clothingType: kind, product: { slot: 'product', src: productSrc, name: product?.name || '내 상품', cm: garmentDisplayLength(analysis, kind), ar: tonePreview ? tonePreview.width / tonePreview.height : imageBoundsAspectRatio(productMeasurement, (productMeasurement !== undefined && originalRatio(productSrc)) || shownVisuals?.front?.width / shownVisuals?.front?.height || (kind === 'bottom' ? .52 : .85)) }, items: { ...selected, footwear: selected.footwear?.id ? selected.footwear : null,
     bag: optionalItem('bag'), accessory: optionalItem('accessory') }, maxHeight, width: 276 });
   const measurementSources = JSON.stringify([...new Set(layout.pieces.map(piece => piece.src).filter(Boolean))]);
   useEffect(() => {

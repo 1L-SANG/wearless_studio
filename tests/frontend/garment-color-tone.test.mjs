@@ -52,3 +52,10 @@ test('원본 색은 알파 200 이상 픽셀의 채널별 중앙값이다', () =
   assert.equal(opaqueMedianSrgb8({ data: new Uint8ClampedArray([1, 2, 3, 0]), width: 1, height: 1 }), null);
   assert.equal(srgb8ToLinear(255), 1);
 });
+
+test('소수 중앙값(짝수 개 픽셀)도 서버처럼 반올림하지 않고 선형광으로 바꾼다', () => {
+  const c = 100.5 / 255;
+  assert.ok(Math.abs(srgb8ToLinear(100.5) - ((c + 0.055) / 1.055) ** 2.4) < 1e-15);
+  assert.ok(srgb8ToLinear(100.5) > srgb8ToLinear(100) && srgb8ToLinear(100.5) < srgb8ToLinear(101));
+  assert.equal(srgb8ToLinear(300), 1);
+});
