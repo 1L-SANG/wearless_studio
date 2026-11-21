@@ -22,6 +22,7 @@ import JSZip from 'jszip';
 import { toBytesUrl, isAssetBytesUrl } from './editorAssetBytes.js';
 export { toBytesUrl, isAssetBytesUrl } from './editorAssetBytes.js';
 import { notarize } from './publicationNotarize.js';
+import { CHROME_SELECTOR, exportStillImageSource } from './editorExportContent.js';
 
 export const EXPORT_WIDTH = 1000; // .ed-canvas 설계 폭 — 캡처는 화면 scale 과 무관하게 이 폭 기준
 const PIXEL_RATIO = 2; // 상세페이지 업로드 기준 2000px — 쇼핑몰 권장폭(860~1280)을 여유 있게 커버
@@ -30,6 +31,8 @@ export const MAX_CAPTURE_DIM = 16384; // html-to-image가 이 길이를 넘으�
 export const MAX_CANVAS_AREA = 16_777_216; // Safari가 빈 캔버스로 돌려줄 수 있는 총 픽셀 상한
 export const MAX_SINGLE_PAGE_HEIGHT = 20000;
 export const MAX_SPLIT_HEIGHT = 3000;
+export const MAX_PUBLICATION_PIECES = 40;
+export const PUBLICATION_PIECE_LIMIT_MESSAGE = '조각이 40장을 넘어 붙여넣을 코드를 만들 수 없어요. 이미지로 받아 주세요';
 export const MAX_JPEG_BYTES = 3 * 1024 * 1024;
 export const JPEG_QUALITY = 0.9;
 export const ORIGINAL_PNG_MAX_HEIGHT = Math.min(
@@ -120,9 +123,9 @@ export function writeExportSettings(storage, settings) {
   }
 }
 
-function scaledBlockHeight(height, ratio) {
+export function exportPixelHeight(height, width) {
   const cssHeight = Number(height);
-  return Number.isFinite(cssHeight) ? Math.max(0, Math.trunc(cssHeight * ratio)) : 0;
+  return Number.isFinite(cssHeight) ? Math.max(0, Math.floor(cssHeight * width / EXPORT_WIDTH)) : 0;
 }
 
 const SHORT_SECTION_HEIGHT = 700;
@@ -429,6 +432,23 @@ function planSplitPieces(blocks, heights, maxHeight) {
   return rebalanceWithTrailingSections(absorbBlankPieces(pieces, heights, maxHeight), sections, maxHeight);
 }
 
+function mergePiecesForPublication(pieces, maxHeight) {
+  while (pieces.length > MAX_PUBLICATION_PIECES) {
+    let bestIndex = -1;
+    let bestHeight = Infinity;
+    for (let i = 0; i + 1 < pieces.length; i += 1) {
+      const height = pieces[i].height + pieces[i + 1].height;
+      if (height <= maxHeight && height < bestHeight) {
+        bestIndex = i;
+        bestHeight = height;
+      }
+    }
+    if (bestIndex === -1) break;
+    pieces.splice(bestIndex, 2, makePiece([...pieces[bestIndex].slices, ...pieces[bestIndex + 1].slices]));
+  }
+  return pieces;
+}
+
 export function singlePageFallbackReason({
   width,
   height,
@@ -462,11 +482,11 @@ function buildExportLayout(blocks, settings, maxHeight) {
   const original = !!exportPreset(settings.preset).original;
   const maxPieceHeight = maxHeight ?? (original ? ORIGINAL_PNG_MAX_HEIGHT : MAX_SPLIT_HEIGHT);
   const measured = blocks.map((block) => typeof block === 'number' ? { height: block } : block);
-  const scaledHeights = measured.map((block) => scaledBlockHeight(block.height, ratio));
+  const scaledHeights = measured.map((block) => exportPixelHeight(block.height, width));
   const height = scaledHeights.reduce((sum, value) => sum + value, 0);
   const fallbackReason = settings.delivery === 'single' ? singlePageFallbackReason({ width, height }) : null;
   const delivery = fallbackReason ? 'split' : settings.delivery;
-  const pieces = delivery === 'split' ? planSplitPieces(measured, scaledHeights, maxPieceHeight)
+  const pieces = delivery === 'split' ? mergePiecesForPublication(planSplitPieces(measured, scaledHeights, maxPieceHeight), maxPieceHeight)
     : height > 0 ? [makePiece(scaledHeights.flatMap((height, index) => splitBlock(index, height, measured[index].blank, maxPieceHeight)))] : [];
   return { width, ratio, height, scaledHeights, original, delivery, maxPieceHeight, pieces, fallbackReason };
 }
@@ -641,20 +661,6 @@ export function exportFileName(productName, suffix) {
 
 /* ---- DOM 캡처 ---- */
 
-// 캡처에서 제외할 에디터 크롬 — 블록 안에 떠 있는 UI. 목록은 렌더 지점과 눈으로 맞춘
-// 블록리스트라, 새 크롬을 추가할 때 여기도 같이 봐야 한다(허용리스트 전환은 백로그).
-const CHROME_SELECTOR = [
-  '.quick', '.blk-label', '.blk-resize', '.selection-marquee', '.crop-bar', '.crop-layer',
-  '.align-bar', '.rot', '.hdl', '.edge', '.moveable-control-box',
-  '.ed-genwait', '.ed-uploadwait', '.canvas-dropline', '.slot-add', '.image-drop-guide',
-  '.el-empty-text', '.el-empty-template-copy', '.canvas-ai-layer', '.canvas-ai-slot-progress', '.canvas-ai-slot-arrived',
-  // 빈 사진 자리(.el-slot)는 "여기에 넣으세요"라는 편집기 안내지 상품 페이지의 내용이
-  // 아니다. 남겨 두면 완성본 PNG에 회색 네모가 그대로 찍힌다 — 사진을 비워 둔 채
-  // 내려받는 순간 상품 페이지에 빈 상자가 인쇄되는 셈이다(2026-08-17).
-  '.el-slot',
-  '.editor-snap-guide', '.editor-gap-guide',
-].join(',');
-
 // 한 번의 다운로드 안에서만 성공한 이미지 바이트를 재사용한다. 재시도는 새 캐시다.
 async function preflightImages(clone, imageCache) {
   const imgs = [...clone.querySelectorAll('img[src]')];
@@ -763,12 +769,13 @@ async function captureBlockCanvas(blockNode, pixelRatio, fontEmbedCSS, imageCach
     // 블록 배경이 다운로드에서 전부 흰색이 됐다(2026-09-28). 블록 배경은 그대로 캡처하고,
     // 흰 바탕 합성은 우리가 한다 — 반투명 배경(bgOpacity)도 화면처럼 흰 바탕 위에 보인다.
     const height = clone.offsetHeight;
+    const width = Math.round(EXPORT_WIDTH * pixelRatio);
     const probes = await collectExportImageProbes(clone, { ratio: pixelRatio, height });
     const svg = await toSvg(clone, { width: EXPORT_WIDTH, height, fontEmbedCSS });
     onVerify?.();
     const canvas = await rasterizeExportSvg(svg, {
-      width: Math.round(EXPORT_WIDTH * pixelRatio),
-      height: Math.trunc(height * pixelRatio),
+      width,
+      height: exportPixelHeight(height, width),
       probes,
     });
     return { canvas, softFailed };
@@ -794,7 +801,7 @@ export async function captureBlockCanvasSlices(
   try {
     await bakeExportBackdrops(clone, pixelRatio);
     const totalCssHeight = clone.offsetHeight;
-    const totalHeight = Math.trunc(totalCssHeight * pixelRatio);
+    const totalHeight = exportPixelHeight(totalCssHeight, width);
     const holder = clone.parentElement;
     if (!holder) throw new Error('내보내기용 블록을 준비하지 못했어요. 다시 시도해 주세요.');
     const viewport = document.createElement('div');
@@ -918,11 +925,11 @@ export async function renderStorefrontFiles(blockNodes, rawSettings, deps = {}) 
   const mime = settings.format === 'png' ? 'image/png' : 'image/jpeg';
   let softFailed = 0;
   let totalHeight = 0;
-  const validateCapture = (canvases, index, tolerance = 0) => {
+  const validateCapture = (canvases, index) => {
     const expectedHeight = layout.scaledHeights[index];
     const actualHeight = canvases.reduce((sum, canvas) => sum + canvas.height, 0);
     if (canvases.some((canvas) => canvas.width !== width || canvas.height <= 0)
-      || Math.abs(actualHeight - expectedHeight) > tolerance) {
+      || actualHeight !== expectedHeight) {
       throw new Error('브라우저 한계로 이미지 아랫부분이 잘릴 수 있어 다운로드를 중단했어요. 나눠서 다시 시도해 주세요.');
     }
     return actualHeight;
@@ -941,7 +948,7 @@ export async function renderStorefrontFiles(blockNodes, rawSettings, deps = {}) 
         deps.onProgress?.(i, blockNodes.length);
         const captured = await captureBlock(blockNodes[i], ratio, i); // eslint-disable-line no-await-in-loop
         try {
-          validateCapture([captured.canvas], i, 1);
+          validateCapture([captured.canvas], i);
           if (y + captured.canvas.height > out.height) {
             throw new Error('예상한 캔버스 높이와 실제 높이가 달라 한 장 저장을 중단했어요. 나눠서 받아주세요.');
           }
@@ -1077,7 +1084,7 @@ export function replaceGifPosters(clone) {
     const poster = img.getAttribute('data-gif-poster');
     if (!poster) return;
     img.removeAttribute('srcset');
-    img.setAttribute('src', poster);
+    img.setAttribute('src', exportStillImageSource(img.getAttribute('src'), poster));
   });
 }
 
@@ -1186,9 +1193,9 @@ export async function exportLongPng(blockNodes, productName, onProgress, opts = 
   }
   const imageCache = new Map();
   const out = document.createElement('canvas');
-  out.width = Math.trunc(EXPORT_WIDTH * ratio);
-  // 블록별 캔버스 높이는 trunc(offsetHeight×ratio) — 합계도 같은 식으로 예약해 이음새를 없앤다.
-  out.height = heights.reduce((sum, h) => sum + Math.trunc(h * ratio), 0);
+  out.width = Math.round(EXPORT_WIDTH * ratio);
+  // 블록별 캡처와 같은 높이로 예약해 이음새를 없앤다.
+  out.height = heights.reduce((sum, height) => sum + exportPixelHeight(height, out.width), 0);
   let softFailed = 0;
   let outBlob;
   try {

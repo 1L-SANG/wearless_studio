@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import JSZip from 'jszip';
+import { CHROME_SELECTOR } from '../../src/features/editor/editorExportContent.js';
 
 import {
   DEFAULT_EXPORT_SETTINGS,
@@ -30,6 +31,24 @@ import {
 
 const AID = '123e4567-e89b-42d3-a456-426614174000';
 const editorSource = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
+
+test('열린 내보내기 창만 블록을 측정하고 조각 계획을 계산한다', () => {
+  const source = editorSource.slice(editorSource.indexOf('  const dlMeasuredBlocks ='), editorSource.indexOf('  useEffect(', editorSource.indexOf('  const pubSummary =')));
+  const run = new Function('useMemo', 'download', 'publish', 'exportModalOpen', 'blocks', 'dlBlockMeasurements',
+    'getBlockRenderHeight', 'isExportBlankBlock', 'buildExportSummary', 'dlSettings', 'pubSettings',
+    `${source}\nreturn { dlSummary, pubSummary };`);
+  for (const [download, publish, expected] of [[false, false, []], [true, false, ['download']], [false, true, ['publish']]]) {
+    const measured = [], plans = [];
+    const blocks = [{ id: 'changed', elements: [] }];
+    const result = run((memo) => memo(), download, publish, download || publish, blocks, null,
+      (block) => { measured.push(block.id); return 1000; }, () => false,
+      (_, settings) => plans.push(settings.preset), { preset: 'download' }, { preset: 'publish' });
+    assert.deepEqual(plans, expected);
+    assert.deepEqual(measured, expected.length ? ['changed'] : []);
+    assert.equal(Boolean(result.dlSummary), download);
+    assert.equal(Boolean(result.pubSummary), publish);
+  }
+});
 
 test('toBytesUrl: /file 자산 URL을 /bytes로 바꾼다 (상대·절대·비uuid id — id 검증은 서버 몫)', () => {
   // 기본은 안전한 레거시 e=1. 백엔드 선배포 뒤 VITE gate로만 e=2를 켠다.
@@ -255,6 +274,27 @@ test('요약은 최종 폭과 총 세로, 예상 파일 수와 용량을 표시�
   });
 });
 
+test('출력 높이는 정수 가로폭을 먼저 곱해 1px를 잃지 않는다', () => {
+  const blocks = [1000, 333, 1001, 1667];
+  for (const width of [1001, 999, 1290, 860, 780, 800, 640, 2000]) {
+    const summary = buildExportSummary(blocks, { preset: 'custom', customWidth: width });
+    const heights = blocks.map((height) => Math.floor(height * width / 1000));
+    assert.deepEqual(summary.scaledHeights, heights, `${width}px 각 블록`);
+    assert.equal(summary.height, heights.reduce((sum, height) => sum + height), `${width}px 전체`);
+  }
+});
+
+test('40장 초과 시 가장 낮은 인접 조각부터 합치며 ZIP의 남은 조각은 보존한다', () => {
+  const heights = [1700, 800, 750, 750, 1600, ...Array(37).fill(1700)];
+  const opts = { preset: 'custom', customWidth: 1000, format: 'png', delivery: 'split' };
+  const summary = buildExportSummary(heights, opts);
+  assert.equal(summary.fileCount, 40);
+  assert.deepEqual(summary.pieceHeights.slice(0, 4), [1700, 2300, 1600, 1700]);
+  assert.deepEqual(summary.pieces.flatMap(({ slices }) => slices.map(({ blockIndex }) => blockIndex)), heights.map((_, i) => i));
+  assert.equal(buildExportSummary(Array(41).fill(1600), opts).fileCount, 41);
+  assert.equal(buildExportSummary(Array(41).fill(1250), { preset: 'original' }).pieceHeights[0], 5000);
+});
+
 test('긴 블록은 3,000px 가까이의 가로 단색 여백 줄에서 자른다', () => {
   const width = 4;
   const height = 6200;
@@ -457,18 +497,16 @@ test('exportFileName: 금지문자 제거·빈 값 기본, 캡처 폭 계약 고
 
 test('내보내기 캡처에서 빈 사진 자리는 빠진다 — 완성본에 회색 네모가 찍히면 안 된다', () => {
   const source = readFileSync(new URL('../../src/features/editor/editorExport.js', import.meta.url), 'utf8');
-  const chrome = source.slice(source.indexOf('const CHROME_SELECTOR'), source.indexOf("].join(',')"));
   // 사진을 비워 둔 칸('＋ 여기에 사진 넣기')은 편집기 안내지 상품 페이지 내용이 아니다.
-  assert.match(chrome, /'\.el-slot'/);
-  assert.match(chrome, /'\.slot-add'/, '＋ 버튼도 함께 빠진다');
+  assert.ok(CHROME_SELECTOR.split(',').includes('.el-slot'));
+  assert.ok(CHROME_SELECTOR.split(',').includes('.slot-add'), '＋ 버튼도 함께 빠진다');
   // 실제로 제거하는 코드와 이어져 있어야 목록이 의미가 있다.
   assert.match(source, /clone\.querySelectorAll\(CHROME_SELECTOR\)\.forEach\(\(n\) => n\.remove\(\)\)/);
 });
 
 test('빈 텍스트 placeholder는 다운로드 DOM에서 제거되고 export 전용 높이를 쓴다', () => {
   const source = readFileSync(new URL('../../src/features/editor/editorExport.js', import.meta.url), 'utf8');
-  const chrome = source.slice(source.indexOf('const CHROME_SELECTOR'), source.indexOf("].join(',')"));
-  assert.match(chrome, /'\.el-empty-text'/, 'placeholder 없는 빈 텍스트도 결과물에서 빠져야 한다');
+  assert.ok(CHROME_SELECTOR.split(',').includes('.el-empty-text'), 'placeholder 없는 빈 텍스트도 결과물에서 빠져야 한다');
   assert.match(source, /clone\.dataset\.exportHeight/);
   assert.match(source, /clone\.style\.height = `\$\{exportHeight\}px`/);
   assert.match(editorSource, /data-export-height=\{getBlockRenderHeight\(block, \{ forExport: true \}\)\}/);

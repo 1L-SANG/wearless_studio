@@ -75,6 +75,17 @@ test('다운로드 창에서 AI 초안 확인 중에도 첫 빈 사진 블록으
   assert.deepEqual(jumps, ['first-empty']);
 });
 
+test('게시용 조각이 40장을 넘으면 코드 만들기 전에 안내하고 실행을 막는다', async () => {
+  const overLimit = editorExport.buildExportSummary(Array(41).fill(2000), editorExport.DEFAULT_EXPORT_SETTINGS);
+  const modal = await mount('publish');
+  modal.render();
+  assert.match(modal.click('코드 만들기'), /그대로 만들기/);
+  const html = modal.render({ summary: overLimit });
+  assert.match(html, /조각이 40장을 넘어 붙여넣을 코드를 만들 수 없어요\. 이미지로 받아 주세요/);
+  assert.match(html, /<button[^>]*disabled[^>]*>코드 만들기<\/button>/);
+  assert.doesNotMatch(html, /그대로 만들기/);
+});
+
 test('코드 만들기 창의 확인 목록은 입력 화면에서만 보이고 닫은 뒤 첫 블록으로 이동한다', async () => {
   const actions = [];
   const photos = [

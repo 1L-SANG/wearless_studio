@@ -1,6 +1,9 @@
 import JSZip from 'jszip';
 import { getPageFontEmbedCSS } from './editorExportFonts.js';
-import { EXPORT_PRESETS, MAX_SPLIT_HEIGHT, MAX_JPEG_BYTES, captureBlockCanvasSlices, renderStorefrontFiles } from './editorExport.js';
+import {
+  EXPORT_PRESETS, MAX_SPLIT_HEIGHT, MAX_JPEG_BYTES, MAX_PUBLICATION_PIECES, PUBLICATION_PIECE_LIMIT_MESSAGE,
+  buildExportSummary, captureBlockCanvasSlices, exportNodeBlock, renderStorefrontFiles,
+} from './editorExport.js';
 import { publicationFetch } from '../../lib/api/detailPublications.js';
 
 const PUBLISH_PRESET_IDS = new Set(['smartstore', 'coupang', 'high']);
@@ -61,6 +64,9 @@ export async function publishDetailPage(blockNodes, { projectId, productName, pr
   const imageCache = new Map();
   let files;
   try {
+    const settings = { preset: selected.id, format: 'jpeg', delivery: 'split' };
+    const layout = buildExportSummary(blockNodes.map(deps.measureBlock || exportNodeBlock), settings);
+    if (layout.fileCount > MAX_PUBLICATION_PIECES) throw new Error(PUBLICATION_PIECE_LIMIT_MESSAGE);
     const render = deps.renderStorefrontFiles || renderStorefrontFiles;
     let captureBlock = deps.captureBlock;
     if (!deps.renderStorefrontFiles && !captureBlock) {
@@ -69,14 +75,15 @@ export async function publishDetailPage(blockNodes, { projectId, productName, pr
         node, ratio, fontEmbedCSS, MAX_SPLIT_HEIGHT, imageCache, undefined, plannedSlices,
       );
     }
-    const rendered = await render(blockNodes, { preset: selected.id, format: 'jpeg', delivery: 'split' }, {
-      ...deps, captureBlock,
+    const rendered = await render(blockNodes, settings, {
+      ...deps, captureBlock, layout,
       onProgress: (done, total) => deps.onProgress?.(done + 1, total, 'capture'),
     });
     files = rendered.files;
     deps.onRendered?.();
     if (!files.length) throw new Error('올릴 블록이 없어요. 상세페이지에 블록을 추가해 주세요.');
-    if (files.length > 40 || files.some((blob) => blob.size > MAX_JPEG_BYTES)
+    if (files.length > MAX_PUBLICATION_PIECES) throw new Error(PUBLICATION_PIECE_LIMIT_MESSAGE);
+    if (files.some((blob) => blob.size > MAX_JPEG_BYTES)
       || files.reduce((sum, blob) => sum + blob.size, 0) > 60 * 1024 * 1024) throw new Error(FAILURE);
     const metadata = await Promise.all(files.map(async (blob, i) => ({
       index: i + 1, byteSize: blob.size, ...await (deps.readDimensions || readDimensions)(blob),

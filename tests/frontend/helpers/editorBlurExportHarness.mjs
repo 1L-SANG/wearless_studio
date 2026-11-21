@@ -5,15 +5,17 @@ import JSZip from 'jszip';
 import { bakeExportBackdrops, rasterizeBackdropImage, rasterizeExportSvg } from '../../../src/features/editor/editorExportRaster.js';
 import { hasBackdropBlur } from '../../../src/features/editor/editorImageBlur.js';
 import { isGifImage } from '../../../src/lib/gif/gifMedia.js';
+import { CHROME_SELECTOR, exportStillImageSource } from '../../../src/features/editor/editorExportContent.js';
 
 const exportSource = readFileSync(new URL('../../../src/features/editor/editorExport.js', import.meta.url), 'utf8');
 const publishSource = readFileSync(new URL('../../../src/features/editor/detailPublish.js', import.meta.url), 'utf8');
-const executable = source => source.replace(/^export \{.*\} from .*;\r?\n/gm, '').replace(/^import .+;\r?\n/gm, '').replace(/\bexport (?=(?:async )?(?:function|const))/g, '');
+const executable = source => source.replace(/^export \{.*\} from .*;\r?\n/gm, '')
+  .replace(/^import [\s\S]+? from ['"][^'"]+['"];\r?\n/gm, '').replace(/\bexport (?=(?:async )?(?:function|const))/g, '');
 
 // Real preflight, blur, capture ordering, stitching, split encoding and public
 // export entrypoints run here. Only DOM, network and codec boundaries are fake.
 export function blurExportHarness(t, { omitBake = false } = {}) {
-  const events = [], saves = [], allocations = [];
+  const events = [], saves = [], allocations = [], encodedSizes = [];
   class Node {
     constructor(tag = 'div') { this.tag = tag; this.children = []; this.style = {}; this.dataset = {}; this.attributes = {}; this.offsetHeight = 10;
       this.classList = { remove() {} }; }
@@ -27,6 +29,7 @@ export function blurExportHarness(t, { omitBake = false } = {}) {
     cloneNode() {
       const node = new Node(this.tag);
       node.dataset = { ...this.dataset }; node.attributes = { ...this.attributes }; node.style = { ...this.style };
+      node.offsetHeight = this.offsetHeight;
       node.naturalWidth = this.naturalWidth; node.naturalHeight = this.naturalHeight;
       this.children.forEach(child => node.appendChild(child.cloneNode()));
       return node;
@@ -56,7 +59,7 @@ export function blurExportHarness(t, { omitBake = false } = {}) {
         putImageData(image) { data = image.data; events.push('pixel-bake'); },
       }; },
       toDataURL() { assert.ok(data[4 * (Math.floor(result.width / 2) - 1)] > 0, 'export contains spread pixels'); return `data:image/png;base64,BAKED`; },
-      toBlob(callback, type) { events.push('encode'); callback(new Blob(['baked output'], { type })); },
+      toBlob(callback, type) { encodedSizes.push([result.width, result.height]); events.push('encode'); callback(new Blob(['baked output'], { type })); },
     };
     allocations.push(result);
     return result;
@@ -77,6 +80,7 @@ export function blurExportHarness(t, { omitBake = false } = {}) {
     events.push('svg'); return 'baked-svg';
   };
   const scope = {
+    CHROME_SELECTOR, exportStillImageSource,
     waitForEditedContrast: async () => {}, document, JSZip, toBytesUrl, isAssetBytesUrl, ASSET_CACHE_VERSION: 1, hasBackdropBlur, isGifImage, bakeExportBackdrops, rasterizeBackdropImage,
     collectExportImageProbes: async clone => {
       assert.equal(clone.querySelector('[data-editor-blur]').dataset.blurBaked, 'true', 'probes must sample baked pixels');
@@ -92,8 +96,9 @@ export function blurExportHarness(t, { omitBake = false } = {}) {
   };
   const code = executable(omitBake ? exportSource.replaceAll('await bakeExportBackdrops(clone, pixelRatio);', '') : exportSource);
   const api = new Function(...Object.keys(scope), `${code}; return { exportBlockPng, exportLongPng, exportBlocksZip,
-    exportStorefrontDownload, captureBlockCanvasSlices, renderStorefrontFiles, EXPORT_PRESETS, MAX_SPLIT_HEIGHT, MAX_JPEG_BYTES };`)(...Object.values(scope));
+    exportStorefrontDownload, captureBlockCanvasSlices, renderStorefrontFiles, buildExportSummary, exportNodeBlock,
+    EXPORT_PRESETS, MAX_SPLIT_HEIGHT, MAX_JPEG_BYTES, MAX_PUBLICATION_PIECES, PUBLICATION_PIECE_LIMIT_MESSAGE };`)(...Object.values(scope));
   const publishScope = { ...scope, ...api, publicationFetch() { throw new Error('unconfigured network'); } };
   const publishDetailPage = new Function(...Object.keys(publishScope), `${executable(publishSource)}; return publishDetailPage;`)(...Object.values(publishScope));
-  return { api, block, events, saves, allocations, publishDetailPage };
+  return { api, block, events, saves, allocations, encodedSizes, publishDetailPage };
 }

@@ -165,7 +165,7 @@ test('일반 폭과 원본 PNG에서 미리보기 점선, 요약과 실제 조�
     assert.deepEqual(rendered.files.map((file) => file.height), summary.pieceHeights);
     const blocks = ['a', 'b', 'c'].map((id) => ({ id, elements: [] }));
     const html = render(settings, blocks, false, { summary, renderPreviewBlock: (block) => `preview-${block.id}` });
-    assert.match(html, new RegExp(`점선에서 ${fileCount}장으로 나뉘어요`));
+    assert.match(html, new RegExp(`점선에서 약 ${fileCount}장으로 나뉘어요`));
     assert.match(html, new RegExp(`${fileCount}개 파일`));
     assert.match(html, /preview-a.*preview-b.*preview-c/s);
     const cuts = html.match(/<svg[^>]+previewCuts[^>]*>(.*?)<\/svg>/s)[1];
@@ -178,8 +178,30 @@ test('일반 폭과 원본 PNG에서 미리보기 점선, 요약과 실제 조�
 test('통 이미지 분할 안내는 파일명 아래에 있고 미리보기에는 분할 번호가 나온다', () => {
   const settings = { preset: 'original', delivery: 'single' };
   const html = render(settings, [], false, { summary: buildExportSummary([11000], settings) });
-  assert.match(html, /점선에서 3장으로 나뉘어요.*파일명.*3개 파일.*세로가 20,000px를 넘어/s);
+  assert.match(html, /점선에서 약 3장으로 나뉘어요.*파일명.*3개 파일.*세로가 20,000px를 넘어/s);
   assert.match(render({ preset: 'smartstore', delivery: 'single' }), /한 장으로 저장돼요/);
+});
+
+test('40장으로 합칠 때와 더 못 합칠 때 모두 다운로드 요약, 미리보기, 파일이 일치한다', async () => {
+  const settings = { preset: 'smartstore', delivery: 'split' };
+  const canvas = (width, height) => ({ width, height, getContext: () => ({ drawImage() {} }) });
+  for (const [height, count] of [[1000, 40], [2000, 41]]) {
+    const measurements = Array(41).fill(height);
+    const summary = buildExportSummary(measurements, settings);
+    const result = await renderStorefrontFiles(measurements, settings, {
+      measureBlock: (value) => value,
+      captureBlock: async (_, __, ___, slices) => ({ canvases: slices.map(({ height }) => canvas(860, height)), softFailed: 0 }),
+      createCanvas: canvas, releaseCanvas() {}, encodeCanvas: async ({ height }) => ({ height, size: 100 }),
+    });
+    const html = render(settings, [], false, { summary });
+    assert.ok(html.includes(`점선에서 약 ${count}장으로 나뉘어요`));
+    assert.ok(html.includes(`약 ${count}개 파일`));
+    const cuts = html.match(/<svg[^>]+previewCuts[^>]*>(.*?)<\/svg>/s)[1];
+    assert.equal([...cuts.matchAll(/<line\b/g)].length, count - 1);
+    assert.equal(result.files.length, count);
+    assert.deepEqual(result.files.map(({ height }) => height), summary.pieceHeights);
+    assert.equal(result.height, 41 * height * 860 / 1000);
+  }
 });
 
 test('직접 입력이 비거나 범위를 벗어나면 다운로드를 막는다', () => {

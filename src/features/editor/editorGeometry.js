@@ -1,5 +1,6 @@
 import { pageTemplatesCatalog } from '../../lib/pageTemplates/catalog.js';
-import { hasImageSource } from './editorImageSource.js';
+import { isGifImage } from '../../lib/gif/gifMedia.js';
+import { exportStillImageSource, isExportPhotoSlot } from './editorExportContent.js';
 
 /** 시스템 요소를 뺀 콘텐츠의 아래 끝. 새 텍스트를 "기존 콘텐츠 아래"에 붙일 때도 쓴다. */
 export function getBlockContentBottom(block) {
@@ -73,6 +74,12 @@ export function getBlockExportElements(block) {
   return compactIntroExport(block, block.elements.filter(element => !hidden.has(element.id ?? element)));
 }
 
+export function getDownloadPreviewElements(block) {
+  return getBlockExportElements(block).filter((element) => !isExportPhotoSlot(element)).map((element) => (
+    isGifImage(element) ? { ...element, src: exportStillImageSource(element.src, element.posterSrc) } : element
+  ));
+}
+
 export function getBlockExportLayout(block) {
   return Object.fromEntries(getBlockExportElements(block).flatMap(el => {
     const original = block.elements.find(item => item.id === el.id);
@@ -82,8 +89,7 @@ export function getBlockExportLayout(block) {
 }
 
 export function isExportBlankBlock(block) {
-  return !getBlockExportElements(block).some((element) => !element.hidden
-    && (element.type !== 'image' || hasImageSource(element)));
+  return !getBlockExportElements(block).some((element) => !isExportPhotoSlot(element));
 }
 
 function exportContentBottom(block) {

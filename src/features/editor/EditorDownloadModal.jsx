@@ -47,7 +47,7 @@ function DownloadPreview({ blocks, blockMeasurements, summary, renderBlock }) {
     <aside className={styles.preview} aria-label="미리보기">
       <header className={styles.previewHeader}>
         <h4>미리보기</h4>
-        {summary && <p>{split ? `점선에서 ${summary.fileCount}장으로 나뉘어요` : '한 장으로 저장돼요'}</p>}
+        {summary && <p>{split ? `점선에서 약 ${summary.fileCount}장으로 나뉘어요` : '한 장으로 저장돼요'}</p>}
       </header>
       <div className={styles.previewScroll} tabIndex={0} role="region" aria-label="상세페이지 미리보기">
         <div className={styles.previewStack} aria-hidden="true">
