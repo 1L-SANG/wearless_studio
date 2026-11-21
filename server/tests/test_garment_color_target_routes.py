@@ -132,6 +132,18 @@ def test_public_source_rejects_non_multipart_before_parsing(client, monkeypatch,
     parser.assert_not_called()
 
 
+@pytest.mark.parametrize(("content_type", "body"), [
+    ("multipart/form-data", b"--x\r\n"),
+    ("multipart/form-data; boundary=x", b"--x\r\nContent-Disposition: form-data\r\n\r\nbroken"),
+    ("multipart/form-data; boundary=x", b"\x00\x01 not multipart at all"),
+])
+def test_public_source_rejects_malformed_multipart_as_input_error(client, content_type, body):
+    enable(client)
+    response = client.post(PUBLIC_SOURCE, headers={"Content-Type": content_type}, content=body)
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "invalid_input"
+
+
 @pytest.mark.parametrize(("image_format", "available"), [
     ("JPEG", True), ("PNG", True), ("WEBP", True), ("BMP", False), ("TIFF", False),
 ])

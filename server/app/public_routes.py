@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from starlette.datastructures import UploadFile as FormUpload
 from starlette.formparsers import MultiPartException, MultiPartParser
+from python_multipart.exceptions import MultipartParseError
 
 from . import rate_limit, repo
 from .agents import product_evidence_contract, detail_recommendations, feature_extractor, points_merge
@@ -344,6 +345,9 @@ async def _garment_color_form(request):
     except MultiPartException as exc:
         if exc.message == "file_too_large":
             raise _bad_request("file_too_large", "사진 한 장은 25MB보다 작아야 해요.") from exc
+        raise _bad_request("invalid_input", "상품 사진과 옷 종류를 다시 확인해 주세요.") from exc
+    except (MultipartParseError, KeyError) as exc:
+        # 깨진 본문이나 boundary 없는 헤더는 파서가 이 오류로 끝난다. 입력 오류라 400이다.
         raise _bad_request("invalid_input", "상품 사진과 옷 종류를 다시 확인해 주세요.") from exc
     try:
         image = form.get("image")
