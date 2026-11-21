@@ -100,6 +100,7 @@ import { patchNoticeBlocks } from './mallNotice.js';
 import { patchRegistrationSizes } from './mallRegisterDraft.js';
 import { extractEditorAssetId } from '@/lib/editorAssetInfo.js';
 import { ExportSplitButton, buildExportMenuItems } from './ExportMenu.jsx';
+import { GenerationLocked } from './GenerationLocked.jsx';
 import { publishDetailPage, buildPublicationHtml, buildPublicationUrlList, downloadPublicationZip } from './detailPublish.js';
 import { EditorBackdropImage } from './EditorBackdropImage.jsx';
 import { hasBackdropBlur } from './editorImageBlur.js';
@@ -1198,6 +1199,18 @@ export function Editor() {
   const dpJob = useAppStore((s) => s.detailPageJob);
   const [genActive, setGenActive] = useState(false);
   const genActiveRef = useRef(false);
+  // 연달아 실패해 서버가 다시 만들기를 막은 동안(retryLockedUntil)은 큰 안내를 띄우고 다시 만들기를 숨긴다.
+  // 끝 시각이 지나면 30초 안에 풀려 원래 실패 띠의 [다시 만들기]가 돌아온다.
+  const genLockUntil = dpJob.projectId === projectId && dpJob.status === 'error' && dpJob.retryLockedUntil
+    ? Date.parse(dpJob.retryLockedUntil) || 0 : 0;
+  const [genLockNow, setGenLockNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!genLockUntil) return undefined;
+    setGenLockNow(Date.now());
+    const timer = setInterval(() => setGenLockNow(Date.now()), 30 * 1000);
+    return () => clearInterval(timer);
+  }, [genLockUntil]);
+  const genLocked = genLockUntil > genLockNow;
   // 이탈 액션이 자기 손으로 저장을 마쳤다는 표식 — 언마운트 정리가 한 번 더 쓰지 않게 한다.
   const skipExitPersist = useRef(false);
   // 첫 로딩 실패 상태 — 훅은 로딩 early-return 위에만 둔다(훅 개수 불변).
@@ -4090,7 +4103,7 @@ export function Editor() {
                   <Button size="sm" variant="primary" onClick={() => setGenFinalizeAttempt((n) => n + 1)}>
                     완성본 다시 불러오기
                   </Button>
-                ) : genIncomplete && genIncomplete.retained.length > 0 ? (
+                ) : genLocked ? null : genIncomplete && genIncomplete.retained.length > 0 ? (
                   /* 부분 실패(2026-09-28) — [다시 시도]와 **같은 길**(reset + POST detail-page:generate)로 새 잡을
                      연다. 새 잡은 같은 사용자·프로젝트의 실패한(error) 잡이 남긴 완성 컷 체크포인트를 찾아
                      (repo.list_detail_cut_checkpoints) digest(콘티 블록 스펙·참고 사진·신원·설정)가 같으면
@@ -4174,6 +4187,8 @@ export function Editor() {
           </div>
         </div>
       )}
+
+      {genLocked && <GenerationLocked until={dpJob.retryLockedUntil} now={genLockNow} onLeave={leaveToLibrary} />}
       {/* FaceMarket 온체인 정산 영수증(장면③) — 완료 병합 후 모달로 */}
       {genReceipt && (
         <div className="ed-genoverlay" onClick={() => setGenReceipt(null)}>

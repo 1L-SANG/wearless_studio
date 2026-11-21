@@ -8,7 +8,7 @@ uuid 컬럼은 ::text 캐스트해 Pydantic str 필드와 맞춘다.
 
 import hashlib
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from psycopg import AsyncConnection, errors
 from psycopg.types.json import Json
@@ -2819,6 +2819,9 @@ async def search_ref_images(
 
 # ---------- jobs ----------
 
+_DETAIL_PAGE_RETRY_FAILURES = 2
+_DETAIL_PAGE_RETRY_DELAY = timedelta(minutes=60)
+
 _JOB_COLS = (
     "id::text as id, user_id::text as user_id, project_id::text as project_id, kind, "
     "status, progress, steps, payload, result, error_message, credits_reserved, "
@@ -2866,6 +2869,30 @@ async def find_detail_page_request_job(
             (user_id, project_id, idempotency_key, idempotency_key),
         )
         return await cur.fetchone()
+
+
+async def get_detail_page_retry_locked_until(
+    conn: AsyncConnection, user_id: str, project_id: str,
+) -> datetime | None:
+    # 가장 최근 종결 잡 두 개가 모두 실패여야 한다. 완료가 끼면 그 전 실패는 초기화된다.
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select status, finished_at from jobs
+            where user_id = %s and project_id = %s and kind = 'detail_page'
+              and finished_at is not null and status in ('done', 'error')
+              and (status = 'done' or (started_at is not null
+                   and result->>'errorCode' is distinct from 'job_cancelled'))
+            order by finished_at desc, created_at desc, id desc
+            limit %s
+            """,
+            (user_id, project_id, _DETAIL_PAGE_RETRY_FAILURES),
+        )
+        jobs = await cur.fetchall()
+    if len(jobs) < _DETAIL_PAGE_RETRY_FAILURES or any(job["status"] == "done" for job in jobs):
+        return None
+    retry_at = jobs[0]["finished_at"].astimezone(timezone.utc) + _DETAIL_PAGE_RETRY_DELAY
+    return retry_at if retry_at > datetime.now(timezone.utc) else None
 
 
 async def list_project_jobs_by_kind(

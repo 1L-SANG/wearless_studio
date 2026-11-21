@@ -9,17 +9,18 @@ import s from './NotFound.module.css';
 // 바코드 막대 [x, 폭]. 그림 전용 장식이라 값에 의미는 없다.
 const BARS = [[104, 2], [109.8, 1], [116.6, 1], [122.4, 1], [127.2, 2], [135, 1], [139.8, 2], [145.6, 3], [152.4, 2], [158.2, 1], [164, 1], [170.8, 1]];
 
-function HangTag({ brand }) {
+// 같은 옷 태그 그림을 다른 빈 화면(생성 막힘 등)에서도 쓴다. 기본값이 404 화면이다.
+export function HangTag({ brand, code = '404', caption = 'PAGE NOT FOUND', codeSize = 46, className }) {
   return (
-    <svg className={s.art} viewBox="0 0 280 230" role="img" aria-label="PAGE NOT FOUND 라고 적힌 옷 태그">
+    <svg className={`${s.art}${className ? ` ${className}` : ''}`} viewBox="0 0 280 230" role="img" aria-label={`${caption} 라고 적힌 옷 태그`}>
       <g className={s.sway}>
         <path className={`${s.stroke} ${s.thin}`} d="M140 4 C 126 22 154 36 140 62" />
         <path className={`${s.stroke} ${s.paper}`} d="M84 70 L106 46 H174 L196 70 V214 Q196 222 188 222 H92 Q84 222 84 214 Z" />
         <circle className={`${s.stroke} ${s.hole}`} cx="140" cy="62" r="6" />
         <text className={`${s.mono} ${s.mutedFill}`} x="140" y="92" textAnchor="middle" fontSize="8" letterSpacing="2.4">{brand}</text>
         <path className={`${s.stroke} ${s.thin} ${s.dashed}`} d="M98 102 H182" />
-        <text className={`${s.display} ${s.inkFill}`} x="140" y="146" textAnchor="middle" fontSize="46">404</text>
-        <text className={`${s.mono} ${s.accentFill}`} x="140" y="164" textAnchor="middle" fontSize="7.6" letterSpacing="1.6">PAGE NOT FOUND</text>
+        <text className={`${s.display} ${s.inkFill}`} x="140" y="146" textAnchor="middle" fontSize={codeSize}>{code}</text>
+        <text className={`${s.mono} ${s.accentFill}`} x="140" y="164" textAnchor="middle" fontSize="7.6" letterSpacing="1.6">{caption}</text>
         {/* 세탁 기호 다섯 개: 물세탁, 표백, 건조기, 다림질, 드라이클리닝 */}
         <g className={`${s.stroke} ${s.care}`}>
           <path d="M100 181 L101.5 189 H110.5 L112 181 M100 181 Q102 178.5 104 181 Q106 183.5 108 181 Q110 178.5 112 181" />
