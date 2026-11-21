@@ -38,7 +38,7 @@
 .handle { position: absolute; top: 50%; left: var(--split, 50%); display: grid; place-items: center; width: 36px; height: 36px; margin: -18px 0 0 -18px; border-radius: 50%; background: var(--bg-1); box-shadow: var(--elev-lift); color: var(--fg-1); }
 .caption { display: flex; justify-content: space-between; margin: 8px 2px 0; font-size: 12px; font-weight: 500; letter-spacing: .01em; color: var(--fg-2); }
 .now { color: var(--fg-1); font-weight: 650; }
-.panel[data-state="processing"] .compare, .panel[data-state="processing"] .tools, .panel[data-state="processing"] .sliders { opacity: .4; pointer-events: none; }
+.panel[data-state="processing"] .compare, .panel[data-state="processing"] .tools, .panel[data-state="processing"] .steps { opacity: .4; pointer-events: none; }
 
 .adjustHead { margin: 16px 0 0; padding-top: 14px; box-shadow: 0 -1px 0 var(--ring); }
 .adjustHead h3 { margin: 0; font-size: 14px; font-weight: 650; }
@@ -49,17 +49,34 @@
 .panel .tools button:disabled { color: var(--fg-3); box-shadow: 0 0 0 1px var(--ring); }
 .note { margin: 8px 0 0; font-size: 13px; color: var(--fg-1); text-wrap: balance; }
 
-.sliders { display: grid; gap: 12px; margin: 12px 0 0; }
-.slider { display: grid; gap: 4px; }
-.sliderName { font-size: 13px; font-weight: 600; }
-.slider input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; margin: 0; cursor: pointer; background: linear-gradient(var(--fg-1), var(--fg-1)) center / 2px 16px no-repeat; }
-.slider input[type="range"]::-webkit-slider-runnable-track { height: 8px; border-radius: 8px; background: var(--track, var(--bg-2)); box-shadow: inset 0 0 0 1px var(--ring-strong); }
-.slider input[type="range"]::-moz-range-track { height: 8px; border-radius: 8px; background: var(--track, var(--bg-2)); box-shadow: inset 0 0 0 1px var(--ring-strong); }
-.slider input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; margin-top: -6px; border-radius: 50%; background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong), var(--elev-card); }
-.slider input[type="range"]::-moz-range-thumb { width: 20px; height: 20px; border: 0; border-radius: 50%; background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong), var(--elev-card); }
+.tools button[data-applied] { gap: 5px; padding-left: 11px; box-shadow: 0 0 0 1.5px var(--fg-1); }
+
+/* 색 조절 한 줄: 양쪽 말 버튼, 가운데 이름과 값, 끌 수 있는 칸 막대. 세 줄의 가운데 선이 0에서 한 줄로 선다. */
+.steps { display: grid; gap: 10px; margin: 12px 0 0; }
+.step { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.nudge { height: 36px; min-width: 56px; padding: 0 10px; border: 0; border-radius: var(--r-pill); background: var(--bg-2); font-size: 13px; font-weight: 600; white-space: nowrap; touch-action: manipulation; user-select: none; -webkit-user-select: none; transition: background 150ms, transform 120ms; }
+.nudge:hover:not(:disabled) { background: color-mix(in srgb, var(--fg-1) 8%, var(--bg-2)); }
+.nudge:active:not(:disabled) { transform: scale(.96); }
+.panel .nudge:disabled { color: var(--fg-3); }
+.stepMid { display: grid; gap: 0; min-width: 0; }
+.stepCap { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 13px; line-height: 18px; }
+.stepName { text-align: right; font-weight: 600; }
+.stepValue { font-weight: 600; font-variant-numeric: tabular-nums; }
+.step[data-zero] .stepValue { color: var(--fg-2); font-weight: 500; }
+.meter { position: relative; display: flex; align-items: center; height: 24px; border-radius: 4px; cursor: ew-resize; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.meter[aria-disabled="true"] { cursor: default; }
+.panel .meter:focus-visible { outline: 2px solid var(--fg-1); outline-offset: 2px; }
+.cells { display: flex; flex: 1; gap: 2px; }
+.cells i { flex: 1; height: 8px; border-radius: 2px; background: linear-gradient(90deg, var(--fg-1) calc(var(--f, 0) * 100%), var(--ring-strong) 0); }
+.cells i.low { background: linear-gradient(270deg, var(--fg-1) calc(var(--f, 0) * 100%), var(--ring-strong) 0); }
+.zero { position: absolute; top: 6px; bottom: 6px; left: 50%; width: 1px; margin-left: -.5px; background: var(--fg-2); }
+/* 손잡이: 지금 값 자리의 짧은 막대. 올려 두거나 끄는 동안 조금 커진다. */
+.mark { position: absolute; top: 5px; bottom: 5px; left: calc(50% + var(--v, 0) * .5%); width: 3px; margin-left: -1.5px; border-radius: 2px; background: var(--fg-1); box-shadow: 0 0 0 2px var(--bg-1); transition: top 120ms, bottom 120ms; pointer-events: none; }
+.meter:hover .mark, .meter[data-dragging] .mark { top: 2px; bottom: 2px; }
+.meter[aria-disabled="true"] .mark { opacity: 0; }
 
 @media (max-width: 480px) { .drawer { padding: 16px 16px 24px; } }
-@media (prefers-reduced-motion: reduce) { .push, .drawer, .spin { animation: none; } .done, .tools button { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .push, .drawer, .spin { animation: none; } .done, .tools button, .nudge, .mark { transition: none; } }
 
 /* 코디 구성의 "내 상품" 줄 */
 .rowCanvas { width: 84%; height: 82%; }

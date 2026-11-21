@@ -1,13 +1,96 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertCircle, ChevronsLeftRight, LoaderCircle } from 'lucide-react';
-import { SLIDER_SNAP, ZERO_SLIDERS, hexOf, isZeroSliders, sameSliders, sliderTrack, toneSrgb8 } from '@/lib/garmentColorTone.js';
+import { AlertCircle, Check, ChevronsLeftRight, LoaderCircle } from 'lucide-react';
+import { SLIDER_RANGE, SLIDER_SNAP, ZERO_SLIDERS, clampSlider, hexOf, isZeroSliders, sameSliders, toneSrgb8 } from '@/lib/garmentColorTone.js';
 import styles from './GarmentColorPanel.module.css';
 
-const SLIDERS = [
-  { key: 'chroma', name: '진하기', label: '진하기. 왼쪽은 연하게, 오른쪽은 진하게' },
-  { key: 'lightness', name: '밝기', label: '밝기. 왼쪽은 어둡게, 오른쪽은 밝게' },
-  { key: 'warmth', name: '따뜻함', label: '따뜻함. 왼쪽은 푸르게, 오른쪽은 노랗게' },
+const AXES = [
+  { key: 'chroma', name: '진하기', low: '연하게', high: '진하게' },
+  { key: 'lightness', name: '밝기', low: '어둡게', high: '밝게' },
+  { key: 'warmth', name: '따뜻함', low: '푸르게', high: '노랗게' },
 ];
+const STEP = 10;
+const CELLS = Array.from({ length: SLIDER_RANGE / STEP }, (_, index) => index);
+const HOLD_DELAY_MS = 420;
+const HOLD_REPEAT_MS = 110;
+const signed = (value) => (value > 0 ? `+${value}` : value < 0 ? `−${-value}` : '0');
+const cellFill = (value, index) => Math.max(0, Math.min(1, (value - index * STEP) / STEP));
+/* 말 버튼 한 번: 그 방향의 다음 10 단위로. AI 값처럼 칸 사이에 있어도 한 번에 칸에 맞는다. */
+const nextCell = (value, dir) => clampSlider(dir > 0 ? Math.floor(value / STEP) * STEP + STEP : Math.ceil(value / STEP) * STEP - STEP);
+
+/* 한 항목: 양쪽 말 버튼은 한 칸씩(길게 누르면 계속), 가운데 칸 막대는 끌어서 1 단위로 오간다. */
+function StepRow({ axis, value, disabled, onValue, onCommit }) {
+  const latest = useRef(value);
+  latest.current = value;
+  const meter = useRef(null);
+  const hold = useRef(null);
+  const drag = useRef(false);
+  const [dragging, setDragging] = useState(false);
+  const stopHold = () => {
+    if (!hold.current) return;
+    clearTimeout(hold.current.timer); clearInterval(hold.current.repeat);
+    hold.current = null;
+    onCommit?.();
+  };
+  useEffect(() => () => { if (hold.current) { clearTimeout(hold.current.timer); clearInterval(hold.current.repeat); } }, []);
+  const step = (dir) => {
+    const next = nextCell(latest.current, dir);
+    latest.current = next;
+    onValue(next);
+    if (Math.abs(next) >= SLIDER_RANGE && hold.current) { clearTimeout(hold.current.timer); clearInterval(hold.current.repeat); }
+  };
+  const nudge = (dir, word) => <button type="button" className={styles.nudge} tabIndex={-1} aria-label={`${axis.name} 한 칸 ${word}`}
+    disabled={disabled || (dir < 0 ? value <= -SLIDER_RANGE : value >= SLIDER_RANGE)}
+    onPointerDown={(event) => {
+      if (event.button) return;
+      stopHold(); step(dir);
+      hold.current = { timer: setTimeout(() => { if (hold.current) hold.current.repeat = setInterval(() => step(dir), HOLD_REPEAT_MS); }, HOLD_DELAY_MS) };
+    }}
+    onPointerUp={stopHold} onPointerLeave={stopHold} onPointerCancel={stopHold}
+    onClick={(event) => { if (event.detail === 0) { step(dir); onCommit?.(); } }}>{word}</button>;
+  const fromPointer = (event) => {
+    const rect = meter.current.getBoundingClientRect();
+    const next = clampSlider(((event.clientX - rect.left) / rect.width) * 2 * SLIDER_RANGE - SLIDER_RANGE);
+    onValue(Math.abs(next) <= SLIDER_SNAP ? 0 : next);
+  };
+  const endDrag = () => { if (!drag.current) return; drag.current = false; setDragging(false); onCommit?.(); };
+  return <div className={styles.step} data-zero={value ? undefined : ''}>
+    {nudge(-1, axis.low)}
+    <div className={styles.stepMid}>
+      <div className={styles.stepCap} aria-hidden="true"><span className={styles.stepName}>{axis.name}</span><span className={styles.stepValue}>{signed(value)}</span></div>
+      <div ref={meter} className={styles.meter} role="slider" tabIndex={disabled ? -1 : 0} data-dragging={dragging ? '' : undefined} style={{ '--v': value }}
+        aria-label={`${axis.name}. 왼쪽은 ${axis.low}, 오른쪽은 ${axis.high}`} aria-valuemin={-SLIDER_RANGE} aria-valuemax={SLIDER_RANGE} aria-valuenow={value}
+        aria-valuetext={value ? `${value < 0 ? axis.low : axis.high} ${Math.abs(value)}` : '사진 그대로'} aria-disabled={disabled || undefined}
+        onPointerDown={(event) => {
+          if (disabled || event.button) return;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          event.currentTarget.focus({ preventScroll: true });
+          drag.current = true; setDragging(true); fromPointer(event);
+        }}
+        onPointerMove={(event) => { if (drag.current) fromPointer(event); }}
+        onPointerUp={endDrag} onPointerCancel={endDrag} onLostPointerCapture={endDrag}
+        onDoubleClick={() => { if (!disabled && value) onValue(0, { immediate: true }); }}
+        onKeyDown={(event) => {
+          if (disabled) return;
+          const dir = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 }[event.key];
+          // 방향키는 1씩(원본 근처도 그대로), Shift와 함께면 한 칸씩.
+          if (dir) onValue(event.shiftKey ? nextCell(value, dir) : clampSlider(value + dir));
+          else if (event.key === 'Home') onValue(-SLIDER_RANGE);
+          else if (event.key === 'End') onValue(SLIDER_RANGE);
+          else return;
+          event.preventDefault();
+        }}
+        onKeyUp={() => onCommit?.()} onBlur={() => onCommit?.()}>
+        <span className={styles.cells} aria-hidden="true">
+          {[...CELLS].reverse().map((index) => <i key={`low-${index}`} className={styles.low} style={{ '--f': cellFill(-value, index) }} />)}
+          {CELLS.map((index) => <i key={`high-${index}`} style={{ '--f': cellFill(value, index) }} />)}
+        </span>
+        <span className={styles.zero} aria-hidden="true" />
+        <span className={styles.mark} aria-hidden="true" />
+      </div>
+    </div>
+    {nudge(1, axis.high)}
+  </div>;
+}
 
 export const colorSourceSrgb = (color, source) => color?.sourceSrgb || source?.median || null;
 export const colorSwatch = (color, source) => {
@@ -77,9 +160,16 @@ export function GarmentColorPanel({ panelRef, colors, currentId, onSelect, onRet
   const failed = current?.status === 'error';
   const processing = !unavailable && !failed && !source?.preview;
   const state = unavailable ? 'unavailable' : failed ? 'error' : processing ? 'processing' : 'ready';
-  const base = colorSourceSrgb(current, source);
   const chips = useRef(null);
-  const dragging = useRef(false);
+  const latest = useRef(sliders);
+  latest.current = sliders;
+  const autoApplied = Boolean(current?.auto) && !isZeroSliders(current.auto) && sameSliders(sliders, current.auto);
+  // 길게 누르기는 다음 그리기 전에 또 부를 수 있어 마지막으로 보낸 값 위에 쌓는다.
+  const setAxis = (key, value, options) => {
+    const next = { ...latest.current, [key]: value };
+    latest.current = next;
+    onSliders(current.colorId, next, options);
+  };
   const pick = (colorId) => onSelect(colorId);
   const reset = <button type="button" disabled={processing || isZeroSliders(sliders)} onClick={() => onSliders(current.colorId, ZERO_SLIDERS, { immediate: true })}>원래대로</button>;
   return <aside ref={panelRef} id="garment-color-panel" className={`${styles.panel} ${drawer ? styles.drawer : styles.push}`} style={style} data-state={state}
@@ -117,28 +207,16 @@ export function GarmentColorPanel({ panelRef, colors, currentId, onSelect, onRet
     {state !== 'unavailable' && state !== 'error' && <>
       <div className={styles.adjustHead}><h3>색 조절</h3>
         <div className={styles.tools}>
-          <button type="button" disabled={processing || !current?.auto} onClick={() => onSliders(current.colorId, current.auto, { immediate: true })}>AI 자동</button>
+          <button type="button" disabled={processing || !current?.auto} data-applied={autoApplied || undefined} onClick={() => onSliders(current.colorId, current.auto, { immediate: true })}>{autoApplied && <Check size={14} aria-hidden="true" />}AI 자동</button>
           {reset}
         </div>
       </div>
       {!processing && !current?.auto && <p className={styles.note} aria-live="polite">배경으로 조명을 알 수 없어 AI 자동을 쓸 수 없어요.</p>}
-      <div className={styles.sliders}>
-        {SLIDERS.map(({ key, name, label }) => <label key={key} className={styles.slider}>
-          <span className={styles.sliderName}>{name}</span>
-          <input type="range" min={-100} max={100} step={1} value={sliders[key]} aria-label={label} disabled={processing}
-            style={base ? { '--track': sliderTrack(base, sliders, key) } : undefined}
-            onPointerDown={() => { dragging.current = true; }}
-            onPointerUp={() => { dragging.current = false; onCommit?.(); }} onPointerCancel={() => { dragging.current = false; onCommit?.(); }}
-            onKeyUp={() => onCommit?.()} onBlur={() => onCommit?.()}
-            onChange={(event) => {
-              // 끌 때만 0 근처를 원본에 붙인다. 방향키 1칸 이동은 그대로 둔다.
-              const value = Number(event.target.value);
-              onSliders(current.colorId, { ...sliders, [key]: dragging.current && Math.abs(value) <= SLIDER_SNAP ? 0 : value });
-            }}
-            onDoubleClick={() => { if (sliders[key]) onSliders(current.colorId, { ...sliders, [key]: 0 }, { immediate: true }); }} />
-        </label>)}
+      <div className={styles.steps}>
+        {AXES.map((axis) => <StepRow key={axis.key} axis={axis} value={sliders[axis.key]} disabled={processing}
+          onValue={(value, options) => setAxis(axis.key, value, options)} onCommit={onCommit} />)}
       </div>
-      {current?.auto && sameSliders(sliders, current.auto) && <span className="sr-only" role="status">AI 자동 값으로 맞췄어요</span>}
+      {autoApplied && <span className="sr-only" role="status">AI 자동 값으로 맞췄어요</span>}
     </>}
   </aside>;
 }

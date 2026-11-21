@@ -129,9 +129,3 @@ export function opaqueMedianSrgb8(imageData) {
     return low ?? 0;
   });
 }
-
-/** 손잡이를 끝에서 끝까지 움직일 때 이 색이 되는 띠(나머지 두 값은 지금 그대로). */
-export function sliderTrack(sourceSrgb, sliders, key, stops = [-100, -50, 0, 50, 100]) {
-  if (!sourceSrgb) return null;
-  return `linear-gradient(90deg, ${stops.map((value) => hexOf(toneSrgb8(sourceSrgb, { ...sliders, [key]: value }))).join(', ')})`;
-}
