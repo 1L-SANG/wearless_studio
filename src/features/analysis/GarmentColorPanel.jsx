@@ -69,13 +69,14 @@ function Compare({ source, sliders }) {
   </>;
 }
 
-export function GarmentColorPanel({ panelRef, colors, currentId, onSelect, sources, onSliders, onDone, drawer, style }) {
+export function GarmentColorPanel({ panelRef, colors, currentId, onSelect, onRetry, sources, onSliders, onDone, drawer, style }) {
   const current = colors.find((color) => color.colorId === currentId) || colors[0];
   const source = current ? sources[current.colorId] : null;
   const sliders = current?.sliders || ZERO_SLIDERS;
   const unavailable = current?.status === 'unavailable';
-  const processing = !unavailable && !source?.preview;
-  const state = unavailable ? 'unavailable' : processing ? 'processing' : 'ready';
+  const failed = current?.status === 'error';
+  const processing = !unavailable && !failed && !source?.preview;
+  const state = unavailable ? 'unavailable' : failed ? 'error' : processing ? 'processing' : 'ready';
   const base = colorSourceSrgb(current, source);
   const chips = useRef(null);
   const pick = (colorId) => onSelect(colorId);
@@ -104,10 +105,12 @@ export function GarmentColorPanel({ panelRef, colors, currentId, onSelect, sourc
     </div>}
     {state === 'processing' && <p className={styles.message} role="status"><LoaderCircle size={16} className={styles.spin} aria-hidden="true" />사진을 정리하는 중이에요.</p>}
     {state === 'unavailable' && <p className={styles.message} role="status"><AlertCircle size={16} aria-hidden="true" />옷 부분을 못 찾았어요. 사진 그대로 만들어요.</p>}
-    {state === 'unavailable'
+    {state === 'error' && <p className={styles.message} role="status"><AlertCircle size={16} aria-hidden="true" /><span>사진을 불러오지 못했어요.</span>
+      <button type="button" className={styles.retry} onClick={() => onRetry?.(current.colorId)}>다시 시도</button></p>}
+    {state === 'unavailable' || state === 'error'
       ? current?.photo && <img className={styles.photo} src={current.photo} alt="올린 원본 사진" />
       : <Compare source={source} sliders={sliders} />}
-    {state !== 'unavailable' && <>
+    {state !== 'unavailable' && state !== 'error' && <>
       <div className={styles.adjustHead}><h3>색 조절</h3>
         <div className={styles.tools}>
           <button type="button" disabled={processing || !current?.auto} onClick={() => onSliders(current.colorId, current.auto, { immediate: true })}>AI 자동</button>

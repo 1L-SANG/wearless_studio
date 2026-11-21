@@ -66,3 +66,4 @@
 .rowValue { display: inline-flex; align-items: center; gap: 6px; }
 .rowValue .dot { width: 14px; height: 14px; }
 .rowChange { color: var(--fg-1); font-weight: 600; }
+.message .retry { flex: none; margin-left: auto; height: 28px; padding: 0 12px; border: 0; border-radius: var(--r-pill); background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong); font-size: 13px; font-weight: 600; white-space: nowrap; }

@@ -67,7 +67,7 @@ export function useGarmentColorInspector({ garment, cardRef }) {
     }
     setCurrentId(baseId);
     setOpen(true);
-    garment.prepare();
+    garment.prepare(baseId);
   }, [open, close, cardRef, baseId, garment]);
 
   useEffect(() => { if (open) panelRef.current?.focus({ preventScroll: true }); }, [open]);
@@ -92,7 +92,7 @@ export function useGarmentColorInspector({ garment, cardRef }) {
   const current = garment.colors.find((color) => color.colorId === (currentId || baseId)) || null;
   const panel = open && garment.colors.length > 0 ? createPortal(<>
     {drawer && <button type="button" className={styles.scrim} aria-label="색 맞추기 닫기" onClick={() => close()} />}
-    <GarmentColorPanel panelRef={panelRef} colors={garment.colors} currentId={current?.colorId} onSelect={setCurrentId} sources={garment.sources}
+    <GarmentColorPanel panelRef={panelRef} colors={garment.colors} currentId={current?.colorId} onSelect={(colorId) => { setCurrentId(colorId); garment.prepare(colorId); }} onRetry={garment.prepare} sources={garment.sources}
       onSliders={garment.setSliders} onDone={() => close()} drawer={drawer}
       style={!drawer && position ? { top: position.top, left: position.left } : undefined} />
   </>, document.body) : null;

@@ -84,8 +84,9 @@ export function useGarmentColorTargets({ projectId, product, analysis, onChange 
       const decoded = await decodePreview(result.cutoutPng);
       setSources((prior) => ({ ...prior, [key]: { status: 'ready', ...decoded, auto: result.auto || null, sourceSrgb: result.sourceSrgb || null } }));
     } catch {
+      // 연결 끊김이나 요청 한도(429)는 옷을 못 찾은 것과 다르다. 다시 시도할 수 있게 둔다.
       requested.current.delete(key);
-      setSources((prior) => ({ ...prior, [key]: { status: 'unavailable', reason: 'request_failed' } }));
+      setSources((prior) => ({ ...prior, [key]: { status: 'error' } }));
     }
   }, [projectId, product?.clothingType]);
 
@@ -94,8 +95,10 @@ export function useGarmentColorTargets({ projectId, product, analysis, onChange 
   const baseTouched = base && !isZeroSliders(savedSliders[base.id]);
   useEffect(() => { if (enabled && base && baseTouched && frontImage(base)) void loadSource(base); }, [enabled, base, baseTouched, loadSource]);
 
-  const prepare = useCallback(() => {
-    productColors.filter((color) => frontImage(color)).forEach((color) => void loadSource(color));
+  // 보고 있는 색상의 누끼만 받는다(색상마다 외부 호출 한 번이라 열지 않은 색상은 부르지 않는다).
+  const prepare = useCallback((colorId) => {
+    const color = productColors.find((item) => item.id === colorId) || productColors[0];
+    if (color && frontImage(color)) void loadSource(color);
   }, [productColors, loadSource]);
 
   const save = useCallback(() => {
