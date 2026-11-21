@@ -158,7 +158,7 @@ Analysis {
   frontClosure?: FrontClosure       // AG-01이 사진에서 판정한 앞 여밈. 서버 소유, 클라이언트 PATCH 금지. 공개 분석은 기존 상품 증거 인계 봉투에 함께 서명해 원본 검증 후 저장한다. 없으면 판단 불가로 읽는다(ADR-0018)
   garmentColorEvidence?: GarmentColorSummary // 서버가 사진에서 측정한 공개 요약. 콘티보드 이탈 시 필요할 때만 생성하고, 없으면 상세페이지 생성이 한 번 더 잰다. 클라이언트 PATCH 금지
   pageStyle?: PageStyle            // 상세페이지 템플릿과 글자 스타일, 페이지 색감. 아래 PageStyle 규칙
-  garmentColorSliders?: GarmentColorSliders // 셀러가 코디보드에서 맞춘 색상별 진하기, 밝기, 따뜻함(정수 -100~100). 클라이언트 소유, 서버가 검증. 목표 색은 생성 때 서버가 다시 잰다. documents/garment_color_target_spec.md (ADR-0029)
+  garmentColorSliders?: GarmentColorSliders // 셀러가 코디보드에서 맞춘 색상별 진하기, 밝기, 따뜻함(정수 -100~100). 클라이언트 소유, 서버가 검증. 목표 색은 생성 때 서버가 다시 잰다. documents/garment_color_target_spec.md (ADR-0030)
 }
 
 PageStyle {

@@ -203,7 +203,7 @@ def test_worker_checks_lease_before_color_stage_and_keeps_originals_on_stage_fai
     monkeypatch.setattr(worker.repo, "get_analysis", AsyncMock(return_value=analysis))
     monkeypatch.setattr(worker.repo, "get_asset_for_user", AsyncMock(return_value={
         "id": "a", "r2_key": "a", "mime_type": "image/png"}))
-    monkeypatch.setattr(worker.page_part_copy, "generate", AsyncMock(return_value={}))
+    monkeypatch.setattr(worker.page_copy, "has_provider_key", lambda _settings: False)
     monkeypatch.setattr(worker.page_assembler, "assemble", lambda *_a, **_kw: [])
     monkeypatch.setattr(worker, "_emit", AsyncMock())
     async def generate(*args, **kwargs):
