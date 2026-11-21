@@ -238,7 +238,8 @@ async def after_color_check(settings, *, master: InlineImage, target: InlineImag
 
 async def segment_seller_garment(settings, data: bytes, rgba: np.ndarray, *,
                                   clothing_type: str, sub_category=None,
-                                  protect_matching: bool = True) -> np.ndarray:
+                                  protect_matching: bool = True, require_matching: bool = False,
+                                  detail: bool = False) -> np.ndarray:
     """Find one sold-garment mask, optionally excluding the coordinating garment."""
     prepared = await run_cpu_bound(fal_api.prepare_image, data, color_managed=True)
     rgb = rgba[..., :3]
@@ -253,11 +254,19 @@ async def segment_seller_garment(settings, data: bytes, rgba: np.ndarray, *,
     if not masks:
         raise tone_mask.NoGarmentCandidate("no seller garment")
     protected = await candidates(other_prompt) if protect_matching and other_prompt else []
-    return await run_cpu_bound(_select_seller_garment, masks, protected, rgba[..., 3])
+    if require_matching and not await run_cpu_bound(_plausible_masks, protected):
+        raise MatchingUnverified
+    return await run_cpu_bound(_select_seller_garment, masks, protected, rgba[..., 3], detail=detail)
 
 
-def _select_seller_garment(masks, protected, alpha):
-    plausible = tone_mask.dedupe(_plausible_masks([mask & (alpha > 0) for mask in masks]))
+def _select_seller_garment(masks, protected, alpha, *, detail):
+    candidates = []
+    for mask in masks:
+        mask = mask & (alpha > 0)
+        accepted, reason = tone_mask.plausible(tone_mask.candidate_stats(mask))
+        if accepted or (detail and reason in {"near_full_frame", "border_dominated"}):
+            candidates.append(mask)
+    plausible = tone_mask.dedupe(candidates)
     separated = []
     for mask in plausible:
         overlap = _overlap(mask, protected)

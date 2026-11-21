@@ -2083,7 +2083,8 @@ async def get_project_asset_for_user(
         await cur.execute(
             "select id::text as id, project_id::text as project_id, r2_bucket, r2_key, "
             "mime_type, source, width, height, metadata from assets "
-            "where id = %s and user_id = %s and project_id = %s and deleted_at is null",
+            "where id = %s and user_id = %s and project_id = %s and deleted_at is null "
+            "and (metadata->>'internalGarmentColorTarget') is null",
             (asset_id, user_id, project_id),
         )
         return await cur.fetchone()

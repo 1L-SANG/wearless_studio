@@ -4704,7 +4704,8 @@ async def _public_asset_or_404(request: Request, asset_id: str) -> dict:
             status_code=404, detail={"code": "not_found", "message": "자산을 찾을 수 없습니다."})
     async with get_conn(request) as conn:
         asset = await repo.get_asset_public(conn, asset_id)
-    if asset is None or not asset.get("r2_key"):
+    if (asset is None or not asset.get("r2_key")
+            or (asset.get("metadata") or {}).get("internalGarmentColorTarget")):
         raise HTTPException(
             status_code=404, detail={"code": "not_found", "message": "자산을 찾을 수 없습니다."})
     return asset
