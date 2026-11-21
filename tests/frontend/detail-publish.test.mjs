@@ -30,7 +30,11 @@ test('builds html with one img per file', () => {
   assert.equal((html.match(/<img /g) || []).length, 2);
   assert.match(html, /^<div style="text-align:center;">\n/);
   assert.match(html, /alt="셔츠 상세 1" style="display:block;width:100%;max-width:860px;margin:0 auto;"/);
-  assert.deepEqual(logic.PUBLISH_PRESETS.map((p) => p.id), ['smartstore', 'coupang', 'high']);
+});
+test('publication keeps the three server-supported presets and widths', () => {
+  assert.deepEqual(logic.PUBLISH_PRESETS.map(({ id, width }) => [id, width]), [
+    ['smartstore', 860], ['coupang', 780], ['high', 1290],
+  ]);
 });
 test('escapes product name in alt', () => {
   const html = logic.buildPublicationHtml(files, { productName: '<셔츠> "A" & \'B\'', width: 860 });
@@ -73,6 +77,61 @@ test('complete adapter preserves missing slice numbers from the server error', a
   await assert.rejects(service.completeDetailPublication('p', { uploads }), (error) => error.code === 'files_missing' && error.missing[0] === 2);
 });
 test('capture dependency is available for the independent publication renderer', () => assert.equal(typeof exports.captureBlockCanvasSlices, 'function'));
+test('publication uploads the pieces from the same section plan as the summary', async () => {
+  const nodes = ['first', 'first', 'second'].map((exportSection) => ({ offsetHeight: 1000, dataset: { exportSection } }));
+  const canvas = (width, height) => ({ width, height, getContext: () => ({ drawImage() {} }) });
+  const manifest = [];
+  const api = {
+    createDetailPublication: async (_, { files }) => {
+      manifest.push(...files);
+      return { publicationId: 'p', uploads };
+    },
+    completeDetailPublication: async () => ({ files }),
+  };
+  await logic.publishDetailPage(nodes, options, {
+    api, createCanvas: canvas, releaseCanvas() {},
+    captureBlock: async (_, __, ___, slices) => ({ canvases: slices.map(({ height }) => canvas(860, height)), softFailed: 0 }),
+    encodeCanvas: async ({ height }) => new Blob([String(height)], { type: 'image/jpeg' }),
+    readDimensions: async (blob) => ({ width: 860, height: Number(await blob.text()) }),
+    fetchImpl: async () => ({ ok: true }),
+  });
+  const summary = exports.buildExportSummary(nodes.map(exports.exportNodeBlock), { preset: 'smartstore' });
+  assert.deepEqual(manifest.map(({ height }) => height), [1720, 860]);
+  assert.deepEqual(manifest.map(({ height }) => height), summary.pieceHeights);
+});
+test('publication fits 41 unkeyed photo blocks into 40 files for all publication presets', async () => {
+  const nodes = Array.from({ length: 41 }, () => ({ offsetHeight: 1000, dataset: {} }));
+  const canvas = (width, height) => ({ width, height, getContext: () => ({ drawImage() {} }) });
+  for (const { id: preset, width } of logic.PUBLISH_PRESETS) {
+    let manifest;
+    const api = {
+      createDetailPublication: async (_, { files }) => {
+        manifest = files;
+        return { publicationId: 'p', uploads: files.map(({ index }) => ({ index, uploadUrl: String(index), uploadToken: String(index) })) };
+      },
+      completeDetailPublication: async () => ({ files: manifest.map(({ index }) => ({ index, url: `/image-${index}.jpg` })) }),
+    };
+    await logic.publishDetailPage(nodes, { ...options, preset }, {
+      api, createCanvas: canvas, releaseCanvas() {},
+      captureBlock: async (_, __, ___, slices) => ({ canvases: slices.map(({ height }) => canvas(width, height)), softFailed: 0 }),
+      encodeCanvas: async ({ height }) => new Blob([String(height)], { type: 'image/jpeg' }),
+      readDimensions: async (blob) => ({ width, height: Number(await blob.text()) }),
+      fetchImpl: async () => ({ ok: true }),
+    });
+    const summary = exports.buildExportSummary(nodes.map(exports.exportNodeBlock), { preset });
+    assert.equal(manifest.length, 40);
+    assert.deepEqual(manifest.map(({ height }) => height), summary.pieceHeights);
+    assert.equal(manifest[0].height, width * 2);
+  }
+});
+
+test('publication rejects a planned count above 40 before capturing or asking the server', async () => {
+  const nodes = Array.from({ length: 41 }, () => ({ offsetHeight: 2000, dataset: {} }));
+  await assert.rejects(logic.publishDetailPage(nodes, options, {
+    api: { createDetailPublication: async () => assert.fail('publication should not start') },
+    captureBlock: async () => assert.fail('capture should not start'),
+  }), /조각이 40장을 넘어.*이미지로 받아 주세요/);
+});
 test('failed uploads stop after three attempts and retain local ZIP files', async () => {
   let calls = 0, completes = 0;
   const api = { createDetailPublication: async () => ({ publicationId: 'p', uploads }), completeDetailPublication: async () => { completes++; } };

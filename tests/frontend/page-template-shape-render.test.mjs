@@ -1,4 +1,5 @@
-import { applyExportLayout } from '../../src/features/editor/editorExport.js';
+import { applyExportLayout, exportPixelHeight } from '../../src/features/editor/editorExport.js';
+import { CHROME_SELECTOR } from '../../src/features/editor/editorExportContent.js';
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -170,7 +171,7 @@ test("R1 circles pass unchanged through the real download clone and capture func
             };
         },
     };
-    const scope = { applyExportLayout,
+    const scope = { applyExportLayout, exportPixelHeight,
         document: {
             createElement: () => holder,
             body: {
@@ -236,7 +237,6 @@ test('WOC20 actual editor keeps empty bubbles editable and preview omits them wi
 
 test('WOC20 real download clone removes empty copy groups and uses the measured export height', async () => {
     const source = readFileSync(new URL('../../src/features/editor/editorExport.js', import.meta.url), 'utf8');
-    const selector = new Function(`${source.slice(source.indexOf('const CHROME_SELECTOR ='), source.indexOf('// 한 번의 다운로드'))};return CHROME_SELECTOR;`)();
     const code = source.slice(source.indexOf('async function prepareClone('), source.indexOf('\nexport function flattenOnWhite'));
     const value = fixture.cases.find(c => c.name === 'woc20-emo-review-empty').input;
     const block = assemblePage(value).find(b => b.pageSectionKind === 'review');
@@ -247,11 +247,11 @@ test('WOC20 real download clone removes empty copy groups and uses the measured 
     });
     const clone = { classList: { remove() {} }, style: {}, dataset: { exportHeight: '1616' },
         querySelectorAll(query) {
-            if (query === selector) return children.filter(child => selector.split(',').some(css => child.markup.includes(css.slice(1))));
+            if (query === CHROME_SELECTOR) return children.filter(child => CHROME_SELECTOR.split(',').some(css => child.markup.includes(css.slice(1))));
             return query === '.el' ? children.filter(child => !child.removed) : [];
         } };
     const scope = { applyExportLayout, document: { createElement: () => ({ style: {}, appendChild() {}, remove() {} }), body: { appendChild() {} } },
-        EXPORT_WIDTH: 1000, CHROME_SELECTOR: selector, replaceGifPosters() {}, preflightImages: async () => ({ softFailed: 0 }) };
+        EXPORT_WIDTH: 1000, CHROME_SELECTOR, replaceGifPosters() {}, preflightImages: async () => ({ softFailed: 0 }) };
     const prepare = new Function(...Object.keys(scope), `${code};return prepareClone;`)(...Object.values(scope));
     const result = await prepare({ cloneNode: () => clone });
     assert.equal(children.filter(child => !child.removed && child.markup.includes('opacity:0.96')).length, 0);

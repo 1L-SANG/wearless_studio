@@ -77,7 +77,8 @@ test('the new download entry records one action for default JPG and original PNG
     const actions = [];
     const stop = new Error('stop before browser capture');
     const bindings = { waitForEditedContrast: async () => {}, recordClientAction: (action) => actions.push(action), normalizeExportSettings: (value) => value,
-      exportNodeHeight: () => 100, buildExportSummary: () => ({}), exportPreset: () => ({ original }),
+      exportNodeBlock: () => ({ height: 100 }), exportWidth: () => 860,
+      buildExportLayout: (_, settings) => ({ original, delivery: settings.delivery }),
       getPageFontEmbedCSS: async () => { throw stop; },
       exportLongPng: async () => { actions.push('download'); throw stop; } };
     const run = new Function(...Object.keys(bindings), `${source}; return exportStorefrontDownload;`)(...Object.values(bindings));
