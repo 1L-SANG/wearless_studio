@@ -11,7 +11,8 @@ const measuredShoes = {
 // constant to isolate the shoe budget from independent image cropping changes.
 const productCases = {
   top: { product: { cm: 64, ar: .85 }, before: [179.84, 122.24], propsBefore: [157.85765293977624, 122.24] },
-  bottom: { product: { cm: 100, ar: .52 }, before: [281, 191], propsBefore: [213.0127182720543, 181.19926740115108] },
+  // 2026-11-21: 짝 상의의 0.7제곱 확대를 없애 실제 길이로 그리면서 하의 상품이 소품과 함께일 때 커졌다.
+  bottom: { product: { cm: 100, ar: .52 }, before: [281, 191], propsBefore: [231.18864346273986, 191] },
   outer: { product: { cm: 76, ar: .85 }, before: [189.55029585798815, 128.8402366863905], propsBefore: [141.39329936289056, 114.18352552187548] },
   dress: { product: { cm: 115, ar: .85 }, before: [216, 216], propsBefore: [170.14686248331105, 170.14686248331105] },
 };
