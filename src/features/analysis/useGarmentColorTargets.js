@@ -8,7 +8,7 @@ const SAVE_DELAY_MS = 400;
 const SOURCE_CACHE_MAX = 8;
 let statusRequest = null;
 /* 같은 사진의 누끼는 코디 단계에 다시 들어와도 다시 받지 않는다(색상마다 외부 호출이 한 번 든다).
-   진행 중인 요청도 함께 쓴다. 실패는 기억하지 않아 다시 시도하면 다시 받는다. */
+   진행 중인 요청도 함께 쓴다. 받은 누끼만 기억한다. 실패나 못 찾음(시간 초과일 수 있다)은 다음에 다시 받는다. */
 const sourceCache = new Map();
 function cachedSource(key, load) {
   if (sourceCache.has(key)) return sourceCache.get(key);
@@ -16,6 +16,19 @@ function cachedSource(key, load) {
   sourceCache.set(key, promise);
   while (sourceCache.size > SOURCE_CACHE_MAX) sourceCache.delete(sourceCache.keys().next().value);
   return promise;
+}
+
+const SOURCE_TYPES = /^image\/(jpeg|png|webp)$/;
+/* 공개 원본 API는 JPEG, PNG, WEBP만 받는다. 상품 입력이 받는 다른 형식(GIF 등)은 PNG로 바꿔 보낸다. */
+async function sourceImage(src) {
+  const blob = await (await fetch(src)).blob();
+  if (SOURCE_TYPES.test(blob.type)) return blob;
+  const bitmap = await createImageBitmap(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width; canvas.height = bitmap.height;
+  canvas.getContext('2d').drawImage(bitmap, 0, 0);
+  bitmap.close?.();
+  return new Promise((resolve, reject) => canvas.toBlob((png) => (png ? resolve(png) : reject(new Error('png_failed'))), 'image/png'));
 }
 
 async function decodePreview(src) {
@@ -87,15 +100,17 @@ export function useGarmentColorTargets({ projectId, product, analysis, onChange 
     setSources((prior) => ({ ...prior, [key]: { status: 'loading' } }));
     const clothingType = latest.current.analysis?.clothingType || product?.clothingType;
     const subCategory = latest.current.analysis?.subCategory;
+    const cacheKey = `${projectId || 'guest'}|${key}|${clothingType || ''}|${subCategory || ''}`;
     try {
-      const state = await cachedSource(`${projectId || 'guest'}|${key}|${clothingType || ''}|${subCategory || ''}`, async () => {
+      const state = await cachedSource(cacheKey, async () => {
         let image;
-        if (!projectId) image = await (await fetch(frontImage(color).src)).blob();
+        if (!projectId) image = await sourceImage(frontImage(color).src);
         const result = await api.getGarmentColorSource(projectId, { colorId: color.id, image, clothingType, subCategory });
         if (result?.status !== 'ready' || !result.cutoutPng) return { status: 'unavailable', reason: result?.reason || 'mask_failed' };
         const decoded = await decodePreview(result.cutoutPng);
         return { status: 'ready', ...decoded, auto: result.auto || null, sourceSrgb: result.sourceSrgb || null };
       });
+      if (state.status !== 'ready') sourceCache.delete(cacheKey);
       setSources((prior) => ({ ...prior, [key]: state }));
     } catch {
       // 연결 끊김이나 요청 한도(429)는 옷을 못 찾은 것과 다르다. 다시 시도할 수 있게 둔다.
