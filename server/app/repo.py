@@ -1740,13 +1740,34 @@ PATCHABLE_PRODUCT_COLUMNS = (
 )
 
 
+def _stored_product_name_source(name, analysis):
+    origin = (analysis or {}).get("productNameOrigin")
+    if isinstance(origin, dict) and origin.get("name") == name and origin.get("source") in ("seller", "ai", "unknown"):
+        return origin["source"]
+    return "unknown"
+
+
+async def _save_product_name_origin(conn, project_id, name, source):
+    source = source if source in ("seller", "ai", "unknown") else "unknown"
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "insert into analyses (project_id, payload) values (%s, %s) "
+            "on conflict (project_id) do update set payload = analyses.payload || excluded.payload",
+            (project_id, Json({"productNameOrigin": {"name": name, "source": source}})),
+        )
+    return source
+
+
 async def get_product(conn: AsyncConnection, project_id: str) -> dict | None:
-    """순수 read. 소유권은 라우트가 get_project로 선검증. 행은 createProject가 생성함."""
+    """Pure read; an unmarked or stale name never gains seller provenance."""
     async with conn.cursor() as cur:
         await cur.execute(
             f"select {_PRODUCT_COLS} from products where project_id = %s", (project_id,)
         )
-        return await cur.fetchone()
+        row = await cur.fetchone()
+    if row is None:return None
+    analysis = await get_analysis(conn, project_id)
+    return {**row, "name_source": _stored_product_name_source(row.get("name"), analysis)}
 
 
 async def save_product(
@@ -1755,8 +1776,8 @@ async def save_product(
     """patch 적용 + name 변경 시 projects.title 동기화(계약 §3.1). 소유권은 라우트 선검증 +
     title UPDATE는 user_id 조건 명시(§9). 레거시(행 없음) 대비 행 보장 포함."""
     previous_color_input = None
+    previous = await get_product(conn, project_id) or {} if any(key in patch for key in ("name", "name_source", "colors", "clothing_type")) else {}
     if "colors" in patch or "clothing_type" in patch:
-        previous = await get_product(conn, project_id) or {}
         previous_color_input = garment_color_input_identity(previous)
     async with conn.cursor() as cur:
         await cur.execute(
@@ -1769,6 +1790,8 @@ async def save_product(
         if k in PATCHABLE_PRODUCT_COLUMNS
     }
     if not sets:
+        if "name_source" in patch:
+            await _save_product_name_origin(conn, project_id, previous.get("name", ""), patch["name_source"])
         return await get_product(conn, project_id)
 
     assignments = ", ".join(f"{col} = %s" for col in sets)
@@ -1788,7 +1811,12 @@ async def save_product(
                 "update projects set title = %s where id = %s and user_id = %s",
                 (patch["name"], project_id, user_id),
             )
-    return row
+    if "name" in patch or "name_source" in patch:
+        name = patch.get("name", (row or previous).get("name", ""))
+        source = patch.get("name_source", previous.get("name_source", "unknown") if name == previous.get("name") else "unknown")
+        source = await _save_product_name_origin(conn, project_id, name, source)
+        return {**row, "name_source": source} if row else row
+    return await get_product(conn, project_id)
 
 
 def garment_color_input_identity(product: dict) -> tuple:
@@ -1816,18 +1844,20 @@ _SERVER_OWNED_ANALYSIS_KEYS = (
     "featureCopy",
     "featureSuggestions",
     "partDescriptionCopy",
+    "pageCopy",
     "confirmedGptProductEvidence",
     "detailRecommendations",
     "garmentColorEvidence",
     "frontClosure",
     "outfitRecommendation",
     "outfitSelections",
+    "productNameOrigin",
 )
 # Unlike sourceMirrored (which the analysis form may explicitly edit), these values are
 # hash-bound server artifacts. API clients may echo them but can never create or replace
 # them; finalize_analyze_success replaces the full payload after a fresh provider call, and
 # replace_garment_color_evidence is the only other writer (lazy garment color measurement).
-_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence", "detailRecommendations", "garmentColorEvidence", "frontClosure", "outfitRecommendation")
+_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence", "detailRecommendations", "garmentColorEvidence", "frontClosure", "outfitRecommendation", "productNameOrigin")
 
 
 async def lock_page_style_project(conn: AsyncConnection, project_id: str):
@@ -4819,6 +4849,7 @@ async def finalize_analyze_success(
     metadata: dict,
 ) -> dict | None:
     """분석 성공 종결(원자·lease 펜스). None = lease 상실(복구·재클레임) → 아무것도 쓰지 않음."""
+    analysis_payload = {key: value for key, value in analysis_payload.items() if key != "productNameOrigin"}
     async with conn.cursor() as cur:
         await cur.execute(
             "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
@@ -4835,7 +4866,8 @@ async def finalize_analyze_success(
         await cur.execute(
             "insert into analyses (project_id, payload) values (%s, %s) "
             "on conflict (project_id) do update set payload = excluded.payload || "
-            "case when analyses.payload ? 'pageStyle' then jsonb_build_object('pageStyle', analyses.payload->'pageStyle') else '{}'::jsonb end "
+            "case when analyses.payload ? 'pageStyle' then jsonb_build_object('pageStyle', analyses.payload->'pageStyle') else '{}'::jsonb end || "
+            "case when analyses.payload ? 'productNameOrigin' then jsonb_build_object('productNameOrigin', analyses.payload->'productNameOrigin') else '{}'::jsonb end "
             "returning payload",
             (project_id, Json(analysis_payload)),
         )
@@ -4981,13 +5013,16 @@ async def finalize_detail_page_success(
             return None
         if product_name:
             await cur.execute(
-                "update products set name = %s where project_id = %s",
+                "update products set name = %s where project_id = %s "
+                "and (btrim(name) = '' or btrim(name) = '새 상품') returning name",
                 (product_name, project_id),
             )
-            await cur.execute(
-                "update projects set title = %s where id = %s and user_id = %s",
-                (product_name, project_id, user_id),
-            )
+            if await cur.fetchone() is not None:
+                await _save_product_name_origin(conn, project_id, product_name, "ai")
+                await cur.execute(
+                    "update projects set title = %s where id = %s and user_id = %s",
+                    (product_name, project_id, user_id),
+                )
         ledger_records = []
         for c in cut_assets:  # 컷 이미지 asset 행 (editor_blocks 가 /v1/assets/{id}/file 로 참조)
             await cur.execute(

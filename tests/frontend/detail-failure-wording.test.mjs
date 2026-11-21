@@ -6,7 +6,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { transformWithEsbuild } from 'vite';
 import { incompleteMessage, retryOfIncomplete, retryReuseHint } from '../../src/lib/detailPageJobFailure.js';
-import { hasImageSource } from '../../src/features/editor/editorImageSource.js';
+import { EXPORT_PHOTO_SLOT_CLASS, isExportPhotoSlot } from '../../src/features/editor/editorExportContent.js';
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 const editor = read('src/features/editor/Editor.jsx');
@@ -88,11 +88,13 @@ for (const [name, extra, heading] of [
 });
 
 test('만들지 못한 컷은 미완성 태그와 기존 크레딧 안내를 표시한다', async () => {
-  const start = editor.indexOf('    if (!hasImageSource(el) && el.genPending) {');
-  const tile = editor.slice(start, editor.indexOf('    if (!hasImageSource(el)) {', start));
+  const start = editor.indexOf('    if (emptyPhotoSlot && el.genPending) {');
+  const tile = editor.slice(start, editor.indexOf('    if (emptyPhotoSlot) {', start));
   const { code } = await transformWithEsbuild(`function Tile(){${tile}}`, 'Tile.jsx', { jsx: 'transform' });
-  const Tile = new Function('React', 'el', 'base', 'hasImageSource', 'failedCutPresentation', `${code}; return Tile;`)(React,
-    { id: 'cut', type: 'image', src: null, genPending: 'failed', radius: 0 }, {}, hasImageSource, failedCutPresentation);
+  const element = { id: 'cut', type: 'image', src: null, genPending: 'failed', radius: 0 };
+  const Tile = new Function('React', 'el', 'base', 'emptyPhotoSlot', 'EXPORT_PHOTO_SLOT_CLASS', 'failedCutPresentation', `${code}; return Tile;`)(
+    React, element, {}, isExportPhotoSlot(element), EXPORT_PHOTO_SLOT_CLASS, failedCutPresentation,
+  );
   const html = renderToStaticMarkup(React.createElement(Tile));
   assert.match(html, /class="ed-genwait-tag fail">미완성<\/span>/);
   assert.match(html, /이 컷은 만들지 못했어요<br\/><small>이 컷 값은 받지 않았어요<br\/>저희 쪽에서 다시 만들 수 있어요<\/small>/);

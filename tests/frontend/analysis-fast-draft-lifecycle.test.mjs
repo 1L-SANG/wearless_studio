@@ -53,6 +53,9 @@ test('실행 조정자의 핵심 응답에 이전 상품 사진이 섞여도 현
   await run.requestCore({ product: draft.product, photos: [] });
   assert.deepEqual(updatedProduct.colors, colors);
   assert.deepEqual(storage.saved.product.colors, colors);
+  assert.equal(updatedProduct.name, '새 상품 분석');
+  assert.equal(updatedProduct.nameSource, 'ai');
+  assert.equal(storage.saved.product.nameSource, 'ai');
   assert.equal(storage.saved.photos[0].blob, originalBlob);
   assert.deepEqual(storage.saved.analysis.sellingPoints, ['이번 상품 특징']);
   assert.deepEqual(storage.saved.analysis.fitRead, fitRead);

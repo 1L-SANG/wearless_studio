@@ -1,3 +1,4 @@
+import { applyExportLayout } from '../../src/features/editor/editorExport.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -87,8 +88,8 @@ async function exportCloneMarkup(markup) {
   const raw = readFileSync('src/features/editor/editorExport.js', 'utf8');
   const source = raw.slice(raw.indexOf('async function prepareClone('), raw.indexOf('export function flattenOnWhite'));
   const document = { createElement: () => ({ style: {}, appendChild() {}, remove() {} }), body: { appendChild() {} } };
-  const prepare = new Function('document', 'EXPORT_WIDTH', 'CHROME_SELECTOR', 'replaceGifPosters', 'preflightImages', `${source};return prepareClone;`)
-    (document, 1000, '.editor-only', () => {}, async () => ({ softFailed: 0 }));
+  const prepare = new Function('applyExportLayout', 'document', 'EXPORT_WIDTH', 'CHROME_SELECTOR', 'replaceGifPosters', 'preflightImages', `${source};return prepareClone;`)
+    (applyExportLayout, document, 1000, '.editor-only', () => {}, async () => ({ softFailed: 0 }));
   const result = await prepare({ cloneNode: () => ({ innerHTML: markup, style: {}, dataset: {}, classList: { remove() {} }, querySelectorAll: () => [] }) });
   result.dispose();
   return result.clone.innerHTML;

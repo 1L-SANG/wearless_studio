@@ -19,6 +19,30 @@ for (const [name, run] of paths) test(`${name} bakes pixels after safe bytes and
   assert.equal(harness.saves.length, 1);
 });
 
+test('수정한 파일명을 ZIP과 통 이미지에 적용하고 직접 입력 폭을 정확히 캡처한다', async t => {
+  const { api, block, saves } = blurExportHarness(t);
+  const name = ' 니트: 상세. ';
+  for (const [preset, customWidth, format, delivery] of [
+    ['cafe24', undefined, 'jpeg', 'split'],
+    ['custom', 1001, 'jpeg', 'split'],
+    ['custom', 1001, 'jpeg', 'single'],
+    ['custom', 1001, 'png', 'single'],
+    ['original', undefined, 'png', 'single'],
+  ]) {
+    await api.exportStorefrontDownload([block], name, null, { preset, customWidth, format, delivery });
+  }
+  assert.deepEqual(saves, ['니트 상세.zip', '니트 상세.zip', '니트 상세.jpg', '니트 상세.png', '니트 상세.png']);
+});
+
+test('폭 1001px은 분할과 통 이미지 캡처에서 원본 1000행을 1001행으로 저장한다', async t => {
+  const { api, block, encodedSizes } = blurExportHarness(t);
+  block.offsetHeight = 1000;
+  for (const delivery of ['split', 'single']) {
+    await api.exportStorefrontDownload([block], '셔츠', null, { preset: 'custom', customWidth: 1001, format: 'png', delivery });
+  }
+  assert.deepEqual(encodedSizes, [[1001, 1001], [1001, 1001]]);
+});
+
 for (const destination of ['detail publication', 'mall registration publication']) test(`${destination} uploads the same baked capture`, async t => {
   const harness = blurExportHarness(t);
   let uploaded;

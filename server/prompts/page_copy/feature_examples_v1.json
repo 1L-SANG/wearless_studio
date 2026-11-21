@@ -1,0 +1,19 @@
+{
+ "_about": "판매 특징 설명의 고치기 전과 후 짝. 카피 총괄이 씀.",
+ "examples": [
+  {
+   "slot": "feature",
+   "template": "emo",
+   "before": "투웨이 지퍼 디테일을 확인할 수 있습니다.",
+   "after": "위아래로 열려서 밑단만 살짝 풀어 입을 수 있어요.",
+   "why": "says nothing about the garment"
+  },
+  {
+   "slot": "feature",
+   "template": "show",
+   "before": "투웨이 지퍼 디테일을 확인할 수 있습니다.",
+   "after": "아래에서도 열어 입는 투웨이 지퍼",
+   "why": "says nothing about the garment"
+  }
+ ]
+}

@@ -1,0 +1,88 @@
+{
+  "_about": "2판 설정. 모든 모델을 낮은 단계로 둔다(오너 11/19). 까닭은 CHANGES.md 2판 절. Gemini 4는 thinking_level만 받고 thinking_budget과 MINIMAL은 400 오류다(공식 안내 11/19 확인). 생각 토큰도 출력 값으로 셈하므로 출력 상한을 작게 두지 않는다.",
+  "required_slots": [
+    "intro.title",
+    "intro.body",
+    "part.desc",
+    "feature.desc",
+    "for_you",
+    "review",
+    "fabric"
+  ],
+  "rewrite_slots": [
+    "intro.title",
+    "intro.body",
+    "part.desc",
+    "feature.desc",
+    "for_you",
+    "review",
+    "fabric",
+    "faq"
+  ],
+  "providers": {
+    "gpt": {
+      "reasoning_effort": "low",
+      "max_output_tokens": 6000
+    },
+    "gemini": {
+      "thinking_level": "low",
+      "max_output_tokens": 6000
+    },
+    "claude": {
+      "effort": "low",
+      "thinking": {
+        "type": "adaptive"
+      },
+      "max_output_tokens": 6000
+    }
+  },
+  "models": {
+    "gpt-6.1-terra": {
+      "reasoning_effort": "low",
+      "max_output_tokens": 6000
+    },
+    "gpt-6-luna": {
+      "reasoning_effort": "low",
+      "max_output_tokens": 6000
+    },
+    "gemini-3.8-flash": {
+      "thinking_level": "low",
+      "max_output_tokens": 6000
+    },
+    "gemini-4-hydrogen": {
+      "thinking_level": null,
+      "thinking_config": {
+        "thinkingLevel": "low"
+      },
+      "max_output_tokens": 8000
+    },
+    "gemini-4-argon": {
+      "thinking_level": null,
+      "thinking_config": {
+        "thinkingLevel": "low"
+      },
+      "max_output_tokens": 8000
+    },
+    "gemini-4-neon": {
+      "thinking_level": null,
+      "thinking_config": {
+        "thinkingLevel": "low"
+      },
+      "max_output_tokens": 8000
+    },
+    "claude-sonnet-5-5": {
+      "effort": "low",
+      "thinking": {
+        "type": "adaptive"
+      },
+      "max_output_tokens": 6000
+    },
+    "claude-opus-5-5": {
+      "effort": "low",
+      "thinking": {
+        "type": "adaptive"
+      },
+      "max_output_tokens": 6000
+    }
+  }
+}

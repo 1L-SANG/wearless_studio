@@ -233,6 +233,7 @@ class Product(CamelModel):
     id: str
     project_id: str
     name: str
+    name_source: Literal["seller", "ai", "unknown"] = "unknown"
     clothing_type: str | None = None
     colors: list[dict] = []
     measurements: list[dict] = []
@@ -246,6 +247,7 @@ class ProductPatch(CamelModel):
 
     draft_visual_job_id: UUID | None = None
     name: str | None = None
+    name_source: Literal["seller", "ai", "unknown"] | None = None
     clothing_type: str | None = None
     colors: list[dict] | None = None
     measurements: list[dict] | None = None
@@ -254,7 +256,7 @@ class ProductPatch(CamelModel):
 
     @model_validator(mode="after")
     def _reject_explicit_null(self):
-        for field in ("name", "colors", "measurements", "measurements_unknown", "upload_complete"):
+        for field in ("name", "name_source", "colors", "measurements", "measurements_unknown", "upload_complete"):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{field}는 null일 수 없습니다.")
         return self

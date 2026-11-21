@@ -1,0 +1,167 @@
+{
+  "source": "/private/tmp/claude-501/-Users-daily-Documents-wearless-studio--claude-worktrees-copywriting-1113/9169b215-1a23-4d9e-ada2-f09004c5fc9e/scratchpad/preview3/work/A-66girls-164492-show.json",
+  "productId": "A-66girls-164492",
+  "originalBrown": {
+    "width": 115,
+    "fontSize": 28,
+    "tracking": 3.36,
+    "renderedBreak": "BROW|N"
+  },
+  "brownAdvanceUnits": 3844,
+  "colorInput": {
+    "storyboard": [
+      {
+        "taxonomyVersion": 4,
+        "pageSectionKey": "show.color_product",
+        "pageSectionKind": "color_product",
+        "pageDesignId": "CP-COLUMN-01",
+        "sectionId": "section-show.color_product",
+        "sectionLayout": "stack",
+        "id": "show.color_product.text",
+        "source": "text",
+        "slotKey": null
+      },
+      {
+        "taxonomyVersion": 4,
+        "pageSectionKey": "show.color_product",
+        "pageSectionKind": "color_product",
+        "pageDesignId": "CP-COLUMN-01",
+        "sectionId": "section-show.color_product",
+        "sectionLayout": "stack",
+        "id": "show.color_product.front.color-0.0",
+        "source": "ai",
+        "slotKey": "color_product.front",
+        "contentRole": "productOverview",
+        "colorId": "color-0",
+        "cutType": "product",
+        "shot": "ghost",
+        "direction": "front",
+        "productPresentation": "ghost"
+      },
+      {
+        "taxonomyVersion": 4,
+        "pageSectionKey": "show.color_product",
+        "pageSectionKind": "color_product",
+        "pageDesignId": "CP-COLUMN-01",
+        "sectionId": "section-show.color_product",
+        "sectionLayout": "stack",
+        "id": "show.color_product.front.color-1.0",
+        "source": "ai",
+        "slotKey": "color_product.front",
+        "contentRole": "productOverview",
+        "colorId": "color-1",
+        "cutType": "product",
+        "shot": "ghost",
+        "direction": "front",
+        "productPresentation": "ghost"
+      },
+      {
+        "taxonomyVersion": 4,
+        "pageSectionKey": "show.color_product",
+        "pageSectionKind": "color_product",
+        "pageDesignId": "CP-COLUMN-01",
+        "sectionId": "section-show.color_product",
+        "sectionLayout": "stack",
+        "id": "show.color_product.back.color-0.0",
+        "source": "ai",
+        "slotKey": "color_product.back",
+        "contentRole": "productOverview",
+        "colorId": "color-0",
+        "cutType": "product",
+        "shot": "ghost",
+        "direction": "back",
+        "productPresentation": "ghost"
+      }
+    ],
+    "product": {
+      "name": "모리플라워미디스커트",
+      "colors": [
+        {
+          "id": "color-0",
+          "name": "브라운",
+          "isBase": true,
+          "images": [
+            {
+              "id": "img-front",
+              "slot": "Front",
+              "label": "front",
+              "src": "/@fs/private/tmp/claude-501/-Users-daily-Documents-wearless-studio--claude-worktrees-copywriting-1113/9169b215-1a23-4d9e-ada2-f09004c5fc9e/scratchpad/preview3/assets/A-66girls-164492/front.jpg"
+            },
+            {
+              "id": "img-detail-1",
+              "slot": "Detail",
+              "label": "detail-1",
+              "src": "/@fs/private/tmp/claude-501/-Users-daily-Documents-wearless-studio--claude-worktrees-copywriting-1113/9169b215-1a23-4d9e-ada2-f09004c5fc9e/scratchpad/preview3/assets/A-66girls-164492/detail-1.jpg"
+            },
+            {
+              "id": "img-detail-2",
+              "slot": "Detail",
+              "label": "detail-2",
+              "src": "/@fs/private/tmp/claude-501/-Users-daily-Documents-wearless-studio--claude-worktrees-copywriting-1113/9169b215-1a23-4d9e-ada2-f09004c5fc9e/scratchpad/preview3/assets/A-66girls-164492/detail-2.jpg"
+            },
+            {
+              "id": "img-detail-3",
+              "slot": "Detail",
+              "label": "detail-3",
+              "src": "/@fs/private/tmp/claude-501/-Users-daily-Documents-wearless-studio--claude-worktrees-copywriting-1113/9169b215-1a23-4d9e-ada2-f09004c5fc9e/scratchpad/preview3/assets/A-66girls-164492/detail-3.jpg"
+            },
+            {
+              "id": "img-detail-4",
+              "slot": "Detail",
+              "label": "detail-4",
+              "src": "/@fs/private/tmp/claude-501/-Users-daily-Documents-wearless-studio--claude-worktrees-copywriting-1113/9169b215-1a23-4d9e-ada2-f09004c5fc9e/scratchpad/preview3/assets/A-66girls-164492/detail-4.jpg"
+            }
+          ],
+          "swatchId": "brown"
+        },
+        {
+          "id": "color-1",
+          "name": "카키",
+          "isBase": false,
+          "swatchId": "green"
+        }
+      ],
+      "materials": [
+        {
+          "name": "겉감 폴리에스터",
+          "ratio": 50
+        },
+        {
+          "name": "겉감 나일론",
+          "ratio": 50
+        },
+        {
+          "name": "안감 폴리에스터",
+          "ratio": 100
+        }
+      ],
+      "clothingType": "bottom"
+    },
+    "analysis": {
+      "pageStyle": {
+        "templateId": "show"
+      }
+    },
+    "cutResults": [
+      {
+        "blockId": "show.color_product.front.color-0.0",
+        "imageUrl": "photo:show.color_product.front.color-0.0",
+        "width": 1024,
+        "height": 1365
+      },
+      {
+        "blockId": "show.color_product.front.color-1.0",
+        "imageUrl": "photo:show.color_product.front.color-1.0",
+        "width": 1024,
+        "height": 1365
+      },
+      {
+        "blockId": "show.color_product.back.color-0.0",
+        "imageUrl": "photo:show.color_product.back.color-0.0",
+        "width": 1024,
+        "height": 1365
+      }
+    ],
+    "copyResults": []
+  }
+}

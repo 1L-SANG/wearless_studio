@@ -1,17 +1,17 @@
 # Page templates (WO1)
 
-## 현재 계약 요약 (2026-11-13)
+## 현재 계약 요약 (2026-11-19)
 
-아래 영어 본문은 템플릿 콘티를 만들면서 단계마다 남긴 작업 기록이다. 지금 코드의 계약은 이 요약이 먼저이고, 결정의 정본은 ADR-0026이다.
+아래 영어 본문은 템플릿 콘티를 만들면서 단계마다 남긴 작업 기록이다. 지금 코드의 계약은 이 요약이 먼저이고, 결정의 정본은 ADR-0026과 페이지 카피 ADR-0029다.
 
 - 콘티 블록은 `taxonomyVersion: 4`만 받는다. 섹션은 같은 `pageSectionKey`가 이어진 블록 묶음이고, 저장 순서가 곧 페이지 순서다. 블록은 `pageSectionKind`, `pageSectionUsage`(착용컷만 `styling` 또는 `fit`), `pageDesignId`, `slotKey`를 가진다.
 - 템플릿은 `emo`(감성형)와 `show`(쇼룸형) 둘이다. 카탈로그 `server/app/data/page_templates_v1.json`은 섹션 종류 10개와 섹션 디자인 52개를 담고, 그중 27개는 섹션 디자인 판에 보이지 않는다.
 - 조립기는 JS `assemblePage`와 Python `assemble_v4` 두 벌이다. `page_assembler.assemble`과 목 `buildEditorBlocksFromStoryboard`는 늘 이 조립기를 부르며, 옛 조립 경로는 없다. 페이지 끝에는 자동 블록 넷(사이즈 안내, 세탁 안내, AI 생성 안내, 공통 주의)을 붙인다.
 - 감성형 첫 장 제목(`P01-D09`)은 가운데, 위, 아래 세 자리 중 글자 대비가 3:1 이상인 곳에 두고, 비슷하면 가운데, 아래, 위 순으로 고른다. 모두 안 되면 검정 60% 받침을 깔고, 받침은 가운데를 먼저 쓰되 받침 자리의 절반 이상이 옷에 걸리면 아래로 옮긴다. 아래도 절반 이상 걸리면 덜 걸리는 쪽, 같으면 가운데에 둔다. 세부 규칙은 루트 `DESIGN.md` 15.5.4에 둔다.
-- 카피는 늘 켠다. AI 글이 들어가는 칸은 디테일 요소 섹션의 부위 설명(`analysis.partDescriptionCopy`), 상품 소개 본문, 후기 초안이고, 다른 AI 글 칸은 지금 빈 글과 안내 문구(placeholder)로 나간다. 카피 체계는 별도 카피라이팅 작업에서 정한다.
-- 상품 소개 본문(`seller+ai`)에는 감성형과 쇼룸형 모두 셀러의 MD 코멘트(`analysis.mdComment`)를 AI가 실제 쇼핑몰 상세페이지의 MD 코멘트처럼 다듬어 넣는다(2026-11-13 오너 결정). 다듬는 말투와 형식은 카피라이팅 작업이 정하고, 다듬기가 붙기 전에는 원문을 줄바꿈까지 그대로 글상자 하나에 넣는다. 셀러 글이 없으면 AI가 초안을 쓴다. 쇼룸형은 사진 다음 사양판(`T06-D01`: 상품명, MD 코멘트 본문, 사양)이나 어두운 소개판(`T06-COMMENT-01`: 맨 위 영문 라벨 "COMMENT", 상품명, 본문, 사양)에 둔다.
-- 후기 섹션은 셀러가 고치기 쉽도록 AI가 매번 조금씩 다른 초안을 넣어 두고, 셀러가 에디터에서 실제 후기로 고친다(2026-10-26 오너 결정). 이름 칸 기본값은 "김태희", 별점 기본값은 5개다.
-- 두 엔진은 같은 카탈로그와 같은 사례 파일(`tests/fixtures/page_templates_cases.json` 404건 등)로 결과가 같은지 검사한다. 상품 소개 MD 코멘트 사례(이름이 `woc17-`로 시작하는 묶음)도 이 파일에 있다. 카탈로그가 잘못되면 API가 시작하지 않는다.
+- 카피는 늘 켠다. `page_copy.generate`가 부위 설명(`analysis.partDescriptionCopy`), 판매 특징 설명(`analysis.featureCopy`), 섹션 글을 한 번에 만들고, 섹션 글은 첫 콘티 카드 id를 키로 한 `copyResults`로 조립한다. 호출 실패로 받지 못한 칸은 기존 사실·셀러 글 또는 빈 글과 안내 문구(placeholder)를 쓴다.
+- 상품 소개 본문(`seller+ai`)에는 감성형과 쇼룸형 모두 셀러의 MD 코멘트(`analysis.mdComment`)를 AI가 실제 쇼핑몰 상세페이지의 MD 코멘트처럼 다듬어 넣는다(2026-11-13 오너 결정). 다듬은 `copyResults` 본문을 먼저 쓰고, 없으면 셀러 원문을 줄바꿈까지 그대로 글상자 하나에 넣으며 `aiDraft`는 붙이지 않는다. 셀러 글이 없으면 AI 초안 또는 서버의 사실 기반 한 문장을 넣고 `aiDraft: true`를 붙인다. 그것도 비면 감성형 소개의 아바타와 MD 이름을 숨기고 높이를 다시 계산한다. 쇼룸형은 사진 다음 사양판(`T06-D01`: 상품명, MD 코멘트 본문, 사양)이나 어두운 소개판(`T06-COMMENT-01`: 맨 위 영문 라벨 "COMMENT", 상품명, 본문, 사양)에 둔다.
+- 후기 섹션은 셀러가 고치기 쉽도록 AI가 매번 조금씩 다른 초안을 넣어 두고, 셀러가 에디터에서 실제 후기로 고친다(2026-10-26 오너 결정). 별점은 각 후기 글 위의 `items.n.stars` 고정 글자 `★★★★★`이며 AI가 쓰지 않는다. 두 후기 디자인 모두 페이지 강조 색 `accentInk`를 쓰고 셀러가 수정할 수 있다. 쇼룸형 기본 구성에는 후기가 없고 추가했을 때만 보인다.
+- 두 엔진은 같은 카탈로그와 같은 사례 파일(`tests/fixtures/page_templates_cases.json` 435건 등)로 결과가 같은지 검사한다. 상품 소개 MD 코멘트 사례(이름이 `woc17-`로 시작하는 묶음)도 이 파일에 있다. 카탈로그가 잘못되면 API가 시작하지 않는다.
 
 The shared catalog is `server/app/data/page_templates_v1.json`. JavaScript imports
 it directly; Python reads and validates it in `app.agents.page_templates`. API
@@ -666,34 +666,59 @@ Copy is keyed by the first storyboard card of the section run, including a
 leading text card. Repeated copy roles are zero based (`items.0.desc`, etc.).
 Static and fact slots ignore copy results. AI slots use the provided result or
 an empty string and placeholder. Copy is always on for template storyboards. A
-nonblank seller MD comment (`analysis.mdComment`) fills the `seller+ai` intro
-body in both templates. AI will rewrite it like an MD comment on a real shop
-detail page, in a voice and format set by the copywriting work; until that
-rewrite is connected the comment is placed verbatim, and that element carries no
-`aiDraft`. A blank comment leaves the body to an AI draft. Legacy items.n.desc first uses analysis.partDescriptionCopy, then
-non-worn featureCopy and section-lead role copy. WOC11 nodes opt into
-copyPolicy:partOnly instead: only the dedicated matching part description with
-two nonempty explicit lines is used, without dictionary/featureCopy/role-copy
-fallback. Old one-line stored rows remain stored and still work in old layouts;
-new designs show the ordinary placeholder until valid two-line copy is supplied.
-Long supplied lines wrap by words rather than singleLine truncation.
+nonblank seller MD comment (`analysis.mdComment`) uses polished section copy first,
+then falls back to the untouched seller original in one text box. Neither is an
+AI draft. Without a seller comment, generated copy and the server's factual
+fallback sentence remain `aiDraft: true`. The assembler never invents that
+sentence. An empty body keeps its editable placeholder, while the emotional
+intro hides the avatar and MD name and recomputes their remaining layout height.
 
-`page_part_copy.generate` keeps one existing completion invocation for seller
-misses plus all actual part labels. Its response has separate featureCopy and
-partDescriptionCopy lists; the same label may have different wording in each.
-Seller DETAIL_COPY hits and existing feature_copy.generate/prompt/60-character
-one-sentence rules remain unchanged. Parts always use new two-line generation:
-first line describes supported visible construction and ends로/라, second gives
-a modest visible benefit in해요체; each line is at most22 codepoints including
-spaces.22 full Hangul at35px occupies770px inside the780px card text box;23 would
-be805px. The plain text box also fits22. Forbidden/hype/material-function claims,
-extra labels, markup/control characters and malformed/overlong lines are rejected.
-The eight original structure examples live in server/prompts/page_part_copy_v1.txt.
-The existing provider fallback chain remains; no correction call was added.
-Missing/failed output preserves stored copy, but new partOnly rendering cannot
-fall back to an old one-line dictionary sentence. Local analysis is updated before
-current-job assembly. Copywriting off sends no part labels and shows no AI part
-copy; the legacy seller-feature path remains independent of that toggle.
+Description lookup keeps the original analysis `point` key. Display names prefer
+`partDescriptionCopy.label`, then `featureCopy.label`, then the analysis name.
+A matching `detailTargetId` establishes the detail candidate's origin, so its
+part label is used even if a seller feature happens to contain the same words.
+A feature label requires exact `aiSuggestedPoints` membership; a manual seller
+feature cannot acquire a display label merely by matching a detail name.
+Manual worn-crop names are always preserved because matching words do not prove
+who wrote that card's label. Seller chip editing removes the previous
+`aiSuggestedPoints` entry (`src/features/analysis/sellingPoints.js`). Legacy items.n.desc first uses
+analysis.partDescriptionCopy, then non-worn featureCopy and section-lead role
+copy. Nodes with `copyPolicy: partOnly` accept only the dedicated matching part
+description with one or two nonempty explicit lines. Failed/missing copy keeps
+stored descriptions; unsupported new copy is not substituted by a dictionary.
+Long lines wrap at word boundaries.
+
+`analysis.pageCopy` stores `{copyResults, promptVersion, model, createdAt}`.
+Omitting `copyResults` in JavaScript or passing `None` in Python reuses that
+stored section copy; explicitly passing `[]` means this run has no section copy
+and never revives stale results after a missing key or failed generation. Older
+mocks need none of the new optional fields. `seedStoryboard` and mock
+`buildEditorBlocksFromStoryboard` keep their existing inputs.
+
+The catalog resolves template-dependent limits through `maxCharsByTemplate` and
+seller-body bounds through `maxCharsFromSeller`; `textSlotForRole` /
+`text_slot_for_role` accept the template and seller text without mutating the
+catalog. Limits match `page_copy._limits`:
+
+| Slot | Emotional | Showroom | Source |
+|---|---:|---:|---|
+| fabric.title | 20 | 16 | aiDraft |
+| fabric.body | 50 | 56 | aiDraft |
+| points.items.n.desc | 44 | 26 | ai |
+| points.fit.tip | 34 | 34 | aiDraft |
+| faq.items.n.a | 56 | 56 | aiDraft |
+| review.items.n.text / who | 34 | 34 | aiDraft |
+| for_you.items.n | 28 | 28 | ai |
+| intro.body | min(300, max(120, seller length)) | same | seller+ai |
+
+The fixed review `items.n.stars` slot has no AI length limit and is editable
+ordinary text. Its `preserveColor` layout flag keeps `accentInk` even over a
+photo; it is excluded from automatic black/white overlay recoloring. Both
+`I09-D06` and saved `I09-SCRIM-01` use the row. The empty-intro decoration nodes
+use `hideWhenEmpty: body`; no storyboard fields are added.
+The default stars also carry `templateCopyDecoration`, so an otherwise empty
+review group stays hidden from export. Seller-edited stars count as content.
+
 The intro `facts` slot projects confirmed color, material and fit values. Notice
 slots have `unavailable: true` and no fact path because the current analysis
 contract contains no product notice; these slots are hidden. SIZE remains absent
@@ -862,27 +887,18 @@ Batang, Gowun Dodum and Cormorant are bundled in `src/fonts`; Cal Sans and Robot
 Mono load from Google Fonts in `seller.html`. `pendingFontBundles` is empty. No
 browser, paid model or network call is needed for these tests.
 
-Copy is always on. AI text fills the two-line part description
-(`analysis.partDescriptionCopy`) in point items, the intro body and the review
-draft (name defaults to 김태희, five stars). The old page job copy step wrote
-only per-photo `headline` texts, which no catalog text slot uses, and it was
-removed with its review on 2026-11-13, so the other `ai` and `aiDraft` slots are
-assembled empty with their placeholders. The intro body (`seller+ai`) takes the
-seller's MD comment (`analysis.mdComment`) in both templates; AI rewrites it in
-the voice and format set by the copywriting work, and until that rewrite is
-connected the comment is placed verbatim. Without a comment, AI writes a draft.
-Elements from `aiDraft` slots, and a `seller+ai` body without a
-comment, carry `aiDraft: true`; the editor
-does not show a draft badge for it. A seller text edit clears the flag, and the
-download and paste-code modals ask once when unedited drafts remain. The copy system (which slot gets which copy,
-and where bold or emphasis goes) is decided in separate copywriting work.
+Copy is always on. The page worker supplies section copy, part descriptions and
+feature descriptions. FAQ answers, fabric title/body, size tips, review text and
+authors, and SNS text carry `aiDraft: true`; recommendations do not. Intro bodies
+carry that flag only when the seller supplied no MD comment. Seller text edits
+clear the flag, and the download/paste-code confirmation checks remaining drafts.
 
-Open items for that work: late copy can change text height and the
-recommendation item count (default four, at most six). The existing late-copy
-merger (`src/lib/editorWaitSkeleton.js`) preserves seller geometry, so new copy
-roles also need a rule for the additional panels and slots (확인 중). These tests
-verify the completed assembly and bypass the legacy skeleton height correction;
-they do not cover that merge.
+The wait merger accepts late polished MD text while its automatic-text baseline
+is unchanged. Manual edits and deletions win over both events and final assembly;
+style and box edits retain the existing merge protection. Untouched template
+runs accept final server layout (including newly visible MD decoration or changed
+paragraphs). `progress.phase = copy_ready` is safely accepted without changing
+wait labels or resetting progress. Tests cover this flow without a browser.
 
 Cases named `woc17-*` cover the intro MD comment in both templates: a
 multi-line seller comment, no comment with an AI body, no comment with an empty AI

@@ -165,7 +165,13 @@ test('WOC11 consumes part copy only while saved legacy descriptions keep old sel
     const input = inputFor('emo', design); input.analysis.partDescriptionCopy = [];
     input.analysis.featureCopy = [{ point: labels[0], desc: '기존 판매 특징 문장' }];
     input.copyResults = [{ blockId: 'lead', texts: [{ role: 'items.0.desc', text: '기존 역할 문장' }] }];
-    assert.equal(textOf(itemsOf(input), 'items.0.desc').text, design === 'P06-D01' ? '기존 판매 특징 문장' : '');
+    const elements = itemsOf(input);
+    if (design === 'P06-D01') assert.equal(textOf(elements, 'items.0.desc').text, '기존 판매 특징 문장');
+    else {
+      assert.equal(textOf(elements, 'items.0.desc').text, '');
+      assert.ok(textOf(elements, 'items.0.desc').hidden);
+      assert.equal(elements.filter(el => el.type === 'image').length, 2, 'copy failure retains both photos');
+    }
   }
 });
 
@@ -194,12 +200,19 @@ const legacyDigests = {
   'show:PT-COLUMN-CARD-01': '0f1e59e995b2da06209a14b44999953cb002ab839003dfb63ed141700941118c',
   'show:PT-BELOW-CARD-01': 'e139cb45c686a9f39560db86e722d6f5f5580bba265599b00817cb587e41c4bf',
 };
-test('WOC11 hiding preserves all eight saved legacy renderings apart from explicit contain metadata', () => {
+test('WOC11 preserves legacy rendering apart from contain and populated-slot placeholder metadata', () => {
   for (const [key, expected] of Object.entries(legacyDigests)) {
     const [templateId, designId] = key.split(':');
     const blocks = blocksOf(inputFor(templateId, designId));
     const legacy = blocks.map(block => ({ ...block, elements: block.elements.map(element => {
-      if (element.type !== 'image') return element;
+      if (element.type !== 'image') {
+        if (element.type === 'text' && element.text?.trim()) {
+          const { placeholder, ...previous } = element;
+          if (element.copyRole === 'label' && /^[\x20-\x7e]+$/.test(element.text)) delete previous.keepWords;
+          return previous;
+        }
+        return element;
+      }
       assert.equal(element.fit, 'contain', key);
       const { fit, ...previous } = element;
       return previous;

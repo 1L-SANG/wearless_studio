@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from PIL import Image
 
-from app.agents import page_template_contrast as contrast, page_part_copy
+from app.agents import page_template_contrast as contrast
 from app.workers import detail_page_job as worker
 from conftest import fake_worker_app, make_settings, worker_job
 from page_template_cases import assemble_input, case_input, collect_input_regions
@@ -90,18 +90,6 @@ def test_non_faq_photos_do_not_invoke_face_detection(monkeypatch):
     detector.assert_not_called()
 
 
-@pytest.mark.parametrize('desc,accepted', [
-    ('단추로 앞을 여밀 수 있어요', True),
-    ('단추가 더해진 여밈으로\n차분한 옷차림을 완성해요', True),
-    ('단추로 앞을 여밀 수 있어요\n', False), ('', False), ('   ', False),
-    ('단추로 앞을 여밀 수 있어요\n둘째 줄이에요\n셋째 줄이에요', False),
-    ('신축성이 좋아 편안해요', False),
-    (' 단추로 앞을 여밀 수 있어요', False), ('단추가 있어요\t', False),
-])
-def test_part_validation_accepts_one_line_without_relaxing_other_guards(desc, accepted):
-    assert bool(page_part_copy.validate_parts([{'point': '단추', 'desc': desc}], ['단추'])) == accepted
-
-
 def test_duplicate_photo_alias_measures_faq_placement_on_the_generated_source(monkeypatch):
     value = case_input('emo-2-mono')
     hero = next(card for card in value['storyboard'] if card['pageSectionKind'] == 'first')
@@ -152,7 +140,7 @@ def test_detail_job_places_faq_heading_on_uploaded_photo(monkeypatch, boxes, exp
     finalized = AsyncMock(return_value={})
     monkeypatch.setattr(worker.repo, 'finalize_detail_page_success', finalized)
     monkeypatch.setattr(worker.repo, 'finalize_detail_page_failure', AsyncMock())
-    monkeypatch.setattr(worker.page_part_copy, 'generate', AsyncMock(return_value={}))
+    monkeypatch.setattr(worker.page_copy, 'generate', AsyncMock(return_value={}))
     monkeypatch.setattr(worker, '_emit', AsyncMock())
     generated_asset = {'asset_id': 'generated-hero'}
     monkeypatch.setattr(worker, '_gen_cuts', AsyncMock(return_value=(

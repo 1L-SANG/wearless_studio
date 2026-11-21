@@ -146,6 +146,16 @@ def test_feature_copy_carried_when_client_omits_it():
     assert saved["fit"] == "regular"          # 셀러 편집은 그대로 반영
 
 
+@pytest.mark.parametrize("merge,incoming", [(False, {}), (True, {"pageCopy": None})])
+def test_page_copy_survives_older_client_omission_and_null(merge, incoming):
+    copy = {"copyResults": [{"blockId": "intro", "texts": [{"role": "body", "text": "상품 설명"}]}],
+            "promptVersion": "v2", "model": "fake", "createdAt": "2026-11-19T00:00:00+00:00"}
+    saved = _save({"pageCopy": copy, "fit": "over"}, {"fit": "regular", **incoming},
+                  merge=merge, delete_nulls=merge)
+    assert saved["pageCopy"] == copy
+    assert saved["fit"] == "regular"
+
+
 def test_client_value_wins_when_present():
     """이월은 '누락 시'에만 — 클라가 명시한 값을 서버가 덮으면 편집이 안 먹는다."""
     saved = _save({"sourceMirrored": True}, {"sourceMirrored": False, "fit": "slim"})

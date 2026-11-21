@@ -1,0 +1,27 @@
+{
+  "_about": "고치기 전과 후의 짝. 카피 총괄이 미리보기 1판 글을 오너 피드백과 korean-humanizer로 고친 것이다(samples/humanize_pairs.md). before는 쓰지 말아야 할 꼴, after는 고친 글, why는 걸린 까닭이다. after가 빈 글이면 그 칸을 비우는 것이 답이라는 뜻이다. 상품은 예시용이고 지금 만드는 상품과 다르다.",
+  "examples": [
+    { "slot": "intro.title", "template": "emo", "before": "반소매로 입는 오픈 카라 니트", "after": "카라 니트, 찾고 있었다면", "why": "restates the product name" },
+    { "slot": "intro.body", "template": "emo", "seller": "단추 없이 열리는 카라가 포인트. 슬랙스에 입으면 출근룩, 청바지에도 잘 어울림", "before": "단추 없이 열리는 카라가 포인트인 니트예요.\n슬랙스에 입으면 출근룩으로, 청바지에도 잘 어울려요.", "after": "단추 없이 툭 열리는 카라가 이 니트의 포인트예요.\n슬랙스에 입으면 그대로 출근룩이 되고 청바지에 입어도 잘 어울려요.\n출근하는 날에도 쉬는 날에도 꺼내 입어 보세요.", "why": "only the endings were changed; rebuild the sentences and close with an invitation" },
+    { "slot": "intro.body", "template": "show", "seller": "단추 없이 열리는 카라가 포인트. 슬랙스에 입으면 출근룩, 청바지에도 잘 어울림", "before": "단추 없이 열리는 카라가 포인트인 니트입니다.\n슬랙스에 입으면 출근룩으로, 청바지에도 잘 어울립니다.", "after": "단추 없이 열리는 오픈 카라가 포인트입니다.\n슬랙스와는 출근룩으로, 청바지와도 잘 어울립니다.", "why": "same text as the emo page with different endings; show is shorter and has no invitation" },
+    { "slot": "intro.body", "template": "emo", "seller": "나일론 소재라서 여름에도 시원하게 착용 가능해요! 소매가 길어서 키 작은 분은 접어 입으면 예뻐요~ 카라 부분 강조해 주세요", "before": "여름에도 시원하게 입기 좋은 나일론 셔츠예요.\n소매가 길어서 키 작은 분은 접어 입으면 예뻐요.\n카라가 포인트예요.", "after": "여름에도 시원하게 입는 나일론 셔츠예요.\n소매가 길게 나와서 키 작은 분은 접어 입으면 예뻐요.", "why": "the seller's instruction to the designer was turned into copy; drop it" },
+    { "slot": "intro.body", "template": "emo", "seller": "", "before": "반소매에 카라를 단 골지 니트예요.\n약속 있는 날엔 슬랙스나 청바지와 입기 좋아요.\n색은 로즈, 아이보리, 블루 중에 고를 수 있어요.", "after": "단추 없이 열리는 카라에 세로 골지를 더한 반소매 니트예요.\n품이 여유 있어서 바지 위로 빼 입기 좋아요.", "why": "the third paragraph only reads the color list back" },
+    { "slot": "part", "template": "emo", "before": "단추 없이 목선이 트인 모양이라\n목걸이를 함께 하기 좋아요", "after": "단추 없이 목선이 트인 카라예요\n깃을 눕혀 펼친 채로 입어요", "why": "talks about a necklace, not the garment" },
+    { "slot": "part", "template": "emo", "before": "세로로 결이 이어지는 짜임이라\n한 장만 입어도 심심하지 않아요", "after": "세로 결이 몸을 따라 곧게 떨어져요", "why": "unsupported effect; one line is enough" },
+    { "slot": "part", "template": "emo", "before": "골지 밴드로 마감한 소매 끝이라\n옆에서 봐도 끝선이 반듯해요", "after": "소매 끝을 골지 밴드로 마감했어요\n소매 끝이 팔 쪽으로 살짝 모여요", "why": "unsupported effect; all three parts used the same frame" },
+    { "slot": "part", "template": "show", "before": "단추 없이 목선이 트인 카라예요", "after": "단추 없이 V자로 여는 카라", "why": "show uses a noun phrase with a specific detail" },
+    { "slot": "part", "template": "show", "before": "지퍼가 달려 있는 디테일", "after": "위아래로 열리는 투웨이 지퍼", "why": "says only what the label already says" },
+    { "slot": "fabric.body", "template": "emo", "before": "면과 폴리에스터로 짠 니트예요. 가까이서 보면 세로 골이 보여요.", "after": "면이 넉넉히 섞여 살에 닿는 느낌이 부드러워요. 골지로 짜서 몸을 따라 편하게 늘어나요.", "why": "reads the fiber table back and describes what the photo already shows; say how it feels" },
+    { "slot": "fabric.body", "template": "show", "before": "면과 폴리에스터를 섞어 짠 원단\n세로 골이 드러나는 골지 조직", "after": "살에 닿는 느낌이 부드러운 원단입니다.\n골지 조직이라 몸을 따라 늘어납니다.", "why": "same problem; show uses two 입니다체 lines" },
+    { "slot": "fabric.title", "template": "all", "before": "면을 섞어 짠 골지 니트", "after": "부드럽게 늘어나는 면 골지", "why": "names the material mix instead of the feel" },
+    { "slot": "for_you", "template": "emo", "before": "무채색보다 로즈나 블루를 좋아하는 분", "after": "출근할 때 입을 상의가 늘 고민인 분", "why": "puts down a color the shop also sells" },
+    { "slot": "review", "template": "all", "before": "로즈 색 예뻐요 모임에도 입고 가요", "after": "로즈 색 진짜 예뻐요", "why": "two stories glued into one line" },
+    { "slot": "review", "template": "all", "before": "여유 있는 핏이라 바지 위로 빼서 입게 되네요", "after": "품이 넉넉해서 빼 입기 좋더라고요", "why": "all three drafts had the same length and shape; vary the ending" },
+    { "slot": "review", "template": "all", "before": "여행 갈 때 치마랑 입었는데 생각보다 잘 어울렸어요", "after": "슬랙스에 입고 출근했더니 다들 어디 거냐고 물어봐요", "why": "the long draft should be one small scene" },
+    { "slot": "faq", "template": "emo", "before": "어떤 소재인가요?\n면 60%, 폴리에스터 40%예요.", "after": "비침은 없나요?\n밝은 색은 살짝 비칠 수 있어 이너를 권해요.", "why": "asks what the page already shows" },
+    { "slot": "faq", "template": "emo", "before": "사이즈는 어떻게 골라요?\n평소 사이즈를 권해요.", "after": "사이즈는 어떻게 골라요?\n품이 여유 있어요. 실측표와 견줘 골라 주세요.", "why": "recommends a size; describe the fit and point to the measurement table" },
+    { "slot": "faq", "template": "show", "before": "핏은 어떤 편인가요?\n품이 여유 있는 세미 오버핏입니다.", "after": "세탁은 어떻게 하나요?\n중성세제로 손세탁하고 눕혀서 말립니다.", "why": "asks what the page already shows" },
+    { "slot": "feature", "template": "emo", "before": "투웨이 지퍼 디테일을 확인할 수 있습니다.", "after": "위아래로 열려서 밑단만 살짝 풀어 입을 수 있어요.", "why": "says nothing about the garment" },
+    { "slot": "feature", "template": "show", "before": "투웨이 지퍼 디테일을 확인할 수 있습니다.", "after": "아래에서도 열어 입는 투웨이 지퍼", "why": "says nothing about the garment" }
+  ]
+}

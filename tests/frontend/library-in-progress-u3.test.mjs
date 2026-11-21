@@ -307,7 +307,7 @@ test('U3 editor error download label is 다운로드 and remains disabled while 
   assert.ok(start >= 0, 'extract the actual editor download split button');
   const jsx = editorSource.slice(start, editorSource.indexOf(' />', start) + ' />'.length);
   const { code } = await transformWithEsbuild(`function header() { return (${jsx}); }`, 'Header.jsx', { jsx: 'transform' });
-  const header = new Function('React', 'ExportSplitButton', 'genActive', 'genFailed', 'setDownload', `
+  const header = new Function('React', 'ExportSplitButton', 'genActive', 'genFailed', 'openDownload', `
     const pubCapturing = false, pubBusy = false, dlBusy = false, exportMenuOpen = false, exportAnchorRef = {},
       publicationInfo = { scope: 'p', disabled: true }, pubScope = 'p', gifImages = [], mallInfo = { disabled: true };
     const buildExportMenuItems = () => []; ${code}; return header;`);

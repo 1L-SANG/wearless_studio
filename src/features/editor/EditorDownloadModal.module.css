@@ -5,20 +5,121 @@
   color: var(--fg-1);
 }
 
+:global(.modal.wide):has(> .download) {
+  max-width: 980px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.download {
+  display: grid;
+  grid-template-columns: min(32%, 300px) minmax(0, 1fr);
+  max-height: calc(100dvh - 48px);
+  overflow: hidden;
+}
+
+.preview,
+.settings {
+  min-width: 0;
+  min-height: 0;
+}
+
+.preview {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--bg-2);
+  border-inline-end: 1px solid var(--ring);
+}
+
+.previewHeader {
+  padding: var(--sp-24) var(--sp-24) var(--sp-12);
+}
+
+.previewHeader h4 {
+  font-size: 14px;
+  text-wrap: balance;
+}
+
+.modal .previewHeader p {
+  margin-top: var(--sp-4);
+  font-size: 13px;
+  text-wrap: balance;
+}
+
+.previewScroll,
+.settings {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+}
+
+.previewScroll:focus-visible {
+  outline: 2px solid var(--cta-bg);
+  outline-offset: -2px;
+}
+
+.previewScroll { padding-bottom: var(--sp-24); }
+
+.previewStack {
+  position: relative;
+  width: 200px;
+  margin-inline: auto;
+  background: var(--bg-1);
+  box-shadow: 0 0 0 1px var(--ring);
+}
+
+.previewBlock > svg {
+  display: block;
+}
+
+.previewStack .previewBlock {
+  background: var(--bg-1);
+}
+
+.previewArtwork {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 1000px;
+  transform: scale(0.2);
+  transform-origin: top left;
+  pointer-events: none;
+}
+
+.previewArtwork :global(.el) {
+  outline: none;
+}
+
+.previewCuts {
+  position: absolute;
+  inset: 0 auto auto 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.previewCuts line {
+  stroke: var(--link);
+  stroke-dasharray: 4 3;
+}
+
+.previewCuts rect { fill: var(--cta-bg); }
+
+.previewCuts text {
+  fill: var(--bg-1);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings {
+  padding: var(--sp-28) calc(var(--sp-16) * 2) 0;
+}
+
 .header {
   text-align: left;
 }
 
-.eyebrow {
-  display: block;
-  margin-bottom: var(--sp-8);
-  color: var(--fg-2);
-  font-family: var(--font-display);
-  font-size: 12px;
-  letter-spacing: 0.02em;
-}
-
-.title {
+.title,
+.download .title {
   font-family: var(--font-display);
   font-size: 22px;
   letter-spacing: 0.2px;
@@ -46,7 +147,8 @@
   border: 0;
 }
 
-.group legend {
+.group legend,
+.fileField > label {
   margin-bottom: var(--sp-8);
   font-size: 13px;
   font-weight: 600;
@@ -57,6 +159,11 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--sp-8);
+}
+
+.settings .option {
+  min-height: 62px;
+  padding: var(--sp-12);
 }
 
 .option {
@@ -114,6 +221,20 @@
   text-wrap: balance;
 }
 
+.optionTag {
+  margin-inline-start: var(--sp-4);
+  color: var(--fg-2);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.optionIcon {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--fg-2);
+}
+
 .optionSize {
   color: var(--cta-bg);
   font-size: 12px;
@@ -127,7 +248,6 @@
 }
 
 .helper,
-.notice,
 .guidance {
   color: var(--fg-2);
   font-size: 12.5px;
@@ -139,13 +259,65 @@
   font-size: 12.5px;
 }
 
-.modal .notice {
-  margin-top: var(--sp-16);
-  padding: var(--sp-12);
-  border-radius: var(--r-5);
-  background: var(--bg-2);
+.fileField {
+  min-width: 0;
+}
+
+.fileField > label {
+  display: block;
+}
+
+.fileField input,
+.customWidth input {
+  width: 100%;
+  min-height: var(--cta-height);
+  padding: var(--sp-8) var(--sp-12);
+  border: 1px solid var(--ring-strong);
+  border-radius: var(--r-4);
+  background: var(--bg-1);
   color: var(--fg-1);
+  font: inherit;
+  font-size: 16px;
+}
+
+.fileField input:focus-visible,
+.customWidth input:focus-visible {
+  outline: 2px solid var(--cta-bg);
+  outline-offset: 1px;
+}
+
+.customField { margin-top: var(--sp-12); }
+
+.customWidth {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  color: var(--fg-2);
+  font-size: 13px;
+}
+
+.customWidth input { width: 120px; }
+
+.customWidth input[aria-invalid="true"] { border-color: var(--accent-error); }
+
+.modal .validation,
+.widthReminder {
+  color: var(--accent-error);
   font-size: 12.5px;
+  text-wrap: balance;
+}
+
+.widthReminder {
+  align-self: center;
+  margin-inline-end: auto;
+}
+
+.modal .savedName {
+  margin-top: var(--sp-4);
+  overflow: hidden;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .summary {
@@ -213,6 +385,8 @@
   gap: var(--sp-8);
   margin-top: 0;
 }
+
+.settings .footer { padding-bottom: var(--sp-20); }
 
 .draftConfirmation {
   display: grid;
@@ -345,6 +519,18 @@
 }
 
 @media (max-width: 560px) {
+  .download {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-y: auto;
+  }
+
+  .preview { max-height: 240px; }
+
+  .settings {
+    overflow: visible;
+    padding-inline: var(--sp-16);
+  }
+
   .optionGrid,
   .inlineOptions {
     grid-template-columns: 1fr;

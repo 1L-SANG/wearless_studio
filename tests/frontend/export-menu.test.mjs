@@ -72,10 +72,10 @@ test('paste item shows download-only badge for real model', async () => {
   const source = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
   const start = source.indexOf('items={buildExportMenuItems(') + 'items={'.length;
   const end = source.indexOf('} />', start);
-  const menu = new Function('buildExportMenuItems', 'realModelBlocked', 'mallInfo', 'publicationInfo', 'pubScope', 'gifImages',
+  const menu = new Function('buildExportMenuItems', 'realModelBlocked', 'mallInfo', 'publicationInfo', 'pubScope', 'gifImages', 'openDownload',
     `return (${source.slice(start, end)});`);
   for (const blocked of [true, false]) {
-    const paste = menu(buildExportMenuItems, blocked, { disabled: true }, { scope: 'p', disabled: false }, 'p', [])
+    const paste = menu(buildExportMenuItems, blocked, { disabled: true }, { scope: 'p', disabled: false }, 'p', [], () => {})
       .find((item) => item.id === 'paste');
     assert.equal(paste.disabled, blocked);
     assert.equal(paste.badge, blocked ? '다운로드만 가능' : undefined);

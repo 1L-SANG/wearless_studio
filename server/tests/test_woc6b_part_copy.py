@@ -1,4 +1,4 @@
-"""Part copy stays in the existing one-call job path, separate from seller features."""
+"""Page-copy results retain separate seller and part identities."""
 import asyncio
 from copy import deepcopy
 from unittest.mock import AsyncMock
@@ -7,7 +7,7 @@ import pytest
 
 from app import repo
 from app.workers import detail_page_job as dpj
-from app.agents import feature_copy, page_part_copy
+from app.agents import page_copy
 from conftest import fake_worker_app, make_settings, worker_job
 
 
@@ -47,13 +47,9 @@ def run_job(monkeypatch, *, enabled=True, result=None, failure=False, persist_fa
     monkeypatch.setattr(repo, "get_product", AsyncMock(return_value={"name": "셔츠", "colors": []}))
     monkeypatch.setattr(repo, "get_storyboard", AsyncMock(return_value=board()))
     monkeypatch.setattr(repo, "get_analysis", AsyncMock(return_value=original))
-    if real_generator:
-        generate = AsyncMock(return_value=(result or {}, "fake-provider"))
-        monkeypatch.setattr(feature_copy, "complete_json", generate)
-    else:
-        generate = AsyncMock(return_value=result or {},
-                             side_effect=RuntimeError("copy unavailable") if failure else None)
-        monkeypatch.setattr(dpj.page_part_copy, "generate", generate)
+    generate = AsyncMock(return_value=result or {},
+                         side_effect=RuntimeError("copy unavailable") if failure else None)
+    monkeypatch.setattr(dpj.page_copy, "generate", generate)
     monkeypatch.setattr(dpj, "_emit", AsyncMock())
     monkeypatch.setattr(dpj, "_gen_cuts", AsyncMock(return_value=([
         {"blockId": "detail", "imageUrl": "/detail.jpg", "width": 600, "height": 900}], [], 0, [], None, [])))
@@ -85,8 +81,9 @@ def test_one_request_names_only_selected_parts_and_updates_current_assembly(monk
                  {"point": "선택하지 않은 포켓", "desc": "반환되어도 버릴 문구입니다."}]}
     call, saved, assembled, original = run_job(monkeypatch, enabled=enabled, result=generated, persist_failure=persist_failure)
     assert call.await_count == 1
-    assert call.call_args.args[1:3] == (["단추", "유연한 원단"], ["단추", "드롭 숄더"])
-    assert call.call_args.kwargs["timeout_seconds"] == 120
+    assert [row["id"] for row in call.call_args.args[1]] == ["worn", "points", "detail"]
+    assert call.call_args.args[3] == original
+    assert 0 < call.call_args.kwargs["timeout_seconds"] <= 90
     expected_features = [{"point": "유연한 원단", "desc": "저장된 원단 설명입니다."}, seller]
     expected_parts = [shoulder, button]
     assert saved.call_args.args[2] == {"featureCopy": expected_features, "partDescriptionCopy": expected_parts}
@@ -116,26 +113,9 @@ def test_empty_or_failed_response_keeps_both_stored_fields(monkeypatch, failure)
     assert assembled["analysis"]["partDescriptionCopy"] == analysis()["partDescriptionCopy"]
 
 
-@pytest.mark.parametrize("enabled", [False, True])
-def test_real_feature_generator_uses_one_fake_provider_call_for_all_unknown_labels(monkeypatch, enabled):
-    result = {"featureCopy": [{"point": "유연한 원단", "desc": "원단의 유연한 형태를 확인할 수 있습니다."}],
-              "partDescriptionCopy": [
-                  {"point": "단추", "desc": "단추가 더해진 여밈으로\n차분한 옷차림을 완성해요"},
-                  {"point": "드롭 숄더", "desc": "어깨 아래로 내려온 절개라\n상체 윤곽이 한결 느긋해요"}]}
-    provider, saved, assembled, _ = run_job(monkeypatch, enabled=enabled, result=result, real_generator=True)
-    assert provider.await_count == 1
-    prompt = provider.call_args.args[1]
-    assert "- 유연한 원단" in prompt and "- 드롭 숄더" in prompt
-    assert prompt.split("PAGE PARTS (data):\n", 1)[1].strip() == "- 단추\n- 드롭 숄더"
-    assert "선택하지 않은 포켓" not in prompt and "삭제된 기장" not in prompt
-    assert {item["point"] for item in assembled["analysis"]["featureCopy"]} == {"유연한 원단", "단추"}
-    assert {item["point"] for item in assembled["analysis"]["partDescriptionCopy"]} == {"단추", "드롭 숄더"}
-    seller_button = next(item["desc"] for item in assembled["analysis"]["featureCopy"] if item["point"] == "단추")
-    part_button = next(item["desc"] for item in assembled["analysis"]["partDescriptionCopy"] if item["point"] == "단추")
-    assert seller_button == "단추 디테일을 확인할 수 있습니다."
-    assert part_button == result["partDescriptionCopy"][0]["desc"]
-    assert seller_button != part_button
-    assert saved.await_count == 1
+def part_labels(storyboard, current_analysis):
+    return list(dict.fromkeys(slot["point"] for slot in page_copy.slots_for_page(
+        storyboard, {"name": "셔츠"}, current_analysis) if slot["target"] == "part"))
 
 
 def test_part_labels_follow_selected_card_order_and_append_legacy_detail_photos():
@@ -143,16 +123,16 @@ def test_part_labels_follow_selected_card_order_and_append_legacy_detail_photos(
     storyboard[-1]["detailTargetId"] = "unselected"
     extra = {**storyboard[-1], "id": "extra", "slotKey": "points.detail2", "detailTargetId": "button"}
     storyboard.append(extra)
-    assert page_part_copy.part_labels(storyboard, analysis()) == ["선택하지 않은 포켓", "드롭 숄더", "단추"]
+    assert part_labels(storyboard, analysis()) == ["선택하지 않은 포켓", "드롭 숄더", "단추"]
     storyboard[1].pop("pointItems")
-    assert page_part_copy.part_labels(storyboard, analysis()) == ["선택하지 않은 포켓", "단추"]
+    assert part_labels(storyboard, analysis()) == ["선택하지 않은 포켓", "단추"]
 
 
 def test_missing_candidate_and_removed_worn_source_do_not_request_unrelated_labels():
     storyboard = board()
     storyboard[-1]["detailTargetId"] = "missing-candidate"
     storyboard.pop(0)
-    assert page_part_copy.part_labels(storyboard, analysis()) == []
+    assert part_labels(storyboard, analysis()) == []
 
 
 def test_bad_or_unrequested_response_rows_cannot_clear_saved_descriptions(monkeypatch):

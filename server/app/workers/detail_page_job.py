@@ -8,6 +8,8 @@
 import asyncio
 from collections import Counter
 import contextlib
+from contextvars import ContextVar
+from copy import deepcopy
 import hashlib
 import json
 import logging
@@ -41,7 +43,7 @@ from ..agents import (
     mannequin,
     outer_closure,
     page_assembler,
-    page_part_copy,
+    page_copy,
     page_output_qc,
     product_button_qc,
     real_horizon_neck_repair,
@@ -65,6 +67,84 @@ from ..agents.detail_recommendations import DetailRecommendationError
 from ._common import emit_job_event as _emit
 
 log = logging.getLogger("wearless.detail_page_job")
+_copy_progress = ContextVar("detail_page_copy_progress", default=None)
+
+
+async def _emit_progress(pool, job_id, payload):
+    """Serialize cut/copy events against the latest progress of this job only."""
+    state = _copy_progress.get()
+    if state is None or state["job_id"] != job_id:
+        await _emit(pool, job_id, "progress", payload)
+        return
+    async with state["lock"]:
+        if payload.get("phase") == "copy_ready":
+            if state.get("copy_ready"):
+                return
+            state["copy_ready"] = True
+        state["progress"] = max(state["progress"], payload.get("progress", 0))
+        await _emit(pool, job_id, "progress", {**payload, "progress": state["progress"]})
+
+
+async def _copy_ready(pool, job_id):
+    try:
+        await _emit_progress(pool, job_id, {"phase": "copy_ready"})
+    except Exception as exc:
+        log.warning("page copy progress unavailable for job %s: %s", job_id, type(exc).__name__)
+
+
+async def _generate_page_copy(settings, storyboard, product, analysis, pool, job_id, deadline):
+    try:
+        remaining = max(0, deadline - time.monotonic())
+        result = await asyncio.wait_for(page_copy.generate(
+            settings, storyboard, product, analysis, seed=str(job_id),
+            timeout_seconds=remaining), timeout=remaining)
+    except asyncio.TimeoutError:
+        log.warning("page copy timed out for job %s", job_id)
+        result = {}
+    except asyncio.CancelledError:
+        if asyncio.current_task().cancelling():
+            raise
+        log.warning("page copy provider cancelled for job %s", job_id)
+        result = {}
+    except Exception as exc:
+        log.warning("page copy failed for job %s: %s", job_id, type(exc).__name__)
+        result = {}
+    await _copy_ready(pool, job_id)
+    return result
+
+
+async def _cancel_page_copy(task):
+    if task is not None:
+        if not task.done():
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+
+
+def _page_copy_patch(result, copy_results, slots, analysis, settings):
+    """Only generated copy fields are merged; seller facts stay in their own keys."""
+    patch = {}
+    for field, target in (("featureCopy", "feature"), ("partDescriptionCopy", "part")):
+        wanted = {slot["point"] for slot in slots if slot["target"] == target}
+        fresh = result.get(field) or []
+        if not isinstance(fresh, list):
+            continue
+        fresh = [row for row in fresh if isinstance(row, dict)
+                 and isinstance(row.get("point"), str) and row["point"] in wanted
+                 and isinstance(row.get("desc"), str) and row["desc"].strip()]
+        if not fresh:
+            continue
+        rows = {row["point"]: dict(row) for row in analysis.get(field) or []
+                if isinstance(row, dict) and isinstance(row.get("point"), str) and row.get("desc")}
+        for row in fresh:
+            rows[row["point"]] = {k: row[k] for k in ("point", "desc", "label") if k in row}
+        patch[field] = list(rows.values())
+    if copy_results:
+        patch["pageCopy"] = {"copyResults": copy_results,
+                             "promptVersion": result.get("promptVersion") or settings.page_copy_prompt_version,
+                             "model": result.get("model"),
+                             "createdAt": datetime.now(timezone.utc).isoformat()}
+    return patch
 
 _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 # 컷 동시 생성 상한. 순차(블록 수 × ~40s)면 4컷에 2~3분 → 병렬로 단축. gemini 버스트
@@ -1549,7 +1629,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 log.warning("AG-06 cut_failed event lost for job %s: %r", job_id, emit_error)
         _done_counter["n"] += 1
         try:
-            await _emit(app.state.pool, job_id, "progress",
+            await _emit_progress(app.state.pool, job_id,
                         {"progress": 20 + round(60 * _done_counter["n"] / _total_cuts),
                          "phase": "cut", "done": _done_counter["n"], "total": _total_cuts})
         except Exception as e:
@@ -1733,6 +1813,7 @@ async def run_detail_page_job(app, job: dict) -> None:
         await facemarket.wait_for_holder(app)
 
     async def _fail(message: str, meta: dict, code: str = "generation_failed", **extra):
+        await _cancel_page_copy(copy_task)
         # extra = 부분 실패(incomplete_cuts)의 result·job_metadata·event_extra(2026-09-28). 다른 실패는
         # 예전과 같은 인자로 부른다.
         if outfit_recipes:
@@ -1787,6 +1868,9 @@ async def run_detail_page_job(app, job: dict) -> None:
     # 이 잡의 체크포인트를 지우려면 try 밖에 이름이 있어야 한다.
     cut_store = None
     finalization_started = False
+    copy_task = None
+    progress_token = _copy_progress.set({"job_id": job_id, "progress": job.get("progress") or 0,
+                                         "lock": asyncio.Lock()})
     try:
         # 1) 입력 로드 — 옷 레퍼런스 = (있으면) 선택 마네킹컷(핏·기장 기준, ADR-0004)
         #    + 블록 색상별 상품 슬롯 이미지 + 모든 착용컷의 매칭 의류 + 무드 레퍼런스
@@ -2811,7 +2895,7 @@ async def run_detail_page_job(app, job: dict) -> None:
 
         # storyboardDigest — "실패한 컷만 다시 만들기" 재시도가 앞선 실패와 같은 콘티로 도는지 화면이
         # 가려 말하는 근거(2026-09-28). 콘티 내용의 해시일 뿐 저장소 키·주소가 아니다.
-        await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",
+        await _emit_progress(pool, job_id, {"progress": 15, "phase": "inputs_loaded",
                                                "aiCuts": len(ai_blocks),
                                                "storyboardDigest": loaded_storyboard_digest})
 
@@ -2822,28 +2906,17 @@ async def run_detail_page_job(app, job: dict) -> None:
         if needs_name:
             generated_name = _fallback_product_name(product, analysis)
             product["name"] = generated_name
+            product["name_source"] = "ai"
 
-        # 2) 판매 특징 설명과 부위 설명을 기존 통합 호출로 만든다.
-        points = page_part_copy.unique_labels(analysis.get("sellingPoints") or analysis.get("aiSuggestedPoints") or [])
-        part_labels = page_part_copy.part_labels(storyboard, analysis)
-        try:
-            groups = await page_part_copy.generate(
-                s, points, part_labels, product, analysis,
-                timeout_seconds=s.background_ai_timeout_seconds)
-        except Exception as e:  # 카피는 게이트 아님 — 상세페이지 생성을 막지 않는다
-            log.warning("feature copy failed for job %s: %r", job_id, e)
-            groups = {}
-        copy_patch = page_part_copy.partition_copy(groups, points, part_labels, analysis)
-        if copy_patch:
-            # The current assembly uses the new descriptions even if persistence fails.
-            analysis = {**analysis, **copy_patch}
-            try:
-                async with pool.connection() as conn:
-                    # 잡이 도는 동안의 셀러 편집을 보존하도록 생성한 카피 키만 병합한다.
-                    await repo.save_analysis(conn, project_id, copy_patch)
-                    await conn.commit()
-            except Exception as e:  # 카피는 게이트 아님 — 기록 실패가 생성을 죽이지 않는다
-                log.warning("feature copy persist failed for job %s: %r", job_id, e)
+        # 2) 카피와 컷을 동시에 시작한다. 컷에는 이 시점의 분석과 빈 섹션 글을 준다.
+        copy_analysis = deepcopy(analysis)
+        copy_deadline = time.monotonic() + s.page_copy_timeout_seconds
+        if page_copy.has_provider_key(s):
+            copy_task = asyncio.create_task(_generate_page_copy(
+                s, deepcopy(storyboard), deepcopy(product), copy_analysis,
+                pool, job_id, copy_deadline), name=f"page-copy:{job_id}")
+        else:
+            log.warning("page copy skipped for job %s: missing provider key", job_id)
 
         # 3) 컷 생성 — 컷 단위 progress(20→80)는 _gen_cuts 안에서 emit
         # body_profile 이 None 이면 키 자체를 생략한다 — _gen_cuts() 목(mock) 중
@@ -2929,7 +3002,7 @@ async def run_detail_page_job(app, job: dict) -> None:
         for block_id in failed_block_ids:
             failed_cuts.setdefault(block_id, failure_info("temporary_error"))
 
-        await _emit(pool, job_id, "progress", {"progress": 85, "phase": "assemble",
+        await _emit_progress(pool, job_id, {"progress": 85, "phase": "assemble",
                                                "generated": len(cut_assets)})
 
         # 4) 조립(M-02), 완성한 컷과 이유가 남는 빈 칸을 함께 내보낸다.
@@ -2944,6 +3017,40 @@ async def run_detail_page_job(app, job: dict) -> None:
                               "licenseId": notice_ctx["license_id"],
                               "faceCuts": face_cuts,
                               "totalCuts": len(cut_results)}
+        # 조립 직전에만 남은 카피 시간을 기다린다. 카피 실패는 이미지를 버리지 않는다.
+        copy_result = {}
+        if copy_task is not None:
+            try:
+                if copy_task.done():
+                    copy_result = copy_task.result()
+                else:
+                    remaining = max(0, copy_deadline - time.monotonic())
+                    copy_result = await asyncio.wait_for(asyncio.shield(copy_task), remaining)
+            except asyncio.TimeoutError:
+                log.warning("page copy deadline reached for job %s", job_id)
+                await _cancel_page_copy(copy_task)
+                await _copy_ready(pool, job_id)
+            except asyncio.CancelledError:
+                if asyncio.current_task().cancelling():
+                    raise
+                log.warning("page copy task cancelled for job %s", job_id)
+                await _copy_ready(pool, job_id)
+            except Exception as exc:
+                log.warning("page copy result unavailable for job %s: %s", job_id, type(exc).__name__)
+        if isinstance(copy_result, dict) and copy_result:
+            try:
+                copy_results = page_copy.copy_results_from_result(copy_result, storyboard)
+                slots = page_copy.slots_for_page(storyboard, product, copy_analysis)
+                copy_patch = _page_copy_patch(copy_result, copy_results, slots, copy_analysis, s)
+                analysis = {**analysis, **copy_patch}
+                if copy_patch:
+                    async with pool.connection() as conn:
+                        # JSON 키 병합으로 생성 중 셀러가 고친 다른 분석 값은 보존한다.
+                        await repo.save_analysis(conn, project_id, copy_patch)
+                        await conn.commit()
+            except Exception as exc:
+                log.warning("page copy merge unavailable for job %s: %s", job_id, type(exc).__name__)
+
         assemble_kwargs = {"license_notice": license_notice} if license_notice is not None else {}
         if failed_cuts:
             assemble_kwargs["failed_cuts"] = failed_cuts
@@ -3110,6 +3217,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 except Exception:
                     log.warning("facemarket settlement hook failed for job %s", job_id)
     except asyncio.CancelledError:
+        await _cancel_page_copy(copy_task)
         await asyncio.shield(_fail(
             "작업 서버가 종료되어 생성이 중단됐어요. 다시 시도해 주세요.",
             {"error": "worker_shutdown"},
@@ -3119,6 +3227,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             await asyncio.shield(_delete_generated_outputs(locals().get("cut_assets")))
         raise
     except Exception as e:
+        await _cancel_page_copy(copy_task)
         if not finalization_started:
             await _delete_generated_outputs(locals().get("cut_assets"))
         error = str(e)[:300]
@@ -3160,3 +3269,6 @@ async def run_detail_page_job(app, job: dict) -> None:
                 else "generation_failed"
             ),
         )
+    finally:
+        await _cancel_page_copy(copy_task)
+        _copy_progress.reset(progress_token)

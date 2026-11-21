@@ -5,10 +5,13 @@ import shared from './EditorDownloadModal.module.css';
 import styles from './EditorPublishModal.module.css';
 import { EditorAiDraftConfirmation, useAiDraftConfirmation } from './EditorAiDraftConfirmation.jsx';
 import { DownloadChecklist } from './DownloadChecklist.jsx';
+import { MAX_PUBLICATION_PIECES, PUBLICATION_PIECE_LIMIT_MESSAGE } from './editorExport.js';
 
 export function EditorPublishModal({ blocks = [], canvasAiJobs, settings, summary, busy, progress, error, result, previousCount,
   realModelBlocked, onChange, onCancel, onPublish, onCopyHtml, onCopyUrls, onDownloadZip, onJumpToBlock }) {
   const draft = useAiDraftConfirmation(blocks, { publish: onPublish, zip: onDownloadZip });
+  const overPieceLimit = summary?.fileCount > MAX_PUBLICATION_PIECES;
+  const showConfirmation = draft.confirming && (draft.pendingAction !== 'publish' || !overPieceLimit);
   const done = Math.max(0, Math.min(progress?.done || 0, progress?.total || 0));
   return (
     <div className={`${shared.modal} ${styles.publish}`}>
@@ -20,7 +23,7 @@ export function EditorPublishModal({ blocks = [], canvasAiJobs, settings, summar
         <div className={styles.thumbnails} aria-label="게시한 이미지 조각">
           {result.files.map((file, i) => <img key={file.index} src={file.previewUrl || file.url} alt={`상세 ${i + 1}`} />)}
         </div>
-        {!draft.confirming && <div className={`modal-actions ${styles.actions}`}>
+        {!showConfirmation && <div className={`modal-actions ${styles.actions}`}>
           <Button variant="primary" disabled={busy} onClick={onCopyHtml}>HTML 복사</Button>
           <Button variant="ghost" disabled={busy} onClick={onCopyUrls}>이미지 주소 복사</Button>
           <Button variant="ghost" disabled={busy} onClick={() => draft.request('zip')}>ZIP 받기</Button>
@@ -35,7 +38,7 @@ export function EditorPublishModal({ blocks = [], canvasAiJobs, settings, summar
           <p>스마트스토어: 상세설명 SmartEditor ONE의 HTML 모드</p>
         </details>
         {previousCount > 0 && <p className={styles.notice}>이전 버전 {previousCount}개가 남아 있어요. 몰을 새 주소로 바꾼 뒤 보관함에서 지울 수 있어요.</p>}
-        {!draft.confirming && <footer className={shared.footer}><div className={`modal-actions ${shared.actions}`}>
+        {!showConfirmation && <footer className={shared.footer}><div className={`modal-actions ${shared.actions}`}>
           <Button variant="ghost" onClick={onCancel}>닫기</Button>
         </div></footer>}
       </> : <>
@@ -56,6 +59,7 @@ export function EditorPublishModal({ blocks = [], canvasAiJobs, settings, summar
           <dl><div><dt>조각 수</dt><dd>약 {summary.fileCount}개</dd></div>
             <div><dt>예상 용량</dt><dd>약 {(summary.approxBytes / 1048576).toFixed(1)}MB</dd></div></dl>
         </section>
+        {overPieceLimit && <p className={styles.notice} role="status">{PUBLICATION_PIECE_LIMIT_MESSAGE}</p>}
         <p className={styles.notice}>구독 중에는 계속 보관해요. 구독이 없으면 게시일부터 6개월 뒤 지워져요. 언제든 ZIP으로 받을 수 있어요.</p>
         {realModelBlocked && <p className={styles.notice} role="status">실존 모델 컷은 다운로드로 받아 몰에 직접 올려 주세요</p>}
       </>}
@@ -64,14 +68,14 @@ export function EditorPublishModal({ blocks = [], canvasAiJobs, settings, summar
         <progress className={shared.progress} aria-label="게시 진행" max={progress?.total || undefined} value={progress?.total ? done : undefined} />
       </div>}
       {error && !busy && <div className={shared.error} role="alert"><p>{error.message || error}</p>
-        {error.files?.length > 0 && !draft.confirming && <div className="modal-actions"><Button onClick={() => draft.request('zip')}>ZIP 받기</Button></div>}
+        {error.files?.length > 0 && !showConfirmation && <div className="modal-actions"><Button onClick={() => draft.request('zip')}>ZIP 받기</Button></div>}
       </div>}
-      {draft.confirming ? <footer className={shared.footer}>
+      {showConfirmation ? <footer className={shared.footer}>
         <EditorAiDraftConfirmation sectionNames={draft.sectionNames} onCancel={onCancel} onConfirm={draft.confirm} busy={busy}
           confirmLabel={draft.pendingAction === 'publish' ? '그대로 만들기' : '그대로 다운로드'} />
       </footer> : !result && <footer className={shared.footer}><div className={`modal-actions ${shared.actions}`}>
         <Button variant="ghost" disabled={busy} onClick={onCancel}>취소</Button>
-        <Button variant="primary" icon="link" disabled={busy || realModelBlocked} onClick={() => draft.request('publish')}>{error ? '다시 시도' : '코드 만들기'}</Button>
+        <Button variant="primary" icon="link" disabled={busy || realModelBlocked || overPieceLimit} onClick={() => draft.request('publish')}>{error ? '다시 시도' : '코드 만들기'}</Button>
       </div></footer>}
     </div>
   );

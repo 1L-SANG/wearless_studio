@@ -161,7 +161,7 @@ test("static/fact slots retain their sources and pending copy keeps seller MD", 
     );
     assert.ok(
         elements(section(off, "emo.review"))
-            .filter((el) => el.copyRole?.startsWith("items."))
+            .filter((el) => el.copyRole?.startsWith("items.") && !el.copyRole.endsWith('.stars'))
             .every((el) => el.text === "" && el.placeholder),
     );
     const input = caseOf("emo-2-mono");

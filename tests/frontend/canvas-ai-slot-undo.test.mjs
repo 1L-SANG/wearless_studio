@@ -6,7 +6,10 @@ import { transformWithEsbuild } from 'vite';
 import * as apply from '../../src/features/editor/canvasAiApply.js';
 import { buildCanvasAiMenu, canvasAiActionCreditCost } from '../../src/features/editor/canvasAiActions.js';
 import { editorImageCreditCost } from '../../src/lib/limits.js';
-import { hasImageSource } from '../../src/features/editor/editorImageSource.js';
+import { EXPORT_PHOTO_SLOT_CLASS, isExportPhotoSlot } from '../../src/features/editor/editorExportContent.js';
+import { getBlockExportElements, getDownloadPreviewElements } from '../../src/features/editor/editorGeometry.js';
+import { isGifImage } from '../../src/lib/gif/gifMedia.js';
+import { hasBackdropBlur } from '../../src/features/editor/editorImageBlur.js';
 import { applySlotFillToInfo } from '../../src/features/editor/presets/infoPresets.js';
 import { fitImageToFrameBlock } from '../../src/features/editor/editorImageDrop.js';
 import { canvasAiHookHarness, editorCanvasAiHandlers } from './helpers/editorCanvasAiHarness.mjs';
@@ -14,14 +17,17 @@ import { canvasAiHookHarness, editorCanvasAiHandlers } from './helpers/editorCan
 const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
 const layer = readFileSync(new URL('../../src/features/editor/CanvasAiLayer.jsx', import.meta.url), 'utf8');
 const elementSource = editor.slice(editor.indexOf('function CanvasElement('), editor.indexOf('const IMAGE_IMPORT_COPY'));
-const { code } = await transformWithEsbuild(`${layer.replace(/^import .*;\r?\n/gm, '').replace(/export function /g, 'function ')}\n${elementSource}`,
+const previewSource = editor.slice(editor.indexOf('const BlockPreviewElements ='), editor.indexOf('function MiniPreview('));
+const { code } = await transformWithEsbuild(`${layer.replace(/^import .*;\r?\n/gm, '').replace(/export function /g, 'function ')}\n${elementSource}\n${previewSource}`,
   'canvas-ai-test.jsx', { jsx: 'transform', jsxFactory: 'React.createElement', jsxFragment: 'React.Fragment' });
 
 // Execute the real components and event handlers. Only DOM effects and React's
 // state storage are replaced, so no browser or paid image request is needed.
 function components() {
   const values = []; let cursor = 0;
-  const scope = { React, useEditedTemplateContrast: el => el, useTitlePlatePreview: () => () => null, ...apply, hasImageSource, editorImageCreditCost, canvasAiActionCreditCost, CREDIT_COSTS: { editorImage: 19 },
+  const scope = { React, useEditedTemplateContrast: el => el, useTitlePlatePreview: () => () => null, ...apply, editorImageCreditCost, canvasAiActionCreditCost, CREDIT_COSTS: { editorImage: 19 },
+    memo: (component) => component, getBlockExportElements, getDownloadPreviewElements, hasTitlePlate: () => false, isGifImage, hasBackdropBlur,
+    EXPORT_PHOTO_SLOT_CLASS, isExportPhotoSlot,
     useRef: (current) => ({ current }), useCallback: (callback) => callback,
     useEffect() {}, useLayoutEffect() {},
     useState(initial) {
@@ -30,7 +36,7 @@ function components() {
       return [values[index], (value) => { values[index] = value; }];
     }, Icon: () => null,
   };
-  const result = new Function(...Object.keys(scope), `${code}; return { CanvasElement, CanvasAiProgress, CanvasAiLayer };`)(...Object.values(scope));
+  const result = new Function(...Object.keys(scope), `${code}; return { CanvasElement, CanvasAiProgress, CanvasAiLayer, renderDownloadPreviewBlock };`)(...Object.values(scope));
   return { ...result, render(name, props) { cursor = 0; return result[name](props); } };
 }
 function find(node, predicate) {
@@ -44,6 +50,17 @@ function find(node, predicate) {
 }
 const empty = { id: 'empty', type: 'image', src: null, x: 0, y: 0, w: 300, h: 450, radius: 12 };
 const initialBlocks = [{ id: 'block', kind: 'twocol', contentRole: 'custom', elements: [empty] }];
+
+test('download preview hides empty and generating photo slots and shows the same GIF poster as export', () => {
+  const ui = components();
+  const gif = { ...empty, id: 'gif', src: '/moving.gif', posterSrc: '/first-frame.jpg', kind: 'gif', gifMeta: { frames: 4 } };
+  const block = { ...initialBlocks[0], elements: [empty, { ...empty, id: 'generating', genPending: 'live' }, gif] };
+  const preview = ui.render('renderDownloadPreviewBlock', block);
+  const elements = preview.type(preview.props).map((element) => ui.render('CanvasElement', element.props)).filter(Boolean);
+  assert.equal(elements.length, 1);
+  assert.equal(find(elements[0], (element) => element.type === 'img')?.props.src, '/first-frame.jpg');
+  assert.equal(gif.src, '/moving.gif', 'live editor image still uses the original');
+});
 
 for (const status of ['cancel', 'busy', 'failed', 'arrived']) {
   test(`empty-slot progress renders only actionable ${status} state`, () => {
