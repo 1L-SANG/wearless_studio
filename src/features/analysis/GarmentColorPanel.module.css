@@ -40,16 +40,15 @@
 .now { color: var(--fg-1); font-weight: 650; }
 .panel[data-state="processing"] .compare, .panel[data-state="processing"] .tools, .panel[data-state="processing"] .steps { opacity: .4; pointer-events: none; }
 
-.adjustHead { margin: 16px 0 0; padding-top: 14px; box-shadow: 0 -1px 0 var(--ring); }
+.adjustHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0 0; padding-top: 10px; box-shadow: 0 -1px 0 var(--ring); }
 .adjustHead h3 { margin: 0; font-size: 14px; font-weight: 650; }
-.tools { display: flex; gap: 6px; margin-top: 10px; }
-.tools button { display: inline-flex; align-items: center; height: 32px; padding: 0 14px; border: 0; border-radius: var(--r-pill); background: var(--bg-1); font-size: 13px; font-weight: 600; white-space: nowrap; box-shadow: 0 0 0 1px var(--ring-strong); transition: background 150ms, transform 120ms; }
-.tools button:hover:not(:disabled) { background: var(--bg-2); }
-.tools button:active:not(:disabled) { transform: scale(.97); }
-.panel .tools button:disabled { color: var(--fg-3); box-shadow: 0 0 0 1px var(--ring); }
+/* AI 자동과 원래대로는 굵은 밑줄 글자로 둔다(11/21 오너 지시). */
+.tools { display: flex; gap: 14px; }
+.tools button { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 2px; border: 0; background: none; font-size: 13px; font-weight: 700; white-space: nowrap; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.tools button:hover:not(:disabled) { text-decoration-thickness: 2px; }
+.panel .tools button:disabled { color: var(--fg-3); }
 .note { margin: 8px 0 0; font-size: 13px; color: var(--fg-1); text-wrap: balance; }
 
-.tools button[data-applied] { gap: 5px; padding-left: 11px; box-shadow: 0 0 0 1.5px var(--fg-1); }
 
 /* 색 조절 한 줄: 양쪽 말 버튼, 가운데 이름과 값, 끌 수 있는 칸 막대. 세 줄의 가운데 선이 0에서 한 줄로 선다. */
 .steps { display: grid; gap: 10px; margin: 12px 0 0; }
@@ -65,7 +64,10 @@
 .step[data-zero] .stepValue { color: var(--fg-2); font-weight: 500; }
 .meter { position: relative; display: flex; align-items: center; height: 24px; border-radius: 4px; cursor: ew-resize; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
 .meter[aria-disabled="true"] { cursor: default; }
-.panel .meter:focus-visible { outline: 2px solid var(--fg-1); outline-offset: 2px; }
+/* 키보드로 고른 줄은 이름과 막대를 함께 감싼다(막대만 감싸면 테두리가 이름 글자를 덮는다). */
+.panel .meter:focus-visible { outline: none; }
+.stepMid { border-radius: 8px; }
+.step:has(.meter:focus-visible) .stepMid { outline: 2px solid var(--fg-1); outline-offset: 2px; }
 .cells { display: flex; flex: 1; gap: 2px; }
 .cells i { flex: 1; height: 8px; border-radius: 2px; background: linear-gradient(90deg, var(--fg-1) calc(var(--f, 0) * 100%), var(--ring-strong) 0); }
 .cells i.low { background: linear-gradient(270deg, var(--fg-1) calc(var(--f, 0) * 100%), var(--ring-strong) 0); }

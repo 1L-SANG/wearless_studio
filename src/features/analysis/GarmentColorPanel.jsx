@@ -63,7 +63,6 @@ function StepRow({ axis, value, disabled, onValue, onCommit }) {
         onPointerDown={(event) => {
           if (disabled || event.button) return;
           event.currentTarget.setPointerCapture(event.pointerId);
-          event.currentTarget.focus({ preventScroll: true });
           drag.current = true; setDragging(true); fromPointer(event);
         }}
         onPointerMove={(event) => { if (drag.current) fromPointer(event); }}
