@@ -17,24 +17,38 @@ from .garment_color_consistency import _encode_srgb, linear_to_oklab
 
 MAX_LIGHTNESS_SHIFT = 0.10
 MAX_CHROMA_SHIFT = 0.08
+MIN_SHIFT = 0.002
 
 
-def _best_exposure(lab, target, *, color):
-    if color:
-        numerator = np.sum(lab * target, axis=-1)
-        denominator = np.sum(lab * lab, axis=-1)
-    else:
-        numerator, denominator = target[0], lab[..., 0]
+def _best_exposure(lab, target):
+    numerator = np.sum(lab * target, axis=-1)
+    denominator = np.sum(lab * lab, axis=-1)
     gain = np.divide(numerator, denominator, out=np.ones_like(denominator), where=denominator > 0)
     return np.clip(gain, 2.0 ** -6, 2.0 ** 6)
 
 
-def solve(median: np.ndarray, target: np.ndarray, sliders: dict) -> tuple[dict, bool]:
-    """Fit active Oklab coordinates, then scale all parameters by the same factor."""
+def solve(
+    median: np.ndarray, source: np.ndarray, target: np.ndarray, sliders: dict,
+) -> tuple[dict | None, bool, np.ndarray, np.ndarray]:
+    """Return parameters, cap flag, seller shift and move. Inputs are linear sRGB, shifts are Oklab."""
     light = bool(sliders["lightness"])
     color = bool(sliders["chroma"] or sliders["warmth"])
     target_lab = linear_to_oklab(target)
     center_lab = linear_to_oklab(median)
+    seller_shift = target_lab - linear_to_oklab(source)
+    gap = target_lab - center_lab
+    move = np.zeros_like(center_lab)
+    if light:
+        move[0] = np.clip(gap[0], min(0, seller_shift[0]), max(0, seller_shift[0]))
+    if color:
+        distance = np.linalg.norm(seller_shift[1:])
+        if distance > 1e-9:
+            direction = seller_shift[1:] / distance
+            move[1:] = direction * np.clip(gap[1:] @ direction, 0, distance)
+    if np.linalg.norm(move) < MIN_SHIFT:
+        return None, False, seller_shift, move
+
+    goal = center_lab + move
     params = {axis: 0.0 for axis in tone.ZERO_SLIDERS}
     if color:
         # Nonnegative saturation and channel gains. Refine a broad grid in place.
@@ -48,9 +62,8 @@ def solve(median: np.ndarray, target: np.ndarray, sliders: dict) -> tuple[dict, 
             )
             lab = linear_to_oklab(tone.tone_linear(median, chroma=chromas[:, None], warmth=warmths))
             if light:
-                lab *= _best_exposure(lab, target_lab, color=True)[..., None]
-            active = slice(None) if light else slice(1, None)
-            errors = np.sum((lab[..., active] - target_lab[active]) ** 2, axis=-1)
+                lab *= _best_exposure(lab, goal)[..., None]
+            errors = np.sum((lab - goal) ** 2, axis=-1)
             # Prefer smaller adjustments if the source cannot distinguish candidates.
             errors += 1e-13 * (chromas[:, None] ** 2 + warmths ** 2)
             i, j = np.unravel_index(np.argmin(errors), errors.shape)
@@ -60,7 +73,7 @@ def solve(median: np.ndarray, target: np.ndarray, sliders: dict) -> tuple[dict, 
     if light:
         lab = linear_to_oklab(tone.tone_linear(median, **params))
         # Exposure multiplies all linear channels equally. Oklab scales by its cube root.
-        params["lightness"] = float(600 * np.log2(_best_exposure(lab, target_lab, color=color)))
+        params["lightness"] = float(600 * np.log2(_best_exposure(lab, goal)))
 
     def within_cap(scale):
         shifted = tone.tone_linear(median, **{axis: value * scale for axis, value in params.items()})
@@ -68,7 +81,7 @@ def solve(median: np.ndarray, target: np.ndarray, sliders: dict) -> tuple[dict, 
         return abs(delta[0]) <= MAX_LIGHTNESS_SHIFT and np.linalg.norm(delta[1:]) <= MAX_CHROMA_SHIFT
 
     if within_cap(1):
-        return params, False
+        return params, False, seller_shift, move
     low, high = 0.0, 1.0
     for _ in range(34):
         mid = (low + high) / 2
@@ -76,7 +89,7 @@ def solve(median: np.ndarray, target: np.ndarray, sliders: dict) -> tuple[dict, 
             low = mid
         else:
             high = mid
-    return {axis: value * low for axis, value in params.items()}, True
+    return {axis: value * low for axis, value in params.items()}, True, seller_shift, move
 
 
 def _png(pixels: np.ndarray) -> bytes:
@@ -215,8 +228,8 @@ async def stage(app, job, *, sliders, fronts, block_colors, assets, results, clo
         asset = by_url.get(result.get("imageUrl"))
         if asset is not None:
             mappings[asset["asset_id"]][color_id].append(str(result["blockId"]))
-    report = {color_id: {"target": None, "median": None, "params": None, "capped": False, "cuts": {}}
-              for color_id in sliders}
+    report = {color_id: {"target": None, "median": None, "sellerShift": None, "move": None,
+                         "params": None, "capped": False, "cuts": {}} for color_id in sliders}
     grouped = defaultdict(list)
     for asset in assets:
         color_blocks = mappings[asset["asset_id"]]
@@ -244,7 +257,8 @@ async def stage(app, job, *, sliders, fronts, block_colors, assets, results, clo
                                                 project_id=job["project_id"], front_id=fronts[color_id])
             measured_source = await sources.measure(settings, data, clothing_type=clothing_type,
                                                      sub_category=sub_category)
-            target = tone.tone_linear(tone.srgb8_to_linear(measured_source[1]), **sliders[color_id])
+            source = tone.srgb8_to_linear(measured_source[1])
+            target = tone.tone_linear(source, **sliders[color_id])
             del measured_source, data
             group["target"] = target.tolist()
         except Exception as exc:
@@ -257,18 +271,26 @@ async def stage(app, job, *, sliders, fronts, block_colors, assets, results, clo
         ))
         centers = [sample[3] for sample, _ in measurements if sample is not None]
         params = None
+        skip_reason = "calculation_failed"
         if centers:
             try:
                 median = tone.srgb8_to_linear(np.median(centers, axis=0))
-                params, capped = await run_cpu_bound(solve, median, target, sliders[color_id])
-                group.update(median=median.tolist(), params=params, capped=capped)
+                params, capped, seller_shift, move = await run_cpu_bound(
+                    solve, median, source, target, sliders[color_id],
+                )
+                group.update(median=median.tolist(), params=params, capped=capped,
+                             sellerShift=seller_shift.tolist(), move=move.tolist())
+                if params is None:
+                    skip_reason = "no_change"
             except Exception:
                 pass
         for (original, blocks), (sample, reason) in zip(candidates, measurements, strict=True):
             before = after = None
             if sample is None or params is None:
                 status = "skipped"
-                reason = reason or "calculation_failed"
+                reason = reason or skip_reason
+                if sample is not None and reason == "no_change":
+                    before = after = sample[3].tolist()
             else:
                 original_data, rgba, alpha, center = sample
                 before = center.tolist()
