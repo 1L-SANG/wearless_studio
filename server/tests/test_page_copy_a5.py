@@ -172,12 +172,12 @@ def test_required_rule_does_not_retry_transport_failures():
     assert len(calls)==1
 
 
-def test_required_empty_after_retry_stays_empty_even_with_seller_fallback():
+def test_required_empty_after_retry_restores_seller_fallback():
     s=slot('intro','body',target='section');calls=[]
     async def empty(req,timeout):calls.append(req);return {'response':{}}
     out=asyncio.run(pc.generate_slots(make_settings(),[s],PRODUCT,{'mdComment':'카라가 넓어요.'},seed=1,timeout_seconds=2,
         overrides={'caller':empty,'order':['gpt'],'models':{'gpt':'test-model'},'required_slots':['intro.body'],'prompt_version':'v2'}))
-    assert len(calls)==2 and out['copyResults']==[{'blockId': 'block', 'texts': []}]
+    assert len(calls)==2 and out['copyResults']==[{'blockId': 'block', 'texts': [{'role': 'body', 'text': '카라가 넓어요.', 'draft': False}]}]
 
 
 
@@ -192,7 +192,7 @@ def test_transport_failure_without_a_draft_preserves_seller_fallback():
     assert out['log']['slots'][0]['source']=='seller_original'
 
 
-def test_empty_required_slot_stays_empty_if_its_correction_provider_fails():
+def test_empty_required_slot_restores_seller_if_correction_provider_fails():
     s=slot('intro','body',target='section');calls=[]
     async def fake(req,timeout):
         calls.append(req)
@@ -200,7 +200,7 @@ def test_empty_required_slot_stays_empty_if_its_correction_provider_fails():
         return {'response':{}}
     out=asyncio.run(pc.generate_slots(make_settings(),[s],PRODUCT,{'mdComment':'카라가 넓어요.'},seed=1,timeout_seconds=2,
         overrides={'caller':fake,'order':['gpt'],'models':{'gpt':'test-model'},'required_slots':['intro.body'],'prompt_version':'v2'}))
-    assert len(calls)==2 and out['copyResults']==[{'blockId': 'block', 'texts': []}]
+    assert len(calls)==2 and out['copyResults']==[{'blockId': 'block', 'texts': [{'role': 'body', 'text': '카라가 넓어요.', 'draft': False}]}]
 
 
 def test_feature_route_does_not_fill_required_omission_with_dictionary_copy():
@@ -218,13 +218,14 @@ def test_feature_route_does_not_fill_required_omission_with_dictionary_copy():
     assert len(calls)==1 and result
 
 
-def test_required_slot_becomes_blank_when_correction_omits_rejected_text():
+def test_required_slot_restores_seller_when_correction_omits_rejected_text():
     s=slot('intro','body',target='section');calls=[]
     async def fake(req,timeout):
         calls.append(req)
         return {'response':response_for([s],['할인 중이에요']) if req['stage']=='single' else {}}
     out=asyncio.run(pc.generate_slots(make_settings(),[s],PRODUCT,{'mdComment':'카라가 넓어요.'},seed=1,timeout_seconds=2,
         overrides={'caller':fake,'order':['gpt'],'models':{'gpt':'test-model'},'required_slots':['intro.body'],'prompt_version':'v2'}))
-    assert len(calls)==2 and out['copyResults']==[{'blockId': 'block', 'texts': []}]
-    assert out['log']['slots'][0]['text']==''
+    assert len(calls)==2 and out['copyResults']==[{'blockId': 'block', 'texts': [{'role': 'body', 'text': '카라가 넓어요.', 'draft': False}]}]
+    assert out['log']['slots'][0]['text']=='카라가 넓어요.'
+    assert out['log']['slots'][0]['source']=='seller_original'
     assert out['log']['slots'][0]['reasons']==['missing_required']

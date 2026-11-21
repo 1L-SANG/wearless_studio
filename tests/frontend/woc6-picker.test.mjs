@@ -208,7 +208,8 @@ test('WOC12 static point choices preserve selection while assembled sections ret
     const desc = elements(plain).find(element => element.copyRole === 'items.0.desc');
     const photo = elements(plain).find(element => element.type === 'image');
     assert.equal(desc.y - title.y - title.h, 14);
-    assert.equal(photo.y - desc.y - desc.h, 32);
+    assert.ok(desc.hidden, 'an absent description must not reserve a text row');
+    assert.equal(photo.y - title.y - title.h, 14);
   } finally { h.close(); }
 });
 

@@ -75,18 +75,18 @@ for (const kind of ['faq', 'review', 'for_you']) test(`seller-written late ${kin
   if (kind === 'for_you') assert.ok(section(merged)[0].h < section(waiting)[0].h);
 });
 
-for (const template of ['emo', 'show']) test(`${template} edited surviving point stays with its original photo after first card is removed`, () => {
+for (const template of ['emo', 'show']) test(`${template} edited point keeps its original photo while the first description is empty`, () => {
   const value = input('points', template);
   let waiting = decorateGenBlocks(assemblePage(value), job({}));
   waiting = edit(waiting, e => e.copyRole === 'items.1.name', e => ({ text: '판매자 소매 이름', style: { ...e.style, weight: 777 } }));
   waiting = edit(waiting, e => e.type === 'image' && e.sourceBlockId === `${template}.points.detail2`, { crop: { x: 0.25, y: 0.2, w: 0.7, h: 0.6 } });
   value.analysis.partDescriptionCopy = [{ point: '소매 단', label: '소매 끝', desc: '소매에만 해당하는 최종 설명이에요' }];
   const final = complete(value, []), merged = mergeServerBlocks(waiting, final);
-  assert.deepEqual(elements(merged).filter(e => e.type === 'image').map(e => e.sourceBlockId), [`${template}.points.detail2`]);
-  assert.equal(items(merged).find(e => e.copyRole === 'items.0.name').text, '판매자 소매 이름');
-  assert.equal(items(merged).find(e => e.copyRole === 'items.0.name').style.weight, 777);
-  assert.equal(items(merged).find(e => e.copyRole === 'items.0.desc').text, '소매에만 해당하는 최종 설명이에요');
-  assert.deepEqual(elements(merged).find(e => e.type === 'image').crop, { x: 0.25, y: 0.2, w: 0.7, h: 0.6 });
+  assert.deepEqual(elements(merged).filter(e => e.type === 'image').map(e => e.sourceBlockId), [`${template}.points.detail1`, `${template}.points.detail2`]);
+  assert.equal(items(merged).find(e => e.copyRole === 'items.1.name').text, '판매자 소매 이름');
+  assert.equal(items(merged).find(e => e.copyRole === 'items.1.name').style.weight, 777);
+  assert.equal(items(merged).find(e => e.copyRole === 'items.1.desc').text, '소매에만 해당하는 최종 설명이에요');
+  assert.deepEqual(elements(merged).find(e => e.type === 'image' && e.sourceBlockId.endsWith('detail2')).crop, { x: 0.25, y: 0.2, w: 0.7, h: 0.6 });
   assert.equal(new Set(merged.map(b => b.id)).size, merged.length);
 });
 
@@ -126,10 +126,11 @@ for (const design of ['PT-TEXT-PHOTO-01', 'PT-PHOTO-CARD-01']) test(`${design} i
   }
   value.analysis.partDescriptionCopy = [{ point: '소매 단', desc: '소매 전용 최종 설명' }];
   const merged = mergeServerBlocks(waiting, complete(value, []));
-  assert.deepEqual(elements(merged).filter(e => e.type === 'image').map(e => e.sourceBlockId), ['emo.points.detail2']);
-  assert.equal(items(merged).find(e => e.copyRole === 'items.0.name').text, '판매자 소매 이름');
-  assert.equal(items(merged).find(e => e.copyRole === 'items.0.desc').text, '소매 전용 최종 설명');
-  assert.ok(!items(merged).some(e => /카라/.test(e.text)));
+  assert.deepEqual(elements(merged).filter(e => e.type === 'image').map(e => e.sourceBlockId), ['emo.points.detail1', 'emo.points.detail2']);
+  assert.equal(items(merged).find(e => e.copyRole === 'items.1.name').text, '판매자 소매 이름');
+  assert.equal(items(merged).find(e => e.copyRole === 'items.1.desc').text, '소매 전용 최종 설명');
+  assert.ok(items(merged).some(e => /카라/.test(e.text)));
+  assert.ok(items(merged).find(e => e.copyRole === 'items.0.desc').hidden);
   if (design === 'PT-PHOTO-CARD-01') assert.equal(elements(merged).filter(e => e.opacity === 0.45).length, 1);
   assert.equal(new Set(elements(merged).map(e => e.id)).size, elements(merged).length);
 });
@@ -144,7 +145,7 @@ test('manual deletion stays deleted when completed recommendation groups are pac
   assert.equal(new Set(elements(merged).map(e => e.id)).size, elements(merged).length);
 });
 
-for (const template of ['emo', 'show']) test(`${template} full-page point compaction keeps block and element ids globally unique`, () => {
+for (const template of ['emo', 'show']) test(`${template} full-page point preservation keeps block and element ids globally unique`, () => {
   const value = structuredClone(fixture.cases.find(c => c.name === `${template}-2-mono`).input);
   value.copyResults = [];
   value.analysis.partDescriptionCopy = [];
@@ -180,6 +181,7 @@ test('retained seller point card clears pending markers and preserves failed-ima
   waiting = edit(waiting, e => e.copyRole === 'items.0.desc', { text: '판매자가 쓴 설명' });
   waiting = edit(waiting, e => e.type === 'image' && e.sourceBlockId === 'emo.points.detail1',
     { src: null, genFailed: true, genFailReason: 'provider_failed', genFailRetryable: false, genFailSourceBlockId: 'original-input' });
+  value.cutResults = []; // The image, not its copy, really failed.
   const merged = mergeServerBlocks(waiting, complete(value, []));
   assert.ok(section(merged).every(block => !Object.hasOwn(block, 'genTemplateBaseline')));
   const image = elements(merged).find(e => e.type === 'image');
@@ -208,10 +210,10 @@ test('two worn crops of one source photo match by source and slot instead of dup
   const final = assemblePage({ ...value, copyResults: [{ blockId: 'points', texts: [] }] });
   const merged = mergeServerBlocks(waiting, final);
   const cards = merged.filter(block => block.pageSectionKind === 'points' && block.elements.some(e => e.type === 'image'));
-  assert.equal(cards.length, 1);
-  assert.equal(cards[0].elements.find(e => e.type === 'image').slotKey, 'points.detail2');
-  assert.equal(cards[0].elements.find(e => e.copyRole === 'items.0.name').text, '판매자 허리선');
-  assert.equal(cards[0].elements.find(e => e.copyRole === 'items.0.desc').text, '허리선 전용 설명');
+  assert.equal(cards.length, 2);
+  assert.deepEqual(cards.map(b => b.elements.find(e => e.type === 'image').slotKey), ['points.detail1', 'points.detail2']);
+  assert.equal(cards[1].elements.find(e => e.copyRole === 'items.1.name').text, '판매자 허리선');
+  assert.equal(cards[1].elements.find(e => e.copyRole === 'items.1.desc').text, '허리선 전용 설명');
 });
 
 test('seller-retained point cannot persist an expired preview when final image is absent', () => {
@@ -221,6 +223,7 @@ test('seller-retained point cannot persist an expired preview when final image i
   waiting = edit(waiting, e => e.type === 'image' && e.sourceBlockId === 'emo.points.detail1',
     { src: 'temporary-signed-preview.jpg', genAutoSrc: 'temporary-signed-preview.jpg' });
   value.analysis.partDescriptionCopy = [{ point: '소매 단', desc: '소매 최종 설명' }];
+  value.cutResults = value.cutResults.filter(cut => cut.blockId !== 'emo.points.detail1');
   const merged = mergeServerBlocks(waiting, complete(value, []), new Set());
   const retained = elements(merged).find(e => e.type === 'image' && e.sourceBlockId === 'emo.points.detail1');
   assert.equal(retained.src, null);

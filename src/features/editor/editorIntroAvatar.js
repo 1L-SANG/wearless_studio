@@ -15,6 +15,10 @@ export function fitIntroAvatar(previous, next) {
   const hidden = !bodies.some(el => !el.hidden && String(el.text || '').trim());
   const wasHidden = !oldBodies.some(el => !el.hidden && String(el.text || '').trim());
   if (wasHidden === hidden) return next;
+  const oldWho = previous.find(el => el.id === who.id || el.copyRole === 'who' && isIntroAvatarElement(el));
+  // A completed server layout already moved its avatar and panels. A direct
+  // text edit leaves visibility unchanged and still needs the local adjustment.
+  if (oldWho && Boolean(oldWho.hidden) !== Boolean(who.hidden) && Boolean(who.hidden) === hidden) return next;
   const design = pageTemplatesCatalog.designs['T01-D07'];
   const columns = design.layout.find(node => node.columns).columns;
   const column = columns.find(col => col.nodes.some(node => node.copyRole === 'who'));

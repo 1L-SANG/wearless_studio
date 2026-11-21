@@ -1,3 +1,4 @@
+import { productNameAfterAnalysis, sellerProductName } from '@/lib/productNameSource.js';
 import { baseProductPhoto } from '@/lib/draftVisuals.js';
 import { isAnalysisFastEntryEnabled } from '@/lib/analysisFastEntry.js';
 import { isMannequinStageEnabled } from '@/lib/mannequinStage.js';
@@ -1395,15 +1396,15 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
           // 분석 대기 중에 입력된 셀러 값도 시작 스냅샷으로 되돌리지 않게
           // 가장 최신 Product를 기준으로 빈칸만 채운다.
           const currentProduct = latestProductRef.current || recoveredProduct;
-          const finalName = (currentProduct.name && currentProduct.name.trim()) || a.suggestedName || '새 상품';
+          const namePatch = productNameAfterAnalysis(currentProduct, a.suggestedName);
           const nextProduct = withAutofilledColors(
-            { ...currentProduct, name: finalName, ...analyzedProductPatch },
+            { ...currentProduct, ...analyzedProductPatch, ...namePatch },
             a,
           );
           if (hasPatchFields(analyzedProductPatch)) {
             await api.saveProduct(editingProjectId, analyzedProductPatch);
           }
-          if (!recoveredProduct.name?.trim()) await api.saveProduct(editingProjectId, { name: finalName });
+          if (!recoveredProduct.name?.trim()) await api.saveProduct(editingProjectId, namePatch);
           if (!alive) return;
           persistedColorsRef.current = nextProduct.colors || [];
           setProduct(nextProduct);
@@ -1582,7 +1583,6 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       // 로그인 여부와 무관하게 확정 전 분석은 publicAnalyze 경로다. 로그인 세션의 Bearer는
       // optional_user 레이트리밋 우선권에만 쓰이며, 보관함 project는 아직 만들지 않는다.
       setAnalysisProjectId(null);
-      const enteredName = (product.name && product.name.trim()) ? product.name.trim() : null;
       let a;
       if (isAnalysisFastEntryEnabled()) {
         const key = analysisPhotoKey(product);
@@ -1620,11 +1620,11 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       const analyzedProductPatch = analysisResponseProductPatch(a);
       // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨 + 서버에도 반영
       const currentProduct = latestProductRef.current || product;
-      const finalName = enteredName || a.suggestedName || '새 상품';
+      const namePatch = productNameAfterAnalysis(currentProduct, a.suggestedName);
       const nextProduct = withAutofilledColors({
         ...currentProduct,
-        name: finalName,
         ...analyzedProductPatch,
+        ...namePatch,
       }, a);
       persistedColorsRef.current = nextProduct.colors || [];
       setProduct(nextProduct);
@@ -1655,9 +1655,15 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart, 
       <div className="sec-sub" style={{ marginTop: -6, marginBottom: 12 }}>안 쓰시면 AI가 알아서 작성해요.</div>
       <input id="product-name" className="field" value={product.name} placeholder="예: 소프트 골지 라운드 니트"
         disabled={phase === 'analyzing' || mobileEditingLocked} onChange={(e) => {
-          const name = e.target.value;
-          set({ name });
-          if (phase === 'done') colorSaveSchedulerRef.current.schedule({ name });
+          const patch = sellerProductName(e.target.value);
+          set(patch);
+          if (phase === 'done') colorSaveSchedulerRef.current.schedule(patch);
+        }} onKeyDown={(e) => {
+          if (e.key !== 'Enter' || e.nativeEvent?.isComposing) return;
+          e.preventDefault();
+          const patch = sellerProductName(e.currentTarget.value);
+          set(patch);
+          if (phase === 'done') colorSaveSchedulerRef.current.schedule(patch);
         }} />
     </div>
   );

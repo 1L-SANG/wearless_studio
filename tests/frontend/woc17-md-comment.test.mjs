@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { assemblePage } from '../../src/lib/pageTemplates/assemble.js';
+import { cleanSellerText } from '../../src/lib/pageTemplates/sellerCopy.js';
 
 const seller = '  Cotton 셔츠를 추천해요.  \n\n  두 번째 줄\n세 번째 줄\n네 번째 줄  \n';
 const ai = 'AI 첫 줄\n\nAI 둘째 줄\nAI 셋째 줄\nAI 넷째 줄';
@@ -19,9 +20,9 @@ for (const templateId of ['emo', 'show']) {
     const input = inputFor(templateId, original, mode === 'missing' ? '' : ai);
     if (mode === 'disabled') input.copywriting = false;
     parityInputs.push(input);
-    test(`${templateId} seller MD remains exact when polished copy is ${mode}, with ${original.includes('\r') ? 'CRLF' : 'LF'}`, () => {
+    test(`${templateId} seller MD is cleaned without changing its saved source when polished copy is ${mode}, with ${original.includes('\r') ? 'CRLF' : 'LF'}`, () => {
       const elements = bodies(assemblePage(input));
-      assert.deepEqual(elements.map(element => element.text), [original]);
+      assert.deepEqual(elements.map(element => element.text), [cleanSellerText(original)]);
       assert.equal(elements[0].aiDraft, undefined);
       assert.equal(elements[0].paragraphCount, templateId === 'emo' ? 1 : undefined);
       if (templateId === 'show') {

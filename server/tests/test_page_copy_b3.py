@@ -60,9 +60,9 @@ def test_leg_effect_observes_long_wide_guard(facts, allowed):
     '확실히 날씬해 보여요', '감쪽같이 날씬해 보여요', '커버되어 날씬해 보여요',
     '군살 없이 날씬해 보여요', '뱃살', '교정', '보정', '다이어트',
     '날씬해 보여요. 다리가 길어요'])
-def test_assertions_numbers_absolutes_and_hard_bans_cannot_use_seller_exemption(text):
+def test_assertions_numbers_absolutes_and_hard_bans_require_seller_claim_support(text):
     s = slot('intro', 'body', target='section')
-    facts = {'sellerComment': text+' 허리 밴딩과 하이웨이스트가 있어요', 'sellingPoints': ['허리 밴딩', '하이웨이스트']}
+    facts = {'sellerComment': '허리 밴딩과 하이웨이스트가 있어요', 'sellingPoints': ['허리 밴딩', '하이웨이스트']}
     assert 'body_effect' in pc._slot_reasons(text, s, facts, {})
 
 
@@ -210,12 +210,12 @@ def test_bare_recommendation_roles_compact_from_first_surviving_item():
 
 
 @pytest.mark.parametrize('seller', ['군살을 감쪽같이 보정해요', '허리 밴딩 없이 날씬해 보여요'])
-def test_seller_fallback_cannot_reintroduce_forbidden_body_claim(seller):
+def test_seller_fallback_keeps_seller_body_claim_under_b4_owner_policy(seller):
     async def fake(req, timeout): return {'response': {}}
     result = asyncio.run(pc.generate_slots(make_settings(), [slot('intro', 'body', target='section')],
         PRODUCT, {'mdComment': seller}, seed=1, overrides={'caller': fake}))
-    assert result['copyResults'] == [{'blockId': 'block', 'texts': []}]
-    assert any(w['reason'] == 'body_effect_seller_fallback_rejected' for w in result['log']['warnings'])
+    assert result['copyResults'] == [{'blockId': 'block', 'texts': [{'role': 'body', 'text': seller, 'draft': False}]}]
+    assert result['log']['slots'][0]['source'] == 'seller_original'
 
 
 def test_real_benchmark_orphan_answer_is_dropped_with_original_role_in_audit():
@@ -239,11 +239,12 @@ def test_points_only_generation_emits_completion_marker_without_changing_point_i
     assert result['partDescriptionCopy'] == [{'point': '오픈 카라', 'desc': '깃을 넓게 펼쳐 입어요'}]
 
 
-def test_fact_fallback_cannot_turn_forbidden_selling_point_into_body_copy():
+def test_fact_fallback_keeps_explicit_seller_feature_claim_under_b4_policy():
     async def fake(req, timeout): return {'response': {}}
     result = asyncio.run(pc.generate_slots(make_settings(), [slot('intro', 'body', target='section')],
         PRODUCT, {'sellingPoints': ['군살 보정']}, seed=1, overrides={'caller': fake}))
-    assert result['copyResults'] == [{'blockId': 'block', 'texts': []}]
+    assert result['copyResults'][0]['texts'][0]['text'] == '군살 보정이 포인트인 상의예요.'
+    assert result['log']['slots'][0]['source'] == 'fact_fallback'
 
 
 def test_fit_profile_length_source_is_available_to_leg_effect_check():

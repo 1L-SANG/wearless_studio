@@ -14,16 +14,16 @@ def test_hidden_intro_identity_survives_without_changing_empty_layout():
 
 
 @pytest.mark.parametrize('template', ['emo', 'show'])
-def test_missing_first_detail_preserves_surviving_identity(template):
+def test_missing_first_detail_preserves_all_photo_identities(template):
     value = case_input(f'{template}-2-mono')
     value['storyboard'] = [b for b in value['storyboard'] if b['pageSectionKind'] == 'points']
     value['analysis']['partDescriptionCopy'] = [dict(point='소매 단', label='소매 끝', desc='소매 끝을 잡아주는 골지 짜임')]
     value['analysis']['featureCopy'] = []
     value['copyResults'] = [dict(blockId=value['storyboard'][0]['id'], texts=[])]
     output = elements(assemble_input(value))
-    assert [el['sourceBlockId'] for el in output if el['type'] == 'image'] == [f'{template}.points.detail2']
-    assert next(el for el in output if el.get('copyRole') == 'items.0.name')['text'] == '소매 끝'
-    assert not any(el.get('copyRole', '').startswith('items.1') for el in output)
+    assert [el['sourceBlockId'] for el in output if el['type'] == 'image'] == [f'{template}.points.detail1', f'{template}.points.detail2']
+    assert next(el for el in output if el.get('copyRole') == 'items.1.name')['text'] == '소매 끝'
+    assert next(el for el in output if el.get('copyRole') == 'items.0.desc').get('hidden')
 
 
 @pytest.mark.parametrize('kind', ['faq', 'review', 'for_you'])
@@ -48,7 +48,7 @@ def test_faq_answer_only_alignment_and_pair_compaction():
     assert [el['style']['align'] for el in items] == ['center', 'left']
 
 
-def test_explicit_empty_intro_completion_cannot_restore_rejected_seller_text():
+def test_explicit_empty_intro_completion_restores_seller_owned_claim():
     value = intro_input(seller='군살을 완벽하게 커버해요', body='')
     value['copyResults'][0]['texts'] = []
-    assert not next(el for el in elements(assemble_input(value)) if el.get('copyRole') == 'body')['text']
+    assert next(el for el in elements(assemble_input(value)) if el.get('copyRole') == 'body')['text'] == value['analysis']['mdComment']

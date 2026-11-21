@@ -18,7 +18,10 @@ function fitIntroPanels(previous, next) {
   const columns = pageTemplatesCatalog.designs['T01-D07'].layout.find(node => node.columns).columns;
   const spec = columns.flatMap(col => col.nodes).find(node => node.splitParagraphs === 'body');
   const titleGap = spec.nodes.find(node => node.copyRole === 'title').gap;
-  for (const oldPanel of previous.filter(item => item.type === 'shape' && introPanelFor(item, previous) === item)) {
+  const referencePanels = previous.filter(item => item.type === 'shape' && introPanelFor(item, previous) === item)
+    .sort((a, b) => (previous.find(text => text.groupId === a.groupId && text.copyRole === 'body')?.paragraphIndex ?? 0)
+      - (previous.find(text => text.groupId === b.groupId && text.copyRole === 'body')?.paragraphIndex ?? 0));
+  for (const [panelIndex, oldPanel] of referencePanels.entries()) {
     const panel = elements.find(item => item.id === oldPanel.id);
     if (!panel || panel.hidden) continue;
     const oldTexts = previous.filter(item => item.type === 'text' && item.groupId === panel.groupId);
@@ -51,9 +54,13 @@ function fitIntroPanels(previous, next) {
       if (!hidden) cursor += h + (text.copyRole === 'title' ? titleGap : 0);
     }
     const h = Math.max(1, cursor - panel.y + bottomPadding);
-    const growth = h - panel.h;
+    // A merged panel may already carry the seller's larger height while newly
+    // inserted paragraphs still use the server layout. Use the reference height
+    // and logical paragraph groups, never the grown panel's current bounds.
+    const growth = h - oldPanel.h;
+    const followingGroups = new Set(referencePanels.slice(panelIndex + 1).map(item => item.groupId));
     elements = elements.map(item => item.id === panel.id ? { ...item, h }
-      : moved.get(item.id) || (growth && item.y >= panel.y + panel.h && introPanelFor(item, elements)
+      : moved.get(item.id) || (growth && followingGroups.has(item.groupId)
         ? { ...item, y: item.y + growth } : item));
   }
   return elements;

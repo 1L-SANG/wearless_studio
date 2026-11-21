@@ -326,7 +326,7 @@ for (const designId of ['P01-D09', 'P01-D09-G']) for (const plated of [false, tr
     validateStoryboardV4(input.storyboard);
     fixture.cases.push({ name: `woc14-${designId}-${plated ? 'plate' : 'plain'}-${position}`, input });
 }
-// Seller MD falls back verbatim when the polished section copy is unavailable.
+// Seller MD remains the fallback source when polished section copy is unavailable.
 fixture.cases = fixture.cases.filter(item => !item.name.startsWith('woc17-'));
 for (const templateId of ['emo', 'show']) {
     const aiBody = 'AI 첫 문단\n\nAI 둘째 문단\nAI 셋째 문단\nAI 넷째 문단';
@@ -492,6 +492,41 @@ for (const origin of ['detail', 'seller', 'ai-suggestion']) {
         partDescriptionCopy: [{ point: '카라', label: '쉬운 이름', desc: '부위 설명' }],
     });
     fixture.cases.push({ name: `copy-b-${origin}-label`, input });
+}
+
+// B5: pending/failed/disabled copy all use the same cleaned seller source.
+fixture.cases = fixture.cases.filter(item => !item.name.startsWith('copy-b5-'));
+for (const templateId of ['emo', 'show']) {
+    for (const state of ['absent', 'empty', 'disabled']) for (const [separatorName, separator] of [
+        ['lf', '\n'], ['line-separator', '\u2028'], ['paragraph-separator', '\u2029'],
+    ]) {
+        const input = structuredClone(fixture.cases.find(item => item.name === `${templateId}-2-mono`).input);
+        input.storyboard = input.storyboard.filter(block => block.pageSectionKind === 'intro');
+        input.analysis.mdComment = ['핏이 편해요.', '무료 배송이에요.', '오늘만 2만 9천 원이에요', '29,000원'].join(separator);
+        input.copywriting = state !== 'disabled';
+        input.copyResults = state === 'empty' ? [{ blockId: input.storyboard[0].id, texts: [] }] : [];
+        delete input.analysis.pageCopy;
+        fixture.cases.push({ name: `copy-b5-${templateId}-${state}-${separatorName}`, input });
+    }
+    const input = structuredClone(fixture.cases.find(item => item.name === `${templateId}-2-mono`).input);
+    input.storyboard = input.storyboard.filter(block => block.pageSectionKind === 'points');
+    input.analysis.partDescriptionCopy = [{ point: '카라', desc: '카라 설명이에요', label: '무료 배송' }];
+    fixture.cases.push({ name: `copy-b5-${templateId}-stored-promotional-label`, input });
+}
+
+// B6 review input stays shared across both assemblers.
+fixture.cases = fixture.cases.filter(item => !item.name.startsWith('copy-b6-'));
+for (const templateId of ['emo', 'show']) for (const [suffix, mdComment] of [
+    ['price-suffix', '핏이 편해요. 2만 9천 원짜리예요.'],
+    ['adjacent-sentences', '핏이 편해요.무료 배송이에요.'],
+    ['decimal', '스티치 간격이 1.5cm예요.무료 배송이에요.'],
+]) {
+    const input = structuredClone(fixture.cases.find(item => item.name === `${templateId}-2-mono`).input);
+    input.storyboard = input.storyboard.filter(block => block.pageSectionKind === 'intro');
+    input.analysis.mdComment = mdComment;
+    input.copyResults = [];
+    delete input.analysis.pageCopy;
+    fixture.cases.push({ name: `copy-b6-${templateId}-${suffix}`, input });
 }
 
 const outputs = fixture.cases.map(({ input }) => ({

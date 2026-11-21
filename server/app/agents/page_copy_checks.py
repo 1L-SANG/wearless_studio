@@ -15,31 +15,27 @@ import re
 import unicodedata
 
 
-_PROMOTION = re.compile(
-    r"배송|교환|반품|환불|주문\s*취소|결제|입금|취소\s*(?:불가|가능|기한)|할인|최저가|재입고|품절|신상|1\s*\+\s*1|한정|특가|세일|"
-    r"쿠폰|적립금|자사몰|가격|가성비|보상|책임지지|인스타|팔로우|디엠|카카오|카톡|채널|"
-    r"유튜브|틱톡|블로그|네이버|스토어|링크|https?://|www\.|@|(?<![a-z])dm(?![a-z])|문의\s*주세요",
-    re.I,
-)
-_DESIGN_DIRECTION = re.compile(
-    r"디자이너|썸네일|상세\s*페이지.{0,20}(?:넣|배치|강조|수정)|"
-    r"(?:강조|부각|배치|수정|삭제|교체|편집)(?:해|하여)?\s*(?:주|부탁)|"
-    r"(?:문구|사진|이미지|컷|텍스트).{0,24}(?:넣어|넣지|빼\s*주|위주|써\s*주|사용해|사용하지)"
-)
+_SELLER_CLEANUP = json.loads((Path(__file__).resolve().parents[1]/"data/page_copy_seller_cleanup.json").read_text(encoding="utf-8"))
+_PROMOTION = re.compile(_SELLER_CLEANUP["promotion"], re.I)
+_DESIGN_DIRECTION = re.compile(_SELLER_CLEANUP["design_direction"])
+
+
+def has_promotion(text: str) -> bool:
+    """Shared predicate for generated text, labels and seller fallbacks."""
+    return bool(_PROMOTION.search(str(text or "")))
 
 
 def clean_seller_text(text: str) -> str:
     """Drop entire offending sentences, retaining product wording and newlines.
 
-    A sentence ends at punctuation followed by whitespace or a line boundary.
-    Decimal points and URL dots therefore do not split an offending sentence into
-    fragments that could leak back into the cleaned source.
+    Also separate adjacent Korean sentences, retaining decimal and Latin URL
+    dots. Keep the boundary expression aligned with sellerCopy.js.
     """
     lines = []
     for line in str(text or "").splitlines():
-        sentences = re.split(r"(?<=[.!?。！？])\s+|…+", line)
+        sentences = re.split(r"(?<=[.!?。！？])(?=\s|[가-힣])\s*|…+", line)
         kept = [s.strip() for s in sentences if s.strip()
-                and not _PROMOTION.search(s) and not _DESIGN_DIRECTION.search(s)]
+                and not has_promotion(s) and not _DESIGN_DIRECTION.search(s)]
         if kept:
             lines.append(" ".join(kept))
     return "\n".join(lines)
@@ -304,7 +300,153 @@ def _functional_claims(text: str) -> set[tuple[str, bool]]:
     return claims
 
 
-def unsupported_additions(source: str, text: str, material_words: Callable[[str], set[str]]) -> list[str]:
+# Seller claims reuse the functional vocabulary, with separate polarity-bearing
+# concepts where the old detail-addition check deliberately used broad families.
+_SELLER_FUNCTIONS = {**_FUNCTIONS,
+    "durability": r"내구|견고|튼튼",
+    "shape_retention": r"변형|형태\s*유지|모양\s*유지",
+    "warmth": r"보온|따뜻|따듯|따스|춥|추위",
+    "opacity": r"비침|비치|비쳐",
+    "stretch": r"늘어나|늘어남|늘어짐|신축|탄성|탄력|텐션",
+    "pilling": r"보풀",
+    "shrinkage": r"수축|줄지",
+    "skin_irritation": r"피부\s*자극|저자극|따갑",
+    "coolness": r"시원",
+    "color_bleeding": r"물이?\s*(?:(?:전혀|절대|거의|잘)\s*)?빠(?:지|짐)",
+    "eco_friendly": r"친환경",
+    "comfort": r"쾌적|편안|편해|편하|편한",
+    "body_correction": r"보정|교정",
+    "body_diet": r"다이어트",
+    "body_slim": r"날씬|슬림",
+    "body_narrow": r"가늘|가녀|작아",
+    "body_bulky": r"부해",
+    "body_tall": r"키(?:가|도)?\s*(?:커|크게)",
+    "body_complement": r"체형\s*보완",
+    "body_belly_less": r"뱃살(?:이|은|도)?\s*덜\s*나(?:와|오)",
+    "body_waist": r"허리(?:가|는|도)?\s*잡혀",
+    "body_longer": r"길어",
+    "fabric_recovery": r"복원력",
+    "fabric_fresh": r"산뜻",
+    "fabric_filling": r"충전재",
+    "season_all": r"사계절",
+    "season_high_summer": r"한여름",
+    "season_midwinter": r"한겨울",
+    "season_transition": r"간절기",
+}
+_SELLER_FUNCTIONS.pop("stretch_resistance")
+_CLAIM_ABSOLUTE = r"최고|전혀|하나도|완벽|확실|감쪽같|절대|완전|무조건|100\s*%"
+_CLAIM_WEAK = r"잘\s*안|거의|덜|약간|조금|살짝|어느\s*정도|(?:할|될|생길|비칠)\s*수|수\s*있"
+_CLAIM_NEGATIVE = r"(?:안|못)(?:\s+|(?=되|돼|가|생|하|해|비|늘|막|쓰|줄|춥))|않|없|아니|아닌|불가|방지"
+
+
+def _claim_clauses(text):
+    start = 0
+    for separator in re.finditer(r"[.!?。！？\n,;]|(?:고|며|지만)\s+", text):
+        yield start, separator.start(), text[start:separator.start()]
+        start = separator.end()
+    yield start, len(text), text[start:]
+
+
+_CLAIM_SUBJECTS = {
+    "원단": r"원단|소재",
+    "소매": r"소매(?:\s*끝|단)?|소맷단|커프스", "지퍼": r"지퍼", "단추": r"단추|버튼",
+    "카라": r"카라|깃", "밑단": r"밑단|끝단", "주머니": r"주머니|포켓",
+    "허리": r"허리(?:선)?", "다리": r"다리", "군살": r"군살", "뱃살": r"뱃살",
+    "기장": r"기장", "안감": r"안감", "어깨": r"어깨", "벨트": r"벨트",
+}
+# Exact seller instructions can exempt their checked tokens. They never erase
+# a whole sentence, a newly added effect, or an unattached absolute modifier.
+_LITERAL_CLAIM_TERMS = re.compile(
+    r"세탁|건조기|드라이|물빨래|손빨래|손세탁|말려|보관|젖|온수|뜨거|뜨겁|표백|삶|다림|다려|세제|세탁망|담가|"
+    r"오래\s*입|오래도록|국내\s*제작|국내산|국산|자체\s*제작|수작업|핸드메이드|가공|제작\s*과정"
+)
+
+
+def _nearest_claim(matches, start, end):
+    return min(range(len(matches)), key=lambda index: (
+        max(matches[index][0] - end, start - matches[index][1], 0),
+        0 if matches[index][0] >= end else 1))
+
+
+def _seller_claim_records(clause, context_subject=None):
+    found = sorted((match.start(), match.end(), name, match[0])
+                   for name, pattern in _SELLER_FUNCTIONS.items()
+                   for match in re.finditer(pattern, clause, re.I))
+    if not found:return []
+    modifiers = [[] for _ in found]
+    for match in re.finditer(_CLAIM_ABSOLUTE+r"|"+_CLAIM_WEAK, clause):
+        owner = _nearest_claim(found, match.start(), match.end())
+        if re.fullmatch(_CLAIM_ABSOLUTE, match[0]) and found[owner][1] <= match.start():
+            gap, tail = clause[found[owner][1]:match.start()], clause[match.end():]
+            if re.search(r"라서|여서|해서|어서|므로", gap) or (tail.strip() and not re.match(r"(?:해요|합니다|하다|이에요|예요|한데|없|않|안|못|하게\s*(?:되|돼|막|해))", tail.strip())):
+                continue
+        modifiers[owner].append(match)
+    subjects = [[] for _ in found]
+    for name, pattern in _CLAIM_SUBJECTS.items():
+        for match in re.finditer(pattern, clause):
+            owner = _nearest_claim(found, match.start(), match.end())
+            gap = clause[match.end():found[owner][0]] if match.end() <= found[owner][0] else ""
+            if re.search(r"(?:으)?로\s|덕분|있어서|통해", gap):continue
+            subjects[owner].append((name, match.start(), match.end()))
+    contextual = next((name for name, pattern in _CLAIM_SUBJECTS.items()
+                       if context_subject and re.search(pattern, context_subject)), None)
+    records = []
+    for index, (start, end, name, word) in enumerate(found):
+        before = clause[max(found[index-1][1] if index else 0, start-8):start]
+        next_start = next((a for a, _, _, _ in found[index+1:] if a >= end), len(clause))
+        after = clause[end:next_start]
+        negations = len(re.findall(_CLAIM_NEGATIVE, after)) + bool(re.search(r"(?:안|못)\s*$", before))
+        negative = None if negations > 1 else bool(negations)
+        if negative is not None and (word in ("춥", "추위") or re.search(r"형태\s*유지|모양\s*유지|저자극", word)):
+            negative = not negative
+        absolute = {re.sub(r"\s+", "", match[0]) for match in modifiers[index] if re.fullmatch(_CLAIM_ABSOLUTE, match[0])}
+        strength = 2 if absolute else 0 if modifiers[index] else 1
+        if name.startswith("body_") and re.search(r"보여|보이", after) and not absolute:strength = 0
+        subject = min(subjects[index], key=lambda value: max(start-value[2], value[1]-end, 0)) if subjects[index] else None
+        records.append({"name": name, "negative": negative, "strength": strength,
+                        "absolute": absolute, "start": start, "end": end,
+                        "subject": subject[0] if subject else contextual,
+                        "subjectSpan": subject[1:] if subject else None,
+                        "modifiers": [(m.start(),m.end()) for m in modifiers[index]]})
+    return records
+
+
+def seller_claim_text(text, sources, *, context_subject=None):
+    """Remove supported claim tokens with their own subject and modifiers.
+
+    Names of materials, quantities and all unrelated wording remain available
+    to the caller's independent checks. Unknown extra claims are never masked.
+    """
+    source_clauses = [clause for source in sources or []
+                      for _, _, clause in _claim_clauses(str(source.get("text", "") if isinstance(source, Mapping) else source))
+                      if clause.strip()]
+    evidence = [record for clause in source_clauses for record in _seller_claim_records(clause)]
+    result = list(text)
+    for offset, end, clause in _claim_clauses(text):
+        records = _seller_claim_records(clause, context_subject)
+        for record in records:
+            support = next((other for other in evidence
+                if record["name"] == other["name"] and record["negative"] == other["negative"]
+                and record["strength"] <= other["strength"] and record["absolute"] <= other["absolute"]
+                and (other["subject"] is None or record["subject"] == other["subject"])), None)
+            if support is None:continue
+            spans = [(record["start"],record["end"]), *record["modifiers"]]
+            if record["subjectSpan"] and support["subject"] == record["subject"]:
+                spans.append(record["subjectSpan"])
+            for start, stop in spans:result[offset+start:offset+stop] = " " * (stop-start)
+        for source in source_clauses:
+            phrase = _compact(source)
+            if len(phrase) < 2:continue
+            for match in re.finditer(r"\s*".join(map(re.escape, phrase)), clause, re.I):
+                if re.search(r"(?:안|못)\s*$", clause[:match.start()]):continue
+                if re.search(_CLAIM_NEGATIVE, clause[match.end():]):continue
+                for token in _LITERAL_CLAIM_TERMS.finditer(clause, match.start(), match.end()):
+                    start, stop = offset+token.start(), offset+token.end()
+                    result[start:stop] = " " * (stop-start)
+    return "".join(result)
+
+
+def unsupported_additions(source: str, text: str, material_words: Callable[[str], set[str]], *, claim_text=None) -> list[str]:
     """Flag numeric, canonical-material or recognized functional additions.
 
     Compare descriptions with factual detail evidence, allowing equivalent
@@ -315,7 +457,7 @@ def unsupported_additions(source: str, text: str, material_words: Callable[[str]
         reasons.append("number_added")
     if material_words(text) - material_words(source):
         reasons.append("material_added")
-    if _functional_claims(text) - _functional_claims(source):
+    if _functional_claims(text if claim_text is None else claim_text) - _functional_claims(source):
         reasons.append("claim_added")
     return reasons
 

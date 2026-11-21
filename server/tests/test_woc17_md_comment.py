@@ -1,4 +1,5 @@
 import pytest
+from app.agents.page_copy_checks import clean_seller_text
 
 from app.agents.page_template_assembler import assemble_v4
 
@@ -20,10 +21,10 @@ def bodies(template_id, analysis, body=AI, *, copywriting=True):
 @pytest.mark.parametrize("template_id", ["emo", "show"])
 @pytest.mark.parametrize("original", [SELLER, "앞줄\r\n\r\n뒤쪽  \t줄\r\n"])
 @pytest.mark.parametrize("mode", ["missing", "disabled"])
-def test_seller_md_fallback_preserves_exact_original(template_id, original, mode):
+def test_seller_md_fallback_cleans_display_and_preserves_saved_original(template_id, original, mode):
     analysis = {"mdComment": original}
     elements = bodies(template_id, analysis, body="" if mode == "missing" else AI, copywriting=mode != "disabled")
-    assert [element["text"] for element in elements] == [original]
+    assert [element["text"] for element in elements] == [clean_seller_text(original)]
     assert not elements[0].get("aiDraft")
     assert elements[0].get("paragraphCount") == (1 if template_id == "emo" else None)
     if template_id == "show":

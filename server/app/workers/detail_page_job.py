@@ -2906,6 +2906,7 @@ async def run_detail_page_job(app, job: dict) -> None:
         if needs_name:
             generated_name = _fallback_product_name(product, analysis)
             product["name"] = generated_name
+            product["name_source"] = "ai"
 
         # 2) 카피와 컷을 동시에 시작한다. 컷에는 이 시점의 분석과 빈 섹션 글을 준다.
         copy_analysis = deepcopy(analysis)

@@ -1,3 +1,4 @@
+import { cleanSellerText, hasPromotion } from './sellerCopy.js';
 import latinMetrics from '../../../server/app/data/page_template_latin_metrics.json' with { type: 'json' };
 import { compactSectionTexts } from './copyItems.js';
 import { titlePlateBounds, titlePlateGroup } from './titlePlate.js';
@@ -6,7 +7,6 @@ import {
     pageTemplatesCatalog,
     sectionDefinition,
     textSlotForRole,
-    walkLayout,
 } from "./catalog.js";
 import { baseColorOf, resolvePageTokens, sectionTokens } from "./tokens.js";
 import { buildAutoBlocks } from "./autoBlocks.js";
@@ -435,7 +435,7 @@ function pointDisplayName(role, ctx) {
         if (!allowed) continue;
         const label = (ctx.analysis[key] || []).find(row => row?.point === name
             && typeof row.label === 'string' && row.label.trim())?.label;
-        if (label) return label;
+        if (label && !hasPromotion(label)) return label;
     }
     return name;
 }
@@ -467,7 +467,7 @@ function contentFor(node, ctx) {
                 : slot.default);
     else if (slot.source === "fact") text = /^items\.\d+\.name$/.test(role) ? pointDisplayName(role, ctx) : factText(role, ctx);
     else if (slot.source === "seller+ai" && sellerComment(ctx))
-        text = ctx.copywriting && ctx.copyReady ? ctx.copy[role] || "" : sellerComment(ctx);
+        text = ctx.copywriting && ctx.copy[role]?.trim() ? ctx.copy[role] : cleanSellerText(sellerComment(ctx));
     else if (ctx.copywriting) {
         text = ctx.copy[role] || "";
         if (/^items\.\d+\.desc$/.test(role)) {
@@ -511,7 +511,8 @@ function renderText(node, x, y, width, ctx) {
     const content = contentFor(node, ctx);
     const collapsed = !content.text.trim() && (ctx.designId === 'T01-D07' && content.role === 'title'
         && contentFor({ copyRole: 'body' }, { ...ctx, paragraphRole: null }).text.trim()
-        || ctx.kind.kind === 'review' && /^items\.\d+\.who$/.test(content.role) && ctx.copywriting && ctx.copyReady);
+        || ctx.kind.kind === 'review' && /^items\.\d+\.who$/.test(content.role) && ctx.copywriting && ctx.copyReady
+        || ctx.kind.kind === 'points' && /^items\.\d+\.desc$/.test(content.role));
     if (node.hideEmpty && !content.text) return { elements: [], h: 0 };
     if (
         node.onlyExtraColor &&
@@ -1389,7 +1390,7 @@ function renderNodes(nodes, x, y, width, ctx) {
     const elements = [];
     const matchingRules = [];
     let lastTextWidth = ctx.lastTextWidth;
-    for (const node of nodes || []) {
+    for (const [nodeIndex, node] of (nodes || []).entries()) {
         const result = renderNode(node, x, cursor, width, {
             ...ctx,
             lastTextWidth,
@@ -1408,7 +1409,9 @@ function renderNodes(nodes, x, y, width, ctx) {
             );
         const emptyAuthor = ctx.kind.kind === 'review' && node.copyRole === 'items.n.text'
             && ctx.copywriting && ctx.copyReady && !contentFor({ copyRole: 'items.n.who' }, ctx).text.trim();
-        if (!node.absolute && result.h) cursor += result.h + (emptyAuthor ? 0 : node.gap || 0);
+        const emptyLastDetail = ctx.kind.kind === 'points' && nodeIndex === nodes.length - 2
+            && nodes.at(-1).copyRole === 'items.n.desc' && !contentFor(nodes.at(-1), ctx).text.trim();
+        if (!node.absolute && result.h) cursor += result.h + (emptyAuthor || emptyLastDetail ? 0 : node.gap || 0);
     }
     // Resolve forward references too: the upper rule precedes the name, while
     // the lower rule follows colors. Both must use the name's longest line.
@@ -1894,7 +1897,7 @@ export function assemblePage({
             first.pageDesignId,
         );
         let designId = first.pageSectionKind === 'intro' && linkedIntro ? linkedIntro : first.pageDesignId || section.designId;
-        let photos = pointPhotosForRun(run, storyboard);
+        const photos = pointPhotosForRun(run, storyboard);
         if (!photos.length && section.fallbackDesignId)
             designId = section.fallbackDesignId;
         const design = catalog.designs[designId];
@@ -1942,22 +1945,6 @@ export function assemblePage({
                 ? tokens.colors.invertBg
                 : sectionStyle.colors[design.surface || "canvas"],
         };
-        if (kind.kind === 'points' && copywriting && ctx.copyReady) {
-            let description;
-            walkLayout(design.layout, node => { if (node.copyRole === 'items.n.desc') description ||= node; });
-            if (description) {
-                const kept = photos.map((card, index) => ({ card, index })).filter(({ card, index }) =>
-                    contentFor(description, { ...ctx, card, index }).text.trim());
-                const numbering = new Map(kept.map(({ index }, next) => [index, next]));
-                ctx.copy = Object.fromEntries(Object.entries(ctx.copy).flatMap(([role, text]) => {
-                    const match = role.match(/^items\.(\d+)(\..+)$/);
-                    return !match ? [[role, text]] : numbering.has(Number(match[1]))
-                        ? [[`items.${numbering.get(Number(match[1]))}${match[2]}`, text]] : [];
-                }));
-                photos = kept.map(({ card }) => card);
-                ctx.photos = photos;
-            }
-        }
         const pad = design.padding || 0,
             width = catalog.canvasWidth - pad * 2;
         let y = design.top || 0,

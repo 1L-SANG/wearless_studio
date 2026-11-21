@@ -65,6 +65,6 @@ def test_part_only_copy_accepts_one_or_two_lines_without_using_seller_copy(saved
     if expected:
         assert desc['text'] == expected
     else:
-        assert desc is None
-        assert not any(el['type'] == 'image' for el in elements)
+        assert desc['text'] == '' and desc.get('hidden')
+        assert any(el['type'] == 'image' for el in elements)
     assert value == original

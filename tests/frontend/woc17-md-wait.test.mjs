@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assemblePage } from '../../src/lib/pageTemplates/assemble.js';
+import { cleanSellerText } from '../../src/lib/pageTemplates/sellerCopy.js';
 import { decorateGenBlocks, fillGenBlocks, mergeServerBlocks, patchTemplateElement } from '../../src/lib/editorWaitSkeleton.js';
 import { applyDetailJobEvents } from '../../src/lib/detailPageJobEvents.js';
 
@@ -21,9 +22,10 @@ for (const templateId of ['emo', 'show']) for (const [cached, incoming] of [
   test(`${templateId} seller MD accepts ${cached} and late polished copy without a draft flag`, () => {
     const input = inputFor(templateId);
     const assembled = assemblePage(input);
-    assert.deepEqual(bodies(assembled).map(element => element.text), [memo]);
+    assert.deepEqual(bodies(assembled).map(element => element.text), [cleanSellerText(memo)]);
+    assert.equal(input.analysis.mdComment, memo);
     const waiting = decorateGenBlocks(assembled, job(incoming), {});
-    assert.deepEqual(bodies(waiting).map(element => element.text), [incoming || memo]);
+    assert.deepEqual(bodies(waiting).map(element => element.text), [incoming || cleanSellerText(memo)]);
     const filled = fillGenBlocks(waiting, job('늦게 온 AI 첫 문단\nAI 둘째 문단'));
     assert.deepEqual(bodies(filled).map(element => element.text), ['늦게 온 AI 첫 문단\nAI 둘째 문단']);
     const complete = mergeServerBlocks(filled, assemblePage(inputFor(templateId, memo, '최종 다듬은 본문')));

@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 from types import SimpleNamespace
 
+from .page_copy_checks import clean_seller_text, has_promotion
 from .page_copy_items import compact_section_texts
 
 from .content_roles import is_worn_crop_source
@@ -14,7 +15,7 @@ from .space_set_assets import load_space_set_registry, parse_space_set_group_id
 
 from .page_templates import (
     CATALOG, base_color_of, get_template, resolve_page_tokens, section_definition,
-    section_tokens, template_section_name, text_slot_for_role, walk_layout,
+    section_tokens, template_section_name, text_slot_for_role,
 )
 
 
@@ -318,7 +319,7 @@ def _point_display_name(role, ctx):
             continue
         label = next((row.get("label") for row in analysis.get(key) or []
                       if isinstance(row, dict) and row.get("point") == name and isinstance(row.get("label"), str) and row["label"].strip()), None)
-        if label:
+        if label and not has_promotion(label):
             return label
     return name
 
@@ -337,7 +338,7 @@ def _content_for(node, ctx):
     elif slot["source"] == "fact":
         text = _point_display_name(role, ctx) if re.fullmatch(r"items\.\d+\.name", role) else _fact_text(role, ctx)
     elif slot["source"] == "seller+ai" and _seller_comment(ctx):
-        text = ctx.copy.get(role, "") if ctx.copywriting and getattr(ctx, "copy_ready", False) else _seller_comment(ctx)
+        text = ctx.copy.get(role) if ctx.copywriting and (ctx.copy.get(role) or "").strip() else clean_seller_text(_seller_comment(ctx))
     elif ctx.copywriting:
         text = ctx.copy.get(role) or ""
         if re.fullmatch(r"items\.\d+\.desc", role):
@@ -381,7 +382,8 @@ def _render_text(node, x, y, width, ctx):
     text, slot, role = _content_for(node, ctx)
     collapsed = not text.strip() and (
         ctx.design_id == "T01-D07" and role == "title" and bool(_content_for({"copyRole": "body"}, _fork(ctx, paragraph_role=None))[0].strip())
-        or ctx.kind["kind"] == "review" and bool(re.fullmatch(r"items\.\d+\.who", role or "")) and ctx.copywriting and getattr(ctx, "copy_ready", False))
+        or ctx.kind["kind"] == "review" and bool(re.fullmatch(r"items\.\d+\.who", role or "")) and ctx.copywriting and getattr(ctx, "copy_ready", False)
+        or ctx.kind["kind"] == "points" and bool(re.fullmatch(r"items\.\d+\.desc", role or "")))
     if node.get("hideEmpty") and not text:
         return [], 0
     if node.get("onlyExtraColor") and (not (ctx.card or {}).get("colorId") or _string(ctx.card["colorId"]) == _string(ctx.base_color.get("id"))):
@@ -933,7 +935,7 @@ def _render_nodes(nodes, x, y, width, ctx):
     cursor, elements = y, []
     matching_rules = []
     last_text_width = getattr(ctx, "last_text_width", None)
-    for node in nodes or []:
+    for node_index, node in enumerate(nodes or []):
         result, height = _render_node(node, x, cursor, width, _fork(ctx, last_text_width=last_text_width))
         elements.extend(result)
         if node["type"] == "rule" and node.get("matchText") and result:
@@ -944,8 +946,10 @@ def _render_nodes(nodes, x, y, width, ctx):
         empty_author = (ctx.kind["kind"] == "review" and node.get("copyRole") == "items.n.text"
                         and ctx.copywriting and getattr(ctx, "copy_ready", False)
                         and not _content_for({"copyRole": "items.n.who"}, ctx)[0].strip())
+        empty_last_detail = (ctx.kind["kind"] == "points" and node_index == len(nodes) - 2
+                             and nodes[-1].get("copyRole") == "items.n.desc" and not _content_for(nodes[-1], ctx)[0].strip())
         if not node.get("absolute") and height:
-            cursor += height + (0 if empty_author else node.get("gap") or 0)
+            cursor += height + (0 if empty_author or empty_last_detail else node.get("gap") or 0)
     # Both forward (upper rule) and backward (lower rule) references use name,
     # regardless of the label/tagline/colors surrounding it.
     for node, element in matching_rules:
@@ -1219,20 +1223,6 @@ def assemble_v4(storyboard, cut_results, copy_results, product, copywriting, *, 
                               tokens=section_style, photos=photos, used=set(), failed_cuts=failed_cuts or {}, align=design.get("align") or tokens["template"]["align"],
                               on_photo=catalog["overlayColors"]["light"], index=0, card=None, overlay_regions=overlay_regions, design_id=design_id, copy_groups={'next': 0},
                               surface_color=tokens["colors"]["invertBg"] if (render_section.get("block") or {}).get("invert") else section_style["colors"][design.get("surface") or "canvas"])
-        if kind["kind"] == "points" and copywriting and ctx.copy_ready:
-            description = next((node for node in walk_layout(design["layout"]) if node.get("copyRole") == "items.n.desc"), None)
-            if description:
-                kept = [(index, card) for index, card in enumerate(photos)
-                        if _content_for(description, _fork(ctx, card=card, index=index))[0].strip()]
-                numbering = {old: new for new, (old, _) in enumerate(kept)}
-                remapped = {}
-                for role, text in ctx.copy.items():
-                    match = re.fullmatch(r"items\.(\d+)(\..+)", role)
-                    if not match:remapped[role] = text
-                    elif int(match[1]) in numbering:remapped[f"items.{numbering[int(match[1])]}{match[2]}"] = text
-                ctx.copy = remapped
-                photos = [card for _, card in kept]
-                ctx.photos = photos
         pad = design.get("padding") or 0
         width = catalog["canvasWidth"] - pad * 2
         y, elements, part = design.get("top") or 0, [], 0

@@ -261,11 +261,9 @@ async def generate(
     analysis = analysis or {}
     template = page_copy.template_of(storyboard or analysis.get("storyboard") or [], analysis)
     slots = page_copy.feature_slots(list(originals), template)
-    # 에디터에서 이번에 더한 칩도 사실 묶음에 넣되 저장된 분석은 바꾸지 않는다.
-    highlights = analysis.get("sellingPoints") or analysis.get("aiSuggestedPoints") or []
-    inputs = {**analysis, "sellingPoints": list(dict.fromkeys(
-        [p.strip() for p in highlights if isinstance(p, str) and p.strip()] + list(originals)
-    ))}
+    # Requested slots can come from AI suggestions. Only the stored seller
+    # fields retain authority; a request list is never evidence by itself.
+    inputs = dict(analysis)
     try:
         result = await page_copy.generate_slots(
             settings, slots, product, inputs, seed=seed, timeout_seconds=timeout_seconds,

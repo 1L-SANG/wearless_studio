@@ -1,3 +1,4 @@
+import { fitTitlePlateBlocks } from '../features/editor/editorTitlePlateFit.js';
 /* =============================================================
    lib/editorWaitSkeleton — 에디터 통합 대기(editor_wait_dev_spec v2)의 순수 헬퍼.
    콘티 → 스켈레톤 블록(서버 조립 규칙 정렬) → 생성 이벤트 채움 → 완료 병합.
@@ -451,9 +452,9 @@ const renameItem = (element, index, groupId) => ({ ...element,
 
 function finishReconciledBlock(local, final, elements) {
   const baseline = local.genTemplateBaseline;
-  const baseBottom = Math.max(0, ...final.elements.map(element => element.y + element.h));
+  const baseBottom = Math.max(0, ...final.elements.filter(element => !element.hidden).map(element => element.y + element.h));
   const padding = Math.max(0, final.h - baseBottom);
-  const bottom = Math.max(0, ...elements.map(element => element.y + element.h));
+  const bottom = Math.max(0, ...elements.filter(element => !element.hidden).map(element => element.y + element.h));
   const h = Math.max(final.h, bottom + padding) + (baseline && local.h !== baseline.h ? local.h - baseline.h : 0);
   const block = mergeSellerElement({ ...final, h }, { ...withoutGeneration(local), h }, { ...baseline?.block, h, elements: local.elements });
   return { ...withoutGeneration(block), id: local.id, elements, h };
@@ -518,6 +519,61 @@ function reconcileEditedList(local, final) {
     ...renameItem(element, index, group.id), y: element.y - overflow,
   })))];
   return finishReconciledBlock(local, final, elements);
+}
+
+function reconcileEditedIntro(local, final) {
+  const baseline = local.genTemplateBaseline?.elements;
+  if (!baseline || !final.elements.some(el => el.copyRole === 'body' && el.paragraphIndex != null)) return null;
+  const bodies = local.elements.filter(el => el.copyRole === 'body');
+  const originalBodies = baseline.filter(el => el.copyRole === 'body');
+  // A body edit/deletion owns the whole seller-authored body. Do not append
+  // generated paragraphs to it or undo a deliberate empty body.
+  if (originalBodies.some(el => !bodies.some(current => current.id === el.id))
+      || bodies.some(el => !Object.hasOwn(el, 'genAutoText') || el.text !== el.genAutoText)) return null;
+  const hideAllBody = bodies.length > 0 && bodies.every(el => el.hidden === true);
+  const identity = el => JSON.stringify([el.groupId || null, el.type, el.shape || null, el.copyRole || null, el.paragraphIndex ?? null]);
+  const available = [...baseline], consumed = new Set();
+  let elements = [];
+  for (const incoming of final.elements) {
+    const index = available.findIndex(el => identity(el) === identity(incoming));
+    const original = index < 0 ? null : available.splice(index, 1)[0];
+    const current = original && local.elements.find(el => el.id === original.id);
+    if (original && !current) continue;
+    if (current) consumed.add(current.id);
+    const mergedElement = mergeSellerElement(incoming, current, current ? expectedElement(local, current) || original : null);
+    elements.push(hideAllBody && incoming.copyRole === 'body' ? { ...mergedElement, hidden: true } : mergedElement);
+  }
+  // Keep added objects independent and in their original position in the layer
+  // stack; they must never be consumed as a same-shaped template background.
+  for (const [index, current] of local.elements.entries()) {
+    if (consumed.has(current.id) || !manuallyChanged(local, current)) continue;
+    const previous = local.elements.slice(0, index).reverse().find(el => elements.some(next => next.id === el.id));
+    const following = local.elements.slice(index + 1).find(el => elements.some(next => next.id === el.id));
+    const at = previous ? elements.findIndex(el => el.id === previous.id) + 1
+      : following ? elements.findIndex(el => el.id === following.id) : elements.length;
+    elements.splice(at, 0, withoutGeneration(current));
+  }
+  // Existing layers retain the seller's paint order. Only new paragraphs and
+  // backgrounds keep their insertion positions from the completed layout.
+  const mergedById = new Map(elements.map(el => [el.id, el]));
+  const localOrder = local.elements.filter(el => mergedById.has(el.id)).map(el => mergedById.get(el.id));
+  const localIds = new Set(localOrder.map(el => el.id));
+  let localIndex = 0;
+  elements = elements.map(el => localIds.has(el.id) ? localOrder[localIndex++] : el);
+  const hiddenTitle = local.elements.find(el => el.copyRole === 'title' && el.hidden
+    && (String(el.text || '').trim() || !expectedElement(local, el)?.hidden));
+  elements = elements.map(el => el.copyRole === 'title' && String(el.text || '').trim() && el.hidden && !hiddenTitle
+    ? { ...el, hidden: false } : el);
+  let merged = finishReconciledBlock(local, final, elements);
+  if (local.h !== local.genTemplateBaseline.h) merged = { ...merged, h: local.h };
+  // Match the final layout to the preserved local IDs before refitting a longer
+  // seller title. New paragraphs and their panels keep the server's group IDs.
+  const before = { ...final, id: merged.id, elements: final.elements.map(el => {
+    const match = elements.find(current => current.groupId === el.groupId && contentKey(current) === contentKey(el)
+      && current.paragraphIndex === el.paragraphIndex);
+    return match ? { ...el, id: match.id } : el;
+  }) };
+  return fitTitlePlateBlocks([before], [merged])[0];
 }
 
 const pointPhoto = block => block.elements.find(element => element.type === 'image' && element.sourceBlockId);
@@ -635,7 +691,10 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
     if (untouched.has(key)) continue;
     const finalRun = (serverBlocks || []).filter(block => block.pageSectionKey === key);
     if (!finalRun.length) continue;
-    if (run[0].pageSectionKind === 'points') {
+    if (run[0].pageSectionKind === 'intro' && run.length === 1 && finalRun.length === 1) {
+      const merged = reconcileEditedIntro(run[0], finalRun[0]);
+      if (merged) reconciled.set(key, [merged]);
+    } else if (run[0].pageSectionKind === 'points') {
       const merged = reconcileEditedPoints(run, finalRun);
       if (merged) reconciled.set(key, merged);
     } else if (['faq', 'review', 'for_you'].includes(run[0].pageSectionKind) && run.length === 1 && finalRun.length === 1) {

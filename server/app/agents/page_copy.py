@@ -232,13 +232,18 @@ def facts_bundle(product, analysis, slots):
     for s in slots:
         if s["target"]=="part" and not any(p["name"]==_part_name(s["point"]) for p in parts):parts.append({"name":_part_name(s["point"]),"evidence":""})
     highlights=_strings(analysis.get("sellingPoints") or analysis.get("aiSuggestedPoints") or [])
+    # The analysis UI also copies suggestions into sellingPoints. Keep those
+    # generation targets, but they do not become seller evidence unchanged.
+    suggested={re.sub(r"\s+", "", text) for text in _strings(analysis.get("aiSuggestedPoints") or [])}
     name=product.get("name") or ""
+    name_source=product.get("name_source", product.get("nameSource", "unknown"))
+    if name_source not in ("seller", "ai", "unknown"):name_source="unknown"
     clothing=product.get("clothing_type") or product.get("clothingType") or analysis.get("clothingType") or ""
     clothing={"top":"상의","bottom":"하의","outer":"아우터","dress":"원피스"}.get(clothing,clothing)
     short=re.search(r"\(([^)]+)\)",clothing)
     garment=short[1] if short else clothing
     feel_rows=_read_json(DATA_DIR/"page_copy_fabric_feel.json")["rows"]
-    evidence=" ".join([name,*highlights,*[p["name"]+" "+p["evidence"] for p in parts],str(analysis.get("fabricStructure") or "")])
+    evidence=" ".join([name if name_source == "seller" else "",*highlights,*[p["name"]+" "+p["evidence"] for p in parts],str(analysis.get("fabricStructure") or "")])
     dominant_words=_material_words(dominant)
     selected=[]
     for row in feel_rows:
@@ -255,9 +260,13 @@ def facts_bundle(product, analysis, slots):
     care=_read_json(DATA_DIR/"page_copy_care.json")
     family=care_family(product,analysis,materials)
     care_lines=care["families"][family]["lines"]
-    facts={"name":name,"clothingType":clothing,"garment":garment,"colors":colors,"colorCount":len(colors),
+    facts={"name":name,"nameSource":name_source,"clothingType":clothing,"garment":garment,"colors":colors,"colorCount":len(colors),
            "fit":fit,"axes":axes,"axisSources":axis_sources,"garmentType":garment_type,"materials":materials,"dominantMaterial":dominant,"materialPreset":preset,
            "sellingPoints":highlights,"parts":parts,"sellerComment":checks.clean_seller_text(str(analysis.get("mdComment") or "").strip()),
+           "sellerClaims":[{"source": source, "text": text} for source, text in [
+               ("name", name if name_source == "seller" else ""), ("mdComment", str(analysis.get("mdComment") or "")),
+               *[(f"sellingPoints.{i}", text) for i, text in enumerate(_strings(analysis.get("sellingPoints") or []))
+                 if re.sub(r"\s+", "", text) not in suggested]] if text.strip()],
            "existingPartCopy":[r for r in analysis.get("partDescriptionCopy") or [] if isinstance(r,dict)],
            "fabricFeel":{"forbidden":_strings([w for r in selected for w in r["forbidden"]])},
            "fabricStructure":_strings([str(analysis.get("fabricStructure") or ""), *[w for r in selected for w in r["lookup_words"] if re.search(r"골지|립|쭈리|스웨트|트윌|와플|메시|시스루|코듀로이|새틴|플리스|트위드|시폰|데님",w) and w in evidence]]),
@@ -269,7 +278,7 @@ def facts_bundle(product, analysis, slots):
         cut_text=" ".join([name,facts["sellerComment"],*highlights,*[p["evidence"] for p in parts],
                            str(analysis.get("description") or ""),str(analysis.get("summary") or "")])
         facts["bottomCut"]=_strings(re.findall(r"세미\s*와이드|와이드|스트레이트|슬림|부츠컷|조거|테이퍼드|일자|배기|플레어|A라인|H라인",cut_text))
-    return {k:v for k,v in facts.items() if v not in ("",[],{}) or k in ("sellerComment","parts","colors","materials")}
+    return {k:v for k,v in facts.items() if v not in ("",[],{}) or k in ("sellerComment","sellerClaims","parts","colors","materials")}
 
 
 def plans(seed, slots, facts):
@@ -385,7 +394,7 @@ def build_request(slots, facts, plans, provider, model, *, feature=False,
         for key,kind,target in dict.fromkeys((_slot_kind(s),s["kind"],s["target"]) for s in slots):
             count=sum(e["slot"] in (key,kind,target) for e in exemplars)
             if count<2:exemplar_warnings.append({"reason":"insufficient_exemplars","slotKind":key,"count":count,"stage":stage})
-    values={"rules":rules,"facts":_json(facts),"plans":_json(plans),"examples":_json(selected),
+    values={"rules":rules,"facts":_json({k: v for k, v in facts.items() if k != "sellerClaims"}),"plans":_json(plans),"examples":_json(selected),
             "slots":_json(public),"exemplars":_json(exemplars)}
     filled=re.sub(r"\{\{(\w+)\}\}",lambda m:values[m[1]],template)
     system,prompt=filled.split("\n---USER---\n",1)
@@ -405,8 +414,8 @@ def build_request(slots, facts, plans, provider, model, *, feature=False,
             "stage":stage,"prompt_version":prompt_version,"mode":mode,"exemplars":exemplars,"warnings":exemplar_warnings}
 
 
-_PROMOTION=r"배송|교환|반품|할인|최저가|재입고|품절|인스타|링크|(?<![a-z])dm(?![a-z])|신상|1\+1|한정|특가|세일|쿠폰|적립금|자사몰|카카오|카톡|채널|유튜브|틱톡|블로그|네이버|스토어|문의\s*주세요|보상|책임지지|@|가격|가성비"
-_CLAIMS=r"따뜻|따듯|따스|시원|보풀.{0,5}(?:없|안\s*생)|줄지\s*않|수축.{0,5}없|통기|통풍|방수|방풍|발수|항균|보온|자외선|\buv\b|흡수|쾌적|피부\s*자극|구김|내구|견고|튼튼|누구나|하루\s*종일|비치지\s*않|비침\s*없|늘어짐\s*없|바람(?:을|도)?\s*막|물을?\s*막|땀(?:을|이)?\s*(?:잘|흡수|차|배출)|변형(?:이|을)?\s*(?:없|방지|않|줄)"
+_PROMOTION = checks._PROMOTION.pattern
+_CLAIMS=r"물이?\s*(?:(?:전혀|절대|거의|잘)\s*)?빠(?:지|짐)|따뜻|따듯|따스|시원|보풀.{0,5}(?:없|안\s*생)|줄지\s*않|수축.{0,5}없|통기|통풍|방수|방풍|발수|항균|보온|자외선|\buv\b|흡수|쾌적|피부\s*자극|구김|내구|견고|튼튼|누구나|하루\s*종일|비치지\s*않|비침\s*없|늘어짐\s*없|바람(?:을|도)?\s*막|물을?\s*막|땀(?:을|이)?\s*(?:잘|흡수|차|배출)|변형(?:이|을)?\s*(?:없|방지|않|줄)"
 _CARE=r"세탁|건조기|드라이|물빨래|손빨래|손세탁|오래\s*입|오래도록|형태\s*유지|모양\s*유지|뒤틀림|틀어짐|구애\s*없이|상관없이"
 _PROCESS=r"국내\s*제작|국내산|국산|자체\s*제작|수작업|핸드메이드|가공|제작\s*과정|®|™|社"
 _BODY=r"골반|엉덩이|허벅지|무릎|종아리|발목|힙|허리선|배꼽|옆구리|손목|손등|팔꿈치|쇄골|정강이|발등"
@@ -519,15 +528,15 @@ def _detail_claims(text, pattern):
     return claims
 
 
-def _unsupported_part_fact(text, part, *, warmth=False):
+def _unsupported_part_fact(text, part, *, warmth=False, claim_text=None):
     evidence=str(part.get("evidence") or "")+" "+" ".join(part.get("features") or [])
     source=part.get("name","")+" "+evidence
     if warmth:source+=" 따뜻"
     # Recognized additions are compared to source concepts, never exact wording.
-    if checks.unsupported_additions(source,text,_material_words):return True
+    if checks.unsupported_additions(source,text,_material_words,claim_text=claim_text):return True
     for pattern in _DETAIL_CONCEPTS:
         supported=_detail_claims(evidence,pattern) or _detail_claims(part.get("name",""),pattern)
-        if _detail_claims(text,pattern)-supported:return True
+        if _detail_claims(text if claim_text is None else claim_text,pattern)-supported:return True
     return False
 
 
@@ -543,6 +552,21 @@ def _slot_kind(s):
 
 def _matches_slot_kind(slot, kinds):
     return slot["kind"] in kinds or _slot_kind(slot) in kinds
+
+
+def _body_effect(text, facts):
+    if facts.get("nameSource") in ("ai", "unknown"):
+        facts = {**facts, "name": ""}
+    return check_body_effect(text, facts)
+
+
+def _seller_claim_text(text, facts, *, point=None):
+    sources = facts.get("sellerClaims")
+    if sources is None:
+        # Compatibility for direct facts callers; highlights alone have no provenance.
+        sources = [{"text": facts.get("sellerComment", "")}]
+        if facts.get("nameSource") == "seller":sources.append({"text": facts.get("name", "")})
+    return checks.seller_claim_text(text, sources, context_subject=point)
 
 
 def _slot_reasons(text,s,facts,plan):
@@ -575,9 +599,10 @@ def _slot_reasons(text,s,facts,plan):
     names=[facts.get("name",""),facts.get("clothingType",""),*facts.get("sellingPoints",[]),*[p["name"] for p in facts.get("parts",[])]]
     exempt=text
     for name in sorted(filter(None,names),key=len,reverse=True):exempt=exempt.replace(name,"")
-    if check_body_effect(text, facts)[0]:reasons.append("body_effect")
+    claim_text = _seller_claim_text(text, facts, point=s.get("point") if s["target"] == "part" else "원단" if kind == "fabric" else None)
+    if _body_effect(claim_text, facts)[0]:reasons.append("body_effect")
     for pattern,reason in [(_PROMOTION,"promotion"),(_PROCESS,"process_claim"),(_CARE,"care_claim"),(_CLAIMS,"unverified_claim"),(_BODY,"body_position"),(_HYPE,"hype")]:
-        source=exempt if reason != "body_position" else text
+        source = text if reason == "promotion" else claim_text if reason in ("unverified_claim", "body_position", "hype", "care_claim", "process_claim") else exempt
         for match in re.finditer(pattern,source,re.I):
             word=match[0]
             if reason=="promotion" and kind=="review" and word=="가격":pass
@@ -586,7 +611,7 @@ def _slot_reasons(text,s,facts,plan):
             if reason=="unverified_claim" and word in ("따뜻", "따듯", "따스") and facts.get("warmthEvidence"):continue
             if reason=="hype" and kind=="review" and word in ("인생템","무조건","최고"):continue
             if reason=="body_position" and (word in part_evidence or word in _json(facts.get("axes",{}))):continue
-            if md and reason not in ("promotion","unverified_claim") and re.search(re.escape(word),seller):continue
+            if md and reason in ("body_position", "process_claim") and re.search(re.escape(word),seller):continue
             reasons.append(reason);break
     if re.search(r"주어요[.!]?$|되어요[.!]?$|보아요[.!]?$",measured):reasons.append("uncontracted")
     if re.search(r"되어지|보여지|보여져|여겨지",text):reasons.append("double_passive")
@@ -616,9 +641,10 @@ def _slot_reasons(text,s,facts,plan):
         name=facts.get("name","")
         if name and name in text and not (md and name==facts.get("garment")):reasons.append("reread_name")
     if checks.size_advice(text, facts.get("fit", ""), faq_answer=answer):reasons.append("size_advice")
-    if re.search(r"하나도\s*안\s*춥|전혀\s*안\s*춥|추위.{0,5}없|완벽\s*보온",text):reasons.append("unverified_claim")
-    if re.search(r"사계절|한여름|한겨울|간절기",text) and not question and not (md and re.search(r"사계절|한여름|한겨울|간절기",seller)):
-        if not (answer and plan.get("topic")=="두께와 계절" and "간절기" in text and facts.get("faqEvidence",{}).get("sleeve")):reasons.append("season_claim")
+    if re.search(r"하나도\s*안\s*춥|전혀\s*안\s*춥|추위.{0,5}없|완벽\s*보온",claim_text):reasons.append("unverified_claim")
+    seasons = re.findall(r"사계절|한여름|한겨울|간절기", claim_text)
+    if not question and any(season != "간절기" or not (answer and plan.get("topic") == "두께와 계절"
+            and facts.get("faqEvidence", {}).get("sleeve")) for season in seasons):reasons.append("season_claim")
     if role=="title" and re.search(r"[?.]$|[요다][.!]?$",text):reasons.append("title_ending")
     if s["target"] in ("part","feature"):
         if s["target"]=="part" and re.search(_OTHER,exempt):reasons.append("other_garment")
@@ -627,8 +653,8 @@ def _slot_reasons(text,s,facts,plan):
         if s["target"]=="feature" and len(re.findall(r"[.!?](?:\s|$)",text))>1:reasons.append("sentence_count")
         if s["target"]=="part" and show:
             part=_part(facts,s.get("point"))
-            if not part.get("evidence") and not any(_part_name(s.get("point")) in h for h in facts.get("sellingPoints",[])):reasons.append("missing_part_evidence")
-            elif _unsupported_part_fact(text,part,warmth=facts.get("warmthEvidence",False)):reasons.append("unsupported_part_fact")
+            if not part.get("evidence") and not any(_part_name(s.get("point")) in h for h in facts.get("sellingPoints",[])) and claim_text == text:reasons.append("missing_part_evidence")
+            elif _unsupported_part_fact(text,part,warmth=facts.get("warmthEvidence",False),claim_text=claim_text):reasons.append("unsupported_part_fact")
         if plan.get("omit"):reasons.append("missing_part_evidence")
     if kind=="intro" and role=="body":
         if re.search(r"강조|해\s*주세요|해\s*주십시오|부각|보여\s*주세요",text):reasons.append("seller_instruction")
@@ -640,8 +666,8 @@ def _slot_reasons(text,s,facts,plan):
         if show and (len(lines)!=2 or any(not l.rstrip(".").endswith("니다") for l in lines)):reasons.append("voice")
         if not show and (not _ENDING_YO.search(text) or "니다" in text):reasons.append("voice")
     if kind=="fabric":
-        if re.search(r"복원력|친환경|보풀|따갑지|산뜻|충전재|줄지\s*않|물이?\s*빠지지\s*않",text):reasons.append("fabric_forbidden")
-        compact=re.sub(r"\s+","",text)
+        if re.search(r"복원력|친환경|보풀|따갑지|산뜻|충전재|줄지\s*않|물이?\s*빠지지\s*않",claim_text):reasons.append("fabric_forbidden")
+        compact=re.sub(r"\s+","",claim_text)
         if any(re.sub(r"\s+","",term) in compact for term in facts.get("fabricFeel",{}).get("forbidden",[])):reasons.append("fabric_forbidden")
     if role in ("fit.body","summary.line"):
         if show and re.search(r"[요다][.!]?$",text) or not show and not _ENDING_YO.search(text):reasons.append("voice")
@@ -655,16 +681,16 @@ def _slot_reasons(text,s,facts,plan):
     if answer:
         if 31<=n<=35:reasons.append("faq_length_gap")
         if show and not text.rstrip(".").endswith("니다") or not show and not _ENDING_YO.search(text):reasons.append("voice")
-        if re.search(r"비침(?:이|은)?\s*(?:전혀\s*)?없|늘어나지\s*않|늘어남\s*없",text):reasons.append("unverified_claim")
-        care_claim=re.search(_CARE+r"|말려|보관|젖|온수|뜨거|뜨겁|표백|삶|다림|다려|세제|세탁망|담가",text)
-        if care_claim and not _faq_care_supported(text,facts):reasons.append("unsupported_care")
+        if re.search(r"비침(?:이|은)?\s*(?:전혀\s*)?없|늘어나지\s*않|늘어남\s*없",claim_text):reasons.append("unverified_claim")
+        care_claim=re.search(_CARE+r"|말려|보관|젖|온수|뜨거|뜨겁|표백|삶|다림|다려|세제|세탁망|담가",claim_text)
+        if care_claim and not _faq_care_supported(claim_text,facts):reasons.append("unsupported_care")
     if kind=="review":
         if re.search(r"[함음움][.!?]*$",text):reasons.append("review_noun_ending")
         if plan.get("length"):
             low,high=plan["length"]
             if not low-3<=n<=high+3:reasons.append("review_length")
         if len(re.findall(r"[.!?](?:\s|$)",text))>1 or "\n" in text:reasons.append("sentence_count")
-        if re.search(r"\d|\b[SMLX]+\b|가격|가성비|배송|도착|세탁|빨래|건조|사진이랑|화면|실물",text):reasons.append("review_claim")
+        if re.search(r"\d|\b[SMLX]+\b|가격|가성비|배송|도착|사진이랑|화면|실물",text) or re.search(r"세탁|빨래|건조",claim_text):reasons.append("review_claim")
     if facts.get("garmentType")=="bottom" and re.search(r"오버\s*핏|품이?\s*(?:넉넉|여유)",text):reasons.append("bottom_top_fit")
     if _checks_trade_terms(s) or kind=="for_you":
         if checks.trade_terms(text):reasons.append("trade_term")
@@ -737,7 +763,7 @@ def validate(response, slots, facts, plans, *, exemplars=None):
         else:
             accepted[s["id"]]=text
             if s["target"]=="part":part_texts[s["point"]]=text
-            warnings.extend({"slotId": s["id"], **warning} for warning in check_body_effect(text, facts)[1])
+            warnings.extend({"slotId": s["id"], **warning} for warning in _body_effect(text, facts)[1])
         rows.append({"slotId":s["id"],"group":s["group"],"kind":s["kind"],"role":s["role"],"target":s["target"],"text":text if isinstance(text,str) else "","passed":not reasons,"reasons":list(dict.fromkeys(reasons))})
         if s["kind"]=="review" and isinstance(text,str):
             metric=_review_length(text,plans.get("slots",{}).get(s["id"],{}))
@@ -956,7 +982,7 @@ def _labels(response, slots):
         for row in response.get(name, []):
             label = row.get("label")
             if (not isinstance(label, str) or not label.strip() or len(re.sub(r"\s+", "", label)) > 8 or
-                    checks.trade_terms(label) or re.search(_HYPE, label) or
+                    checks.trade_terms(label) or re.search(_HYPE, label) or checks.has_promotion(label) or
                     re.search(r"[\n\r<>`]|[\x00-\x1f]", label)):
                 continue
             for slot in slots:
@@ -966,10 +992,10 @@ def _labels(response, slots):
 
 
 def md_fact_fallback(facts, template):
-    points = facts.get("sellingPoints") or [p.get("name") for p in facts.get("parts", [])]
-    point = next((p.strip() for p in points if isinstance(p, str) and p.strip()), "")
+    points = [*(facts.get("sellingPoints") or []), *[p.get("name") for p in facts.get("parts", [])]]
+    point = next((p.strip() for p in points if isinstance(p, str) and p.strip() and not checks.has_promotion(p)), "")
     garment = str(facts.get("garment") or facts.get("clothingType") or "").strip()
-    if not point or not garment:return ""
+    if not point or not garment or checks.has_promotion(garment):return ""
     final = ord(point[-1]) - ord("가")
     particle = "이" if 0 <= final < 11172 and final % 28 else "가"
     ending = "입니다." if template == "show" else "예요."
@@ -1163,16 +1189,13 @@ def _finish_result(slots, accepted, owners, latest, received, journal, original,
         identity = slot["id"]; text = accepted.get(identity, ""); fallback = False; fact_fallback = False
         required_empty = (_matches_slot_kind(slot, required_kinds) and not text and "missing_required" in latest.get(identity, {}).get("reasons", []))
         if not dry and not text and slot["kind"] == "intro" and slot["role"] == "body":
-            if cleaned and not required_empty:
-                if check_body_effect(cleaned, facts)[0]:
-                    journal["warnings"].append({"reason": "body_effect_seller_fallback_rejected", "slotId": identity})
-                else:text = cleaned; fallback = True
+            if cleaned:text = cleaned; fallback = True
             elif not cleaned:
                 text = md_fact_fallback(facts, slot["template"])
-                if check_body_effect(text, facts)[0]:text = ""
+                if _body_effect(_seller_claim_text(text, facts), facts)[0]:text = ""
                 fact_fallback = bool(text)
         if text and (fallback or fact_fallback):
-            journal["warnings"].extend({"slotId": identity, **warning} for warning in check_body_effect(text, facts)[1])
+            journal["warnings"].extend({"slotId": identity, **warning} for warning in _body_effect(text, facts)[1])
         row = deepcopy(owners.get(identity) or (latest if required_empty else received).get(identity) or latest.get(identity) or
             {"slotId": identity, "group": slot["group"], "kind": slot["kind"], "role": slot["role"], "target": slot["target"], "passed": False, "reasons": ["not_called"]})
         source = (("seller_original" if cleaned == original else "seller_cleaned") if fallback else "fact_fallback" if fact_fallback else "ai")

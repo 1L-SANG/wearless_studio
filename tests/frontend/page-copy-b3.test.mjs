@@ -100,7 +100,7 @@ for (const kind of ['faq', 'review', 'for_you']) test(`${kind} compacts complete
   assert.ok(!assemblePage(value).flatMap(b => b.elements).some(el => el.copyRole?.startsWith('items.')));
 });
 
-for (const template of ['emo', 'show']) test(`${template} missing first detail keeps surviving photo and name together`, () => {
+for (const template of ['emo', 'show']) test(`${template} missing first detail keeps all photos with their original names`, () => {
   const value = input(`${template}-2-mono`);
   value.storyboard = value.storyboard.filter(card => card.pageSectionKind === 'points');
   value.analysis.partDescriptionCopy = [{ point: '소매 단', label: '소매 끝', desc: '소매 끝을 잡아주는 골지 짜임' }];
@@ -108,10 +108,10 @@ for (const template of ['emo', 'show']) test(`${template} missing first detail k
   value.copyResults = [{ blockId: value.storyboard[0].id, texts: [] }];
   const completed = assemblePage(value);
   const elements = completed.flatMap(b => b.elements);
-  assert.deepEqual(elements.filter(el => el.type === 'image').map(el => el.sourceBlockId), [`${template}.points.detail2`]);
-  assert.equal(elements.find(el => el.copyRole === 'items.0.name').text, '소매 끝');
-  assert.equal(elements.find(el => el.copyRole === 'items.0.desc').text, value.analysis.partDescriptionCopy[0].desc);
-  assert.ok(!elements.some(el => el.copyRole?.startsWith('items.1')));
+  assert.deepEqual(elements.filter(el => el.type === 'image').map(el => el.sourceBlockId), [`${template}.points.detail1`, `${template}.points.detail2`]);
+  assert.equal(elements.find(el => el.copyRole === 'items.1.name').text, '소매 끝');
+  assert.equal(elements.find(el => el.copyRole === 'items.1.desc').text, value.analysis.partDescriptionCopy[0].desc);
+  assert.ok(elements.find(el => el.copyRole === 'items.0.desc').hidden);
   const pending = decorateGenBlocks(assemblePage({ ...value, copyResults: [], analysis: { ...value.analysis, partDescriptionCopy: [] } }),
     { cuts: {}, copy: {}, status: 'running' });
   const merged = mergeServerBlocks(pending, completed);
@@ -126,12 +126,12 @@ test('editing nonempty body preserves a manually hidden avatar', () => {
   assert.ok(who(edit(hidden, 0, '고친 본문이에요')).hidden);
 });
 
-test('explicit empty intro completion cannot restore rejected seller text', () => {
+test('explicit empty intro completion restores the seller-owned claim', () => {
   const value = input('emo-2-mono');
   value.storyboard = value.storyboard.filter(b => b.pageSectionKind === 'intro');
   value.analysis.mdComment = '군살을 완벽하게 커버해요';
   value.copyResults = [{ blockId: value.storyboard[0].id, texts: [] }];
-  assert.equal(bodies(assemblePage(value)[0])[0].text, '');
+  assert.equal(bodies(assemblePage(value)[0])[0].text, value.analysis.mdComment);
 });
 
 test('typing remeasures body after restoring the narrower avatar column', async () => {

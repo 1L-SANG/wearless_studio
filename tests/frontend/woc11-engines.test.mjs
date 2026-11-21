@@ -168,8 +168,9 @@ test('WOC11 consumes part copy only while saved legacy descriptions keep old sel
     const elements = itemsOf(input);
     if (design === 'P06-D01') assert.equal(textOf(elements, 'items.0.desc').text, '기존 판매 특징 문장');
     else {
-      assert.ok(!textOf(elements, 'items.0.desc'));
-      assert.ok(!elements.some(el => el.type === 'image'), 'completed missing descriptions remove their whole cards');
+      assert.equal(textOf(elements, 'items.0.desc').text, '');
+      assert.ok(textOf(elements, 'items.0.desc').hidden);
+      assert.equal(elements.filter(el => el.type === 'image').length, 2, 'copy failure retains both photos');
     }
   }
 });
