@@ -11,6 +11,7 @@ import numpy as np
 from PIL import Image
 
 from . import fal_api, fal_cutout, matching_cutout
+from .garment_color_consistency import linear_to_oklab
 
 log = logging.getLogger("wearless.qwen_flatlay")
 
@@ -75,11 +76,12 @@ def _srgb_to_linear(rgb: np.ndarray) -> np.ndarray:
     return np.where(srgb <= .04045, srgb / 12.92, ((srgb + .055) / 1.055) ** 2.4)
 
 
-def _color_target(ref: np.ndarray, reference_mask: np.ndarray) -> np.ndarray:
+def _color_target(ref: np.ndarray, reference_mask: np.ndarray, *, direction_only: bool = False) -> np.ndarray | None:
     # 원본 중앙값을 유지해 추정 실패 시 기존 보정과 정확히 같은 목표를 쓴다.
-    ref_lab = cv2.cvtColor(ref[:, :, :3].astype(np.float32) / 255, cv2.COLOR_RGB2Lab)
-    original = np.median(ref_lab[reference_mask], axis=0)
-    target = original.copy()
+    if not direction_only:
+        ref_lab = cv2.cvtColor(ref[:, :, :3].astype(np.float32) / 255, cv2.COLOR_RGB2Lab)
+        original = np.median(ref_lab[reference_mask], axis=0)
+        target = original.copy()
     illumination = np.ones(3)
     exposure = 1.
     background_pixels = 0
@@ -148,6 +150,11 @@ def _color_target(ref: np.ndarray, reference_mask: np.ndarray) -> np.ndarray:
             else:
                 # 단색 배경만으로는 벽 색과 조명 색을 구분할 수 없다.
                 reason = "sog_only"
+            if direction_only:
+                if reason != "both" or weight == 0:
+                    return None
+                corrected = np.clip(_srgb_to_linear(ref[:, :, :3][reference_mask]) / illumination, 0, 1)
+                return np.median(linear_to_oklab(corrected), axis=0)[1:]
             garment_linear = _srgb_to_linear(ref[:, :, :3][ref[:, :, 3] > 127])
             g99 = float(np.percentile(garment_linear @ LUMINANCE_WEIGHTS, 99))
             if not np.isfinite(g99) or g99 <= 0:
@@ -182,6 +189,8 @@ def _color_target(ref: np.ndarray, reference_mask: np.ndarray) -> np.ndarray:
                 shift *= MAX_CHROMA_SHIFT / distance
             target[1:] = original[1:] + shift
     except Exception as exc:
+        if direction_only:
+            return None
         target = original.copy()
         illumination = np.ones(3)
         exposure = 1.

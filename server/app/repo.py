@@ -2083,7 +2083,8 @@ async def get_project_asset_for_user(
         await cur.execute(
             "select id::text as id, project_id::text as project_id, r2_bucket, r2_key, "
             "mime_type, source, width, height, metadata from assets "
-            "where id = %s and user_id = %s and project_id = %s and deleted_at is null",
+            "where id = %s and user_id = %s and project_id = %s and deleted_at is null "
+            "and (metadata->>'internalGarmentColorTarget') is null",
             (asset_id, user_id, project_id),
         )
         return await cur.fetchone()
@@ -4809,13 +4810,17 @@ async def finalize_analyze_success(
             "insert into analyses (project_id, payload) values (%s, %s) "
             "on conflict (project_id) do update set payload = excluded.payload || "
             "case when analyses.payload ? 'pageStyle' then jsonb_build_object('pageStyle', analyses.payload->'pageStyle') else '{}'::jsonb end "
+            "|| case when analyses.payload ? 'garmentColorSliders' "
+            "then jsonb_build_object('garmentColorSliders', analyses.payload->'garmentColorSliders') else '{}'::jsonb end "
             "returning payload",
             (project_id, Json(analysis_payload)),
         )
         saved_analysis = await cur.fetchone()
-        if saved_analysis and saved_analysis.get("payload", {}).get("pageStyle"):
-            analysis_payload = {**analysis_payload, "pageStyle": saved_analysis["payload"]["pageStyle"]}
-            result = {**result, "data": {**(result.get("data") or {}), "pageStyle": analysis_payload["pageStyle"]}}
+        saved_payload = (saved_analysis or {}).get("payload") or {}
+        retained = {key: saved_payload[key] for key in ("pageStyle", "garmentColorSliders")
+                    if saved_payload.get(key)}
+        if retained:
+            result = {**result, "data": {**(result.get("data") or {}), **retained}}
         # metadata 병합 저장(provider·promptVersion) — provider 품질/폴백 추적·spike 데이터 근거.
         await cur.execute(
             "update jobs set status = 'done', result = %s, progress = 100, "
