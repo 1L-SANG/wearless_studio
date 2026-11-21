@@ -71,16 +71,6 @@ test('model drawer search uses displayName when the catalog has no item name', (
   assert.deepEqual(helper('filterOutfitItems')(models, { role: 'model', search: ' 가을 ' }).map(x => x.id), ['one']);
 });
 
-test('compressed matching height uses the 0.7 ratio and invalid measurements remain finite', () => {
-  const height = helper('compressedMatchHeight');
-  near(height(128, 64, 100), 174.9379318309245);
-  near(height(100, 100, 64), 73.16880830837224);
-  assert.equal(height(100, 64, 64), 100);
-  assert.equal(height(100, 0, 100), 100);
-  assert.equal(height(100, 64, -1), 100);
-  assert.equal(height(NaN, 64, 100), 0);
-});
-
 test('board stacks top and bottom without overlap and keeps product and shoes at physical scale', () => {
   const layout = helper('buildOutfitBoardLayout')({ clothingType: 'top',
     product: { cm: 64, ar: 0.95, name: '상품' },
@@ -95,7 +85,7 @@ test('board stacks top and bottom without overlap and keeps product and shoes at
   near(product.width, product.height * .95);
   near(product.x, (244 - product.width) / 2);
   assert.equal(product.y, 10);
-  near(bottom.height, product.height * (100 / 64) ** .7);
+  near(bottom.height, product.height * 100 / 64);
   near(bottom.y - product.y - product.height, 10);
   near(shoes.y - bottom.y - bottom.height, 10);
   near(shoes.height, shoeCm * scale);
@@ -113,7 +103,7 @@ test('outer is behind its offset inner and matching bottom uses the visible prod
   near((inner.x + inner.width / 2) - (product.x + product.width / 2), 44);
   near(inner.y - product.y, product.height * 0.3);
   near(bottom.y - Math.max(product.y + product.height, inner.y + inner.height), 10);
-  near(bottom.height / (inner.y + inner.height - product.y), 1.129807620631004);
+  near(bottom.height / (inner.y + inner.height - product.y), 100 / 84);
   near(shoes.y - bottom.y - bottom.height, 10);
 });
 
@@ -122,7 +112,7 @@ test('bottom layouts put matching top first and dresses do not invent garment sl
   const bottom = layout({ clothingType: 'bottom', product: { cm: 100, ar: 0.52 },
     items: { top: { cm: 64, ar: 0.95 }, footwear: { ar: 2 } } });
   assert.deepEqual(bottom.pieces.map(x => x.slot), ['top', 'product', 'footwear']);
-  near(bottom.pieces[0].height / bottom.pieces[1].height, 0.7316880830837224);
+  near(bottom.pieces[0].height / bottom.pieces[1].height, 0.64);
   const dress = layout({ clothingType: 'dress', product: { cm: 110, ar: 0.6 }, items: {} });
   assert.deepEqual(dress.pieces.map(x => x.slot), ['product', 'footwear']);
   assert.ok(dress.height <= 440);

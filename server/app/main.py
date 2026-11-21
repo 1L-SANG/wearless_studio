@@ -483,6 +483,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 별도 특징 요청과 합치기 재시도는 기존 분석 한도를 소비하지 않는다.
     app.state.public_feature_limiter = PublicAnalysisRateLimiter(hourly_limit=10, daily_limit=30)
     app.state.user_feature_limiter = PublicAnalysisRateLimiter(hourly_limit=20, daily_limit=60)
+    app.state.public_garment_color_source_limiter = PublicAnalysisRateLimiter(hourly_limit=40, daily_limit=120)
+    app.state.user_garment_color_source_limiter = PublicAnalysisRateLimiter(hourly_limit=60, daily_limit=200)
     app.state.public_merge_limiter = PublicAnalysisRateLimiter(hourly_limit=20, daily_limit=60)
     app.state.user_merge_limiter = PublicAnalysisRateLimiter(hourly_limit=40, daily_limit=120)
     # 카카오 OIDC 인가코드 교환도 미인증 공개 라우트라 같은 안전밸브를 단다(IP 기준).

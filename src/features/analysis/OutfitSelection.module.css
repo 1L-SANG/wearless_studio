@@ -146,3 +146,7 @@
 .boardAccessoryPending { background: color-mix(in srgb, var(--fg-1) 7%, var(--bg-2)); animation: skeletonPulse 1s ease-in-out infinite alternate; }
 .selectionHint { margin: 10px 2px 0; color: var(--fg-2); font-size: 12px; line-height: 1.5; }
 @media (prefers-reduced-motion: reduce) { .boardAccessoryPending { animation: none; } }
+/* 내 옷 색 맞추기: 판이 열리면 보드에서 내 상품만 또렷하게 */
+.boardFocus .piece:not(.productPiece), .boardFocus .boardAccessory { opacity: .3; transition: opacity 200ms; }
+.productPiece:hover { background: color-mix(in srgb, var(--fg-1) 3%, transparent); }
+.tonedProduct { display: block; width: 100%; height: 100%; }

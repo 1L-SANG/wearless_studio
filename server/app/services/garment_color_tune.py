@@ -234,3 +234,45 @@ async def after_color_check(settings, *, master: InlineImage, target: InlineImag
     if record.get("reason") == "over_cap":
         warnings.append({"code": "color_tune_over_cap"})
     return data, mime
+
+
+async def segment_seller_garment(settings, data: bytes, rgba: np.ndarray, *,
+                                  clothing_type: str, sub_category=None,
+                                  protect_matching: bool = True, require_matching: bool = False,
+                                  detail: bool = False) -> np.ndarray:
+    """Find one sold-garment mask, optionally excluding the coordinating garment."""
+    prepared = await run_cpu_bound(fal_api.prepare_image, data, color_managed=True)
+    rgb = rgba[..., :3]
+    prompt, _ = tone_mask.prompts_for(clothing_type, sub_category)
+    other_prompt = _MATCHING_PROMPTS.get(matching.complementary_type(clothing_type))
+
+    async def candidates(text):
+        return await tone_mask.candidates_for_prepared_image(
+            settings, prepared, rgb, (text,), min_score=MIN_CONFIDENCE)
+
+    masks = await candidates(prompt)
+    if not masks:
+        raise tone_mask.NoGarmentCandidate("no seller garment")
+    protected = await candidates(other_prompt) if protect_matching and other_prompt else []
+    if require_matching and not await run_cpu_bound(_plausible_masks, protected):
+        raise MatchingUnverified
+    return await run_cpu_bound(_select_seller_garment, masks, protected, rgba[..., 3], detail=detail)
+
+
+def _select_seller_garment(masks, protected, alpha, *, detail):
+    candidates = []
+    for mask in masks:
+        mask = mask & (alpha > 0)
+        accepted, reason = tone_mask.plausible(tone_mask.candidate_stats(mask))
+        if accepted or (detail and reason in {"near_full_frame", "border_dominated"}):
+            candidates.append(mask)
+    plausible = tone_mask.dedupe(candidates)
+    separated = []
+    for mask in plausible:
+        overlap = _overlap(mask, protected)
+        if overlap.sum() <= MAX_OVERLAP_FRAC * mask.sum():
+            separated.append(mask & ~overlap)
+    if len(separated) != 1:
+        raise tone_mask.NoGarmentCandidate("ambiguous seller garment")
+    mask, _, _ = consistency.trim_specks(separated[0])
+    return np.where(mask, alpha, 0).astype(np.uint8)

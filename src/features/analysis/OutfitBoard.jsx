@@ -6,6 +6,7 @@ import { OUTFIT_SLOT_LABELS, complementaryOutfitSlot, outfitSlotsFor, selectedOu
 import { buildOutfitBoardLayout, selectProductBoardImage, shoePairImageLayers } from '@/lib/outfitPresentation.js';
 import { croppedImageStyle, getOutfitImageBounds, imageBoundsAspectRatio, loadOutfitImageBounds } from '@/lib/outfitImageBounds.js';
 import { OutfitRoleIcon, outfitImage, outfitName } from './OutfitCatalog.jsx';
+import { ToneCanvas } from './GarmentColorPanel.jsx';
 import styles from './OutfitSelection.module.css';
 
 // 총장이 없는 후보는 카탈로그의 길이 분류를 사용한다. 실측을 분석 값으로 저장하지 않는다.
@@ -36,7 +37,7 @@ export function garmentDisplayLength(item, role) {
   return DEFAULT_CM[role] || 64;
 }
 
-export function OutfitBoard({ draftVisuals, analysis, product, projectId, onOpenRole, skeleton = false }) {
+export function OutfitBoard({ draftVisuals, analysis, product, projectId, onOpenRole, skeleton = false, productColor = null }) {
   const [visuals, setVisuals] = useState(null);
   const [ratios, setRatios] = useState({});
   const [measurements, setMeasurements] = useState({});
@@ -83,7 +84,9 @@ export function OutfitBoard({ draftVisuals, analysis, product, projectId, onOpen
   };
   const kind = analysis.clothingType || 'top';
   const productMeasurement = measurementFor(productSrc);
-  const layout = buildOutfitBoardLayout({ clothingType: kind, product: { slot: 'product', src: productSrc, name: product?.name || '내 상품', cm: garmentDisplayLength(analysis, kind), ar: imageBoundsAspectRatio(productMeasurement, (productMeasurement !== undefined && originalRatio(productSrc)) || shownVisuals?.front?.width / shownVisuals?.front?.height || (kind === 'bottom' ? .52 : .85)) }, items: { ...selected, footwear: selected.footwear?.id ? selected.footwear : null,
+  // 맞춘 색 누끼를 그릴 때는 그 누끼의 가로세로 비율로 칸을 잡는다(다른 비율 칸에 맞춰 줄이면 길이 비율이 틀어진다).
+  const tonePreview = productColor?.source?.preview;
+  const layout = buildOutfitBoardLayout({ clothingType: kind, product: { slot: 'product', src: productSrc, name: product?.name || '내 상품', cm: garmentDisplayLength(analysis, kind), ar: tonePreview ? tonePreview.width / tonePreview.height : imageBoundsAspectRatio(productMeasurement, (productMeasurement !== undefined && originalRatio(productSrc)) || shownVisuals?.front?.width / shownVisuals?.front?.height || (kind === 'bottom' ? .52 : .85)) }, items: { ...selected, footwear: selected.footwear?.id ? selected.footwear : null,
     bag: optionalItem('bag'), accessory: optionalItem('accessory') }, maxHeight, width: 276 });
   const measurementSources = JSON.stringify([...new Set(layout.pieces.map(piece => piece.src).filter(Boolean))]);
   useEffect(() => {
@@ -111,18 +114,22 @@ export function OutfitBoard({ draftVisuals, analysis, product, projectId, onOpen
   return <aside className={styles.preview} aria-label="코디 미리보기">
     <h3>미리보기</h3>
     <div className={styles.reference}><Info size={12} aria-hidden="true" /><b>참고용</b><span>코디 느낌만 봐 주세요. 의류컷은 별개로 만들어요</span></div>
-    <div className={`${styles.board} ${skeleton ? styles.boardLoading : ''}`} aria-busy={skeleton}>
+    <div className={`${styles.board} ${skeleton ? styles.boardLoading : ''} ${productColor?.open ? styles.boardFocus : ''}`} aria-busy={skeleton}>
       <div className={styles.boardCanvas} style={{ width: layout.width, height: layout.height }}>
         {layout.pieces.map((piece) => {
           const item = piece.slot === 'product' ? { src: productSrc, name: product?.name || '내 상품' } : selected[piece.slot];
           const label = piece.slot === 'product' ? '내 상품' : OUTFIT_SLOT_LABELS[piece.slot];
           const unavailable = analysis.outfitRecommendation?.roleStatus?.[piece.slot] === 'unavailable';
           const preparing = piece.slot === 'product' && !projectId && draftVisuals?.front?.tidyStatus === 'processing';
-          const content = preparing ? <span className={styles.ghost} role="status"><b>준비 중</b></span> : item?.src
+          const toned = piece.slot === 'product' && productColor?.source;
+          const content = toned ? <ToneCanvas source={productColor.source} sliders={productColor.sliders} className={styles.tonedProduct} width={Math.round(piece.width * 2)} height={Math.round(piece.height * 2)} />
+            : preparing ? <span className={styles.ghost} role="status"><b>준비 중</b></span> : item?.src
             ? piece.slot === 'footwear' && !item.measurementFailed ? shoePairImageLayers().map((layer, index) => image(item, layer, index === 0)) : image(item)
             : <span className={styles.ghost}><OutfitRoleIcon role={piece.slot} /><b>{label}</b></span>;
           const box = { left: piece.x, top: piece.y, width: piece.width, height: piece.height, zIndex: piece.zIndex,
-            visibility: !preparing && item?.src && measurementFor(item.src) === undefined ? 'hidden' : undefined };
+            visibility: !toned && !preparing && item?.src && measurementFor(item.src) === undefined ? 'hidden' : undefined };
+          if (piece.slot === 'product' && productColor) return <button key={piece.slot} type="button" className={`${styles.piece} ${styles.productPiece}`} style={box}
+            aria-label="내 옷 색 확인" aria-expanded={productColor.open} aria-controls="garment-color-panel" onClick={(event) => productColor.onOpen(event.currentTarget)}>{content}</button>;
           return piece.slot === 'product' || unavailable
             ? <div key={piece.slot} className={styles.piece} style={box}>{content}</div>
             : <button key={piece.slot} type="button" className={styles.piece} style={box} aria-label={`${label} 바꾸기`} onClick={() => onOpenRole(piece.slot)}>{content}</button>;

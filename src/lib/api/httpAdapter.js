@@ -874,6 +874,21 @@ export const httpAdapter = {
   async measureGarmentColors(projectId) {
     return http(`/v1/projects/${projectId}/analysis/garment-colors:measure`, { method: 'POST' });
   },
+  // 내 옷 색 맞추기 (documents/garment_color_target_spec.md §6). 셀러 입력은 분석 키 garmentColorSliders로
+  // 저장한다. 여기서는 켜짐 여부와 미리보기 누끼만 받는다. 새 상품(프로젝트 없음)은 사진 파일을 보낸다.
+  async getGarmentColorStatus(opts = {}) {
+    return http('/v1/public/garment-color-targets/status', { ...opts, requireAuth: false, suppressErrorLog: true });
+  },
+  async getGarmentColorSource(projectId, { colorId, image, clothingType, subCategory } = {}, { signal } = {}) {
+    if (projectId) {
+      return http(`/v1/projects/${projectId}/garment-color-source`, { method: 'POST', body: { colorId }, signal });
+    }
+    const form = new FormData();
+    form.append('image', image, image?.name || 'front.jpg');
+    form.append('clothingType', clothingType || 'top');
+    if (subCategory) form.append('subCategory', subCategory);
+    return publicHttp('/v1/public/garment-color-source', form, { signal });
+  },
   // 세탁 관리법 AI 초안 (동기·무과금) — 서버가 상품 종류·소재로 짧은 문구 생성. bare string 반환(mock 동일).
   // projectId 없으면(비로그인) 서버 project 가 없으니 클라 기본 문구로 폴백.
   async draftWashCare(projectId) {

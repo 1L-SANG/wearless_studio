@@ -11,6 +11,9 @@ from hashlib import sha256
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from starlette.datastructures import UploadFile as FormUpload
+from starlette.formparsers import MultiPartException, MultiPartParser
+from python_multipart.exceptions import MultipartParseError
 
 from . import rate_limit, repo
 from .agents import product_evidence_contract, detail_recommendations, feature_extractor, points_merge
@@ -18,7 +21,7 @@ from .agents.vision_llm import VisionError
 from .auth import optional_user
 from .client_ip import client_ip as _client_ip
 from .r2 import ext_for_mime
-from .services import outfit
+from .services import garment_color_target, garment_color_target_sources, outfit
 from .routes import MAX_UPLOAD_BYTES, _require_outfit_props_ready
 from .workers.analyze_job import analyze_image_bytes, analyze_core_image_bytes, extract_image_features
 
@@ -27,6 +30,7 @@ logger = logging.getLogger("wearless.public_analysis")
 MAX_PUBLIC_REQUEST_BYTES = 60 * 1024 * 1024
 PUBLIC_ANALYSIS_CONCURRENCY = 4
 _analysis_semaphore = asyncio.Semaphore(PUBLIC_ANALYSIS_CONCURRENCY)
+_garment_color_source_semaphore = asyncio.Semaphore(PUBLIC_ANALYSIS_CONCURRENCY)
 PUBLIC_FEATURE_CONCURRENCY = 4
 _feature_semaphore = asyncio.Semaphore(PUBLIC_FEATURE_CONCURRENCY)
 
@@ -169,7 +173,7 @@ def _enforce_public_limit(request, authenticated_user, kind):
 
 
 @asynccontextmanager
-async def _public_slot(request, authenticated_user, semaphore, kind):
+async def _processing_slot(semaphore):
     # 빈 슬롯이 없으면 한도를 차감하지 않고 즉시 거절한다. 획득 뒤에는 항상 반환한다.
     if semaphore.locked():
         raise HTTPException(status_code=429, detail={
@@ -177,10 +181,16 @@ async def _public_slot(request, authenticated_user, semaphore, kind):
         })
     await semaphore.acquire()
     try:
-        _enforce_public_limit(request, authenticated_user, kind)
         yield
     finally:
         semaphore.release()
+
+
+@asynccontextmanager
+async def _public_slot(request, authenticated_user, semaphore, kind):
+    async with _processing_slot(semaphore):
+        _enforce_public_limit(request, authenticated_user, kind)
+        yield
 
 
 def _handoff_unavailable():
@@ -306,6 +316,73 @@ async def public_recommend_outfit(request: Request, images: list[UploadFile] = F
         source_images, product = await _read_analysis_inputs(images, slots, productContext)
         fields = await _public_outfit_fields(request, source_images, product, analysis, slots, role=role, handoff=handoff)
     return JSONResponse({"data": fields})
+
+
+@router.get("/garment-color-targets/status", tags=["Public Analysis"])
+async def garment_color_target_status(request: Request):
+    if not request.app.state.settings.garment_color_target_enabled:
+        return {"enabled": False}
+    return {"enabled": True, "toneVersion": garment_color_target.TONE_VERSION}
+
+
+async def _garment_color_form(request):
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type != "multipart/form-data":
+        raise _bad_request("invalid_input", "상품 사진과 옷 종류를 다시 확인해 주세요.")
+
+    async def bounded_stream():
+        total = 0
+        async for chunk in request.stream():
+            total += len(chunk)
+            if total > MAX_UPLOAD_BYTES + 64 * 1024:
+                raise MultiPartException("file_too_large")
+            yield chunk
+
+    try:
+        form = await MultiPartParser(
+            request.headers, bounded_stream(), max_files=1, max_fields=2, max_part_size=4096,
+        ).parse()
+    except MultiPartException as exc:
+        if exc.message == "file_too_large":
+            raise _bad_request("file_too_large", "사진 한 장은 25MB보다 작아야 해요.") from exc
+        raise _bad_request("invalid_input", "상품 사진과 옷 종류를 다시 확인해 주세요.") from exc
+    except (MultipartParseError, KeyError) as exc:
+        # 깨진 본문이나 boundary 없는 헤더는 파서가 이 오류로 끝난다. 입력 오류라 400이다.
+        raise _bad_request("invalid_input", "상품 사진과 옷 종류를 다시 확인해 주세요.") from exc
+    try:
+        image = form.get("image")
+        clothing_type = form.get("clothingType")
+        sub_category = form.get("subCategory")
+        if (not isinstance(image, FormUpload) or not isinstance(clothing_type, str)
+                or not clothing_type.strip() or (sub_category is not None and not isinstance(sub_category, str))):
+            raise _bad_request("invalid_input", "상품 사진과 옷 종류를 다시 확인해 주세요.")
+        data = await image.read(MAX_UPLOAD_BYTES + 1)
+        if len(data) > MAX_UPLOAD_BYTES:
+            raise _bad_request("file_too_large", "사진 한 장은 25MB보다 작아야 해요.")
+        if _detected_image_mime(data) is None:
+            raise _bad_request("invalid_image_content", "실제 이미지 파일만 올려주세요.")
+        return data, clothing_type, sub_category
+    finally:
+        await form.close()
+
+
+@router.post("/garment-color-source", tags=["Public Analysis"],
+             openapi_extra={"requestBody": {"required": True, "content": {"multipart/form-data": {
+                 "schema": {"type": "object", "required": ["image", "clothingType"], "properties": {
+                     "image": {"type": "string", "format": "binary"}, "clothingType": {"type": "string"},
+                     "subCategory": {"type": "string"},
+                 }},
+             }}}})
+async def public_garment_color_source(request: Request, authenticated_user: str | None = Depends(optional_user)):
+    settings = request.app.state.settings
+    if not settings.garment_color_target_enabled:
+        raise HTTPException(status_code=404)
+    _enforce_public_limit(request, authenticated_user, "garment_color_source")
+    data, clothing_type, sub_category = await _garment_color_form(request)
+    async with _processing_slot(_garment_color_source_semaphore):
+        return await garment_color_target_sources.preview(
+            settings, data, clothing_type=clothing_type, sub_category=sub_category,
+        )
 
 
 @router.post("/analyze", tags=["Public Analysis"], summary="비로그인 상품 사진 AI 분석")
