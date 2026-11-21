@@ -261,9 +261,9 @@ test('생성 결과는 의류에 남고 현재 탭을 바꾸지 않는다', () =
 test('새 UI는 CSS 변수로 배치하고 내보내기에서 제외한다', () => {
   assert.doesNotMatch(layer, /style=\{/);
   assert.match(layer, /style\.setProperty/);
-  const exportSource = read('../../src/features/editor/editorExport.js');
-  assert.match(exportSource, /'\.canvas-ai-layer'/);
-  assert.match(exportSource, /'\.canvas-ai-slot-progress'/);
+  const exportContent = read('../../src/features/editor/editorExportContent.js');
+  assert.match(exportContent, /'\.canvas-ai-layer'/);
+  assert.match(exportContent, /'\.canvas-ai-slot-progress'/);
   assert.match(css, /\.ed-body\s*\{[^}]*position: relative/);
 });
 

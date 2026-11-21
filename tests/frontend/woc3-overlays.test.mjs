@@ -7,6 +7,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { assemblePage, collectOverlayRegions } from '../../src/lib/pageTemplates/assemble.js';
 import { pageTemplatesCatalog as catalog, validateCatalog } from '../../src/lib/pageTemplates/catalog.js';
+import { baseColorOf, resolvePageTokens } from '../../src/lib/pageTemplates/tokens.js';
 
 const fixture = JSON.parse(readFileSync(new URL('../fixtures/page_templates_cases.json', import.meta.url)));
 const ids = { review: ['I09-D06', 'I09-SCRIM-01'], faq: ['T08-D07', 'T08-SCRIM-01'] };
@@ -36,7 +37,14 @@ for (const kind of ['review', 'faq']) {
       assert.equal(bubble.fill, '#ffffff');
       assert.ok(bubble.w <= 731);
       assert.equal(index % 2 ? bubble.x + bubble.w : bubble.x, index % 2 ? 930 : 70);
-      assert.ok(bubble.y > photo.y + 625 && bubble.y + bubble.h <= photo.y + 1162.5);
+      const heading = elements.find(el => el.copyRole === (kind === 'review' ? 'lead' : 'title'));
+      assert.ok(bubble.y > photo.y && bubble.y >= heading.y + heading.h && bubble.y + bubble.h <= photo.y + 1162.5);
+      if (index) assert.ok(bubble.y > bubbles[index - 1].y + bubbles[index - 1].h);
+      if (kind === 'review') {
+        const star = elements.find(el => el.copyRole === `items.${index}.stars`);
+        const copy = elements.find(el => el.copyRole === `items.${index}.text`);
+        assert.ok(star.y >= bubble.y && star.y + star.h < copy.y);
+      }
       assert.equal(bubble.boxShadow, '0px 3px 12px rgba(0, 0, 0, 0.18)');
     }
     assert.equal(bubbles.at(-1).y + bubbles.at(-1).h, photo.y + 1162.5);
@@ -53,10 +61,15 @@ for (const kind of ['review', 'faq']) {
     const elements = assembled(input);
     assert.equal(elements.filter(element => element.type === 'image').length, 1);
     const scrim = elements.find(element => element.type === 'shape');
-    assert.deepEqual([scrim.x, scrim.y, scrim.w, scrim.h], [0, elements.find(el => el.type === 'image').y + 525, 1000, 725]);
-    assert.equal(scrim.fill, 'linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.72) 100%)');
+    assert.deepEqual([scrim.x, scrim.y, scrim.w, scrim.h], [0, elements.find(el => el.type === 'image').y + (kind === 'review' ? 312.5 : 525), 1000, kind === 'review' ? 937.5 : 725]);
+    if (kind === 'review') assert.match(scrim.fill, /^linear-gradient\(180deg, rgba\(0, 0, 0, 0\) 0%, rgba\(0, 0, 0, 0\.56\) [\d.]+%, rgba\(0, 0, 0, 0\.72\) 100%\)$/);
+    else assert.equal(scrim.fill, 'linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.72) 100%)');
     assert.equal(elements.filter(element => element.type === 'shape').length, 1);
-    assert.ok(elements.filter(element => element.type === 'text' && element.copyRole !== 'label').every(element => element.style.color === '#ffffff'));
+    assert.ok(elements.filter(element => element.type === 'text' && element.copyRole !== 'label'
+      && !element.copyRole?.endsWith('.stars')).every(element => element.style.color === '#ffffff'));
+    const stars = elements.filter(element => element.copyRole?.endsWith('.stars'));
+    assert.equal(stars.length, kind === 'review' ? 3 : 0);
+    assert.ok(stars.every(star => star.text === '★★★★★' && star.style.color === '#ffffff'));
     assert.deepEqual(collectOverlayRegions(input), []);
   });
 }

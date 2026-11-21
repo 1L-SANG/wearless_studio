@@ -400,26 +400,32 @@
         {
           "copyRole": "title",
           "kind": "title",
-          "source": "ai",
+          "source": "aiDraft",
           "default": "소재 제목",
           "maxChars": 20,
           "factPath": null,
           "itemCount": null,
           "style": "titleKo",
           "color": "ink",
-          "uppercase": false
+          "uppercase": false,
+          "maxCharsByTemplate": {
+            "show": 16
+          }
         },
         {
           "copyRole": "body",
           "kind": "body",
-          "source": "ai",
+          "source": "aiDraft",
           "default": "촉감과 소재 특징",
-          "maxChars": 60,
+          "maxChars": 50,
           "factPath": null,
           "itemCount": null,
           "style": "body",
           "color": "ink",
-          "uppercase": false
+          "uppercase": false,
+          "maxCharsByTemplate": {
+            "show": 56
+          }
         },
         {
           "copyRole": "mix",
@@ -506,7 +512,11 @@
           "itemCount": null,
           "style": "body",
           "color": "ink",
-          "uppercase": false
+          "uppercase": false,
+          "maxCharsFromSeller": {
+            "min": 120,
+            "max": 300
+          }
         },
         {
           "copyRole": "summary.n",
@@ -612,9 +622,9 @@
         {
           "copyRole": "fit.tip",
           "kind": "body",
-          "source": "ai",
+          "source": "aiDraft",
           "default": "사이즈 팁",
-          "maxChars": 40,
+          "maxChars": 34,
           "factPath": null,
           "itemCount": null,
           "style": "body",
@@ -638,12 +648,15 @@
           "kind": "body",
           "source": "ai",
           "default": "부위 설명",
-          "maxChars": 40,
+          "maxChars": 44,
           "factPath": null,
           "itemCount": null,
           "style": "body",
           "color": "ink",
-          "uppercase": false
+          "uppercase": false,
+          "maxCharsByTemplate": {
+            "show": 26
+          }
         },
         {
           "copyRole": "notice",
@@ -700,7 +713,7 @@
         {
           "copyRole": "items.n",
           "kind": "item",
-          "source": "aiDraft",
+          "source": "ai",
           "default": "추천 대상과 입기 좋은 상황",
           "maxChars": 28,
           "factPath": null,
@@ -754,7 +767,7 @@
           "kind": "item",
           "source": "aiDraft",
           "default": "후기 초안",
-          "maxChars": 40,
+          "maxChars": 34,
           "factPath": null,
           "itemCount": {
             "default": 3,
@@ -769,7 +782,7 @@
           "kind": "item",
           "source": "aiDraft",
           "default": "작성자",
-          "maxChars": 16,
+          "maxChars": 34,
           "factPath": null,
           "itemCount": {
             "default": 3,
@@ -777,6 +790,21 @@
           },
           "style": "body",
           "color": "ink",
+          "uppercase": false
+        },
+        {
+          "copyRole": "items.n.stars",
+          "kind": "item",
+          "source": "static",
+          "default": "★★★★★",
+          "maxChars": null,
+          "factPath": null,
+          "itemCount": {
+            "default": 3,
+            "max": 3
+          },
+          "style": "small",
+          "color": "accentInk",
           "uppercase": false
         }
       ],
@@ -834,9 +862,9 @@
         {
           "copyRole": "items.n.a",
           "kind": "item",
-          "source": "ai",
+          "source": "aiDraft",
           "default": "확인된 사실로 답변",
-          "maxChars": 40,
+          "maxChars": 56,
           "factPath": null,
           "itemCount": {
             "default": 3,
@@ -2161,7 +2189,8 @@
                     }
                   ],
                   "gap": 20,
-                  "radius": 999
+                  "radius": 999,
+                  "hideWhenEmpty": "body"
                 }
               ]
             },
@@ -2176,7 +2205,8 @@
                   "size": 21,
                   "color": "muted",
                   "typographyRole": "small",
-                  "style": "small"
+                  "style": "small",
+                  "hideWhenEmpty": "body"
                 },
                 {
                   "type": "panel",
@@ -2211,9 +2241,11 @@
                   "minW": 220,
                   "maxW": 769,
                   "splitParagraphs": "body",
-                  "align": "left"
+                  "align": "left",
+                  "fullWidthWhenEmpty": "body"
                 }
-              ]
+              ],
+              "fullWidthWhenEmpty": "body"
             }
           ]
         }
@@ -2930,6 +2962,16 @@
                   "items": [
                     {
                       "type": "text",
+                      "copyRole": "items.n.stars",
+                      "style": "small",
+                      "typographyRole": "small",
+                      "color": "accentInk",
+                      "preserveColor": true,
+                      "gap": 6,
+                      "copyDecoration": true
+                    },
+                    {
+                      "type": "text",
                       "copyRole": "items.n.text",
                       "size": 22,
                       "gap": 6,
@@ -3069,6 +3111,7 @@
                     {
                       "type": "text",
                       "copyRole": "items.n.a",
+                      "align": "left",
                       "size": 26,
                       "gap": 0,
                       "prefix": "A.",
@@ -3326,7 +3369,9 @@
           "scrim": {
             "color": "#000000",
             "opacity": 0.72,
-            "heightRatio": 0.58,
+            "heightRatio": 0.75,
+            "startOpacity": 0,
+            "midStop": { "offset": 0.3, "opacity": 0.56 },
             "gradient": true
           },
           "groups": [
@@ -3353,6 +3398,15 @@
                   "count": 3,
                   "gap": 0,
                   "items": [
+                    {
+                      "type": "text",
+                      "copyRole": "items.n.stars",
+                      "style": "small",
+                      "typographyRole": "small",
+                      "color": "onPhoto",
+                      "gap": 6,
+                      "copyDecoration": true
+                    },
                     {
                       "type": "text",
                       "copyRole": "items.n.text",

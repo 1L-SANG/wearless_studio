@@ -1,0 +1,7 @@
+{
+  "status": "OWNER_MUST_FILL_VERIFIED_PRICES",
+  "currency": "USD",
+  "unit": "per_1m_tokens",
+  "fields": ["input", "cached_input", "output"],
+  "models": {}
+}

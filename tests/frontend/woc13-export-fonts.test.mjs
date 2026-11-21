@@ -13,7 +13,7 @@ test('WOC13 single/long/ZIP/storefront/publication paths all use the common page
  const source=readFileSync('src/features/editor/editorExport.js','utf8'),publish=readFileSync('src/features/editor/detailPublish.js','utf8');
  assert.match(source,/getPageFontEmbedCSS\(\[blockNode\]\)/);assert.equal((source.match(/await getPageFontEmbedCSS\(blockNodes\)/g)||[]).length,2);
  assert.match(publish,/await getPageFontEmbedCSS\(blockNodes\)/);assert.doesNotMatch(source+publish,/getFontEmbedCSS\(blockNodes\[0\]\)/);
- assert.match(source,/captureBlockCanvas\(blockNodes\[i\], ratio, fontEmbedCSS/);assert.match(source,/captureBlockCanvasSlices\(node, ratio, fontEmbedCSS/);assert.match(publish,/captureBlockCanvasSlices\(node, ratio, fontEmbedCSS/);
+ assert.match(source,/captureBlockCanvas\(blockNodes\[i\], ratio, fontEmbedCSS/);assert.match(source,/captureBlockCanvasSlices\(node, ratio, fontEmbedCSS/);assert.match(publish,/captureBlockCanvasSlices\(\s*node, ratio, fontEmbedCSS/);
 });
 test('WOC13 empty page requires no font embedding',async()=>{assert.equal(await getPageFontEmbedCSS([],{embed(){throw Error('unused');}}),'');});
 

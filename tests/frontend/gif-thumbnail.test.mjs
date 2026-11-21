@@ -814,16 +814,16 @@ test('정지 이미지 ZIP만 공증한 뒤 GIF를 추가하며 서명된 정지
   try {
     assert.equal(typeof packageStorefrontZip, 'function');
     const result = await packageStorefrontZip([new Blob(['image'])], 'jpeg', {
-      provenance: { projectId: 'project' }, gifImages: [{ src: gifUrl }],
+      preset: 'smartstore', fileName: '셔츠', provenance: { projectId: 'project' }, gifImages: [{ src: gifUrl }],
     }, async (blob, options) => {
       assert.deepEqual(options, { projectId: 'project', kind: 'zip' });
       const sent = await JSZip.loadAsync(await blob.arrayBuffer());
-      assert.deepEqual(Object.keys(sent.files), ['detail_01.jpg']);
-      sent.file('detail_01.jpg', 'signed-image');
+      assert.deepEqual(Object.keys(sent.files), ['셔츠_01.jpg']);
+      sent.file('셔츠_01.jpg', 'signed-image');
       return { blob: new Blob([await sent.generateAsync({ type: 'uint8array' })]), verifyUrl: '/verify', warning: null };
     });
     const received = await JSZip.loadAsync(await result.blob.arrayBuffer());
-    assert.equal(await received.file('detail_01.jpg').async('string'), 'signed-image');
+    assert.equal(await received.file('셔츠_01.jpg').async('string'), 'signed-image');
     assert.equal(await received.file('gif_01.gif').async('string'), 'GIF89a-original');
     assert.equal(result.verifyUrl, '/verify');
   } finally { URL.revokeObjectURL(gifUrl); }

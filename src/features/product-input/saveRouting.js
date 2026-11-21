@@ -30,6 +30,7 @@ const STORYBOARD_SEED_PATCH_KEYS = new Set(['colors', 'clothingType', 'subCatego
 
 const PRODUCT_PATCH_KEYS = new Set([
   'name',
+  'nameSource',
   'clothingType',
   'colors',
   'measurements',
@@ -39,6 +40,7 @@ const PRODUCT_PATCH_KEYS = new Set([
 
 const PRODUCT_PATCH_NON_NULL_KEYS = new Set([
   'name',
+  'nameSource',
   'colors',
   'measurements',
   'measurementsUnknown',
@@ -68,7 +70,7 @@ export function splitAnalysisEditPatch(patch) {
     colors 패치는 이 함수를 지나지 않으므로 영향받지 않는다. */
 export function analysisResponseProductPatch(analysis) {
   const { productPatch } = splitAnalysisEditPatch(analysis);
-  const { colors: _photosAreNotTheAnalysisJob, ...rest } = productPatch;
+  const { colors: _photosAreNotTheAnalysisJob, name: _nameIsNotAnalysisOwned, nameSource: _nameSourceIsNotAnalysisOwned, ...rest } = productPatch;
   return rest;
 }
 
@@ -163,8 +165,9 @@ export async function persistAnalysisEdit(api, projectId, patch) {
   }
   // AnalysisForm의 현재 저장 shape에는 추천 갱신 컨텍스트(clothingType)와 실측 표시값도 들어 있다.
   // 서버 Product를 먼저 갱신해 생성의 정본을 맞춘 뒤, 기존 analysis 저장 계약은 유지한다.
-  if (hasPatchFields(patch)) {
-    saved.analysis = await api.saveAnalysis(projectId, patch);
+  const { nameSource: _productNameSource, ...analysisPayload } = patch || {};
+  if (hasPatchFields(analysisPayload)) {
+    saved.analysis = await api.saveAnalysis(projectId, analysisPayload);
   }
   return saved;
 }

@@ -60,6 +60,11 @@ def test_part_only_copy_accepts_one_or_two_lines_without_using_seller_copy(saved
     value['analysis']['featureCopy'] = [{'point': '스냅 단추', 'desc': '판매 특징 문장'}]
     value['copy_results'] = [{'blockId': 'lead', 'texts': [{'role': 'items.0.desc', 'text': '기존 역할 문장'}]}]
     original = deepcopy(value)
-    desc = next(el for el in point_elements(value) if el.get('copyRole') == 'items.0.desc')
-    assert desc['text'] == expected
+    elements = point_elements(value)
+    desc = next((el for el in elements if el.get('copyRole') == 'items.0.desc'), None)
+    if expected:
+        assert desc['text'] == expected
+    else:
+        assert desc['text'] == '' and desc.get('hidden')
+        assert any(el['type'] == 'image' for el in elements)
     assert value == original

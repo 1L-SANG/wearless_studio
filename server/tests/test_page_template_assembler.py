@@ -62,7 +62,7 @@ def test_copy_pending_off_and_fact_sources():
     off_value = case_input("emo-copy-off-seller")
     off = assemble_input(off_value)
     assert text(section(off, "emo.for_you"), "title")[0]["text"] == "이런 분께 추천해요"
-    assert all(el["text"] == "" and el["placeholder"] for el in elements(section(off, "emo.review")) if el.get("copyRole", "").startswith("items."))
+    assert all(el["text"] == "" and el["placeholder"] for el in elements(section(off, "emo.review")) if el.get("copyRole", "").startswith("items.") and not el["copyRole"].endswith(".stars"))
     value = case_input("emo-2-mono")
     value["copyResults"][0]["texts"].append({"role": "name", "text": "지어낸 상품명"})
     blocks = assemble_input(value)

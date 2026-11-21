@@ -74,17 +74,16 @@ def test_provider_timeout_follows_caller_policy(monkeypatch, name, expected, bac
                              background_ai_timeout_seconds=background_timeout)
     with pytest.raises(CapturedCall):
         asyncio.run(_invoke(name, settings, image))
-    assert seen == [background_timeout if expected == "background" else expected]
+    if name == "feature_copy":
+        # The page-copy deadline includes preparation and any correction call.
+        assert len(seen) == 1 and 0 < seen[0] <= expected
+    else:
+        assert seen == [background_timeout if expected == "background" else expected]
 
 
-@pytest.mark.parametrize("background_timeout", [120, 137])
-def test_detail_page_part_copy_passes_background_timeout(monkeypatch, background_timeout):
-    seen = []
-
-    async def capture(settings, prompt, schema, *, timeout_seconds=None):
-        seen.append(timeout_seconds)
-        raise CapturedCall
-
+@pytest.mark.parametrize("page_timeout", [90, 137])
+def test_detail_page_copy_uses_its_own_total_deadline(monkeypatch, page_timeout):
+    call = AsyncMock(return_value={})
     for name, value in (
         ("get_project", {"copywriting": False}),
         ("get_storyboard", v4_blocks([])),
@@ -93,11 +92,11 @@ def test_detail_page_part_copy_passes_background_timeout(monkeypatch, background
     ):
         monkeypatch.setattr(detail_page_job.repo, name, AsyncMock(return_value=value))
     monkeypatch.setattr(detail_page_job, "_emit", AsyncMock())
-    monkeypatch.setattr(feature_copy, "complete_json", capture)
-    app = fake_worker_app(make_settings(
-        analysis_timeout_seconds=19, background_ai_timeout_seconds=background_timeout))
-
-    with pytest.raises(CapturedCall):
-        asyncio.run(detail_page_job.run_detail_page_job(app, worker_job()))
-
-    assert seen == [background_timeout]
+    monkeypatch.setattr(detail_page_job.page_copy, "generate", call)
+    monkeypatch.setattr(detail_page_job, "_gen_cuts", AsyncMock(return_value=([], [], 0, [], None, [])))
+    monkeypatch.setattr(detail_page_job.repo, "finalize_detail_page_success", AsyncMock(return_value={"editor_blocks": [], "available": 1}))
+    app = fake_worker_app(make_settings(gemini_api_key="fake", page_copy_timeout_seconds=page_timeout,
+                                       analysis_timeout_seconds=19, background_ai_timeout_seconds=120))
+    asyncio.run(detail_page_job.run_detail_page_job(app, worker_job()))
+    assert call.await_count == 1
+    assert 0 < call.call_args.kwargs["timeout_seconds"] <= page_timeout

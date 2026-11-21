@@ -1,0 +1,16 @@
+{
+  "_about": "공급자와 모델마다의 설정. 카피 총괄이 정함. 까닭은 CHANGES.md.",
+  "providers": {
+    "gpt": { "reasoning_effort": null, "max_output_tokens": 4096 },
+    "gemini": { "thinking_level": "low", "max_output_tokens": 4096 },
+    "claude": { "effort": "low", "thinking": { "type": "adaptive" }, "max_output_tokens": 6000 }
+  },
+  "models": {
+    "gpt-6.1-terra": { "reasoning_effort": "none", "max_output_tokens": 4096 },
+    "gpt-6-luna": { "reasoning_effort": null, "max_output_tokens": 4096 },
+    "gemini-3.8-flash": { "thinking_level": "low", "max_output_tokens": 4096 },
+    "gemini-3.1-pro-preview": { "thinking_level": "low", "max_output_tokens": 6000 },
+    "claude-sonnet-5-5": { "effort": "low", "thinking": { "type": "adaptive" }, "max_output_tokens": 6000 },
+    "claude-opus-5-5": { "effort": "low", "thinking": { "type": "adaptive" }, "max_output_tokens": 6000 }
+  }
+}

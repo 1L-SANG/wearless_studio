@@ -1,0 +1,884 @@
+{
+  "r5": [
+    {
+      "source": "ai",
+      "line": 967,
+      "case": "v2-16",
+      "template": "show",
+      "arm": "one-hydrogen",
+      "run": 1,
+      "seed": 11016529214677608787,
+      "page_attempt": 1,
+      "slotId": "S7:items.0.desc",
+      "group": "points",
+      "kind": "points",
+      "role": "items.0.desc",
+      "target": "part",
+      "text": "자연스럽게 허리를 잡아주는 핀턱",
+      "passed": true,
+      "reasons": [],
+      "rewrite": false,
+      "polish": "skipped",
+      "stage": "draft",
+      "provider": "gemini",
+      "model": "gemini-4-hydrogen",
+      "draft": false,
+      "slot_kind": "part.desc",
+      "productName": "핀턱 셔츠 원피스"
+    },
+    {
+      "source": "ai",
+      "line": 977,
+      "case": "v2-16",
+      "template": "emo",
+      "arm": "one-hydrogen",
+      "run": 1,
+      "seed": 11236082648250157914,
+      "page_attempt": 1,
+      "slotId": "S4:items.0.desc",
+      "group": "points",
+      "kind": "points",
+      "role": "items.0.desc",
+      "target": "part",
+      "text": "허리 주름이 잡혀 있어서\n원피스인데도 단정해 보여요",
+      "passed": true,
+      "reasons": [],
+      "rewrite": true,
+      "polish": "skipped",
+      "stage": "rewrite",
+      "provider": "gemini",
+      "model": "gemini-4-hydrogen",
+      "draft": false,
+      "slot_kind": "part.desc",
+      "productName": "핀턱 셔츠 원피스"
+    }
+  ],
+  "comparison": [
+    {
+      "source": "copy-benchmark-20261119/out/comparison.json",
+      "rowIndex": 29,
+      "case": "B-hotping-48811",
+      "shop": "핫핑",
+      "template": "show",
+      "kind": "part.desc",
+      "status": "ready",
+      "order": [
+        "hydrogen",
+        "argon"
+      ],
+      "item": {
+        "product": "에트랑제 일체형 배색 루즈핏 딥브이넥 니트",
+        "template": "쇼룸형",
+        "kind": "디테일 설명",
+        "facts": {
+          "seller": {
+            "name": "에트랑제 일체형 배색 루즈핏 딥브이넥 니트",
+            "materials": [
+              {
+                "name": "아크릴",
+                "ratio": 100.0
+              }
+            ],
+            "colors": [
+              "머스타드",
+              "차콜",
+              "블루",
+              "블랙"
+            ]
+          },
+          "clothing_type": "top",
+          "points": [
+            "배색 레이어드 브이넥",
+            "드롭숄더 소매"
+          ],
+          "fit": "over",
+          "details": [
+            {
+              "label": "배색 레이어드 넥",
+              "reason": "깊은 브이넥과 안쪽 흰색 라운드넥의 겹친 모습이 보여요",
+              "featurePoints": [
+                "깊은 브이넥",
+                "안쪽 흰색 라운드넥"
+              ]
+            },
+            {
+              "label": "니트 짜임",
+              "reason": "여러 색 실이 섞인 니트 표면과 짜임을 가까이 볼 수 있어요",
+              "featurePoints": [
+                "색이 섞인 니트 표면",
+                "니트 짜임"
+              ]
+            },
+            {
+              "label": "소매 끝 골지",
+              "reason": "소매 끝의 골지 짜임과 소매 몸판의 연결 부분이 보여요",
+              "featurePoints": [
+                "소매 끝 골지 마감"
+              ]
+            }
+          ]
+        },
+        "reference": [
+          "딥 브이넥 디자인에 일체형 배색 레이어드를 더해,\n단독 착용만으로도 세련된 레이어드룩을 연출해 줘요.",
+          "탄탄하고 쫀쫀한 소매 시보리 짜임으로 팔목을 부드럽게 감싸주어,\n늘어짐 걱정 없이 깔끔하고 안정감 있는 실루엣을 유지해 드려요."
+        ],
+        "A": [
+          {
+            "role": "items.1.desc",
+            "text": "여러 색 실이 섞여 멋스러운 짜임"
+          },
+          {
+            "role": "items.2.desc",
+            "text": "소매 끝을 잡아주는 골지 짜임"
+          }
+        ],
+        "B": [
+          {
+            "role": "items.0.desc",
+            "text": "하나만 입어도 겹쳐 입은 듯한 배색 브이넥"
+          },
+          {
+            "role": "items.1.desc",
+            "text": "여러 색 실이 섞여 밋밋하지 않은 니트 짜임"
+          }
+        ],
+        "id": "206ad66fab332c1623389160"
+      },
+      "counts": {
+        "argon": 3,
+        "hydrogen": 3
+      }
+    },
+    {
+      "source": "copy-benchmark-20261119/out/comparison.json",
+      "rowIndex": 38,
+      "case": "A-blackup-36654",
+      "shop": "블랙업",
+      "template": "emo",
+      "kind": "part.desc",
+      "status": "ready",
+      "order": [
+        "hydrogen",
+        "argon"
+      ],
+      "item": {
+        "product": "헤비스웨트 와이드 투웨이 팬츠",
+        "template": "감성형",
+        "kind": "디테일 설명",
+        "facts": {
+          "seller": {
+            "name": "헤비스웨트 와이드 투웨이 팬츠",
+            "materials": [
+              {
+                "name": "면",
+                "ratio": 45.0
+              },
+              {
+                "name": "폴리에스터",
+                "ratio": 55.0
+              }
+            ],
+            "colors": [
+              "멜란지그레이",
+              "오트밀",
+              "멜란지화이트",
+              "블랙",
+              "네이비",
+              "차콜",
+              "애쉬브라운"
+            ]
+          },
+          "clothing_type": "bottom",
+          "points": [
+            "와이드 실루엣",
+            "밑단 스트링"
+          ],
+          "fit": "over",
+          "details": [
+            {
+              "label": "밑단 스트링",
+              "reason": "밑단 옆의 끈과 조절 장식이 보여 구조를 확인할 수 있어요",
+              "featurePoints": [
+                "밑단 끈",
+                "끈 조절 장식"
+              ]
+            },
+            {
+              "label": "허리 밴딩과 끈",
+              "reason": "주름 잡힌 허리와 앞쪽 끈이 함께 보여 허리 구성을 확인할 수 있어요",
+              "featurePoints": [
+                "허리 밴딩",
+                "앞쪽 허리 끈"
+              ]
+            },
+            {
+              "label": "원단 겉면과 안쪽",
+              "reason": "접힌 밑단에서 원단 겉면과 안쪽의 서로 다른 표면이 보여요",
+              "featurePoints": [
+                "멜란지 겉면",
+                "고리 짜임 안쪽"
+              ]
+            },
+            {
+              "label": "앞면 옆 주머니",
+              "reason": "허리 아래 옆쪽 주머니의 길게 열린 입구를 확인할 수 있어요",
+              "featurePoints": [
+                "앞면 옆 주머니"
+              ]
+            },
+            {
+              "label": "뒷면 주머니",
+              "reason": "뒷면 한쪽에 붙은 주머니의 입구와 형태를 확인할 수 있어요",
+              "featurePoints": [
+                "뒷면 패치 주머니"
+              ]
+            }
+          ]
+        },
+        "reference": [
+          "탄탄하고 안정적인\n밴딩 웨이스트",
+          "이중으로 재봉된\n견고한 마감",
+          "니켈팁으로 견고한\n스트링 마감",
+          "원단의 변형을 방지하며\n내구성을 높이는 더블 스티치 봉제",
+          "세탁 후 건조가 편리한\n싱글 원단의 주머니 안감",
+          "두 가지 실루엣으로\n연출되는 스토퍼 디테일",
+          "이중으로 재봉된 견고한 마감"
+        ],
+        "A": [
+          {
+            "role": "items.0.desc",
+            "text": "밑단에 끈이 있어서\n원하는 대로 조여 입기 좋아요"
+          },
+          {
+            "role": "items.1.desc",
+            "text": "허리가 밴딩이라 편하고\n끈으로 맞춰 입을 수 있어요"
+          },
+          {
+            "role": "items.2.desc",
+            "text": "안쪽이 고리 짜임이라\n피부에 닿는 느낌이 부드러워요"
+          }
+        ],
+        "B": [
+          {
+            "role": "items.1.desc",
+            "text": "허리 밴딩에 끈까지 있어서\n내 체형에 맞게 조절해 입기 편해요"
+          }
+        ],
+        "id": "e84cae733b995a89589f50e1"
+      },
+      "counts": {
+        "argon": 3,
+        "hydrogen": 3
+      }
+    },
+    {
+      "source": "copy-benchmark-20261119/out/comparison.json",
+      "rowIndex": 56,
+      "case": "A-creamcheese-27858",
+      "shop": "크림치즈",
+      "template": "emo",
+      "kind": "part.desc",
+      "status": "ready",
+      "order": [
+        "hydrogen",
+        "argon"
+      ],
+      "item": {
+        "product": "더클래식 테일러 울자켓",
+        "template": "감성형",
+        "kind": "디테일 설명",
+        "facts": {
+          "seller": {
+            "name": "더클래식 테일러 울자켓",
+            "materials": [
+              {
+                "name": "울",
+                "ratio": 25.0
+              },
+              {
+                "name": "폴리에스터",
+                "ratio": 50.0
+              },
+              {
+                "name": "스판",
+                "ratio": 25.0
+              }
+            ],
+            "colors": [
+              "차콜",
+              "블랙"
+            ]
+          },
+          "clothing_type": "outer",
+          "points": [
+            "보송한 표면 원단"
+          ],
+          "fit": "regular",
+          "details": [
+            {
+              "label": "보송한 원단 표면",
+              "reason": "잔털이 보이는 원단 표면을 가까이서 살펴볼 수 있어요",
+              "featurePoints": [
+                "보송한 표면",
+                "섞여 보이는 색감"
+              ]
+            },
+            {
+              "label": "소매 끝 단추",
+              "reason": "소매 끝에 나란히 달린 네 개의 단추와 겹친 부분이 보여요",
+              "featurePoints": [
+                "소매 단추 네 개",
+                "겹쳐진 소매 끝"
+              ]
+            },
+            {
+              "label": "앞면 일자 주머니",
+              "reason": "가로로 길게 놓인 주머니 입구와 테두리가 보여요",
+              "featurePoints": [
+                "가로 주머니 입구"
+              ]
+            },
+            {
+              "label": "앞면 단추 여밈",
+              "reason": "앞 중심에 세 개의 단추가 세로로 놓인 모습이 보여요",
+              "featurePoints": [
+                "앞 단추 세 개"
+              ]
+            },
+            {
+              "label": "목 안쪽 브랜드 라벨",
+              "reason": "목 안쪽 흰 라벨의 영문 글자를 가까이서 읽을 수 있어요",
+              "featurePoints": [
+                "영문 브랜드 라벨"
+              ]
+            },
+            {
+              "label": "테일러드 카라",
+              "reason": "목에서 가슴으로 이어지는 접힌 카라의 모양이 보여요",
+              "featurePoints": [
+                "접힌 카라",
+                "뾰족한 라펠"
+              ]
+            }
+          ]
+        },
+        "reference": [
+          "플랫하게 눌려진 테일러드 카라넥은\n탄탄하게 자리 잡아 깔끔하고 단정한 인상이 연출되어요",
+          "은은한 광택감이 감도는 버튼으로\n손 쉬운 오픈 클로징이 가능합니다",
+          "소매에 더해진 미니멀한 페이크 더블 버튼은\n작은 부분까지 밋밋하지 않게 마무리했습니다",
+          "사이드에 더해진 립 포켓은\n작은 실용성까지 든든하게 챙겨주었습니다",
+          "프론트 일자 포켓은 전체적인 디자인을 깔끔하게 정돈해주면서\n실용적으로 활용할 수 있고,\n안쪽에는 내부 포켓까지 따로 더해\n보이지 않는 부분까지 세심하게 챙겼답니다"
+        ],
+        "A": [
+          {
+            "role": "items.0.desc",
+            "text": "표면이 보송보송해서\n보기에도 따뜻해 보여요"
+          },
+          {
+            "role": "items.2.desc",
+            "text": "주머니가 있어서\n작은 소지품 넣기 좋아요"
+          }
+        ],
+        "B": [
+          {
+            "role": "items.0.desc",
+            "text": "표면이 보송보송해서\n손으로 만졌을 때 부드러워요"
+          },
+          {
+            "role": "items.2.desc",
+            "text": "양쪽에 주머니가 있어서\n작은 소지품을 챙기기 편해요"
+          }
+        ],
+        "id": "2a4ad1835adbf66217273992"
+      },
+      "counts": {
+        "argon": 3,
+        "hydrogen": 3
+      }
+    },
+    {
+      "source": "copy-benchmark-20261119/out/comparison.json",
+      "rowIndex": 97,
+      "case": "A-uremind-3133",
+      "shop": "유얼마인드",
+      "template": "emo",
+      "kind": "faq",
+      "status": "ready",
+      "order": [
+        "argon",
+        "hydrogen"
+      ],
+      "item": {
+        "product": "더블코튼 사이드 벌룬 스웻팬츠",
+        "template": "감성형",
+        "kind": "궁금한 점",
+        "facts": {
+          "seller": {
+            "name": "더블코튼 사이드 벌룬 스웻팬츠",
+            "materials": [
+              {
+                "name": "면",
+                "ratio": 51.0
+              },
+              {
+                "name": "폴리에스터",
+                "ratio": 49.0
+              }
+            ],
+            "colors": [
+              "그레이",
+              "백메란지",
+              "블랙"
+            ]
+          },
+          "clothing_type": "bottom",
+          "points": [
+            "와이드 실루엣",
+            "스트링 끝 금속 장식"
+          ],
+          "fit": "over",
+          "details": [
+            {
+              "label": "스트링 허리 밴딩",
+              "reason": "주름진 허리 밴딩과 앞쪽으로 나온 조임끈의 구성이 보여요",
+              "featurePoints": [
+                "허리 밴딩",
+                "앞쪽 조임끈"
+              ]
+            },
+            {
+              "label": "앞쪽 사선 주머니",
+              "reason": "허리 아래 사선으로 이어지는 주머니 입구와 마감이 보여요",
+              "featurePoints": [
+                "앞쪽 사선 주머니"
+              ]
+            },
+            {
+              "label": "스트링 끝 금속 장식",
+              "reason": "조임끈 양쪽 끝의 은색 장식과 작은 구멍이 가까이 보여요",
+              "featurePoints": [
+                "스트링 끝 금속 장식"
+              ]
+            },
+            {
+              "label": "밑단 박음질",
+              "reason": "접어 박은 밑단과 세로 이음선이 만나는 마감이 보여요",
+              "featurePoints": [
+                "일자 밑단",
+                "밑단 박음질"
+              ]
+            },
+            {
+              "label": "원단 표면",
+              "reason": "회색 원단의 잔잔한 짜임과 섞인 색감이 가까이 보여요",
+              "featurePoints": [
+                "잔잔한 원단 짜임",
+                "섞인 회색 색감"
+              ]
+            }
+          ]
+        },
+        "reference": [
+          "Q. 사이드 벌룬 때문에 너무 부해 보이지 않을까요?",
+          "A. 전혀요! 옆선이 자연스럽게 볼륨을 잡아주면서\n군살을 커버해다리 라인을 더욱 살려줘요!",
+          "Q. 허벅지가 굵어도 입을 수 있나요?",
+          "A. 물론이죠! 허벅지부터 여유롭게 떨어져\n체형을 자연스럽게 커버해 줍답니다",
+          "Q. 키가 작으면 다리가 짧아 보이지 않을까요?",
+          "A. 세로로 이어지는 사이드 라인 덕분에\n시선이 길게 연결돼 오히려 다리가 길어 보이는 효과가 있어요",
+          "Q. 무릎이 쉽게 나오지는 않을까요?",
+          "A. 흐물거리는 원단이 아니라 안정감 있게 핏을 잡아주는\n탄탄한 코튼 소재를 사용해 편안하면서도 깔끔하게 착용됩니다"
+        ],
+        "A": [
+          {
+            "role": "items.0.q",
+            "text": "어느 계절에 입기 좋은가요?"
+          },
+          {
+            "role": "items.0.a",
+            "text": "적당한 두께의 면 혼방 소재라 봄과 가을을 중심으로 편하게 입기 좋아요"
+          },
+          {
+            "role": "items.1.q",
+            "text": "세탁할 때 줄어들지 않나요?"
+          },
+          {
+            "role": "items.1.a",
+            "text": "면 소재 특성상 세탁 후 약간의 수축이 생길 수 있으니 건조기 사용은 피해 주세요"
+          }
+        ],
+        "B": [
+          {
+            "role": "items.0.q",
+            "text": "어느 계절에 입기 좋나요?"
+          },
+          {
+            "role": "items.0.a",
+            "text": "적당한 두께라 봄과 가을에 편하게 입기 좋아요"
+          },
+          {
+            "role": "items.1.a",
+            "text": "도톰한 스웻 원단이라 비침 걱정 없이 입기 좋아요"
+          },
+          {
+            "role": "items.2.q",
+            "text": "세탁은 어떻게 하면 되나요?"
+          },
+          {
+            "role": "items.2.a",
+            "text": "단독으로 찬물 세탁하시고 건조기 사용은 피해 주세요"
+          }
+        ],
+        "id": "20901f58bb66cb9bcdcb0948"
+      },
+      "counts": {
+        "argon": 6,
+        "hydrogen": 6
+      }
+    },
+    {
+      "source": "copy-benchmark-20261119/out/comparison.json",
+      "rowIndex": 101,
+      "case": "A-uremind-3133",
+      "shop": "유얼마인드",
+      "template": "show",
+      "kind": "part.desc",
+      "status": "ready",
+      "order": [
+        "argon",
+        "hydrogen"
+      ],
+      "item": {
+        "product": "더블코튼 사이드 벌룬 스웻팬츠",
+        "template": "쇼룸형",
+        "kind": "디테일 설명",
+        "facts": {
+          "seller": {
+            "name": "더블코튼 사이드 벌룬 스웻팬츠",
+            "materials": [
+              {
+                "name": "면",
+                "ratio": 51.0
+              },
+              {
+                "name": "폴리에스터",
+                "ratio": 49.0
+              }
+            ],
+            "colors": [
+              "그레이",
+              "백메란지",
+              "블랙"
+            ]
+          },
+          "clothing_type": "bottom",
+          "points": [
+            "와이드 실루엣",
+            "스트링 끝 금속 장식"
+          ],
+          "fit": "over",
+          "details": [
+            {
+              "label": "스트링 허리 밴딩",
+              "reason": "주름진 허리 밴딩과 앞쪽으로 나온 조임끈의 구성이 보여요",
+              "featurePoints": [
+                "허리 밴딩",
+                "앞쪽 조임끈"
+              ]
+            },
+            {
+              "label": "앞쪽 사선 주머니",
+              "reason": "허리 아래 사선으로 이어지는 주머니 입구와 마감이 보여요",
+              "featurePoints": [
+                "앞쪽 사선 주머니"
+              ]
+            },
+            {
+              "label": "스트링 끝 금속 장식",
+              "reason": "조임끈 양쪽 끝의 은색 장식과 작은 구멍이 가까이 보여요",
+              "featurePoints": [
+                "스트링 끝 금속 장식"
+              ]
+            },
+            {
+              "label": "밑단 박음질",
+              "reason": "접어 박은 밑단과 세로 이음선이 만나는 마감이 보여요",
+              "featurePoints": [
+                "일자 밑단",
+                "밑단 박음질"
+              ]
+            },
+            {
+              "label": "원단 표면",
+              "reason": "회색 원단의 잔잔한 짜임과 섞인 색감이 가까이 보여요",
+              "featurePoints": [
+                "잔잔한 원단 짜임",
+                "섞인 회색 색감"
+              ]
+            }
+          ]
+        },
+        "reference": [
+          "유연하고 편안한 허리 밴딩으로 편안한 착용감",
+          "허리라인을 한번 더 잡아주는 스트링과 탄탄한 쇠팁",
+          "여유있는 넉넉한 포켓으로 간편한 수납성",
+          "자극없이 부드럽고 탄탄한 안감"
+        ],
+        "A": [
+          {
+            "role": "items.1.desc",
+            "text": "양손을 가볍게 넣기 편한 양쪽 주머니"
+          },
+          {
+            "role": "items.2.desc",
+            "text": "끈 끝이 쉽게 풀리지 않게 잡아주는 마감"
+          }
+        ],
+        "B": [
+          {
+            "role": "items.0.desc",
+            "text": "허리에 맞게 조여 입는 밴딩"
+          },
+          {
+            "role": "items.1.desc",
+            "text": "손을 편하게 넣을 수 있는 주머니"
+          },
+          {
+            "role": "items.2.desc",
+            "text": "허리끈 끝을 깔끔하게 잡아주는 장식"
+          }
+        ],
+        "id": "641b60ec077c9e89da55fec9"
+      },
+      "counts": {
+        "argon": 3,
+        "hydrogen": 3
+      }
+    },
+    {
+      "source": "copy-benchmark-20261119/out/comparison.json",
+      "rowIndex": 164,
+      "case": "C-jucyjudy-03",
+      "shop": "쥬시쥬디",
+      "template": "emo",
+      "kind": "part.desc",
+      "status": "ready",
+      "order": [
+        "hydrogen",
+        "argon"
+      ],
+      "item": {
+        "product": "스퀘어넥 플레어 티셔츠",
+        "template": "감성형",
+        "kind": "디테일 설명",
+        "facts": {
+          "seller": {
+            "name": "스퀘어넥 플레어 티셔츠",
+            "materials": [
+              {
+                "name": "면",
+                "ratio": 75.0
+              },
+              {
+                "name": "폴리에스터",
+                "ratio": 25.0
+              }
+            ],
+            "colors": [
+              "블랙",
+              "레몬옐로우",
+              "화이트"
+            ]
+          },
+          "clothing_type": "top",
+          "points": [
+            "스퀘어넥 디자인",
+            "가슴 레터링 로고"
+          ],
+          "fit": "slim",
+          "details": [
+            {
+              "label": "스퀘어넥 마감",
+              "reason": "네모난 목선과 가장자리를 따라 이어진 마감을 볼 수 있어요",
+              "featurePoints": [
+                "스퀘어넥",
+                "목선 스티치"
+              ]
+            },
+            {
+              "label": "가슴 레터링 로고",
+              "reason": "가슴에 들어간 작은 영문 로고의 형태를 가까이 볼 수 있어요",
+              "featurePoints": [
+                "왼쪽 가슴 영문 로고"
+              ]
+            },
+            {
+              "label": "밑단 옆면 절개",
+              "reason": "옆면 절개선과 밑단 스티치가 이어지는 모습을 볼 수 있어요",
+              "featurePoints": [
+                "밑단 옆면 절개",
+                "밑단 스티치"
+              ]
+            },
+            {
+              "label": "목 안쪽 브랜드 라벨",
+              "reason": "목 안쪽 라벨에 적힌 영문 브랜드명을 확인할 수 있어요",
+              "featurePoints": [
+                "Jucy Judy 라벨"
+              ]
+            }
+          ]
+        },
+        "reference": [
+          "넥 라인은 골지 립 대신 제원단 립 마감으로 변경해\n미니멀하고 깔끔한 인상을 완성했으며,",
+          "가슴 디테일은 미니 와펜에서 자수 레터링으로 변경해\n한층 심플하면서도 여성스러운 무드를 더했습니다."
+        ],
+        "A": [
+          {
+            "role": "items.1.desc",
+            "text": "가슴에 작은 영문 로고가 있어서\n단독으로 입어도 심심하지 않아요."
+          },
+          {
+            "role": "items.2.desc",
+            "text": "밑단 옆이 살짝 트여 있어서\n움직일 때 걸리는 느낌 없이 편해요."
+          }
+        ],
+        "B": [
+          {
+            "role": "items.1.desc",
+            "text": "왼쪽 가슴에 작은 영문 로고가 있어서\n하나만 입어도 밋밋하지 않아요."
+          },
+          {
+            "role": "items.2.desc",
+            "text": "밑단이 자연스럽게 퍼져서\n앉거나 움직일 때 허리가 편해요."
+          }
+        ],
+        "id": "112b0db5a2ce7649505a9ffa"
+      },
+      "counts": {
+        "argon": 3,
+        "hydrogen": 3
+      }
+    },
+    {
+      "source": "copy-benchmark-20261119/out/comparison.json",
+      "rowIndex": 173,
+      "case": "C-jucyjudy-03",
+      "shop": "쥬시쥬디",
+      "template": "show",
+      "kind": "part.desc",
+      "status": "ready",
+      "order": [
+        "hydrogen",
+        "argon"
+      ],
+      "item": {
+        "product": "스퀘어넥 플레어 티셔츠",
+        "template": "쇼룸형",
+        "kind": "디테일 설명",
+        "facts": {
+          "seller": {
+            "name": "스퀘어넥 플레어 티셔츠",
+            "materials": [
+              {
+                "name": "면",
+                "ratio": 75.0
+              },
+              {
+                "name": "폴리에스터",
+                "ratio": 25.0
+              }
+            ],
+            "colors": [
+              "블랙",
+              "레몬옐로우",
+              "화이트"
+            ]
+          },
+          "clothing_type": "top",
+          "points": [
+            "스퀘어넥 디자인",
+            "가슴 레터링 로고"
+          ],
+          "fit": "slim",
+          "details": [
+            {
+              "label": "스퀘어넥 마감",
+              "reason": "네모난 목선과 가장자리를 따라 이어진 마감을 볼 수 있어요",
+              "featurePoints": [
+                "스퀘어넥",
+                "목선 스티치"
+              ]
+            },
+            {
+              "label": "가슴 레터링 로고",
+              "reason": "가슴에 들어간 작은 영문 로고의 형태를 가까이 볼 수 있어요",
+              "featurePoints": [
+                "왼쪽 가슴 영문 로고"
+              ]
+            },
+            {
+              "label": "밑단 옆면 절개",
+              "reason": "옆면 절개선과 밑단 스티치가 이어지는 모습을 볼 수 있어요",
+              "featurePoints": [
+                "밑단 옆면 절개",
+                "밑단 스티치"
+              ]
+            },
+            {
+              "label": "목 안쪽 브랜드 라벨",
+              "reason": "목 안쪽 라벨에 적힌 영문 브랜드명을 확인할 수 있어요",
+              "featurePoints": [
+                "Jucy Judy 라벨"
+              ]
+            }
+          ]
+        },
+        "reference": [
+          "넥 라인은 골지 립 대신 제원단 립 마감으로 변경해\n미니멀하고 깔끔한 인상을 완성했으며,",
+          "가슴 디테일은 미니 와펜에서 자수 레터링으로 변경해\n한층 심플하면서도 여성스러운 무드를 더했습니다."
+        ],
+        "A": [
+          {
+            "role": "items.0.desc",
+            "text": "목이 답답하지 않은 네모난 넥라인"
+          },
+          {
+            "role": "items.1.desc",
+            "text": "밋밋하지 않게 포인트를 주는 작은 로고"
+          }
+        ],
+        "B": [
+          {
+            "role": "items.1.desc",
+            "text": "단독으로 입어도 심심하지 않은 가슴 영문 로고"
+          }
+        ],
+        "id": "bd01edc624055e93c682ab28"
+      },
+      "counts": {
+        "argon": 3,
+        "hydrogen": 3
+      }
+    }
+  ],
+  "mutations": [
+    {
+      "synthetic": true,
+      "source": "trial/r5/slots.jsonl",
+      "line": 977,
+      "description": "Replace the original neutral appearance with each boundary claim; these are not provider outputs.",
+      "texts": [
+        "날씬해 보여요",
+        "허리가 잡혀 보여요",
+        "허리가 가늘어 보여요",
+        "다리가 길어 보여요",
+        "날씬해요",
+        "허리가 가늘어요",
+        "다리가 길어요",
+        "5cm 다리가 길어 보여요",
+        "확실히 날씬해 보여요",
+        "군살 없이 날씬해 보여요"
+      ]
+    }
+  ]
+}

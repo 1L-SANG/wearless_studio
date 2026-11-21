@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { assemblePage } from '../../src/lib/pageTemplates/assemble.js';
+import { cleanSellerText } from '../../src/lib/pageTemplates/sellerCopy.js';
 
 const seller = '  Cotton 셔츠를 추천해요.  \n\n  두 번째 줄\n세 번째 줄\n네 번째 줄  \n';
 const ai = 'AI 첫 줄\n\nAI 둘째 줄\nAI 셋째 줄\nAI 넷째 줄';
@@ -9,17 +10,19 @@ const inputFor = (templateId, mdComment, body = ai) => ({
   storyboard: [{ id: 'intro', taxonomyVersion: 4, source: 'text', sectionId: 'intro',
     pageSectionKey: `${templateId}.intro`, pageSectionKind: 'intro', pageDesignId: templateId === 'show' ? 'T06-D01' : 'T01-D07', slotKey: null }],
   product: { name: '코튼 셔츠', colors: [] }, analysis: { mdComment }, copywriting: true,
-  copyResults: [{ blockId: 'intro', texts: [{ role: 'body', text: body }] }],
+  copyResults: body ? [{ blockId: 'intro', texts: [{ role: 'body', text: body }] }] : [],
 });
 const bodies = blocks => blocks.flatMap(block => block.elements).filter(element => element.copyRole === 'body');
 const parityInputs = [];
 
 for (const templateId of ['emo', 'show']) {
-  for (const original of [seller, '앞줄\r\n\r\n뒤쪽  \t줄\r\n']) {
-    const input = inputFor(templateId, original); parityInputs.push(input);
-    test(`${templateId} seller MD remains exact in one body with copy enabled and ${original.includes('\r') ? 'CRLF' : 'LF'}`, () => {
+  for (const original of [seller, '앞줄\r\n\r\n뒤쪽  \t줄\r\n']) for (const mode of ['missing', 'disabled']) {
+    const input = inputFor(templateId, original, mode === 'missing' ? '' : ai);
+    if (mode === 'disabled') input.copywriting = false;
+    parityInputs.push(input);
+    test(`${templateId} seller MD is cleaned without changing its saved source when polished copy is ${mode}, with ${original.includes('\r') ? 'CRLF' : 'LF'}`, () => {
       const elements = bodies(assemblePage(input));
-      assert.deepEqual(elements.map(element => element.text), [original]);
+      assert.deepEqual(elements.map(element => element.text), [cleanSellerText(original)]);
       assert.equal(elements[0].aiDraft, undefined);
       assert.equal(elements[0].paragraphCount, templateId === 'emo' ? 1 : undefined);
       if (templateId === 'show') {
@@ -42,9 +45,9 @@ for (const templateId of ['emo', 'show']) {
 }
 
 const longSeller = 'Cotton '.repeat(27) + '!';
-const longInput = inputFor('show', longSeller);
+const longInput = inputFor('show', longSeller, '');
 parityInputs.push(longInput);
-test('show 190-character MD keeps the raw text and wraps within the padded panel', () => {
+test('show 190-character MD fallback keeps raw text and wraps within the padded panel', () => {
   const [body] = bodies(assemblePage(longInput));
   assert.equal(body.text, longSeller);
   assert.deepEqual([body.x, body.y, body.w], [56, 172, 888]);

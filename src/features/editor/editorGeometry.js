@@ -1,7 +1,11 @@
+import { pageTemplatesCatalog } from '../../lib/pageTemplates/catalog.js';
+import { isGifImage } from '../../lib/gif/gifMedia.js';
+import { exportStillImageSource, isExportPhotoSlot } from './editorExportContent.js';
+
 /** 시스템 요소를 뺀 콘텐츠의 아래 끝. 새 텍스트를 "기존 콘텐츠 아래"에 붙일 때도 쓴다. */
 export function getBlockContentBottom(block) {
   return block.elements.reduce(
-    (bottom, element) => element.system
+    (bottom, element) => element.system || element.hidden
       ? bottom
       : Math.max(bottom, (element.y || 0) + (element.h || 40)),
     0,
@@ -20,7 +24,7 @@ export function getHiddenExportElementIds(block) {
     group.push(element);
     groups.set(element.groupId, group);
   }
-  const hidden = new Set(block.elements.filter(isEmptyTextElement).map(element => element.id ?? element));
+  const hidden = new Set(block.elements.filter(element => element.hidden || isEmptyTextElement(element)).map(element => element.id ?? element));
   for (const members of groups.values()) {
     // Literal Q./A., stars and similar template ornaments are not copy. If the
     // seller rewrites one, its changed text counts as content and keeps the group.
@@ -32,18 +36,76 @@ export function getHiddenExportElementIds(block) {
   return hidden;
 }
 
+// Export is a projection: the editor keeps empty input slots and its saved
+// geometry. Only linked intro panels and later linked paragraphs are packed.
+function compactIntroExport(block, visible) {
+  if (block.pageDesignId !== 'T01-D07') return visible;
+  const panels = block.elements.filter(el => el.type === 'shape' && el.shape === 'rect'
+    && el.groupId?.startsWith('template-copy:') && block.elements.some(text => text.groupId === el.groupId
+      && text.copyRole === 'body' && text.paragraphIndex != null)).sort((a, b) => a.y - b.y);
+  const byGroup = new Map(panels.map(panel => [panel.groupId, panel]));
+  let output = visible;
+  for (const [index, original] of panels.entries()) {
+    const panel = output.find(el => el.id === original.id);
+    const texts = block.elements.filter(el => el.type === 'text' && el.groupId === original.groupId && !el.hidden).sort((a, b) => a.y - b.y);
+    if (!texts.some(isEmptyTextElement)) continue;
+    const kept = output.filter(el => el.type === 'text' && el.groupId === original.groupId).sort((a, b) => a.y - b.y);
+    let removed = original.h;
+    const updates = new Map();
+    if (panel && kept.length) {
+      const topPad = Math.max(0, texts[0].y - original.y);
+      const bottomPad = Math.max(0, original.y + original.h - Math.max(...texts.map(el => el.y + el.h)));
+      let cursor = panel.y + topPad;
+      kept.forEach((el, i) => {
+        if (i) cursor += Math.max(0, el.y - kept[i - 1].y - kept[i - 1].h);
+        updates.set(el.id, { ...el, y: cursor }); cursor += el.h;
+      });
+      const h = Math.min(panel.h, cursor - panel.y + bottomPad);
+      removed = panel.h - h; updates.set(panel.id, { ...panel, h });
+    } else if (panels[index + 1]) removed += Math.max(0, panels[index + 1].y - original.y - original.h);
+    output = output.map(el => updates.get(el.id) || (removed && byGroup.get(el.groupId)?.y >= original.y + original.h
+      ? { ...el, y: el.y - removed } : el));
+  }
+  return output;
+}
+
 export function getBlockExportElements(block) {
   const hidden = getHiddenExportElementIds(block);
-  return block.elements.filter(element => !hidden.has(element.id ?? element));
+  return compactIntroExport(block, block.elements.filter(element => !hidden.has(element.id ?? element)));
+}
+
+export function getDownloadPreviewElements(block) {
+  return getBlockExportElements(block).filter((element) => !isExportPhotoSlot(element)).map((element) => (
+    isGifImage(element) ? { ...element, src: exportStillImageSource(element.src, element.posterSrc) } : element
+  ));
+}
+
+export function getBlockExportLayout(block) {
+  return Object.fromEntries(getBlockExportElements(block).flatMap(el => {
+    const original = block.elements.find(item => item.id === el.id);
+    const changed = Object.fromEntries(['x', 'y', 'w', 'h'].filter(key => el[key] !== original?.[key]).map(key => [key, el[key]]));
+    return Object.keys(changed).length ? [[el.id, changed]] : [];
+  }));
+}
+
+export function isExportBlankBlock(block) {
+  return !getBlockExportElements(block).some((element) => !isExportPhotoSlot(element));
 }
 
 function exportContentBottom(block) {
   return getBlockExportElements(block).reduce(
-    (bottom, element) => element.system
+    (bottom, element) => element.system || element.hidden
       ? bottom
       : Math.max(bottom, (element.y || 0) + (element.h || 40)),
     0,
   );
+}
+
+export function introSectionPadding() {
+  const catalog = pageTemplatesCatalog;
+  const wrapper = catalog.designs['T01-D07'].layout.find(node => node.columns);
+  const bubble = wrapper.columns.flatMap(col => col.nodes).find(node => node.splitParagraphs === 'body');
+  return catalog.templates.find(template => template.id === 'emo').spacing.textSectionGap + wrapper.gap + bubble.gap;
 }
 
 export function getBlockRenderHeight(block, { forExport = false } = {}) {
@@ -51,7 +113,9 @@ export function getBlockRenderHeight(block, { forExport = false } = {}) {
   const blockHeight = block.h || 220;
   // 이미 부모 안에 들어온 요소에는 여백을 다시 더하지 않는다. 요소가 실제로 넘친
   // 경우에만 한 번 50px 안전 여백과 함께 확장해야, 하단에 딱 맞춘 뒤 높이가 반복 증가하지 않는다.
-  const editorHeight = contentBottom > blockHeight ? contentBottom + 50 : blockHeight;
+  const padding = block.pageDesignId === 'T01-D07' ? introSectionPadding() : 50;
+  const editorHeight = block.pageDesignId === 'T01-D07' ? Math.max(blockHeight, contentBottom + padding)
+    : contentBottom > blockHeight ? contentBottom + padding : blockHeight;
   if (!forExport) return editorHeight;
   // 편집 높이에서 빈 텍스트가 만든 맨 아래 구간만 뺀다. 이렇게 해야 생성 캡션 자리는
   // 결과물에서 사라지면서도 셀러가 수동으로 늘린 블록 여백은 그대로 보존된다.
@@ -59,7 +123,8 @@ export function getBlockRenderHeight(block, { forExport = false } = {}) {
 }
 
 export function expandBlockHeights(blocks) {
-  return blocks.map((block) => ({ ...block, h: getBlockRenderHeight(block) }));
+  return blocks.map((block) => block.pageDesignId === 'T01-D07' && !block.genTemplateBaseline ? block
+    : { ...block, h: getBlockRenderHeight(block) });
 }
 
 export function blockHeightFromBottom(startHeight, screenDeltaY, scale = 1) {

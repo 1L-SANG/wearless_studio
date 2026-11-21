@@ -96,9 +96,14 @@ const rolePattern = (role) =>
     String(role)
         .replace(/\{direction\}/g, "front")
         .replace(/\.\d+(?=\.|$)/g, ".n");
-export function textSlotForRole(kind, role) {
+export function textSlotForRole(kind, role, { templateId, sellerComment = "" } = {}) {
     const pattern = rolePattern(role);
-    return kind?.textSlots?.find((slot) => slot.copyRole === pattern);
+    const slot = kind?.textSlots?.find((slot) => slot.copyRole === pattern);
+    if (!slot) return undefined;
+    let maxChars = slot.maxCharsByTemplate?.[templateId] ?? slot.maxChars;
+    if (slot.maxCharsFromSeller) maxChars = Math.min(slot.maxCharsFromSeller.max,
+        Math.max(slot.maxCharsFromSeller.min, Array.from(String(sellerComment || "")).length));
+    return { ...slot, maxChars };
 }
 
 /** Both runtimes reject an invalid catalog before serving any page. */
@@ -217,6 +222,15 @@ export function validateCatalog(catalog) {
                         slot.itemCount.max >= slot.itemCount.default,
                     `itemCount ${key}.${slot.copyRole}`,
                 );
+            if (slot.maxCharsByTemplate !== undefined)
+                check(slot.maxCharsByTemplate && typeof slot.maxCharsByTemplate === 'object'
+                    && !Array.isArray(slot.maxCharsByTemplate)
+                    && Object.entries(slot.maxCharsByTemplate).every(([id, value]) => ['emo', 'show'].includes(id) && positive(value)),
+                `maxCharsByTemplate ${key}.${slot.copyRole}`);
+            if (slot.maxCharsFromSeller !== undefined)
+                check(slot.maxCharsFromSeller && positive(slot.maxCharsFromSeller.min)
+                    && positive(slot.maxCharsFromSeller.max) && slot.maxCharsFromSeller.max >= slot.maxCharsFromSeller.min,
+                `maxCharsFromSeller ${key}.${slot.copyRole}`);
         }
     }
     const designs = catalog?.designs || {};
@@ -346,6 +360,9 @@ export function validateCatalog(catalog) {
                     node.type === "overlay" && paint && typeof paint === "object" &&
                         (HEX.test(paint.color) || HEX.test(catalog.neutralColors[paint.color])) && opacity(paint.opacity) &&
                         (paint.heightRatio == null || positive(paint.heightRatio) && paint.heightRatio <= 1) &&
+                        (paint.startOpacity == null || opacity(paint.startOpacity) && paint.startOpacity <= paint.opacity) &&
+                        (paint.midStop == null || paint.gradient && positive(paint.midStop.offset) && paint.midStop.offset < 1
+                            && opacity(paint.midStop.opacity) && paint.midStop.opacity >= (paint.startOpacity || 0) && paint.midStop.opacity <= paint.opacity) &&
                         (paint.gradient == null || typeof paint.gradient === "boolean"),
                     `overlay scrim ${id}`,
                 );

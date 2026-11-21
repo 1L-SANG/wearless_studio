@@ -22,6 +22,7 @@ import JSZip from 'jszip';
 import { toBytesUrl, isAssetBytesUrl } from './editorAssetBytes.js';
 export { toBytesUrl, isAssetBytesUrl } from './editorAssetBytes.js';
 import { notarize } from './publicationNotarize.js';
+import { CHROME_SELECTOR, exportStillImageSource } from './editorExportContent.js';
 
 export const EXPORT_WIDTH = 1000; // .ed-canvas 설계 폭 — 캡처는 화면 scale 과 무관하게 이 폭 기준
 const PIXEL_RATIO = 2; // 상세페이지 업로드 기준 2000px — 쇼핑몰 권장폭(860~1280)을 여유 있게 커버
@@ -30,18 +31,25 @@ export const MAX_CAPTURE_DIM = 16384; // html-to-image가 이 길이를 넘으�
 export const MAX_CANVAS_AREA = 16_777_216; // Safari가 빈 캔버스로 돌려줄 수 있는 총 픽셀 상한
 export const MAX_SINGLE_PAGE_HEIGHT = 20000;
 export const MAX_SPLIT_HEIGHT = 3000;
+export const MAX_PUBLICATION_PIECES = 40;
+export const PUBLICATION_PIECE_LIMIT_MESSAGE = '조각이 40장을 넘어 붙여넣을 코드를 만들 수 없어요. 이미지로 받아 주세요';
 export const MAX_JPEG_BYTES = 3 * 1024 * 1024;
 export const JPEG_QUALITY = 0.9;
 export const ORIGINAL_PNG_MAX_HEIGHT = Math.min(
   MAX_CAPTURE_DIM, MAX_CANVAS_DIM, Math.floor(MAX_CANVAS_AREA / (EXPORT_WIDTH * PIXEL_RATIO)),
 );
 export const EXPORT_SETTINGS_KEY = 'wearless.editor.export.v1';
+export const CUSTOM_EXPORT_MIN_WIDTH = 640;
+export const CUSTOM_EXPORT_MAX_WIDTH = 2000;
+export const CUSTOM_EXPORT_WIDTH_ERROR = '640~2,000px 사이로 넣어 주세요';
 
 export const EXPORT_PRESETS = Object.freeze([
-  { id: 'smartstore', width: 860, label: '스마트스토어·통용' },
+  { id: 'smartstore', width: 860, label: '스마트스토어' },
   { id: 'coupang', width: 780, label: '쿠팡' },
+  { id: 'cafe24', width: 800, label: '카페24' },
   { id: 'high', width: 1290, label: '고화질', desc: '휴대폰에서 더 선명, 파일이 큼' },
   { id: 'original', width: 2000, label: '원본 PNG', original: true },
+  { id: 'custom', label: '직접 입력' },
 ]);
 
 export const DEFAULT_EXPORT_SETTINGS = Object.freeze({
@@ -52,6 +60,7 @@ export const DEFAULT_EXPORT_SETTINGS = Object.freeze({
 
 const EXPORT_FORMATS = new Set(['jpeg', 'png']);
 const EXPORT_DELIVERIES = new Set(['split', 'single']);
+const CUT_SEARCH_WINDOW = 400;
 
 /* ---- 순수 헬퍼 (테스트 대상) ---- */
 
@@ -59,17 +68,27 @@ export function exportPreset(presetId) {
   return EXPORT_PRESETS.find((preset) => preset.id === presetId) || EXPORT_PRESETS[0];
 }
 
-export function exportScaleForPreset(presetId) {
-  return exportPreset(presetId).width / EXPORT_WIDTH;
+function validCustomExportWidth(width) {
+  return Number.isInteger(width) && width >= CUSTOM_EXPORT_MIN_WIDTH && width <= CUSTOM_EXPORT_MAX_WIDTH;
+}
+
+export function exportWidth({ preset, customWidth }) {
+  if (preset === 'custom') return validCustomExportWidth(customWidth) ? customWidth : null;
+  return exportPreset(preset).width;
+}
+
+export function exportScaleForPreset(preset, customWidth) {
+  const width = exportWidth({ preset, customWidth });
+  return width === null ? null : width / EXPORT_WIDTH;
 }
 
 export function normalizeExportSettings(value) {
-  const preset = exportPreset(value?.preset).id;
-  const original = exportPreset(preset).original;
+  const { id: preset, original } = exportPreset(value?.preset);
   return {
     preset,
     format: original ? 'png' : (EXPORT_FORMATS.has(value?.format) ? value.format : DEFAULT_EXPORT_SETTINGS.format),
     delivery: EXPORT_DELIVERIES.has(value?.delivery) ? value.delivery : DEFAULT_EXPORT_SETTINGS.delivery,
+    ...(validCustomExportWidth(value?.customWidth) ? { customWidth: value.customWidth } : {}),
   };
 }
 
@@ -83,7 +102,9 @@ export function readExportSettings(storage) {
     const target = resolveExportStorage(storage);
     if (!target) return { ...DEFAULT_EXPORT_SETTINGS };
     const raw = target.getItem(EXPORT_SETTINGS_KEY);
-    return raw ? normalizeExportSettings(JSON.parse(raw)) : { ...DEFAULT_EXPORT_SETTINGS };
+    if (!raw) return { ...DEFAULT_EXPORT_SETTINGS };
+    const settings = normalizeExportSettings(JSON.parse(raw));
+    return exportWidth(settings) === null ? { ...DEFAULT_EXPORT_SETTINGS } : settings;
   } catch {
     return { ...DEFAULT_EXPORT_SETTINGS };
   }
@@ -93,37 +114,339 @@ export function writeExportSettings(storage, settings) {
   try {
     const target = resolveExportStorage(storage);
     if (!target) return false;
-    target.setItem(EXPORT_SETTINGS_KEY, JSON.stringify(normalizeExportSettings(settings)));
+    const normalized = normalizeExportSettings(settings);
+    if (exportWidth(normalized) === null) return false;
+    target.setItem(EXPORT_SETTINGS_KEY, JSON.stringify(normalized));
     return true;
   } catch {
     return false;
   }
 }
 
-export function groupScaledBlockHeights(blockHeights, ratio, maxHeight = MAX_SPLIT_HEIGHT) {
-  const groups = [];
-  let current = 0;
-  const flush = () => {
-    if (current > 0) groups.push(current);
-    current = 0;
-  };
-  for (const cssHeight of blockHeights) {
-    let height = Math.max(0, Math.trunc((Number(cssHeight) || 0) * ratio));
-    if (height <= 0) continue;
-    if (height <= maxHeight) {
-      if (current + height > maxHeight) flush();
-      current += height;
+export function exportPixelHeight(height, width) {
+  const cssHeight = Number(height);
+  return Number.isFinite(cssHeight) ? Math.max(0, Math.floor(cssHeight * width / EXPORT_WIDTH)) : 0;
+}
+
+const SHORT_SECTION_HEIGHT = 700;
+const sumHeights = (slices) => slices.reduce((sum, slice) => sum + slice.height, 0);
+
+function makePiece(slices) {
+  const joined = [];
+  let height = 0;
+  for (const slice of slices) {
+    height += slice.height;
+    const last = joined.at(-1);
+    if (last?.blockIndex === slice.blockIndex) {
+      joined[joined.length - 1] = { ...last, height: last.height + slice.height };
+    } else joined.push(slice);
+  }
+  return { height, slices: joined, blank: joined.every((slice) => slice.blank) };
+}
+
+function splitBlock(blockIndex, height, blank, maxHeight) {
+  const count = Math.ceil(height / maxHeight);
+  let y = 0;
+  return Array.from({ length: count }, (_, index) => {
+    const end = Math.ceil((index + 1) * height / count);
+    const slice = { blockIndex, y, height: end - y, blank };
+    y = end;
+    return slice;
+  });
+}
+
+function collectExportSections(blocks, heights, maxHeight) {
+  const runs = [];
+  blocks.forEach((block, index) => {
+    const key = block.pageSectionKey;
+    let run = runs.at(-1);
+    if (!key || run?.key !== key) {
+      run = { key, slices: [] };
+      runs.push(run);
+    }
+    run.slices.push(...splitBlock(index, heights[index], block.blank, maxHeight));
+  });
+
+  const sections = [];
+  let gap = [];
+  for (const { slices } of runs) {
+    const first = slices.findIndex((slice) => !slice.blank);
+    if (first === -1) {
+      gap.push(...slices);
       continue;
     }
-    flush();
-    while (height > maxHeight) {
-      groups.push(maxHeight);
-      height -= maxHeight;
+    const end = slices.findLastIndex((slice) => !slice.blank) + 1;
+    let content = slices.slice(first, end);
+    const height = sumHeights(slices);
+    const short = height < SHORT_SECTION_HEIGHT && height <= maxHeight;
+    if (short) {
+      // Keep a short section together even if its neighboring long run is rebalanced later.
+      content = content.map((slice) => ({ ...slice, shortSection: sections.length }));
     }
-    current = height;
+    sections.push({ gap: [...gap, ...slices.slice(0, first)], content, short });
+    gap = slices.slice(end);
   }
-  flush();
-  return groups;
+  return { sections, trailingGap: gap };
+}
+
+function bundleSectionSlices(slices, maxHeight) {
+  const bundles = [];
+  for (let start = 0; start < slices.length;) {
+    let end = start + 1;
+    const shortSection = slices[start].shortSection;
+    if (shortSection !== undefined) {
+      while (slices[end]?.shortSection === shortSection) end += 1;
+    } else if (slices[start].blank) {
+      while (end < slices.length && slices[end].blank) end += 1;
+    }
+    const bundle = makePiece(slices.slice(start, end));
+    if (bundle.height <= maxHeight) bundles.push(bundle);
+    else bundles.push(...slices.slice(start, end).map((slice) => makePiece([slice])));
+    start = end;
+  }
+  return bundles;
+}
+
+function partitionSection(slices, maxHeight, { leading, trailing } = {}) {
+  const bundles = bundleSectionSlices(slices, maxHeight);
+  if (leading) bundles[0] = makePiece([...leading, ...bundles[0].slices]);
+  if (trailing) bundles[bundles.length - 1] = makePiece([...bundles.at(-1).slices, ...trailing]);
+  if (bundles.some(({ height }) => height > maxHeight)) return null;
+  const order = ['blankCount', 'count', 'gapsAtEnd', 'squaredHeights'];
+  const better = (candidate, current) => {
+    const difference = current && order.find((key) => candidate[key] !== current[key]);
+    return !difference || candidate[difference] < current[difference];
+  };
+  const best = [{ blankCount: 0, count: 0, gapsAtEnd: 0, squaredHeights: 0 }];
+  // Each prefix uses as few blank-only files as possible, then as few files as
+  // possible. For a fixed file count, minimizing squared heights balances them.
+  for (let end = 1; end <= bundles.length; end += 1) {
+    let height = 0;
+    let blank = true;
+    for (let start = end - 1; start >= 0; start -= 1) {
+      height += bundles[start].height;
+      if (height > maxHeight) break;
+      blank &&= bundles[start].blank;
+      const prefix = best[start];
+      const candidate = {
+        start, blankCount: prefix.blankCount + Number(blank), count: prefix.count + 1,
+        gapsAtEnd: prefix.gapsAtEnd + Number(!blank && end < bundles.length && bundles[end - 1].blank),
+        squaredHeights: prefix.squaredHeights + height * height,
+      };
+      if (better(candidate, best[end])) best[end] = candidate;
+    }
+  }
+  const pieces = [];
+  for (let end = bundles.length; end > 0;) {
+    const { start } = best[end];
+    pieces.push(makePiece(bundles.slice(start, end).flatMap((bundle) => bundle.slices)));
+    end = start;
+  }
+  return pieces.reverse();
+}
+
+function takeGapEdge(gap, budget, fromEnd, blockHeights, maxHeight) {
+  const taken = [];
+  while (gap.length && budget > 0) {
+    const index = fromEnd ? gap.length - 1 : 0;
+    const slice = gap[index];
+    if (slice.height <= budget) {
+      taken.push(gap.splice(index, 1)[0]);
+      budget -= slice.height;
+    } else {
+      // Only a block that was already taller than the limit can be cut here.
+      if (blockHeights[slice.blockIndex] > maxHeight) {
+        const remainder = slice.height - budget;
+        taken.push({ ...slice, y: fromEnd ? slice.y + remainder : slice.y, height: budget });
+        gap[index] = { ...slice, y: fromEnd ? slice.y : slice.y + budget, height: remainder };
+      }
+      break;
+    }
+  }
+  return fromEnd ? taken.reverse() : taken;
+}
+
+function shareOversizeGap(remaining, previous, following, heights, maxHeight) {
+  const suffix = following ? takeGapEdge(remaining, maxHeight - following.height, true, heights, maxHeight) : [];
+  const prefix = previous ? takeGapEdge(remaining, maxHeight - previous.height, false, heights, maxHeight) : [];
+  return {
+    previous: prefix.length ? makePiece([...previous.slices, ...prefix]) : previous,
+    following: suffix.length ? makePiece([...suffix, ...following.slices]) : following,
+  };
+}
+
+// A long section's balanced pieces may leave part of an oversized gap alone.
+// Try the available space on both sides without moving any content rows.
+function absorbBlankPieces(pieces, heights, maxHeight) {
+  const result = [];
+  for (let index = 0; index < pieces.length;) {
+    if (!pieces[index].blank) {
+      result.push(pieces[index++]);
+      continue;
+    }
+    let end = index + 1;
+    while (pieces[end]?.blank) end += 1;
+    const previous = result.at(-1);
+    const following = pieces[end];
+    const blanks = pieces.slice(index, end);
+    index = end;
+    if (!previous || !following) {
+      result.push(...blanks);
+      continue;
+    }
+    const previousEnd = previous.slices.findLastIndex((slice) => !slice.blank) + 1;
+    const followingStart = following.slices.findIndex((slice) => !slice.blank);
+    const gap = [
+      ...previous.slices.slice(previousEnd), ...blanks.flatMap((piece) => piece.slices),
+      ...following.slices.slice(0, followingStart),
+    ];
+    if (sumHeights(gap) <= maxHeight) {
+      result.push(...blanks);
+      continue;
+    }
+    const shared = shareOversizeGap(gap, makePiece(previous.slices.slice(0, previousEnd)),
+      makePiece(following.slices.slice(followingStart)), heights, maxHeight);
+    const leftover = partitionSection(gap, maxHeight);
+    if (leftover.length <= blanks.length && sumHeights(leftover) < sumHeights(blanks)) {
+      result[result.length - 1] = shared.previous;
+      result.push(...leftover);
+      pieces[end] = shared.following;
+    } else result.push(...blanks);
+  }
+  return result;
+}
+
+function rebalanceWithTrailingSections(pieces, sections, maxHeight) {
+  for (const [index, { content }] of sections.entries()) {
+    if (sumHeights(content) <= maxHeight) continue;
+    let after = index + 1;
+    while (sections[after]?.short) after += 1;
+
+    const firstBlock = content[0].blockIndex;
+    const lastBlock = content.at(-1).blockIndex;
+    const start = pieces.findIndex(({ slices }) => slices.at(-1).blockIndex >= firstBlock);
+    const nextBlock = sections[after]?.content[0].blockIndex;
+    const end = nextBlock === undefined ? pieces.length
+      : pieces.findIndex(({ slices }) => slices.at(-1).blockIndex >= nextBlock);
+    const current = pieces.slice(start, end);
+    const slices = current.flatMap((piece) => piece.slices);
+
+    // Keep the gaps where the normal placement rules put them. In particular,
+    // a gap carried by the next regular section is outside this range.
+    const leading = slices.filter((slice) => slice.blockIndex < firstBlock);
+    const trailing = slices.filter((slice) => slice.blockIndex > lastBlock);
+    if (!trailing.length) continue;
+    const section = slices.slice(leading.length, slices.length - trailing.length);
+    const balanced = partitionSection(section, maxHeight, { leading, trailing });
+    if (!balanced || balanced.length > current.length) continue;
+    if (balanced.filter((piece) => piece.blank).length > current.filter((piece) => piece.blank).length) continue;
+    pieces.splice(start, current.length, ...balanced);
+  }
+  return pieces;
+}
+
+function planSplitPieces(blocks, heights, maxHeight) {
+  const { sections, trailingGap } = collectExportSections(blocks, heights, maxHeight);
+  const pieces = [];
+  let previousLongStart = null;
+  let atStart = true;
+
+  function placeGap(gap, next) {
+    if (!gap.length) return;
+    const height = sumHeights(gap);
+    const previous = pieces.at(-1);
+    const following = next[0];
+    if (following && height + following.height <= maxHeight) {
+      next[0] = makePiece([...gap, ...following.slices]);
+    } else if (previous && previous.height + height <= maxHeight) {
+      pieces[pieces.length - 1] = makePiece([...previous.slices, ...gap]);
+    } else {
+      // Long sections can move their internal boundaries to make room.
+      if (height <= maxHeight && next.length > 1) {
+        const rebalanced = partitionSection(next.flatMap((piece) => piece.slices), maxHeight, { leading: gap });
+        if (rebalanced) {
+          next.splice(0, next.length, ...rebalanced);
+          return;
+        }
+      }
+      if (height <= maxHeight && previousLongStart !== null) {
+        const rebalanced = partitionSection(
+          pieces.slice(previousLongStart).flatMap((piece) => piece.slices), maxHeight, { trailing: gap },
+        );
+        if (rebalanced) {
+          pieces.splice(previousLongStart, pieces.length, ...rebalanced);
+          return;
+        }
+      }
+      // Only a gap exceeding the limit can be divided between its neighbors.
+      let remaining = [...gap];
+      if (height > maxHeight) {
+        const shared = shareOversizeGap(remaining, previous, following, heights, maxHeight);
+        const previousRun = previousLongStart === null ? null : pieces.slice(previousLongStart).flatMap((piece) => piece.slices);
+        const followingRun = next.length > 1 ? next.flatMap((piece) => piece.slices) : null;
+        const candidate = remaining.length && (previousRun || followingRun) ? [...gap] : null;
+        const after = followingRun ? bundleSectionSlices(followingRun, maxHeight)[0] : following;
+        const before = previousRun ? bundleSectionSlices(previousRun, maxHeight).at(-1) : previous;
+        const suffix = candidate && after ? takeGapEdge(candidate, maxHeight - after.height, true, heights, maxHeight) : [];
+        const prefix = candidate && before ? takeGapEdge(candidate, maxHeight - before.height, false, heights, maxHeight) : [];
+        if (candidate && sumHeights(candidate) < sumHeights(remaining)) {
+          // A different boundary can give the gap more space without mixing sections.
+          if (previousRun) pieces.splice(previousLongStart, pieces.length, ...partitionSection(previousRun, maxHeight, { trailing: prefix }));
+          else if (previous) pieces[pieces.length - 1] = makePiece([...previous.slices, ...prefix]);
+          if (followingRun) next.splice(0, next.length, ...partitionSection(followingRun, maxHeight, { leading: suffix }));
+          else if (following) next[0] = makePiece([...suffix, ...following.slices]);
+          remaining = candidate;
+        } else {
+          if (previous) pieces[pieces.length - 1] = shared.previous;
+          if (following) next[0] = shared.following;
+        }
+      }
+      pieces.push(...partitionSection(remaining, maxHeight));
+      if (remaining.length) previousLongStart = null;
+    }
+  }
+
+  for (const { gap, content, short } of sections) {
+    const section = makePiece(content);
+    const long = section.height > maxHeight;
+    let next = long ? partitionSection(content, maxHeight) : [section];
+    placeGap(gap, next);
+    const previous = pieces.at(-1);
+    let joinedPrevious = false;
+    if ((short || atStart) && previous && previous.height + next[0].height <= maxHeight) {
+      next[0] = makePiece([...pieces.pop().slices, ...next[0].slices]);
+      joinedPrevious = true;
+    } else if (atStart && long && previous && !previous.blank) {
+      const rebalanced = partitionSection(next.flatMap((piece) => piece.slices), maxHeight, { leading: previous.slices });
+      if (rebalanced) {
+        pieces.pop();
+        next = rebalanced;
+      }
+    }
+    if (long) previousLongStart = pieces.length;
+    else if (!short || !joinedPrevious) previousLongStart = null;
+    pieces.push(...next);
+    atStart &&= short;
+  }
+  placeGap(trailingGap, []);
+  return rebalanceWithTrailingSections(absorbBlankPieces(pieces, heights, maxHeight), sections, maxHeight);
+}
+
+function mergePiecesForPublication(pieces, maxHeight) {
+  while (pieces.length > MAX_PUBLICATION_PIECES) {
+    let bestIndex = -1;
+    let bestHeight = Infinity;
+    for (let i = 0; i + 1 < pieces.length; i += 1) {
+      const height = pieces[i].height + pieces[i + 1].height;
+      if (height <= maxHeight && height < bestHeight) {
+        bestIndex = i;
+        bestHeight = height;
+      }
+    }
+    if (bestIndex === -1) break;
+    pieces.splice(bestIndex, 2, makePiece([...pieces[bestIndex].slices, ...pieces[bestIndex + 1].slices]));
+  }
+  return pieces;
 }
 
 export function singlePageFallbackReason({
@@ -142,42 +465,57 @@ export function singlePageFallbackReason({
   return null;
 }
 
-export function detailFileName(index, count, format) {
+export function detailFileName(index, count, format, base = '상세페이지', preset) {
   const digits = Math.max(2, String(Math.max(1, count)).length);
   const ext = format === 'png' ? 'png' : 'jpg';
-  return `detail_${String(index + 1).padStart(digits, '0')}.${ext}`;
+  return `${preset === 'cafe24' ? 'detail' : base}_${String(index + 1).padStart(digits, '0')}.${ext}`;
 }
 
 export function publicationKindForSingle(format) {
   return format === 'jpeg' ? 'jpeg' : 'long_png';
 }
 
-export function buildExportSummary(blockHeights, rawSettings) {
+function buildExportLayout(blocks, settings, maxHeight) {
+  const width = exportWidth(settings);
+  if (width === null) return null;
+  const ratio = width / EXPORT_WIDTH;
+  const original = !!exportPreset(settings.preset).original;
+  const maxPieceHeight = maxHeight ?? (original ? ORIGINAL_PNG_MAX_HEIGHT : MAX_SPLIT_HEIGHT);
+  const measured = blocks.map((block) => typeof block === 'number' ? { height: block } : block);
+  const scaledHeights = measured.map((block) => exportPixelHeight(block.height, width));
+  const height = scaledHeights.reduce((sum, value) => sum + value, 0);
+  const fallbackReason = settings.delivery === 'single' ? singlePageFallbackReason({ width, height }) : null;
+  const delivery = fallbackReason ? 'split' : settings.delivery;
+  const pieces = delivery === 'split' ? mergePiecesForPublication(planSplitPieces(measured, scaledHeights, maxPieceHeight), maxPieceHeight)
+    : height > 0 ? [makePiece(scaledHeights.flatMap((height, index) => splitBlock(index, height, measured[index].blank, maxPieceHeight)))] : [];
+  return { width, ratio, height, scaledHeights, original, delivery, maxPieceHeight, pieces, fallbackReason };
+}
+
+export function buildExportSummary(blocks, rawSettings) {
   const settings = normalizeExportSettings(rawSettings);
-  const preset = exportPreset(settings.preset);
-  const ratio = preset.width / EXPORT_WIDTH;
-  const scaled = blockHeights.map((height) => Math.max(0, Math.trunc((Number(height) || 0) * ratio)));
-  const height = scaled.reduce((sum, value) => sum + value, 0);
-  const grouped = preset.original
-    ? scaled.flatMap((value) => {
-      const pieces = [];
-      for (let left = value; left > 0; left -= ORIGINAL_PNG_MAX_HEIGHT) pieces.push(Math.min(left, ORIGINAL_PNG_MAX_HEIGHT));
-      return pieces;
-    })
-    : groupScaledBlockHeights(blockHeights, ratio);
-  const fileCount = settings.delivery === 'single' ? (height > 0 ? 1 : 0) : grouped.length;
+  const layout = buildExportLayout(blocks, settings);
+  if (!layout) return null;
   const bytesPerPixel = settings.format === 'jpeg' ? 0.24 : 1.1;
   return {
-    width: preset.width,
-    height,
-    fileCount,
-    maxPieceHeight: settings.delivery === 'split' ? (preset.original ? ORIGINAL_PNG_MAX_HEIGHT : MAX_SPLIT_HEIGHT) : null,
-    approxBytes: Math.round(preset.width * height * bytesPerPixel),
+    ...layout,
+    pieceHeights: layout.pieces.map((piece) => piece.height),
+    fileCount: layout.pieces.length,
+    maxPieceHeight: layout.delivery === 'split' ? layout.maxPieceHeight : null,
+    approxBytes: Math.round(layout.width * layout.height * bytesPerPixel),
     approximate: true,
-    fallbackReason: settings.delivery === 'single'
-      ? singlePageFallbackReason({ width: preset.width, height })
-      : null,
   };
+}
+
+function blockSlicePlan(layout) {
+  const plan = layout.scaledHeights.map(() => []);
+  layout.pieces.forEach((piece, pieceIndex) => {
+    for (const [sliceIndex, slice] of piece.slices.entries()) {
+      const cutSlack = slice.y + slice.height < layout.scaledHeights[slice.blockIndex]
+        ? layout.maxPieceHeight - layout.pieces[pieceIndex + 1].height : 0;
+      plan[slice.blockIndex].push({ ...slice, pieceIndex, cutSlack, endsPiece: sliceIndex === piece.slices.length - 1 });
+    }
+  });
+  return plan;
 }
 
 function rowIsUniform(pixels, width, y, tolerance) {
@@ -195,7 +533,7 @@ export function findUniformCutRow(
   pixels,
   width,
   targetHeight,
-  { searchWindow = 400, tolerance = 2 } = {},
+  { searchWindow = CUT_SEARCH_WINDOW, tolerance = 2 } = {},
 ) {
   const height = Math.floor(pixels.length / Math.max(1, width * 4));
   const target = Math.min(height, Math.max(1, Math.trunc(targetHeight)));
@@ -206,37 +544,39 @@ export function findUniformCutRow(
   return target;
 }
 
-export function splitCanvasRanges(canvas, maxHeight = MAX_SPLIT_HEIGHT) {
-  if (canvas.height <= maxHeight) return [{ y: 0, height: canvas.height }];
+function findUniformJpegRow(canvas, range, middle) {
+  const start = Math.max(range.y + 1, middle - CUT_SEARCH_WINDOW);
+  const end = Math.min(range.y + range.height - 1, middle + CUT_SEARCH_WINDOW);
   const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('이미지를 나눌 수 없어요. 다시 시도해 주세요.');
-  const ranges = [];
-  let y = 0;
-  while (canvas.height - y > maxHeight) {
-    const sample = ctx.getImageData(0, y, canvas.width, maxHeight);
-    const height = findUniformCutRow(sample.data, canvas.width, maxHeight);
-    ranges.push({ y, height });
-    y += height;
+  if (!ctx) return null;
+  const { data } = ctx.getImageData(0, start, canvas.width, end - start + 1);
+  for (let step = 0; step <= CUT_SEARCH_WINDOW; step += 1) {
+    const before = middle - step;
+    const after = middle + step;
+    if (before >= start && rowIsUniform(data, canvas.width, before - start, 2)) return before;
+    if (after <= end && rowIsUniform(data, canvas.width, after - start, 2)) return after;
   }
-  if (canvas.height > y) ranges.push({ y, height: canvas.height - y });
-  return ranges;
+  return null;
 }
 
-export async function splitOversizeJpegRanges(
-  range,
-  encodeRange,
-  { maxBytes = MAX_JPEG_BYTES, quality = JPEG_QUALITY } = {},
-) {
+export async function splitOversizeJpegRanges(range, encodeRange, options = {}) {
+  const { maxBytes = MAX_JPEG_BYTES, quality = JPEG_QUALITY, blockBoundaries = [], findUniformRow } = options;
   const blob = await encodeRange(range, quality);
   if (blob.size <= maxBytes) return [{ range, blob }];
   if (range.height <= 1) {
     throw new Error('JPG 조각을 3MB 이하로 만들 수 없어요. PNG로 다시 시도해 주세요.');
   }
-  const firstHeight = Math.max(1, Math.floor(range.height / 2));
-  const first = { y: range.y, height: firstHeight };
-  const second = { y: range.y + firstHeight, height: range.height - firstHeight };
-  const left = await splitOversizeJpegRanges(first, encodeRange, { maxBytes, quality });
-  const right = await splitOversizeJpegRanges(second, encodeRange, { maxBytes, quality });
+  const end = range.y + range.height;
+  const middle = range.y + Math.floor(range.height / 2);
+  let boundary = null;
+  for (const row of blockBoundaries) {
+    if (row > range.y && row < end && (boundary === null
+      || Math.abs(row - middle) < Math.abs(boundary - middle))) boundary = row;
+  }
+  const uniform = boundary === null ? findUniformRow?.(range, middle) : null;
+  const cut = boundary ?? (uniform > range.y && uniform < end ? uniform : middle);
+  const left = await splitOversizeJpegRanges({ y: range.y, height: cut - range.y }, encodeRange, options);
+  const right = await splitOversizeJpegRanges({ y: cut, height: end - cut }, encodeRange, options);
   return [...left, ...right];
 }
 
@@ -273,31 +613,53 @@ export function exportNodeHeight(node) {
   const editorHeight = Number.parseFloat(node?.style?.height);
   const exportHeight = Number(node?.dataset?.exportHeight);
   if (!Number.isFinite(exportHeight) || exportHeight <= 0) return offsetHeight;
-  if (!Number.isFinite(editorHeight)) return exportHeight;
-  return Math.max(1, offsetHeight - editorHeight + exportHeight);
+  const style = node.ownerDocument?.defaultView?.getComputedStyle?.(node);
+  if (style?.boxSizing === 'border-box') {
+    // Hidden content can reduce the declared height below the padding that the clone still has.
+    const edges = [style.paddingTop, style.paddingBottom, style.borderTopWidth, style.borderBottomWidth]
+      .reduce((sum, value) => sum + (Number.parseFloat(value) || 0), 0);
+    return Math.max(1, Math.round(Math.max(exportHeight, edges, Number.parseFloat(style.minHeight) || 0)));
+  }
+  if (!Number.isFinite(editorHeight)) return Math.round(exportHeight);
+  return Math.max(1, offsetHeight - Math.round(editorHeight) + Math.round(exportHeight));
 }
 
-// 파일명 — 상품명에서 파일시스템 금지문자만 걷어낸다. 빈 값은 '상세페이지'.
+export function exportNodeBlock(node) {
+  return {
+    height: exportNodeHeight(node),
+    pageSectionKey: node?.dataset?.exportSection,
+    blank: node?.dataset?.exportBlank === 'true',
+  };
+}
+
+const RESERVED_EXPORT_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
+export function sanitizeExportFileName(value) {
+  const cleaned = String(value ?? '').normalize('NFC')
+    .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().replace(/[ .]+$/, '');
+  const base = Array.from(cleaned).slice(0, 60).join('').replace(/[ .]+$/, '');
+  return RESERVED_EXPORT_NAME.test(base) ? `${base}_상세` : base || '상세페이지';
+}
+
+// The same pure projection drives preview elements and the cloned canvas.
+// These DOM attributes are transient; no new editor-save fields are introduced.
+export function applyExportLayout(node) {
+  if (!node?.dataset?.exportLayout) return;
+  const layout = JSON.parse(node.dataset.exportLayout);
+  for (const element of node.querySelectorAll('[data-elid]')) {
+    const patch = layout[element.dataset.elid];
+    if (!patch) continue;
+    for (const [key, style] of [['x', 'left'], ['y', 'top'], ['w', 'width'], ['h', 'height']]) {
+      if (Number.isFinite(patch[key])) element.style[style] = `${patch[key]}px`;
+    }
+  }
+}
+
 export function exportFileName(productName, suffix) {
-  const base = String(productName || '').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
-  return `${base || '상세페이지'}${suffix ? `_${suffix}` : ''}.png`;
+  return `${sanitizeExportFileName(productName)}${suffix ? `_${suffix}` : ''}.png`;
 }
 
 /* ---- DOM 캡처 ---- */
-
-// 캡처에서 제외할 에디터 크롬 — 블록 안에 떠 있는 UI. 목록은 렌더 지점과 눈으로 맞춘
-// 블록리스트라, 새 크롬을 추가할 때 여기도 같이 봐야 한다(허용리스트 전환은 백로그).
-const CHROME_SELECTOR = [
-  '.quick', '.blk-label', '.blk-resize', '.selection-marquee', '.crop-bar', '.crop-layer',
-  '.align-bar', '.rot', '.hdl', '.edge', '.moveable-control-box',
-  '.ed-genwait', '.ed-uploadwait', '.canvas-dropline', '.slot-add', '.image-drop-guide',
-  '.el-empty-text', '.el-empty-template-copy', '.canvas-ai-layer', '.canvas-ai-slot-progress', '.canvas-ai-slot-arrived',
-  // 빈 사진 자리(.el-slot)는 "여기에 넣으세요"라는 편집기 안내지 상품 페이지의 내용이
-  // 아니다. 남겨 두면 완성본 PNG에 회색 네모가 그대로 찍힌다 — 사진을 비워 둔 채
-  // 내려받는 순간 상품 페이지에 빈 상자가 인쇄되는 셈이다(2026-08-17).
-  '.el-slot',
-  '.editor-snap-guide', '.editor-gap-guide',
-].join(',');
 
 // 한 번의 다운로드 안에서만 성공한 이미지 바이트를 재사용한다. 재시도는 새 캐시다.
 async function preflightImages(clone, imageCache) {
@@ -351,6 +713,7 @@ async function prepareClone(blockNode, imageCache = new Map()) {
   // 카드 그림자·간격은 화면용 — 결과물에 회색 이음새를 남긴다(이어보기 모드와 불일치, 리뷰 반영).
   clone.style.boxShadow = 'none';
   clone.style.margin = '0';
+  applyExportLayout(clone);
   clone.querySelectorAll(CHROME_SELECTOR).forEach((n) => n.remove());
   const exportHeight = Number(clone.dataset.exportHeight);
   if (Number.isFinite(exportHeight) && exportHeight > 0) clone.style.height = `${exportHeight}px`;
@@ -406,12 +769,13 @@ async function captureBlockCanvas(blockNode, pixelRatio, fontEmbedCSS, imageCach
     // 블록 배경이 다운로드에서 전부 흰색이 됐다(2026-09-28). 블록 배경은 그대로 캡처하고,
     // 흰 바탕 합성은 우리가 한다 — 반투명 배경(bgOpacity)도 화면처럼 흰 바탕 위에 보인다.
     const height = clone.offsetHeight;
+    const width = Math.round(EXPORT_WIDTH * pixelRatio);
     const probes = await collectExportImageProbes(clone, { ratio: pixelRatio, height });
     const svg = await toSvg(clone, { width: EXPORT_WIDTH, height, fontEmbedCSS });
     onVerify?.();
     const canvas = await rasterizeExportSvg(svg, {
-      width: Math.trunc(EXPORT_WIDTH * pixelRatio),
-      height: Math.trunc(height * pixelRatio),
+      width,
+      height: exportPixelHeight(height, width),
       probes,
     });
     return { canvas, softFailed };
@@ -427,15 +791,17 @@ export async function captureBlockCanvasSlices(
   maxHeight = MAX_SPLIT_HEIGHT,
   imageCache,
   onVerify,
+  plannedSlices,
 ) {
+  const width = Math.round(EXPORT_WIDTH * pixelRatio);
   maxHeight = Math.min(maxHeight, MAX_CAPTURE_DIM, MAX_CANVAS_DIM,
-    Math.floor(MAX_CANVAS_AREA / Math.trunc(EXPORT_WIDTH * pixelRatio)));
+    Math.floor(MAX_CANVAS_AREA / width));
   const { clone, softFailed, dispose } = await prepareClone(blockNode, imageCache);
   const canvases = [];
   try {
     await bakeExportBackdrops(clone, pixelRatio);
     const totalCssHeight = clone.offsetHeight;
-    const totalHeight = Math.trunc(totalCssHeight * pixelRatio);
+    const totalHeight = exportPixelHeight(totalCssHeight, width);
     const holder = clone.parentElement;
     if (!holder) throw new Error('내보내기용 블록을 준비하지 못했어요. 다시 시도해 주세요.');
     const viewport = document.createElement('div');
@@ -447,9 +813,14 @@ export async function captureBlockCanvasSlices(
     clone.style.width = `${EXPORT_WIDTH}px`;
     clone.style.margin = '0';
 
+    const slices = plannedSlices ?? splitBlock(0, totalHeight, false, maxHeight);
+    const expectedHeight = slices.reduce((sum, slice) => sum + slice.height, 0);
+    if (totalHeight !== expectedHeight) throw new Error('브라우저 한계로 이미지 아랫부분이 잘릴 수 있어 다운로드를 중단했어요.');
     let y = 0;
-    while (y < totalHeight) {
-      const wantedHeight = Math.min(maxHeight, totalHeight - y);
+    for (const slice of slices) {
+      // A cut shifted up in the previous slice leaves extra rows here.
+      const wantedHeight = slice.y + slice.height - y;
+      if (wantedHeight > maxHeight) throw new Error('이미지를 나눌 수 없어요. 다시 시도해 주세요.');
       const cssY = y / pixelRatio;
       const cssHeight = wantedHeight / pixelRatio;
       viewport.style.height = `${cssHeight}px`;
@@ -459,19 +830,20 @@ export async function captureBlockCanvasSlices(
       // 최종 픽셀 수를 직접 지정해 CSS 높이 왕복에서 생기는 1px 손실을 막는다.
       onVerify?.();
       let flattened = await rasterizeExportSvg(svg, {
-        width: Math.trunc(EXPORT_WIDTH * pixelRatio), height: wantedHeight, probes,
+        width, height: wantedHeight, probes,
       }); // eslint-disable-line no-await-in-loop
-      if (flattened.width !== Math.trunc(EXPORT_WIDTH * pixelRatio)
-        || Math.abs(flattened.height - wantedHeight) > 1) {
+      if (flattened.width !== width || flattened.height !== wantedHeight) {
         releaseExportCanvas(flattened);
         throw new Error('브라우저 한계로 이미지 아랫부분이 잘릴 수 있어 다운로드를 중단했어요.');
       }
       let keepHeight = flattened.height;
-      if (y + keepHeight < totalHeight) {
+      if (slice.cutSlack > 0 && y + keepHeight < totalHeight) {
         const ctx = flattened.getContext('2d');
         if (!ctx) throw new Error('이미지를 나눌 수 없어요. 다시 시도해 주세요.');
         const pixels = ctx.getImageData(0, 0, flattened.width, flattened.height).data;
-        keepHeight = findUniformCutRow(pixels, flattened.width, flattened.height);
+        keepHeight = findUniformCutRow(pixels, flattened.width, flattened.height, {
+          searchWindow: Math.min(CUT_SEARCH_WINDOW, slice.cutSlack),
+        });
       }
       if (keepHeight < flattened.height) {
         const trimmed = drawCanvasRange(
@@ -540,37 +912,31 @@ function drawCanvasRange(createCanvas, source, range, width = source.width) {
 
 export async function renderStorefrontFiles(blockNodes, rawSettings, deps = {}) {
   const settings = normalizeExportSettings(rawSettings);
-  const preset = exportPreset(settings.preset);
-  const width = preset.width;
-  const ratio = width / EXPORT_WIDTH;
-  const maxHeight = deps.maxHeight || (preset.original ? ORIGINAL_PNG_MAX_HEIGHT : MAX_SPLIT_HEIGHT);
+  const measureBlock = deps.measureBlock || exportNodeBlock;
+  const layout = deps.layout || buildExportLayout(blockNodes.map(measureBlock), settings, deps.maxHeight);
+  if (!layout) throw new Error(CUSTOM_EXPORT_WIDTH_ERROR);
+  if (settings.delivery === 'single' && layout.fallbackReason) throw new Error(layout.fallbackReason);
+  const { width, ratio, maxPieceHeight: maxHeight } = layout;
   const createCanvas = deps.createCanvas || createExportCanvas;
   const releaseCanvas = deps.releaseCanvas || releaseExportCanvas;
   const encodeCanvas = deps.encodeCanvas || canvasToBlob;
   const captureBlock = deps.captureBlock;
-  const measureBlock = deps.measureBlock || exportNodeHeight;
   if (!captureBlock) throw new Error('내보내기 캡처 함수를 찾지 못했어요.');
   const mime = settings.format === 'png' ? 'image/png' : 'image/jpeg';
   let softFailed = 0;
   let totalHeight = 0;
-  const validateCapture = (canvases, node) => {
-    const expectedHeight = Math.trunc(measureBlock(node) * ratio);
+  const validateCapture = (canvases, index) => {
+    const expectedHeight = layout.scaledHeights[index];
     const actualHeight = canvases.reduce((sum, canvas) => sum + canvas.height, 0);
-    if (canvases.some((canvas) => canvas.width !== width)
-      || Math.abs(actualHeight - expectedHeight) > 1) {
-      canvases.forEach(releaseCanvas);
+    if (canvases.some((canvas) => canvas.width !== width || canvas.height <= 0)
+      || actualHeight !== expectedHeight) {
       throw new Error('브라우저 한계로 이미지 아랫부분이 잘릴 수 있어 다운로드를 중단했어요. 나눠서 다시 시도해 주세요.');
     }
     return actualHeight;
   };
 
   if (settings.delivery === 'single') {
-    const plannedHeight = blockNodes.reduce(
-      (sum, node) => sum + Math.trunc(measureBlock(node) * ratio), 0,
-    );
-    const fallbackReason = singlePageFallbackReason({ width, height: plannedHeight });
-    if (fallbackReason) throw new Error(fallbackReason);
-    const out = createCanvas(width, plannedHeight);
+    const out = createCanvas(width, layout.height);
     const ctx = out.getContext('2d');
     if (!ctx) {
       releaseCanvas(out);
@@ -582,7 +948,7 @@ export async function renderStorefrontFiles(blockNodes, rawSettings, deps = {}) 
         deps.onProgress?.(i, blockNodes.length);
         const captured = await captureBlock(blockNodes[i], ratio, i); // eslint-disable-line no-await-in-loop
         try {
-          validateCapture([captured.canvas], blockNodes[i]);
+          validateCapture([captured.canvas], i);
           if (y + captured.canvas.height > out.height) {
             throw new Error('예상한 캔버스 높이와 실제 높이가 달라 한 장 저장을 중단했어요. 나눠서 받아주세요.');
           }
@@ -603,79 +969,65 @@ export async function renderStorefrontFiles(blockNodes, rawSettings, deps = {}) 
   }
 
   const files = [];
+  const slicePlan = blockSlicePlan(layout);
   let current = null;
   let currentHeight = 0;
+  let blockBoundaries = [];
 
-  const flush = async () => {
-    if (!current || currentHeight <= 0) return;
-    const active = current;
-    let exact = null;
-    try {
-      exact = drawCanvasRange(createCanvas, active, { y: 0, height: currentHeight }, width);
-      if (settings.format === 'jpeg') {
-        const parts = await splitOversizeJpegRanges(
-          { y: 0, height: currentHeight },
-          async (range, quality) => {
-            const slice = drawCanvasRange(createCanvas, exact, range, width);
-            try {
-              return await encodeCanvas(slice, mime, quality);
-            } finally {
-              releaseCanvas(slice);
-            }
-          },
-        );
-        files.push(...parts.map(({ blob }) => blob));
-      } else {
-        files.push(await encodeCanvas(exact, mime));
-      }
-    } finally {
-      if (exact) releaseCanvas(exact);
-      releaseCanvas(active);
-      current = null;
-      currentHeight = 0;
+  const savePiece = async (canvas, boundaries = []) => {
+    if (settings.format === 'png') {
+      files.push(await encodeCanvas(canvas, mime));
+      return;
     }
+    const parts = await splitOversizeJpegRanges({ y: 0, height: canvas.height }, async (range, quality) => {
+      if (range.height === canvas.height) return encodeCanvas(canvas, mime, quality);
+      const slice = drawCanvasRange(createCanvas, canvas, range);
+      try { return await encodeCanvas(slice, mime, quality); }
+      finally { releaseCanvas(slice); }
+    }, { blockBoundaries: boundaries, findUniformRow: (range, middle) => findUniformJpegRow(canvas, range, middle) });
+    files.push(...parts.map(({ blob }) => blob));
   };
 
-  const append = async (source, range) => {
-    if (!current) current = createCanvas(width, maxHeight);
-    if (currentHeight + range.height > maxHeight) {
-      await flush();
-      current = createCanvas(width, maxHeight);
-    }
-    const ctx = current.getContext('2d');
-    if (!ctx) throw new Error('저장용 캔버스를 만들지 못했어요. 다시 시도해 주세요.');
-    ctx.drawImage(
-      source,
-      0, range.y, source.width, range.height,
-      0, currentHeight, width, range.height,
-    );
-    currentHeight += range.height;
+  const flush = async () => {
+    const exact = drawCanvasRange(createCanvas, current, { y: 0, height: currentHeight }, width);
+    try { await savePiece(exact, blockBoundaries); }
+    finally { releaseCanvas(exact); }
+    releaseCanvas(current);
+    current = null;
+    currentHeight = 0;
+    blockBoundaries = [];
   };
 
   try {
     for (let i = 0; i < blockNodes.length; i += 1) {
+      const planned = slicePlan[i];
+      if (!planned.length) continue;
       deps.onProgress?.(i, blockNodes.length);
-      const captured = await captureBlock(blockNodes[i], ratio, i); // eslint-disable-line no-await-in-loop
+      const captured = await captureBlock(blockNodes[i], ratio, i, planned);
       const canvases = captured.canvases || [captured.canvas];
-      totalHeight += validateCapture(canvases, blockNodes[i]);
-      softFailed += captured.softFailed;
       try {
-        for (const canvas of canvases) {
-          if (preset.original && canvas.height <= maxHeight) {
-            // 이미 2배율로 안전하게 캡처한 PNG 조각이다. 다시 그리거나 축소하지 않는다.
-            files.push(await encodeCanvas(canvas, 'image/png')); // eslint-disable-line no-await-in-loop
-            releaseCanvas(canvas);
+        if (canvases.length !== planned.length) throw new Error('이미지를 나눌 수 없어요. 다시 시도해 주세요.');
+        totalHeight += validateCapture(canvases, i);
+        softFailed += captured.softFailed;
+        for (const [index, canvas] of canvases.entries()) {
+          const pieceIndex = planned[index].pieceIndex;
+          const piece = layout.pieces[pieceIndex];
+          if (piece.slices.length === 1) {
+            if (canvas.height > maxHeight) throw new Error('이미지를 나눌 수 없어요. 다시 시도해 주세요.');
+            await savePiece(canvas);
             continue;
           }
-          const ranges = splitCanvasRanges(canvas, maxHeight);
-          for (const range of ranges) await append(canvas, range); // eslint-disable-line no-await-in-loop
+          if (!current) current = createCanvas(width, maxHeight);
+          const ctx = current.getContext('2d');
+          if (!ctx || currentHeight + canvas.height > maxHeight) throw new Error('저장용 캔버스를 만들지 못했어요. 다시 시도해 주세요.');
+          if (currentHeight > 0) blockBoundaries.push(currentHeight);
+          ctx.drawImage(canvas, 0, currentHeight);
+          currentHeight += canvas.height;
+          if (planned[index].endsPiece) await flush();
         }
-      } finally {
-        canvases.forEach(releaseCanvas);
-      }
+      } finally { canvases.forEach(releaseCanvas); }
     }
     deps.onProgress?.(blockNodes.length - 1, blockNodes.length, 'encode');
-    await flush();
   } finally {
     if (current) releaseCanvas(current);
   }
@@ -732,7 +1084,7 @@ export function replaceGifPosters(clone) {
     const poster = img.getAttribute('data-gif-poster');
     if (!poster) return;
     img.removeAttribute('srcset');
-    img.setAttribute('src', poster);
+    img.setAttribute('src', exportStillImageSource(img.getAttribute('src'), poster));
   });
 }
 
@@ -756,9 +1108,10 @@ export async function appendGifFiles(zip, images = []) {
 
 export async function packageStorefrontZip(files, format, opts = {}, sign = notarize) {
   const zip = new JSZip();
+  const base = sanitizeExportFileName(opts.fileName);
   // ArrayBuffer also works with JSZip outside browsers, without a FileReader shim.
   for (let index = 0; index < files.length; index += 1) {
-    zip.file(detailFileName(index, files.length, format), await files[index].arrayBuffer());
+    zip.file(detailFileName(index, files.length, format, base, opts.preset), await files[index].arrayBuffer());
   }
   let blob = await zip.generateAsync({ type: 'blob' });
   let verifyUrl = null;
@@ -834,15 +1187,15 @@ export async function exportLongPng(blockNodes, productName, onProgress, opts = 
   const fontEmbedCSS = await getPageFontEmbedCSS(blockNodes);
   const heights = blockNodes.map(exportNodeHeight);
   const totalCssHeight = heights.reduce((a, b) => a + b, 0);
-  const ratio = fitPixelRatio(totalCssHeight);
+  const ratio = fitPixelRatio(totalCssHeight, exportScaleForPreset('original'));
   if (ratio == null) {
     throw new Error('페이지가 너무 길어 한 장으로는 저장할 수 없어요. 블록별 ZIP으로 받아주세요.');
   }
   const imageCache = new Map();
   const out = document.createElement('canvas');
-  out.width = Math.trunc(EXPORT_WIDTH * ratio);
-  // 블록별 캔버스 높이는 trunc(offsetHeight×ratio) — 합계도 같은 식으로 예약해 이음새를 없앤다.
-  out.height = heights.reduce((sum, h) => sum + Math.trunc(h * ratio), 0);
+  out.width = Math.round(EXPORT_WIDTH * ratio);
+  // 블록별 캡처와 같은 높이로 예약해 이음새를 없앤다.
+  out.height = heights.reduce((sum, height) => sum + exportPixelHeight(height, out.width), 0);
   let softFailed = 0;
   let outBlob;
   try {
@@ -891,22 +1244,21 @@ export async function exportBlocksZip(blockNodes, productName, onProgress, opts 
 
 export async function exportStorefrontDownload(
   blockNodes,
-  productName,
+  fileName,
   onProgress,
   rawSettings,
   opts = {},
 ) {
   const settings = normalizeExportSettings(rawSettings);
+  if (exportWidth(settings) === null) throw new Error(CUSTOM_EXPORT_WIDTH_ERROR);
   await blockNodes[0]?.ownerDocument?.fonts?.ready;
   await waitForEditedContrast(blockNodes);
-  const heights = blockNodes.map(exportNodeHeight);
-  const summary = buildExportSummary(heights, settings);
-  const autoSwitchReason = summary.fallbackReason;
-  const effective = autoSwitchReason ? { ...settings, delivery: 'split' } : settings;
-  const preset = exportPreset(effective.preset);
+  const layout = buildExportLayout(blockNodes.map(exportNodeBlock), settings);
+  const { fallbackReason: autoSwitchReason, delivery, original, maxPieceHeight } = layout;
+  const effective = { ...settings, delivery };
 
-  if (preset.original && effective.delivery === 'single') {
-    const result = await exportLongPng(blockNodes, productName, onProgress, opts);
+  if (original && delivery === 'single') {
+    const result = await exportLongPng(blockNodes, fileName, onProgress, opts);
     return { ...result, autoSwitchReason, delivery: effective.delivery };
   }
 
@@ -916,23 +1268,25 @@ export async function exportStorefrontDownload(
   let rendered;
   try {
     rendered = await renderStorefrontFiles(blockNodes, effective, {
-      onProgress,
+      onProgress, layout,
       captureBlock: effective.delivery === 'split'
-        ? (node, ratio, index) => captureBlockCanvasSlices(node, ratio, fontEmbedCSS,
-          preset.original ? ORIGINAL_PNG_MAX_HEIGHT : MAX_SPLIT_HEIGHT, imageCache,
-          () => onProgress?.(index, blockNodes.length, 'verify'))
+        ? (node, ratio, index, plannedSlices) => captureBlockCanvasSlices(node, ratio, fontEmbedCSS,
+          maxPieceHeight, imageCache,
+          () => onProgress?.(index, blockNodes.length, 'verify'), plannedSlices)
         : (node, ratio, index) => captureBlockCanvas(node, ratio, fontEmbedCSS, imageCache,
           () => onProgress?.(index, blockNodes.length, 'verify')),
     });
   } finally { imageCache.clear(); }
   let blob;
+  const base = sanitizeExportFileName(fileName);
   let verifyUrl = null;
   let notarizeWarning = null;
 
   if (effective.delivery === 'split') {
     onProgress?.(blockNodes.length - 1, blockNodes.length, 'zip');
-    ({ blob, verifyUrl, notarizeWarning } = await packageStorefrontZip(rendered.files, effective.format, opts));
-    saveBlob(blob, exportFileName(productName).replace(/\.png$/, '.zip'));
+    ({ blob, verifyUrl, notarizeWarning } = await packageStorefrontZip(rendered.files, effective.format,
+      { ...opts, preset: effective.preset, fileName }));
+    saveBlob(blob, `${base}.zip`);
   } else {
     [blob] = rendered.files;
     if (opts.provenance?.projectId) {
@@ -945,7 +1299,7 @@ export async function exportStorefrontDownload(
       notarizeWarning = result.warning;
     }
     const ext = effective.format === 'jpeg' ? '.jpg' : '.png';
-    saveBlob(blob, exportFileName(productName).replace(/\.png$/, ext));
+    saveBlob(blob, `${base}${ext}`);
   }
 
   return {

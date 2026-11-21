@@ -1,3 +1,4 @@
+import { isIntroAvatarElement } from '../../src/features/editor/editorIntroAvatar.js';
 import {loadEditedContrastHook} from './helpers/editorContrast.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -5,7 +6,7 @@ import {readFileSync} from 'node:fs';
 import {assemblePage,collectOverlayRegions} from '../../src/lib/pageTemplates/assemble.js';
 import {pageTemplatesCatalog as catalog,walkLayout,validateCatalog} from '../../src/lib/pageTemplates/catalog.js';
 import {isTitlePlate,hasTitlePlate} from '../../src/lib/pageTemplates/titlePlate.js';
-import {fitTitlePlateBlocks} from '../../src/features/editor/editorTitlePlateFit.js';
+import {fitTitlePlateBlocks, introPanelFor} from '../../src/features/editor/editorTitlePlateFit.js';
 import {selectionIdsForElement} from '../../src/features/editor/editorSelection.js';
 import {hookHarness} from './helpers/storyboardComponents.mjs';
 const fixture=JSON.parse(readFileSync('tests/fixtures/page_templates_cases.json','utf8'));
@@ -68,7 +69,7 @@ test('WOC14 typing previews plate height immediately, commits measured height, a
  const nodes=block.elements.map(e=>({dataset:{elid:e.id},style:{}}));
  const node=nodes.find(n=>n.dataset.elid===element.id);node.offsetHeight=element.h+80;node.parentElement={querySelectorAll:()=>nodes};
  const source=readFileSync('src/features/editor/editorTitlePlatePreview.js','utf8').replace(/^import .*;\n/gm,'').replace('export function','function');
- const h=hookHarness();const hook=new Function('useLayoutEffect','useRef','fitTitlePlateBlocks','hasTitlePlate',source+';return useTitlePlatePreview;')(h.hooks.useEffect,h.hooks.useRef,fitTitlePlateBlocks,hasTitlePlate);
+ const h=hookHarness();const hook=new Function('useLayoutEffect','useRef','fitTitlePlateBlocks','hasTitlePlate','introPanelFor','isIntroAvatarElement',source+';return useTitlePlatePreview;')(h.hooks.useEffect,h.hooks.useRef,fitTitlePlateBlocks,hasTitlePlate,introPanelFor,isIntroAvatarElement);
  const render=editing=>h.render(()=>hook(element,block.elements,{current:node},editing),{});
  try{
   const preview=render(true),size=preview(node,'입력 중 더 길어진 상품 제목');assert.deepEqual(size,{h:element.h+80});

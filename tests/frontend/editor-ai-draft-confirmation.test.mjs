@@ -3,16 +3,17 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { componentModule, hooks } from './helpers/reactHarness.mjs';
-import { EXPORT_PRESETS, normalizeExportSettings } from '../../src/features/editor/editorExport.js';
+import * as editorExport from '../../src/features/editor/editorExport.js';
+import { colorWithOpacity } from '../../src/features/editor/editorLibrary.js';
 import { getAiDraftSectionNames, formatAiDraftSectionNames } from '../../src/features/editor/editorAiDrafts.js';
 import { downloadChecks } from '../../src/features/editor/editorDownloadWarnings.js';
 
-const { PUBLISH_PRESETS } = await componentModule('src/features/editor/detailPublish.js', ['PUBLISH_PRESETS'], { EXPORT_PRESETS });
+const { PUBLISH_PRESETS } = await componentModule('src/features/editor/detailPublish.js', ['PUBLISH_PRESETS'], editorExport);
 
 const blocks = [{ id: 'b', name: '후기', pageSectionKind: 'review', elements: [
   { id: 't', type: 'text', text: 'AI 후기', aiDraft: true },
 ] }];
-const summary = { width: 860, height: 1000, fileCount: 1, approxBytes: 1000 };
+const summary = editorExport.buildExportSummary([1000, 1000, 1000], editorExport.DEFAULT_EXPORT_SETTINGS);
 const result = { files: [{ index: 1, url: '/image.jpg' }], html: '<p>상세</p>' };
 const style = new Proxy({}, { get: (_, key) => String(key) });
 const { DownloadChecklist } = await componentModule('src/features/editor/DownloadChecklist.jsx',
@@ -27,7 +28,8 @@ async function mount(kind, extra = {}) {
     ['useAiDraftConfirmation', 'EditorAiDraftConfirmation'], bindings);
   const name = kind === 'download' ? 'EditorDownloadModal' : 'EditorPublishModal';
   const module = await componentModule(`src/features/editor/${name}.jsx`, [name], {
-    ...bindings, ...shared, DownloadChecklist, EXPORT_PRESETS, normalizeExportSettings, PUBLISH_PRESETS, RadioCard: () => null,
+    ...bindings, ...shared, ...editorExport, DownloadChecklist, PUBLISH_PRESETS, colorWithOpacity,
+    useId: () => 'test-field', RadioCard: () => null,
   });
   let props = { blocks, settings: { preset: 'smartstore' }, summary, busy: false, error: '',
     result: null, previousCount: 0, onChange() {}, onCancel: () => calls.push('cancel'),
@@ -71,6 +73,17 @@ test('다운로드 창에서 AI 초안 확인 중에도 첫 빈 사진 블록으
   modal.click('보러 가기');
   assert.deepEqual(modal.calls, ['cancel']);
   assert.deepEqual(jumps, ['first-empty']);
+});
+
+test('게시용 조각이 40장을 넘으면 코드 만들기 전에 안내하고 실행을 막는다', async () => {
+  const overLimit = editorExport.buildExportSummary(Array(41).fill(2000), editorExport.DEFAULT_EXPORT_SETTINGS);
+  const modal = await mount('publish');
+  modal.render();
+  assert.match(modal.click('코드 만들기'), /그대로 만들기/);
+  const html = modal.render({ summary: overLimit });
+  assert.match(html, /조각이 40장을 넘어 붙여넣을 코드를 만들 수 없어요\. 이미지로 받아 주세요/);
+  assert.match(html, /<button[^>]*disabled[^>]*>코드 만들기<\/button>/);
+  assert.doesNotMatch(html, /그대로 만들기/);
 });
 
 test('코드 만들기 창의 확인 목록은 입력 화면에서만 보이고 닫은 뒤 첫 블록으로 이동한다', async () => {

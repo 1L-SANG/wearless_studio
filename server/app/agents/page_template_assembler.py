@@ -2,8 +2,13 @@
 from __future__ import annotations
 
 import math
+import json
+from pathlib import Path
 import re
 from types import SimpleNamespace
+
+from .page_copy_checks import clean_seller_text, has_promotion
+from .page_copy_items import compact_section_texts
 
 from .content_roles import is_worn_crop_source
 from .space_set_assets import load_space_set_registry, parse_space_set_group_id
@@ -56,14 +61,22 @@ def _same_panel_surface(node, fill, surface_color):
     return fill and fill.lower() == (surface_color or "").lower() and opacity == 1 and not node.get("shadow")
 
 
-def _render_scrim(scrim, x, y, width, height, ctx):
-    if not scrim:
-        return []
-    h = height * scrim.get("heightRatio", 1)
+def _render_scrim(scrim, x, y, width, height, ctx, copy_top=math.inf):
+    if not scrim:return []
     color = _paint_color(scrim['color'], ctx)
-    paint = ({"fill": f"linear-gradient(180deg, {_rgba(color, 0)} 0%, {_rgba(color, scrim['opacity'])} 100%)"}
-             if scrim.get("gradient") else {"fill": color, "opacity": scrim["opacity"]})
-    return [{"type": "shape", "shape": "rect", "x": x, "y": y + height - h, "w": width, "h": h, "radius": 0, **paint}]
+    h = height * scrim.get('heightRatio', 1)
+    top = y + height - h
+    if scrim.get('midStop') and math.isfinite(copy_top):
+        top = max(y, min(top, copy_top - 32))
+        h = y + height - top
+    stops = [f"{_rgba(color, scrim.get('startOpacity', 0))} 0%"]
+    if scrim.get('midStop'):
+        offset = min(scrim['midStop']['offset'], (copy_top - top - 1) / h)
+        percent = max(.1, math.floor(offset * 10000) / 100)
+        stops.append(f"{_rgba(color, scrim['midStop']['opacity'])} {percent:g}%")
+    stops.append(f"{_rgba(color, scrim['opacity'])} 100%")
+    paint = {'fill': f"linear-gradient(180deg, {', '.join(stops)})"} if scrim.get('gradient') else {'fill': color, 'opacity': scrim['opacity']}
+    return [{'type': 'shape', 'shape': 'rect', 'x': x, 'y': top, 'w': width, 'h': h, 'radius': 0, **paint}]
 
 
 def _local_slot(card, section):
@@ -91,8 +104,27 @@ def _role_for(role, ctx):
     return re.sub(r"\.n(?=\.|$)", f".{ctx.index or 0}", _string(role)).replace("{direction}", (ctx.card or {}).get("direction") or "front")
 
 
+_LATIN_METRICS = json.loads((Path(__file__).resolve().parents[1] / 'data/page_template_latin_metrics.json').read_text())
+
+
+def _latin_label_role(role):
+    return role == 'label' or bool(re.fullmatch(r'colors\.\d+\.(?:name|en)|colorName\.\d+', role or ''))
+
+
+def _metrics_for_element(el, metrics=None):
+    metrics = metrics or CATALOG['textMetrics']
+    return metrics_for_text(el.get('text') or el.get('placeholder'), el['style'], metrics) if _latin_label_role(el.get('copyRole')) else metrics
+
+
+def metrics_for_text(text, style, metrics=None):
+    metrics = metrics or CATALOG['textMetrics']
+    key = str(style.get('font')) + (':italic' if style.get('italic') else '')
+    row = _LATIN_METRICS['fonts'].get(key) or _LATIN_METRICS['fonts'].get(style.get('font'))
+    return {**metrics, 'glyphWidths': row['widths']} if row and re.search(r'[A-Za-z]', text or '') and re.fullmatch(r'[\x20-\x7e\s]+', text or '') else metrics
+
+
 def _text_units(text, metrics):
-    return sum(metrics["space"] if char.isspace() else metrics["uppercaseAscii"] if "A" <= char <= "Z" else metrics["ascii"] if ord(char) < 128 else metrics["wide"] for char in text)
+    return sum(metrics.get('glyphWidths', {}).get(char, metrics["space"] if char.isspace() else metrics["uppercaseAscii"] if "A" <= char <= "Z" else metrics["ascii"] if ord(char) < 128 else metrics["wide"]) for char in text)
 
 
 def _text_width(text, size, metrics, tracking):
@@ -127,7 +159,7 @@ def wrap_text(text, width, size, metrics=None, tracking=0):
 
 def measure_text_width(text, width, size, metrics=None, tracking=0):
     metrics = metrics or CATALOG["textMetrics"]
-    return math.ceil(min(width, max(0, *(_text_width(line, size, metrics, tracking) for line in wrap_text(text, width, size, metrics, tracking)))))
+    return math.ceil(min(width, max(0, *(_text_width(line, size, metrics, tracking) + (1 if metrics.get('glyphWidths') else 0) for line in wrap_text(text, width, size, metrics, tracking)))))
 
 
 def estimate_text_height(text, width, size, line_height, metrics=None, tracking=0):
@@ -271,21 +303,42 @@ def _seller_comment(ctx):
     return text if text.strip() else ""
 
 
+def _point_display_name(role, ctx):
+    # Keep matching descriptions by their original analysis key, never by label.
+    name = _fact_text(role, ctx)
+    analysis = ctx.analysis
+    card = ctx.card or {}
+    if (card.get("pointItem") or {}).get("kind") == "wornCrop":
+        return name
+    ai_origin = name in (analysis.get("aiSuggestedPoints") or [])
+    candidate = card.get("detailTargetId") is not None and any(
+        _string(item.get("id")) == _string(card["detailTargetId"])
+        for item in (analysis.get("detailRecommendations") or {}).get("candidates") or [])
+    for key, allowed in (("partDescriptionCopy", candidate), ("featureCopy", ai_origin)):
+        if not allowed:
+            continue
+        label = next((row.get("label") for row in analysis.get(key) or []
+                      if isinstance(row, dict) and row.get("point") == name and isinstance(row.get("label"), str) and row["label"].strip()), None)
+        if label and not has_promotion(label):
+            return label
+    return name
+
+
 def _content_for(node, ctx):
     if node.get("literal") is not None:
         text = _string(node["literal"]).replace("{number}", str((ctx.index or 0) + 1).zfill(2)).replace("{initial}", _string(ctx.profile.get("display_name"))[:1] or "MD")
         return text, None, None
     role = _role_for(node.get("copyRole"), ctx)
-    slot = text_slot_for_role(ctx.kind, role)
+    slot = text_slot_for_role(ctx.kind, role, template_id=ctx.tokens["template"]["id"], seller_comment=_seller_comment(ctx))
     if slot is None:
         raise ValueError(f"Unknown copyRole {ctx.kind['kind']}.{role}")
     text = ""
     if slot["source"] == "static":
         text = node.get("default", "LOOKBOOK" if role == "label" and ctx.section.get("usage") == "fit" else slot["default"])
     elif slot["source"] == "fact":
-        text = _fact_text(role, ctx)
+        text = _point_display_name(role, ctx) if re.fullmatch(r"items\.\d+\.name", role) else _fact_text(role, ctx)
     elif slot["source"] == "seller+ai" and _seller_comment(ctx):
-        text = _seller_comment(ctx)
+        text = ctx.copy.get(role) if ctx.copywriting and (ctx.copy.get(role) or "").strip() else clean_seller_text(_seller_comment(ctx))
     elif ctx.copywriting:
         text = ctx.copy.get(role) or ""
         if re.fullmatch(r"items\.\d+\.desc", role):
@@ -327,6 +380,10 @@ def _typography_for(node, ctx):
 
 def _render_text(node, x, y, width, ctx):
     text, slot, role = _content_for(node, ctx)
+    collapsed = not text.strip() and (
+        ctx.design_id == "T01-D07" and role == "title" and bool(_content_for({"copyRole": "body"}, _fork(ctx, paragraph_role=None))[0].strip())
+        or ctx.kind["kind"] == "review" and bool(re.fullmatch(r"items\.\d+\.who", role or "")) and ctx.copywriting and getattr(ctx, "copy_ready", False)
+        or ctx.kind["kind"] == "points" and bool(re.fullmatch(r"items\.\d+\.desc", role or "")))
     if node.get("hideEmpty") and not text:
         return [], 0
     if node.get("onlyExtraColor") and (not (ctx.card or {}).get("colorId") or _string(ctx.card["colorId"]) == _string(ctx.base_color.get("id"))):
@@ -340,7 +397,7 @@ def _render_text(node, x, y, width, ctx):
     font = {**ctx.tokens["fonts"][font_key], **({"weight": 300} if node.get("weight") == "light" else {}),
             **({"trackingEm": node["trackingEm"]} if node.get("trackingEm") is not None else {}),
             **{key: typography[key] for key in ('weight', 'trackingEm') if key in typography}}
-    metrics = ctx.catalog["textMetrics"]
+    metrics = metrics_for_text(text or (slot or {}).get('default'), font, ctx.catalog["textMetrics"]) if _latin_label_role(role) or node.get('colorLabel') else ctx.catalog["textMetrics"]
     uppercase = (slot or {}).get("uppercase") or (font.get("uppercase") and (slot or {}).get("kind") != "fact")
     if uppercase:
         text = text.upper()
@@ -356,6 +413,7 @@ def _render_text(node, x, y, width, ctx):
     display = text or (fallback.upper() if uppercase else fallback)
     if node.get("singleLine"):
         display = re.sub(r"\s+", " ", display).strip()
+    fit_width = max(1, layout_width - (1 if metrics.get('glyphWidths') else 0))
     title_wrap = node.get("titleWrap") if ctx.design_id in ("P01-D09", "P01-D09-G") and role == "name" else None
     if title_wrap:
         layout_width = min(layout_width, ctx.photo_width * title_wrap["photoWidthRatio"])
@@ -368,12 +426,16 @@ def _render_text(node, x, y, width, ctx):
         width = layout_width
     elif display and node.get("singleLine"):
         units = _text_units(display, metrics) + len(display) * (font.get("trackingEm") or 0) * metrics["unitsPerEm"]
-        size = min(size, max(1, math.floor(layout_width * metrics["unitsPerEm"] / max(1, units))))
-        while size > 1 and _text_width(display, size, metrics, _round((font.get("trackingEm") or 0) * size * 100) / 100) > layout_width:
+        size = min(size, max(1, math.floor(fit_width * metrics["unitsPerEm"] / max(1, units))))
+        while size > 1 and _text_width(display, size, metrics, _round((font.get("trackingEm") or 0) * size * 100) / 100) > fit_width:
             size -= 1
     elif display:
         longest = max(1, *(_text_units(word, metrics) + len(word) * (font.get("trackingEm") or 0) * metrics["unitsPerEm"] for word in re.split(r"\s+", display)))
-        size = min(size, max(1, math.floor(layout_width * ctx.catalog["textMetrics"]["unitsPerEm"] / longest)))
+        size = min(size, max(1, math.floor(fit_width * ctx.catalog["textMetrics"]["unitsPerEm"] / longest)))
+    if metrics.get('glyphWidths') and not title_wrap:
+        while size > 1 and any(_text_width(word, size, metrics, _round((font.get('trackingEm') or 0) * size * 100) / 100) > fit_width for word in re.split(r'\s+', display)):
+            size -= 1
+        if text:text = '\n'.join(wrap_text(text, fit_width, size, metrics, _round((font.get('trackingEm') or 0) * size * 100) / 100))
     factor = metrics["titleLineHeight"] if font_key == "titleKo" else metrics["labelLineHeight"] if font_key == "labelEn" else metrics["lineHeight"]
     line_height = math.ceil(size * (typography.get('lineHeight') or node.get('lineHeight') or factor / metrics['unitsPerEm']))
     color = node.get("color") or (slot or {}).get("color") or "ink"
@@ -387,7 +449,7 @@ def _render_text(node, x, y, width, ctx):
              "color": ctx.on_photo if color == "onPhoto" else ctx.tokens["colors"][color]}
     if node.get('liningNumbers'):
         style['numeric'] = 'lining'
-    bare_overlay = bool(getattr(ctx, "overlay_group_key", None) and not getattr(ctx, "opaque_background", False))
+    bare_overlay = bool(getattr(ctx, "overlay_group_key", None) and not getattr(ctx, "opaque_background", False) and not node.get("preserveColor"))
     fixed_color = getattr(ctx, "fixed_overlay_color", None)
     auto_contrast = bare_overlay and not fixed_color
     if bare_overlay:
@@ -396,14 +458,17 @@ def _render_text(node, x, y, width, ctx):
         style["color"] = ctx.catalog["neutralColors"]["panelMuted"]
     height = estimate_text_height(text or display, layout_width, size, line_height, metrics, style["tracking"])
     element = {"type": "text", "x": x, "y": y, "w": width, "h": height, "text": text, "style": style}
-    if title_wrap or node.get('singleLine'):
+    if collapsed:
+        element["hidden"] = True
+    if node.get("copyDecoration"):
+        element["templateCopyDecoration"] = text
+    if title_wrap or node.get('singleLine') or metrics.get('glyphWidths'):
         element["keepWords"] = True
     if auto_contrast:
         element["_overlayGroupKey"] = ctx.overlay_group_key
     if role:
         element.update(sourceBlockId=ctx.source_id, copyRole=role, textSlotVersion=1)
-        if not text:
-            element["placeholder"] = (display if title_wrap else node.get("default") or slot["default"]) or "내용을 입력해 주세요"
+        element["placeholder"] = (display if title_wrap else node.get("default") or slot["default"]) or "내용을 입력해 주세요"
         if slot["source"] == "aiDraft" or (slot["source"] == "seller+ai" and not _seller_comment(ctx)):
             element["aiDraft"] = True
     if getattr(ctx, "paragraph_role", None) == role and role is not None:
@@ -424,7 +489,7 @@ def _render_text(node, x, y, width, ctx):
     if node.get('prefix'):
         return [{'type': 'text', 'x': prefix_x, 'y': y, 'w': prefix_width, 'h': line_height,
                  'text': node['prefix'], 'style': {**style, 'align': 'left'}, 'templateCopyDecoration': node['prefix']}, element], height
-    return [element], height
+    return [element], 0 if collapsed else height
 
 
 def _group_copy_elements(elements, ctx, extend=False):
@@ -658,8 +723,8 @@ def _render_groups(groups, x, y, width, height, ctx, photo):
                 top = min(el["y"] for el in texts) - plate_style["paddingTop"]
                 bottom = max(el["y"] + el["h"] for el in texts) + plate_style["paddingBottom"]
                 plate = {"x": x + gx + group_width / 2 - w / 2, "y": top, "w": w, "h": bottom - top}
-            top = plate["y"] if plate else min(0, *(el["y"] for el in result))
-            bottom = plate["y"] + plate["h"] if plate else max(0, *(el["y"] + el["h"] for el in result))
+            top = plate["y"] if plate else min([0, *(el["y"] for el in result)])
+            bottom = plate["y"] + plate["h"] if plate else max([0, *(el["y"] + el["h"] for el in result)])
             band = ctx.catalog[group["band"]] if group.get("band") else None
             center = y + height * ((band["top"] + band["bottom"]) / 2 if band else .5) - (top + bottom) / 2
             inset = max(0, min(height * policy["edgeInsetRatio"], (height - (bottom - top)) / 2)) if policy else 0
@@ -713,6 +778,13 @@ def _render_node(node, x, y, width, ctx):
         return [], 0
     if node.get("firstItemOnly") and getattr(ctx, "paragraph_index", 0) > 0:
         return [], 0
+    if node.get("hideWhenEmpty"):
+        hidden = not _content_for({"copyRole": node["hideWhenEmpty"]}, ctx)[0].strip()
+        elements, height = _render_node({**node, "hideWhenEmpty": None}, x, y, width, ctx)
+        return [{**el, "groupId": f"template-intro-avatar:{ctx.source_id}", **({"hidden": True} if hidden else {})}
+                for el in elements], 0 if hidden else height
+    if node.get("fullWidthWhenEmpty") and not _content_for({"copyRole": node["fullWidthWhenEmpty"]}, ctx)[0].strip():
+        node = {**node, "x": 0, "w": width, "maxW": width, "hug": False}
     x += node.get("x") or 0
     available_width = width - (node.get("x") or 0)
     requested = (getattr(ctx, "last_text_width", None) or 0) if node.get("w") == "text" else node.get("w") or width
@@ -756,8 +828,13 @@ def _render_node(node, x, y, width, ctx):
 
         def children(box_x, box_width):
             if node.get("columns"):
+                columns = [{**col, "x": 0, "w": box_width - 2 * pad_x,
+                            "nodes": [{**child, "x": col["x"], "w": col["w"]} if child.get("hideWhenEmpty") else child
+                                      for child in col["nodes"]]}
+                           if col.get("fullWidthWhenEmpty") and not _content_for({"copyRole": col["fullWidthWhenEmpty"]}, ctx)[0].strip()
+                           else col for col in node["columns"]]
                 columns = [_render_nodes(col.get("nodes"), box_x + pad_x + col["x"], y + pad_y,
-                                         max(1, min(col["w"], box_width - 2 * pad_x - col["x"])), child_ctx) for col in node["columns"]]
+                                         max(1, min(col["w"], box_width - 2 * pad_x - col["x"])), child_ctx) for col in columns]
                 return [el for result, _ in columns for el in result], max(0, *(h for _, h in columns))
             return _render_nodes(node.get("nodes"), box_x + pad_x, y + pad_y, max(1, box_width - 2 * pad_x), child_ctx)
 
@@ -784,14 +861,18 @@ def _render_node(node, x, y, width, ctx):
             heading, head_h = _render_nodes(fallback['nodes'], x + fallback['padding'], y + fallback['top'], width - 2 * fallback['padding'], ctx)
             offset = fallback['top'] + head_h + fallback['gap']
         groups = [group for group in node.get('groups') or [] if group is not outside]
+        copy = _render_groups(groups, x, y + offset, width, height, ctx, photo)
+        copy_top = min((el['y'] for el in copy if el['type'] == 'text' and not el.get('hidden')), default=math.inf)
         return (heading + [{**el, 'y': el['y'] + offset} for el in elements]
-                + _render_scrim(None if outside else node.get('scrim'), x, y, width, height, ctx)
-                + _render_groups(groups, x, y + offset, width, height, ctx, photo)), height + offset
+                + _render_scrim(None if outside else node.get('scrim'), x, y, width, height, ctx, copy_top)
+                + copy), height + offset
     if kind == "list":
         pattern = _string(node.get("countRole") or node.get("copyRole"))
         index_pattern = re.compile("^" + re.escape(pattern).replace(r"\.n", r"\.(\d+)") + "$")
         indexes = [int(match[1]) for key in ctx.copy if (match := index_pattern.fullmatch(key))]
         count = min(node.get("maxCount") or node["count"], max(node["count"], *(index + 1 for index in indexes))) if indexes else node["count"]
+        if ctx.copywriting and getattr(ctx, "copy_ready", False):
+            count = min(node.get("maxCount") or node["count"], max([0, *(index + 1 for index in indexes)]))
         cursor, elements = y, []
         max_width = min(node.get("maxW") or node.get("w") or width, width)
         items = [{**child, "x": (child.get("x") or 0) + 22} for child in node.get("items") or []] if node.get("marker") else node.get("items")
@@ -832,7 +913,7 @@ def _render_color_legend(x, y, width, ctx):
     for index in range(len(ctx.product.get('colors') or [])):
         elements, height = _render_text({'copyRole': 'colors.n.name', 'colorLabel': True, 'swatchDot': True, 'align': 'left'},
                                        0, 0, width, _fork(ctx, card=None, index=index))
-        w = max(0, *(el['x'] + (measure_text_width(el['text'], el['w'], el['style']['size'], ctx.catalog['textMetrics'], el['style']['tracking'])
+        w = max(0, *(el['x'] + (measure_text_width(el['text'], el['w'], el['style']['size'], _metrics_for_element(el, ctx.catalog['textMetrics']), el['style']['tracking'])
                                if el['type'] == 'text' else el['w']) for el in elements))
         if row and row_width + spec['itemGap'] + w > width:
             rows.append((row, row_width))
@@ -854,7 +935,7 @@ def _render_nodes(nodes, x, y, width, ctx):
     cursor, elements = y, []
     matching_rules = []
     last_text_width = getattr(ctx, "last_text_width", None)
-    for node in nodes or []:
+    for node_index, node in enumerate(nodes or []):
         result, height = _render_node(node, x, cursor, width, _fork(ctx, last_text_width=last_text_width))
         elements.extend(result)
         if node["type"] == "rule" and node.get("matchText") and result:
@@ -862,8 +943,13 @@ def _render_nodes(nodes, x, y, width, ctx):
         last = next((el for el in reversed(result) if el["type"] == "text"), None)
         if last:
             last_text_width = measure_text_width(last.get("text"), last["w"], last["style"]["size"], ctx.catalog["textMetrics"], last["style"]["tracking"])
+        empty_author = (ctx.kind["kind"] == "review" and node.get("copyRole") == "items.n.text"
+                        and ctx.copywriting and getattr(ctx, "copy_ready", False)
+                        and not _content_for({"copyRole": "items.n.who"}, ctx)[0].strip())
+        empty_last_detail = (ctx.kind["kind"] == "points" and node_index == len(nodes) - 2
+                             and nodes[-1].get("copyRole") == "items.n.desc" and not _content_for(nodes[-1], ctx)[0].strip())
         if not node.get("absolute") and height:
-            cursor += height + (node.get("gap") or 0)
+            cursor += height + (0 if empty_author or empty_last_detail else node.get("gap") or 0)
     # Both forward (upper rule) and backward (lower rule) references use name,
     # regardless of the label/tagline/colors surrounding it.
     for node, element in matching_rules:
@@ -874,11 +960,11 @@ def _render_nodes(nodes, x, y, width, ctx):
             text.get("text") or text.get("placeholder"), text["w"], text["style"]["size"], ctx.catalog["textMetrics"], text["style"]["tracking"])))
         element["x"] += (element["w"] - rule_width) / 2
         element["w"] = rule_width
-    return elements, max(cursor - y, *(el["y"] + el["h"] - y for el in elements), 0)
+    return elements, max(cursor - y, *(el["y"] + el["h"] - y for el in elements if not el.get("hidden")), 0)
 
 
 def _content_width(elements, x):
-    return max(0, 0, *(el["x"] - x + (measure_text_width(el.get("text") or el.get("placeholder"), el["w"], el["style"]["size"], CATALOG["textMetrics"], el["style"]["tracking"]) if el["type"] == "text" else el["w"]) for el in elements))
+    return max(0, 0, *(el["x"] - x + (measure_text_width(el.get("text") or el.get("placeholder"), el["w"], el["style"]["size"], _metrics_for_element(el), el["style"]["tracking"]) if el["type"] == "text" else el["w"]) for el in elements if not el.get("hidden")))
 
 
 def _render_paragraphs(node, x, y, width, ctx):
@@ -1109,7 +1195,11 @@ def assemble_v4(storyboard, cut_results, copy_results, product, copywriting, *, 
             seen.add(key)
             runs.append([card])
     cuts = {cut["blockId"]: cut for cut in cut_results or []}
-    copies = {copy["blockId"]: {item["role"]: item["text"] for item in copy.get("texts") or []} for copy in copy_results or []}
+    if copy_results is None:
+        copy_results = (analysis.get("pageCopy") or {}).get("copyResults") or []
+    kinds_by_id = {card["id"]: card.get("pageSectionKind") for card in storyboard}
+    copies = {copy["blockId"]: {item["role"]: item["text"] for item in compact_section_texts(
+        copy.get("texts"), kind=kinds_by_id.get(copy["blockId"]))} for copy in copy_results}
     blocks = []
     opening = next((run[0] for run in runs if run[0].get('pageSectionKind') == 'first'), {})
     linked_intro = catalog['designs'].get(opening.get('pageDesignId'), {}).get('introDesignId')
@@ -1129,7 +1219,7 @@ def assemble_v4(storyboard, cut_results, copy_results, product, copywriting, *, 
         ctx = SimpleNamespace(catalog=catalog, storyboard=storyboard, product=product, analysis=analysis, profile=profile or {},
                               use_english_color_names=use_english_color_names,
                               shop_name=shop_name.strip() if isinstance(shop_name, str) else "", copywriting=copywriting,
-                              key=key, section=section, kind=kind, cuts=cuts, copy=copies.get(first["id"]) or {}, source_id=first["id"], base_color=base_color_of(product),
+                              key=key, section=section, kind=kind, cuts=cuts, copy=copies.get(first["id"]) or {}, source_id=first["id"], copy_ready=first["id"] in copies, base_color=base_color_of(product),
                               tokens=section_style, photos=photos, used=set(), failed_cuts=failed_cuts or {}, align=design.get("align") or tokens["template"]["align"],
                               on_photo=catalog["overlayColors"]["light"], index=0, card=None, overlay_regions=overlay_regions, design_id=design_id, copy_groups={'next': 0},
                               surface_color=tokens["colors"]["invertBg"] if (render_section.get("block") or {}).get("invert") else section_style["colors"][design.get("surface") or "canvas"])
@@ -1143,7 +1233,7 @@ def assemble_v4(storyboard, cut_results, copy_results, product, copywriting, *, 
             if not elements:
                 return
             block_id = f"b{len(blocks)}"
-            height = max(y, *(el["y"] + el["h"] for el in elements)) + ((design.get("bottom") or 0) if bottom is None else bottom)
+            height = max([y, *(el["y"] + el["h"] for el in elements if not el.get("hidden"))]) + ((design.get("bottom") or 0) if bottom is None else bottom)
             blocks.append({"id": block_id, "name": template_section_name(first), "kind": first.get("sectionRole") or "info", "pageSectionKey": key,
                            "pageSectionKind": first["pageSectionKind"], "pageDesignId": design_id,
                            "bg": tokens["colors"]["invertBg"] if (render_section.get("block") or {}).get("invert") else section_style["colors"][design.get("surface") or "canvas"],

@@ -142,8 +142,14 @@ Analysis {
   sellingPoints: string[]          // 자유 텍스트, max LIMITS.sellingPointMax(5)
   aiSuggestedPoints: string[]      // max LIMITS.aiSuggestedPointMax(2)
   fitRead?: FitRead                // 분석의 핏 읽기 결과. 서버 소유. 모양과 규칙은 fit_profile_spec.md "분석 페이지 핏 칸" 절(ADR-0028)
-  featureCopy?: { point: string, desc: string }[] // 판매 특징 설명. 구 상세 카드의 동일명 fallback도 유지한다.
-  partDescriptionCopy?: { point: string, desc: string }[] // 실제 상세 부위 카드 설명. detailTarget 후보 label 또는 wornCrop.label과 일치시킨다.
+  featureCopy?: { point: string, desc: string, label?: string }[] // 판매 특징 설명. 구 상세 카드의 동일명 fallback도 유지한다.
+  partDescriptionCopy?: { point: string, desc: string, label?: string }[] // 실제 상세 부위 카드 설명. detailTarget 후보 label 또는 wornCrop.label과 일치시킨다.
+  pageCopy?: { // 생성한 섹션 글. 분석 JSON 안에 저장하며 콘티 블록은 바꾸지 않는다.
+    copyResults: { blockId: string, texts: { role: string, text: string }[] }[]
+    promptVersion: string
+    model: string | null
+    createdAt: string // 시간대가 있는 ISO 문자열
+  }
   mdComment: string                // 셀러 직접 입력 선택 메모. 기본값 ''. 앞뒤 공백 제거 후 최대 300자
   selectedModelId: string          // catalogs.models 참조
   matchCandidates: MatchClothing[] // AI가 제안한 매칭 의류 후보
@@ -194,7 +200,7 @@ MatchClothing {
 //       Analysis.washCare (세탁 안내는 분석이 아니라 에디터 자동 블록 — M-02 규칙 기반 생성, PRD §10.14)
 ```
 
-`mdComment`는 감성형과 쇼룸형 모두 상품 소개 본문 칸(`source='seller+ai'`)에 들어가는 셀러 글이다(2026-11-13 오너 결정, ADR-0026 18항). 값이 공백만이 아니면 AI가 실제 쇼핑몰 상세페이지의 MD 코멘트처럼 다듬어 그 칸에 넣는다. 다듬는 말투와 형식은 카피라이팅 작업이 정한다. 다듬기가 붙기 전에는 템플릿 조립기가 저장된 값을 그대로 넣는다(앞뒤 공백은 저장할 때 지운다, `page_template_assembler.py`의 `_seller_comment`). 글 안의 줄바꿈과 공백을 지키고 문단으로 나누지 않아 글상자 하나가 되며, 그 요소에는 `aiDraft`를 붙이지 않는다. 값이 비었거나 공백뿐이면 그 칸은 AI 초안 자리이고 요소에 `aiDraft: true`를 붙인다(§5.1). 생성 대기 화면은 셀러 원문이 든 상품 소개 본문(`aiDraft`가 없고 글이 있는 `body` 요소)을 늦게 온 카피로 덮지 않는다(`src/lib/editorWaitSkeleton.js`).
+`mdComment`는 감성형과 쇼룸형 모두 상품 소개 본문 칸(`source='seller+ai'`)에 들어가는 셀러 글이다(2026-11-13, 2026-11-19 오너 결정, ADR-0026 18항과 ADR-0029). `page_copy`가 페이지 전체를 쓰는 호출 안에서 셀러 글을 다듬으며, 별도의 다듬기 호출은 하지 않는다. 조립기는 `copy_results`의 본문을 먼저 쓰고, 없으면 저장된 셀러 원문을 그대로 쓴다. 셀러 원문이 있으면 어느 쪽에도 `aiDraft`를 붙이지 않는다. 원문은 분석에 그대로 보존한다. 원문이 비었거나 공백뿐이면 AI 본문에 `aiDraft: true`를 붙인다. AI 초안이 실패하면 `page_copy`가 강조 특징(없으면 첫 디테일 부위)과 옷 종류로 사실 한 문장을 만든다. 이것도 만들 수 없으면 본문은 비우고 감성형 상품 소개의 아바타와 MD 이름표를 숨긴 뒤 높이를 다시 계산한다. 생성 대기 화면은 늦게 도착한 다듬은 본문으로 셀러 원문을 바꾸되, 대기 중 셀러가 직접 편집한 요소는 기존 편집 보호 규칙으로 지킨다(`src/lib/editorWaitSkeleton.js`).
 문자열이 아닌 값은 저장할 수 없다. `merge=1`에서 `null`은 기존 병합 규칙에 따라 키를 삭제한다.
 
 `pageStyle`은 분석이 소유하는 페이지 모양 선택이다. DB 마이그레이션 없이 분석 payload 안에 둔다.
@@ -207,9 +213,11 @@ MatchClothing {
 - 적용: 조립기는 `templateId`의 템플릿 글꼴과 색에 `fontStyle`의 글꼴 덮어쓰기를 얹는다. `colorMode='point'`는 기준 색상 스와치가 `white`, `gray`, `black`, 미지정이거나 팔레트에 없으면 실제로는 `mono`로 조립한다. 이때도 저장값은 바꾸지 않는다.
 - 콘티와의 관계: 저장 콘티의 템플릿(`pageSectionKey` 앞부분)은 `pageStyle.templateId`와 같아야 한다. 다르면 콘티 저장과 상세페이지 생성이 400 `page_style_mismatch`다(§6).
 
-`partDescriptionCopy`는 상세페이지의 `page_part_copy.generate`가 셀러 강조 특징의 사전 미스와 실제 부위 이름을 기존 completion 한 번에 묶어 얻는다. 출력은 `featureCopy`와 `partDescriptionCopy`로 분리하고 같은 이름도 각 규칙으로 따로 쓴다. 셀러 강조 특징의 기존 사전·60자 한 문장 규칙은 그대로이며 부위 설명에는 사전을 쓰지 않는다. 부위 설명은 줄바꿈으로 나뉜 두 줄, 각 줄 공백 포함 최대 22자다. 첫 줄은 확인된 부위 생김새를 쓰고 로/라로 잇고, 둘째 줄은 입었을 때의 보이는 장점을 해요체로 맺는다. 보온·통기·방수 같은 소재 기능 단정, 금지어·과장어·숨은 제어 문자·미요청 부위·길이/형식 위반은 거른다. 새 지시문은 `server/prompts/page_part_copy_v1.txt`이며 추가 교정 호출은 없다. 기존 제공자 폴백은 유지한다.
+`partDescriptionCopy`와 `featureCopy`는 상세페이지 작업에서 `page_copy.generate`가 섹션 글과 함께 쓴다(2026-11-19 오너 결정). 응답의 두 목록은 같은 분석 이름표도 따로 식별한다. `point`는 분석 이름표를 유지하며 `desc`는 설명, 선택값 `label`은 화면용 손님 말 이름표다. `label`은 공백 제외 8자 이하이고 봉제 용어와 과장어 검사에 통과한 경우만 저장한다. 이름표만 검사에 실패하면 설명은 유지한다. 사진 지시문, 컷 생성, 내부 기록에는 계속 분석 이름표를 쓴다. 화면에서는 분석이 만든 디테일 후보 또는 `aiSuggestedPoints`로 출처가 확인되는 특징만 `label`을 쓰고, 셀러가 직접 쓴 강조 특징과 출처를 가를 수 없는 값은 원문을 지킨다.
 
-실패나 일부 응답 누락은 저장된 설명을 지우지 않는다. 다만 새 디테일 요소 디자인(`copyPolicy: partOnly`)은 전용 설명의 비어 있지 않은 한 줄이나 두 줄만 읽고 옛 한 줄이나 featureCopy/개별 사진 카피로 대체하지 않는다. 유효한 새 설명이 없으면 기존 자리표시자가 남으며, 숨긴 디자인의 예전 설명 규칙은 유지한다. 분석 전문 저장의 필드 생략·null PATCH 보호와 두 목록의 저장 모양은 그대로이며 DB 마이그레이션이나 새 콘티 필드는 없다.
+실패나 일부 누락은 저장된 설명을 지우지 않는다. `copyPolicy: partOnly` 디자인은 전용 설명의 비어 있지 않은 한 줄이나 두 줄만 읽고, 없으면 자리표시자를 남긴다. 섹션 글은 `[{blockId,texts:[{role,text}]}]`로 조립기에 넘긴다. 응답의 `S1`, `S2`는 저장 콘티 순서상 해당 섹션의 첫 블록 ID로 바꾼다. 분석의 `pageCopy`는 이 목록을 `copyResults`에 담고 `promptVersion`, `model`, `createdAt`을 덧붙인다. 조립 호출에서 카피를 생략하면 저장된 `pageCopy`를 다시 쓸 수 있고 명시적 빈 목록은 저장값을 쓰지 않는다. 카피 세 키만 기존 분석 JSON 병합으로 저장하므로 생성 중 셀러가 편집한 다른 분석 키는 덮지 않는다. 구 클라이언트의 전문 저장에서 `pageCopy` 생략, 병합 저장에서 `null`은 기존 서버 카피 필드와 같이 보존한다. DB 열과 콘티 블록 필드는 추가하지 않는다.
+
+카피는 컷 생성과 동시에 시작하고 조립 직전에 남은 `PAGE_COPY_TIMEOUT_SECONDS`(기본 90초)만 기다린다. 키 없음, 실패, 시간 초과는 경고 뒤 빈 결과로 조립하며 작업 실패/취소 시 카피도 취소한다. 일부 칸만 성공하면 그 칸을 쓴다. `copy_ready` 진행 이벤트는 당시 최신 진행 값을 싣고 진행률을 내리지 않는다. 에디터의 "AI 문구 불러오기"는 기존 A 구현의 모델 생성 후 누락 칸 사전 보완 순서와 `feature_*_v1` 지시문을 유지한다.
 
 `garmentColorEvidence`는 기존 13개 색상 계열/색상명을 HEX로 바꾸는 값이 아니다. 사진 분석은 이 값을 만들지 않는다. 셀러가 콘티보드에서 마네킹컷으로 넘어갈 때 서버가 필요할 때만 만든다. 필요 조건은 `horizonBackgroundMode='garment-tone'`인 호리존 세트 멤버가 있고 그 대상 색상의 측정 결과가 없는 경우다. 해당 색상의 첫 Front와 첫 Back 원본에서 관찰기는 판매 의류 안쪽 영역만 제안하고, 서버가 사진을 먼저 줄인 뒤 sRGB로 변환한 픽셀에서 색을 측정한다. 측정이 실패해도 이동은 막지 않는다. 생성이 시작될 때 필요한 색의 측정 결과가 아직 없으면(이동 때 측정이 끝나지 않았거나 실패했거나 측정 없이 넘어간 경우) 상세페이지 생성이 한 번 더 측정한다. 끝내 근거가 없으면 배경은 기존 예시를 유지한다. 사진의 관찰색이며 실물색 보정/인증 값은 아니다.
 
@@ -683,10 +691,20 @@ GenerationExample {
 글 칸(`kinds[].textSlots`)의 `source`는 `static`(고정 문구), `fact`(상품명, 색 이름, 소재 혼용률 같은 사실), `ai`, `aiDraft`(셀러가 고칠 초안), `seller+ai`(셀러 입력이 있으면 그 글을 다듬어 쓰고, 없으면 AI 초안을 쓰는 칸. 지금은 상품 소개 본문 하나이며 §3.2 `mdComment` 참고)다. 글 칸에 연결된 글 요소는 `sourceBlockId`, `copyRole`, `textSlotVersion: 1`을 갖고, 글이 비면 편집 화면에만 보이는 `placeholder`(디자인 노드나 카탈로그의 `default`)를 단다. 동작은 다음과 같다.
 
 - `static` 칸은 고정 문구로, `fact` 칸은 값이 있으면 그 사실로 조립할 때 채운다.
-- AI가 채우는 칸은 디테일 요소의 부위 설명(`items.n.desc`, `analysis.partDescriptionCopy`를 읽는다. §3.2), 후기 초안, 상품 소개 본문이다.
-- 상품 소개 본문(`seller+ai`)은 `analysis.mdComment`가 있으면 그 글을 AI가 다듬어 넣고(다듬기가 붙기 전에는 원문 그대로 하나의 글상자), 없으면 AI 초안을 넣는다(§3.2). 감성형과 쇼룸형 모두 같다. 쇼룸형은 사진 다음 사양판(`T06-D01`)이나 어두운 소개판(`T06-COMMENT-01`, 맨 위 영문 라벨 `COMMENT`)에 이 본문을 둔다.
-- 후기(`review`)는 셀러가 고치기 쉽도록 AI가 초안을 넣어 두고 셀러가 에디터에서 실제 후기로 고치는 칸이다(2026-10-26 오너 결정). 초안은 만들 때마다 조금씩 다르게 쓰고, 이름 칸 기본값은 `김태희`, 별점 기본값은 5개다.
-- 그 밖의 `ai`, `aiDraft` 칸(첫 장 영문 상품명, 착용컷 제목과 소개, 원단 제목과 설명, 색상 소개, 상품 소개의 제목과 요약, 디테일 요소 제목과 핏 설명, 추천 대상, 질문과 답 등)은 빈 글과 안내 문구로 나간다. 옛 사진별 제목 카피 생성(AG-02 `headline`)과 검수(AG-03)는 카탈로그에 `headline` 글 칸이 없어 쓰이지 않았고 2026-11-13에 지웠다. 조립기의 `copy_results` 입력(`page_template_assembler.py`의 `ctx.copy`)은 새 카피를 위해 남겼다.
+- `page_copy`가 표시된 페이지의 섹션 글, 디테일 설명과 판매 특징 설명을 한 번에 쓴다. 조립기는 `copy_results`와 분석의 두 설명 목록을 읽는다(§3.2).
+- 상품 소개 본문(`seller+ai`)은 `analysis.mdComment`가 있으면 그 글을 AI가 다듬어 넣고(결과가 없으면 셀러 원문), 없으면 AI 초안 또는 서버의 사실 한 문장을 넣는다(§3.2). 감성형과 쇼룸형 모두 같다. 쇼룸형은 사진 다음 사양판(`T06-D01`)이나 어두운 소개판(`T06-COMMENT-01`, 맨 위 영문 라벨 `COMMENT`)에 이 본문을 둔다.
+- 후기(`review`)는 셀러가 고치기 쉽도록 AI가 초안을 넣어 두고 셀러가 에디터에서 실제 후기로 고치는 칸이다(2026-10-26 오너 결정). 초안은 만들 때마다 조금씩 다르게 쓰고, 이름 칸 기본값은 `김태희`다. 각 후기 글 위에는 강조 색 토큰을 쓰는 고정 별점 `★★★★★`를 둔다. AI가 생성하지 않으며 셀러가 편집할 수 있다. 쇼룸형에서는 후기 섹션을 추가했을 때만 보인다.
+- 카피가 없거나 해당 칸의 검사에 실패하면 빈 글과 기존 안내 문구를 유지한다. 색 소개(`colors.n.desc`)와 첫 장 tagline은 생성하지 않는다. 옛 사진별 제목 카피 생성(AG-02 `headline`)과 검수(AG-03)는 2026-11-13에 제거했다.
+
+| 글 칸 | source | 초안 표시 |
+|---|---|---|
+| 상품 소개 본문 | seller+ai | 셀러 원문이 없을 때만 |
+| 궁금한 점 답 `items.n.a` | aiDraft | 있음 |
+| 원단 제목과 본문 | aiDraft | 있음 |
+| 디테일 사이즈 팁 `fit.tip` | aiDraft | 있음, 기본 비움 |
+| 후기 본문, SNS 본문 | aiDraft | 있음 |
+| 추천 대상 `items.n` | ai | 없음 |
+| 후기 별점 `items.n.stars` | static | 없음 |
 - `aiDraft: true`인 글 요소는 셀러가 글 내용을 바꾸면 그 표시를 지운다(위치, 크기, 색 같은 서식만 바꾸면 남는다, `src/features/editor/editorTextEdit.js`). 내려받기 창과 몰에 붙여넣을 코드 만들기 창은 실제로 나가는 글 중 표시가 남고 글이 빈 칸이 아닌 요소가 있으면, 그 섹션 이름을 한 줄로 보여 주고 한 번만 묻는다(`src/features/editor/editorAiDrafts.js`, 2026-11-14 오너 결정). 블록 하나 내려받기와 쇼핑몰 직접 등록은 묻지 않는다.
 - 글 칸별로 무엇을 어떻게 쓸지, 어디를 강조할지 같은 카피 체계는 별도 카피라이팅 작업에서 정한다. 이 절은 그때 다시 고친다.
 

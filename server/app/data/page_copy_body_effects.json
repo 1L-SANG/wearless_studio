@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "forbidden": "교정|보정|다이어트|군살|뱃살|살이?\\s*빠져|체형\\s*보완|\\d+\\s*(?:kg|킬로|키로|cm|센치)",
+  "claims": "날씬(?:해|하|한|함|히)|허리(?:가|는|도)?\\s*(?:잡혀|가늘)|다리(?:가|는|도)?\\s*길|키(?:가|도)?\\s*(?:커|크게)\\s*보|(?:길어|날씬|슬림|가늘|가녀|작아|부해).{0,6}보",
+  "absolute": "완벽|확실|감쪽같|커버|무조건",
+  "appearance": "보(?:여요|이고|이는|이게|여서)(?![가-힣])",
+  "evidence": {
+    "waist_seam": {
+      "pattern": "허리\\s*절개"
+    },
+    "band": {
+      "pattern": "밴딩|고무줄",
+      "context": "허리"
+    },
+    "waist_tie": {
+      "pattern": "허리\\s*끈"
+    },
+    "waist_string": {
+      "pattern": "스트링",
+      "context": "허리"
+    },
+    "belt": {
+      "pattern": "벨트(?!\\s*(?:고리|루프))"
+    },
+    "high_waist": {
+      "pattern": "하이\\s*웨이스트"
+    },
+    "long": {
+      "pattern": "긴\\s*기장|발목\\s*(?:아래|덮음)|복숭아뼈\\s*덮음|바닥까지|롱\\s*(?:팬츠|슬랙스|데님|진|와이드)"
+    },
+    "bootcut": {
+      "pattern": "부츠컷"
+    },
+    "wide": {
+      "pattern": "와이드",
+      "requires": "long"
+    },
+    "waist_strap": {
+      "pattern": "스트랩",
+      "context": "허리"
+    }
+  },
+  "rows": [
+    {
+      "effect": "slim",
+      "pattern": "날씬해\\s*",
+      "evidence": [
+        "waist_seam",
+        "band",
+        "waist_tie",
+        "waist_string",
+        "belt",
+        "high_waist",
+        "waist_strap"
+      ]
+    },
+    {
+      "effect": "defined_waist",
+      "pattern": "허리(?:가|는|도)?\\s*잡혀\\s*(?:날씬해\\s*)?",
+      "evidence": [
+        "waist_seam",
+        "band",
+        "waist_tie",
+        "waist_string",
+        "belt",
+        "high_waist",
+        "waist_strap"
+      ]
+    },
+    {
+      "effect": "narrow_waist",
+      "pattern": "허리(?:가|는|도)?\\s*가늘어\\s*",
+      "evidence": [
+        "waist_seam",
+        "band",
+        "waist_tie",
+        "waist_string",
+        "belt",
+        "high_waist",
+        "waist_strap"
+      ]
+    },
+    {
+      "effect": "long_legs",
+      "pattern": "다리(?:가|는|도)?\\s*길어\\s*",
+      "evidence": [
+        "high_waist",
+        "long",
+        "bootcut",
+        "wide"
+      ]
+    },
+    {
+      "effect": "tall",
+      "pattern": "키(?:가|도)?\\s*(?:커|크게)\\s*",
+      "evidence": [
+        "high_waist",
+        "long",
+        "bootcut",
+        "wide"
+      ]
+    }
+  ],
+  "_about": "체형 효과 문구 규칙(오너 11/20: 보이는 구조가 있을 때만 '~해 보여요', 숫자와 절대 표현 금지). evidence는 사실 묶음(상품 이름, 셀러 글, 부위 이름과 근거, 판매 특징, 기장 칩)에서 찾는 구조, rows는 효과마다 필요한 구조. 11/20 카피 총괄이 다듬음: 밴딩과 스트랩은 허리일 때만, 벨트 고리는 근거 아님, '롱' 하나만으로는 긴 기장 근거 아님(상의와 치마의 롱 칩이 걸림), 키 커 보임과 살 빠져 보임을 더함."
+}

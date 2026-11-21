@@ -1,3 +1,4 @@
+import { productNamePatch } from '../lib/productNameSource.js';
 import { identityKindOf } from '@/lib/identityScope.js';
 import { isRealModelSelection } from '@/features/analysis/modelSelection.js';
 import { validateStoryboardV4 } from '@/lib/pageTemplates/validateStoryboard.js';
@@ -944,7 +945,10 @@ export const api = {
   async uploadProductPhotos(_projectId, product) { await wait(40); return clone(product); },
   async saveProduct(_projectId, patch) {
     await wait(200);
-    Object.assign(DB.product, patch);
+    const namePatch = productNamePatch(DB.product, patch);
+    Object.assign(DB.product, patch, namePatch);
+    if (Object.hasOwn(patch, 'name') || Object.hasOwn(patch, 'nameSource'))
+      DB.analysis.productNameOrigin = { name: DB.product.name, source: DB.product.nameSource };
     if (DB.product.clothingType === 'dress') {
       DB.analysis.targetGenders = ['women'];
     }
@@ -1163,8 +1167,8 @@ export const api = {
     const normalized = normalizeAnalysisFit(patch);
     const changed = Object.fromEntries(Object.entries(patch).map(([key, value]) => [key, value === null ? null : normalized[key]]));
     if (_projectId) {
-      for (const key of ['locked', 'confirmedGptProductEvidence', 'detailRecommendations', 'garmentColorEvidence']) delete changed[key];
-      for (const key of ['sourceMirrored', 'inputConsistency', 'featureCopy', 'partDescriptionCopy']) {
+      for (const key of ['locked', 'confirmedGptProductEvidence', 'detailRecommendations', 'garmentColorEvidence', 'productNameOrigin']) delete changed[key];
+      for (const key of ['sourceMirrored', 'inputConsistency', 'featureCopy', 'partDescriptionCopy', 'pageCopy']) {
         if (changed[key] === null) delete changed[key];
       }
     }

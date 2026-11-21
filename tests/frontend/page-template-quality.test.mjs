@@ -457,7 +457,8 @@ test("C16 color captions hide swatch-family English names; opening intro is opti
             (e) => e.copyRole === "intro",
         );
         assert.ok(intro.text);
-        assert.equal(intro.placeholder, undefined);
+        assert.equal(typeof intro.placeholder, 'string');
+        assert.notEqual(intro.text, intro.placeholder);
     }
 });
 test("C1 template defaults, per-project preferences, storage failure, and contiguous section groups", () => {

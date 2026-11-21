@@ -93,6 +93,17 @@ test('mock analysis null patch cannot delete stored part descriptions', async ()
   assert.deepEqual(DB.analysis.partDescriptionCopy, stored);
 });
 
+test('mock analysis preserves stored page copy across older-client saves', async () => {
+  seed();
+  const stored = { copyResults: [{ blockId: 'points', texts: [{ role: 'title', text: '눈여겨볼 부분' }] }],
+    promptVersion: 'v2', model: 'fake', createdAt: '2026-11-19T00:00:00Z' };
+  DB.analysis.pageCopy = structuredClone(stored);
+  await api.saveAnalysis(DB.project.id, { pageCopy: null });
+  assert.deepEqual(DB.analysis.pageCopy, stored);
+  await api.saveAnalysis(DB.project.id, { sellingPoints: ['새 특징'] });
+  assert.deepEqual(DB.analysis.pageCopy, stored);
+});
+
 test('mock same-label seller copy stays independent and unsupported labels are not invented', () => {
   seed();
   DB.analysis.featureCopy = [{ point: '단추', desc: '단추 디테일을 확인할 수 있습니다.' }];

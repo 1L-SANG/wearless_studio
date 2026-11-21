@@ -1,3 +1,4 @@
+import { productNameAfterAnalysis } from './productNameSource.js';
 import { api } from './api/index.js';
 import { fillAnalysisFitZones } from './fitZone.js';
 import { createFeatureRun, getActiveFeatureRun, setActiveFeatureRun, stripFeatureClientFields } from './featureRun.js';
@@ -93,8 +94,7 @@ export function createDraftFeatureRun({ product, analysis, readProduct, readAnal
       const core = await api.analyzeProduct(null, { ...options, parts: 'core', runId: record.runId, isCurrent: current });
       if (!core || !current()) return null;
       const source = readProduct?.() || product;
-      const nextProduct = { ...source, name: source.name?.trim() || core.suggestedName || '새 상품',
-        ...analysisResponseProductPatch(core), colors: autofillColorGroups(source.colors, core.swatchSuggestions, swatchColors) };
+      const nextProduct = { ...source, ...analysisResponseProductPatch(core), ...productNameAfterAnalysis(source, core.suggestedName), colors: autofillColorGroups(source.colors, core.swatchSuggestions, swatchColors) };
       const saved = memoryOnly ? true : await saveFeatureRunDraft({}, { product: nextProduct, isCurrent: current,
         matchesDraft: (draft) => sameRun(run, draft.analysis?.featureRun) });
       if (!current()) return null;

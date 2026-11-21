@@ -58,9 +58,10 @@ for (const [kind, designId] of [['review', 'I09-SCRIM-01'], ['faq', 'T08-SCRIM-0
     const page = assemblePage(input).filter(block => block.pageSectionKind === kind);
     const html = renderToStaticMarkup(React.createElement(Preview, { blocks: page, wireframe: true }));
     const stops = [...html.matchAll(/<stop\b([^>]+)>/g)].map(match => attrs(match[1]));
-    assert.equal(stops.length, 2); assert.equal(stops[0]['stop-opacity'], '0');
-    assert.equal(stops[1]['stop-opacity'], '0.72');
-    const end = rgb(stops[1]['stop-color']), photo = rgb(cssValue('.previewWirePhoto', 'fill'));
+    assert.equal(stops.length, kind === 'review' ? 3 : 2); assert.equal(stops[0]['stop-opacity'], '0');
+    if (kind === 'review') assert.equal(stops[1]['stop-opacity'], '0.56');
+    assert.equal(stops.at(-1)['stop-opacity'], '0.72');
+    const end = rgb(stops.at(-1)['stop-color']), photo = rgb(cssValue('.previewWirePhoto', 'fill'));
     const painted = end.map((v, i) => v * .72 + photo[i] * .28);
     assert.ok(contrast(end, photo) >= 1.8);
     assert.ok(contrast(painted, photo) >= 1.8, `actual composited scrim ${contrast(painted, photo)}`);

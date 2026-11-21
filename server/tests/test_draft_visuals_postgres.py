@@ -37,6 +37,8 @@ def database(queue_database):
                 create table products(id uuid default gen_random_uuid(), project_id uuid,
                   name text, clothing_type text, colors jsonb, measurements jsonb,
                   measurements_unknown boolean, upload_complete boolean);
+                create table analyses(project_id uuid primary key,
+                  payload jsonb not null default '{}', locked boolean not null default false);
                 create table matching_items(id text primary key, owner_user_id uuid, project_id uuid,
                   image_asset_id uuid, thumbnail_asset_id uuid, is_active boolean default true);
                 create table mannequin_cuts(asset_id uuid);

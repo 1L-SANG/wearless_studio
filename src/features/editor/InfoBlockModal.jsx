@@ -412,13 +412,7 @@ function FeatureIconsFormBody({ info, setInfo, onPickPhoto, drafting, draftError
             <Button variant="ghost" size="sm" icon="plus"
               onClick={() => setInfo((f) => ({ ...f, items: [...f.items, { title: '', desc: '', src: null }] }))}>포인트 추가</Button>
           )}
-          {/* 자동 채움은 빈칸에만 손대므로, 이미 쓰여 있는 설명을 다시 만들려면 여기로 부른다 */}
-          {onRedraft && (
-            <Button variant="quiet" size="sm" icon="sparkles" disabled={drafting} onClick={onRedraft}
-              title="분석의 강조특징으로 설명을 다시 만들어요 — 지금 쓰여 있는 설명은 새 문구로 바뀌어요">
-              {drafting ? '만드는 중…' : '설명 다시 만들기'}
-            </Button>
-          )}
+          {/* 11/21 오너 결정: 수동 재생성 버튼만 숨긴다. 창을 열 때의 자동 채움은 유지한다. */}
         </div>
       </Field>
     </>
