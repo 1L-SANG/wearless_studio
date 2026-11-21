@@ -1,6 +1,6 @@
 from dataclasses import replace
 from io import BytesIO
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import numpy as np
 import pytest
@@ -82,6 +82,77 @@ def test_project_source_requires_owner_and_uses_first_front(client, make_token, 
     }
     assert read.await_args.kwargs["front_id"] == FRONT_ID
     assert render.await_args.args[1] == b"original"
+
+
+@pytest.mark.parametrize("first_path", [PUBLIC_SOURCE, PROJECT_SOURCE])
+def test_project_and_public_sources_share_user_budget(client, make_token, monkeypatch, first_path):
+    enable(client)
+    patch_route_db(monkeypatch, routes)
+    client.app.state.user_garment_color_source_limiter = public_routes.PublicAnalysisRateLimiter(hourly_limit=1)
+    owner = AsyncMock(return_value=None)
+    monkeypatch.setattr(repo, "get_project", owner)
+    monkeypatch.setattr(repo, "get_product", AsyncMock(return_value={"clothing_type": "top", "colors": [
+        {"id": "c1", "images": [{"slot": "Front", "id": FRONT_ID}]},
+    ]}))
+    read = AsyncMock(return_value=b"original")
+    preview = AsyncMock(return_value={"status": "ready"})
+    monkeypatch.setattr(sources, "read_front", read)
+    monkeypatch.setattr(sources, "preview", preview)
+    headers = auth_headers(make_token)
+    photo = BytesIO()
+    Image.new("RGB", (8, 8)).save(photo, "PNG")
+
+    def request(path):
+        if path == PROJECT_SOURCE:
+            return client.post(path, headers=headers, json={"colorId": "c1"})
+        return client.post(path, headers=headers, data={"clothingType": "top"},
+                           files={"image": ("front.png", photo.getvalue(), "image/png")})
+
+    assert request(PROJECT_SOURCE).status_code == 404
+    owner.return_value = {"id": "p1"}
+    assert client.post(PROJECT_SOURCE, headers=headers, json={"colorId": "unknown"}).status_code == 404
+    assert request(first_path).status_code == 200
+    public_denied, project_denied = request(PUBLIC_SOURCE), request(PROJECT_SOURCE)
+    assert public_denied.status_code == project_denied.status_code == 429
+    assert public_denied.json() == project_denied.json()
+    assert project_denied.json()["error"]["code"] == "rate_limited"
+    preview.assert_awaited_once()
+    assert read.await_count == int(first_path == PROJECT_SOURCE)
+
+
+@pytest.mark.parametrize("content_type", [None, "application/json"])
+def test_public_source_rejects_non_multipart_before_parsing(client, monkeypatch, content_type):
+    enable(client)
+    parser = Mock(wraps=public_routes.MultiPartParser)
+    monkeypatch.setattr(public_routes, "MultiPartParser", parser)
+    headers = {"Content-Type": content_type} if content_type else {}
+    response = client.post(PUBLIC_SOURCE, headers=headers, content=b"{}")
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_input"
+    parser.assert_not_called()
+
+
+@pytest.mark.parametrize(("image_format", "available"), [
+    ("JPEG", True), ("PNG", True), ("WEBP", True), ("BMP", False), ("TIFF", False),
+])
+def test_public_source_checks_image_bytes_before_decoding(client, monkeypatch, image_format, available):
+    enable(client)
+    preview = AsyncMock(return_value={"status": "ready"})
+    monkeypatch.setattr(sources, "preview", preview)
+    photo = BytesIO()
+    Image.new("RGB", (8, 8)).save(photo, image_format)
+    data = photo.getvalue()
+    declared_type = f"image/{image_format.lower()}" if available else "image/png"
+    response = client.post(PUBLIC_SOURCE, files={"image": ("front", data, declared_type)},
+                           data={"clothingType": "top"})
+    if available:
+        assert response.status_code == 200
+        preview.assert_awaited_once()
+        assert preview.await_args.args[1] == data
+    else:
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_image_content"
+        preview.assert_not_awaited()
 
 
 def test_source_png_is_cropped_and_downscaled(client, monkeypatch):
