@@ -11,6 +11,14 @@ from ..r2 import PRIVATE_NO_STORE, ai_key, ext_for_mime
 
 async def stage_master(app, job: dict, image, *, cut_type: str, real_derived: bool,
                        stored_outputs=None) -> dict:
+    return await stage_output(
+        app, job, image, metadata={"internalGarmentMaster": True, "cut_type": cut_type,
+                                   "facemarket_real_derived": real_derived},
+        cache=PRIVATE_NO_STORE, stored_outputs=stored_outputs,
+    )
+
+
+async def stage_output(app, job: dict, image, *, metadata: dict, cache: str, stored_outputs=None) -> dict:
     asset_id = str(uuid.uuid4())
     key = ai_key(job["user_id"], job["project_id"], job["id"], asset_id,
                  ext_for_mime(image.mime) or "png")
@@ -20,13 +28,12 @@ async def stage_master(app, job: dict, image, *, cut_type: str, real_derived: bo
     candidate = {"asset_id": asset_id, "key": key, "cleanup_intent_id": intent,
                  "bucket": app.state.settings.r2_bucket, "mime": image.mime,
                  "size": len(image.data), "sha256": hashlib.sha256(image.data).hexdigest(),
-                 "metadata": {"internalGarmentMaster": True, "cut_type": cut_type,
-                              "facemarket_real_derived": real_derived}}
+                 "metadata": metadata}
     # Register before upload so cancellation cannot leave an untracked object.
     if stored_outputs is not None:
         stored_outputs.append(candidate)
     upload = asyncio.create_task(asyncio.to_thread(
-        app.state.r2.put_bytes, key, image.data, image.mime, cache=PRIVATE_NO_STORE))
+        app.state.r2.put_bytes, key, image.data, image.mime, cache=cache))
     try:
         await asyncio.shield(upload)
     except asyncio.CancelledError:

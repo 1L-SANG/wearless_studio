@@ -1,0 +1,89 @@
+/* 내 옷 색 맞추기 판. 11/12 확정 9차 시안(.scratch/coordi-color-20261111/mockup/index.html)을 따른다. */
+.panel { --panel-w: 300px; width: var(--panel-w); padding: 16px 16px 18px; background: var(--bg-1); color: var(--fg-1); font-family: var(--font-body); }
+.panel:focus { outline: none; }
+.panel button { font-family: inherit; color: var(--fg-1); cursor: pointer; }
+.panel button:disabled { cursor: default; }
+.panel button:focus-visible, .panel input:focus-visible, .handle:focus-visible { outline: 2px solid var(--fg-1); outline-offset: 3px; }
+
+/* 넓은 창: 카드 오른쪽에 붙고 본문이 왼쪽으로 밀린다 */
+.push { position: absolute; z-index: 30; border-radius: 20px; box-shadow: var(--elev-card); animation: panelIn 280ms cubic-bezier(.2, 0, 0, 1); }
+@keyframes panelIn { from { opacity: 0; transform: translateX(-14px); } }
+/* 좁은 창: 오른쪽에서 덮는 서랍 */
+.drawer { position: fixed; top: 60px; right: 0; bottom: 0; z-index: 60; width: min(344px, 100vw); overflow-y: auto; overscroll-behavior: contain; box-shadow: var(--elev-lift); animation: drawerIn 240ms cubic-bezier(.2, 0, 0, 1); }
+@keyframes drawerIn { from { transform: translateX(100%); } }
+.scrim { position: fixed; inset: 0; z-index: 55; background: color-mix(in srgb, var(--fg-1) 18%, transparent); border: 0; padding: 0; }
+
+.head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.head h2 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: -.01em; text-wrap: balance; }
+.head p { margin: 2px 0 12px; font-size: 13px; color: var(--fg-2); text-wrap: balance; }
+.done { flex: none; height: 36px; padding: 0 16px; border: 0; border-radius: var(--r-pill); background: var(--bg-1); font-size: 13px; font-weight: 600; box-shadow: var(--elev-card); transition: box-shadow 150ms; }
+.done:hover { box-shadow: var(--elev-lift); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.chip { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px 0 9px; border: 0; border-radius: var(--r-pill); background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong); color: var(--fg-2); font-size: 13px; font-weight: 500; white-space: nowrap; }
+.panel .chip { color: var(--fg-2); }
+.panel .chip[aria-checked="true"] { box-shadow: 0 0 0 1.5px var(--accent-blue-line); color: var(--fg-1); font-weight: 600; }
+.dot { flex: none; width: 12px; height: 12px; border-radius: 50%; background: var(--swatch, var(--bg-2)); box-shadow: inset 0 0 0 1px var(--ring-strong); }
+
+.message { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: var(--bg-2); font-size: 13px; text-wrap: balance; }
+.message svg { flex: none; color: var(--fg-2); }
+.spin { animation: spin 900ms linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.photo { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 14px; box-shadow: inset 0 0 0 1px var(--ring); }
+
+.compare { position: relative; width: 100%; aspect-ratio: 4 / 3; overflow: hidden; border-radius: 14px; background: var(--bg-2); box-shadow: inset 0 0 0 1px var(--ring); touch-action: none; user-select: none; -webkit-user-select: none; cursor: ew-resize; }
+.compare canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.after { clip-path: inset(0 0 0 var(--split, 50%)); }
+.divider { position: absolute; top: 0; bottom: 0; left: var(--split, 50%); width: 2px; margin-left: -1px; background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong); }
+.handle { position: absolute; top: 50%; left: var(--split, 50%); display: grid; place-items: center; width: 36px; height: 36px; margin: -18px 0 0 -18px; border-radius: 50%; background: var(--bg-1); box-shadow: var(--elev-lift); color: var(--fg-1); }
+.caption { display: flex; justify-content: space-between; margin: 8px 2px 0; font-size: 12px; font-weight: 500; letter-spacing: .01em; color: var(--fg-2); }
+.now { color: var(--fg-1); font-weight: 650; }
+.panel[data-state="processing"] .compare, .panel[data-state="processing"] .tools, .panel[data-state="processing"] .steps { opacity: .4; pointer-events: none; }
+
+.adjustHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0 0; padding-top: 10px; box-shadow: 0 -1px 0 var(--ring); }
+.adjustHead h3 { margin: 0; font-size: 14px; font-weight: 650; }
+/* AI 자동과 원래대로는 굵은 밑줄 글자로 둔다(11/21 오너 지시). */
+.tools { display: flex; gap: 14px; }
+.tools button { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 2px; border: 0; background: none; font-size: 13px; font-weight: 700; white-space: nowrap; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.tools button:hover:not(:disabled) { text-decoration-thickness: 2px; }
+.panel .tools button:disabled { color: var(--fg-3); }
+.note { margin: 8px 0 0; font-size: 13px; color: var(--fg-1); text-wrap: balance; }
+
+
+/* 색 조절 한 줄: 양쪽 말 버튼, 가운데 이름과 값, 끌 수 있는 칸 막대. 세 줄의 가운데 선이 0에서 한 줄로 선다. */
+.steps { display: grid; gap: 10px; margin: 12px 0 0; }
+.step { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.nudge { height: 36px; min-width: 56px; padding: 0 10px; border: 0; border-radius: var(--r-pill); background: var(--bg-2); font-size: 13px; font-weight: 600; white-space: nowrap; touch-action: manipulation; user-select: none; -webkit-user-select: none; transition: background 150ms, transform 120ms; }
+.nudge:hover:not(:disabled) { background: color-mix(in srgb, var(--fg-1) 8%, var(--bg-2)); }
+.nudge:active:not(:disabled) { transform: scale(.96); }
+.panel .nudge:disabled { color: var(--fg-3); }
+.stepMid { display: grid; gap: 0; min-width: 0; }
+.stepCap { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 13px; line-height: 18px; }
+.stepName { text-align: right; font-weight: 600; }
+.stepValue { font-weight: 600; font-variant-numeric: tabular-nums; }
+.step[data-zero] .stepValue { color: var(--fg-2); font-weight: 500; }
+.meter { position: relative; display: flex; align-items: center; height: 24px; border-radius: 4px; cursor: ew-resize; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.meter[aria-disabled="true"] { cursor: default; }
+/* 키보드로 고른 줄은 이름과 막대를 함께 감싼다(막대만 감싸면 테두리가 이름 글자를 덮는다). */
+.panel .meter:focus-visible { outline: none; }
+.stepMid { border-radius: 8px; }
+.step:has(.meter:focus-visible) .stepMid { outline: 2px solid var(--fg-1); outline-offset: 2px; }
+.cells { display: flex; flex: 1; gap: 2px; }
+.cells i { flex: 1; height: 8px; border-radius: 2px; background: linear-gradient(90deg, var(--fg-1) calc(var(--f, 0) * 100%), var(--ring-strong) 0); }
+.cells i.low { background: linear-gradient(270deg, var(--fg-1) calc(var(--f, 0) * 100%), var(--ring-strong) 0); }
+.zero { position: absolute; top: 6px; bottom: 6px; left: 50%; width: 1px; margin-left: -.5px; background: var(--fg-2); }
+/* 손잡이: 지금 값 자리의 짧은 막대. 올려 두거나 끄는 동안 조금 커진다. */
+.mark { position: absolute; top: 5px; bottom: 5px; left: calc(50% + var(--v, 0) * .5%); width: 3px; margin-left: -1.5px; border-radius: 2px; background: var(--fg-1); box-shadow: 0 0 0 2px var(--bg-1); transition: top 120ms, bottom 120ms; pointer-events: none; }
+.meter:hover .mark, .meter[data-dragging] .mark { top: 2px; bottom: 2px; }
+.meter[aria-disabled="true"] .mark { opacity: 0; }
+
+@media (max-width: 480px) { .drawer { padding: 16px 16px 24px; } }
+@media (prefers-reduced-motion: reduce) { .push, .drawer, .spin { animation: none; } .done, .tools button, .nudge, .mark { transition: none; } }
+
+/* 코디 구성의 "내 상품" 줄 */
+.rowCanvas { width: 84%; height: 82%; }
+.rowValue { display: inline-flex; align-items: center; gap: 6px; }
+.rowValue .dot { width: 14px; height: 14px; }
+.rowChange { color: var(--fg-1); font-weight: 600; }
+.message .retry { flex: none; margin-left: auto; height: 28px; padding: 0 12px; border: 0; border-radius: var(--r-pill); background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.savedNote { margin: 0; font-size: 13px; color: var(--fg-2); text-wrap: balance; }

@@ -117,12 +117,6 @@ const positiveNumber = (value, fallback) => Number.isFinite(Number(value)) && Nu
 
 export const outfitModelCredit = fee => fee > 0 ? `+${fee} 크레딧` : '무료';
 
-export function compressedMatchHeight(productHeight, productCm, matchCm) {
-  const height = positiveNumber(productHeight, 0);
-  if (!positiveNumber(productCm, 0) || !positiveNumber(matchCm, 0)) return height;
-  return height * (Number(matchCm) / Number(productCm)) ** 0.7;
-}
-
 export function selectProductBoardImage(visuals, originalSrc) {
   const front = visuals?.front;
   return (front?.tidyStatus === 'ready' && front.tidyUrl) || front?.cutoutUrl || originalSrc || null;
@@ -177,10 +171,9 @@ export function buildOutfitBoardLayout({ clothingType, product, items = {}, maxH
   let scale = Math.min(3.4, Math.max(0, canvasHeight - pad * 2 - gap * rows.length) / sumCm);
   for (const item of garments) scale = Math.min(scale, Math.round(canvasWidth * 0.74) / (item.cm * item.ar));
   scale *= 0.9;
-  const match = clothingType === 'bottom' ? top : clothingType === 'dress' ? null : bottom;
-  const bundleCm = rowCm(rows.find(row => row.includes(prod)));
+  // 상품과 보완 의류를 실제 길이 비율 그대로 그린다(2026-11-21 오너: 보드 상의와 하의 비율을 실제에 맞게).
   for (const item of garments) {
-    item.height = item === match ? compressedMatchHeight(bundleCm * scale, bundleCm, item.cm) : item.cm * scale;
+    item.height = item.cm * scale;
     item.width = item.height * item.ar;
   }
   shoes.height = shoes.cm * scale;
@@ -199,8 +192,7 @@ export function buildOutfitBoardLayout({ clothingType, product, items = {}, maxH
     ? Math.max(row[0].height, row[0].height * outerDy + row[1].height) : row[0].height;
   const rowWidth = row => row.length === 2
     ? Math.max(row[0].width, row[1].width, (row[0].width + row[1].width) / 2 + outerDx * 2) : row[0].width;
-  // The 0.7 correction can make a short match taller, or a wide match wider,
-  // than the raw cm estimate. Fit AFTER that correction; gaps remain 10px.
+  // Fit the final rows, shoes and circles with one scale; gaps remain 10px.
   const contentHeight = rows.reduce((sum, row) => sum + rowHeight(row), 0) + shoes.height;
   const fit = Math.min(1,
     Math.max(0, canvasHeight - pad * 2 - gap * rows.length) / contentHeight,

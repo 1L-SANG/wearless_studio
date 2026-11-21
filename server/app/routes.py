@@ -40,7 +40,8 @@ from .agents import (
 )
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
-from .services import (canonical_reference, editor_garment_mask, garment_color_measure, garment_grid,
+from .services import (canonical_reference, editor_garment_mask, garment_color_measure, garment_color_target,
+                       garment_color_target_sources, garment_grid,
                        input_qc, mannequin_display,
                        mannequin_tone_render, matching, matching_cutout, product_photos,
                        retrieval, sam_retry, outfit, outfit_jobs)
@@ -1294,6 +1295,16 @@ async def save_analysis(
         project = await repo.get_project(conn, user_id, project_id)
         if project is None:
             raise _not_found()
+        sliders_key = garment_color_target.SLIDERS_KEY
+        if sliders_key in analysis:
+            product = await repo.get_product(conn, project_id) or {}
+            normalized = garment_color_target.normalize_sliders(
+                analysis[sliders_key], garment_color_target_sources.fronts_by_color(product),
+            )
+            if normalized is None and not merge:
+                analysis.pop(sliders_key)
+            else:
+                analysis[sliders_key] = normalized
         incoming_profile = analysis.get("fitProfile")
         selected_id = project.get("selected_mannequin_id") or project.get("selectedMannequinId")
         if (fit_profile_only and selected_id and
@@ -1460,6 +1471,43 @@ async def promote_confirmed_gpt_evidence(
         )
         await conn.commit()
     return {"promoted": True}
+
+
+@router.post("/projects/{project_id}/garment-color-source", tags=["Products"],
+             openapi_extra={"requestBody": {"required": True, "content": {"application/json": {
+                 "schema": {"type": "object", "required": ["colorId"],
+                            "properties": {"colorId": {"type": "string"}}},
+             }}}})
+async def project_garment_color_source(request: Request, project_id: str, user_id: str = Depends(require_user)):
+    settings = request.app.state.settings
+    if not settings.garment_color_target_enabled:
+        raise _not_found()
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        try:
+            color_id = (await request.json())["colorId"]
+            if not isinstance(color_id, str) or not color_id:
+                raise ValueError
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail={
+                "code": "invalid_color_id", "message": "색상을 다시 선택해 주세요.",
+            }) from exc
+        product = await repo.get_product(conn, project_id) or {}
+        fronts = garment_color_target_sources.fronts_by_color(product)
+        if color_id not in fronts:
+            raise _not_found()
+        rate_limit.enforce(
+            getattr(request.app.state, "user_garment_color_source_limiter", None), rate_limit.user_key(user_id),
+        )
+        analysis = await repo.get_analysis(conn, project_id)
+        data = await garment_color_target_sources.read_front(
+            conn, getattr(request.app.state, "r2", None), user_id=user_id,
+            project_id=project_id, front_id=fronts[color_id],
+        )
+    return await garment_color_target_sources.preview(
+        settings, data, clothing_type=product.get("clothing_type"), sub_category=analysis.get("subCategory"),
+    )
 
 
 @router.post(
@@ -4659,7 +4707,8 @@ async def _public_asset_or_404(request: Request, asset_id: str) -> dict:
             status_code=404, detail={"code": "not_found", "message": "자산을 찾을 수 없습니다."})
     async with get_conn(request) as conn:
         asset = await repo.get_asset_public(conn, asset_id)
-    if asset is None or not asset.get("r2_key"):
+    if (asset is None or not asset.get("r2_key")
+            or (asset.get("metadata") or {}).get("internalGarmentColorTarget")):
         raise HTTPException(
             status_code=404, detail={"code": "not_found", "message": "자산을 찾을 수 없습니다."})
     return asset

@@ -41,6 +41,7 @@ variables:
   APP_ENV: production
   JOB_KINDS: detail_page
   GARMENT_COLOR_TUNE_ENABLED: "true"
+  GARMENT_COLOR_TARGET_ENABLED: "true"
   # 컷 5개가 각자 step/progress 이벤트를 쓰고 lease heartbeat·image_usage 적재가 겹친다.
   # 2 면 그 6~7개 짧은 쓰기가 커넥션 두 개를 두고 줄서서 PoolTimeout(10s) 여지가 생긴다.
   # Supabase 한도 15: api 롤링 2×3 + worker 롤링 2×3 = 12 로 여전히 여유가 있다.

@@ -463,7 +463,11 @@ def rgb_to_oklab(rgb: np.ndarray) -> np.ndarray:
     """sRGB uint8 (..., 3)을 Oklab float64 (..., 3)으로 바꾼다."""
     if not isinstance(rgb, np.ndarray) or rgb.dtype != np.uint8 or rgb.shape[-1] != 3:
         raise ValueError("rgb must be a uint8 array whose last axis is 3")
-    return np.cbrt(_SRGB_DECODE[rgb] @ _RGB_TO_LMS.T) @ _LMS_TO_LAB.T
+    return linear_to_oklab(_SRGB_DECODE[rgb])
+
+
+def linear_to_oklab(rgb: np.ndarray) -> np.ndarray:
+    return np.cbrt(rgb @ _RGB_TO_LMS.T) @ _LMS_TO_LAB.T
 
 
 def _oklab_to_linear(lab: np.ndarray) -> np.ndarray:

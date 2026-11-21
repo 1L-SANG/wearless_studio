@@ -110,7 +110,7 @@ test('tops and inners use cropped 45 and regular/default 64, with real measureme
   assert.equal(garmentDisplayLength({}, 'dress'), 115);
 });
 
-test('all new lengths retain the 0.7 proportions and fit R1 bounds after final scaling', () => {
+test('all new lengths keep their real length ratio and fit R1 bounds after final scaling', () => {
   const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-6, `${actual} != ${expected}`);
   for (const [bottomCm, [length]] of bottomLengths) for (const topLength of ['cropped', 'regular']) {
     const topCm = topLength === 'cropped' ? 45 : 64;
@@ -131,7 +131,7 @@ test('all new lengths retain the 0.7 proportions and fit R1 bounds after final s
       const match = layout.pieces.find(piece => piece.slot === (clothingType === 'bottom' ? 'top' : 'bottom'));
       const bundleCm = clothingType === 'outer' ? Math.max(115, 115 * .3 + topCm) : product.cm;
       const bundleHeight = prod.height * bundleCm / product.cm;
-      near(match.height / bundleHeight, ((clothingType === 'bottom' ? topCm : bottomCm) / bundleCm) ** .7);
+      near(match.height / bundleHeight, (clothingType === 'bottom' ? topCm : bottomCm) / bundleCm);
       const shoes = layout.pieces.at(-1);
       near(shoes.y - Math.max(...layout.pieces.slice(0, -1).map(piece => piece.y + piece.height)), 10);
     }

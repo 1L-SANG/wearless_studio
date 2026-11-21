@@ -57,7 +57,10 @@ from ..agents.catalog_image import catalog_image
 from ..agents.model_routing import resolve_detail_cut_model
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
-from ..services import garment_color_measure, garment_color_tune, matching, outfit_generation
+from ..services import (
+    garment_color_measure, garment_color_target, garment_color_target_finish,
+    garment_color_target_sources, garment_color_tune, matching, outfit_generation,
+)
 from ..services import garment_color as color_storage
 from . import cut_checkpoints as _cut_checkpoints
 from . import detail_shot_runtime
@@ -1886,6 +1889,13 @@ async def run_detail_page_job(app, job: dict) -> None:
                           for block in storyboard]
             product = await repo.get_product(conn, project_id) or {}
             analysis = await repo.get_analysis(conn, project_id) or {}
+            color_target_fronts = {}
+            color_target_sliders = {}
+            if getattr(s, "garment_color_target_enabled", False):
+                color_target_fronts = garment_color_target_sources.fronts_by_color(product)
+                color_target_sliders = (garment_color_target.normalize_sliders(
+                    analysis.get(garment_color_target.SLIDERS_KEY), color_target_fronts,
+                ) or {}).get("colors", {})
             selected_mannequin_id = (
                 project.get("selected_mannequin_id")
                 or project.get("selectedMannequinId")
@@ -3002,6 +3012,41 @@ async def run_detail_page_job(app, job: dict) -> None:
         for block_id in failed_block_ids:
             failed_cuts.setdefault(block_id, failure_info("temporary_error"))
 
+        staged_targets, color_target_report = {}, {}
+        if color_target_sliders and cut_assets:
+            try:
+                block_colors = {}
+                for block in ai_blocks:
+                    block_id = str(block.get("id"))
+                    plan = color_plans.get(block_id)
+                    block_colors[block_id] = plan.target_color_id if plan else _color_key(block) or base_color_id
+                generated_blocks = {str(item[0]["id"]): item[0] for item in prepared}
+
+                async def measure_contrast(data, block_ids):
+                    block_id, *aliases = block_ids
+                    block = generated_blocks[block_id]
+                    width, height, contrast = await asyncio.to_thread(
+                        _image_metrics, data, block, product=product, analysis=analysis,
+                        template_context={**_gen_cuts_kwargs["template_context"],
+                                          "source_aliases": {alias: block_id for alias in aliases}},
+                    )
+                    if width is None or height is None:
+                        raise ValueError("corrected cut measurements unavailable")
+                    return {"width": width, "height": height, **contrast}
+
+                async with pool.connection() as conn:
+                    renewed = await repo.renew_job_lease(conn, job_id, lease_token)
+                    await conn.commit()
+                if renewed:
+                    staged_targets, color_target_report = await garment_color_target_finish.stage(
+                        app, job, sliders=color_target_sliders, fronts=color_target_fronts,
+                        block_colors=block_colors, assets=cut_assets, results=cut_results,
+                        clothing_type=clothing_type, sub_category=analysis.get("subCategory"),
+                        stored_outputs=stored_outputs, measure_contrast=measure_contrast,
+                    )
+            except Exception as exc:
+                log.warning("garment color target stage failed for job %s: %s", job_id, type(exc).__name__)
+
         await _emit_progress(pool, job_id, {"progress": 85, "phase": "assemble",
                                                "generated": len(cut_assets)})
 
@@ -3088,8 +3133,11 @@ async def run_detail_page_job(app, job: dict) -> None:
                 overlay_text_metadata, block, data, product=assembly_product, analysis=analysis,
                 storyboard=storyboard, copy_results=copy_results)
             assembly_cuts.append({"blockId": block["id"], **placement})
-        editor_blocks = page_assembler.assemble(
-            storyboard, assembly_cuts, copy_results, assembly_product, True, **assemble_kwargs)
+        def assemble_page():
+            return page_assembler.assemble(
+                storyboard, assembly_cuts, copy_results, assembly_product, True, **assemble_kwargs)
+
+        editor_blocks = assemble_page() if not staged_targets else None
 
         # 5) 성공 종결 (원자·lease 펜스). 예약 시점 단가와 최소 컷 수 스냅샷으로 정산.
         # (job.metadata.perCutCost — routes.py가 예약과 같은 tx에서 기록). 실행 시점 설정을 쓰면
@@ -3164,6 +3212,15 @@ async def run_detail_page_job(app, job: dict) -> None:
                 for c in cut_assets:
                     if (c.get("metadata") or {}).get("facemarket_real_derived") is True:
                         c["provenance"] = prov
+            if staged_targets:
+                # Fence internal rows before inserting them in the final transaction.
+                if await repo.renew_job_lease(conn, job_id, lease_token):
+                    await garment_color_target_finish.persist(
+                        conn, job, staged_targets, color_target_report, cut_assets, cut_results,
+                    )
+                editor_blocks = assemble_page()
+            if color_target_report:
+                success_metadata["garmentColorTarget"] = color_target_report
             # 이 지점부터 커밋 결과가 불확실할 수 있다. 예외·중단 시 직접 R2를 지우면
             # 이미 과금·발행된 페이지의 이미지를 삭제할 위험이 있다. 실패로 확정된
             # 미발행 객체는 assets 행을 확인하는 reclaimer 에 맡긴다.
@@ -3174,14 +3231,14 @@ async def run_detail_page_job(app, job: dict) -> None:
                 metadata=success_metadata, product_name=generated_name)
             if out is not None:
                 await color_storage.persist_masters(conn, job=job, outputs=cut_assets)
-            await conn.commit()
-        if out is None:  # lease 상실 → 방금 올린 R2 객체 best-effort 정리
-            # 체크포인트는 남긴다 — lease 를 잃은 상세 잡은 error 로 끝나고(recover_stale_leases),
-            # 다음 시도가 그걸 이어 쓴다. TTL(24시간) 뒤에는 리클레이머가 지운다.
-            for c in cut_assets:
-                await _delete_output_candidate(c)
-                for master in c.get("internal_masters") or []:
-                    await _delete_output_candidate(master)
+            if out is None and staged_targets:
+                await conn.rollback()
+            else:
+                await conn.commit()
+        if out is None:  # lease 상실 시 체크포인트는 TTL까지 보관한다.
+            await _delete_generated_outputs([
+                asset for cut in cut_assets for asset in (cut, *(cut.get("internal_masters") or ()))
+            ])
         else:
             # 추적 층 — 커밋된 원장 행에 컷 지문을 붙인다. 베스트에포트(실패해도 조용히 빠지고
             # 백필 스크립트가 채운다). 이미 done 으로 커밋된 뒤라 셀러 화면을 늦추지 않는다.
