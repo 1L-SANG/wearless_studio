@@ -57,6 +57,8 @@ from .models import (
     CreditQuote,
     CreditSource,
     CustomMatchItemRequest,
+    DetailPageConflictResponse,
+    DetailPageJobFailureView,
     DraftSlotPutRequest,
     DraftVisualPrepareRequest,
     DraftVisualPromoteRequest,
@@ -939,6 +941,13 @@ async def reject_refund(
     return JSONResponse(result)
 
 
+async def _with_detail_page_retry_lock(conn, user_id: str, project_id: str, job: dict | None) -> dict | None:
+    if job is None or job.get("status") not in ("error", "cancelled"):
+        return job
+    retry_at = await repo.get_detail_page_retry_locked_until(conn, user_id, project_id)
+    return {**job, "retryLockedUntil": retry_at}
+
+
 @router.get(
     "/projects",
     response_model=list[ProjectSummary] | list[InProgressProjectSummary],
@@ -1000,7 +1009,9 @@ async def get_project(
         row = await repo.get_project(conn, user_id, project_id)
         if row is None:
             raise _not_found()
-        row = {**row, "latestJobs": await repo.get_latest_project_jobs(conn, user_id, project_id)}
+        latest_jobs = await repo.get_latest_project_jobs(conn, user_id, project_id)
+        latest_detail = await _with_detail_page_retry_lock(conn, user_id, project_id, latest_jobs.get("detailPage"))
+        row = {**row, "latestJobs": {**latest_jobs, "detailPage": latest_detail}}
     return row
 
 
@@ -4373,7 +4384,8 @@ async def generate_editor_image(
 @router.post(
     "/projects/{project_id}/detail-page:generate",
     responses={**COMMON_RESPONSES, 202: {"description": "상세페이지 생성 작업 진입"},
-               400: {"model": ErrorResponse}, 402: {"model": ErrorResponse}},
+               400: {"model": ErrorResponse}, 402: {"model": ErrorResponse},
+               409: {"model": DetailPageConflictResponse}},
     tags=["Detail Page"], summary="상세페이지 생성 작업 시작 (PL-4)",
 )
 async def generate_detail_page(
@@ -4520,6 +4532,13 @@ async def generate_detail_page(
         job = await repo.find_detail_page_request_job(conn, user_id, project_id, scoped_key)
         created = False
         if job is None:
+            retry_at = await repo.get_detail_page_retry_locked_until(conn, user_id, project_id)
+            if retry_at is not None:
+                raise HTTPException(status_code=409, detail={
+                    "code": "generation_retry_locked",
+                    "message": "지금 서버에 문제가 생겼어요. 1시간 뒤에 다시 시도해 주세요.",
+                    "meta": {"retryAt": retry_at.isoformat()},
+                })
             fee = 0
             if cost > 0:
                 fee, plan = await _detail_page_model_pricing(conn, user_id, project_id, selected_model_id)
@@ -4699,7 +4718,7 @@ async def get_asset_bytes(request: Request, asset_id: str):
 
 @router.get(
     "/jobs/{job_id}",
-    response_model=JobView,
+    response_model=DetailPageJobFailureView | JobView,
     responses={**COMMON_RESPONSES},
     tags=["Jobs & SSE"],
     summary="작업(Job) 상태 조회",
@@ -4713,10 +4732,25 @@ async def get_job(request: Request, job_id: str, user_id: str = Depends(require_
     """
     async with get_conn(request) as conn:
         row = await repo.get_job(conn, user_id, job_id)
-    if row is None:
-        raise HTTPException(
-            status_code=404, detail={"code": "not_found", "message": "작업을 찾을 수 없습니다."})
+        if row is None:
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": "작업을 찾을 수 없습니다."})
+        if row.get("kind") == "detail_page":
+            row = await _with_detail_page_retry_lock(conn, user_id, row["project_id"], row)
     return row
+
+
+async def _list_job_events_with_retry_lock(conn, user_id: str, job: dict, after: int) -> list[dict]:
+    events = await repo.list_job_events(conn, user_id, job["id"], after)
+    failure_events = ("error", "cancelled")
+    if job.get("kind") != "detail_page" or not any(event["event_type"] in failure_events for event in events):
+        return events
+    retry_at = await repo.get_detail_page_retry_locked_until(conn, user_id, job["project_id"])
+    retry_locked_until = retry_at.isoformat() if retry_at is not None else None
+    return [
+        {**event, "payload": {**event["payload"], "retryLockedUntil": retry_locked_until}}
+        if event["event_type"] in failure_events else event for event in events
+    ]
 
 
 @router.get(
@@ -4746,17 +4780,19 @@ async def job_events(
     # 조회를 한 lease에서 끝내 DB 장애 때의 풀 압력을 절반으로 줄인다.
     if poll:
         async with get_conn(request) as conn:
-            if await repo.get_job(conn, user_id, job_id) is None:
+            job = await repo.get_job(conn, user_id, job_id)
+            if job is None:
                 raise HTTPException(
                     status_code=404,
                     detail={"code": "not_found", "message": "작업을 찾을 수 없습니다."},
                 )
-            events = await repo.list_job_events(conn, user_id, job_id, after)
+            events = await _list_job_events_with_retry_lock(conn, user_id, job, after)
         return JSONResponse({"events": [
             {"id": e["id"], "type": e["event_type"], "payload": e["payload"]} for e in events
         ]})
     async with get_conn(request) as conn:  # SSE 소유권 확인
-        if await repo.get_job(conn, user_id, job_id) is None:
+        job = await repo.get_job(conn, user_id, job_id)
+        if job is None:
             raise HTTPException(
                 status_code=404, detail={"code": "not_found", "message": "작업을 찾을 수 없습니다."})
     start = int(last_event_id) if (last_event_id is not None and last_event_id.isdigit()) else after
@@ -4767,7 +4803,7 @@ async def job_events(
         deadline = time.monotonic() + 300  # 5분 상한 (이후 클라가 재연결)
         while time.monotonic() < deadline:
             async with pool.connection() as conn:
-                events = await repo.list_job_events(conn, user_id, job_id, after_id)
+                events = await _list_job_events_with_retry_lock(conn, user_id, job, after_id)
             for e in events:
                 after_id = e["id"]
                 payload = json.dumps(e["payload"], ensure_ascii=False)
@@ -4776,8 +4812,8 @@ async def job_events(
                     return
             if not events:  # 종결 이벤트를 이미 본 뒤 재연결 → 상태 확인해 즉시 종료(5분 hang 방지)
                 async with pool.connection() as conn:
-                    job = await repo.get_job(conn, user_id, job_id)
-                if job and job["status"] in ("done", "error", "cancelled"):
+                    current = await repo.get_job(conn, user_id, job_id)
+                if current and current["status"] in ("done", "error", "cancelled"):
                     return
             await asyncio.sleep(1.0)
 

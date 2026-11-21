@@ -109,9 +109,14 @@ class LatestJobSummary(CamelModel):
     error_code: str | None
 
 
+class DetailPageJobFailureSummary(LatestJobSummary):
+    status: Literal["error", "cancelled"]
+    retry_locked_until: datetime | None
+
+
 class LatestProjectJobs(CamelModel):
     mannequin: LatestJobSummary | None
-    detail_page: LatestJobSummary | None
+    detail_page: DetailPageJobFailureSummary | LatestJobSummary | None
 
 
 class ProjectDetail(Project):
@@ -342,6 +347,12 @@ class JobView(CamelModel):
     updated_at: datetime
 
 
+class DetailPageJobFailureView(JobView):
+    kind: Literal["detail_page"]
+    status: Literal["error", "cancelled"]
+    retry_locked_until: datetime | None
+
+
 # ---------- 크레딧 시스템 (credit_system_design.md §6) ----------
 
 
@@ -427,3 +438,15 @@ class ErrorDetail(CamelModel):
 
 class ErrorResponse(CamelModel):
     error: ErrorDetail
+
+
+class DetailPageRetryLockMeta(CamelModel):
+    retry_at: datetime
+
+
+class DetailPageConflictDetail(ErrorDetail):
+    meta: DetailPageRetryLockMeta | None = None
+
+
+class DetailPageConflictResponse(ErrorResponse):
+    error: DetailPageConflictDetail

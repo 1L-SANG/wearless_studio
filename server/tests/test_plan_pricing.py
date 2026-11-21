@@ -318,7 +318,7 @@ def _wire_sql_regenerate(monkeypatch, *, plan, done_count, balance, running=Fals
             user_id text, project_id text, kind text, status text, payload text,
             idempotency_key text unique, credits_reserved integer, metadata text,
             progress integer, steps text, result text, error_message text,
-            credits_charged integer, created_at text, updated_at text, finished_at text);
+            credits_charged integer, created_at text, updated_at text, started_at text, finished_at text);
         create unique index jobs_active_unique_idx on jobs(project_id, kind)
             where status in ('pending', 'running');
         create table mannequin_job_requests(user_id text, project_id text,

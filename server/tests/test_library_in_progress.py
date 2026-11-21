@@ -236,7 +236,7 @@ def test_route_selects_only_new_view_and_preserves_existing_list_shape(client, m
 @pytest.mark.parametrize("jobs", [
     {"mannequin": None, "detailPage": None},
     {"mannequin": {"id": "m1", "status": "running", "errorCode": None},
-     "detailPage": {"id": "d1", "status": "error", "errorCode": "failed"}},
+     "detailPage": {"id": "d1", "status": "error", "errorCode": "failed", "retryLockedUntil": None}},
 ])
 def test_project_detail_exposes_latest_jobs(client, make_token, monkeypatch, jobs):
     patch_route_db(monkeypatch, routes)
