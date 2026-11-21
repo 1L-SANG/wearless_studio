@@ -25,7 +25,13 @@ for (let i = 0; i < 256; i += 1) {
   const c = i / 255;
   SRGB_TO_LINEAR[i] = c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
 }
-export const srgb8ToLinear = (v) => SRGB_TO_LINEAR[Math.max(0, Math.min(255, Math.round(v)))];
+/* 정수는 표로, 소수(짝수 개 픽셀의 중앙값 100.5 같은 값)는 서버처럼 식 그대로 바꾼다. */
+export const srgb8ToLinear = (v) => {
+  const n = Math.max(0, Math.min(255, Number(v) || 0));
+  if (Number.isInteger(n)) return SRGB_TO_LINEAR[n];
+  const c = n / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+};
 export const linearToSrgb8 = (c) => {
   const v = Math.min(1, Math.max(0, c));
   return (v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055) * 255;

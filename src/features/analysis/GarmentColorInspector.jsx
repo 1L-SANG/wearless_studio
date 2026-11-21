@@ -43,7 +43,12 @@ export function useGarmentColorInspector({ garment, cardRef }) {
     garment.flush();
     setOpen(false); setPosition(null); unshift();
     setCurrentId(null);
-    if (returnFocus) (opener.current || rowRef.current)?.focus({ preventScroll: true });
+    if (returnFocus) {
+      // 서랍이 앱을 inert로 막아 둔 채면 초점이 옮겨지지 않는다. 막기를 먼저 풀고 돌려준다.
+      const root = document.getElementById('root');
+      if (root) root.inert = false;
+      (opener.current || rowRef.current)?.focus({ preventScroll: true });
+    }
   }, [open, garment, unshift]);
 
   const openPanel = useCallback((from) => {
@@ -76,7 +81,7 @@ export function useGarmentColorInspector({ garment, cardRef }) {
     const onKey = (event) => {
       if (event.key === 'Escape') { close(); return; }
       if (event.key !== 'Tab' || !drawer || !panelRef.current) return;
-      const focusable = [...panelRef.current.querySelectorAll('button:not(:disabled), input:not(:disabled), [tabindex="0"]')].filter((node) => node.offsetParent !== null);
+      const focusable = [...panelRef.current.querySelectorAll('button:not(:disabled):not([tabindex="-1"]), input:not(:disabled), [tabindex="0"]')].filter((node) => node.offsetParent !== null);
       if (!focusable.length) return;
       const first = focusable[0], last = focusable[focusable.length - 1];
       if (event.shiftKey && (document.activeElement === first || document.activeElement === panelRef.current)) { last.focus(); event.preventDefault(); }
