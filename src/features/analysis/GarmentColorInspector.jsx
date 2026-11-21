@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronRight } from 'lucide-react';
 import { baseProductPhoto } from '@/lib/draftVisuals.js';
@@ -70,7 +70,7 @@ export function useGarmentColorInspector({ garment, cardRef }) {
     garment.prepare();
   }, [open, close, cardRef, baseId, garment]);
 
-  useLayoutEffect(() => { if (open) panelRef.current?.focus({ preventScroll: true }); }, [open]);
+  useEffect(() => { if (open) panelRef.current?.focus({ preventScroll: true }); }, [open]);
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (event) => {
@@ -92,7 +92,7 @@ export function useGarmentColorInspector({ garment, cardRef }) {
   const current = garment.colors.find((color) => color.colorId === (currentId || baseId)) || null;
   const panel = open && garment.colors.length > 0 ? createPortal(<>
     {drawer && <button type="button" className={styles.scrim} aria-label="색 맞추기 닫기" onClick={() => close()} />}
-    <GarmentColorPanel ref={panelRef} colors={garment.colors} currentId={current?.colorId} onSelect={setCurrentId} sources={garment.sources}
+    <GarmentColorPanel panelRef={panelRef} colors={garment.colors} currentId={current?.colorId} onSelect={setCurrentId} sources={garment.sources}
       onSliders={garment.setSliders} onDone={() => close()} drawer={drawer}
       style={!drawer && position ? { top: position.top, left: position.left } : undefined} />
   </>, document.body) : null;

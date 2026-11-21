@@ -1,4 +1,4 @@
-import React, { forwardRef, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, ChevronsLeftRight, LoaderCircle } from 'lucide-react';
 import { ZERO_SLIDERS, hexOf, isZeroSliders, sameSliders, sliderTrack, toneSrgb8 } from '@/lib/garmentColorTone.js';
 import styles from './GarmentColorPanel.module.css';
@@ -69,9 +69,7 @@ function Compare({ source, sliders }) {
   </>;
 }
 
-export const GarmentColorPanel = forwardRef(function GarmentColorPanel({
-  colors, currentId, onSelect, sources, onSliders, onDone, drawer, style,
-}, ref) {
+export function GarmentColorPanel({ panelRef, colors, currentId, onSelect, sources, onSliders, onDone, drawer, style }) {
   const current = colors.find((color) => color.colorId === currentId) || colors[0];
   const source = current ? sources[current.colorId] : null;
   const sliders = current?.sliders || ZERO_SLIDERS;
@@ -81,7 +79,7 @@ export const GarmentColorPanel = forwardRef(function GarmentColorPanel({
   const base = colorSourceSrgb(current, source);
   const chips = useRef(null);
   const pick = (colorId) => onSelect(colorId);
-  return <aside ref={ref} id="garment-color-panel" className={`${styles.panel} ${drawer ? styles.drawer : styles.push}`} style={style} data-state={state}
+  return <aside ref={panelRef} id="garment-color-panel" className={`${styles.panel} ${drawer ? styles.drawer : styles.push}`} style={style} data-state={state}
     tabIndex={-1} aria-labelledby="garment-color-title" role={drawer ? 'dialog' : undefined} aria-modal={drawer ? true : undefined}>
     <div className={styles.head}>
       <div><h2 id="garment-color-title">내 옷 색 맞추기</h2><p>실물과 같은지 확인해 주세요.</p></div>
@@ -129,4 +127,4 @@ export const GarmentColorPanel = forwardRef(function GarmentColorPanel({
       {current?.auto && sameSliders(sliders, current.auto) && <span className="sr-only" role="status">AI 자동 값으로 맞췄어요</span>}
     </>}
   </aside>;
-});
+}

@@ -45,7 +45,7 @@ export function useGarmentColorTargets({ projectId, product, analysis, onChange 
 
   useEffect(() => {
     let alive = true;
-    statusRequest ||= Promise.resolve(api.getGarmentColorStatus()).catch(() => ({ enabled: false }));
+    statusRequest ||= Promise.resolve().then(() => api.getGarmentColorStatus()).catch(() => ({ enabled: false }));
     statusRequest.then((status) => { if (alive) setEnabled(!!status?.enabled); });
     return () => { alive = false; };
   }, []);
