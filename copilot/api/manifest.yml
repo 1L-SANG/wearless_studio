@@ -139,7 +139,7 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # pending detail_page가 생기면 아래 autoscaler가 detail-worker를 1대로 깨운다.
   JOB_KINDS: "-detail_page"
   GARMENT_COLOR_TUNE_ENABLED: "true"
-  GARMENT_COLOR_TARGET_ENABLED: "false"
+  GARMENT_COLOR_TARGET_ENABLED: "true"
   DETAIL_WORKER_AUTOSCALE: "on"
   # 0 이면 잡이 끝나는 즉시 0대로 내려가 **다음 잡마다 콜드스타트**(태스크 프로비저닝 +
   # 이미지 풀 + uvicorn 기동)를 다시 문다. 게다가 수요 스냅샷을 읽고 desired=0 을 쏘는
